@@ -196,7 +196,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     saveCurrentBitmap({ hist: newHistory, length: newHistory.length });
   }
 
-  function updateLastHistoryItem(args: ToolArgs, forceNewItem?: boolean) {
+  function updateLastHistoryItem(args: ToolArgs) {
     if (!originalImage) return;
 
     const toolName = getCurrentTool();
@@ -212,10 +212,11 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const newHistory = history.slice(0, historyLength - 1);
       setHistory(newHistory);
       setHistoryLength(newHistory.length);
+      writeImageToCanvas(getPrevBitmap(), canvasRef.current);
       return;
     }
 
-    const addNewItem = forceNewItem || currentEmptyTool;
+    const addNewItem = currentEmptyTool;
 
     // should normally have args, but just in case
     args ??= { ...defaultSettings[toolName] };

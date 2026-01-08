@@ -33,12 +33,13 @@ const Main = () => {
   // const stageRef = useRef<HTMLDivElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
 
-  const isDrawing = useRef(false);
+  const isMouseDown = useRef(false);
   const pointerId = useRef<number | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const pointsRef = useRef<Point[]>([]);
   const pendingPoints = useRef<Point[]>([]);
   const cropStart = useRef<Point | null>(null);
+  const resizeHandle = useRef<string | null>(null);
   const bufferCtx = useRef<CanvasRenderingContext2D | null>(null);
   const frameRequested = useRef(false);
 
@@ -102,11 +103,19 @@ const Main = () => {
     const overlay = overlayRef.current!;
     bufferCtx.current = overlay.getContext('2d')!;
 
+    if (isDrawToolActive) {
+      overlayRef.current!.style.cursor = 'crosshair';
+    } else if (isCropToolActive && !isMouseDown.current) {
+      overlayRef.current!.style.cursor = 'crosshair';
+    }
+
     return () => {
       ctxRef.current = null;
       bufferCtx.current = null;
     };
-  }, [canvasRef]);
+  }, [canvasRef, isDrawToolActive, isCropToolActive]);
+
+  const HANDLE_SIZE = 10;
 
   useEffect(() => {
     const ctx = bufferCtx.current;
@@ -114,7 +123,7 @@ const Main = () => {
 
     ctx.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
 
-    if (isCropToolActive && crop && !isDrawing.current) {
+    if (isCropToolActive && crop && !isMouseDown.current) {
       const { x, y, width, height } = crop;
       if (width > 0 && height > 0) {
         const width_overlay = overlayRef.current!.width;
@@ -132,6 +141,13 @@ const Main = () => {
         ctx.setLineDash([5, 5]);
         ctx.strokeRect(x, y, width, height);
         ctx.setLineDash([]);
+
+        // Draw handles
+        ctx.fillStyle = '#007bff';
+        ctx.fillRect(x - HANDLE_SIZE / 2, y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+        ctx.fillRect(x + width - HANDLE_SIZE / 2, y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+        ctx.fillRect(x - HANDLE_SIZE / 2, y + height - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+        ctx.fillRect(x + width - HANDLE_SIZE / 2, y + height - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
       }
     }
   }, [canvasDimensions, crop, isCropToolActive]);
@@ -215,7 +231,7 @@ const Main = () => {
     overlayRef.current!.setPointerCapture(event.pointerId);
 
     if (isDrawToolActive) {
-      isDrawing.current = true;
+      isMouseDown.current = true;
 
       const alpha = (savedLastSettings.draw as DrawToolType).alpha;
 
@@ -232,14 +248,51 @@ const Main = () => {
       }
       draw();
     } else if (isCropToolActive) {
-      isDrawing.current = true;
+      isMouseDown.current = true;
       const coords = getCanvasCoordinates(event);
-      cropStart.current = coords;
+
+      if (crop) {
+        const { x, y, width, height } = crop;
+        const h2 = HANDLE_SIZE / 2;
+
+        if (coords.x >= x - h2 && coords.x <= x + h2 && coords.y >= y - h2 && coords.y <= y + h2) {
+          resizeHandle.current = 'top-left';
+        } else if (
+          coords.x >= x + width - h2 &&
+          coords.x <= x + width + h2 &&
+          coords.y >= y - h2 &&
+          coords.y <= y + h2
+        ) {
+          resizeHandle.current = 'top-right';
+        } else if (
+          coords.x >= x - h2 &&
+          coords.x <= x + h2 &&
+          coords.y >= y + height - h2 &&
+          coords.y <= y + height + h2
+        ) {
+          resizeHandle.current = 'bottom-left';
+        } else if (
+          coords.x >= x + width - h2 &&
+          coords.x <= x + width + h2 &&
+          coords.y >= y + height - h2 &&
+          coords.y <= y + height + h2
+        ) {
+          resizeHandle.current = 'bottom-right';
+        } else {
+          resizeHandle.current = null;
+        }
+      }
+
+      if (resizeHandle.current) {
+        cropStart.current = { x: crop!.x, y: crop!.y }; // actually we need the initial crop for reference
+      } else {
+        cropStart.current = coords;
+      }
     }
   };
 
   const handleMouseUp: PointerEventHandler<HTMLCanvasElement> = (event) => {
-    if (!isDrawing.current) return;
+    if (!isMouseDown.current) return;
 
     if (isDrawToolActive) {
       draw();
@@ -254,15 +307,49 @@ const Main = () => {
       const start = cropStart.current!;
       const canvas = canvasRef.current!;
 
-      const x1 = Math.max(0, Math.min(canvas.width, start.x));
-      const y1 = Math.max(0, Math.min(canvas.height, start.y));
-      const x2 = Math.max(0, Math.min(canvas.width, coords.x));
-      const y2 = Math.max(0, Math.min(canvas.height, coords.y));
+      let x, y, width, height;
 
-      const x = Math.min(x1, x2);
-      const y = Math.min(y1, y2);
-      const width = Math.abs(x1 - x2);
-      const height = Math.abs(y1 - y2);
+      if (resizeHandle.current) {
+        const currentCrop = crop!;
+        let x1 = currentCrop.x;
+        let y1 = currentCrop.y;
+        let x2 = currentCrop.x + currentCrop.width;
+        let y2 = currentCrop.y + currentCrop.height;
+
+        if (resizeHandle.current === 'top-left') {
+          x1 = coords.x;
+          y1 = coords.y;
+        } else if (resizeHandle.current === 'top-right') {
+          x2 = coords.x;
+          y1 = coords.y;
+        } else if (resizeHandle.current === 'bottom-left') {
+          x1 = coords.x;
+          y2 = coords.y;
+        } else if (resizeHandle.current === 'bottom-right') {
+          x2 = coords.x;
+          y2 = coords.y;
+        }
+
+        const rx1 = Math.max(0, Math.min(canvas.width, x1));
+        const ry1 = Math.max(0, Math.min(canvas.height, y1));
+        const rx2 = Math.max(0, Math.min(canvas.width, x2));
+        const ry2 = Math.max(0, Math.min(canvas.height, y2));
+
+        x = Math.min(rx1, rx2);
+        y = Math.min(ry1, ry2);
+        width = Math.abs(rx1 - rx2);
+        height = Math.abs(ry1 - ry2);
+      } else {
+        const x1 = Math.max(0, Math.min(canvas.width, start.x));
+        const y1 = Math.max(0, Math.min(canvas.height, start.y));
+        const x2 = Math.max(0, Math.min(canvas.width, coords.x));
+        const y2 = Math.max(0, Math.min(canvas.height, coords.y));
+
+        x = Math.min(x1, x2);
+        y = Math.min(y1, y2);
+        width = Math.abs(x1 - x2);
+        height = Math.abs(y1 - y2);
+      }
 
       if (width > 0 && height > 0) {
         setCrop({
@@ -276,10 +363,11 @@ const Main = () => {
       requestAnimationFrame(() => {
         drawCrop(coords);
         cropStart.current = null;
+        resizeHandle.current = null;
       });
     }
 
-    isDrawing.current = false;
+    isMouseDown.current = false;
     pointerId.current = null;
     try {
       overlayRef.current!.releasePointerCapture(event.pointerId);
@@ -289,11 +377,12 @@ const Main = () => {
   };
 
   const handleMouseMove: PointerEventHandler<HTMLCanvasElement> = (event) => {
-    if (!isDrawing.current) return;
-
     if (isDrawToolActive) {
+      if (!isMouseDown.current) return;
+
       const coords = getCanvasCoordinates(event);
       pendingPoints.current.push(coords);
+
       if (!frameRequested.current) {
         frameRequested.current = true;
         requestAnimationFrame(draw);
@@ -303,6 +392,35 @@ const Main = () => {
         frameRequested.current = true;
         const coords = getCanvasCoordinates(event);
         requestAnimationFrame(() => drawCrop(coords));
+      }
+
+      const coords = getCanvasCoordinates(event);
+      if (crop) {
+        const { x, y, width, height } = crop;
+        const h2 = HANDLE_SIZE / 2;
+        let cursor = 'crosshair';
+
+        if (resizeHandle.current === 'top-left' || resizeHandle.current === 'bottom-right') {
+          cursor = 'nwse-resize';
+        } else if (resizeHandle.current === 'top-right' || resizeHandle.current === 'bottom-left') {
+          cursor = 'nesw-resize';
+        } else if (!resizeHandle.current) {
+          if (
+            (coords.x >= x - h2 && coords.x <= x + h2 && coords.y >= y - h2 && coords.y <= y + h2) ||
+            (coords.x >= x + width - h2 &&
+              coords.x <= x + width + h2 &&
+              coords.y >= y + height - h2 &&
+              coords.y <= y + height + h2)
+          ) {
+            cursor = 'nwse-resize';
+          } else if (
+            (coords.x >= x + width - h2 && coords.x <= x + width + h2 && coords.y >= y - h2 && coords.y <= y + h2) ||
+            (coords.x >= x - h2 && coords.x <= x + h2 && coords.y >= y + height - h2 && coords.y <= y + height + h2)
+          ) {
+            cursor = 'nesw-resize';
+          }
+        }
+        overlayRef.current!.style.cursor = cursor;
       }
     }
   };
@@ -315,10 +433,39 @@ const Main = () => {
     const height_overlay = overlayRef.current!.height;
     ctx.clearRect(0, 0, width_overlay, height_overlay);
 
-    const x = Math.min(start.x, coords.x);
-    const y = Math.min(start.y, coords.y);
-    const width = Math.abs(start.x - coords.x);
-    const height = Math.abs(start.y - coords.y);
+    let x, y, width, height;
+
+    if (resizeHandle.current) {
+      const currentCrop = crop!;
+      let x1 = currentCrop.x;
+      let y1 = currentCrop.y;
+      let x2 = currentCrop.x + currentCrop.width;
+      let y2 = currentCrop.y + currentCrop.height;
+
+      if (resizeHandle.current === 'top-left') {
+        x1 = coords.x;
+        y1 = coords.y;
+      } else if (resizeHandle.current === 'top-right') {
+        x2 = coords.x;
+        y1 = coords.y;
+      } else if (resizeHandle.current === 'bottom-left') {
+        x1 = coords.x;
+        y2 = coords.y;
+      } else if (resizeHandle.current === 'bottom-right') {
+        x2 = coords.x;
+        y2 = coords.y;
+      }
+
+      x = Math.min(x1, x2);
+      y = Math.min(y1, y2);
+      width = Math.abs(x1 - x2);
+      height = Math.abs(y1 - y2);
+    } else {
+      x = Math.min(start.x, coords.x);
+      y = Math.min(start.y, coords.y);
+      width = Math.abs(start.x - coords.x);
+      height = Math.abs(start.y - coords.y);
+    }
 
     // Draw semi-transparent overlay
     ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
@@ -332,6 +479,13 @@ const Main = () => {
     ctx.setLineDash([5, 5]);
     ctx.strokeRect(x, y, width, height);
     ctx.setLineDash([]);
+
+    // Draw handles
+    ctx.fillStyle = '#007bff';
+    ctx.fillRect(x - HANDLE_SIZE / 2, y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+    ctx.fillRect(x + width - HANDLE_SIZE / 2, y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+    ctx.fillRect(x - HANDLE_SIZE / 2, y + height - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+    ctx.fillRect(x + width - HANDLE_SIZE / 2, y + height - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
 
     frameRequested.current = false;
   }
@@ -383,7 +537,6 @@ const Main = () => {
           onPointerLeave={handleMouseUp}
           style={{
             display: isDrawToolActive || isCropToolActive ? 'block' : 'none',
-            cursor: 'crosshair',
           }}
         />
       </>
