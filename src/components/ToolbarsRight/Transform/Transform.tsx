@@ -1,55 +1,85 @@
-import React, { useContext, useEffect, useMemo } from 'react';
+import React, { useContext } from 'react';
 import './Transform.scss';
-import { throttle } from 'lodash-es';
-import { THROTTLE_TIME } from '../../../constants';
 // import UndoButton from '../../Common/UndoButton.tsx';
 import { ImageContext } from '../../../contexts/ImageContext.tsx';
+import type { TransformToolType } from '../../../tools/transform.ts';
 
 interface TransformToolbarProps {
-  args: { rotate?: number; mirrorH?: number; mirrorV?: number };
-  onChange: (args: { rotate: number; mirrorH: number; mirrorV: number }) => void;
+  args: TransformToolType;
+  onChange: (args: TransformToolType) => void;
 }
 
 const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
-  const { crop, setCrop, startEmptyTool } = useContext(ImageContext);
+  const { crop, setCrop, size, startEmptyTool } = useContext(ImageContext);
 
-  const rotate = args.rotate ?? 0;
-  const mirrorH = args.mirrorH ?? 0;
-  const mirrorV = args.mirrorV ?? 0;
+  const { rotate, mirrorH, mirrorV } = args;
 
-  const throttledOnChange = useMemo(() => throttle(onChange, THROTTLE_TIME), [onChange]);
+  function compensateCropCorners({ rotate: newRotate, mirrorV: newMirrorV, mirrorH: newMirrorH }: TransformToolType) {
+    if (!crop) return;
 
-  useEffect(() => {
-    return () => {
-      throttledOnChange.cancel();
-    };
-  }, [throttledOnChange]);
+    const prevWidth = size.width;
+    const prevHeight = size.height;
+
+    const angle = ((newRotate - rotate) * Math.PI) / 180;
+    const absCos = Math.abs(Math.cos(angle));
+    const absSin = Math.abs(Math.sin(angle));
+
+    // image expands if rotated
+    const newWidth = Math.round(prevWidth * absCos + prevHeight * absSin);
+    const newHeight = Math.round(prevWidth * absSin + prevHeight * absCos);
+
+    const scaleX = newWidth / prevWidth;
+    const scaleY = newHeight / prevHeight;
+
+    // compensate resize after rotation corners
+    let { x, y, width, height } = crop;
+
+    x *= scaleX;
+    y *= scaleY;
+    width *= scaleX;
+    height *= scaleY;
+
+    if (mirrorH !== newMirrorH) {
+      x = width - x;
+    }
+    if (mirrorV !== newMirrorV) {
+      y = height - y;
+    }
+
+    setCrop({ x, y, width, height });
+  }
+
+  const handleOnChange = (newArgs: TransformToolType) => {
+    compensateCropCorners(newArgs);
+    onChange(newArgs);
+  };
 
   const handleRotateLeft = () => {
     let newRotate = rotate - 90;
     if (newRotate < 0) newRotate += 360;
-    onChange({ rotate: newRotate, mirrorH, mirrorV });
+    handleOnChange({ rotate: newRotate, mirrorH, mirrorV });
   };
 
   const handleRotateRight = () => {
     let newRotate = rotate + 90;
     if (newRotate >= 360) newRotate -= 360;
-    onChange({ rotate: newRotate, mirrorH, mirrorV });
+    handleOnChange({ rotate: newRotate, mirrorH, mirrorV });
   };
 
   const handleRotateSliderChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const newRotate = Number(event.target.value);
-    throttledOnChange({ rotate: newRotate, mirrorH, mirrorV });
+    handleOnChange({ rotate: newRotate, mirrorH, mirrorV });
   };
 
   const toggleMirrorH = () => {
-    onChange({ rotate, mirrorH: mirrorH ? 0 : 1, mirrorV });
+    handleOnChange({ rotate, mirrorH: !mirrorH, mirrorV });
   };
 
   const toggleMirrorV = () => {
-    onChange({ rotate, mirrorH, mirrorV: mirrorV ? 0 : 1 });
+    handleOnChange({ rotate, mirrorH, mirrorV: !mirrorV });
   };
 
+  // todo add some stratching and free transform
   // const hasDefaultTransform = isEqual(args, defaultSettings.transform);
 
   return (
@@ -80,6 +110,12 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
         <span>
           <b>{rotate}°</b>
         </span>
+        <span
+          style={{ cursor: 'pointer', color: '#007bff' }}
+          onClick={() => handleOnChange({ rotate: 0, mirrorH, mirrorV })}
+        >
+          Reset
+        </span>
       </div>
 
       <div className="button-group">
@@ -100,7 +136,7 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
       <button
         className="btn btn-primary w-100 mt-3"
         disabled={!crop || crop.width === 0 || crop.height === 0}
-        onClick={() => startEmptyTool('crop')}
+        onClick={() => startEmptyTool('transform') /* this will apply current setting as a history item */}
       >
         Apply Crop
       </button>

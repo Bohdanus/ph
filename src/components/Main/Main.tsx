@@ -7,10 +7,22 @@ import {
   useRef,
   useState,
 } from 'react';
-import { ImageContext, type Point } from '../../contexts/ImageContext';
-import { type DrawToolType, setDrawTool } from '../../tools/draw.ts';
-import { savedLastSettings } from '../../tools/settings.ts';
+import { ImageContext } from '../../contexts/ImageContext';
 import './Main.scss';
+import { useResizeObserverRAF } from '../../hooks/useResizeObserver';
+import { useDrawHandler } from './useDrawHandler';
+import { useCropHandler } from './useCropHandler';
+import { useZoomHandler } from './useZoomHandler';
+
+type Dimensions = {
+  innerWidth: number;
+  innerHeight: number;
+  outerWidth: number;
+  outerHeight: number;
+  offsetX: number;
+  offsetY: number;
+  scale: number;
+};
 
 const Main = () => {
   const {
@@ -22,155 +34,85 @@ const Main = () => {
     openLoadImageDialog,
     crop,
     setCrop,
-    canvasDimensions,
+    size,
     interactionMode,
+    zoomData,
   } = useContext(ImageContext);
 
+  const dimensionsRef = useRef<Dimensions>({
+    innerWidth: 0,
+    innerHeight: 0,
+    outerWidth: 0,
+    outerHeight: 0,
+    offsetX: 0,
+    offsetY: 0,
+    scale: 1,
+  });
   const [isDragging, setIsDragging] = useState(false);
 
-  // const viewportRef = useRef<HTMLDivElement | null>(null);
-  // const busRef = useRef<HTMLDivElement | null>(null);
-  // const stageRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
 
-  const isMouseDown = useRef(false);
   const pointerId = useRef<number | null>(null);
-  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
-  const pointsRef = useRef<Point[]>([]);
-  const pendingPoints = useRef<Point[]>([]);
-  const cropStart = useRef<Point | null>(null);
-  const resizeHandle = useRef<string | null>(null);
-  const bufferCtx = useRef<CanvasRenderingContext2D | null>(null);
-  const frameRequested = useRef(false);
+  const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const overlayCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
-  const isDrawToolActive = toolName === 'draw'; // && interactionMode === 'draw';
+  const isDrawToolActive = toolName === 'draw';
   const isCropToolActive = interactionMode === 'crop';
-
-  // const handlePointerDownMain: PointerEventHandler<HTMLDivElement> = (event) => {
-  //   if (interactionMode !== 'pan') return;
-  //   if (event.button !== 0) return;
-  //
-  //   // todo: if you want perfection, later add hybrid pan (drag = transform, wheel = scroll)
-  //   const scrollContainer = viewportRef.current!;
-  //   const startX = event.clientX;
-  //   const startY = event.clientY;
-  //   const scrollLeft = scrollContainer.scrollLeft;
-  //   const scrollTop = scrollContainer.scrollTop;
-  //   // eslint-disable-next-line react-compiler/react-compiler
-  //   document.body.style.cursor = 'grabbing';
-  //
-  //   const handlePointerMove = (moveEvent: PointerEvent) => {
-  //     const dx = moveEvent.clientX - startX;
-  //     const dy = moveEvent.clientY - startY;
-  //     scrollContainer.scrollLeft = scrollLeft - dx;
-  //     scrollContainer.scrollTop = scrollTop - dy;
-  //   };
-  //
-  //   const handlePointerUp = () => {
-  //     window.removeEventListener('pointermove', handlePointerMove);
-  //     window.removeEventListener('pointerup', handlePointerUp);
-  //     document.body.style.cursor = '';
-  //   };
-  //
-  //   window.addEventListener('pointermove', handlePointerMove);
-  //   window.addEventListener('pointerup', handlePointerUp);
-  // };
-
-  // sets width & height for scrollbars to appear, resize
-  // useLayoutEffect(() => {
-  //   const viewport = viewportRef.current;
-  //   const bus = busRef.current;
-  //   if (!viewport || !bus) return;
-  //
-  //   const ro = new ResizeObserver(([entry]) => {
-  //     const { width, height } = entry.contentRect;
-  //     if (width === 0 || height === 0) return;
-  //     bus.style.width = `${width * zoom}px`;
-  //     bus.style.height = `${height * zoom}px`;
-  //   });
-  //
-  //   ro.observe(viewport);
-  //   return () => ro.disconnect();
-  // }, [zoom]);
+  const isZoomToolActive = toolName === 'zoom';
 
   // caches the context
-  useEffect(() => {
+  useLayoutEffect(() => {
     const canvas = canvasRef.current;
 
     if (!canvas) return;
-    ctxRef.current = canvas.getContext('2d')!;
+    canvasCtxRef.current = canvas.getContext('2d')!;
 
     const overlay = overlayRef.current!;
-    bufferCtx.current = overlay.getContext('2d')!;
-
-    if (isDrawToolActive) {
-      overlayRef.current!.style.cursor = 'crosshair';
-    } else if (isCropToolActive && !isMouseDown.current) {
-      overlayRef.current!.style.cursor = 'crosshair';
-    }
+    overlayCtxRef.current = overlay.getContext('2d')!;
 
     return () => {
-      ctxRef.current = null;
-      bufferCtx.current = null;
+      canvasCtxRef.current = null;
+      overlayCtxRef.current = null;
     };
-  }, [canvasRef, isDrawToolActive, isCropToolActive]);
+  }, [canvasRef]);
 
-  const HANDLE_SIZE = 10;
+  useResizeObserverRAF(containerRef, ({ width: outerWidth, height: outerHeight }) => {
+    // setZoomData({ width, height, zoom: 1 });
+    const { width: imageWidth, height: imageHeight } = size;
 
-  useEffect(() => {
-    const ctx = bufferCtx.current;
-    if (!ctx) return;
+    const scaleX = outerWidth / imageWidth;
+    const scaleY = outerHeight / imageHeight;
 
-    ctx.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
+    const scale = Math.min(scaleX, scaleY);
 
-    if (isCropToolActive && crop && !isMouseDown.current) {
-      const { x, y, width, height } = crop;
-      if (width > 0 && height > 0) {
-        const width_overlay = overlayRef.current!.width;
-        const height_overlay = overlayRef.current!.height;
+    const innerWidth = imageWidth * scale;
+    const innerHeight = imageHeight * scale;
+    const offsetX = (outerWidth - innerWidth) / 2;
+    const offsetY = (outerHeight - innerHeight) / 2;
 
-        // Draw semi-transparent overlay
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(0, 0, width_overlay, height_overlay);
-
-        // Clear the selection area
-        ctx.clearRect(x, y, width, height);
-
-        ctx.strokeStyle = '#007bff';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([5, 5]);
-        ctx.strokeRect(x, y, width, height);
-        ctx.setLineDash([]);
-
-        // Draw handles
-        ctx.fillStyle = '#007bff';
-        ctx.fillRect(x - HANDLE_SIZE / 2, y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-        ctx.fillRect(x + width - HANDLE_SIZE / 2, y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-        ctx.fillRect(x - HANDLE_SIZE / 2, y + height - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-        ctx.fillRect(x + width - HANDLE_SIZE / 2, y + height - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-      }
-    }
-  }, [canvasDimensions, crop, isCropToolActive]);
-
-  // useLayoutEffect(() => {
-  //   const viewport = viewportRef.current;
-  //   const stage = stageRef.current;
-  //   if (!originalImage || !viewport || !stage) return;
-  //
-  //   stage.style.aspectRatio = `${originalImage.width} / ${originalImage.height}`;
-  //
-  //   // const scaleX = viewport.clientWidth / originalImage.width;
-  //   // const scaleY = viewport.clientHeight / originalImage.height;
-  //   //
-  //   // const newZoom = Math.min(scaleX, scaleY, 1);
-  //   // setZoom(newZoom);
-  // }, [canvasRef, originalImage, setZoom]);
+    dimensionsRef.current = {
+      innerWidth,
+      innerHeight,
+      outerWidth,
+      outerHeight,
+      offsetX,
+      offsetY,
+      scale,
+    };
+  });
 
   useLayoutEffect(() => {
-    if (!originalImage || !overlayRef.current) return;
-    overlayRef.current.width = canvasRef.current!.width;
-    overlayRef.current.height = canvasRef.current!.height;
-  }, [canvasDimensions]);
+    if (!overlayRef.current) return;
+    const { width, height } = size;
+    overlayRef.current.width = width;
+    overlayRef.current.height = height;
+  }, [size]);
+
+  // clean overlay when switching interaction modes
+  useEffect(() => {
+    overlayCtxRef.current?.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
+  }, [interactionMode]);
 
   const handleDragOver = (event: React.DragEvent) => {
     event.preventDefault();
@@ -190,184 +132,58 @@ const Main = () => {
   };
 
   const getCanvasCoordinates = (event: PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current!;
-    const rect = canvas.getBoundingClientRect();
-
-    const canvasWidth = canvas.width;
-    const canvasHeight = canvas.height;
-    const rectWidth = rect.width;
-    const rectHeight = rect.height;
-
-    const canvasRatio = canvasWidth / canvasHeight;
-    const rectRatio = rectWidth / rectHeight;
-
-    let displayedWidth, displayedHeight, offsetX, offsetY;
-
-    if (canvasRatio > rectRatio) {
-      displayedWidth = rectWidth;
-      displayedHeight = rectWidth / canvasRatio;
-      offsetX = 0;
-      offsetY = (rectHeight - displayedHeight) / 2;
-    } else {
-      displayedWidth = rectHeight * canvasRatio;
-      displayedHeight = rectHeight;
-      offsetX = (rectWidth - displayedWidth) / 2;
-      offsetY = 0;
-    }
-
-    const scaleX = canvasWidth / displayedWidth;
-    const scaleY = canvasHeight / displayedHeight;
+    const { offsetX, offsetY, scale } = dimensionsRef.current;
 
     return {
-      x: (event.clientX - rect.left - offsetX) * scaleX,
-      y: (event.clientY - rect.top - offsetY) * scaleY,
+      x: (event.nativeEvent.offsetX - offsetX) / scale,
+      y: (event.nativeEvent.offsetY - offsetY) / scale,
     };
   };
 
+  const drawHandler = useDrawHandler({
+    getCanvasCoordinates,
+    overlayCtxRef,
+    addCanvasToHistory,
+    canvasCtxRef,
+    overlayRef,
+  });
+
+  const cropHandler = useCropHandler({
+    crop,
+    overlayCtxRef,
+    overlayRef,
+    getCanvasCoordinates,
+    interactionMode,
+    setCrop,
+    size,
+  });
+
+  const zoomHandler = useZoomHandler();
+
   const handleMouseDown: PointerEventHandler<HTMLCanvasElement> = (event) => {
-    if (event.button !== undefined && event.button !== 0) return;
+    if (event.button !== undefined && event.button !== 0 && event.button !== 1) return;
 
     pointerId.current = event.pointerId;
     overlayRef.current!.setPointerCapture(event.pointerId);
 
     if (isDrawToolActive) {
-      isMouseDown.current = true;
-
-      const alpha = (savedLastSettings.draw as DrawToolType).alpha;
-
-      const ctx = alpha === 1 ? ctxRef.current! : bufferCtx.current!;
-      setDrawTool(ctx, savedLastSettings.draw as DrawToolType);
-
-      const coords = getCanvasCoordinates(event);
-      pointsRef.current = [];
-      pendingPoints.current = [coords];
-
-      if (alpha === 1) {
-        ctx.beginPath();
-        ctx.moveTo(coords.x, coords.y);
-      }
-      draw();
+      drawHandler.handleMouseDown(event);
     } else if (isCropToolActive) {
-      isMouseDown.current = true;
-      const coords = getCanvasCoordinates(event);
-
-      if (crop) {
-        const { x, y, width, height } = crop;
-        const h2 = HANDLE_SIZE / 2;
-
-        if (coords.x >= x - h2 && coords.x <= x + h2 && coords.y >= y - h2 && coords.y <= y + h2) {
-          resizeHandle.current = 'top-left';
-        } else if (
-          coords.x >= x + width - h2 &&
-          coords.x <= x + width + h2 &&
-          coords.y >= y - h2 &&
-          coords.y <= y + h2
-        ) {
-          resizeHandle.current = 'top-right';
-        } else if (
-          coords.x >= x - h2 &&
-          coords.x <= x + h2 &&
-          coords.y >= y + height - h2 &&
-          coords.y <= y + height + h2
-        ) {
-          resizeHandle.current = 'bottom-left';
-        } else if (
-          coords.x >= x + width - h2 &&
-          coords.x <= x + width + h2 &&
-          coords.y >= y + height - h2 &&
-          coords.y <= y + height + h2
-        ) {
-          resizeHandle.current = 'bottom-right';
-        } else {
-          resizeHandle.current = null;
-        }
-      }
-
-      if (resizeHandle.current) {
-        cropStart.current = { x: crop!.x, y: crop!.y }; // actually we need the initial crop for reference
-      } else {
-        cropStart.current = coords;
-      }
+      cropHandler.handleMouseDown(event);
+    } else if (isZoomToolActive) {
+      zoomHandler.handleMouseDown(event);
     }
   };
 
   const handleMouseUp: PointerEventHandler<HTMLCanvasElement> = (event) => {
-    if (!isMouseDown.current) return;
-
     if (isDrawToolActive) {
-      draw();
-
-      ctxRef.current!.drawImage(overlayRef.current!, 0, 0);
-      bufferCtx.current!.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
-
-      const args = savedLastSettings.draw as DrawToolType;
-      addCanvasToHistory('draw', { ...args, points: pointsRef.current });
+      drawHandler.handleMouseUp();
     } else if (isCropToolActive) {
-      const coords = getCanvasCoordinates(event);
-      const start = cropStart.current!;
-      const canvas = canvasRef.current!;
-
-      let x, y, width, height;
-
-      if (resizeHandle.current) {
-        const currentCrop = crop!;
-        let x1 = currentCrop.x;
-        let y1 = currentCrop.y;
-        let x2 = currentCrop.x + currentCrop.width;
-        let y2 = currentCrop.y + currentCrop.height;
-
-        if (resizeHandle.current === 'top-left') {
-          x1 = coords.x;
-          y1 = coords.y;
-        } else if (resizeHandle.current === 'top-right') {
-          x2 = coords.x;
-          y1 = coords.y;
-        } else if (resizeHandle.current === 'bottom-left') {
-          x1 = coords.x;
-          y2 = coords.y;
-        } else if (resizeHandle.current === 'bottom-right') {
-          x2 = coords.x;
-          y2 = coords.y;
-        }
-
-        const rx1 = Math.max(0, Math.min(canvas.width, x1));
-        const ry1 = Math.max(0, Math.min(canvas.height, y1));
-        const rx2 = Math.max(0, Math.min(canvas.width, x2));
-        const ry2 = Math.max(0, Math.min(canvas.height, y2));
-
-        x = Math.min(rx1, rx2);
-        y = Math.min(ry1, ry2);
-        width = Math.abs(rx1 - rx2);
-        height = Math.abs(ry1 - ry2);
-      } else {
-        const x1 = Math.max(0, Math.min(canvas.width, start.x));
-        const y1 = Math.max(0, Math.min(canvas.height, start.y));
-        const x2 = Math.max(0, Math.min(canvas.width, coords.x));
-        const y2 = Math.max(0, Math.min(canvas.height, coords.y));
-
-        x = Math.min(x1, x2);
-        y = Math.min(y1, y2);
-        width = Math.abs(x1 - x2);
-        height = Math.abs(y1 - y2);
-      }
-
-      if (width > 0 && height > 0) {
-        setCrop({
-          x: Math.round(x),
-          y: Math.round(y),
-          width: Math.round(width),
-          height: Math.round(height),
-        });
-      }
-
-      requestAnimationFrame(() => {
-        drawCrop(coords);
-        cropStart.current = null;
-        resizeHandle.current = null;
-      });
+      cropHandler.handleMouseUp(event);
+    } else if (isZoomToolActive) {
+      zoomHandler.handleMouseUp();
     }
 
-    isMouseDown.current = false;
     pointerId.current = null;
     try {
       overlayRef.current!.releasePointerCapture(event.pointerId);
@@ -378,156 +194,34 @@ const Main = () => {
 
   const handleMouseMove: PointerEventHandler<HTMLCanvasElement> = (event) => {
     if (isDrawToolActive) {
-      if (!isMouseDown.current) return;
-
-      const coords = getCanvasCoordinates(event);
-      pendingPoints.current.push(coords);
-
-      if (!frameRequested.current) {
-        frameRequested.current = true;
-        requestAnimationFrame(draw);
-      }
+      drawHandler.handleMouseMove(event);
     } else if (isCropToolActive) {
-      if (!frameRequested.current) {
-        frameRequested.current = true;
-        const coords = getCanvasCoordinates(event);
-        requestAnimationFrame(() => drawCrop(coords));
-      }
-
-      const coords = getCanvasCoordinates(event);
-      if (crop) {
-        const { x, y, width, height } = crop;
-        const h2 = HANDLE_SIZE / 2;
-        let cursor = 'crosshair';
-
-        if (resizeHandle.current === 'top-left' || resizeHandle.current === 'bottom-right') {
-          cursor = 'nwse-resize';
-        } else if (resizeHandle.current === 'top-right' || resizeHandle.current === 'bottom-left') {
-          cursor = 'nesw-resize';
-        } else if (!resizeHandle.current) {
-          if (
-            (coords.x >= x - h2 && coords.x <= x + h2 && coords.y >= y - h2 && coords.y <= y + h2) ||
-            (coords.x >= x + width - h2 &&
-              coords.x <= x + width + h2 &&
-              coords.y >= y + height - h2 &&
-              coords.y <= y + height + h2)
-          ) {
-            cursor = 'nwse-resize';
-          } else if (
-            (coords.x >= x + width - h2 && coords.x <= x + width + h2 && coords.y >= y - h2 && coords.y <= y + h2) ||
-            (coords.x >= x - h2 && coords.x <= x + h2 && coords.y >= y + height - h2 && coords.y <= y + height + h2)
-          ) {
-            cursor = 'nesw-resize';
-          }
-        }
-        overlayRef.current!.style.cursor = cursor;
-      }
+      cropHandler.handleMouseMove(event);
+    } else if (isZoomToolActive) {
+      zoomHandler.handleMouseMove(event);
     }
   };
 
-  function drawCrop(coords: Point) {
-    const ctx = bufferCtx.current!;
-    const start = cropStart.current!;
-
-    const width_overlay = overlayRef.current!.width;
-    const height_overlay = overlayRef.current!.height;
-    ctx.clearRect(0, 0, width_overlay, height_overlay);
-
-    let x, y, width, height;
-
-    if (resizeHandle.current) {
-      const currentCrop = crop!;
-      let x1 = currentCrop.x;
-      let y1 = currentCrop.y;
-      let x2 = currentCrop.x + currentCrop.width;
-      let y2 = currentCrop.y + currentCrop.height;
-
-      if (resizeHandle.current === 'top-left') {
-        x1 = coords.x;
-        y1 = coords.y;
-      } else if (resizeHandle.current === 'top-right') {
-        x2 = coords.x;
-        y1 = coords.y;
-      } else if (resizeHandle.current === 'bottom-left') {
-        x1 = coords.x;
-        y2 = coords.y;
-      } else if (resizeHandle.current === 'bottom-right') {
-        x2 = coords.x;
-        y2 = coords.y;
-      }
-
-      x = Math.min(x1, x2);
-      y = Math.min(y1, y2);
-      width = Math.abs(x1 - x2);
-      height = Math.abs(y1 - y2);
-    } else {
-      x = Math.min(start.x, coords.x);
-      y = Math.min(start.y, coords.y);
-      width = Math.abs(start.x - coords.x);
-      height = Math.abs(start.y - coords.y);
-    }
-
-    // Draw semi-transparent overlay
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    ctx.fillRect(0, 0, width_overlay, height_overlay);
-
-    // Clear the selection area
-    ctx.clearRect(x, y, width, height);
-
-    ctx.strokeStyle = '#007bff';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([5, 5]);
-    ctx.strokeRect(x, y, width, height);
-    ctx.setLineDash([]);
-
-    // Draw handles
-    ctx.fillStyle = '#007bff';
-    ctx.fillRect(x - HANDLE_SIZE / 2, y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-    ctx.fillRect(x + width - HANDLE_SIZE / 2, y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-    ctx.fillRect(x - HANDLE_SIZE / 2, y + height - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-    ctx.fillRect(x + width - HANDLE_SIZE / 2, y + height - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-
-    frameRequested.current = false;
-  }
-
-  function draw() {
-    const pp = pendingPoints.current;
-    if (pp.length === 0) return;
-    pointsRef.current.push(...pp);
-
-    const alpha = (savedLastSettings.draw as DrawToolType).alpha;
-    const ctx = alpha === 1 ? ctxRef.current! : bufferCtx.current!;
-
-    if (alpha === 1) {
-      for (let i = 0; i < pp.length; i++) {
-        ctx.lineTo(pp[i].x, pp[i].y);
-      }
-      ctx.stroke();
-    } else {
-      ctx.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
-      ctx.beginPath();
-      const points = pointsRef.current;
-      ctx.moveTo(points[0].x, points[0].y);
-      for (let i = 0; i < points.length; i++) {
-        ctx.lineTo(points[i].x, points[i].y);
-      }
-      ctx.stroke();
-    }
-
-    frameRequested.current = false;
-    pendingPoints.current = [];
-  }
-
   const renderContent = () => {
+    const { dx, dy, zoom } = zoomData;
     return (
-      <>
-        <canvas
-          ref={canvasRef}
-          className="canvas-layer"
-          style={{
-            display: originalImage ? 'block' : 'none',
-          }}
-        />
+      <div
+        className="canvas-container"
+        style={{
+          transform: `translate(${dx}px, ${dy}px) scale(${zoom})`,
+          transformOrigin: 'center center',
+          width: '100%',
+          height: '100%',
+          display: originalImage ? 'flex' : 'none',
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          cursor: isCropToolActive ? 'crosshair' : isZoomToolActive ? 'grab' : undefined,
+        }}
+      >
+        <canvas ref={canvasRef} className="canvas-layer" />
         <canvas
           ref={overlayRef}
           className="canvas-layer"
@@ -535,16 +229,19 @@ const Main = () => {
           onPointerMove={handleMouseMove}
           onPointerUp={handleMouseUp}
           onPointerLeave={handleMouseUp}
+          onWheel={zoomHandler.handleWheel}
           style={{
             display: isDrawToolActive || isCropToolActive ? 'block' : 'none',
+            cursor: isDrawToolActive ? 'crosshair' : undefined,
           }}
         />
-      </>
+      </div>
     );
   };
 
   return (
     <main
+      ref={containerRef}
       className={`main-content ${isDragging ? 'bg-light border border-primary' : ''} ${originalImage ? '' : 'button-center'}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}

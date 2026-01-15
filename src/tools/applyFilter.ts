@@ -1,11 +1,16 @@
-export const applyFilter = async (
-  canvas: HTMLCanvasElement,
-  action: (ctx: CanvasRenderingContext2D) => void
-): Promise<ImageBitmap> => {
-  const ctx = canvas.getContext('2d');
+let scheduledRAF: number | null = null;
 
-  ctx!.reset();
-  action(ctx!);
+export const applyFilter = async (canvas: HTMLCanvasElement, action: (ctx: CanvasRenderingContext2D) => void) => {
+  if (scheduledRAF !== null) {
+    cancelAnimationFrame(scheduledRAF);
+  }
 
-  return await createImageBitmap(canvas);
+  scheduledRAF = requestAnimationFrame(() => {
+    scheduledRAF = null;
+
+    const ctx = canvas.getContext('2d');
+    ctx!.reset();
+
+    action(ctx!);
+  });
 };

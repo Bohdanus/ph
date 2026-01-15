@@ -1,10 +1,16 @@
-import { useContext } from 'react';
+import { useContext, useEffect, useState } from 'react';
 
 import './Sidebar.scss';
-import { ImageContext } from '../../contexts/ImageContext.tsx';
+import { ImageContext, type InteractionMode } from '../../contexts/ImageContext.tsx';
+import Zoom from '../Zoom/Zoom.tsx';
 
 const SidebarLeft = () => {
-  const { originalImage, startEmptyTool, toolName } = useContext(ImageContext);
+  const { originalImage, startEmptyTool, toolName, interactionMode, setInteractionMode } = useContext(ImageContext);
+  const [prevInteractionMode, setPrevInteractionMode] = useState<InteractionMode>(interactionMode);
+
+  useEffect(() => {
+    setPrevInteractionMode(interactionMode);
+  }, [toolName]);
 
   const handleColors = () => {
     startEmptyTool('colors');
@@ -60,7 +66,7 @@ const SidebarLeft = () => {
           </li>
           <li className="nav-item">
             <button
-              className={`nav-link ${toolName === 'transform' ? 'active' : ''}`}
+              className={`nav-link ${toolName === 'transform' || toolName === 'crop' ? 'active' : ''}`}
               disabled={!originalImage}
               onClick={handleTransform}
             >
@@ -78,22 +84,18 @@ const SidebarLeft = () => {
           </li>
         </ul>
 
-        {/*<hr />*/}
-        {/*<Zoom />*/}
+        <hr />
+        <Zoom />
+
         {/*<div className="btn-group w-100 mt-3" role="group">*/}
         {/*  <button*/}
         {/*    type="button"*/}
-        {/*    className={`btn btn-sm ${interactionMode === 'pan' ? 'btn-primary' : 'btn-outline-primary'}`}*/}
-        {/*    onClick={() => setInteractionMode('pan')}*/}
+        {/*    className={`btn btn-sm ${['draw', 'crop', 'transform'].includes(toolName!) ? '' : 'disabled'} ${interactionMode === 'zoom' ? 'btn-primary' : 'btn-outline-primary'}`}*/}
+        {/*    onClick={() => {*/}
+        {/*      setInteractionMode(interactionMode === 'zoom' ? prevInteractionMode : 'zoom');*/}
+        {/*    }}*/}
         {/*  >*/}
-        {/*    Pan*/}
-        {/*  </button>*/}
-        {/*  <button*/}
-        {/*    type="button"*/}
-        {/*    className={`btn btn-sm ${interactionMode === 'draw' ? 'btn-primary' : 'btn-outline-primary'}`}*/}
-        {/*    onClick={() => setInteractionMode('draw')}*/}
-        {/*  >*/}
-        {/*    Draw*/}
+        {/*    Toggle Pan Mode*/}
         {/*  </button>*/}
         {/*</div>*/}
       </div>

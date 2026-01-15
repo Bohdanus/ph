@@ -18,7 +18,10 @@ type ToolsMap = Record<
   {
     saveLastSettings?: boolean;
     icon: string;
-    imageProcessor: (canvas: HTMLCanvasElement, snapshot: ImageBitmap) => (args: ToolArgs) => Promise<ImageBitmap>;
+    imageProcessor: (
+      canvas: HTMLCanvasElement,
+      snapshot: ImageBitmap
+    ) => (args: ToolArgs, callback: (newWidth: number, newHeight: number) => void) => Promise<ImageBitmap>;
     defaultSettings: ToolArgs;
     toolboxComponent: ToolbarRightComponent;
   }
@@ -51,6 +54,7 @@ export const toolsMap: ToolsMap = {
     // @ts-expect-error args
     imageProcessor: transform,
     defaultSettings: defaultSettings.transform,
+    // @ts-expect-error args
     toolboxComponent: Transform,
   },
   crop: {
@@ -58,6 +62,7 @@ export const toolsMap: ToolsMap = {
     // @ts-expect-error args
     imageProcessor: crop,
     defaultSettings: defaultSettings.crop,
+    // @ts-expect-error args
     toolboxComponent: Transform,
   },
   draw: {

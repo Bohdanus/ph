@@ -1,8 +1,16 @@
-import React, { useState, type ReactNode, useRef, useEffect } from 'react';
+import React, { useState, type ReactNode, useRef } from 'react';
 import { loadImageFile } from './loadFromFile.ts';
 import { saveImage } from './saveToFile.ts';
 import SaveDialog from '../components/SaveDialog/SaveDialog.tsx';
-import { type HistoryItem, ImageContext, type ToolArgs, type ToolName } from './ImageContext.tsx';
+import {
+  type HistoryItem,
+  ImageContext,
+  type InteractionMode,
+  type Size,
+  type ToolArgs,
+  type ToolName,
+  type ZoomData,
+} from './ImageContext.tsx';
 import { toolsMap } from '../tools/toolsMap.ts';
 import { defaultSettings, savedLastSettings } from '../tools/settings.ts';
 import { isEqual } from 'lodash-es';
@@ -11,8 +19,12 @@ import type { CropToolType } from '../tools/crop.ts';
 
 export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // const isWorkingRef = useRef(false);
+
   const [fileName, setFileName] = useState('');
   const [originalImage, setOriginalImage] = useState<HTMLImageElement | null>(null);
+  const [size, setSize] = useState<Size>({ width: 0, height: 0 });
+
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -21,8 +33,8 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [historyLength, setHistoryLength] = useState<number>(0);
 
   const [crop, setCrop] = useState<CropToolType | null>(null);
-  const [zoom, setZoom] = useState(1);
-  const [interactionMode, setInteractionMode] = useState<'pan' | 'draw' | 'crop'>('draw');
+  const [zoomData, setZoomData] = useState<ZoomData>({ dx: 0, dy: 0, zoom: 1 });
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>('draw');
 
   const handleFileInputChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -35,7 +47,6 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   async function handleImageUpload(file?: File) {
-    // todo add a propmt, because we are overwriting the original image
     if (!file) {
       return;
     }
@@ -47,12 +58,14 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
       setFileName(file.name);
       setOriginalImage(img);
+      setSize({ width: img.width, height: img.height });
+
       setCurrentEmptyTool(getCurrentTool() ?? 'draw');
 
       const bitmap = await createImageBitmap(canvas); // or maybe from inage??
       setHistory([
         {
-          tool: 'init',
+          tool: '', // default tool shoul;d be draw todo
           args: {},
           bitmap,
           saved: true,
@@ -65,6 +78,11 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }
 
   const openLoadImageDialog = () => {
+    if (historyLength > 0 && !history[historyLength - 1].saved) {
+      if (!confirm('You have unsaved changes, do you want to save them?')) {
+        return;
+      }
+    }
     fileInputRef.current?.click();
   };
 
@@ -80,6 +98,9 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const success = saveImage(canvasRef.current, filename, format);
     if (success) {
       setFileName(filename);
+      history[historyLength - 1].saved = true;
+      setHistory([...history]);
+      // setShowSaveDialog(false);
     }
   };
 
@@ -102,19 +123,6 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return history[historyLength].bitmap!;
   }
 
-  // function getPrevHistoryImage() {
-  //   if (prevHistoryImage) return prevHistoryImage;
-  //
-  //   if (history.length === 0) {
-  //     return originalImage;
-  //   }
-  //
-  //     setPrevHistoryImage(history[history.length - 1].image);
-  //   }
-  //
-  //   return prevHistoryImage;
-  // }
-
   function saveCurrentBitmap({
     bitmapToDisplay, // used in case you are saving AND moving in history
     hist = history,
@@ -122,10 +130,9 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     callback,
   }: { bitmapToDisplay?: ImageBitmap; hist?: HistoryItem[]; length?: number; callback?: () => void } = {}) {
     const historyItem = hist[length - 1];
-    if (!historyItem.saved) {
+    if (!historyItem.bitmap) {
       createImageBitmap(canvasRef.current!).then((bitmap) => {
         historyItem.bitmap = bitmap;
-        historyItem.saved = true;
 
         callback?.();
 
@@ -142,22 +149,24 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   }
 
-  useEffect(() => {
-    if (crop && currentEmptyTool === 'crop') {
-      updateLastHistoryItem(crop);
-      setCrop(null);
-    }
-  }, [crop, currentEmptyTool, updateLastHistoryItem]);
-
   function startEmptyTool(toolName: ToolName) {
-    if (toolName === 'transform' || toolName === 'crop') {
+    if (toolName === 'transform') {
       setInteractionMode('crop');
     } else if (toolName === 'draw') {
       setInteractionMode('draw');
     } else {
-      setInteractionMode('pan');
+      setInteractionMode('zoom');
     }
-    saveCurrentBitmap({ callback: () => setCurrentEmptyTool(toolName) });
+    setCurrentEmptyTool(toolName);
+
+    saveCurrentBitmap({
+      callback: () => {
+        if (toolName === 'transform' && crop) {
+          updateLastHistoryItem(crop, 'crop');
+          setCrop(null);
+        }
+      },
+    });
     // if (historyLength > 0) {
     //   canvasRef.current!.toBlob(
     //     (blob) => {
@@ -170,36 +179,38 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }
 
   function getCurrentTool(): ToolName | null | undefined {
-    if (currentEmptyTool) {
-      return currentEmptyTool;
-    }
+    const tool = currentEmptyTool ?? history[historyLength - 1]?.tool;
 
-    if (historyLength === 0) return null;
-    return history[historyLength - 1].tool;
+    if (tool === 'crop') {
+      return 'transform';
+    }
+    return tool;
   }
 
   function getCurrentArgs(): ToolArgs | undefined {
-    if (currentEmptyTool) {
-      return savedLastSettings[currentEmptyTool] || defaultSettings[currentEmptyTool];
+    // doto understand this
+    const tool = getCurrentTool();
+    if (tool) {
+      return savedLastSettings[tool] || history[historyLength - 1]?.args || defaultSettings[tool];
     }
-    if (historyLength === 0) return undefined;
-    return history[historyLength - 1].args;
+    return history[historyLength - 1]?.args;
   }
 
   async function addCanvasToHistory(toolName: ToolName, args: ToolArgs) {
     if (!originalImage) return;
     //  savedLastSettings[toolName] = args;
-    const newHistory = [...history.slice(0, historyLength), { tool: toolName, args, saved: false }];
+    const newHistory = [...history.slice(0, historyLength), { tool: toolName, args }];
     setCurrentEmptyTool(null);
     setHistory(newHistory);
     setHistoryLength(newHistory.length);
     saveCurrentBitmap({ hist: newHistory, length: newHistory.length });
   }
 
-  function updateLastHistoryItem(args: ToolArgs) {
+  // todo apply this low priority
+  function updateLastHistoryItem(args: ToolArgs, overrideCurrentTool?: ToolName /* used when crop */) {
     if (!originalImage) return;
 
-    const toolName = getCurrentTool();
+    const toolName = overrideCurrentTool ?? getCurrentTool();
     if (!toolName) return; // shouldn't normally happen, but just in case
 
     if (isEqual(args, defaultSettings[toolName])) {
@@ -216,15 +227,20 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return;
     }
 
-    const addNewItem = currentEmptyTool;
+    const addNewItem = !!overrideCurrentTool || currentEmptyTool;
 
     // should normally have args, but just in case
     args ??= { ...defaultSettings[toolName] };
 
-    toolsMap[toolName].imageProcessor(canvasRef.current!, addNewItem ? getCurrentBitmap() : getPrevBitmap())(args);
+    toolsMap[toolName].imageProcessor(canvasRef.current!, addNewItem ? getCurrentBitmap() : getPrevBitmap())(
+      args,
+      (width, height) => {
+        setSize({ width, height });
+      }
+    );
 
     const newHistory = history.slice(0, historyLength - (addNewItem ? 0 : 1));
-    const newHistoryItem = { tool: toolName, args, saved: false } as HistoryItem;
+    const newHistoryItem = { tool: toolName, args };
     newHistory.push(newHistoryItem);
 
     setCurrentEmptyTool(null);
@@ -245,17 +261,18 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // }
 
   function undo() {
-    const toolName = getCurrentTool();
     if (canUndo()) {
       const newLength = historyLength - 1;
-      const newToolName = history[newLength - 1]?.tool;
-      if (newToolName === toolName) {
+      if (newLength > 0) {
         setCurrentEmptyTool(null);
       } else {
-        setCurrentEmptyTool(toolName ?? null);
+        setCurrentEmptyTool('draw');
       }
+
+      const bitmap = getPrevBitmap();
+      setSize({ width: bitmap.width, height: bitmap.height });
       // should save current state and only then proceed
-      saveCurrentBitmap({ bitmapToDisplay: getPrevBitmap() });
+      saveCurrentBitmap({ bitmapToDisplay: bitmap });
 
       setHistoryLength(newLength);
     }
@@ -266,17 +283,13 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }
 
   function redo() {
-    const toolName = getCurrentTool();
     if (canRedo()) {
       const newLength = historyLength + 1;
-      const newToolName = history[newLength - 1]?.tool;
-      if (newToolName === toolName) {
-        setCurrentEmptyTool(null);
-      } else {
-        setCurrentEmptyTool(toolName ?? null);
-      }
+      setCurrentEmptyTool(null);
 
-      writeImageToCanvas(getNextBitmap(), canvasRef.current);
+      const bitmap = getNextBitmap();
+      setSize({ width: bitmap.width, height: bitmap.height });
+      writeImageToCanvas(bitmap, canvasRef.current);
 
       setHistoryLength(newLength);
     }
@@ -289,12 +302,17 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // NOSONAR: React Compiler handles memoization of this object
   const providerValue = {
     canvasRef,
+
     fileName,
     setFileName,
     originalImage,
+    size,
+    setSize,
+
     openLoadImageDialog,
     openSaveImageDialog,
     _setOriginalImage: handleImageUpload,
+
     toolName: getCurrentTool(),
     toolArgs: getCurrentArgs(),
     startEmptyTool,
@@ -304,11 +322,11 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     redo,
     canUndo,
     canRedo,
+
     crop,
     setCrop,
-    canvasDimensions: `${canvasRef.current?.width}x${canvasRef.current?.height}`,
-    zoom,
-    setZoom,
+    zoomData,
+    setZoomData,
     interactionMode,
     setInteractionMode,
   };

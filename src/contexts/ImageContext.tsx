@@ -2,13 +2,18 @@ import { createContext, type RefObject } from 'react';
 import { toolsMap } from '../tools/toolsMap.ts';
 import type { CropToolType } from '../tools/crop.ts';
 
+export type Size = { width: number; height: number };
+export type ZoomData = { dx: number; dy: number; zoom: number };
 export type Point = { x: number; y: number };
+export type Delta = { dx: number; dy: number };
 
 export type ToolName = keyof typeof toolsMap;
 export type ToolArgs = Record<string, string | number | Point[]>;
 
+export type InteractionMode = 'zoom' | 'draw' | 'crop';
+
 export type HistoryItem = {
-  saved: boolean;
+  saved?: boolean; // saved to disk
   tool: ToolName;
   args: ToolArgs;
   bitmap?: ImageBitmap | null;
@@ -17,9 +22,13 @@ export type HistoryItem = {
 
 interface ImageContextType {
   canvasRef: RefObject<HTMLCanvasElement | null>;
+
   fileName: string;
   setFileName: (name: string) => void;
   originalImage: HTMLImageElement | null;
+  size: Size;
+  setSize: (size: Size) => void;
+
   openLoadImageDialog: () => void;
   openSaveImageDialog: () => void;
   _setOriginalImage: (image?: File) => Promise<void>; // use with caution now and refactor later
@@ -28,7 +37,7 @@ interface ImageContextType {
   toolArgs: ToolArgs | undefined;
   startEmptyTool: (tool: ToolName) => void;
   addCanvasToHistory: (toolName: ToolName, args: ToolArgs) => void;
-  updateLastHistoryItem: (args: ToolArgs, forceNewEntry?: boolean) => void;
+  updateLastHistoryItem: (args: ToolArgs, overrideCurrentTool?: ToolName /* used when crop */) => void;
   undo: () => void;
   redo: () => void;
   canUndo: () => boolean;
@@ -37,21 +46,23 @@ interface ImageContextType {
   crop: CropToolType | null;
   setCrop: (args: CropToolType | null) => void;
 
-  canvasDimensions: string;
+  zoomData: ZoomData;
+  setZoomData: (zoom: ZoomData) => void;
 
-  zoom: number;
-  setZoom: (zoom: number) => void;
-
-  interactionMode: 'pan' | 'draw' | 'crop';
-  setInteractionMode: (mode: 'pan' | 'draw' | 'crop') => void;
+  interactionMode: InteractionMode;
+  setInteractionMode: (mode: InteractionMode) => void;
 }
 
 export const ImageContext = createContext<ImageContextType>({
   // @ts-expect-error smth
   canvasRef: null,
+
   fileName: '',
   setFileName: () => {},
   originalImage: null,
+  size: { width: 0, height: 0 },
+  setSize: () => {},
+
   openLoadImageDialog: () => {},
   openSaveImageDialog: () => {},
   _setOriginalImage: () => Promise.resolve(),
@@ -69,11 +80,9 @@ export const ImageContext = createContext<ImageContextType>({
   crop: null,
   setCrop: () => {},
 
-  canvasDimensions: '',
+  zoomData: { dx: 0, dy: 0, zoom: 1 },
+  setZoomData: () => {},
 
-  zoom: 1,
-  setZoom: () => {},
-
-  interactionMode: 'pan',
+  interactionMode: 'zoom',
   setInteractionMode: () => {},
 });

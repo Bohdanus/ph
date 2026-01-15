@@ -3,16 +3,17 @@ import './Zoom.scss';
 import { ImageContext } from '../../contexts/ImageContext.tsx';
 
 const Zoom: React.FC = () => {
-  const { originalImage, zoom, setZoom } = useContext(ImageContext);
+  const { originalImage, zoomData, setZoomData } = useContext(ImageContext);
 
   const handleZoomChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setZoom(Number(event.target.value));
+    setZoomData({ ...zoomData, zoom: Number(event.target.value) });
   };
 
   // const handleResetZoom = () => {
   //   setZoom(1);
   // };
 
+  const { zoom } = zoomData;
   const style = originalImage ? {} : { opacity: 0.5 };
 
   return (
@@ -23,7 +24,7 @@ const Zoom: React.FC = () => {
         disabled={!originalImage}
         type="range"
         min="0.1"
-        max="5"
+        max="8"
         step="0.1"
         value={zoom}
         onChange={handleZoomChange}

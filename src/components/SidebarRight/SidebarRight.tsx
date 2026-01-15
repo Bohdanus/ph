@@ -4,8 +4,9 @@ import { ImageContext } from '../../contexts/ImageContext.tsx';
 import { toolsMap } from '../../tools/toolsMap.ts';
 
 const SidebarRight = () => {
-  const { toolName, toolArgs, updateLastHistoryItem } = useContext(ImageContext);
-  if (!toolName) {
+  const { originalImage, toolName, toolArgs, updateLastHistoryItem } = useContext(ImageContext);
+  if (!toolName || !toolArgs || !originalImage) {
+    // todo UNDERSTAND THIS
     return (
       <aside className="sidebar sidebar-right d-none d-md-block">
         <div className="p-3"></div>
