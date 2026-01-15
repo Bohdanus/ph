@@ -1,4 +1,6 @@
-@import "bootstrap/scss/bootstrap";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 html, body, #root {
   height: 100%;
@@ -10,7 +12,7 @@ body {
 }
 
 // Global styles for mobile
-@include media-breakpoint-down(md) {
+@media (max-width: 767.98px) {
   body {
     padding-bottom: 60px; // space for bottom toolbar
   }

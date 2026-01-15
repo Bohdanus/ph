@@ -1,5 +1,4 @@
 import React, { useContext } from 'react';
-import './Zoom.scss';
 import { ImageContext } from '../../contexts/ImageContext.tsx';
 
 const Zoom: React.FC = () => {
@@ -14,26 +13,27 @@ const Zoom: React.FC = () => {
   // };
 
   const { zoom } = zoomData;
-  const style = originalImage ? {} : { opacity: 0.5 };
 
   return (
-    <div className="zoom-toolbar" style={style}>
-      <label htmlFor="zoom-slider">Zoom level</label>
+    <div className={`mt-4 ${originalImage ? '' : 'opacity-50'}`}>
+      <label htmlFor="zoom-slider" className="mb-2 block text-sm font-medium text-gray-700">
+        Zoom level
+      </label>
       <input
         id="zoom-slider"
         disabled={!originalImage}
         type="range"
-        min="0.1"
+        min="0.05"
         max="8"
-        step="0.1"
+        step="0.05"
         value={zoom}
         onChange={handleZoomChange}
-        className="zoom-slider"
+        className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 disabled:cursor-not-allowed"
       />
-      <div className="mt-2">
-        Zoom: <b>{Math.round(zoom * 100)}%</b>
+      <div className="mt-2 text-sm text-gray-600">
+        Zoom: <b className="text-gray-900">{Math.round(zoom * 100)}%</b>
       </div>
-      {/*<button className="btn btn-secondary btn-sm mt-3" onClick={handleResetZoom}>*/}
+      {/*<button className="mt-3 rounded bg-gray-600 px-2 py-1 text-sm text-white" onClick={handleResetZoom}>*/}
       {/*  Reset Zoom*/}
       {/*</button>*/}
     </div>

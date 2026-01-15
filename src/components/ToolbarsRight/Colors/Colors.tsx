@@ -1,5 +1,4 @@
 import React, { useMemo, useEffect } from 'react';
-import './Colors.scss';
 import { defaultSettings } from '../../../tools/settings.ts';
 import { isEqual, throttle } from 'lodash-es';
 import { THROTTLE_TIME } from '../../../constants';
@@ -41,53 +40,65 @@ const Colors: React.FC<ColorsToolbarProps> = ({ args, onChange }) => {
   const hasDefaultValues = isEqual(args, defaultSettings.colors);
 
   return (
-    <div className="colors-toolbar">
-      <div className="slider-group">
-        <label htmlFor="grayscale-slider">Grayscale</label>
-        <input
-          id="grayscale-slider"
-          type="range"
-          min="0"
-          max="100"
-          value={grayscale}
-          onChange={handleGrayscaleChange}
-          className="colors-slider"
-        />
-        <span>
-          <b>{grayscale}%</b>
-        </span>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <label htmlFor="grayscale-slider" className="text-sm font-medium text-gray-700">
+          Grayscale
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            id="grayscale-slider"
+            type="range"
+            min="0"
+            max="100"
+            value={grayscale}
+            onChange={handleGrayscaleChange}
+            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200"
+          />
+          <span className="min-w-[40px] text-right text-sm">
+            <b className="text-gray-900">{grayscale}%</b>
+          </span>
+        </div>
       </div>
 
-      <div className="slider-group">
-        <label htmlFor="sepia-slider">Sepia</label>
-        <input
-          id="sepia-slider"
-          type="range"
-          min="0"
-          max="100"
-          value={sepia}
-          onChange={handleSepiaChange}
-          className="colors-slider"
-        />
-        <span>
-          <b>{sepia}%</b>
-        </span>
+      <div className="flex flex-col gap-1">
+        <label htmlFor="sepia-slider" className="text-sm font-medium text-gray-700">
+          Sepia
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            id="sepia-slider"
+            type="range"
+            min="0"
+            max="100"
+            value={sepia}
+            onChange={handleSepiaChange}
+            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200"
+          />
+          <span className="min-w-[40px] text-right text-sm">
+            <b className="text-gray-900">{sepia}%</b>
+          </span>
+        </div>
       </div>
 
-      <div className="slider-group">
-        <label htmlFor="saturation-slider">Saturation</label>
-        <input
-          id="saturation-slider"
-          type="range"
-          min={0}
-          max={100}
-          value={saturation}
-          onChange={handleSaturationChange}
-          className="colors-slider"
-        />
-        <span>
-          <b>{saturation}%</b>
-        </span>
+      <div className="flex flex-col gap-1">
+        <label htmlFor="saturation-slider" className="text-sm font-medium text-gray-700">
+          Saturation
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            id="saturation-slider"
+            type="range"
+            min={0}
+            max={100}
+            value={saturation}
+            onChange={handleSaturationChange}
+            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200"
+          />
+          <span className="min-w-[40px] text-right text-sm">
+            <b className="text-gray-900">{saturation}%</b>
+          </span>
+        </div>
       </div>
 
       <UndoButton disabled={hasDefaultValues} />

@@ -1,4 +1,3 @@
-import './Menu.scss';
 import DesktopHeader from '../DesktopHeader/DesktopHeader.tsx';
 import MobileMenu from '../MobileMenu/MobileMenu.tsx';
 

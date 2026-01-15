@@ -188,12 +188,10 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }
 
   function getCurrentArgs(): ToolArgs | undefined {
-    // doto understand this
-    const tool = getCurrentTool();
-    if (tool) {
-      return savedLastSettings[tool] || history[historyLength - 1]?.args || defaultSettings[tool];
-    }
-    return history[historyLength - 1]?.args;
+    if (currentEmptyTool) return savedLastSettings[currentEmptyTool] || defaultSettings[currentEmptyTool];
+
+    const tool = getCurrentTool()!;
+    return history[historyLength - 1]?.args ?? savedLastSettings[tool] ?? defaultSettings[tool];
   }
 
   async function addCanvasToHistory(toolName: ToolName, args: ToolArgs) {
@@ -219,7 +217,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         // should never happen, but just in case
         return;
       }
-      setCurrentEmptyTool(toolName);
+      setCurrentEmptyTool(toolName === 'crop' ? 'transform' : toolName);
       const newHistory = history.slice(0, historyLength - 1);
       setHistory(newHistory);
       setHistoryLength(newHistory.length);
@@ -282,6 +280,11 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return historyLength > 1;
   }
 
+  function resetArgs() {
+    const toolName = getCurrentTool()!;
+    updateLastHistoryItem(defaultSettings[toolName]);
+  }
+
   function redo() {
     if (canRedo()) {
       const newLength = historyLength + 1;
@@ -322,6 +325,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     redo,
     canUndo,
     canRedo,
+    resetArgs,
 
     crop,
     setCrop,

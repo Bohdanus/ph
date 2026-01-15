@@ -54,84 +54,108 @@ const DesktopHeader = () => {
   }, [handleClickOutside]);
 
   return (
-    <header className="navbar navbar-expand-md navbar-dark bg-dark d-none d-md-flex px-3">
-      <a className="navbar-brand" href="#">
+    <header className="flex h-[50px] items-center bg-[#212529] px-3 max-md:hidden [grid-area:header]">
+      <a className="mr-4 text-xl text-white no-underline" href="#">
         Logo
       </a>
-      <ul className="navbar-nav me-auto">
-        <li className="nav-item dropdown" ref={fileMenuRef}>
+      <ul className="mr-auto flex list-none items-center p-0">
+        <li className="relative" ref={fileMenuRef}>
           <button
-            className="nav-link dropdown-toggle"
+            className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
             type="button"
             onClick={() => setOpenMenu(openMenu === 'file' ? null : 'file')}
           >
             File
           </button>
-          <ul className="dropdown-menu" style={{ display: openMenu === 'file' ? 'block' : 'none' }}>
-            <li>
-              <button
-                className="dropdown-item"
-                type="button"
-                onClick={() => {
-                  openLoadImageDialog();
-                  setOpenMenu(null);
-                }}
-              >
-                Open
-              </button>
-            </li>
-            <li>
-              <button
-                className="dropdown-item"
-                type="button"
-                onClick={() => {
-                  openSaveImageDialog();
-                  setOpenMenu(null);
-                }}
-              >
-                Save
-              </button>
-            </li>
-          </ul>
+          {openMenu === 'file' && (
+            <ul className="absolute left-0 top-full z-10 m-0 min-w-[160px] list-none rounded bg-white py-2 shadow-lg">
+              <li>
+                <button
+                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100"
+                  type="button"
+                  onClick={() => {
+                    openLoadImageDialog();
+                    setOpenMenu(null);
+                  }}
+                >
+                  Open
+                </button>
+              </li>
+              <li>
+                <button
+                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100"
+                  type="button"
+                  onClick={() => {
+                    openSaveImageDialog();
+                    setOpenMenu(null);
+                  }}
+                >
+                  Save
+                </button>
+              </li>
+            </ul>
+          )}
         </li>
-        <li className="nav-item dropdown" ref={editMenuRef}>
+        <li className="relative" ref={editMenuRef}>
           <button
-            className="nav-link dropdown-toggle"
+            className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
             type="button"
             onClick={() => setOpenMenu(openMenu === 'edit' ? null : 'edit')}
           >
             Edit
           </button>
-          <ul className="dropdown-menu" style={{ display: openMenu === 'edit' ? 'block' : 'none' }}>
-            <li>
-              <button className="dropdown-item" type="button" onClick={handleColors}>
-                Colors
-              </button>
-            </li>
-            <li>
-              <button className="dropdown-item" type="button" onClick={handleBlur}>
-                Blur
-              </button>
-            </li>
-            <li>
-              <button className="dropdown-item" type="button" onClick={handleLevels}>
-                Levels
-              </button>
-            </li>
-            <li>
-              <button className="dropdown-item" type="button" onClick={handleTransform}>
-                Transform
-              </button>
-            </li>
-            <li>
-              <button className="dropdown-item" type="button" onClick={handleDraw}>
-                Draw
-              </button>
-            </li>
-          </ul>
+          {openMenu === 'edit' && (
+            <ul className="absolute left-0 top-full z-10 m-0 min-w-[160px] list-none rounded bg-white py-2 shadow-lg">
+              <li>
+                <button
+                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100"
+                  type="button"
+                  onClick={handleColors}
+                >
+                  Colors
+                </button>
+              </li>
+              <li>
+                <button
+                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100"
+                  type="button"
+                  onClick={handleBlur}
+                >
+                  Blur
+                </button>
+              </li>
+              <li>
+                <button
+                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100"
+                  type="button"
+                  onClick={handleLevels}
+                >
+                  Levels
+                </button>
+              </li>
+              <li>
+                <button
+                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100"
+                  type="button"
+                  onClick={handleTransform}
+                >
+                  Transform
+                </button>
+              </li>
+              <li>
+                <button
+                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100"
+                  type="button"
+                  onClick={handleDraw}
+                >
+                  Draw
+                </button>
+              </li>
+            </ul>
+          )}
         </li>
       </ul>
-      <div className="navbar-nav ms-auto">
+      <div className="ml-auto flex items-center">
         <HistoryControls />
       </div>
     </header>

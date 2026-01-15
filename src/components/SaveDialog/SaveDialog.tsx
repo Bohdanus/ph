@@ -1,5 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
-import { Modal } from 'bootstrap';
+import { useState, useEffect } from 'react';
 
 interface SaveDialogProps {
   proposedName: string;
@@ -10,27 +9,10 @@ interface SaveDialogProps {
 const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
   const [filename, setFilename] = useState(proposedName);
   const [format, setFormat] = useState('image/png');
-  const modalRef = useRef<HTMLDivElement>(null);
-  const bsModal = useRef<Modal | null>(null);
 
   useEffect(() => {
     setFilename(proposedName);
   }, [proposedName]);
-
-  useEffect(() => {
-    if (modalRef.current) {
-      bsModal.current = new Modal(modalRef.current);
-      bsModal.current?.show();
-
-      const currentModal = modalRef.current;
-      currentModal.addEventListener('hidden.bs.modal', onClose);
-
-      return () => {
-        currentModal.removeEventListener('hidden.bs.modal', onClose);
-        bsModal.current?.dispose();
-      };
-    }
-  }, [onClose]);
 
   const handleSave = () => {
     onSave(filename, format);
@@ -38,34 +20,38 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
   };
 
   return (
-    <div className="modal fade" ref={modalRef} tabIndex={-1} aria-labelledby="saveDialogLabel" aria-hidden="true">
-      <div className="modal-dialog">
-        <div className="modal-content">
-          <div className="modal-header">
-            <h5 className="modal-title" id="saveDialogLabel">
-              Save File As...
-            </h5>
-            <button type="button" className="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+    <div className="fixed inset-0 z-[1050] flex items-center justify-center overflow-y-auto overflow-x-hidden outline-none focus:outline-none">
+      <div className="fixed inset-0 bg-black bg-opacity-50 transition-opacity" onClick={onClose} />
+      <div className="relative mx-auto my-6 w-full max-w-lg px-4">
+        <div className="relative flex w-full flex-col rounded-lg border-0 bg-white shadow-lg outline-none focus:outline-none">
+          <div className="flex items-center justify-between rounded-t border-b border-solid border-gray-200 p-4">
+            <h3 className="m-0 text-xl font-semibold">Save File As...</h3>
+            <button
+              className="ml-auto border-0 bg-transparent p-1 text-3xl font-semibold leading-none text-black opacity-50 outline-none hover:opacity-100 focus:outline-none"
+              onClick={onClose}
+            >
+              <span className="block h-6 w-6 text-2xl">×</span>
+            </button>
           </div>
-          <div className="modal-body">
-            <div className="mb-3">
-              <label htmlFor="filenameInput" className="form-label">
+          <div className="relative flex-auto p-6">
+            <div className="mb-4">
+              <label htmlFor="filenameInput" className="mb-2 block text-sm font-bold text-gray-700">
                 Filename
               </label>
               <input
                 type="text"
-                className="form-label d-block w-100 p-2 border rounded"
+                className="w-full rounded border px-3 py-2 leading-tight text-gray-700 shadow focus:outline-none focus:ring-2 focus:ring-blue-500"
                 id="filenameInput"
                 value={filename}
                 onChange={(e) => setFilename(e.target.value)}
               />
             </div>
-            <div className="mb-3">
-              <label htmlFor="formatSelect" className="form-label">
+            <div className="mb-4">
+              <label htmlFor="formatSelect" className="mb-2 block text-sm font-bold text-gray-700">
                 Format
               </label>
               <select
-                className="form-select"
+                className="w-full rounded border px-3 py-2 leading-tight text-gray-700 shadow focus:outline-none focus:ring-2 focus:ring-blue-500"
                 id="formatSelect"
                 value={format}
                 onChange={(e) => setFormat(e.target.value)}
@@ -76,11 +62,19 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
               </select>
             </div>
           </div>
-          <div className="modal-footer">
-            <button type="button" className="btn btn-secondary" data-bs-dismiss="modal">
+          <div className="flex items-center justify-end rounded-b border-t border-solid border-gray-200 p-4">
+            <button
+              className="mr-2 rounded px-4 py-2 font-bold text-gray-600 hover:bg-gray-100 focus:outline-none"
+              type="button"
+              onClick={onClose}
+            >
               Cancel
             </button>
-            <button type="button" className="btn btn-primary" onClick={handleSave}>
+            <button
+              className="rounded bg-blue-600 px-4 py-2 font-bold text-white hover:bg-blue-700 focus:outline-none"
+              type="button"
+              onClick={handleSave}
+            >
               Save
             </button>
           </div>

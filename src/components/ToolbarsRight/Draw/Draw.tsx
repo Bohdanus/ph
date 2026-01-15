@@ -1,11 +1,10 @@
 import React, { type ChangeEvent, useContext, useState } from 'react';
-import './Draw.scss';
 import type { DrawToolNoPoints } from '../../../tools/draw.ts';
 import { savedDrawPerPen, savedLastSettings } from '../../../tools/settings.ts';
 import { ImageContext } from '../../../contexts/ImageContext.tsx';
 
 const Draw: React.FC = () => {
-  const { interactionMode, zoom } = useContext(ImageContext);
+  const { interactionMode, zoomData } = useContext(ImageContext);
   const [args, setArgs] = useState<DrawToolNoPoints>(savedLastSettings.draw as DrawToolNoPoints);
 
   const handleChange = (newArgs: DrawToolNoPoints) => {
@@ -38,22 +37,9 @@ const Draw: React.FC = () => {
   // const hasDefaultValues = points!.length === 0;
 
   return (
-    <div className="draw-toolbar" style={{ opacity: interactionMode === 'draw' ? 1 : 0.5 }}>
-      {/*<div className="mb-3">*/}
-      {/*  <label htmlFor="pen-type" className="form-label">*/}
-      {/*    Pen Type*/}
-      {/*  </label>*/}
-      {/*  <select id="pen-type" value={penType} onChange={handlePenTypeChange} className="form-select">*/}
-      {/*    <option value="pen">Pen</option>*/}
-      {/*    <option value="marker">Marker</option>*/}
-      {/*    /!*<option value="highlighter">Highlighter</option>*!/*/}
-      {/*    /!*<option value="vivid">Vivid</option>*!/*/}
-      {/*    /!*<option value="eraser">Eraser</option>*!/*/}
-      {/*  </select>*/}
-      {/*</div>*/}
-
-      <div className="mb-3">
-        <label htmlFor="color-picker" className="form-label">
+    <div className="flex flex-col gap-4" style={{ opacity: interactionMode === 'draw' ? 1 : 0.5 }}>
+      <div className="flex flex-col gap-2">
+        <label htmlFor="color-picker" className="text-sm font-medium text-gray-700">
           Color
         </label>
         <input
@@ -61,17 +47,15 @@ const Draw: React.FC = () => {
           type="color"
           value={color}
           onChange={handleColorChange}
-          className="form-control form-control-color w-100"
+          className="h-10 w-full cursor-pointer rounded border border-gray-300 p-1"
           disabled={penType === 'eraser'}
         />
       </div>
 
-      <div className="mb-3">
-        <label htmlFor="size-slider" className="form-label d-flex justify-content-between">
+      <div className="flex flex-col gap-2">
+        <label htmlFor="size-slider" className="flex justify-between text-sm font-medium text-gray-700">
           Brush Size
-          <span>
-            <b>{size}px</b>
-          </span>
+          <span className="font-bold text-gray-900">{size}px</span>
         </label>
         <input
           id="size-slider"
@@ -80,16 +64,14 @@ const Draw: React.FC = () => {
           max="400"
           value={size}
           onChange={handleSizeChange}
-          className="form-range"
+          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200"
         />
       </div>
 
-      <div className="mb-3">
-        <label htmlFor="alpha-slider" className="form-label d-flex justify-content-between">
+      <div className="flex flex-col gap-2">
+        <label htmlFor="alpha-slider" className="flex justify-between text-sm font-medium text-gray-700">
           Opacity
-          <span>
-            <b>{Math.round(alpha * 100)}%</b>
-          </span>
+          <span className="font-bold text-gray-900">{Math.round(alpha * 100)}%</span>
         </label>
         <input
           id="alpha-slider"
@@ -99,18 +81,18 @@ const Draw: React.FC = () => {
           step="0.01"
           value={alpha}
           onChange={handleAlphaChange}
-          className="form-range"
+          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200"
         />
       </div>
 
       <div
-        className="d-flex justify-content-center align-items-center mt-4 border rounded bg-light"
+        className="mt-4 flex items-center justify-center rounded border border-gray-200 bg-gray-50"
         style={{ minHeight: '220px' }}
       >
         <div
           style={{
-            width: `${size * zoom}px`,
-            height: `${size * zoom}px`,
+            width: `${size * zoomData.zoom}px`,
+            height: `${size * zoomData.zoom}px`,
             backgroundColor: color,
             opacity: alpha,
             borderRadius: '50%',

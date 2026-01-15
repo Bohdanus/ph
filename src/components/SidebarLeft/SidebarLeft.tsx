@@ -1,6 +1,5 @@
 import { useContext, useEffect, useState } from 'react';
 
-import './Sidebar.scss';
 import { ImageContext, type InteractionMode } from '../../contexts/ImageContext.tsx';
 import Zoom from '../Zoom/Zoom.tsx';
 
@@ -33,49 +32,61 @@ const SidebarLeft = () => {
   };
 
   return (
-    <aside className="sidebar sidebar-left d-none d-md-block">
+    <aside className="bg-gray-100 max-md:hidden [grid-area:left]">
       <div className="p-3">
-        <h5>Toolbox</h5>
-        <ul className="nav flex-column">
-          <li className="nav-item">
+        <h5 className="mb-3 text-lg font-bold">Toolbox</h5>
+        <ul className="flex flex-col list-none p-0">
+          <li className="mb-1">
             <button
-              className={`nav-link ${toolName === 'colors' ? 'active' : ''}`}
+              className={`w-full rounded px-3 py-2 text-left transition-colors ${
+                toolName === 'colors' ? 'bg-blue-600 text-white' : 'text-blue-600 hover:bg-blue-50'
+              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent`}
               disabled={!originalImage}
               onClick={handleColors}
             >
               Colors
             </button>
           </li>
-          <li className="nav-item">
+          <li className="mb-1">
             <button
-              className={`nav-link ${toolName === 'blur' ? 'active' : ''}`}
+              className={`w-full rounded px-3 py-2 text-left transition-colors ${
+                toolName === 'blur' ? 'bg-blue-600 text-white' : 'text-blue-600 hover:bg-blue-50'
+              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent`}
               disabled={!originalImage}
               onClick={handleBlur}
             >
               Blur
             </button>
           </li>
-          <li className="nav-item">
+          <li className="mb-1">
             <button
-              className={`nav-link ${toolName === 'levels' ? 'active' : ''}`}
+              className={`w-full rounded px-3 py-2 text-left transition-colors ${
+                toolName === 'levels' ? 'bg-blue-600 text-white' : 'text-blue-600 hover:bg-blue-50'
+              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent`}
               disabled={!originalImage}
               onClick={handleLevels}
             >
               Levels
             </button>
           </li>
-          <li className="nav-item">
+          <li className="mb-1">
             <button
-              className={`nav-link ${toolName === 'transform' || toolName === 'crop' ? 'active' : ''}`}
+              className={`w-full rounded px-3 py-2 text-left transition-colors ${
+                toolName === 'transform' || toolName === 'crop'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-blue-600 hover:bg-blue-50'
+              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent`}
               disabled={!originalImage}
               onClick={handleTransform}
             >
               Crop & Transform
             </button>
           </li>
-          <li className="nav-item">
+          <li className="mb-1">
             <button
-              className={`nav-link ${toolName === 'draw' ? 'active' : ''}`}
+              className={`w-full rounded px-3 py-2 text-left transition-colors ${
+                toolName === 'draw' ? 'bg-blue-600 text-white' : 'text-blue-600 hover:bg-blue-50'
+              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent`}
               disabled={!originalImage}
               onClick={handleDraw}
             >
@@ -84,20 +95,8 @@ const SidebarLeft = () => {
           </li>
         </ul>
 
-        <hr />
+        <hr className="my-3 border-gray-300" />
         <Zoom />
-
-        {/*<div className="btn-group w-100 mt-3" role="group">*/}
-        {/*  <button*/}
-        {/*    type="button"*/}
-        {/*    className={`btn btn-sm ${['draw', 'crop', 'transform'].includes(toolName!) ? '' : 'disabled'} ${interactionMode === 'zoom' ? 'btn-primary' : 'btn-outline-primary'}`}*/}
-        {/*    onClick={() => {*/}
-        {/*      setInteractionMode(interactionMode === 'zoom' ? prevInteractionMode : 'zoom');*/}
-        {/*    }}*/}
-        {/*  >*/}
-        {/*    Toggle Pan Mode*/}
-        {/*  </button>*/}
-        {/*</div>*/}
       </div>
     </aside>
   );

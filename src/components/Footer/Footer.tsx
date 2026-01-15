@@ -1,8 +1,8 @@
 const Footer = () => {
   return (
-    <footer className="footer mt-auto py-3 bg-light border-top d-none d-md-block">
-      <div className="container-fluid px-3">
-        <span className="text-muted">© 2025 Photo App Desktop Footer</span>
+    <footer className="mt-auto border-t border-gray-200 bg-gray-100 py-3 max-md:hidden [grid-area:footer]">
+      <div className="px-3">
+        <span className="text-gray-500">© 2025 Photo App Desktop Footer</span>
       </div>
     </footer>
   );

@@ -8,7 +8,6 @@ import {
   useState,
 } from 'react';
 import { ImageContext } from '../../contexts/ImageContext';
-import './Main.scss';
 import { useResizeObserverRAF } from '../../hooks/useResizeObserver';
 import { useDrawHandler } from './useDrawHandler';
 import { useCropHandler } from './useCropHandler';
@@ -206,25 +205,18 @@ const Main = () => {
     const { dx, dy, zoom } = zoomData;
     return (
       <div
-        className="canvas-container"
+        className="absolute left-0 top-0 flex h-full w-full items-center justify-center"
         style={{
           transform: `translate(${dx}px, ${dy}px) scale(${zoom})`,
           transformOrigin: 'center center',
-          width: '100%',
-          height: '100%',
           display: originalImage ? 'flex' : 'none',
-          alignItems: 'center',
-          justifyContent: 'center',
-          position: 'absolute',
-          top: 0,
-          left: 0,
           cursor: isCropToolActive ? 'crosshair' : isZoomToolActive ? 'grab' : undefined,
         }}
       >
-        <canvas ref={canvasRef} className="canvas-layer" />
+        <canvas ref={canvasRef} className="max-h-full max-w-full object-contain" />
         <canvas
           ref={overlayRef}
-          className="canvas-layer"
+          className="max-h-full max-w-full object-contain absolute"
           onPointerDown={handleMouseDown}
           onPointerMove={handleMouseMove}
           onPointerUp={handleMouseUp}
@@ -242,15 +234,19 @@ const Main = () => {
   return (
     <main
       ref={containerRef}
-      className={`main-content ${isDragging ? 'bg-light border border-primary' : ''} ${originalImage ? '' : 'button-center'}`}
+      className={`relative overflow-y-auto [grid-area:main] ${
+        isDragging ? 'bg-gray-100 border-2 border-dashed border-blue-500' : ''
+      } ${originalImage ? '' : 'flex items-center justify-center'}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      style={{ position: 'relative' }}
     >
       {renderContent()}
       {!originalImage && (
-        <button className="btn btn-primary btn-lg" onClick={openLoadImageDialog}>
+        <button
+          className="rounded bg-blue-600 px-6 py-3 text-xl text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          onClick={openLoadImageDialog}
+        >
           Open File
         </button>
       )}

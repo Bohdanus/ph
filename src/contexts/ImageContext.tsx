@@ -42,6 +42,7 @@ interface ImageContextType {
   redo: () => void;
   canUndo: () => boolean;
   canRedo: () => boolean;
+  resetArgs: () => void;
 
   crop: CropToolType | null;
   setCrop: (args: CropToolType | null) => void;
@@ -76,6 +77,7 @@ export const ImageContext = createContext<ImageContextType>({
   redo: () => {},
   canUndo: () => false,
   canRedo: () => false,
+  resetArgs: () => {},
 
   crop: null,
   setCrop: () => {},

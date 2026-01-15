@@ -1,6 +1,4 @@
 import React, { useContext } from 'react';
-import './Transform.scss';
-// import UndoButton from '../../Common/UndoButton.tsx';
 import { ImageContext } from '../../../contexts/ImageContext.tsx';
 import type { TransformToolType } from '../../../tools/transform.ts';
 
@@ -83,65 +81,94 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
   // const hasDefaultTransform = isEqual(args, defaultSettings.transform);
 
   return (
-    <div className="transform-toolbar">
-      <div className="button-group">
-        <label>Rotate</label>
-        <div className="buttons">
-          <button onClick={handleRotateLeft} title="Rotate Left">
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-2">
+        <label className="text-sm font-medium text-gray-700">Rotate</label>
+        <div className="flex gap-2">
+          <button
+            className="flex h-10 flex-1 items-center justify-center rounded border border-gray-300 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            onClick={handleRotateLeft}
+            title="Rotate Left"
+          >
             ↺
           </button>
-          <button onClick={handleRotateRight} title="Rotate Right">
+          <button
+            className="flex h-10 flex-1 items-center justify-center rounded border border-gray-300 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            onClick={handleRotateRight}
+            title="Rotate Right"
+          >
             ↻
           </button>
         </div>
       </div>
 
-      <div className="slider-group">
-        <label htmlFor="rotate-slider">Rotate Degree</label>
-        <input
-          id="rotate-slider"
-          type="range"
-          min={-90}
-          max={90}
-          value={rotate}
-          onChange={handleRotateSliderChange}
-          className="transform-slider"
-        />
-        <span>
-          <b>{rotate}°</b>
-        </span>
-        <span
-          style={{ cursor: 'pointer', color: '#007bff' }}
+      <div className="flex flex-col gap-2">
+        <label htmlFor="rotate-slider" className="text-sm font-medium text-gray-700">
+          Rotate Degree
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            id="rotate-slider"
+            type="range"
+            min={-90}
+            max={90}
+            value={rotate}
+            onChange={handleRotateSliderChange}
+            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200"
+          />
+          <span className="min-w-[40px] text-right text-sm font-bold text-gray-900">{rotate}°</span>
+        </div>
+        <button
+          className="self-end text-sm text-blue-600 hover:text-blue-800"
           onClick={() => handleOnChange({ rotate: 0, mirrorH, mirrorV })}
         >
           Reset
-        </span>
+        </button>
       </div>
 
-      <div className="button-group">
-        <label>Mirror</label>
-        <div className="buttons">
-          <button className={mirrorH ? 'active' : ''} onClick={toggleMirrorH} title="Mirror Horizontal">
+      <div className="flex flex-col gap-2">
+        <label className="text-sm font-medium text-gray-700">Mirror</label>
+        <div className="flex gap-2">
+          <button
+            className={`flex h-10 flex-1 items-center justify-center rounded border transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+              mirrorH
+                ? 'border-blue-600 bg-blue-600 text-white'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+            onClick={toggleMirrorH}
+            title="Mirror Horizontal"
+          >
             ↔
           </button>
-          <button className={mirrorV ? 'active' : ''} onClick={toggleMirrorV} title="Mirror Vertical">
+          <button
+            className={`flex h-10 flex-1 items-center justify-center rounded border transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+              mirrorV
+                ? 'border-blue-600 bg-blue-600 text-white'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+            onClick={toggleMirrorV}
+            title="Mirror Vertical"
+          >
             ↕
           </button>
         </div>
       </div>
 
-      {/*<UndoButton disabled={hasDefaultTransform} text="Reset" />*/}
-      <hr />
+      <hr className="my-2 border-gray-300" />
 
       <button
-        className="btn btn-primary w-100 mt-3"
+        className="w-full rounded bg-blue-600 px-4 py-2 font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
         disabled={!crop || crop.width === 0 || crop.height === 0}
-        onClick={() => startEmptyTool('transform') /* this will apply current setting as a history item */}
+        onClick={() => startEmptyTool('transform')}
       >
         Apply Crop
       </button>
 
-      <button className="btn btn-outline-secondary w-100 mt-2" disabled={!crop} onClick={() => setCrop(null)}>
+      <button
+        className="w-full rounded border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+        disabled={!crop}
+        onClick={() => setCrop(null)}
+      >
         Clear Crop
       </button>
     </div>

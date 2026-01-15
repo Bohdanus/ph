@@ -1,5 +1,4 @@
 import React, { useMemo, useEffect } from 'react';
-import './Blur.scss';
 import { throttle } from 'lodash-es';
 import { THROTTLE_TIME } from '../../../constants';
 
@@ -26,20 +25,24 @@ const Blur: React.FC<BlurToolbarProps> = ({ args, onChange }) => {
   const hasDefaultValues = radius === 0;
 
   return (
-    <div className="blur-toolbar">
-      <label htmlFor="blur-slider">Blur Radius</label>
-      <input
-        id="blur-slider"
-        type="range"
-        min="0"
-        max="100"
-        value={radius}
-        onChange={handleChange}
-        className="blur-slider"
-      />
-      <span>
-        Radius: <b>{radius}px</b>
-      </span>
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2">
+        <label htmlFor="blur-slider" className="text-sm font-medium text-gray-700">
+          Blur Radius
+        </label>
+        <input
+          id="blur-slider"
+          type="range"
+          min="0"
+          max="100"
+          value={radius}
+          onChange={handleChange}
+          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200"
+        />
+        <span className="text-sm text-gray-600">
+          Radius: <b className="text-gray-900">{radius}px</b>
+        </span>
+      </div>
 
       <UndoButton disabled={hasDefaultValues} text="Undo Blur" />
     </div>

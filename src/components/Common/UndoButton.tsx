@@ -7,14 +7,13 @@ interface UndoButtonProps {
 }
 
 const UndoButton: React.FC<UndoButtonProps> = ({ disabled, text }) => {
-  const { undo } = useContext(ImageContext);
+  const { resetArgs } = useContext(ImageContext);
 
   return (
     <button
-      className="btn btn-secondary btn-sm mt-2"
+      className="mt-2 rounded bg-gray-600 px-3 py-1 text-sm font-medium text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
       disabled={disabled}
-      onClick={undo}
-      style={disabled ? { opacity: 0.55 } : {}}
+      onClick={resetArgs}
     >
       {text ?? 'Reset'}
     </button>

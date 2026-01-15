@@ -1,4 +1,3 @@
-import '../SidebarLeft/Sidebar.scss';
 import { useContext } from 'react';
 import { ImageContext } from '../../contexts/ImageContext.tsx';
 import { toolsMap } from '../../tools/toolsMap.ts';
@@ -8,7 +7,7 @@ const SidebarRight = () => {
   if (!toolName || !toolArgs || !originalImage) {
     // todo UNDERSTAND THIS
     return (
-      <aside className="sidebar sidebar-right d-none d-md-block">
+      <aside className="bg-gray-100 max-md:hidden [grid-area:right]">
         <div className="p-3"></div>
       </aside>
     );
@@ -18,10 +17,10 @@ const SidebarRight = () => {
   const Component = toolsMap[toolName].toolboxComponent;
 
   return (
-    <aside className="sidebar sidebar-right d-none d-md-block">
+    <aside className="bg-gray-100 max-md:hidden [grid-area:right]">
       <div className="p-3">
-        <ul className="nav flex-column">
-          <li className="nav-item">
+        <ul className="flex flex-col list-none p-0">
+          <li className="mb-2">
             <Component args={args} onChange={updateLastHistoryItem} />
           </li>
         </ul>
