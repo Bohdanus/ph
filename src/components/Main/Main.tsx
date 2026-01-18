@@ -235,7 +235,9 @@ const Main = () => {
     <main
       ref={containerRef}
       className={`relative overflow-y-auto [grid-area:main] ${
-        isDragging ? 'bg-gray-100 border-2 border-dashed border-blue-500' : ''
+        isDragging
+          ? 'bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-blue-500'
+          : 'bg-white dark:bg-[#1a1a1a]'
       } ${originalImage ? '' : 'flex items-center justify-center'}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}

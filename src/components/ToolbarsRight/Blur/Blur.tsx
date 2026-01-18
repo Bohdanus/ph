@@ -27,7 +27,7 @@ const Blur: React.FC<BlurToolbarProps> = ({ args, onChange }) => {
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-2">
-        <label htmlFor="blur-slider" className="text-sm font-medium text-gray-700">
+        <label htmlFor="blur-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
           Blur Radius
         </label>
         <input
@@ -37,10 +37,10 @@ const Blur: React.FC<BlurToolbarProps> = ({ args, onChange }) => {
           max="100"
           value={radius}
           onChange={handleChange}
-          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200"
+          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
-        <span className="text-sm text-gray-600">
-          Radius: <b className="text-gray-900">{radius}px</b>
+        <span className="text-sm text-gray-600 dark:text-gray-400">
+          Radius: <b className="text-gray-900 dark:text-gray-200">{radius}px</b>
         </span>
       </div>
 

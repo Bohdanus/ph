@@ -1,10 +1,8 @@
 import { type PointerEvent, useContext, useRef } from 'react';
-import { type Delta, ImageContext } from '../../contexts/ImageContext';
+import { ImageContext } from '../../contexts/ImageContext';
 
 export const useZoomHandler = () => {
   const { zoomData, setZoomData, interactionMode } = useContext(ImageContext);
-  const isMouseDown = useRef(false);
-  const panRef = useRef<Delta | null>(null);
   const isPanning = useRef(false);
   const lastPoint = useRef({ x: 0, y: 0 });
 
@@ -17,11 +15,11 @@ export const useZoomHandler = () => {
 
     // Limit zoom level
     const clampedZoom = Math.min(Math.max(newZoom, 0.1), 10);
-    setZoomData(clampedZoom);
+    setZoomData({ ...zoomData, zoom: clampedZoom });
   };
 
   const handleMouseDown = (event: PointerEvent<HTMLCanvasElement>) => {
-    if (interactionMode !== 'pan') return;
+    if (interactionMode !== 'zoom') return;
     if (event.button !== 0 && event.button !== 1) return; // Left or middle click
 
     isPanning.current = true;
@@ -34,9 +32,11 @@ export const useZoomHandler = () => {
     const dx = event.clientX - lastPoint.current.x;
     const dy = event.clientY - lastPoint.current.y;
 
-    setPan({
-      x: pan.x + dx,
-      y: pan.y + dy,
+    const { dx: prevDx, dy: prevDy, zoom } = zoomData;
+    setZoomData({
+      zoom,
+      dx: prevDx + dx,
+      dy: prevDy + dy,
     });
 
     lastPoint.current = { x: event.clientX, y: event.clientY };

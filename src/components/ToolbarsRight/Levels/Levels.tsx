@@ -27,7 +27,7 @@ const Levels: React.FC<LevelsToolbarProps> = ({ args, onChange }) => {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <label htmlFor="brightness-slider" className="text-sm font-medium text-gray-700">
+        <label htmlFor="brightness-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
           Brightness
         </label>
         <div className="flex items-center gap-2">
@@ -38,15 +38,15 @@ const Levels: React.FC<LevelsToolbarProps> = ({ args, onChange }) => {
             max={100}
             value={brightness}
             onChange={handleBrightnessChange}
-            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200"
+            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
           />
-          <span className="min-w-[40px] text-right text-sm">
-            <b className="text-gray-900">{brightness}%</b>
+          <span className="min-w-[40px] text-right text-sm dark:text-gray-400">
+            <b className="text-gray-900 dark:text-gray-200">{brightness}%</b>
           </span>
         </div>
       </div>
       <div className="flex flex-col gap-1">
-        <label htmlFor="contrast-slider" className="text-sm font-medium text-gray-700">
+        <label htmlFor="contrast-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
           Contrast
         </label>
         <div className="flex items-center gap-2">
@@ -57,10 +57,10 @@ const Levels: React.FC<LevelsToolbarProps> = ({ args, onChange }) => {
             max={100}
             value={contrast}
             onChange={handleContrastChange}
-            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200"
+            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
           />
-          <span className="min-w-[40px] text-right text-sm">
-            <b className="text-gray-900">{contrast}%</b>
+          <span className="min-w-[40px] text-right text-sm dark:text-gray-400">
+            <b className="text-gray-900 dark:text-gray-200">{contrast}%</b>
           </span>
         </div>
       </div>

@@ -83,17 +83,17 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-2">
-        <label className="text-sm font-medium text-gray-700">Rotate</label>
+        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Rotate</label>
         <div className="flex gap-2">
           <button
-            className="flex h-10 flex-1 items-center justify-center rounded border border-gray-300 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="flex h-10 flex-1 items-center justify-center rounded border border-gray-300 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
             onClick={handleRotateLeft}
             title="Rotate Left"
           >
             ↺
           </button>
           <button
-            className="flex h-10 flex-1 items-center justify-center rounded border border-gray-300 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="flex h-10 flex-1 items-center justify-center rounded border border-gray-300 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
             onClick={handleRotateRight}
             title="Rotate Right"
           >
@@ -103,7 +103,7 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
       </div>
 
       <div className="flex flex-col gap-2">
-        <label htmlFor="rotate-slider" className="text-sm font-medium text-gray-700">
+        <label htmlFor="rotate-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
           Rotate Degree
         </label>
         <div className="flex items-center gap-2">
@@ -114,12 +114,12 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
             max={90}
             value={rotate}
             onChange={handleRotateSliderChange}
-            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200"
+            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
           />
-          <span className="min-w-[40px] text-right text-sm font-bold text-gray-900">{rotate}°</span>
+          <span className="min-w-[40px] text-right text-sm font-bold text-gray-900 dark:text-gray-200">{rotate}°</span>
         </div>
         <button
-          className="self-end text-sm text-blue-600 hover:text-blue-800"
+          className="self-end text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
           onClick={() => handleOnChange({ rotate: 0, mirrorH, mirrorV })}
         >
           Reset
@@ -127,13 +127,13 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
       </div>
 
       <div className="flex flex-col gap-2">
-        <label className="text-sm font-medium text-gray-700">Mirror</label>
+        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Mirror</label>
         <div className="flex gap-2">
           <button
             className={`flex h-10 flex-1 items-center justify-center rounded border transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               mirrorH
                 ? 'border-blue-600 bg-blue-600 text-white'
-                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
             }`}
             onClick={toggleMirrorH}
             title="Mirror Horizontal"
@@ -144,7 +144,7 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
             className={`flex h-10 flex-1 items-center justify-center rounded border transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
               mirrorV
                 ? 'border-blue-600 bg-blue-600 text-white'
-                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
             }`}
             onClick={toggleMirrorV}
             title="Mirror Vertical"
@@ -154,7 +154,7 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
         </div>
       </div>
 
-      <hr className="my-2 border-gray-300" />
+      <hr className="my-2 border-gray-300 dark:border-gray-700" />
 
       <button
         className="w-full rounded bg-blue-600 px-4 py-2 font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
@@ -165,7 +165,7 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
       </button>
 
       <button
-        className="w-full rounded border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+        className="w-full rounded border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
         disabled={!crop}
         onClick={() => setCrop(null)}
       >

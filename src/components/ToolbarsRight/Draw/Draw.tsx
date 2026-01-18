@@ -39,7 +39,7 @@ const Draw: React.FC = () => {
   return (
     <div className="flex flex-col gap-4" style={{ opacity: interactionMode === 'draw' ? 1 : 0.5 }}>
       <div className="flex flex-col gap-2">
-        <label htmlFor="color-picker" className="text-sm font-medium text-gray-700">
+        <label htmlFor="color-picker" className="text-sm font-medium text-gray-700 dark:text-gray-300">
           Color
         </label>
         <input
@@ -47,15 +47,18 @@ const Draw: React.FC = () => {
           type="color"
           value={color}
           onChange={handleColorChange}
-          className="h-10 w-full cursor-pointer rounded border border-gray-300 p-1"
+          className="h-10 w-full cursor-pointer rounded border border-gray-300 p-1 dark:border-gray-600 dark:bg-gray-700"
           disabled={penType === 'eraser'}
         />
       </div>
 
       <div className="flex flex-col gap-2">
-        <label htmlFor="size-slider" className="flex justify-between text-sm font-medium text-gray-700">
+        <label
+          htmlFor="size-slider"
+          className="flex justify-between text-sm font-medium text-gray-700 dark:text-gray-300"
+        >
           Brush Size
-          <span className="font-bold text-gray-900">{size}px</span>
+          <span className="font-bold text-gray-900 dark:text-gray-200">{size}px</span>
         </label>
         <input
           id="size-slider"
@@ -64,14 +67,17 @@ const Draw: React.FC = () => {
           max="400"
           value={size}
           onChange={handleSizeChange}
-          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200"
+          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>
 
       <div className="flex flex-col gap-2">
-        <label htmlFor="alpha-slider" className="flex justify-between text-sm font-medium text-gray-700">
+        <label
+          htmlFor="alpha-slider"
+          className="flex justify-between text-sm font-medium text-gray-700 dark:text-gray-300"
+        >
           Opacity
-          <span className="font-bold text-gray-900">{Math.round(alpha * 100)}%</span>
+          <span className="font-bold text-gray-900 dark:text-gray-200">{Math.round(alpha * 100)}%</span>
         </label>
         <input
           id="alpha-slider"
@@ -81,12 +87,12 @@ const Draw: React.FC = () => {
           step="0.01"
           value={alpha}
           onChange={handleAlphaChange}
-          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200"
+          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>
 
       <div
-        className="mt-4 flex items-center justify-center rounded border border-gray-200 bg-gray-50"
+        className="mt-4 flex items-center justify-center rounded border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900"
         style={{ minHeight: '220px' }}
       >
         <div

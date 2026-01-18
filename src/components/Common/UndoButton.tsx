@@ -11,7 +11,7 @@ const UndoButton: React.FC<UndoButtonProps> = ({ disabled, text }) => {
 
   return (
     <button
-      className="mt-2 rounded bg-gray-600 px-3 py-1 text-sm font-medium text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+      className="mt-2 rounded bg-gray-600 px-3 py-1 text-sm font-medium text-white hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-gray-500 dark:hover:bg-gray-400"
       disabled={disabled}
       onClick={resetArgs}
     >
