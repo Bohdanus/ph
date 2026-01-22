@@ -1,6 +1,7 @@
-import React, { useContext } from 'react';
-import { ImageContext } from '../../../contexts/ImageContext.tsx';
+import React, { useContext, useEffect, useRef } from 'react';
+import { ImageContext, type RectXY, type Size } from '../../../contexts/ImageContext.tsx';
 import type { TransformToolType } from '../../../tools/transform.ts';
+import { sortRect } from '../../../contexts/util.ts';
 
 interface TransformToolbarProps {
   args: TransformToolType;
@@ -9,16 +10,26 @@ interface TransformToolbarProps {
 
 const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
   const { crop, setCrop, size, startEmptyTool } = useContext(ImageContext);
+  const originalCrop = useRef<RectXY | null>(null);
+  const originalWidth = useRef<Size | null>(null);
+  const originalAngle = useRef<number | null>(null);
 
   const { rotate, mirrorH, mirrorV } = args;
+
+  useEffect(() => {
+    if (!crop || crop?.isRotated) return;
+    originalCrop.current = crop;
+    originalWidth.current = size;
+    originalAngle.current = rotate;
+  }, [crop]);
 
   function compensateCropCorners({ rotate: newRotate, mirrorV: newMirrorV, mirrorH: newMirrorH }: TransformToolType) {
     if (!crop) return;
 
-    const prevWidth = size.width;
-    const prevHeight = size.height;
+    const prevWidth = originalWidth.current!.width;
+    const prevHeight = originalWidth.current!.height;
 
-    const angle = ((newRotate - rotate) * Math.PI) / 180;
+    const angle = ((newRotate - originalAngle.current!) * Math.PI) / 180;
     const absCos = Math.abs(Math.cos(angle));
     const absSin = Math.abs(Math.sin(angle));
 
@@ -30,21 +41,25 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
     const scaleY = newHeight / prevHeight;
 
     // compensate resize after rotation corners
-    let { x, y, width, height } = crop;
+    let { x1, y1, x2, y2 } = originalCrop.current!;
 
-    x *= scaleX;
-    y *= scaleY;
-    width *= scaleX;
-    height *= scaleY;
+    x1 *= scaleX;
+    y1 *= scaleY;
+    x2 *= scaleX;
+    y2 *= scaleY;
 
     if (mirrorH !== newMirrorH) {
-      x = width - x;
+      x1 = newWidth - x1;
+      x2 = newWidth - x2;
     }
     if (mirrorV !== newMirrorV) {
-      y = height - y;
+      y1 = newHeight - y1;
+      y2 = newHeight - y2;
     }
 
-    setCrop({ x, y, width, height });
+    const sorted = sortRect({ x1, y1, x2, y2 });
+    sorted.isRotated = true;
+    setCrop(sorted);
   }
 
   const handleOnChange = (newArgs: TransformToolType) => {
@@ -158,7 +173,7 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
 
       <button
         className="w-full rounded bg-blue-600 px-4 py-2 font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-        disabled={!crop || crop.width === 0 || crop.height === 0}
+        disabled={!crop}
         onClick={() => startEmptyTool('transform')}
       >
         Apply Crop

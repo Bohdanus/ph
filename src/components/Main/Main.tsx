@@ -8,57 +8,36 @@ import {
   useState,
 } from 'react';
 import { ImageContext } from '../../contexts/ImageContext';
-import { useResizeObserverRAF } from '../../hooks/useResizeObserver';
 import { useDrawHandler } from './useDrawHandler';
 import { useCropHandler } from './useCropHandler';
 import { useZoomHandler } from './useZoomHandler';
 
-type Dimensions = {
-  innerWidth: number;
-  innerHeight: number;
-  outerWidth: number;
-  outerHeight: number;
-  offsetX: number;
-  offsetY: number;
-  scale: number;
-};
+const pointers = new Map<number, PointerEvent>();
 
 const Main = () => {
   const {
     canvasRef,
     originalImage,
     _setOriginalImage,
-    toolName,
     addCanvasToHistory,
     openLoadImageDialog,
     crop,
     setCrop,
     size,
     interactionMode,
-    zoomData,
+    zoomDataRef,
   } = useContext(ImageContext);
-
-  const dimensionsRef = useRef<Dimensions>({
-    innerWidth: 0,
-    innerHeight: 0,
-    outerWidth: 0,
-    outerHeight: 0,
-    offsetX: 0,
-    offsetY: 0,
-    scale: 1,
-  });
   const [isDragging, setIsDragging] = useState(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
 
-  const pointerId = useRef<number | null>(null);
   const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const overlayCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
-  const isDrawToolActive = toolName === 'draw';
+  const isDrawToolActive = interactionMode === 'draw';
   const isCropToolActive = interactionMode === 'crop';
-  const isZoomToolActive = toolName === 'zoom';
+  const isZoomToolActive = interactionMode === 'zoom';
 
   // caches the context
   useLayoutEffect(() => {
@@ -66,40 +45,17 @@ const Main = () => {
 
     if (!canvas) return;
     canvasCtxRef.current = canvas.getContext('2d')!;
+    canvasCtxRef.current.imageSmoothingEnabled = false;
 
     const overlay = overlayRef.current!;
     overlayCtxRef.current = overlay.getContext('2d')!;
+    overlayCtxRef.current.imageSmoothingEnabled = false;
 
     return () => {
       canvasCtxRef.current = null;
       overlayCtxRef.current = null;
     };
   }, [canvasRef]);
-
-  useResizeObserverRAF(containerRef, ({ width: outerWidth, height: outerHeight }) => {
-    // setZoomData({ width, height, zoom: 1 });
-    const { width: imageWidth, height: imageHeight } = size;
-
-    const scaleX = outerWidth / imageWidth;
-    const scaleY = outerHeight / imageHeight;
-
-    const scale = Math.min(scaleX, scaleY);
-
-    const innerWidth = imageWidth * scale;
-    const innerHeight = imageHeight * scale;
-    const offsetX = (outerWidth - innerWidth) / 2;
-    const offsetY = (outerHeight - innerHeight) / 2;
-
-    dimensionsRef.current = {
-      innerWidth,
-      innerHeight,
-      outerWidth,
-      outerHeight,
-      offsetX,
-      offsetY,
-      scale,
-    };
-  });
 
   useLayoutEffect(() => {
     if (!overlayRef.current) return;
@@ -129,102 +85,107 @@ const Main = () => {
 
     await _setOriginalImage(file);
   };
-
-  const getCanvasCoordinates = (event: PointerEvent<HTMLCanvasElement>) => {
-    const { offsetX, offsetY, scale } = dimensionsRef.current;
-
-    return {
-      x: (event.nativeEvent.offsetX - offsetX) / scale,
-      y: (event.nativeEvent.offsetY - offsetY) / scale,
-    };
-  };
+  //
+  // const getCanvasCoordinates = (event: PointerEvent<HTMLDivElement>) => {
+  //   const { offsetX, offsetY, scale } = dimensionsRef.current;
+  //
+  //   const xBeforeZoom = (event.nativeEvent.offsetX - offsetX) / scale;
+  //   const yBeforeZoom = (event.nativeEvent.offsetY - offsetY) / scale;
+  //
+  //   const { dx, dy, zoom } = zoomDataRef.current;
+  //
+  //   // account for zoom transformation: translate then scale
+  //   // reverse the transformation: (point - translate) / scale
+  //   const x = (xBeforeZoom - dx) / zoom;
+  //   const y = (yBeforeZoom - dy) / zoom;
+  //
+  //   return { x, y };
+  // };
+  //
+  // const getOverlayCoordinates = (event: PointerEvent<HTMLDivElement>) => {
+  //   const { offsetX, offsetY, scale } = dimensionsRef.current;
+  //
+  //   const x = (event.nativeEvent.offsetX - offsetX) / scale;
+  //   const y = (event.nativeEvent.offsetY - offsetY) / scale;
+  //
+  //   return { x, y };
+  // };
 
   const drawHandler = useDrawHandler({
-    getCanvasCoordinates,
-    overlayCtxRef,
     addCanvasToHistory,
     canvasCtxRef,
+    containerRef,
+    overlayCtxRef,
     overlayRef,
+    size,
   });
 
   const cropHandler = useCropHandler({
+    containerRef,
     crop,
+    interactionMode,
     overlayCtxRef,
     overlayRef,
-    getCanvasCoordinates,
-    interactionMode,
     setCrop,
     size,
   });
 
   const zoomHandler = useZoomHandler();
 
-  const handleMouseDown: PointerEventHandler<HTMLCanvasElement> = (event) => {
+  const handleMouseDown: PointerEventHandler<HTMLDivElement> = (event) => {
     if (event.button !== undefined && event.button !== 0 && event.button !== 1) return;
-
-    pointerId.current = event.pointerId;
-    overlayRef.current!.setPointerCapture(event.pointerId);
+    if (!originalImage) return;
 
     if (isDrawToolActive) {
       drawHandler.handleMouseDown(event);
     } else if (isCropToolActive) {
       cropHandler.handleMouseDown(event);
     } else if (isZoomToolActive) {
-      zoomHandler.handleMouseDown(event);
+      zoomHandler.handlePointerDown(event);
     }
   };
 
-  const handleMouseUp: PointerEventHandler<HTMLCanvasElement> = (event) => {
+  const handleMouseUp: PointerEventHandler<HTMLDivElement> = (event) => {
+    if (!originalImage) return;
+
     if (isDrawToolActive) {
-      drawHandler.handleMouseUp();
+      drawHandler.handleMouseUp(event);
     } else if (isCropToolActive) {
       cropHandler.handleMouseUp(event);
     } else if (isZoomToolActive) {
-      zoomHandler.handleMouseUp();
-    }
-
-    pointerId.current = null;
-    try {
-      overlayRef.current!.releasePointerCapture(event.pointerId);
-    } catch {
-      // pointer capture might have been lost already
+      zoomHandler.handlePointerUp(event);
     }
   };
 
-  const handleMouseMove: PointerEventHandler<HTMLCanvasElement> = (event) => {
+  const handleMouseMove: PointerEventHandler<HTMLDivElement> = (event) => {
+    if (!originalImage) return;
+
     if (isDrawToolActive) {
       drawHandler.handleMouseMove(event);
     } else if (isCropToolActive) {
       cropHandler.handleMouseMove(event);
     } else if (isZoomToolActive) {
-      zoomHandler.handleMouseMove(event);
+      zoomHandler.handlePointerMove(event);
     }
   };
 
   const renderContent = () => {
-    const { dx, dy, zoom } = zoomData;
+    const { dx, dy, zoom } = zoomDataRef.current;
     return (
       <div
-        className="absolute left-0 top-0 flex h-full w-full items-center justify-center"
+        className="zoom-container absolute left-0 top-0 flex h-full w-full items-center justify-center"
         style={{
-          transform: `translate(${dx}px, ${dy}px) scale(${zoom})`,
-          transformOrigin: 'center center',
-          display: originalImage ? 'flex' : 'none',
           cursor: isCropToolActive ? 'crosshair' : isZoomToolActive ? 'grab' : undefined,
+          display: originalImage ? 'flex' : 'none',
+          transform: `translate(${dx}px, ${dy}px) scale(${zoom})`,
         }}
       >
         <canvas ref={canvasRef} className="max-h-full max-w-full object-contain" />
         <canvas
           ref={overlayRef}
           className="max-h-full max-w-full object-contain absolute"
-          onPointerDown={handleMouseDown}
-          onPointerMove={handleMouseMove}
-          onPointerUp={handleMouseUp}
-          onPointerLeave={handleMouseUp}
-          onWheel={zoomHandler.handleWheel}
           style={{
             display: isDrawToolActive || isCropToolActive ? 'block' : 'none',
-            cursor: isDrawToolActive ? 'crosshair' : undefined,
           }}
         />
       </div>
@@ -242,6 +203,10 @@ const Main = () => {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      onPointerDown={handleMouseDown}
+      onPointerMove={handleMouseMove}
+      onPointerUp={handleMouseUp}
+      onWheel={zoomHandler.handleWheel}
     >
       {renderContent()}
       {!originalImage && (

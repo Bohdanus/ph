@@ -1,35 +1,31 @@
-import { useLayoutEffect, useRef } from 'react';
+import { type RefObject, useLayoutEffect, useRef } from 'react';
+import type { Rect } from '../contexts/ImageContext.tsx';
 
-export function useResizeObserverRAF(
-  conRef: React.RefObject<HTMLElement | null>,
-  onResize: (size: DOMRectReadOnly) => void
-) {
+export function useResizeObserverRAF(ref: RefObject<HTMLElement | null>, onResize: (size: Rect) => void) {
   const frameRef = useRef<number | null>(null);
-  const lastSizeRef = useRef<DOMRectReadOnly | null>(null);
 
   useLayoutEffect(() => {
-    const el = conRef.current;
+    const el = ref.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
 
+    // expect position not change on subsequent resizes, only width and height
+    const positon = el.getBoundingClientRect();
+
     const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      lastSizeRef.current = entry.contentRect;
-
       // Throttle to 1 per frame
-      if (frameRef.current == null) {
-        frameRef.current = requestAnimationFrame(() => {
-          frameRef.current = null;
-
-          const next = lastSizeRef.current!;
-
-          // Optional bailout (prevents useless work)
-          if (next.width === 0 || next.height === 0) {
-            return;
-          }
-
-          onResize(next);
-        });
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
       }
+
+      frameRef.current = requestAnimationFrame(() => {
+        frameRef.current = null;
+
+        const entry = entries[0];
+        const { width, height } = entry.contentRect;
+        const rect = { x: positon.left, y: positon.top, width, height };
+
+        onResize(rect);
+      });
     });
 
     observer.observe(el);
@@ -41,5 +37,5 @@ export function useResizeObserverRAF(
         frameRef.current = null;
       }
     };
-  }, [conRef, onResize]);
+  }, [ref, onResize]);
 }

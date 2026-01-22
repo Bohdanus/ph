@@ -4,7 +4,7 @@ import { savedDrawPerPen, savedLastSettings } from '../../../tools/settings.ts';
 import { ImageContext } from '../../../contexts/ImageContext.tsx';
 
 const Draw: React.FC = () => {
-  const { interactionMode, zoomData } = useContext(ImageContext);
+  const { interactionMode, zoomDataRef } = useContext(ImageContext);
   const [args, setArgs] = useState<DrawToolNoPoints>(savedLastSettings.draw as DrawToolNoPoints);
 
   const handleChange = (newArgs: DrawToolNoPoints) => {
@@ -97,8 +97,8 @@ const Draw: React.FC = () => {
       >
         <div
           style={{
-            width: `${size * zoomData.zoom}px`,
-            height: `${size * zoomData.zoom}px`,
+            // width: `${size * zoomData.zoom}px`,
+            // height: `${size * zoomData.zoom}px`,
             backgroundColor: color,
             opacity: alpha,
             borderRadius: '50%',

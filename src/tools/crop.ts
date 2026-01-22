@@ -1,11 +1,19 @@
 import { applyFilter } from './applyFilter.ts';
+import type { RectXY } from '../contexts/ImageContext.tsx';
+import { trimRect } from '../contexts/util.ts';
 
-export type CropToolType = { x: number; y: number; width: number; height: number };
+export type CropToolType = RectXY;
 
 export const crop =
   (canvas: HTMLCanvasElement, source: ImageBitmap) =>
-  ({ x, y, width, height }: CropToolType, callback: (width: number, height: number) => void) => {
+  (rect: CropToolType, callback: (width: number, height: number) => void) => {
     return applyFilter(canvas, (ctx: CanvasRenderingContext2D) => {
+      const imageSize = {
+        width: canvas.width,
+        height: canvas.height,
+      };
+      const { x, y, width, height } = trimRect(rect, imageSize);
+
       canvas.width = width;
       canvas.height = height;
 

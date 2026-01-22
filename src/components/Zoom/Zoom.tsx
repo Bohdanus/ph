@@ -2,17 +2,17 @@ import React, { useContext } from 'react';
 import { ImageContext } from '../../contexts/ImageContext.tsx';
 
 const Zoom: React.FC = () => {
-  const { originalImage, zoomData, setZoomData } = useContext(ImageContext);
+  const { originalImage, zoomDataRef, setZoomData } = useContext(ImageContext);
 
   const handleZoomChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setZoomData({ ...zoomData, zoom: Number(event.target.value) });
+    setZoomData({ ...zoomDataRef.current, zoom: Number(event.target.value) });
   };
 
   // const handleResetZoom = () => {
   //   setZoom(1);
   // };
 
-  const { zoom } = zoomData;
+  const { zoom } = zoomDataRef.current;
 
   return (
     <div className={`mt-4 ${originalImage ? '' : 'opacity-50'}`}>

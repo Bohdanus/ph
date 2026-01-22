@@ -33,7 +33,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [historyLength, setHistoryLength] = useState<number>(0);
 
   const [crop, setCrop] = useState<CropToolType | null>(null);
-  const [zoomData, setZoomData] = useState<ZoomData>({ dx: 0, dy: 0, zoom: 1 });
+  const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });
   const [interactionMode, setInteractionMode] = useState<InteractionMode>('draw');
 
   const handleFileInputChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -151,6 +151,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   function startEmptyTool(toolName: ToolName) {
     if (toolName === 'transform') {
+      // the way crop is done ois ugly and buggy
       setInteractionMode('crop');
     } else if (toolName === 'draw') {
       setInteractionMode('draw');
@@ -213,15 +214,16 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     if (isEqual(args, defaultSettings[toolName])) {
       if (currentEmptyTool) {
-        console.log('currentEmptyTool is not null, but args are equal to defaultSettings');
+        throw 'currentEmptyTool is not null, but args are equal to defaultSettings';
         // should never happen, but just in case
-        return;
       }
       setCurrentEmptyTool(toolName === 'crop' ? 'transform' : toolName);
       const newHistory = history.slice(0, historyLength - 1);
       setHistory(newHistory);
       setHistoryLength(newHistory.length);
-      writeImageToCanvas(getPrevBitmap(), canvasRef.current);
+      const bmp = getPrevBitmap();
+      writeImageToCanvas(bmp, canvasRef.current);
+      setSize({ width: bmp.width, height: bmp.height });
       return;
     }
 
@@ -329,8 +331,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     crop,
     setCrop,
-    zoomData,
-    setZoomData,
+    zoomDataRef,
     interactionMode,
     setInteractionMode,
   };

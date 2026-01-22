@@ -1,27 +1,31 @@
 import { type PointerEvent, type RefObject, useRef } from 'react';
-import { type Point, type ToolArgs } from '../../contexts/ImageContext';
+import { type Point, type Size, type ToolArgs } from '../../contexts/ImageContext';
 import { type DrawToolType, setDrawTool } from '../../tools/draw.ts';
 import { savedLastSettings } from '../../tools/settings.ts';
+import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 
 interface DrawHandlerProps {
   addCanvasToHistory: (tool: string, args: ToolArgs) => void;
-  getCanvasCoordinates: (event: PointerEvent<HTMLCanvasElement>) => Point;
   canvasCtxRef: RefObject<CanvasRenderingContext2D | null>;
+  containerRef: RefObject<HTMLDivElement | null>;
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
+  size: Size;
 }
 
 export const useDrawHandler = ({
-  getCanvasCoordinates,
-  overlayCtxRef,
   addCanvasToHistory,
   canvasCtxRef,
+  containerRef,
+  overlayCtxRef,
   overlayRef,
+  size,
 }: DrawHandlerProps) => {
-  const isMouseDown = useRef(false);
   const pointsRef = useRef<Point[]>([]);
   const pendingPoints = useRef<Point[]>([]);
   const frameRequested = useRef(false);
+
+  const { onPointerDown, onPointerUp, getLocalCoords, isMouseDown } = usePointerPosition(containerRef, size);
 
   const draw = () => {
     const pp = pendingPoints.current;
@@ -51,14 +55,14 @@ export const useDrawHandler = ({
     pendingPoints.current = [];
   };
 
-  const handleMouseDown = (event: PointerEvent<HTMLCanvasElement>) => {
-    isMouseDown.current = true;
+  const handleMouseDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (!onPointerDown(event)) return;
 
     const alpha = (savedLastSettings.draw as DrawToolType).alpha;
     const ctx = alpha === 1 ? canvasCtxRef.current! : overlayCtxRef.current!;
     setDrawTool(ctx, savedLastSettings.draw as DrawToolType);
 
-    const coords = getCanvasCoordinates(event);
+    const coords = getLocalCoords(event);
     pointsRef.current = [];
     pendingPoints.current = [coords];
 
@@ -69,10 +73,10 @@ export const useDrawHandler = ({
     draw();
   };
 
-  const handleMouseMove = (event: PointerEvent<HTMLCanvasElement>) => {
+  const handleMouseMove = (event: PointerEvent<HTMLDivElement>) => {
     if (!isMouseDown.current) return;
 
-    const coords = getCanvasCoordinates(event);
+    const coords = getLocalCoords(event);
     pendingPoints.current.push(coords);
 
     if (!frameRequested.current) {
@@ -81,8 +85,8 @@ export const useDrawHandler = ({
     }
   };
 
-  const handleMouseUp = () => {
-    if (!isMouseDown.current) return;
+  const handleMouseUp = (event: PointerEvent<HTMLDivElement>) => {
+    if (!onPointerUp(event)) return;
     draw();
 
     canvasCtxRef.current!.drawImage(overlayRef.current!, 0, 0);
@@ -90,8 +94,6 @@ export const useDrawHandler = ({
 
     const args = savedLastSettings.draw as DrawToolType;
     addCanvasToHistory('draw', { ...args, points: pointsRef.current });
-
-    isMouseDown.current = false;
   };
 
   return {

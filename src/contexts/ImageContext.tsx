@@ -2,9 +2,19 @@ import { createContext, type RefObject } from 'react';
 import { toolsMap } from '../tools/toolsMap.ts';
 import type { CropToolType } from '../tools/crop.ts';
 
-export type Size = { width: number; height: number };
-export type ZoomData = { dx: number; dy: number; zoom: number };
 export type Point = { x: number; y: number };
+export type Size = { width: number; height: number };
+export type Rect = Point & Size;
+
+export type RectXY = {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  isRotated?: boolean;
+};
+
+export type ZoomData = { dx: number; dy: number; zoom: number };
 export type Delta = { dx: number; dy: number };
 
 export type ToolName = keyof typeof toolsMap;
@@ -47,8 +57,8 @@ interface ImageContextType {
   crop: CropToolType | null;
   setCrop: (args: CropToolType | null) => void;
 
-  zoomData: ZoomData;
-  setZoomData: (zoom: ZoomData) => void;
+  zoomDataRef: { current: ZoomData };
+  setZoomData: (data: ZoomData) => void;
 
   interactionMode: InteractionMode;
   setInteractionMode: (mode: InteractionMode) => void;
@@ -82,7 +92,7 @@ export const ImageContext = createContext<ImageContextType>({
   crop: null,
   setCrop: () => {},
 
-  zoomData: { dx: 0, dy: 0, zoom: 1 },
+  zoomDataRef: { current: { dx: 0, dy: 0, zoom: 1 } },
   setZoomData: () => {},
 
   interactionMode: 'zoom',
