@@ -17,6 +17,7 @@ const pointers = new Map<number, PointerEvent>();
 const Main = () => {
   const {
     canvasRef,
+    containerRef,
     originalImage,
     _setOriginalImage,
     addCanvasToHistory,
@@ -29,8 +30,7 @@ const Main = () => {
   } = useContext(ImageContext);
   const [isDragging, setIsDragging] = useState(false);
 
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const overlayRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
 
   const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const overlayCtxRef = useRef<CanvasRenderingContext2D | null>(null);

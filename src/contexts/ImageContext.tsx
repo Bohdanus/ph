@@ -31,6 +31,7 @@ export type HistoryItem = {
 };
 
 interface ImageContextType {
+  containerRef: RefObject<HTMLDivElement | null>;
   canvasRef: RefObject<HTMLCanvasElement | null>;
 
   fileName: string;
@@ -65,8 +66,8 @@ interface ImageContextType {
 }
 
 export const ImageContext = createContext<ImageContextType>({
-  // @ts-expect-error smth
-  canvasRef: null,
+  containerRef: { current: null },
+  canvasRef: { current: null },
 
   fileName: '',
   setFileName: () => {},

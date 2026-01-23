@@ -10,26 +10,36 @@ interface TransformToolbarProps {
 
 const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
   const { crop, setCrop, size, startEmptyTool } = useContext(ImageContext);
-  const originalCrop = useRef<RectXY | null>(null);
-  const originalWidth = useRef<Size | null>(null);
-  const originalAngle = useRef<number | null>(null);
+  const originalState = useRef<{
+    crop: RectXY | null;
+    size: Size | null;
+    rotate: number | null;
+  }>({
+    crop: null,
+    size: null,
+    rotate: null,
+  });
 
   const { rotate, mirrorH, mirrorV } = args;
 
   useEffect(() => {
     if (!crop || crop?.isRotated) return;
-    originalCrop.current = crop;
-    originalWidth.current = size;
-    originalAngle.current = rotate;
+    originalState.current = {
+      crop,
+      size,
+      rotate,
+    };
   }, [crop]);
 
   function compensateCropCorners({ rotate: newRotate, mirrorV: newMirrorV, mirrorH: newMirrorH }: TransformToolType) {
     if (!crop) return;
 
-    const prevWidth = originalWidth.current!.width;
-    const prevHeight = originalWidth.current!.height;
+    const state = originalState.current;
 
-    const angle = ((newRotate - originalAngle.current!) * Math.PI) / 180;
+    const prevWidth = state.size!.width;
+    const prevHeight = state.size!.height;
+
+    const angle = ((newRotate - state.rotate!) * Math.PI) / 180;
     const absCos = Math.abs(Math.cos(angle));
     const absSin = Math.abs(Math.sin(angle));
 
@@ -41,7 +51,7 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
     const scaleY = newHeight / prevHeight;
 
     // compensate resize after rotation corners
-    let { x1, y1, x2, y2 } = originalCrop.current!;
+    let { x1, y1, x2, y2 } = state.crop!;
 
     x1 *= scaleX;
     y1 *= scaleY;

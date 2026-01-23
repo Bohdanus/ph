@@ -49,7 +49,7 @@ export const useCropHandler = ({
     setCrop(null);
   }, [interactionMode]);
 
-  // when rotating crop changes
+  // when rotating, crop area changes, so redraw the crop mask
   useEffect(() => {
     if (interactionMode === 'crop') {
       lastCropRectUnsorted.current = crop;

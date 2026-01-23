@@ -19,6 +19,7 @@ import type { CropToolType } from '../tools/crop.ts';
 
 export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   // const isWorkingRef = useRef(false);
 
   const [fileName, setFileName] = useState('');
@@ -307,6 +308,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // NOSONAR: React Compiler handles memoization of this object
   const providerValue = {
     canvasRef,
+    containerRef,
 
     fileName,
     setFileName,
