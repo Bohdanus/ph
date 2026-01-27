@@ -2,12 +2,14 @@ import { useState, useContext } from 'react';
 import { ImageContext } from '../../contexts/ImageContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import HistoryControls from '../HistoryControls/HistoryControls';
+import NewImageDialog from '../NewImageDialog/NewImageDialog';
 
 const MobileMenu = () => {
-  const { startEmptyTool, openLoadImageDialog, openSaveImageDialog } = useContext(ImageContext);
+  const { startEmptyTool, openLoadImageDialog, openSaveImageDialog, createBlankImage } = useContext(ImageContext);
   const { theme, toggleTheme } = useTheme();
   const [openSection, setOpenSection] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [showNewDialog, setShowNewDialog] = useState(false);
 
   const toggleSection = (sectionId: string) => {
     setOpenSection(openSection === sectionId ? null : sectionId);
@@ -49,6 +51,11 @@ const MobileMenu = () => {
   const handleText = () => {
     startEmptyTool('text');
     closeMenu();
+  };
+
+  const handleNewClick = () => {
+    closeMenu();
+    setShowNewDialog(true);
   };
 
   const handleOpenClick = () => {
@@ -100,7 +107,7 @@ const MobileMenu = () => {
 
       {/* Backdrop */}
       {isMenuOpen && (
-        <div className="fixed inset-0 z-[1040] bg-black bg-opacity-50 transition-opacity" onClick={closeMenu} />
+        <div className="fixed inset-0 z-[1040] bg-black bg-opacity-25 transition-opacity" onClick={closeMenu} />
       )}
 
       {/* Offcanvas Sidebar */}
@@ -143,6 +150,14 @@ const MobileMenu = () => {
               </button>
               {openSection === 'file' && (
                 <ul className="m-0 list-none p-0 bg-transparent">
+                  <li className="border-0">
+                    <button
+                      className="block w-full px-8 py-3 text-left text-gray-800 no-underline hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                      onClick={handleNewClick}
+                    >
+                      New
+                    </button>
+                  </li>
                   <li className="border-0">
                     <button
                       className="block w-full px-8 py-3 text-left text-gray-800 no-underline hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
@@ -237,6 +252,7 @@ const MobileMenu = () => {
           <hr className="my-4 border-gray-300 dark:border-gray-700" />
         </div>
       </div>
+      {showNewDialog && <NewImageDialog onClose={() => setShowNewDialog(false)} onCreate={createBlankImage} />}
     </>
   );
 };

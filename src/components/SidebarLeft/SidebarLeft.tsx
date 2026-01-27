@@ -133,7 +133,7 @@ const SidebarLeft = () => {
         </ul>
 
         <hr className="my-3 border-gray-300 dark:border-gray-700" />
-        <Zoom />
+        {/*<Zoom />*/}
       </div>
     </aside>
   );

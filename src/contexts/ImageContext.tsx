@@ -62,7 +62,9 @@ interface ImageContextType {
 
   openLoadImageDialog: () => void;
   openSaveImageDialog: () => void;
+  createBlankImage: (width: number, height: number) => void;
   _setOriginalImage: (image?: File) => Promise<void>; // use with caution now and refactor later
+  isSaved: boolean;
 
   toolName: ToolName | null | undefined;
   toolArgs: ToolArgs | undefined;
@@ -94,7 +96,9 @@ export const ImageContext = createContext<ImageContextType>({
 
   openLoadImageDialog: () => {},
   openSaveImageDialog: () => {},
+  createBlankImage: () => {},
   _setOriginalImage: () => Promise.resolve(),
+  isSaved: false,
 
   toolName: null,
   toolArgs: {},

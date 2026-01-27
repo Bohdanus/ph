@@ -24,7 +24,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // const isWorkingRef = useRef(false);
 
   const [fileName, setFileName] = useState('');
-  const [originalImage, setOriginalImage] = useState<HTMLImageElement | null>(null);
+  const [originalImage, setOriginalImage] = useState<boolean>(false);
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
 
   const [showSaveDialog, setShowSaveDialog] = useState(false);
@@ -54,6 +54,24 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
+  async function handleNewImage(width: number, height: number) {
+    setOriginalImage(true);
+    setSize({ width, height });
+
+    setCurrentEmptyTool(getCurrentTool() ?? 'draw');
+
+    const bitmap = await createImageBitmap(canvasRef.current!);
+    setHistory([
+      {
+        tool: '',
+        args: {},
+        bitmap,
+        saved: true,
+      },
+    ]);
+    setHistoryLength(1);
+  }
+
   async function handleImageUpload(file?: File) {
     if (!file) {
       return;
@@ -61,25 +79,10 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     try {
       const img = await loadImageFile(file);
-      const canvas = canvasRef.current!;
-      writeImageToCanvas(img, canvas);
+      writeImageToCanvas(img, canvasRef.current!);
 
       setFileName(file.name);
-      setOriginalImage(img);
-      setSize({ width: img.width, height: img.height });
-
-      setCurrentEmptyTool(getCurrentTool() ?? 'draw');
-
-      const bitmap = await createImageBitmap(canvas); // or maybe from inage??
-      setHistory([
-        {
-          tool: '', // default tool shoul;d be draw todo
-          args: {},
-          bitmap,
-          saved: true,
-        },
-      ]);
-      setHistoryLength(1);
+      handleNewImage(img.width, img.height);
     } catch (error) {
       console.error('Failed to load image:', error);
     }
@@ -87,7 +90,8 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const openLoadImageDialog = () => {
     if (historyLength > 0 && !history[historyLength - 1].saved) {
-      if (!confirm('You have unsaved changes, do you want to save them?')) {
+      if (confirm('You have unsaved changes, do you want to save them?')) {
+        openSaveImageDialog();
         return;
       }
     }
@@ -100,6 +104,18 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     } else {
       alert('No image to save!');
     }
+  };
+
+  const createBlankImage = async (width: number, height: number) => {
+    const canvas = canvasRef.current!;
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, width, height);
+
+    setFileName('new-image.png');
+    handleNewImage(width, height);
   };
 
   const handleSave = (filename: string, format: string) => {
@@ -303,6 +319,13 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return historyLength < history.length;
   }
 
+  function isSaved() {
+    const len = historyLength;
+    if (len === 0) return true;
+
+    return history[len - 1].saved;
+  }
+
   // NOSONAR: React Compiler handles memoization of this object
   const providerValue = {
     canvasRef,
@@ -316,7 +339,9 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     openLoadImageDialog,
     openSaveImageDialog,
+    createBlankImage,
     _setOriginalImage: handleImageUpload,
+    isSaved: isSaved(),
 
     toolName: getCurrentTool(),
     toolArgs: getCurrentArgs(),

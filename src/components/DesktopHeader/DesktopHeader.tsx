@@ -2,11 +2,14 @@ import { useState, useEffect, useRef, useCallback, useContext } from 'react';
 import { ImageContext } from '../../contexts/ImageContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import HistoryControls from '../HistoryControls/HistoryControls';
+import NewImageDialog from '../NewImageDialog/NewImageDialog';
 
 const DesktopHeader = () => {
-  const { startEmptyTool, openLoadImageDialog, openSaveImageDialog } = useContext(ImageContext);
+  const { isSaved, startEmptyTool, openLoadImageDialog, openSaveImageDialog, createBlankImage } =
+    useContext(ImageContext);
   const { theme, toggleTheme } = useTheme();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [showNewDialog, setShowNewDialog] = useState(false);
 
   const fileMenuRef = useRef<HTMLLIElement>(null);
   const editMenuRef = useRef<HTMLLIElement>(null);
@@ -76,6 +79,20 @@ const DesktopHeader = () => {
           </button>
           {openMenu === 'file' && (
             <ul className="absolute left-0 top-full z-10 m-0 min-w-[160px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800">
+              <li>
+                <button
+                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                  type="button"
+                  onClick={() => {
+                    if (isSaved || confirm('All unsaved changes to current image will be lost. Continue?.')) {
+                      setShowNewDialog(true);
+                      setOpenMenu(null);
+                    }
+                  }}
+                >
+                  New
+                </button>
+              </li>
               <li>
                 <button
                   className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
@@ -190,6 +207,7 @@ const DesktopHeader = () => {
         </button>
         <HistoryControls />
       </div>
+      {showNewDialog && <NewImageDialog onClose={() => setShowNewDialog(false)} onCreate={createBlankImage} />}
     </header>
   );
 };
