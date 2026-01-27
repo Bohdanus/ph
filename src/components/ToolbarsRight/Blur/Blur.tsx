@@ -3,10 +3,11 @@ import { throttle } from 'lodash-es';
 import { THROTTLE_TIME } from '../../../constants';
 
 import UndoButton from '../../Common/UndoButton.tsx';
+import type { BlurToolType } from '../../../tools/blur.ts';
 
 interface BlurToolbarProps {
-  args: { radius?: number };
-  onChange: (args: { radius: number }) => void;
+  args: BlurToolType;
+  onChange: (args: BlurToolType) => void;
 }
 
 const Blur: React.FC<BlurToolbarProps> = ({ args, onChange }) => {

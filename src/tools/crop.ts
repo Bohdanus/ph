@@ -1,8 +1,8 @@
 import { applyFilter } from './applyFilter.ts';
-import type { RectXY } from '../contexts/ImageContext.tsx';
+import type { RectXYSorted } from '../contexts/ImageContext.tsx';
 import { trimRect } from '../contexts/util.ts';
 
-export type CropToolType = RectXY;
+export type CropToolType = RectXYSorted;
 
 export const crop =
   (canvas: HTMLCanvasElement, source: ImageBitmap) =>

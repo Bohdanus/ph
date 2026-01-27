@@ -1,15 +1,15 @@
 import React, { type ChangeEvent, useContext, useState } from 'react';
-import type { DrawToolNoPoints } from '../../../tools/draw.ts';
+import type { DrawToolNoPoints, PenType } from '../../../tools/draw.ts';
 import { savedDrawPerPen, savedLastSettings } from '../../../tools/settings.ts';
 import { ImageContext } from '../../../contexts/ImageContext.tsx';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
 
 const Draw: React.FC = () => {
-  const { containerRef, interactionMode, size: imageSize } = useContext(ImageContext);
+  const { containerRef, size: imageSize } = useContext(ImageContext);
   const [args, setArgs] = useState<DrawToolNoPoints>(savedLastSettings.draw as DrawToolNoPoints);
   const [brushScale, setBrushScale] = useState<number>(0);
 
-  usePointerPosition(containerRef, imageSize, ({ scale }) => setBrushScale(scale));
+  usePointerPosition({ ref: containerRef, imageSize, onResize: ({ scale }) => setBrushScale(scale) });
 
   const handleChange = (newArgs: DrawToolNoPoints) => {
     savedLastSettings.draw = newArgs;
@@ -32,16 +32,16 @@ const Draw: React.FC = () => {
     handleChange({ ...args, alpha });
   };
 
-  // const handlePenTypeChange = (event: ChangeEvent<HTMLSelectElement>) => {
-  //   const penType = event.target.value as PenType;
-  //   handleChange({ ...args, ...savedDrawPerPen[penType], penType });
-  // };
+  const handlePenTypeChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const penType = event.target.value as PenType;
+    handleChange({ ...args, ...savedDrawPerPen[penType], penType });
+  };
 
   const { alpha, color, size: brushSize, penType } = args;
   // const hasDefaultValues = points!.length === 0;
 
   return (
-    <div className="flex flex-col gap-4" style={{ opacity: interactionMode === 'draw' ? 1 : 0.5 }}>
+    <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-2">
         <label htmlFor="color-picker" className="text-sm font-medium text-gray-700 dark:text-gray-300">
           Color
@@ -52,8 +52,22 @@ const Draw: React.FC = () => {
           value={color}
           onChange={handleColorChange}
           className="h-10 w-full cursor-pointer rounded border border-gray-300 p-1 dark:border-gray-600 dark:bg-gray-700"
-          disabled={penType === 'eraser'}
         />
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <label htmlFor="pen-type" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+          Pen Type
+        </label>
+        <select
+          id="pen-type"
+          value={penType}
+          onChange={handlePenTypeChange}
+          className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+        >
+          <option value="pen">Pen</option>
+          <option value="spray">Spray</option>
+        </select>
       </div>
 
       <div className="flex flex-col gap-2">

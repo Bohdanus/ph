@@ -3,19 +3,27 @@ import { useResizeObserverRAF } from './useResizeObserver.ts';
 import type { Point, Rect, Size } from '../contexts/ImageContext.tsx';
 
 export type ContainDimensions = {
-  innerWidth: number;
+  innerWidth: number; // inner image
   innerHeight: number;
-  outerWidth: number;
+  outerWidth: number; // container
   outerHeight: number;
-  offsetX: number;
+  offsetX: number; // gap between image and container
   offsetY: number;
-  scale: number;
+  scale: number; // how much is image scaled to be contained
 };
 
 export function usePointerPosition<T extends HTMLElement>(
-  ref: RefObject<T | null>,
-  imageSize: Size,
-  onResize?: (rect: ContainDimensions) => void
+  {
+    enabled = true,
+    ref,
+    imageSize,
+    onResize,
+  }: {
+    enabled?: boolean;
+    ref: RefObject<T | null>;
+    imageSize: Size;
+    onResize?: (rect: ContainDimensions) => void;
+  }
   // {
   //   zoom = 1,
   //   panX = 0,
@@ -26,7 +34,7 @@ export function usePointerPosition<T extends HTMLElement>(
   const activePointerId = useRef<number | null>(null);
   const isMouseDown = useRef(false);
 
-  // position of the contained image within container
+  // coordinates of the contained image within container
   const dimensionsRef = useRef<ContainDimensions>({
     innerWidth: 0,
     innerHeight: 0,
@@ -38,6 +46,9 @@ export function usePointerPosition<T extends HTMLElement>(
   });
 
   const calculateDimensions = () => {
+    // todo move this fn down
+    if (!enabled) return;
+
     // prevent calculation before resizeObserver first run
     if (!containerRectRef.current) return;
 
@@ -68,15 +79,38 @@ export function usePointerPosition<T extends HTMLElement>(
   };
 
   useEffect(() => {
+    if (!enabled) {
+      // dropCurrentEvent();
+      return;
+    }
+
     calculateDimensions();
-  }, [imageSize]);
+  }, [enabled, imageSize]);
 
   useResizeObserverRAF(ref, (rect: Rect) => {
+    // For simplicity, leave resize observer working and calculating tiny things.
+    // The plus od doing this is the instant response having rect in place.
     containerRectRef.current = rect;
+    if (!enabled) return;
+
     calculateDimensions();
   });
 
+  function clearEvent(e: React.PointerEvent<T>) {
+    // Safe even if capture was already lost
+    try {
+      e.currentTarget.releasePointerCapture(activePointerId.current!);
+    } catch {
+      // ignore
+    }
+
+    isMouseDown.current = false;
+    activePointerId.current = null;
+  }
+
   const onPointerDown = (e: React.PointerEvent<T>) => {
+    if (e.button !== 0) return false; // Only handle left click
+
     // First pointer wins
     if (activePointerId.current !== null) return false;
 
@@ -93,14 +127,7 @@ export function usePointerPosition<T extends HTMLElement>(
       throw 'this should never happen, very interesting, todo kill this check';
     }
 
-    isMouseDown.current = false;
-    activePointerId.current = null;
-    // Safe even if capture was already lost
-    try {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    } catch {
-      // ignore
-    }
+    clearEvent(e);
 
     return true;
   };

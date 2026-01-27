@@ -1,18 +1,11 @@
-import {
-  type PointerEvent,
-  type PointerEventHandler,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from 'react';
+import { useContext, useLayoutEffect, useRef, useState } from 'react';
 import { ImageContext } from '../../contexts/ImageContext';
-import { useDrawHandler } from './useDrawHandler';
-import { useCropHandler } from './useCropHandler';
-import { useZoomHandler } from './useZoomHandler';
-
-const pointers = new Map<number, PointerEvent>();
+import { CropToolArea } from './CropToolArea.tsx';
+import { DrawToolArea } from './DrawToolArea.tsx';
+import { TextToolArea } from './TextToolArea.tsx';
+import { DummyToolArea } from './DummyToolArea.tsx';
+//
+// const pointers = new Map<number, PointerEvent>();
 
 const Main = () => {
   const {
@@ -20,12 +13,9 @@ const Main = () => {
     containerRef,
     originalImage,
     _setOriginalImage,
-    addCanvasToHistory,
     openLoadImageDialog,
-    crop,
-    setCrop,
+    toolName,
     size,
-    interactionMode,
     zoomDataRef,
   } = useContext(ImageContext);
   const [isDragging, setIsDragging] = useState(false);
@@ -35,9 +25,14 @@ const Main = () => {
   const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const overlayCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
-  const isDrawToolActive = interactionMode === 'draw';
-  const isCropToolActive = interactionMode === 'crop';
-  const isZoomToolActive = interactionMode === 'zoom';
+  let interactionMode = 'zoom';
+  if (toolName === 'crop') {
+    interactionMode = 'crop';
+  } else if (toolName === 'draw') {
+    interactionMode = 'draw';
+  } else if (toolName === 'text') {
+    interactionMode = 'text';
+  }
 
   // caches the context
   useLayoutEffect(() => {
@@ -63,11 +58,6 @@ const Main = () => {
     overlayRef.current.width = width;
     overlayRef.current.height = height;
   }, [size]);
-
-  // clean overlay when switching interaction modes
-  useEffect(() => {
-    overlayCtxRef.current?.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
-  }, [interactionMode]);
 
   const handleDragOver = (event: React.DragEvent) => {
     event.preventDefault();
@@ -111,82 +101,42 @@ const Main = () => {
   //   return { x, y };
   // };
 
-  const drawHandler = useDrawHandler({
-    addCanvasToHistory,
-    canvasCtxRef,
-    containerRef,
-    overlayCtxRef,
-    overlayRef,
-    size,
-  });
-
-  const cropHandler = useCropHandler({
-    containerRef,
-    crop,
-    interactionMode,
-    overlayCtxRef,
-    overlayRef,
-    setCrop,
-    size,
-  });
-
-  const zoomHandler = useZoomHandler();
-
-  const handleMouseDown: PointerEventHandler<HTMLDivElement> = (event) => {
-    if (event.button !== undefined && event.button !== 0 && event.button !== 1) return;
-    if (!originalImage) return;
-
-    if (isDrawToolActive) {
-      drawHandler.handleMouseDown(event);
-    } else if (isCropToolActive) {
-      cropHandler.handleMouseDown(event);
-    } else if (isZoomToolActive) {
-      zoomHandler.handlePointerDown(event);
-    }
-  };
-
-  const handleMouseUp: PointerEventHandler<HTMLDivElement> = (event) => {
-    if (!originalImage) return;
-
-    if (isDrawToolActive) {
-      drawHandler.handleMouseUp(event);
-    } else if (isCropToolActive) {
-      cropHandler.handleMouseUp(event);
-    } else if (isZoomToolActive) {
-      zoomHandler.handlePointerUp(event);
-    }
-  };
-
-  const handleMouseMove: PointerEventHandler<HTMLDivElement> = (event) => {
-    if (!originalImage) return;
-
-    if (isDrawToolActive) {
-      drawHandler.handleMouseMove(event);
-    } else if (isCropToolActive) {
-      cropHandler.handleMouseMove(event);
-    } else if (isZoomToolActive) {
-      zoomHandler.handlePointerMove(event);
-    }
-  };
-
   const renderContent = () => {
     const { dx, dy, zoom } = zoomDataRef.current;
+
+    const ComponentsMap = {
+      crop: CropToolArea,
+      draw: DrawToolArea,
+      text: TextToolArea,
+    };
+    const EventHandler = originalImage ? (ComponentsMap[interactionMode] ?? DummyToolArea) : DummyToolArea;
+
     return (
       <div
-        className="zoom-container absolute left-0 top-0 flex h-full w-full items-center justify-center"
-        style={{
-          cursor: isCropToolActive ? 'crosshair' : isZoomToolActive ? 'grab' : undefined,
-          display: originalImage ? 'flex' : 'none',
-          transform: `translate(${dx}px, ${dy}px) scale(${zoom})`,
-        }}
+        className="absolute left-0 top-0 flex h-full w-full items-center justify-center"
+        style={{ display: originalImage ? undefined : 'none' }}
       >
-        <canvas ref={canvasRef} className="max-h-full max-w-full object-contain" />
+        <div
+          className="zoom-container"
+          style={{
+            cursor: interactionMode === 'crop' ? 'crosshair' : interactionMode === 'text' ? 'text' : 'grab',
+            transform: `translate(${dx}px, ${dy}px) scale(${zoom})`,
+          }}
+        >
+          <canvas ref={canvasRef} className="max-h-full max-w-full object-contain" />
+        </div>
         <canvas
           ref={overlayRef}
           className="max-h-full max-w-full object-contain absolute"
           style={{
-            display: isDrawToolActive || isCropToolActive ? 'block' : 'none',
+            display: ['draw', 'crop', 'text'].includes(interactionMode) ? 'block' : 'none',
           }}
+        />
+        <EventHandler
+          className="absolute inset-0 h-full w-full"
+          canvasCtxRef={canvasCtxRef}
+          overlayCtxRef={overlayCtxRef}
+          overlayRef={overlayRef}
         />
       </div>
     );
@@ -203,10 +153,6 @@ const Main = () => {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      onPointerDown={handleMouseDown}
-      onPointerMove={handleMouseMove}
-      onPointerUp={handleMouseUp}
-      onWheel={zoomHandler.handleWheel}
     >
       {renderContent()}
       {!originalImage && (

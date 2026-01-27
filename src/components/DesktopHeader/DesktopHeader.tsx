@@ -36,6 +36,11 @@ const DesktopHeader = () => {
     setOpenMenu(null);
   };
 
+  const handleText = () => {
+    startEmptyTool('text');
+    setOpenMenu(null);
+  };
+
   const handleClickOutside = useCallback(
     (event: MouseEvent) => {
       if (openMenu === 'file' && fileMenuRef.current && !fileMenuRef.current.contains(event.target as Node)) {
@@ -151,6 +156,15 @@ const DesktopHeader = () => {
                   onClick={handleDraw}
                 >
                   Draw
+                </button>
+              </li>
+              <li>
+                <button
+                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                  type="button"
+                  onClick={handleText}
+                >
+                  Text
                 </button>
               </li>
             </ul>

@@ -3,7 +3,13 @@
 // use default initially
 
 import { type ToolArgs, type ToolName } from '../contexts/ImageContext.tsx';
-import type { PenType } from './draw.ts';
+import type { DrawToolType, PenType } from './draw.ts';
+import type { TextToolArgs } from './text.ts';
+import type { CropToolType } from './crop.ts';
+import type { TransformToolType } from './transform.ts';
+import type { ColorsToolType } from './colors.ts';
+import type { LevelsToolType } from './levels.ts';
+import type { BlurToolType } from './blur.ts';
 
 type DrawSettings = {
   alpha: number;
@@ -13,21 +19,29 @@ type DrawSettings = {
 
 export const savedDrawPerPen: Record<PenType, DrawSettings> = {
   pen: { alpha: 1, size: 10 },
-  marker: { alpha: 0.5, size: 20 },
-  highlighter: { alpha: 0.75, size: 35 },
-  vivid: { alpha: 0.9, size: 40 },
-  eraser: { alpha: 1, size: 100 },
+  spray: { alpha: 0.5, size: 100 },
 };
 
 export const defaultSettings: Record<ToolName, ToolArgs> = {
-  blur: { radius: 0 },
-  colors: { grayscale: 0, sepia: 0, saturation: 0 },
-  levels: { brightness: 0, contrast: 0 },
-  transform: { rotate: 0, mirrorH: 0, mirrorV: 0 },
-  crop: { x: 0, y: 0, width: 0, height: 0 },
-  draw: { ...savedDrawPerPen['pen'], color: '#000000', points: [], penType: 'pen' },
+  blur: { radius: 0 } as BlurToolType,
+  colors: { grayscale: 0, sepia: 0, saturation: 0 } as ColorsToolType,
+  levels: { brightness: 0, contrast: 0 } as LevelsToolType,
+  transform: { rotate: 0, mirrorH: false, mirrorV: false } as TransformToolType,
+  crop: { x1: 0, y1: 0, x2: 0, y2: 0 } as CropToolType,
+  draw: { ...savedDrawPerPen['pen'], color: '#000000', points: [], penType: 'pen' } as DrawToolType,
+  text: {
+    text: '',
+    fontSize: 64,
+    fontFamily: 'Arial',
+    color: '#000000',
+    rect: null,
+    align: 'left',
+    bold: false,
+    italic: false,
+  } as TextToolArgs,
 };
 
 export const savedLastSettings: Record<ToolName, ToolArgs> = {
   draw: defaultSettings.draw,
+  text: defaultSettings.text,
 };

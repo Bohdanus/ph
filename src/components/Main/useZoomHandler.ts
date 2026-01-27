@@ -20,7 +20,7 @@ export const useZoomHandler = () => {
     setZoomData({ ...zoomDataRef.current, zoom: clampedZoom });
   };
 
-  const handlePointerDown = (event: PointerEvent<HTMLElement>) => {
+  const handleMouseDown = (event: PointerEvent<HTMLElement>) => {
     activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
     if (activePointers.current.size === 1) {
@@ -36,7 +36,7 @@ export const useZoomHandler = () => {
     }
   };
 
-  const handlePointerMove = (event: PointerEvent<HTMLElement>) => {
+  const handleMouseMove = (event: PointerEvent<HTMLElement>) => {
     if (!activePointers.current.has(event.pointerId)) return;
     activePointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
@@ -69,7 +69,7 @@ export const useZoomHandler = () => {
     }
   };
 
-  const handlePointerUp = (event: PointerEvent<HTMLElement>) => {
+  const handleMouseUp = (event: PointerEvent<HTMLElement>) => {
     activePointers.current.delete(event.pointerId);
     if (activePointers.current.size < 2) {
       lastPinchDistance.current = null;
@@ -81,8 +81,8 @@ export const useZoomHandler = () => {
 
   return {
     handleWheel,
-    handlePointerDown,
-    handlePointerMove,
-    handlePointerUp,
+    handleMouseDown,
+    handleMouseMove,
+    handleMouseUp,
   };
 };

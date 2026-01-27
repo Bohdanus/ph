@@ -1,6 +1,11 @@
 import { createContext, type RefObject } from 'react';
 import { toolsMap } from '../tools/toolsMap.ts';
 import type { CropToolType } from '../tools/crop.ts';
+import type { DrawToolType } from '../tools/draw.ts';
+import type { TransformToolType } from '../tools/transform.ts';
+import type { ColorsToolType } from '../tools/colors.ts';
+import type { TextToolArgs } from '../tools/text.ts';
+import type { BlurToolType } from '../tools/blur.ts';
 
 export type Point = { x: number; y: number };
 export type Size = { width: number; height: number };
@@ -11,19 +16,34 @@ export type RectXY = {
   y1: number;
   x2: number;
   y2: number;
-  isRotated?: boolean;
 };
+
+export type RectXYSorted = RectXY;
 
 export type ZoomData = { dx: number; dy: number; zoom: number };
 export type Delta = { dx: number; dy: number };
 
 export type ToolName = keyof typeof toolsMap;
-export type ToolArgs = Record<string, string | number | Point[]>;
+export type ToolArgs =
+  | Record<string, string | number>
+  | BlurToolType
+  | DrawToolType
+  | ColorsToolType
+  | CropToolType
+  | TextToolArgs
+  | TransformToolType;
 
-export type InteractionMode = 'zoom' | 'draw' | 'crop';
+// export type InteractionMode = 'zoom' | 'draw' | 'crop' | 'text';
+
+export type UpdateHistoryFn = {
+  args: ToolArgs;
+  overrideCurrentTool?: ToolName /* used when crop */;
+  dryRun?: boolean;
+  forceNewItem?: boolean;
+};
 
 export type HistoryItem = {
-  saved?: boolean; // saved to disk
+  saved?: boolean; // exported to disk
   tool: ToolName;
   args: ToolArgs;
   bitmap?: ImageBitmap | null;
@@ -33,12 +53,12 @@ export type HistoryItem = {
 interface ImageContextType {
   containerRef: RefObject<HTMLDivElement | null>;
   canvasRef: RefObject<HTMLCanvasElement | null>;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
 
   fileName: string;
   setFileName: (name: string) => void;
   originalImage: HTMLImageElement | null;
   size: Size;
-  setSize: (size: Size) => void;
 
   openLoadImageDialog: () => void;
   openSaveImageDialog: () => void;
@@ -48,7 +68,7 @@ interface ImageContextType {
   toolArgs: ToolArgs | undefined;
   startEmptyTool: (tool: ToolName) => void;
   addCanvasToHistory: (toolName: ToolName, args: ToolArgs) => void;
-  updateLastHistoryItem: (args: ToolArgs, overrideCurrentTool?: ToolName /* used when crop */) => void;
+  updateLastHistoryItem: (params: UpdateHistoryFn) => void;
   undo: () => void;
   redo: () => void;
   canUndo: () => boolean;
@@ -59,21 +79,18 @@ interface ImageContextType {
   setCrop: (args: CropToolType | null) => void;
 
   zoomDataRef: { current: ZoomData };
-  setZoomData: (data: ZoomData) => void;
-
-  interactionMode: InteractionMode;
-  setInteractionMode: (mode: InteractionMode) => void;
+  // setZoomData: (data: ZoomData) => void;
 }
 
 export const ImageContext = createContext<ImageContextType>({
   containerRef: { current: null },
   canvasRef: { current: null },
+  textareaRef: { current: null },
 
   fileName: '',
   setFileName: () => {},
   originalImage: null,
   size: { width: 0, height: 0 },
-  setSize: () => {},
 
   openLoadImageDialog: () => {},
   openSaveImageDialog: () => {},
@@ -94,8 +111,5 @@ export const ImageContext = createContext<ImageContextType>({
   setCrop: () => {},
 
   zoomDataRef: { current: { dx: 0, dy: 0, zoom: 1 } },
-  setZoomData: () => {},
-
-  interactionMode: 'zoom',
-  setInteractionMode: () => {},
+  // setZoomData: () => {},
 });

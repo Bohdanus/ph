@@ -46,6 +46,11 @@ const MobileMenu = () => {
     closeMenu();
   };
 
+  const handleText = () => {
+    startEmptyTool('text');
+    closeMenu();
+  };
+
   const handleOpenClick = () => {
     closeMenu();
     openLoadImageDialog();
@@ -215,6 +220,14 @@ const MobileMenu = () => {
                       onClick={handleDraw}
                     >
                       Draw
+                    </button>
+                  </li>
+                  <li className="border-0">
+                    <button
+                      className="block w-full px-8 py-3 text-left text-gray-800 no-underline hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700"
+                      onClick={handleText}
+                    >
+                      Text
                     </button>
                   </li>
                 </ul>

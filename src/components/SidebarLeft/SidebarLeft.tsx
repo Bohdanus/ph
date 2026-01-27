@@ -1,15 +1,10 @@
-import { useContext, useEffect, useState } from 'react';
+import { useContext } from 'react';
 
-import { ImageContext, type InteractionMode } from '../../contexts/ImageContext.tsx';
+import { ImageContext } from '../../contexts/ImageContext.tsx';
 import Zoom from '../Zoom/Zoom.tsx';
 
 const SidebarLeft = () => {
-  const { originalImage, startEmptyTool, toolName, interactionMode, setInteractionMode } = useContext(ImageContext);
-  const [prevInteractionMode, setPrevInteractionMode] = useState<InteractionMode>(interactionMode);
-
-  useEffect(() => {
-    setPrevInteractionMode(interactionMode);
-  }, [toolName]);
+  const { originalImage, startEmptyTool, toolName } = useContext(ImageContext);
 
   const handleColors = () => {
     startEmptyTool('colors');
@@ -27,8 +22,16 @@ const SidebarLeft = () => {
     startEmptyTool('transform');
   };
 
+  const handleCrop = () => {
+    startEmptyTool('crop');
+  };
+
   const handleDraw = () => {
     startEmptyTool('draw');
+  };
+
+  const handleText = () => {
+    startEmptyTool('text');
   };
 
   return (
@@ -78,14 +81,27 @@ const SidebarLeft = () => {
           <li className="mb-1">
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'transform' || toolName === 'crop'
+                toolName === 'transform'
                   ? 'bg-blue-600 text-white'
                   : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!originalImage}
               onClick={handleTransform}
             >
-              Crop & Transform
+              Transform
+            </button>
+          </li>
+          <li className="mb-1">
+            <button
+              className={`w-full rounded px-3 py-2 text-left transition-colors ${
+                toolName === 'crop'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
+              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
+              disabled={!originalImage}
+              onClick={handleCrop}
+            >
+              Crop
             </button>
           </li>
           <li className="mb-1">
@@ -99,6 +115,19 @@ const SidebarLeft = () => {
               onClick={handleDraw}
             >
               Draw
+            </button>
+          </li>
+          <li className="mb-1">
+            <button
+              className={`w-full rounded px-3 py-2 text-left transition-colors ${
+                toolName === 'text'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
+              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
+              disabled={!originalImage}
+              onClick={handleText}
+            >
+              Text
             </button>
           </li>
         </ul>

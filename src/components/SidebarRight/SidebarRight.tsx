@@ -21,7 +21,16 @@ const SidebarRight = () => {
       <div className="p-3">
         <ul className="flex flex-col list-none p-0">
           <li className="mb-2">
-            <Component args={args} onChange={updateLastHistoryItem} />
+            <Component
+              args={args}
+              onChange={(newArgsOrParams: any) => {
+                if ('args' in newArgsOrParams) {
+                  updateLastHistoryItem(newArgsOrParams);
+                } else {
+                  updateLastHistoryItem({ args: newArgsOrParams });
+                }
+              }}
+            />
           </li>
         </ul>
       </div>
