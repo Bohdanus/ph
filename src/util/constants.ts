@@ -1,5 +1,7 @@
 export const HANDLE_SIZE = 12;
 
+export const TEXT_PADDING = 5;
+
 export const CURSOR_MAP = {
   top: 'ns-resize',
   'top-right': 'nesw-resize',

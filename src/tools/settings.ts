@@ -41,6 +41,7 @@ export const defaultSettings: Record<ToolName, ToolArgs> = {
   text: {
     text: '',
     fontSize: 64,
+    lineHeight: 1.1,
     fontFamily: 'Arial',
     color: '#000000',
     rect: null,

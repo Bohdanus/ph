@@ -1,6 +1,7 @@
 import React, { type ChangeEvent, useContext } from 'react';
 import type { TextToolArgs } from '../../../tools/text.ts';
-import { ImageContext, type UpdateHistoryFn } from '../../../contexts/ImageContext.tsx';
+import { ImageContext, type RectXY, type UpdateHistoryFn } from '../../../contexts/ImageContext.tsx';
+import { TEXT_PADDING } from '../../../util/constants.ts';
 
 interface TextToolbarProps {
   args: TextToolArgs;
@@ -8,16 +9,42 @@ interface TextToolbarProps {
 }
 
 const Text: React.FC<TextToolbarProps> = ({ args, onChange }) => {
-  const { textareaRef } = useContext(ImageContext);
+  const { size: imageSize, textareaRef } = useContext(ImageContext);
+  const { text, fontSize, lineHeight, rect, bold, italic, fontFamily, color, align } = args;
+
+  const calculateNewRect = (text: string, fontSize: number, lineHeight: number, rect: RectXY | null) => {
+    if (!rect) return null;
+
+    const lines = text.split('\n');
+    const lineCount = lines.length;
+    const requiredHeight = lineCount * fontSize * lineHeight + TEXT_PADDING * 2;
+
+    const currentHeight = rect.y2 - rect.y1;
+    if (requiredHeight > currentHeight) {
+      // Limit to image height
+      const cappedY2 = Math.min(rect.y1 + requiredHeight, imageSize.height);
+      return { ...rect, y2: cappedY2 };
+    }
+
+    return rect;
+  };
 
   const handleTextChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
-    const text = event.target.value;
-    onChange({ args: { ...args, text }, dryRun: true });
+    const textValue = event.target.value;
+    const newRect = calculateNewRect(textValue, fontSize, lineHeight, rect);
+    onChange({ args: { ...args, text: textValue, rect: newRect }, dryRun: true });
   };
 
   const handleFontSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const fontSize = Number(event.target.value);
-    onChange({ args: { ...args, fontSize }, dryRun: true });
+    const newFontSize = Number(event.target.value);
+    const newRect = calculateNewRect(text, newFontSize, lineHeight, rect);
+    onChange({ args: { ...args, fontSize: newFontSize, rect: newRect }, dryRun: true });
+  };
+
+  const handleLineHeightChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const newLineHeight = Number(event.target.value);
+    const newRect = calculateNewRect(text, fontSize, newLineHeight, rect);
+    onChange({ args: { ...args, lineHeight: newLineHeight, rect: newRect }, dryRun: true });
   };
 
   const handleFontFamilyChange = (event: ChangeEvent<HTMLSelectElement>) => {
@@ -36,18 +63,16 @@ const Text: React.FC<TextToolbarProps> = ({ args, onChange }) => {
   };
 
   const toggleBold = () => {
-    onChange({ args: { ...args, bold: !args.bold }, dryRun: true });
+    onChange({ args: { ...args, bold: !bold }, dryRun: true });
   };
 
   const toggleItalic = () => {
-    onChange({ args: { ...args, italic: !args.italic }, dryRun: true });
+    onChange({ args: { ...args, italic: !italic }, dryRun: true });
   };
 
   const applyText = () => {
     onChange({ args: { ...args } });
   };
-
-  const { text, fontSize, fontFamily, color, align, bold, italic, rect } = args;
 
   return (
     <div className="flex flex-col gap-4">
@@ -55,9 +80,7 @@ const Text: React.FC<TextToolbarProps> = ({ args, onChange }) => {
         <p className="mb-1 font-semibold">How to use:</p>
         <ul className="ml-4 list-disc space-y-1">
           <li>Click on the canvas to set text position</li>
-          <li>Start typing (you can also use text input below)</li>
           <li>Press Enter for new line</li>
-          <li>Press Escape to cancel</li>
         </ul>
       </div>
 
@@ -91,6 +114,26 @@ const Text: React.FC<TextToolbarProps> = ({ args, onChange }) => {
           max="500"
           value={fontSize}
           onChange={handleFontSizeChange}
+          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+        />
+      </div>
+
+      <div className="flex flex-col gap-2">
+        <label
+          htmlFor="line-height-slider"
+          className="flex justify-between text-sm font-medium text-gray-700 dark:text-gray-300"
+        >
+          Line Height
+          <span className="font-bold text-gray-900 dark:text-gray-200">{lineHeight.toFixed(1)}</span>
+        </label>
+        <input
+          id="line-height-slider"
+          type="range"
+          min="0.5"
+          max="2.25"
+          step="0.05"
+          value={lineHeight}
+          onChange={handleLineHeightChange}
           className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>

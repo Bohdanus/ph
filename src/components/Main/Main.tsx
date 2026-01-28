@@ -4,6 +4,7 @@ import { CropToolArea } from './CropToolArea.tsx';
 import { DrawToolArea } from './DrawToolArea.tsx';
 import { TextToolArea } from './TextToolArea.tsx';
 import { DummyToolArea } from './DummyToolArea.tsx';
+import NewImageDialog from '../NewImageDialog/NewImageDialog.tsx';
 //
 // const pointers = new Map<number, PointerEvent>();
 
@@ -17,8 +18,10 @@ const Main = () => {
     toolName,
     size,
     zoomDataRef,
+    createBlankImage,
   } = useContext(ImageContext);
   const [isDragging, setIsDragging] = useState(false);
+  const [showNewDialog, setShowNewDialog] = useState(false);
 
   const overlayRef = useRef<HTMLCanvasElement>(null);
 
@@ -156,13 +159,22 @@ const Main = () => {
     >
       {renderContent()}
       {!originalImage && (
-        <button
-          className="rounded bg-blue-600 px-6 py-3 text-xl text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          onClick={openLoadImageDialog}
-        >
-          Open File
-        </button>
+        <div className="flex flex-col items-center gap-4">
+          <button
+            className="rounded bg-blue-600 px-6 py-3 text-xl text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            onClick={openLoadImageDialog}
+          >
+            Open File
+          </button>
+          <button
+            className="text-blue-600 hover:underline dark:text-blue-400 focus:outline-none"
+            onClick={() => setShowNewDialog(true)}
+          >
+            blank image
+          </button>
+        </div>
       )}
+      {showNewDialog && <NewImageDialog onClose={() => setShowNewDialog(false)} onCreate={createBlankImage} />}
     </main>
   );
 };
