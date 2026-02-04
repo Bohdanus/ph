@@ -221,8 +221,8 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     if (isEqual(args, defaultSettings[toolName])) {
       if (currentEmptyTool) {
-        throw 'currentEmptyTool is not null, but args are equal to defaultSettings';
-        // should never happen, but just in case
+        console.log('currentEmptyTool is not null, but args are equal to defaultSettings');
+        return;
       }
       setCurrentEmptyTool(toolName);
       const newHistory = history.slice(0, historyLength - 1);
@@ -323,7 +323,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const len = historyLength;
     if (len === 0) return true;
 
-    return history[len - 1].saved;
+    return history[len - 1].saved!;
   }
 
   // NOSONAR: React Compiler handles memoization of this object

@@ -9,10 +9,10 @@ type DummyToolAreaProps = {
   overlayRef: RefObject<HTMLCanvasElement | null>;
 };
 
-export function DummyToolArea({ ...rest }: DummyToolAreaProps) {
+export function DummyToolArea({ className }: DummyToolAreaProps) {
   return (
     <div
-      {...rest}
+      className={className}
       style={{
         display: 'none',
       }}

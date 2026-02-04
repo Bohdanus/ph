@@ -71,7 +71,7 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
                 Cancel
               </button>
               <button
-                className="rounded bg-blue-600 px-4 py-2 font-bold text-white hover:bg-blue-700 focus:outline-none"
+                className="rounded bg-blue-600 px-10 py-2 font-bold text-white hover:bg-blue-700 focus:outline-none"
                 type="submit"
               >
                 OK

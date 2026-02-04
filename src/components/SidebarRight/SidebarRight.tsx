@@ -22,6 +22,7 @@ const SidebarRight = () => {
         <ul className="flex flex-col list-none p-0">
           <li className="mb-2">
             <Component
+              key={toolName}
               args={args}
               onChange={(newArgsOrParams: any) => {
                 if ('args' in newArgsOrParams) {

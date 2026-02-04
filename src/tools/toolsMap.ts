@@ -12,9 +12,11 @@ import Blur from '../components/ToolbarsRight/Blur/Blur.tsx';
 import Levels from '../components/ToolbarsRight/Levels/Levels.tsx';
 import Transform from '../components/ToolbarsRight/Transform/Transform.tsx';
 import Draw from '../components/ToolbarsRight/Draw/Draw.tsx';
+import Shapes from '../components/ToolbarsRight/Figures/Shapes.tsx';
 import Text from '../components/ToolbarsRight/Text/Text.tsx';
 import type { ToolbarRightComponent } from '../components/ToolbarsRight/types.ts';
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
+import { shape } from './shape.ts';
 
 type ToolsMap = Record<
   string,
@@ -78,6 +80,14 @@ export const toolsMap: ToolsMap = {
     imageProcessor: draw,
     defaultSettings: defaultSettings.draw,
     toolboxComponent: Draw,
+  },
+  shape: {
+    saveLastSettings: true,
+    icon: 'shape',
+    // @ts-expect-error args
+    imageProcessor: shape,
+    defaultSettings: defaultSettings.shape,
+    toolboxComponent: Shapes,
   },
   text: {
     saveLastSettings: true,

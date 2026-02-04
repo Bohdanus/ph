@@ -1,15 +1,16 @@
 import { type RefObject, useContext, useEffect } from 'react';
 import { ImageContext, type RectXYSorted } from '../../contexts/ImageContext';
 import { useRect } from '../../hooks/useRect.ts';
-import { trimRect } from '../../contexts/util.ts';
+import { trimRect } from '../../util/rect.ts';
 
 type cropToolAreaProps = {
+  className?: string;
   canvasCtxRef: RefObject<CanvasRenderingContext2D | null>;
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
 };
 
-export const CropToolArea = ({ overlayCtxRef, overlayRef, ...rest }: cropToolAreaProps) => {
+export const CropToolArea = ({ className, overlayCtxRef, overlayRef }: cropToolAreaProps) => {
   const { containerRef, crop, toolName, setCrop, size } = useContext(ImageContext);
 
   // cleanup when leaving the tool, this is particularly needed for poor history, I mean double interaction with transform!
@@ -35,5 +36,5 @@ export const CropToolArea = ({ overlayCtxRef, overlayRef, ...rest }: cropToolAre
     },
   });
 
-  return <div {...rest} {...pointerEvents}></div>;
+  return <div className={`${className} cursor-crop`} {...pointerEvents}></div>;
 };

@@ -1,7 +1,7 @@
 import { type PointerEvent, type RefObject, useEffect, useRef } from 'react';
 import type { Point, RectXY, RectXYSorted, Size } from '../contexts/ImageContext.tsx';
 import { usePointerPosition } from './usePointerPosition.ts';
-import { getCanvasSize, sortRect, trimRect } from '../contexts/util.ts';
+import { getCanvasSize, sortRect, trimRect } from '../util/rect.ts';
 import { CURSOR_MAP, HANDLE_SIZE } from '../util/constants.ts';
 
 type UseRectProps = {
@@ -261,7 +261,7 @@ export function useRect({
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
     if (!onPointerUp(event)) return;
 
-    overlayRef.current!.style.cursor = '';
+    (event.target as HTMLDivElement).style.cursor = '';
 
     const point = getLocalCoords(event);
     const sortedRect = sortRect(calculateCropRect(point));

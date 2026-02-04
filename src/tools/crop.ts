@@ -1,6 +1,6 @@
 import { applyFilter } from './applyFilter.ts';
 import type { RectXYSorted } from '../contexts/ImageContext.tsx';
-import { trimRect } from '../contexts/util.ts';
+import { trimRect } from '../util/rect.ts';
 
 export type CropToolType = RectXYSorted;
 

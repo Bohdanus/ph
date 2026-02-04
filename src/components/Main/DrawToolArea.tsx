@@ -3,15 +3,17 @@ import { ImageContext, type Point } from '../../contexts/ImageContext';
 import { type DrawToolType, setDrawTool } from '../../tools/draw.ts';
 import { savedLastSettings } from '../../tools/settings.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
-import { hexToRgb } from '../../contexts/util.ts';
+import { hexToRgb } from '../../util/rect.ts';
+import { bezierSmoothedLine } from '../../util/draw.ts';
 
 type DrawHandlerProps = {
+  className?: string;
   canvasCtxRef: RefObject<CanvasRenderingContext2D | null>;
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
 };
 
-export const DrawToolArea = ({ canvasCtxRef, overlayCtxRef, overlayRef, ...rest }: DrawHandlerProps) => {
+export const DrawToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayRef }: DrawHandlerProps) => {
   const { addCanvasToHistory, containerRef, size } = useContext(ImageContext);
   const pointsRef = useRef<Point[]>([]);
   const pendingPoints = useRef<Point[]>([]);
@@ -30,18 +32,14 @@ export const DrawToolArea = ({ canvasCtxRef, overlayCtxRef, overlayRef, ...rest 
     const ctx = alpha === 1 ? canvasCtxRef.current! : overlayCtxRef.current!;
 
     if (alpha === 1) {
-      for (let i = 0; i < pp.length; i++) {
-        ctx.lineTo(pp[i].x, pp[i].y);
-      }
+      bezierSmoothedLine(ctx, pp);
       ctx.stroke();
     } else {
       ctx.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
       ctx.beginPath();
       const points = pointsRef.current;
       ctx.moveTo(points[0].x, points[0].y);
-      for (let i = 0; i < points.length; i++) {
-        ctx.lineTo(points[i].x, points[i].y);
-      }
+      bezierSmoothedLine(ctx, points);
       ctx.stroke();
     }
   };
@@ -56,7 +54,7 @@ export const DrawToolArea = ({ canvasCtxRef, overlayCtxRef, overlayRef, ...rest 
     const color = hexToRgb(settings.color);
     const colorStart = `rgba(${color}, ${alpha / 4})`;
     const colorStop = `rgba(${color}, 0)`;
-    const radius = settings.size;
+    const radius = settings.lineWidth;
     const ctx = canvasCtxRef.current!;
 
     for (let i = 0; i < pp.length; i++) {
@@ -76,7 +74,7 @@ export const DrawToolArea = ({ canvasCtxRef, overlayCtxRef, overlayRef, ...rest 
     // if (pendingPoints.current.length === 0) return;
 
     const penType = (savedLastSettings.draw as DrawToolType).penType;
-    if (penType === 'pen') {
+    if (penType === 'pen' || penType === 'pen-dashed') {
       drawPen();
     } else if (penType === 'spray') {
       drawSpray();
@@ -134,7 +132,7 @@ export const DrawToolArea = ({ canvasCtxRef, overlayCtxRef, overlayRef, ...rest 
 
   return (
     <div
-      {...rest}
+      className={`${className} cursor-draw`}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}

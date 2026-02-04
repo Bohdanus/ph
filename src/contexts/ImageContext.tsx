@@ -6,6 +6,7 @@ import type { TransformToolType } from '../tools/transform.ts';
 import type { ColorsToolType } from '../tools/colors.ts';
 import type { TextToolArgs } from '../tools/text.ts';
 import type { BlurToolType } from '../tools/blur.ts';
+import type { ShapeToolType } from '../tools/shape.ts';
 
 export type Point = { x: number; y: number };
 export type Size = { width: number; height: number };
@@ -31,7 +32,8 @@ export type ToolArgs =
   | ColorsToolType
   | CropToolType
   | TextToolArgs
-  | TransformToolType;
+  | TransformToolType
+  | ShapeToolType;
 
 // export type InteractionMode = 'zoom' | 'draw' | 'crop' | 'text';
 
@@ -57,7 +59,7 @@ interface ImageContextType {
 
   fileName: string;
   setFileName: (name: string) => void;
-  originalImage: HTMLImageElement | null;
+  originalImage: boolean; // todo change ther name = it tells us if the image is loaded or not
   size: Size;
 
   openLoadImageDialog: () => void;
@@ -91,7 +93,7 @@ export const ImageContext = createContext<ImageContextType>({
 
   fileName: '',
   setFileName: () => {},
-  originalImage: null,
+  originalImage: false,
   size: { width: 0, height: 0 },
 
   openLoadImageDialog: () => {},

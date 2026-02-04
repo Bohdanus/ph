@@ -10,16 +10,30 @@ import type { TransformToolType } from './transform.ts';
 import type { ColorsToolType } from './colors.ts';
 import type { LevelsToolType } from './levels.ts';
 import type { BlurToolType } from './blur.ts';
+import type { FigureType, ShapeToolType } from './shape.ts';
 
-type DrawSettings = {
-  alpha: number;
-  color?: string;
-  size: number;
-};
+// type DrawSettings = { // todo use Omit
+//   alpha: number;
+//   color?: string;
+//   lineWidth: number;
+//   lineDash?: null | number[];
+// };
+
+type DrawSettings = Omit<DrawToolType, 'color' | 'points' | 'penType'>;
+type ShapeSettings = Omit<ShapeToolType, 'lineColor' | 'fillColor' | 'start' | 'end' | 'figure'>;
 
 export const savedDrawPerPen: Record<PenType, DrawSettings> = {
-  pen: { alpha: 1, size: 10 },
-  spray: { alpha: 0.5, size: 100 },
+  pen: { alpha: 0.9, lineWidth: 10 },
+  'pen-dashed': { alpha: 0.9, lineWidth: 10, lineDash: [5, 30] },
+  spray: { alpha: 0.5, lineWidth: 100 },
+};
+
+export const savedArgsPerFigure: Record<FigureType, ShapeSettings> = {
+  line: { alpha: 1, lineWidth: 5 },
+  circle: { alpha: 1, lineWidth: 5 },
+  rectangle: { alpha: 1, lineWidth: 5 },
+  square: { alpha: 1, lineWidth: 5 },
+  oval: { alpha: 1, lineWidth: 5 },
 };
 
 export const defaultSettings: Record<ToolName, ToolArgs> = {
@@ -38,6 +52,11 @@ export const defaultSettings: Record<ToolName, ToolArgs> = {
   } as TransformToolType,
   crop: { x1: 0, y1: 0, x2: 0, y2: 0 } as CropToolType,
   draw: { ...savedDrawPerPen['pen'], color: '#000000', points: [], penType: 'pen' } as DrawToolType,
+  shape: {
+    ...savedArgsPerFigure['rectangle'],
+    lineColor: '#000000',
+    fillColor: null,
+  } as ShapeToolType,
   text: {
     text: '',
     fontSize: 64,
@@ -53,5 +72,6 @@ export const defaultSettings: Record<ToolName, ToolArgs> = {
 
 export const savedLastSettings: Record<ToolName, ToolArgs> = {
   draw: defaultSettings.draw,
+  shape: defaultSettings.shape,
   text: defaultSettings.text,
 };

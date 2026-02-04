@@ -2,15 +2,16 @@ import { type RefObject, useContext, useEffect } from 'react';
 import { ImageContext, type RectXY, type RectXYSorted } from '../../contexts/ImageContext';
 import { renderText, type TextToolArgs } from '../../tools/text.ts';
 import { useRect } from '../../hooks/useRect.ts';
-import { trimRect } from '../../contexts/util.ts';
+import { calculateNewRect } from '../../util/rect.ts';
 
 type TextToolAreaProps = {
+  className?: string;
   canvasCtxRef: RefObject<CanvasRenderingContext2D | null>;
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
 };
 
-export const TextToolArea = ({ overlayCtxRef, overlayRef, ...rest }: TextToolAreaProps) => {
+export const TextToolArea = ({ className, overlayCtxRef, overlayRef }: TextToolAreaProps) => {
   const { containerRef, textareaRef, toolArgs, size: imageSize, updateLastHistoryItem } = useContext(ImageContext);
   const args = toolArgs as TextToolArgs;
 
@@ -31,28 +32,9 @@ export const TextToolArea = ({ overlayCtxRef, overlayRef, ...rest }: TextToolAre
       handleUpdate(rect);
     },
     onChangeEnd: (rect: RectXYSorted) => {
-      const { x, y, width, height } = trimRect(rect, imageSize);
+      const newRect = calculateNewRect({ ...args, rect }, overlayRef, imageSize);
 
-      const { fontSize } = args;
-      const newWidth = Math.max(width, 3 * fontSize);
-      const newHeight = Math.max(height, 1.3 * fontSize);
-
-      const newRect: RectXY = {
-        x1: x,
-        y1: y,
-        x2: x + newWidth,
-        y2: y + newHeight,
-      };
-
-      if (newRect.x2 > imageSize.width) {
-        newRect.x1 -= newRect.x2 - imageSize.width;
-      }
-      if (newRect.y2 > imageSize.height) {
-        newRect.y1 -= newRect.y2 - imageSize.height;
-      }
-
-      const newArgs = { ...args, rect: newRect };
-      updateLastHistoryItem({ args: newArgs, dryRun: true });
+      updateLastHistoryItem({ args: { ...args, rect: newRect }, dryRun: true });
 
       textareaRef.current!.focus();
     },
@@ -149,5 +131,5 @@ export const TextToolArea = ({ overlayCtxRef, overlayRef, ...rest }: TextToolAre
   //   updateLastHistoryItem({ args: newArgs });
   // }
 
-  return <div {...rest} {...pointerEvents} />;
+  return <div className={`${className} cursor-text`} {...pointerEvents} />;
 };

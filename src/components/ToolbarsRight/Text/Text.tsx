@@ -1,7 +1,8 @@
-import React, { type ChangeEvent, useContext } from 'react';
-import type { TextToolArgs } from '../../../tools/text.ts';
-import { ImageContext, type RectXY, type UpdateHistoryFn } from '../../../contexts/ImageContext.tsx';
-import { TEXT_PADDING } from '../../../util/constants.ts';
+import React, { type ChangeEvent, useContext, useEffect } from 'react';
+import { type TextToolArgs } from '../../../tools/text.ts';
+import { ImageContext, type UpdateHistoryFn } from '../../../contexts/ImageContext.tsx';
+import { savedLastSettings } from '../../../tools/settings.ts';
+import { calculateNewRect } from '../../../util/rect.ts';
 
 interface TextToolbarProps {
   args: TextToolArgs;
@@ -9,70 +10,83 @@ interface TextToolbarProps {
 }
 
 const Text: React.FC<TextToolbarProps> = ({ args, onChange }) => {
-  const { size: imageSize, textareaRef } = useContext(ImageContext);
+  const { size: imageSize, textareaRef, canvasRef } = useContext(ImageContext);
   const { text, fontSize, lineHeight, rect, bold, italic, fontFamily, color, align } = args;
-
-  const calculateNewRect = (text: string, fontSize: number, lineHeight: number, rect: RectXY | null) => {
-    if (!rect) return null;
-
-    const lines = text.split('\n');
-    const lineCount = lines.length;
-    const requiredHeight = lineCount * fontSize * lineHeight + TEXT_PADDING * 2;
-
-    const currentHeight = rect.y2 - rect.y1;
-    if (requiredHeight > currentHeight) {
-      // Limit to image height
-      const cappedY2 = Math.min(rect.y1 + requiredHeight, imageSize.height);
-      return { ...rect, y2: cappedY2 };
-    }
-
-    return rect;
-  };
 
   const handleTextChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const textValue = event.target.value;
-    const newRect = calculateNewRect(textValue, fontSize, lineHeight, rect);
-    onChange({ args: { ...args, text: textValue, rect: newRect }, dryRun: true });
+    const newArgs = { ...args, text: textValue };
+    const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
+    onChange({ args: { ...newArgs, rect: newRect }, dryRun: true });
   };
 
   const handleFontSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const newFontSize = Number(event.target.value);
-    const newRect = calculateNewRect(text, newFontSize, lineHeight, rect);
-    onChange({ args: { ...args, fontSize: newFontSize, rect: newRect }, dryRun: true });
+    const fontSize = Number(event.target.value);
+    const newArgs = { ...args, fontSize };
+    savedLastSettings.text = newArgs;
+    const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
+    onChange({ args: { ...newArgs, rect: newRect }, dryRun: true });
   };
 
   const handleLineHeightChange = (event: ChangeEvent<HTMLInputElement>) => {
     const newLineHeight = Number(event.target.value);
-    const newRect = calculateNewRect(text, fontSize, newLineHeight, rect);
-    onChange({ args: { ...args, lineHeight: newLineHeight, rect: newRect }, dryRun: true });
+    const newArgs = { ...args, lineHeight: newLineHeight };
+    savedLastSettings.text = newArgs;
+    const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
+    onChange({ args: { ...newArgs, rect: newRect }, dryRun: true });
   };
 
   const handleFontFamilyChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const fontFamily = event.target.value;
-    onChange({ args: { ...args, fontFamily }, dryRun: true });
+    const newArgs = { ...args, fontFamily };
+    savedLastSettings.text = newArgs;
+    const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
+    onChange({ args: { ...newArgs, rect: newRect }, dryRun: true });
   };
 
   const handleColorChange = (event: ChangeEvent<HTMLInputElement>) => {
     const color = event.target.value;
-    onChange({ args: { ...args, color }, dryRun: true });
+    const newArgs = { ...args, color };
+    savedLastSettings.text = newArgs;
+    onChange({ args: newArgs, dryRun: true });
   };
 
   const handleAlignChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const align = event.target.value as 'left' | 'center' | 'right';
-    onChange({ args: { ...args, align }, dryRun: true });
+    const newArgs = { ...args, align };
+    savedLastSettings.text = newArgs;
+    onChange({ args: newArgs, dryRun: true });
   };
 
   const toggleBold = () => {
-    onChange({ args: { ...args, bold: !bold }, dryRun: true });
+    const newArgs = { ...args, bold: !bold };
+    savedLastSettings.text = newArgs;
+    const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
+    onChange({ args: { ...newArgs, rect: newRect }, dryRun: true });
   };
 
   const toggleItalic = () => {
-    onChange({ args: { ...args, italic: !italic }, dryRun: true });
+    const newArgs = { ...args, italic: !italic };
+    savedLastSettings.text = newArgs;
+    const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
+    onChange({ args: { ...newArgs, rect: newRect }, dryRun: true });
   };
 
   const applyText = () => {
-    onChange({ args: { ...args } });
+    if (text && rect) {
+      onChange({ args: { ...args } });
+    }
   };
+
+  const clear = () => {
+    onChange({ args: { ...args, text: '', rect: null } });
+  };
+
+  useEffect(() => {
+    return () => {
+      applyText();
+    };
+  }, []);
 
   return (
     <div className="flex flex-col gap-4">
@@ -220,10 +234,18 @@ const Text: React.FC<TextToolbarProps> = ({ args, onChange }) => {
 
       <button
         className="w-full rounded bg-blue-600 px-4 py-2 font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-        disabled={!(text && rect)}
+        disabled={!text || !rect}
         onClick={applyText}
       >
         Apply
+      </button>
+
+      <button
+        className="w-full rounded border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+        disabled={!text || !rect}
+        onClick={clear}
+      >
+        Clear
       </button>
     </div>
   );

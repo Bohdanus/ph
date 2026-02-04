@@ -1,22 +1,31 @@
 import { applyFilter } from './applyFilter.ts';
 import type { Point } from '../contexts/ImageContext.tsx';
 
-export type PenType = 'pen' | 'spray';
+export type PenType = 'pen' | 'pen-dashed' | 'spray';
 
-export type DrawToolType = { alpha: number; color: string; penType: PenType; size: number; points: Point[] };
+export type DrawToolType = {
+  alpha: number;
+  color: string;
+  penType: PenType;
+  lineWidth: number;
+  lineDash?: null | number[];
+  points: Point[];
+};
 
 export type DrawToolNoPoints = Omit<DrawToolType, 'points'>;
 
 export const setDrawTool = (ctx: CanvasRenderingContext2D, args: DrawToolNoPoints) => {
-  const { alpha, color, penType, size } = args;
+  const { alpha, color, penType, lineDash, lineWidth } = args;
 
-  if (penType !== 'pen') return;
+  if (penType === 'spray') return;
 
   ctx.strokeStyle = color;
-  ctx.lineWidth = size;
+  ctx.lineWidth = lineWidth;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   ctx.globalAlpha = alpha;
+
+  lineDash && ctx.setLineDash(lineDash);
 };
 
 export const draw = (canvas: HTMLCanvasElement, source: ImageBitmap) => (args: DrawToolType) => {

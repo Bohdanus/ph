@@ -3,6 +3,7 @@ import type { DrawToolNoPoints, PenType } from '../../../tools/draw.ts';
 import { savedDrawPerPen, savedLastSettings } from '../../../tools/settings.ts';
 import { ImageContext } from '../../../contexts/ImageContext.tsx';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
+import { isLightColor } from '../../../util/color.ts';
 
 const Draw: React.FC = () => {
   const { containerRef, size: imageSize } = useContext(ImageContext);
@@ -13,7 +14,11 @@ const Draw: React.FC = () => {
 
   const handleChange = (newArgs: DrawToolNoPoints) => {
     savedLastSettings.draw = newArgs;
-    savedDrawPerPen[newArgs.penType] = { alpha: newArgs.alpha, color: newArgs.color, size: newArgs.size };
+    savedDrawPerPen[newArgs.penType] = {
+      alpha: newArgs.alpha,
+      lineWidth: newArgs.lineWidth,
+      lineDash: newArgs.lineDash,
+    };
     setArgs(newArgs);
   };
 
@@ -23,8 +28,8 @@ const Draw: React.FC = () => {
   };
 
   const handleSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const size = Number(event.target.value);
-    handleChange({ ...args, size });
+    const lineWidth = Number(event.target.value);
+    handleChange({ ...args, lineWidth });
   };
 
   const handleAlphaChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -37,8 +42,36 @@ const Draw: React.FC = () => {
     handleChange({ ...args, ...savedDrawPerPen[penType], penType });
   };
 
-  const { alpha, color, size: brushSize, penType } = args;
-  // const hasDefaultValues = points!.length === 0;
+  const { alpha, color, lineWidth: brushSize, penType, lineDash } = args;
+
+  const scaledBrushSize = brushSize * brushScale;
+  const dash = lineDash ? lineDash[0] * brushScale : 0;
+  const gap = lineDash ? lineDash[1] * brushScale : 0;
+
+  const previewStyle: React.CSSProperties =
+    penType === 'pen-dashed' && lineDash
+      ? {
+          border: `${scaledBrushSize}px solid transparent`,
+          backgroundImage: `linear-gradient(transparent, transparent), repeating-linear-gradient(to right, ${color}, ${color} ${dash}px, transparent ${dash}px, transparent ${
+            dash + gap
+          }px), repeating-linear-gradient(to bottom, ${color}, ${color} ${dash}px, transparent ${dash}px, transparent ${
+            dash + gap
+          }px), repeating-linear-gradient(to left, ${color}, ${color} ${dash}px, transparent ${dash}px, transparent ${
+            dash + gap
+          }px), repeating-linear-gradient(to top, ${color}, ${color} ${dash}px, transparent ${dash}px, transparent ${
+            dash + gap
+          }px)`,
+          backgroundSize: `100% 100%, 100% ${scaledBrushSize}px, ${scaledBrushSize}px 100%, 100% ${scaledBrushSize}px, ${scaledBrushSize}px 100%`,
+          backgroundPosition: `0 0, 0 0, 100% 0, 100% 100%, 0 100%`,
+          backgroundRepeat: 'no-repeat, repeat-x, repeat-y, repeat-x, repeat-y',
+          backgroundOrigin: 'border-box',
+          backgroundClip: 'padding-box, border-box, border-box, border-box, border-box',
+          borderRadius: '50%',
+        }
+      : {
+          backgroundColor: color,
+          borderRadius: '50%',
+        };
 
   return (
     <div className="flex flex-col gap-4">
@@ -66,6 +99,7 @@ const Draw: React.FC = () => {
           className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         >
           <option value="pen">Pen</option>
+          <option value="pen-dashed">Dashed Pen</option>
           <option value="spray">Spray</option>
         </select>
       </div>
@@ -111,17 +145,18 @@ const Draw: React.FC = () => {
       </div>
 
       <div
-        className="mt-4 flex items-center justify-center rounded border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900"
+        className={`mt-4 flex items-center justify-center rounded border border-gray-200 dark:border-gray-700 ${
+          isLightColor(color) ? 'checkerboard-dark' : 'checkerboard-light'
+        }`}
         style={{ height: '224px', overflow: 'auto' }}
       >
         <div
           style={{
             flexShrink: 0,
-            width: `${Math.round(brushSize * brushScale)}px`,
-            height: `${Math.round(brushSize * brushScale)}px`,
-            backgroundColor: color,
+            width: `${Math.round(scaledBrushSize)}px`,
+            height: `${Math.round(scaledBrushSize)}px`,
             opacity: alpha,
-            borderRadius: '50%',
+            ...previewStyle,
           }}
         />
       </div>

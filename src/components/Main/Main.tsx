@@ -5,6 +5,9 @@ import { DrawToolArea } from './DrawToolArea.tsx';
 import { TextToolArea } from './TextToolArea.tsx';
 import { DummyToolArea } from './DummyToolArea.tsx';
 import NewImageDialog from '../NewImageDialog/NewImageDialog.tsx';
+
+import './Main.scss';
+import { ShapeToolArea } from './ShapeToolArea.tsx';
 //
 // const pointers = new Map<number, PointerEvent>();
 
@@ -33,6 +36,8 @@ const Main = () => {
     interactionMode = 'crop';
   } else if (toolName === 'draw') {
     interactionMode = 'draw';
+  } else if (toolName === 'shape') {
+    interactionMode = 'shape';
   } else if (toolName === 'text') {
     interactionMode = 'text';
   }
@@ -110,6 +115,7 @@ const Main = () => {
     const ComponentsMap = {
       crop: CropToolArea,
       draw: DrawToolArea,
+      shape: ShapeToolArea,
       text: TextToolArea,
     };
     const EventHandler = originalImage ? (ComponentsMap[interactionMode] ?? DummyToolArea) : DummyToolArea;
@@ -122,7 +128,6 @@ const Main = () => {
         <div
           className="zoom-container"
           style={{
-            cursor: interactionMode === 'crop' ? 'crosshair' : interactionMode === 'text' ? 'text' : 'grab',
             transform: `translate(${dx}px, ${dy}px) scale(${zoom})`,
           }}
         >
@@ -132,7 +137,7 @@ const Main = () => {
           ref={overlayRef}
           className="max-h-full max-w-full object-contain absolute"
           style={{
-            display: ['draw', 'crop', 'text'].includes(interactionMode) ? 'block' : 'none',
+            display: ['draw', 'crop', 'text', 'shape'].includes(interactionMode) ? 'block' : 'none',
           }}
         />
         <EventHandler

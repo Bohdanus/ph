@@ -30,6 +30,10 @@ const SidebarLeft = () => {
     startEmptyTool('draw');
   };
 
+  const handleShapes = () => {
+    startEmptyTool('shape');
+  };
+
   const handleText = () => {
     startEmptyTool('text');
   };
@@ -115,6 +119,19 @@ const SidebarLeft = () => {
               onClick={handleDraw}
             >
               Draw
+            </button>
+          </li>
+          <li className="mb-1">
+            <button
+              className={`w-full rounded px-3 py-2 text-left transition-colors ${
+                toolName === 'shape'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
+              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
+              disabled={!originalImage}
+              onClick={handleShapes}
+            >
+              Shapes
             </button>
           </li>
           <li className="mb-1">
