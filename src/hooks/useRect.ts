@@ -13,6 +13,7 @@ type UseRectProps = {
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
   onChange?: (sortedRect: RectXYSorted) => void; // is called when dragging, after each mouse move (RAF throttling is done)
   onChangeEnd: (sortedRect: RectXYSorted) => void; // is called after final change, when mouse is up
+  aspectRatio?: number | null;
 };
 
 export function useRect({
@@ -24,6 +25,7 @@ export function useRect({
   overlayCtxRef,
   onChange,
   onChangeEnd,
+  aspectRatio = null,
 }: UseRectProps) {
   const rectUnsortedRef = useRef<RectXY | null>(null); // might become unsorted while dragging
   const startPointRef = useRef<Point | null>(null);
@@ -152,15 +154,53 @@ export function useRect({
           break;
         case 'left':
           x1 = point.x;
+          if (aspectRatio) {
+            const width = Math.abs(x2 - x1);
+            const height = width / aspectRatio;
+            y2 = y1 + height * (y2 < y1 ? -1 : 1);
+          }
           break;
         case 'right':
           x2 = point.x;
+          if (aspectRatio) {
+            const width = Math.abs(x2 - x1);
+            const height = width / aspectRatio;
+            y2 = y1 + height * (y2 < y1 ? -1 : 1);
+          }
           break;
         case 'top':
           y1 = point.y;
+          if (aspectRatio) {
+            const height = Math.abs(y2 - y1);
+            const width = height * aspectRatio;
+            x2 = x1 + width * (x2 < x1 ? -1 : 1);
+          }
           break;
         case 'bottom':
           y2 = point.y;
+          if (aspectRatio) {
+            const height = Math.abs(y2 - y1);
+            const width = height * aspectRatio;
+            x2 = x1 + width * (x2 < x1 ? -1 : 1);
+          }
+          break;
+        case 'top-left':
+        case 'top-right':
+        case 'bottom-left':
+        case 'bottom-right':
+          x2 = point.x;
+          y2 = point.y;
+          if (aspectRatio) {
+            const width = Math.abs(x2 - x1);
+            const height = Math.abs(y2 - y1);
+            if (width / height > aspectRatio) {
+              // width is too large
+              x2 = x1 + height * aspectRatio * (x2 < x1 ? -1 : 1);
+            } else {
+              // height is too large
+              y2 = y1 + (width / aspectRatio) * (y2 < y1 ? -1 : 1);
+            }
+          }
           break;
       }
     } else {
@@ -168,6 +208,16 @@ export function useRect({
       y1 = startPoint.y;
       x2 = point.x;
       y2 = point.y;
+
+      if (aspectRatio) {
+        const width = Math.abs(x2 - x1);
+        const height = Math.abs(y2 - y1);
+        if (width / height > aspectRatio) {
+          x2 = x1 + height * aspectRatio * (x2 < x1 ? -1 : 1);
+        } else {
+          y2 = y1 + (width / aspectRatio) * (y2 < y1 ? -1 : 1);
+        }
+      }
     }
 
     const rect = {
@@ -207,24 +257,28 @@ export function useRect({
             x: initialRect.x2,
             y: initialRect.y2,
           };
+          movingEdgeRef.current = edge;
           return;
         case 'top-right':
           startPointRef.current = {
             x: initialRect.x1,
             y: initialRect.y2,
           };
+          movingEdgeRef.current = edge;
           return;
         case 'bottom-left':
           startPointRef.current = {
             x: initialRect.x2,
             y: initialRect.y1,
           };
+          movingEdgeRef.current = edge;
           return;
         case 'bottom-right':
           startPointRef.current = {
             x: initialRect.x1,
             y: initialRect.y1,
           };
+          movingEdgeRef.current = edge;
           return;
         case 'top':
         case 'left':

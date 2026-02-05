@@ -11,7 +11,7 @@ type cropToolAreaProps = {
 };
 
 export const CropToolArea = ({ className, overlayCtxRef, overlayRef }: cropToolAreaProps) => {
-  const { containerRef, crop, toolName, setCrop, size } = useContext(ImageContext);
+  const { containerRef, crop, toolName, setCrop, size, cropAspectRatio } = useContext(ImageContext);
 
   // cleanup when leaving the tool, this is particularly needed for poor history, I mean double interaction with transform!
   useEffect(() => {
@@ -24,6 +24,7 @@ export const CropToolArea = ({ className, overlayCtxRef, overlayRef }: cropToolA
     containerRef,
     overlayRef,
     overlayCtxRef,
+    aspectRatio: cropAspectRatio,
     onChangeEnd: (rect: RectXYSorted) => {
       const newRectTrimmed = trimRect(rect, size);
 

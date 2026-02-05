@@ -81,6 +81,8 @@ interface ImageContextType {
 
   crop: CropToolType | null;
   setCrop: (args: CropToolType | null) => void;
+  cropAspectRatio: number | null;
+  setCropAspectRatio: (ratio: number | null) => void;
 
   zoomDataRef: { current: ZoomData };
   // setZoomData: (data: ZoomData) => void;
@@ -115,6 +117,8 @@ export const ImageContext = createContext<ImageContextType>({
 
   crop: null,
   setCrop: () => {},
+  cropAspectRatio: null,
+  setCropAspectRatio: () => {},
 
   zoomDataRef: { current: { dx: 0, dy: 0, zoom: 1 } },
   // setZoomData: () => {},

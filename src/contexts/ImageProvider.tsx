@@ -36,7 +36,23 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [historyLength, setHistoryLength] = useState<number>(0);
 
   const [crop, setCrop] = useState<CropToolType | null>(null);
+  const [cropAspectRatio, setCropAspectRatio] = useState<number | null>(null);
   const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });
+
+  function getCurrentTool(): ToolName | null | undefined {
+    const tool = currentEmptyTool ?? history[historyLength - 1]?.tool;
+
+    return tool || 'draw';
+  }
+
+  const toolName = getCurrentTool();
+
+  function getCurrentArgs(): ToolArgs | undefined {
+    if (currentEmptyTool) return savedLastSettings[currentEmptyTool] || defaultSettings[currentEmptyTool];
+
+    const tool = toolName!;
+    return history[historyLength - 1]?.args ?? savedLastSettings[tool] ?? defaultSettings[tool];
+  }
 
   function setSizeMemo(width: number, height: number) {
     if (width !== size.width || height !== size.height) {
@@ -58,7 +74,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setOriginalImage(true);
     setSize({ width, height });
 
-    setCurrentEmptyTool(getCurrentTool() ?? 'draw');
+    setCurrentEmptyTool(toolName ?? 'draw');
 
     const bitmap = await createImageBitmap(canvasRef.current!);
     setHistory([
@@ -189,19 +205,6 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     // }
   }
 
-  function getCurrentTool(): ToolName | null | undefined {
-    const tool = currentEmptyTool ?? history[historyLength - 1]?.tool;
-
-    return tool || 'draw';
-  }
-
-  function getCurrentArgs(): ToolArgs | undefined {
-    if (currentEmptyTool) return savedLastSettings[currentEmptyTool] || defaultSettings[currentEmptyTool];
-
-    const tool = getCurrentTool()!;
-    return history[historyLength - 1]?.args ?? savedLastSettings[tool] ?? defaultSettings[tool];
-  }
-
   async function addCanvasToHistory(toolName: ToolName, args: ToolArgs) {
     if (!originalImage) return;
     //  savedLastSettings[toolName] = args;
@@ -216,15 +219,15 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   function updateLastHistoryItem({ args, dryRun, forceNewItem }: UpdateHistoryFn) {
     if (!originalImage) return;
 
-    const toolName = getCurrentTool();
-    if (!toolName) return; // shouldn't normally happen, but just in case
+    const tool = toolName;
+    if (!tool) return; // shouldn't normally happen, but just in case
 
-    if (isEqual(args, defaultSettings[toolName])) {
+    if (isEqual(args, defaultSettings[tool])) {
       if (currentEmptyTool) {
         console.log('currentEmptyTool is not null, but args are equal to defaultSettings');
         return;
       }
-      setCurrentEmptyTool(toolName);
+      setCurrentEmptyTool(tool);
       const newHistory = history.slice(0, historyLength - 1);
       setHistory(newHistory);
       setHistoryLength(newHistory.length);
@@ -237,10 +240,10 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const addNewItem = forceNewItem || currentEmptyTool;
 
     // should normally have args, but just in case
-    args ??= { ...defaultSettings[toolName] };
+    args ??= { ...defaultSettings[tool] };
 
     if (!dryRun) {
-      toolsMap[toolName].imageProcessor(canvasRef.current!, addNewItem ? getCurrentBitmap() : getPrevBitmap())(
+      toolsMap[tool].imageProcessor(canvasRef.current!, addNewItem ? getCurrentBitmap() : getPrevBitmap())(
         args,
         (width, height) => {
           saveCurrentBitmap({ hist: newHistory, length: newHistory.length });
@@ -250,14 +253,14 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
 
     const newHistory = history.slice(0, historyLength - (addNewItem ? 0 : 1));
-    const newHistoryItem = { tool: toolName, args };
+    const newHistoryItem = { tool, args };
     newHistory.push(newHistoryItem);
 
     setHistory(newHistory);
     setHistoryLength(newHistory.length);
 
     if (forceNewItem) {
-      setCurrentEmptyTool(toolName);
+      setCurrentEmptyTool(tool);
     } else {
       setCurrentEmptyTool(null);
     }
@@ -298,8 +301,8 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }
 
   function resetArgs() {
-    const toolName = getCurrentTool()!;
-    updateLastHistoryItem({ args: defaultSettings[toolName] });
+    const tool = toolName!;
+    updateLastHistoryItem({ args: defaultSettings[tool] });
   }
 
   function redo() {
@@ -325,6 +328,10 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     return history[len - 1].saved!;
   }
+
+  React.useEffect(() => {
+    setCropAspectRatio(null);
+  }, [toolName]);
 
   // NOSONAR: React Compiler handles memoization of this object
   const providerValue = {
@@ -356,6 +363,8 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     crop,
     setCrop,
+    cropAspectRatio,
+    setCropAspectRatio,
     zoomDataRef,
   };
 
