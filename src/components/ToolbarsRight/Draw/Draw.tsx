@@ -13,6 +13,7 @@ const Draw: React.FC = () => {
   usePointerPosition({ ref: containerRef, imageSize, onResize: ({ scale }) => setBrushScale(scale) });
 
   const handleChange = (newArgs: DrawToolNoPoints) => {
+    // @ts-expect-error: savedDrawPerPen is a map of PenType to DrawToolNoPoints, so this is safe.
     savedLastSettings.draw = newArgs;
     savedDrawPerPen[newArgs.penType] = {
       alpha: newArgs.alpha,
@@ -37,6 +38,18 @@ const Draw: React.FC = () => {
     handleChange({ ...args, alpha });
   };
 
+  const handleDashChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const value = Number(event.target.value);
+    const gap = args.lineDash?.[1] ?? 10;
+    handleChange({ ...args, lineDash: [value, gap] });
+  };
+
+  const handleGapChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const value = Number(event.target.value);
+    const dash = args.lineDash?.[0] ?? 10;
+    handleChange({ ...args, lineDash: [dash, value] });
+  };
+
   const handlePenTypeChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const penType = event.target.value as PenType;
     handleChange({ ...args, ...savedDrawPerPen[penType], penType });
@@ -44,34 +57,23 @@ const Draw: React.FC = () => {
 
   const { alpha, color, lineWidth: brushSize, penType, lineDash } = args;
 
-  const scaledBrushSize = brushSize * brushScale;
+  const scaledBrushSize = brushSize * brushScale + (penType === 'pen-dashed' ? 1 : 0);
   const dash = lineDash ? lineDash[0] * brushScale : 0;
   const gap = lineDash ? lineDash[1] * brushScale : 0;
 
-  const previewStyle: React.CSSProperties =
-    penType === 'pen-dashed' && lineDash
-      ? {
-          border: `${scaledBrushSize}px solid transparent`,
-          backgroundImage: `linear-gradient(transparent, transparent), repeating-linear-gradient(to right, ${color}, ${color} ${dash}px, transparent ${dash}px, transparent ${
-            dash + gap
-          }px), repeating-linear-gradient(to bottom, ${color}, ${color} ${dash}px, transparent ${dash}px, transparent ${
-            dash + gap
-          }px), repeating-linear-gradient(to left, ${color}, ${color} ${dash}px, transparent ${dash}px, transparent ${
-            dash + gap
-          }px), repeating-linear-gradient(to top, ${color}, ${color} ${dash}px, transparent ${dash}px, transparent ${
-            dash + gap
-          }px)`,
-          backgroundSize: `100% 100%, 100% ${scaledBrushSize}px, ${scaledBrushSize}px 100%, 100% ${scaledBrushSize}px, ${scaledBrushSize}px 100%`,
-          backgroundPosition: `0 0, 0 0, 100% 0, 100% 100%, 0 100%`,
-          backgroundRepeat: 'no-repeat, repeat-x, repeat-y, repeat-x, repeat-y',
-          backgroundOrigin: 'border-box',
-          backgroundClip: 'padding-box, border-box, border-box, border-box, border-box',
-          borderRadius: '50%',
-        }
-      : {
-          backgroundColor: color,
-          borderRadius: '50%',
-        };
+  let previewStyle: React.CSSProperties = {};
+
+  if (penType === 'pen-dashed' && lineDash) {
+    previewStyle = {
+      background: `repeating-linear-gradient(
+        to right,
+        ${color} 0px, ${color} ${dash + scaledBrushSize}px, transparent ${dash + scaledBrushSize}px, transparent ${dash + scaledBrushSize + gap}px)`,
+    };
+  } else {
+    previewStyle = {
+      background: color,
+    };
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -103,6 +105,47 @@ const Draw: React.FC = () => {
           <option value="spray">Spray</option>
         </select>
       </div>
+
+      {penType === 'pen-dashed' && lineDash && (
+        <div className="flex gap-4">
+          <div className="flex flex-1 flex-col gap-1">
+            <label
+              htmlFor="dash-size"
+              className="flex justify-between text-xs font-medium text-gray-700 dark:text-gray-300"
+            >
+              Dash
+              <span className="font-bold text-gray-900 dark:text-gray-200">{lineDash[0]}px</span>
+            </label>
+            <input
+              id="dash-size"
+              type="range"
+              min="1"
+              max="100"
+              value={lineDash[0]}
+              onChange={handleDashChange}
+              className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+            />
+          </div>
+          <div className="flex flex-1 flex-col gap-1">
+            <label
+              htmlFor="gap-size"
+              className="flex justify-between text-xs font-medium text-gray-700 dark:text-gray-300"
+            >
+              Gap
+              <span className="font-bold text-gray-900 dark:text-gray-200">{lineDash[1]}px</span>
+            </label>
+            <input
+              id="gap-size"
+              type="range"
+              min="1"
+              max="100"
+              value={lineDash[1]}
+              onChange={handleGapChange}
+              className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+            />
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col gap-2">
         <label
@@ -153,9 +196,10 @@ const Draw: React.FC = () => {
         <div
           style={{
             flexShrink: 0,
-            width: `${Math.round(scaledBrushSize)}px`,
+            width: penType === 'pen-dashed' ? '77%' : `${Math.round(scaledBrushSize)}px`,
             height: `${Math.round(scaledBrushSize)}px`,
             opacity: alpha,
+            borderRadius: penType === 'pen-dashed' ? Math.round(scaledBrushSize) : '50%',
             ...previewStyle,
           }}
         />

@@ -83,12 +83,28 @@ const Shapes: React.FC = () => {
   const dash = lineDash ? lineDash[0] * brushScale : 0;
   const gap = lineDash ? lineDash[1] * brushScale : 0;
 
-  const borderStyle: React.CSSProperties = lineDash
-    ? {
+  let borderStyle: React.CSSProperties = {};
+  let fillStyle: React.CSSProperties = {};
+
+  if (lineDash) {
+    if (figure === 'circle' || figure === 'oval') {
+      borderStyle = {
         border: `${scaledLineWidth}px solid transparent`,
-        backgroundImage: `linear-gradient(${fillColor ?? 'transparent'}, ${
-          fillColor ?? 'transparent'
-        }), repeating-linear-gradient(to right, ${lineColor}, ${lineColor} ${dash}px, transparent ${dash}px, transparent ${
+        backgroundImage: `repeating-conic-gradient(from 0deg, ${lineColor} 0deg, ${
+          (dash / (Math.PI * 100)) * 360
+        }deg, transparent ${(dash / (Math.PI * 100)) * 360}deg, transparent ${
+          ((dash + gap) / (Math.PI * 100)) * 360
+        }deg)`,
+        backgroundSize: '100% 100%',
+        backgroundPosition: '0 0',
+        backgroundRepeat: 'repeat',
+        backgroundOrigin: 'border-box',
+        backgroundClip: 'border-box',
+      };
+    } else {
+      borderStyle = {
+        border: `${scaledLineWidth}px solid transparent`,
+        backgroundImage: `repeating-linear-gradient(to right, ${lineColor}, ${lineColor} ${dash}px, transparent ${dash}px, transparent ${
           dash + gap
         }px), repeating-linear-gradient(to bottom, ${lineColor}, ${lineColor} ${dash}px, transparent ${dash}px, transparent ${
           dash + gap
@@ -97,16 +113,25 @@ const Shapes: React.FC = () => {
         }px), repeating-linear-gradient(to top, ${lineColor}, ${lineColor} ${dash}px, transparent ${dash}px, transparent ${
           dash + gap
         }px)`,
-        backgroundSize: `100% 100%, 100% ${scaledLineWidth}px, ${scaledLineWidth}px 100%, 100% ${scaledLineWidth}px, ${scaledLineWidth}px 100%`,
-        backgroundPosition: `0 0, 0 0, 100% 0, 100% 100%, 0 100%`,
-        backgroundRepeat: 'no-repeat, repeat-x, repeat-y, repeat-x, repeat-y',
-        backgroundOrigin: 'border-box',
-        backgroundClip: 'padding-box, border-box, border-box, border-box, border-box',
-      }
-    : {
-        border: `${scaledLineWidth}px solid ${lineColor}`,
-        backgroundColor: fillColor ?? 'transparent',
+        backgroundSize: `100% ${scaledLineWidth}px, ${scaledLineWidth}px 100%, 100% ${scaledLineWidth}px, ${scaledLineWidth}px 100%`,
+        backgroundPosition: `0 0, 100% 0, 100% 100%, 0 100%`,
+        backgroundRepeat: 'repeat-x, repeat-y, repeat-x, repeat-y',
+        backgroundOrigin: 'border-box, border-box, border-box, border-box',
+        backgroundClip: 'border-box, border-box, border-box, border-box',
       };
+    }
+  } else {
+    borderStyle = {
+      border: `${scaledLineWidth}px solid ${lineColor}`,
+    };
+  }
+
+  fillStyle = {
+    backgroundImage: `repeating-linear-gradient(45deg, ${fillColor ?? 'transparent'} 0px, ${
+      fillColor ?? 'transparent'
+    } 10px, transparent 10px, transparent 20px)`,
+    backgroundSize: '100% 100%',
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -278,15 +303,26 @@ const Shapes: React.FC = () => {
       >
         <div
           style={{
-            boxSizing: 'content-box',
+            boxSizing: 'border-box',
             flexShrink: 0,
-            width: `${figure === 'line' ? '100%' : '40%'}`,
-            height: `${figure === 'line' ? Math.round(scaledLineWidth) : '40%'}`,
+            width: `${figure === 'line' ? '80%' : '40%'}`,
+            height: `${figure === 'line' ? `${Math.round(scaledLineWidth)}px` : '40%'}`,
             opacity: alpha,
             borderRadius: figure === 'circle' || figure === 'oval' ? '50%' : '0',
             ...borderStyle,
           }}
-        />
+        >
+          {figure !== 'line' && (
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                borderRadius: figure === 'circle' || figure === 'oval' ? '50%' : '0',
+                ...fillStyle,
+              }}
+            />
+          )}
+        </div>
       </div>
     </div>
   );

@@ -54,6 +54,7 @@ export const defaultSettings: Record<ToolName, ToolArgs> = {
   draw: { ...savedDrawPerPen['pen'], color: '#000000', points: [], penType: 'pen' } as DrawToolType,
   shape: {
     ...savedArgsPerFigure['rectangle'],
+    figure: 'rectangle',
     lineColor: '#000000',
     fillColor: null,
   } as ShapeToolType,
