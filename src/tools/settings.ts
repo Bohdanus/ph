@@ -2,15 +2,15 @@
 // localStorage
 // use default initially
 
-import { type ToolArgs, type ToolName } from '../contexts/ImageContext.tsx';
-import type { DrawToolType, PenType } from './draw.ts';
-import type { TextToolArgs } from './text.ts';
-import type { CropToolType } from './crop.ts';
-import type { TransformToolType } from './transform.ts';
-import type { ColorsToolType } from './colors.ts';
-import type { LevelsToolType } from './levels.ts';
-import type { BlurToolType } from './blur.ts';
-import type { FigureType, ShapeToolType } from './shape.ts';
+import { type ToolName } from '../contexts/ImageContext.tsx';
+import type { DrawToolSettings, DrawToolArgs, PenType } from './draw.ts';
+import type { TextToolArgs, TextToolSettings } from './text.ts';
+import type { CropToolArgs } from './crop.ts';
+import type { TransformToolArgs } from './transform.ts';
+import type { ColorsToolArgs } from './colors.ts';
+import type { LevelsToolArgs } from './levels.ts';
+import type { BlurToolArgs } from './blur.ts';
+import type { FigureType, ShapeToolSettings, ShapeToolArgs } from './shape.ts';
 
 // type DrawSettings = { // todo use Omit
 //   alpha: number;
@@ -19,16 +19,16 @@ import type { FigureType, ShapeToolType } from './shape.ts';
 //   lineDash?: null | number[];
 // };
 
-type DrawSettings = Omit<DrawToolType, 'color' | 'points' | 'penType'>;
-type ShapeSettings = Omit<ShapeToolType, 'lineColor' | 'fillColor' | 'start' | 'end' | 'figure'>;
+type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType'>;
+type FigureSettings = Omit<ShapeToolArgs, 'lineColor' | 'fillColor' | 'start' | 'end' | 'figure'>;
 
-export const savedDrawPerPen: Record<PenType, DrawSettings> = {
+export const savedDrawPerPen: Record<PenType, PenSettings> = {
   pen: { alpha: 0.9, lineWidth: 10 },
   'pen-dashed': { alpha: 0.9, lineWidth: 10, lineDash: [5, 30] },
   spray: { alpha: 0.5, lineWidth: 100 },
 };
 
-export const savedArgsPerFigure: Record<FigureType, ShapeSettings> = {
+export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
   line: { alpha: 1, lineWidth: 5 },
   circle: { alpha: 1, lineWidth: 5 },
   rectangle: { alpha: 1, lineWidth: 5 },
@@ -36,10 +36,10 @@ export const savedArgsPerFigure: Record<FigureType, ShapeSettings> = {
   oval: { alpha: 1, lineWidth: 5 },
 };
 
-export const defaultSettings: Record<ToolName, ToolArgs> = {
-  blur: { radius: 0 } as BlurToolType,
-  colors: { grayscale: 0, sepia: 0, saturation: 0 } as ColorsToolType,
-  levels: { brightness: 0, contrast: 0 } as LevelsToolType,
+export const defaultSettings: Record<ToolName, SavedSettings> = {
+  blur: { radius: 0 } as BlurToolArgs,
+  colors: { grayscale: 0, sepia: 0, saturation: 0 } as ColorsToolArgs,
+  levels: { brightness: 0, contrast: 0 } as LevelsToolArgs,
   transform: {
     rotate: 0,
     mirrorH: false,
@@ -49,15 +49,15 @@ export const defaultSettings: Record<ToolName, ToolArgs> = {
     trapezoid: 0,
     resizeX: 100,
     resizeY: 100,
-  } as TransformToolType,
-  crop: { x1: 0, y1: 0, x2: 0, y2: 0 } as CropToolType,
-  draw: { ...savedDrawPerPen['pen'], color: '#000000', points: [], penType: 'pen' } as DrawToolType,
+  } as TransformToolArgs,
+  crop: { aspectRatio: null, rect: null } as CropToolArgs,
+  draw: { ...savedDrawPerPen['pen'], color: '#000000', points: [], penType: 'pen' } as DrawToolArgs,
   shape: {
     ...savedArgsPerFigure['rectangle'],
     figure: 'rectangle',
     lineColor: '#000000',
     fillColor: null,
-  } as ShapeToolType,
+  } as ShapeToolArgs,
   text: {
     text: '',
     fontSize: 64,
@@ -71,8 +71,12 @@ export const defaultSettings: Record<ToolName, ToolArgs> = {
   } as TextToolArgs,
 };
 
-export const savedLastSettings: Record<ToolName, ToolArgs> = {
-  draw: defaultSettings.draw,
-  shape: defaultSettings.shape,
-  text: defaultSettings.text,
-};
+export type SavedSettings =
+  | DrawToolSettings
+  | ShapeToolSettings
+  | TextToolSettings
+  | BlurToolArgs
+  | ColorsToolArgs
+  | LevelsToolArgs
+  | TransformToolArgs
+  | CropToolArgs; // >>>???

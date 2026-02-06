@@ -1,20 +1,22 @@
-import { applyFilter } from './applyFilter.ts';
 import type { Point } from '../contexts/ImageContext.tsx';
+import type { ImageProcParams } from './toolsMap.ts';
 
 export type FigureType = 'line' | 'circle' | 'rectangle' | 'square' | 'oval';
 
-export type ShapeToolType = {
+export type ShapeToolArgs = {
   alpha: number;
   lineColor: string;
   fillColor: null | string;
   figure: FigureType;
   lineWidth: number;
   lineDash?: null | number[];
-  start: Point;
-  end: Point;
+  start?: Point;
+  end?: Point;
 };
 
-export const setShapeTool = (ctx: CanvasRenderingContext2D, args: ShapeToolType) => {
+export type ShapeToolSettings = Omit<ShapeToolArgs, 'start' | 'end'>;
+
+export const setShapeTool = (ctx: CanvasRenderingContext2D, args: ShapeToolArgs) => {
   const { alpha, lineColor, fillColor, lineWidth, lineDash } = args;
 
   ctx.strokeStyle = lineColor;
@@ -26,8 +28,10 @@ export const setShapeTool = (ctx: CanvasRenderingContext2D, args: ShapeToolType)
   lineDash && ctx.setLineDash(lineDash);
 };
 
-export const drawShape = (ctx: CanvasRenderingContext2D, args: ShapeToolType) => {
+export const drawShape = (ctx: CanvasRenderingContext2D, args: ShapeToolArgs) => {
   const { figure, fillColor, start, end } = args;
+
+  if (!start || !end) return;
 
   if (figure === 'line') {
     ctx.beginPath();
@@ -64,12 +68,12 @@ export const drawShape = (ctx: CanvasRenderingContext2D, args: ShapeToolType) =>
   }
 };
 
-export const shape = (canvas: HTMLCanvasElement, source: ImageBitmap) => (args: ShapeToolType) => {
-  return applyFilter(canvas, (ctx) => {
-    ctx.drawImage(source, 0, 0);
+export const shape =
+  ({ ctx, bitmap }: ImageProcParams) =>
+  (args: ShapeToolArgs) => {
+    ctx.drawImage(bitmap, 0, 0);
 
     setShapeTool(ctx, args);
 
     drawShape(ctx, args);
-  });
-};
+  };

@@ -12,7 +12,7 @@ type TextToolAreaProps = {
 };
 
 export const TextToolArea = ({ className, overlayCtxRef, overlayRef }: TextToolAreaProps) => {
-  const { containerRef, textareaRef, toolArgs, size: imageSize, updateLastHistoryItem } = useContext(ImageContext);
+  const { containerRef, textareaRef, toolArgs, size: imageSize, setToolArgs } = useContext(ImageContext);
   const args = toolArgs as TextToolArgs;
 
   // // because dragging should happen outside react state management
@@ -34,7 +34,7 @@ export const TextToolArea = ({ className, overlayCtxRef, overlayRef }: TextToolA
     onChangeEnd: (rect: RectXYSorted) => {
       const newRect = calculateNewRect({ ...args, rect }, overlayRef, imageSize);
 
-      updateLastHistoryItem({ args: { ...args, rect: newRect }, dryRun: true });
+      setToolArgs({ ...args, rect: newRect });
 
       textareaRef.current!.focus();
     },

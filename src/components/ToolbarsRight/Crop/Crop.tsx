@@ -1,15 +1,15 @@
 import React, { useContext } from 'react';
 import { ImageContext } from '../../../contexts/ImageContext.tsx';
-import type { TransformToolType } from '../../../tools/transform.ts';
-import type { CropToolType } from '../../../tools/crop.ts';
+import type { CropToolArgs } from '../../../tools/crop.ts';
 
-interface TransformToolbarProps {
-  args: CropToolType;
-  onChange: (args: TransformToolType) => void;
+interface CropToolbarProps {
+  onChange: (args: CropToolArgs) => void;
 }
 
-const Crop: React.FC<TransformToolbarProps> = () => {
-  const { crop, setCrop, updateLastHistoryItem, cropAspectRatio, setCropAspectRatio } = useContext(ImageContext);
+const Crop: React.FC<CropToolbarProps> = ({ onChange }) => {
+  const { toolArgs, updateLastHistoryItem } = useContext(ImageContext);
+  const args = toolArgs as CropToolArgs;
+  const { aspectRatio, rect } = args;
 
   const aspectRatios = [
     { label: 'Free', value: null },
@@ -28,10 +28,11 @@ const Crop: React.FC<TransformToolbarProps> = () => {
         </label>
         <select
           id="aspect-ratio"
-          value={cropAspectRatio ?? ''}
+          value={aspectRatio ?? ''}
           onChange={(e) => {
             const val = e.target.value;
-            setCropAspectRatio(val === '' ? null : Number(val));
+            const newAspectRatio = val === '' ? null : Number(val);
+            onChange({ ...args, aspectRatio: newAspectRatio });
           }}
           className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         >
@@ -45,13 +46,9 @@ const Crop: React.FC<TransformToolbarProps> = () => {
 
       <button
         className="w-full rounded bg-blue-600 px-4 py-2 font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-        disabled={!crop}
+        disabled={!rect}
         onClick={() => {
-          updateLastHistoryItem({
-            args: crop!,
-            forceNewItem: true,
-          });
-          setCrop(null);
+          updateLastHistoryItem(args);
         }}
       >
         Apply Crop
@@ -59,8 +56,8 @@ const Crop: React.FC<TransformToolbarProps> = () => {
 
       <button
         className="w-full rounded border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
-        disabled={!crop}
-        onClick={() => setCrop(null)}
+        disabled={!rect}
+        onClick={() => onChange({ ...args, rect: null })}
       >
         Clear Crop
       </button>

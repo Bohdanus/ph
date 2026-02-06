@@ -1,23 +1,38 @@
-import React, { useMemo, useEffect } from 'react';
-import { throttle } from 'lodash-es';
-import { THROTTLE_TIME } from '../../../constants';
+import React, { useRef, useCallback, useContext } from 'react';
 
 import UndoButton from '../../Common/UndoButton.tsx';
-import type { BlurToolType } from '../../../tools/blur.ts';
+import { type BlurToolArgs, blur } from '../../../tools/blur.ts';
+import { ImageContext } from '../../../contexts/ImageContext.tsx';
 
 interface BlurToolbarProps {
-  args: BlurToolType;
-  onChange: (args: BlurToolType) => void;
+  onChange: (args: BlurToolArgs) => void;
 }
 
-const Blur: React.FC<BlurToolbarProps> = ({ args, onChange }) => {
-  const throttledOnChange = useMemo(() => throttle(onChange, THROTTLE_TIME), [onChange]);
+const Blur: React.FC<BlurToolbarProps> = ({ onChange }) => {
+  const { getBitmap, canvasRef, canvasCtxRef, toolArgs } = useContext(ImageContext);
+  const args = toolArgs as BlurToolArgs;
+  const pendingUpdateRef = useRef<BlurToolArgs | null>(null);
+  const rafIdRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    return () => {
-      throttledOnChange.cancel();
-    };
-  }, [throttledOnChange]);
+  const throttledOnChange = useCallback(
+    (newArgs: BlurToolArgs) => {
+      pendingUpdateRef.current = newArgs;
+
+      if (rafIdRef.current === null) {
+        rafIdRef.current = requestAnimationFrame(() => {
+          if (pendingUpdateRef.current !== null) {
+            blur({ bitmap: getBitmap()!, canvas: canvasRef.current!, ctx: canvasCtxRef.current })(
+              pendingUpdateRef.current
+            );
+            onChange(pendingUpdateRef.current);
+            pendingUpdateRef.current = null;
+          }
+          rafIdRef.current = null;
+        });
+      }
+    },
+    [onChange, getBitmap, canvasRef, canvasCtxRef]
+  );
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     throttledOnChange({ radius: Number(event.target.value) });

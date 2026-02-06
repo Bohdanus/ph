@@ -1,20 +1,20 @@
-import { applyFilter } from './applyFilter.ts';
 import type { Point } from '../contexts/ImageContext.tsx';
+import type { ImageProcParams } from './toolsMap.ts';
 
 export type PenType = 'pen' | 'pen-dashed' | 'spray';
 
-export type DrawToolType = {
+export type DrawToolArgs = {
   alpha: number;
   color: string;
   penType: PenType;
   lineWidth: number;
   lineDash?: null | number[];
-  points: Point[];
+  points?: Point[];
 };
 
-export type DrawToolNoPoints = Omit<DrawToolType, 'points'>;
+export type DrawToolSettings = Omit<DrawToolArgs, 'points'>;
 
-export const setDrawTool = (ctx: CanvasRenderingContext2D, args: DrawToolNoPoints) => {
+export const setDrawTool = (ctx: CanvasRenderingContext2D, args: DrawToolSettings) => {
   const { alpha, color, penType, lineDash, lineWidth } = args;
 
   if (penType === 'spray') return;
@@ -28,13 +28,14 @@ export const setDrawTool = (ctx: CanvasRenderingContext2D, args: DrawToolNoPoint
   lineDash && ctx.setLineDash(lineDash);
 };
 
-export const draw = (canvas: HTMLCanvasElement, source: ImageBitmap) => (args: DrawToolType) => {
-  return applyFilter(canvas, (ctx) => {
-    ctx.drawImage(source, 0, 0);
+export const draw =
+  ({ ctx, bitmap }: ImageProcParams) =>
+  (args: DrawToolArgs) => {
+    ctx.drawImage(bitmap, 0, 0);
 
-    if (args.penType === 'spray') {
-      throw 'rewriting from history not implemented';
-    }
+    // if (args.penType === 'spray') {
+    throw 'rewriting from history not implemented';
+    // }
 
     const { points } = args;
     if (!points || points.length === 0) return;
@@ -47,5 +48,4 @@ export const draw = (canvas: HTMLCanvasElement, source: ImageBitmap) => (args: D
       ctx.lineTo(points[i].x, points[i].y);
     }
     ctx.stroke();
-  });
-};
+  };

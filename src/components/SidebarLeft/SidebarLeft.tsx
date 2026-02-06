@@ -4,38 +4,38 @@ import { ImageContext } from '../../contexts/ImageContext.tsx';
 import Zoom from '../Zoom/Zoom.tsx';
 
 const SidebarLeft = () => {
-  const { originalImage, startEmptyTool, toolName } = useContext(ImageContext);
+  const { originalImage, startTool, toolName } = useContext(ImageContext);
 
   const handleColors = () => {
-    startEmptyTool('colors');
+    startTool('colors');
   };
 
   const handleBlur = () => {
-    startEmptyTool('blur');
+    startTool('blur');
   };
 
   const handleLevels = () => {
-    startEmptyTool('levels');
+    startTool('levels');
   };
 
   const handleTransform = () => {
-    startEmptyTool('transform');
+    startTool('transform');
   };
 
   const handleCrop = () => {
-    startEmptyTool('crop');
+    startTool('crop');
   };
 
   const handleDraw = () => {
-    startEmptyTool('draw');
+    startTool('draw');
   };
 
   const handleShapes = () => {
-    startEmptyTool('shape');
+    startTool('shape');
   };
 
   const handleText = () => {
-    startEmptyTool('text');
+    startTool('text');
   };
 
   return (

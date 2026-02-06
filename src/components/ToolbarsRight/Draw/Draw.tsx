@@ -1,26 +1,28 @@
 import React, { type ChangeEvent, useContext, useState } from 'react';
-import type { DrawToolNoPoints, PenType } from '../../../tools/draw.ts';
-import { savedDrawPerPen, savedLastSettings } from '../../../tools/settings.ts';
+import type { DrawToolSettings, PenType } from '../../../tools/draw.ts';
+import { savedDrawPerPen } from '../../../tools/settings.ts';
 import { ImageContext } from '../../../contexts/ImageContext.tsx';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
 import { isLightColor } from '../../../util/color.ts';
 
-const Draw: React.FC = () => {
-  const { containerRef, size: imageSize } = useContext(ImageContext);
-  const [args, setArgs] = useState<DrawToolNoPoints>(savedLastSettings.draw as DrawToolNoPoints);
+interface DrawToolbarProps {
+  onChange: (args: DrawToolSettings) => void;
+}
+
+const Draw: React.FC<DrawToolbarProps> = ({ onChange }) => {
+  const { containerRef, size: imageSize, toolArgs } = useContext(ImageContext);
+  const args = toolArgs as DrawToolSettings;
   const [brushScale, setBrushScale] = useState<number>(0);
 
   usePointerPosition({ ref: containerRef, imageSize, onResize: ({ scale }) => setBrushScale(scale) });
 
-  const handleChange = (newArgs: DrawToolNoPoints) => {
-    // @ts-expect-error: savedDrawPerPen is a map of PenType to DrawToolNoPoints, so this is safe.
-    savedLastSettings.draw = newArgs;
+  const handleChange = (newArgs: DrawToolSettings) => {
     savedDrawPerPen[newArgs.penType] = {
       alpha: newArgs.alpha,
       lineWidth: newArgs.lineWidth,
       lineDash: newArgs.lineDash,
     };
-    setArgs(newArgs);
+    onChange(newArgs);
   };
 
   const handleColorChange = (event: ChangeEvent<HTMLInputElement>) => {

@@ -13,3 +13,5 @@ export const CURSOR_MAP = {
   'top-left': 'nwse-resize',
   inside: 'move',
 };
+
+export const DEFAULT_TOOL = 'draw';

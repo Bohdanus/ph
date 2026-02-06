@@ -1,12 +1,38 @@
-import React from 'react';
-import type { TransformToolType } from '../../../tools/transform.ts';
+import React, { useRef, useCallback, useContext } from 'react';
+import type { TransformToolArgs } from '../../../tools/transform.ts';
+import { transform } from '../../../tools/transform.ts';
+import { ImageContext } from '../../../contexts/ImageContext.tsx';
 
 interface TransformToolbarProps {
-  args: TransformToolType;
-  onChange: (args: TransformToolType) => void;
+  onChange: (args: TransformToolArgs) => void;
 }
 
-const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
+const Transform: React.FC<TransformToolbarProps> = ({ onChange }) => {
+  const { getBitmap, canvasRef, canvasCtxRef, setSizeMemo, toolArgs } = useContext(ImageContext);
+  const args = toolArgs as TransformToolArgs;
+  const pendingUpdateRef = useRef<TransformToolArgs | null>(null);
+  const rafIdRef = useRef<number | null>(null);
+
+  const throttledOnChange = useCallback(
+    (newArgs: TransformToolArgs) => {
+      pendingUpdateRef.current = newArgs;
+
+      if (rafIdRef.current === null) {
+        rafIdRef.current = requestAnimationFrame(() => {
+          if (pendingUpdateRef.current !== null) {
+            transform({ bitmap: getBitmap()!, canvas: canvasRef.current!, ctx: canvasCtxRef.current })(
+              pendingUpdateRef.current,
+              setSizeMemo
+            );
+            onChange(pendingUpdateRef.current);
+            pendingUpdateRef.current = null;
+          }
+          rafIdRef.current = null;
+        });
+      }
+    },
+    [onChange, getBitmap, canvasRef, canvasCtxRef, setSizeMemo]
+  );
   const { rotate = 0, mirrorH, mirrorV, skewX = 0, skewY = 0, trapezoid = 0, resizeX = 100, resizeY = 100 } = args;
   //
   // function compensateCropCorners({ rotate: newRotate, mirrorV: newMirrorV, mirrorH: newMirrorH }: TransformToolType) {
@@ -53,50 +79,50 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
   const handleRotateLeft = () => {
     let newRotate = rotate - 90;
     if (newRotate < 0) newRotate += 360;
-    onChange({ ...args, rotate: newRotate });
+    throttledOnChange({ ...args, rotate: newRotate });
   };
 
   const handleRotateRight = () => {
     let newRotate = rotate + 90;
     if (newRotate >= 360) newRotate -= 360;
-    onChange({ ...args, rotate: newRotate });
+    throttledOnChange({ ...args, rotate: newRotate });
   };
 
   const handleRotateSliderChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const newRotate = Number(event.target.value);
-    onChange({ ...args, rotate: newRotate });
+    throttledOnChange({ ...args, rotate: newRotate });
   };
 
   const toggleMirrorH = () => {
-    onChange({ ...args, mirrorH: !mirrorH });
+    throttledOnChange({ ...args, mirrorH: !mirrorH });
   };
 
   const toggleMirrorV = () => {
-    onChange({ ...args, mirrorV: !mirrorV });
+    throttledOnChange({ ...args, mirrorV: !mirrorV });
   };
 
   const handleSkewXChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    onChange({ ...args, skewX: Number(event.target.value) });
+    throttledOnChange({ ...args, skewX: Number(event.target.value) });
   };
 
   const handleSkewYChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    onChange({ ...args, skewY: Number(event.target.value) });
+    throttledOnChange({ ...args, skewY: Number(event.target.value) });
   };
 
   const handleTrapezoidChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    onChange({ ...args, trapezoid: Number(event.target.value) });
+    throttledOnChange({ ...args, trapezoid: Number(event.target.value) });
   };
 
   const handleResizeXChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    onChange({ ...args, resizeX: Number(event.target.value) });
+    throttledOnChange({ ...args, resizeX: Number(event.target.value) });
   };
 
   const handleResizeYChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    onChange({ ...args, resizeY: Number(event.target.value) });
+    throttledOnChange({ ...args, resizeY: Number(event.target.value) });
   };
 
   const resetAll = () => {
-    onChange({
+    throttledOnChange({
       rotate: 0,
       mirrorH: false,
       mirrorV: false,
@@ -125,7 +151,7 @@ const Transform: React.FC<TransformToolbarProps> = ({ args, onChange }) => {
           </button>
           <button
             className="flex h-10 flex-1 min-w-[40px] items-center justify-center rounded border border-gray-300 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
-            onClick={() => onChange({ ...args, rotate: (rotate + 180) % 360 })}
+            onClick={() => throttledOnChange({ ...args, rotate: (rotate + 180) % 360 })}
             title="Rotate 180°"
           >
             180°

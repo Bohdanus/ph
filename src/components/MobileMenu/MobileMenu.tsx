@@ -5,7 +5,7 @@ import HistoryControls from '../HistoryControls/HistoryControls';
 import NewImageDialog from '../NewImageDialog/NewImageDialog';
 
 const MobileMenu = () => {
-  const { startEmptyTool, openLoadImageDialog, openSaveImageDialog, createBlankImage } = useContext(ImageContext);
+  const { startTool, openLoadImageDialog, openSaveImageDialog, createBlankImage } = useContext(ImageContext);
   const { theme, toggleTheme } = useTheme();
   const [openSection, setOpenSection] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -24,32 +24,32 @@ const MobileMenu = () => {
   };
 
   const handleColors = () => {
-    startEmptyTool('colors');
+    startTool('colors');
     closeMenu();
   };
 
   const handleBlur = () => {
-    startEmptyTool('blur');
+    startTool('blur');
     closeMenu();
   };
 
   const handleLevels = () => {
-    startEmptyTool('levels');
+    startTool('levels');
     closeMenu();
   };
 
   const handleTransform = () => {
-    startEmptyTool('transform');
+    startTool('transform');
     closeMenu();
   };
 
   const handleDraw = () => {
-    startEmptyTool('draw');
+    startTool('draw');
     closeMenu();
   };
 
   const handleText = () => {
-    startEmptyTool('text');
+    startTool('text');
     closeMenu();
   };
 

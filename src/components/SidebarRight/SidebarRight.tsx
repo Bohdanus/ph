@@ -3,8 +3,8 @@ import { ImageContext } from '../../contexts/ImageContext.tsx';
 import { toolsMap } from '../../tools/toolsMap.ts';
 
 const SidebarRight = () => {
-  const { originalImage, toolName, toolArgs, updateLastHistoryItem } = useContext(ImageContext);
-  if (!toolName || !toolArgs || !originalImage) {
+  const { originalImage, toolName, setToolArgs } = useContext(ImageContext);
+  if (!toolName || !originalImage) {
     // todo UNDERSTAND THIS
     return (
       <aside className="bg-gray-100 dark:bg-gray-800 dark:border-l dark:border-gray-700 max-md:hidden [grid-area:right]">
@@ -13,7 +13,6 @@ const SidebarRight = () => {
     );
   }
 
-  const args = { ...toolArgs };
   const Component = toolsMap[toolName].toolboxComponent;
 
   return (
@@ -21,17 +20,7 @@ const SidebarRight = () => {
       <div className="p-3">
         <ul className="flex flex-col list-none p-0">
           <li className="mb-2">
-            <Component
-              key={toolName}
-              args={args}
-              onChange={(newArgsOrParams: any) => {
-                if ('args' in newArgsOrParams) {
-                  updateLastHistoryItem(newArgsOrParams);
-                } else {
-                  updateLastHistoryItem({ args: newArgsOrParams });
-                }
-              }}
-            />
+            <Component key={toolName} onChange={setToolArgs} />
           </li>
         </ul>
       </div>

@@ -1,92 +1,78 @@
-import React, { type ChangeEvent, useContext, useEffect } from 'react';
-import { type TextToolArgs } from '../../../tools/text.ts';
-import { ImageContext, type UpdateHistoryFn } from '../../../contexts/ImageContext.tsx';
-import { savedLastSettings } from '../../../tools/settings.ts';
+import React, { type ChangeEvent, useContext } from 'react';
+import { ImageContext } from '../../../contexts/ImageContext.tsx';
 import { calculateNewRect } from '../../../util/rect.ts';
+import type { TextToolArgs } from '../../../tools/text.ts';
 
 interface TextToolbarProps {
-  args: TextToolArgs;
-  onChange: (params: UpdateHistoryFn) => void;
+  onChange: (args: TextToolArgs) => void;
 }
 
-const Text: React.FC<TextToolbarProps> = ({ args, onChange }) => {
-  const { size: imageSize, textareaRef, canvasRef } = useContext(ImageContext);
+const Text: React.FC<TextToolbarProps> = ({ onChange }) => {
+  const { size: imageSize, textareaRef, canvasRef, toolArgs, updateLastHistoryItem } = useContext(ImageContext);
+  const args = toolArgs as TextToolArgs;
   const { text, fontSize, lineHeight, rect, bold, italic, fontFamily, color, align } = args;
 
   const handleTextChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const textValue = event.target.value;
     const newArgs = { ...args, text: textValue };
     const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
-    onChange({ args: { ...newArgs, rect: newRect }, dryRun: true });
+    onChange({ ...newArgs, rect: newRect });
   };
 
   const handleFontSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
     const fontSize = Number(event.target.value);
     const newArgs = { ...args, fontSize };
-    savedLastSettings.text = newArgs;
     const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
-    onChange({ args: { ...newArgs, rect: newRect }, dryRun: true });
+    onChange({ ...newArgs, rect: newRect });
   };
 
   const handleLineHeightChange = (event: ChangeEvent<HTMLInputElement>) => {
     const newLineHeight = Number(event.target.value);
     const newArgs = { ...args, lineHeight: newLineHeight };
-    savedLastSettings.text = newArgs;
     const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
-    onChange({ args: { ...newArgs, rect: newRect }, dryRun: true });
+    onChange({ ...newArgs, rect: newRect });
   };
 
   const handleFontFamilyChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const fontFamily = event.target.value;
     const newArgs = { ...args, fontFamily };
-    savedLastSettings.text = newArgs;
     const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
-    onChange({ args: { ...newArgs, rect: newRect }, dryRun: true });
+    onChange({ ...newArgs, rect: newRect });
   };
 
   const handleColorChange = (event: ChangeEvent<HTMLInputElement>) => {
     const color = event.target.value;
     const newArgs = { ...args, color };
-    savedLastSettings.text = newArgs;
-    onChange({ args: newArgs, dryRun: true });
+    onChange(newArgs);
   };
 
   const handleAlignChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const align = event.target.value as 'left' | 'center' | 'right';
     const newArgs = { ...args, align };
-    savedLastSettings.text = newArgs;
-    onChange({ args: newArgs, dryRun: true });
+    onChange(newArgs);
   };
 
   const toggleBold = () => {
     const newArgs = { ...args, bold: !bold };
-    savedLastSettings.text = newArgs;
     const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
-    onChange({ args: { ...newArgs, rect: newRect }, dryRun: true });
+    onChange({ ...newArgs, rect: newRect });
   };
 
   const toggleItalic = () => {
     const newArgs = { ...args, italic: !italic };
-    savedLastSettings.text = newArgs;
     const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
-    onChange({ args: { ...newArgs, rect: newRect }, dryRun: true });
+    onChange({ ...newArgs, rect: newRect });
   };
 
   const applyText = () => {
     if (text && rect) {
-      onChange({ args: { ...args } });
+      updateLastHistoryItem(args);
     }
   };
 
   const clear = () => {
-    onChange({ args: { ...args, text: '', rect: null } });
+    onChange({ ...args, text: '', rect: null });
   };
-
-  useEffect(() => {
-    return () => {
-      applyText();
-    };
-  }, []);
 
   return (
     <div className="flex flex-col gap-4">

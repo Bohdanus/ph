@@ -5,8 +5,7 @@ import HistoryControls from '../HistoryControls/HistoryControls';
 import NewImageDialog from '../NewImageDialog/NewImageDialog';
 
 const DesktopHeader = () => {
-  const { isSaved, startEmptyTool, openLoadImageDialog, openSaveImageDialog, createBlankImage } =
-    useContext(ImageContext);
+  const { isSaved, startTool, openLoadImageDialog, openSaveImageDialog, createBlankImage } = useContext(ImageContext);
   const { theme, toggleTheme } = useTheme();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [showNewDialog, setShowNewDialog] = useState(false);
@@ -15,32 +14,32 @@ const DesktopHeader = () => {
   const editMenuRef = useRef<HTMLLIElement>(null);
 
   const handleColors = () => {
-    startEmptyTool('colors');
+    startTool('colors');
     setOpenMenu(null);
   };
 
   const handleBlur = () => {
-    startEmptyTool('blur');
+    startTool('blur');
     setOpenMenu(null);
   };
 
   const handleLevels = () => {
-    startEmptyTool('levels');
+    startTool('levels');
     setOpenMenu(null);
   };
 
   const handleTransform = () => {
-    startEmptyTool('transform');
+    startTool('transform');
     setOpenMenu(null);
   };
 
   const handleDraw = () => {
-    startEmptyTool('draw');
+    startTool('draw');
     setOpenMenu(null);
   };
 
   const handleText = () => {
-    startEmptyTool('text');
+    startTool('text');
     setOpenMenu(null);
   };
 

@@ -1,9 +1,12 @@
 .zoom-container {
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
+  //image-rendering: pixelated;
+  //image-rendering: crisp-edges;
   overscroll-behavior: none;
   transform-origin: center center;
   user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .cursor-draw {

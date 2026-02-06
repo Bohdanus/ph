@@ -126,16 +126,16 @@ const Main = () => {
         style={{ display: originalImage ? undefined : 'none' }}
       >
         <div
-          className="zoom-container"
+          className="zoom-container h-full w-full"
           style={{
             transform: `translate(${dx}px, ${dy}px) scale(${zoom})`,
           }}
         >
-          <canvas ref={canvasRef} className="max-h-full max-w-full object-contain" />
+          <canvas ref={canvasRef} className="h-full w-full object-contain pointer-events-none" />
         </div>
         <canvas
           ref={overlayRef}
-          className="max-h-full max-w-full object-contain absolute"
+          className="h-full w-full object-contain absolute pointer-events-none"
           style={{
             display: ['draw', 'crop', 'text', 'shape'].includes(interactionMode) ? 'block' : 'none',
           }}

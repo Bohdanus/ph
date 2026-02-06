@@ -1,27 +1,30 @@
 import React, { type ChangeEvent, useContext, useRef, useState } from 'react';
-import { savedArgsPerFigure, savedLastSettings } from '../../../tools/settings.ts';
+import { savedArgsPerFigure } from '../../../tools/settings.ts';
 import { ImageContext } from '../../../contexts/ImageContext.tsx';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
-import type { FigureType, ShapeToolType } from '../../../tools/shape.ts';
+import type { FigureType, ShapeToolArgs, ShapeToolSettings } from '../../../tools/shape.ts';
 import { isLightColor } from '../../../util/color.ts';
 
-const Shapes: React.FC = () => {
-  const { containerRef, size: imageSize } = useContext(ImageContext);
-  const [args, setArgs] = useState<ShapeToolType>(savedLastSettings.shape as ShapeToolType);
+interface ShapesToolbarProps {
+  onChange: (args: ShapeToolSettings) => void;
+}
+
+const Shapes: React.FC<ShapesToolbarProps> = ({ onChange }: ShapesToolbarProps) => {
+  const { containerRef, size: imageSize, toolArgs } = useContext(ImageContext);
+  const args = toolArgs as ShapeToolArgs;
   const [brushScale, setBrushScale] = useState<number>(0);
   const savedFillColorRef = useRef(args.fillColor);
   const savedLineDashRef = useRef(args.lineDash);
 
   usePointerPosition({ ref: containerRef, imageSize, onResize: ({ scale }) => setBrushScale(scale) });
 
-  const handleChange = (newArgs: ShapeToolType) => {
-    savedLastSettings.shape = newArgs;
+  const handleChange = (newArgs: ShapeToolArgs) => {
     savedArgsPerFigure[newArgs.figure] = {
       alpha: newArgs.alpha,
       lineWidth: newArgs.lineWidth,
       lineDash: newArgs.lineDash,
     };
-    setArgs(newArgs);
+    onChange(newArgs);
   };
 
   const handleColorChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -39,7 +42,8 @@ const Shapes: React.FC = () => {
     if (args.fillColor !== null) {
       savedFillColorRef.current = args.fillColor;
     }
-    handleChange({ ...args, fillColor: fill ? (savedFillColorRef.current ?? '#000000') : null });
+    const fillColor = fill ? (savedFillColorRef.current ?? '#000000') : null;
+    handleChange({ ...args, fillColor });
   };
 
   const handleSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -62,19 +66,22 @@ const Shapes: React.FC = () => {
     if (args.lineDash) {
       savedLineDashRef.current = args.lineDash;
     }
-    handleChange({ ...args, lineDash: isDashed ? (savedLineDashRef.current ?? [10, 10]) : null });
+    const lineDash = isDashed ? (savedLineDashRef.current ?? [10, 10]) : null;
+    handleChange({ ...args, lineDash });
   };
 
   const handleDashChange = (event: ChangeEvent<HTMLInputElement>) => {
     const value = Number(event.target.value);
     const gap = args.lineDash?.[1] ?? 10;
-    handleChange({ ...args, lineDash: [value, gap] });
+    const newArgs = { ...args, lineDash: [value, gap] };
+    handleChange(newArgs);
   };
 
   const handleGapChange = (event: ChangeEvent<HTMLInputElement>) => {
     const value = Number(event.target.value);
     const dash = args.lineDash?.[0] ?? 10;
-    handleChange({ ...args, lineDash: [dash, value] });
+    const newArgs = { ...args, lineDash: [dash, value] };
+    handleChange(newArgs);
   };
 
   const { alpha, lineColor, fillColor, lineWidth, figure, lineDash } = args;

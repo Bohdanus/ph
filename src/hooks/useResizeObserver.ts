@@ -14,6 +14,7 @@ export function useResizeObserverRAF(ref: RefObject<HTMLElement | null>, onResiz
     const observer = new ResizeObserver((entries) => {
       // Throttle to 1 per frame
       if (frameRef.current !== null) {
+        // cancelling animation frame here will cause more sparse events on high load, which is by design => more debounce like !
         cancelAnimationFrame(frameRef.current);
       }
 

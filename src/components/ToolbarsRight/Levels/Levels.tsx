@@ -1,24 +1,48 @@
-import React from 'react';
+import React, { useContext, useRef, useCallback } from 'react';
 import { defaultSettings } from '../../../tools/settings.ts';
 import { isEqual } from 'lodash-es';
 import UndoButton from '../../Common/UndoButton.tsx';
+import { ImageContext } from '../../../contexts/ImageContext.tsx';
+import { type LevelsToolArgs, levels } from '../../../tools/levels.ts';
 
 interface LevelsToolbarProps {
-  args: { brightness?: number; contrast?: number };
-  onChange: (args: { brightness: number; contrast: number }) => void;
+  onChange: (args: LevelsToolArgs) => void;
 }
 
-const Levels: React.FC<LevelsToolbarProps> = ({ args, onChange }) => {
+const Levels: React.FC<LevelsToolbarProps> = ({ onChange }) => {
+  const { getBitmap, canvasRef, canvasCtxRef, toolArgs } = useContext(ImageContext);
+  const args = toolArgs as LevelsToolArgs;
+  const pendingUpdateRef = useRef<LevelsToolArgs | null>(null);
+  const rafIdRef = useRef<number | null>(null);
+
+  const throttledOnChange = useCallback(
+    (newArgs: LevelsToolArgs) => {
+      pendingUpdateRef.current = newArgs;
+
+      if (rafIdRef.current === null) {
+        rafIdRef.current = requestAnimationFrame(() => {
+          if (pendingUpdateRef.current !== null) {
+            levels({ bitmap: getBitmap()!, canvas: canvasRef.current!, ctx: canvasCtxRef.current })(
+              pendingUpdateRef.current
+            );
+            onChange(pendingUpdateRef.current);
+            pendingUpdateRef.current = null;
+          }
+          rafIdRef.current = null;
+        });
+      }
+    },
+    [onChange, getBitmap, canvasRef, canvasCtxRef]
+  );
+
   const handleBrightnessChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const brightness = Number(event.target.value);
-    // @ts-expect-error: mess with polymorphic args
-    onChange({ ...args, brightness });
+    throttledOnChange({ ...args, brightness });
   };
 
   const handleContrastChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const contrast = Number(event.target.value);
-    // @ts-expect-error: mess with polymorphic args
-    onChange({ ...args, contrast });
+    throttledOnChange({ ...args, contrast });
   };
 
   const { brightness, contrast } = args;

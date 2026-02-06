@@ -1,18 +1,20 @@
-import { applyFilter } from './applyFilter.ts';
 import type { RectXY } from '../contexts/ImageContext.tsx';
 import { TEXT_PADDING } from '../util/constants.ts';
+import type { ImageProcParams } from './toolsMap.ts';
 
 export type TextToolArgs = {
-  text: string;
-  fontSize: number;
-  lineHeight: number;
-  fontFamily: string;
-  color: string;
-  rect: RectXY | null;
   align: 'left' | 'center' | 'right';
   bold: boolean;
+  color: string;
+  fontFamily: string;
+  fontSize: number;
   italic: boolean;
+  lineHeight: number;
+  text?: string;
+  rect?: RectXY | null;
 };
+
+export type TextToolSettings = Omit<TextToolArgs, 'text' | 'rect'>;
 
 export function renderText(ctx: CanvasRenderingContext2D, args: TextToolArgs) {
   const { text, fontSize, lineHeight, fontFamily, color, rect, align, bold, italic } = args;
@@ -46,7 +48,7 @@ export function renderText(ctx: CanvasRenderingContext2D, args: TextToolArgs) {
 export function getTextWidth(ctx: CanvasRenderingContext2D, args: TextToolArgs): number {
   const { fontSize, fontFamily, bold, italic, text } = args;
   ctx.font = `${italic ? 'italic ' : ''}${bold ? 'bold ' : ''}${fontSize}px ${fontFamily}`;
-  const lines = text.split('\n');
+  const lines = (text ?? '').split('\n');
 
   return Math.max(
     ...lines.map((line) => {
@@ -56,10 +58,10 @@ export function getTextWidth(ctx: CanvasRenderingContext2D, args: TextToolArgs):
   );
 }
 
-export const text = (canvas: HTMLCanvasElement, source: ImageBitmap) => (args: TextToolArgs) => {
-  return applyFilter(canvas, (ctx) => {
-    ctx.drawImage(source, 0, 0);
+export const text =
+  ({ ctx, bitmap }: ImageProcParams) =>
+  (args: TextToolArgs) => {
+    ctx.drawImage(bitmap, 0, 0);
 
     renderText(ctx, args);
-  });
-};
+  };

@@ -1,7 +1,6 @@
 import { type PointerEvent, type RefObject, useContext, useRef } from 'react';
 import { ImageContext, type Point } from '../../contexts/ImageContext';
-import { type DrawToolType, setDrawTool } from '../../tools/draw.ts';
-import { savedLastSettings } from '../../tools/settings.ts';
+import { type DrawToolSettings, setDrawTool } from '../../tools/draw.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { hexToRgb } from '../../util/rect.ts';
 import { bezierSmoothedLine } from '../../util/draw.ts';
@@ -14,7 +13,8 @@ type DrawHandlerProps = {
 };
 
 export const DrawToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayRef }: DrawHandlerProps) => {
-  const { addCanvasToHistory, containerRef, size } = useContext(ImageContext);
+  const { addCanvasToHistory, containerRef, size, toolArgs } = useContext(ImageContext);
+  const args = toolArgs as DrawToolSettings;
   const pointsRef = useRef<Point[]>([]);
   const pendingPoints = useRef<Point[]>([]);
   const frameRequested = useRef<number | null>(null);
@@ -28,34 +28,26 @@ export const DrawToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayRe
     const pp = pendingPoints.current;
     pointsRef.current.push(...pp);
 
-    const alpha = (savedLastSettings.draw as DrawToolType).alpha;
-    const ctx = alpha === 1 ? canvasCtxRef.current! : overlayCtxRef.current!;
+    const ctx = overlayCtxRef.current!;
 
-    if (alpha === 1) {
-      bezierSmoothedLine(ctx, pp);
-      ctx.stroke();
-    } else {
-      ctx.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
-      ctx.beginPath();
-      const points = pointsRef.current;
-      ctx.moveTo(points[0].x, points[0].y);
-      bezierSmoothedLine(ctx, points);
-      ctx.stroke();
-    }
+    ctx.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
+    ctx.beginPath();
+    const points = pointsRef.current;
+    ctx.moveTo(points[0].x, points[0].y);
+    bezierSmoothedLine(ctx, points);
+    ctx.stroke();
   };
 
   const drawSpray = () => {
     const pp = pendingPoints.current;
     pointsRef.current.push(...pp);
 
-    const settings = savedLastSettings.draw as DrawToolType;
-
-    const alpha = settings.alpha;
-    const color = hexToRgb(settings.color);
+    const alpha = args.alpha;
+    const color = hexToRgb(args.color);
     const colorStart = `rgba(${color}, ${alpha / 4})`;
     const colorStop = `rgba(${color}, 0)`;
-    const radius = settings.lineWidth;
-    const ctx = canvasCtxRef.current!;
+    const radius = args.lineWidth;
+    const ctx = overlayCtxRef.current!;
 
     for (let i = 0; i < pp.length; i++) {
       const g = ctx.createRadialGradient(pp[i].x, pp[i].y, 0, pp[i].x, pp[i].y, radius);
@@ -73,7 +65,7 @@ export const DrawToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayRe
     frameRequested.current = null;
     // if (pendingPoints.current.length === 0) return;
 
-    const penType = (savedLastSettings.draw as DrawToolType).penType;
+    const penType = args.penType;
     if (penType === 'pen' || penType === 'pen-dashed') {
       drawPen();
     } else if (penType === 'spray') {
@@ -86,18 +78,12 @@ export const DrawToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayRe
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (!onPointerDown(event)) return;
 
-    const alpha = (savedLastSettings.draw as DrawToolType).alpha;
-    const ctx = alpha === 1 ? canvasCtxRef.current! : overlayCtxRef.current!;
-    setDrawTool(ctx, savedLastSettings.draw as DrawToolType);
+    const ctx = overlayCtxRef.current!;
+    setDrawTool(ctx, args);
 
     const coords = getLocalCoords(event);
     pointsRef.current = [];
     pendingPoints.current = [coords];
-
-    if (alpha === 1) {
-      ctx.beginPath();
-      ctx.moveTo(coords.x, coords.y);
-    }
 
     flushDrawingFrame();
   };
@@ -108,9 +94,7 @@ export const DrawToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayRe
     const coords = getLocalCoords(event);
     pendingPoints.current.push(coords);
 
-    if (frameRequested.current !== null) {
-      cancelAnimationFrame(frameRequested.current);
-    }
+    if (frameRequested.current !== null) return;
 
     frameRequested.current = requestAnimationFrame(flushDrawingFrame);
   };
@@ -121,13 +105,13 @@ export const DrawToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayRe
     if (frameRequested.current !== null) {
       cancelAnimationFrame(frameRequested.current);
     }
+
     flushDrawingFrame();
 
     canvasCtxRef.current!.drawImage(overlayRef.current!, 0, 0);
     overlayCtxRef.current!.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
 
-    const args = savedLastSettings.draw as DrawToolType;
-    addCanvasToHistory('draw', { ...args, points: pointsRef.current });
+    addCanvasToHistory({ ...args, points: pointsRef.current });
   };
 
   return (

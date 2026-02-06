@@ -1,38 +1,52 @@
-import React, { useMemo, useEffect } from 'react';
+import React, { useRef, useCallback, useContext } from 'react';
 import { defaultSettings } from '../../../tools/settings.ts';
-import { isEqual, throttle } from 'lodash-es';
-import { THROTTLE_TIME } from '../../../constants';
+import { isEqual } from 'lodash-es';
 import UndoButton from '../../Common/UndoButton.tsx';
+import { ImageContext } from '../../../contexts/ImageContext.tsx';
+import { type ColorsToolArgs, colors } from '../../../tools/colors.ts';
 
 interface ColorsToolbarProps {
-  args: { grayscale?: number; sepia?: number; saturation?: number };
-  onChange: (args: { grayscale: number; sepia: number; saturation: number }) => void;
+  onChange: (args: ColorsToolArgs) => void;
 }
 
-const Colors: React.FC<ColorsToolbarProps> = ({ args, onChange }) => {
-  const throttledOnChange = useMemo(() => throttle(onChange, THROTTLE_TIME), [onChange]);
+const Colors: React.FC<ColorsToolbarProps> = ({ onChange }) => {
+  const { getBitmap, canvasRef, canvasCtxRef, toolArgs } = useContext(ImageContext);
+  const args = toolArgs as ColorsToolArgs;
+  const pendingUpdateRef = useRef<ColorsToolArgs | null>(null);
+  const rafIdRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    return () => {
-      throttledOnChange.cancel();
-    };
-  }, [throttledOnChange]);
+  const throttledOnChange = useCallback(
+    (newArgs: ColorsToolArgs) => {
+      pendingUpdateRef.current = newArgs;
+
+      if (rafIdRef.current === null) {
+        rafIdRef.current = requestAnimationFrame(() => {
+          if (pendingUpdateRef.current !== null) {
+            colors({ bitmap: getBitmap()!, canvas: canvasRef.current!, ctx: canvasCtxRef.current })(
+              pendingUpdateRef.current
+            );
+            onChange(pendingUpdateRef.current);
+            pendingUpdateRef.current = null;
+          }
+          rafIdRef.current = null;
+        });
+      }
+    },
+    [onChange, getBitmap, canvasRef, canvasCtxRef]
+  );
 
   const handleGrayscaleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const grayscale = Number(event.target.value);
-    // @ts-expect-error: mess with polymorphic args
     throttledOnChange({ ...args, grayscale });
   };
 
   const handleSepiaChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const sepia = Number(event.target.value);
-    // @ts-expect-error: mess with polymorphic args
     throttledOnChange({ ...args, sepia });
   };
 
   const handleSaturationChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const saturation = Number(event.target.value);
-    // @ts-expect-error: mess with polymorphic args
     throttledOnChange({ ...args, saturation });
   };
 

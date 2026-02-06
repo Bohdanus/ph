@@ -17,7 +17,6 @@ type UseRectProps = {
 };
 
 export function useRect({
-  enabled = true,
   imageSize,
   initialRect,
   containerRef,
@@ -30,29 +29,40 @@ export function useRect({
   const rectUnsortedRef = useRef<RectXY | null>(null); // might become unsorted while dragging
   const startPointRef = useRef<Point | null>(null);
   const movingEdgeRef = useRef<string | null>(null);
+  const customAspectRatioRef = useRef<number | null>(null);
 
+  const pendingPoint = useRef<Point | null>(null);
   const frameRequested = useRef<number | null>(null);
 
   // when rotating or mirroring, crop area changes, so redraw the crop mask
   useEffect(() => {
-    if (enabled) {
-      rectUnsortedRef.current = initialRect ?? null;
-      drawMask();
-    }
+    rectUnsortedRef.current = initialRect ?? null;
+    drawMask();
   }, [initialRect]);
 
+  useEffect(() => {
+    return () => {
+      cancelAnimationFrame(frameRequested.current!);
+      overlayCtxRef.current!.clearRect(0, 0, imageSize.width, imageSize.height);
+    };
+  }, []);
+
   const { dimensionsRef, onPointerDown, onPointerUp, getLocalCoords, isMouseDown } = usePointerPosition({
-    enabled,
     ref: containerRef,
     imageSize,
     onResize: drawMask,
   });
 
-  function getEdgeAtPoint(point: Point) {
+  function getEdgeAtPoint(point: Point, event?: PointerEvent<HTMLDivElement>): string | undefined {
     if (initialRect) {
       const { x1, y1, x2, y2 } = initialRect;
       const { scale } = dimensionsRef.current;
       const h2 = HANDLE_SIZE / scale / 2;
+
+      // Detect modifier keys to lock aspect ratio, if not set already
+      if (!aspectRatio && event && (event.ctrlKey || event.metaKey || event.shiftKey)) {
+        customAspectRatioRef.current = (x2 - x1) / (y2 - y1);
+      }
 
       // check for tops
       if (point.x >= x1 - h2 && point.x <= x1 + h2 && point.y >= y1 - h2 && point.y <= y1 + h2) {
@@ -98,11 +108,9 @@ export function useRect({
 
   function drawMask() {
     const ctx = overlayCtxRef.current!;
-    const width_overlay = overlayRef.current!.width;
-    const height_overlay = overlayRef.current!.height;
     const { scale } = dimensionsRef.current;
 
-    ctx.clearRect(0, 0, width_overlay, height_overlay);
+    ctx.clearRect(0, 0, imageSize.width, imageSize.height);
 
     const rect = rectUnsortedRef.current;
     if (!rect) return;
@@ -112,7 +120,7 @@ export function useRect({
     // Draw semi-transparent overlay
     // eslint-disable-next-line react-compiler/react-compiler
     ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    ctx.fillRect(0, 0, width_overlay, height_overlay);
+    ctx.fillRect(0, 0, imageSize.width, imageSize.height);
 
     // Clear the selection area
     ctx.clearRect(x, y, width, height);
@@ -136,10 +144,29 @@ export function useRect({
     onChange?.(sortRect(rect));
   }
 
+  function adjustHeightRatio({ x1, y1, x2, y2 }: RectXY, _aspectRatio: number | null) {
+    if (_aspectRatio) {
+      const width = Math.abs(x2 - x1);
+      const currentHeight = Math.abs(y2 - y1);
+      const wantedHeight = width / _aspectRatio;
+      const diff = (wantedHeight - currentHeight) / 2;
+      if (y1 < y2) {
+        y1 -= diff;
+        y2 += diff;
+      } else {
+        y1 += diff;
+        y2 -= diff;
+      }
+    }
+    return { y1, y2 };
+  }
+
   function calculateCropRect(point: Point) {
     let x1, x2, y1, y2;
     const startPoint = startPointRef.current!;
     const startEdge = movingEdgeRef.current;
+
+    const _aspectRatio = customAspectRatioRef.current ?? aspectRatio;
 
     if (initialRect && startEdge) {
       ({ x1, y1, x2, y2 } = initialRect);
@@ -154,51 +181,56 @@ export function useRect({
           break;
         case 'left':
           x1 = point.x;
-          if (aspectRatio) {
-            const width = Math.abs(x2 - x1);
-            const height = width / aspectRatio;
-            y2 = y1 + height * (y2 < y1 ? -1 : 1);
-          }
+          ({ y1, y2 } = adjustHeightRatio({ x1, y1, x2, y2 }, _aspectRatio));
           break;
         case 'right':
           x2 = point.x;
-          if (aspectRatio) {
-            const width = Math.abs(x2 - x1);
-            const height = width / aspectRatio;
-            y2 = y1 + height * (y2 < y1 ? -1 : 1);
-          }
+          ({ y1, y2 } = adjustHeightRatio({ x1, y1, x2, y2 }, _aspectRatio));
           break;
         case 'top':
           y1 = point.y;
-          if (aspectRatio) {
+          if (_aspectRatio) {
             const height = Math.abs(y2 - y1);
-            const width = height * aspectRatio;
+            const width = height * _aspectRatio;
             x2 = x1 + width * (x2 < x1 ? -1 : 1);
           }
           break;
         case 'bottom':
           y2 = point.y;
-          if (aspectRatio) {
+          if (_aspectRatio) {
             const height = Math.abs(y2 - y1);
-            const width = height * aspectRatio;
+            const width = height * _aspectRatio;
             x2 = x1 + width * (x2 < x1 ? -1 : 1);
           }
           break;
         case 'top-left':
+          if (_aspectRatio) {
+            const width = Math.abs(startPoint.x - point.x);
+            const height = Math.abs(y2 - y1);
+            if (width / height > _aspectRatio) {
+              // width is too large
+              x2 = x1 + height * _aspectRatio * (x2 < x1 ? -1 : 1);
+            } else {
+              // height is too large
+              y2 = y1 + (width / _aspectRatio) * (y2 < y1 ? -1 : 1);
+            }
+          }
+          break;
+
         case 'top-right':
         case 'bottom-left':
         case 'bottom-right':
-          x2 = point.x;
-          y2 = point.y;
-          if (aspectRatio) {
+          if (_aspectRatio) {
+            x2 = point.x;
+            y2 = point.y;
             const width = Math.abs(x2 - x1);
             const height = Math.abs(y2 - y1);
-            if (width / height > aspectRatio) {
+            if (width / height > _aspectRatio) {
               // width is too large
-              x2 = x1 + height * aspectRatio * (x2 < x1 ? -1 : 1);
+              x2 = x1 + height * _aspectRatio * (x2 < x1 ? -1 : 1);
             } else {
               // height is too large
-              y2 = y1 + (width / aspectRatio) * (y2 < y1 ? -1 : 1);
+              y2 = y1 + (width / _aspectRatio) * (y2 < y1 ? -1 : 1);
             }
           }
           break;
@@ -209,13 +241,13 @@ export function useRect({
       x2 = point.x;
       y2 = point.y;
 
-      if (aspectRatio) {
+      if (_aspectRatio) {
         const width = Math.abs(x2 - x1);
         const height = Math.abs(y2 - y1);
-        if (width / height > aspectRatio) {
-          x2 = x1 + height * aspectRatio * (x2 < x1 ? -1 : 1);
+        if (width / height > _aspectRatio) {
+          x2 = x1 + height * _aspectRatio * (x2 < x1 ? -1 : 1);
         } else {
-          y2 = y1 + (width / aspectRatio) * (y2 < y1 ? -1 : 1);
+          y2 = y1 + (width / _aspectRatio) * (y2 < y1 ? -1 : 1);
         }
       }
     }
@@ -236,15 +268,13 @@ export function useRect({
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (!onPointerDown(event)) return;
 
-    if (event.button !== 0) return;
-
     startPointRef.current = null;
     movingEdgeRef.current = null;
 
     const point = getLocalCoords(event);
 
     if (initialRect) {
-      const edge = getEdgeAtPoint(point);
+      const edge = getEdgeAtPoint(point, event);
       setMouseCursor(edge, event);
 
       switch (edge) {
@@ -301,13 +331,13 @@ export function useRect({
       return;
     }
 
-    if (frameRequested.current !== null) {
-      cancelAnimationFrame(frameRequested.current);
-    }
+    pendingPoint.current = point;
+    if (frameRequested.current !== null) return;
+
     frameRequested.current = requestAnimationFrame(() => {
       frameRequested.current = null;
 
-      calculateCropRect(point);
+      calculateCropRect(pendingPoint.current!);
       drawMask();
     });
   };
@@ -328,11 +358,11 @@ export function useRect({
       cancelAnimationFrame(frameRequested.current);
     }
 
+    customAspectRatioRef.current = null;
+
     // commented out because useEffect after initialRect change is doing the shit anyway
     // drawMask();
   };
-
-  if (!enabled) return {};
 
   return {
     onPointerDown: handlePointerDown,

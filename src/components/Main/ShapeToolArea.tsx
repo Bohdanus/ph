@@ -1,7 +1,7 @@
 import { type PointerEvent, type RefObject, useContext, useRef } from 'react';
 import { ImageContext, type Point } from '../../contexts/ImageContext';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
-import { drawShape, setShapeTool, type ShapeToolType } from '../../tools/shape.ts';
+import { drawShape, setShapeTool, type ShapeToolArgs } from '../../tools/shape.ts';
 
 type ShapeHandlerProps = {
   className?: string;
@@ -12,7 +12,7 @@ type ShapeHandlerProps = {
 
 export const ShapeToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayRef }: ShapeHandlerProps) => {
   const { addCanvasToHistory, containerRef, size, toolArgs } = useContext(ImageContext);
-  const args = toolArgs as ShapeToolType;
+  const args = toolArgs as ShapeToolArgs;
   const startRef = useRef<Point | null>(null);
   const endRef = useRef<Point | null>(null);
   const frameRequested = useRef<number | null>(null);
@@ -46,9 +46,7 @@ export const ShapeToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayR
 
     endRef.current = getLocalCoords(event);
 
-    if (frameRequested.current !== null) {
-      cancelAnimationFrame(frameRequested.current);
-    }
+    if (frameRequested.current !== null) return;
 
     frameRequested.current = requestAnimationFrame(flushDrawingFrame);
   };
@@ -66,7 +64,7 @@ export const ShapeToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayR
     canvasCtxRef.current!.drawImage(overlayRef.current!, 0, 0);
     overlayCtxRef.current!.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
 
-    addCanvasToHistory('shape', { ...args, start: startRef.current!, end: endRef.current! });
+    addCanvasToHistory({ ...args, start: startRef.current!, end: endRef.current });
   };
 
   return (
