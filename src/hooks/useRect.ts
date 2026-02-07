@@ -34,11 +34,14 @@ export function useRect({
   const pendingPoint = useRef<Point | null>(null);
   const frameRequested = useRef<number | null>(null);
 
-  // when rotating or mirroring, crop area changes, so redraw the crop mask
   useEffect(() => {
     rectUnsortedRef.current = initialRect ?? null;
+    if (aspectRatio && initialRect) {
+      const patch = adjustWidthRatio(initialRect, aspectRatio);
+      rectUnsortedRef.current = { ...initialRect, ...patch };
+    }
     drawMask();
-  }, [initialRect]);
+  }, [aspectRatio, initialRect]);
 
   useEffect(() => {
     return () => {
@@ -160,6 +163,41 @@ export function useRect({
     return { y1, y2 };
   }
 
+  function adjustWidthRatio({ x1, y1, x2, y2 }: RectXY, _aspectRatio: number | null) {
+    if (_aspectRatio) {
+      const height = Math.abs(y2 - y1);
+      const currentWidth = Math.abs(x2 - x1);
+      const wantedWidth = height / _aspectRatio;
+      const diff = (wantedWidth - currentWidth) / 2;
+      if (x1 < x2) {
+        x1 -= diff;
+        x2 += diff;
+      } else {
+        x1 += diff;
+        x2 -= diff;
+      }
+    }
+    return { x1, x2 };
+  }
+
+  function adjustFreePoint(point: Point, _aspectRatio: number | null) {
+    let x1 = startPointRef.current!.x;
+    let y1 = startPointRef.current!.y;
+    let x2 = point.x;
+    let y2 = point.y;
+
+    if (_aspectRatio) {
+      const width = Math.abs(x2 - x1);
+      const height = Math.abs(y2 - y1);
+      if (width / height > _aspectRatio) {
+        x2 = x1 + height * _aspectRatio * (x2 < x1 ? -1 : 1);
+      } else {
+        y2 = y1 + (width / _aspectRatio) * (y2 < y1 ? -1 : 1);
+      }
+    }
+    return { x1, y1, x2, y2 };
+  }
+
   function calculateCropRect(point: Point) {
     let x1, x2, y1, y2;
     const startPoint = startPointRef.current!;
@@ -188,67 +226,17 @@ export function useRect({
           break;
         case 'top':
           y1 = point.y;
-          if (_aspectRatio) {
-            const height = Math.abs(y2 - y1);
-            const width = height * _aspectRatio;
-            x2 = x1 + width * (x2 < x1 ? -1 : 1);
-          }
+          ({ x1, x2 } = adjustWidthRatio({ x1, y1, x2, y2 }, _aspectRatio));
           break;
         case 'bottom':
           y2 = point.y;
-          if (_aspectRatio) {
-            const height = Math.abs(y2 - y1);
-            const width = height * _aspectRatio;
-            x2 = x1 + width * (x2 < x1 ? -1 : 1);
-          }
+          ({ x1, x2 } = adjustWidthRatio({ x1, y1, x2, y2 }, _aspectRatio));
           break;
-        case 'top-left':
-          if (_aspectRatio) {
-            const width = Math.abs(startPoint.x - point.x);
-            const height = Math.abs(y2 - y1);
-            if (width / height > _aspectRatio) {
-              // width is too large
-              x2 = x1 + height * _aspectRatio * (x2 < x1 ? -1 : 1);
-            } else {
-              // height is too large
-              y2 = y1 + (width / _aspectRatio) * (y2 < y1 ? -1 : 1);
-            }
-          }
-          break;
-
-        case 'top-right':
-        case 'bottom-left':
-        case 'bottom-right':
-          if (_aspectRatio) {
-            x2 = point.x;
-            y2 = point.y;
-            const width = Math.abs(x2 - x1);
-            const height = Math.abs(y2 - y1);
-            if (width / height > _aspectRatio) {
-              // width is too large
-              x2 = x1 + height * _aspectRatio * (x2 < x1 ? -1 : 1);
-            } else {
-              // height is too large
-              y2 = y1 + (width / _aspectRatio) * (y2 < y1 ? -1 : 1);
-            }
-          }
-          break;
+        default:
+          ({ x1, y1, x2, y2 } = adjustFreePoint(point, _aspectRatio));
       }
     } else {
-      x1 = startPoint.x;
-      y1 = startPoint.y;
-      x2 = point.x;
-      y2 = point.y;
-
-      if (_aspectRatio) {
-        const width = Math.abs(x2 - x1);
-        const height = Math.abs(y2 - y1);
-        if (width / height > _aspectRatio) {
-          x2 = x1 + height * _aspectRatio * (x2 < x1 ? -1 : 1);
-        } else {
-          y2 = y1 + (width / _aspectRatio) * (y2 < y1 ? -1 : 1);
-        }
-      }
+      ({ x1, y1, x2, y2 } = adjustFreePoint(point, _aspectRatio));
     }
 
     const rect = {
@@ -355,6 +343,7 @@ export function useRect({
 
     if (frameRequested.current !== null) {
       cancelAnimationFrame(frameRequested.current);
+      frameRequested.current = null;
     }
 
     customAspectRatioRef.current = null;
