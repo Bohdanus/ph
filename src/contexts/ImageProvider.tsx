@@ -1,4 +1,4 @@
-import React, { useState, type ReactNode, useRef, useEffect } from 'react';
+import React, { useState, type ReactNode, useRef, useLayoutEffect } from 'react';
 import { loadImageFile } from './loadFromFile.ts';
 import { saveImage } from './saveToFile.ts';
 import SaveDialog from '../components/SaveDialog/SaveDialog.tsx';
@@ -40,7 +40,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });
   const [, forceUpdate] = useState(0);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     canvasCtxRef.current = canvasRef.current!.getContext('2d')!;
   }, []);
 
@@ -95,7 +95,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     try {
       const img = await loadImageFile(file);
-      writeImageToCanvas(img, canvasRef.current);
+      canvasCtxRef.current = writeImageToCanvas(img, canvasRef.current!);
 
       setFileName(file.name);
       await handleNewImage(img.width, img.height);
@@ -164,7 +164,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       historyItem.bitmap = bitmap;
 
       // provide canvas handoff. This is very ugly but provides context reset
-      writeImageToCanvas(bitmap, canvasRef.current);
+      canvasCtxRef.current = writeImageToCanvas(bitmap, canvasRef.current!);
     });
   }
 
@@ -181,12 +181,11 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }
 
   function onHistoryMove(historyItem: HistoryItem) {
-    setToolName(historyItem.toolName);
-    setArgs(historyItem.args);
+    setArgs(defaultSettings[toolName]);
     setIsToolDirty(false);
 
     if (historyItem.bitmap) {
-      writeImageToCanvas(historyItem.bitmap, canvasRef.current, setSizeMemo);
+      canvasCtxRef.current = writeImageToCanvas(historyItem.bitmap, canvasRef.current!, setSizeMemo);
     }
   }
 
@@ -264,7 +263,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (isToolDirty) {
       setIsToolDirty(false);
       setArgs(defaultSettings[toolName]);
-      writeImageToCanvas(getCurrentBitmap(), canvasRef.current, setSizeMemo);
+      canvasCtxRef.current = writeImageToCanvas(getCurrentBitmap()!, canvasRef.current!, setSizeMemo);
       return;
     }
 
@@ -314,6 +313,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     createBlankImage,
     _setOriginalImage: handleImageUpload,
     isSaved: isSaved(),
+    historyLength,
 
     toolName,
     toolArgs: args,

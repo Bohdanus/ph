@@ -15,21 +15,19 @@ export function exp1_1(val: number, k: number = 2) {
 }
 
 export function writeImageToCanvas(
-  image: HTMLImageElement | ImageBitmap | null,
-  canvas: HTMLCanvasElement | null,
+  image: HTMLImageElement | ImageBitmap,
+  canvas: HTMLCanvasElement,
   callback?: ResizeCb
-) {
-  if (!image || !canvas) return null;
+): CanvasRenderingContext2D {
+  canvas.width = image.width;
+  canvas.height = image.height;
 
   const ctx = canvas.getContext('2d');
-  if (ctx) {
-    // ctx.reset();
-    canvas.width = image.width;
-    canvas.height = image.height;
-    ctx.drawImage(image, 0, 0);
+  ctx!.drawImage(image, 0, 0);
 
-    callback?.(image.width, image.height);
-  }
+  callback?.(image.width, image.height);
+
+  return ctx!;
 }
 
 // function base64ToUint8Array(base64) {

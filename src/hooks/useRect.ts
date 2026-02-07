@@ -43,7 +43,6 @@ export function useRect({
   useEffect(() => {
     return () => {
       cancelAnimationFrame(frameRequested.current!);
-      overlayCtxRef.current!.clearRect(0, 0, imageSize.width, imageSize.height);
     };
   }, []);
 

@@ -90,17 +90,27 @@ const Shapes: React.FC<ShapesToolbarProps> = ({ onChange }: ShapesToolbarProps) 
   const dash = lineDash ? lineDash[0] * brushScale : 0;
   const gap = lineDash ? lineDash[1] * brushScale : 0;
 
+  const chessClass = isLightColor(lineColor) ? 'checkerboard-dark' : 'checkerboard-light';
   let borderStyle: React.CSSProperties = {};
-  let fillStyle: React.CSSProperties = {};
 
-  if (lineDash) {
+  if (figure === 'line') {
+    if (lineDash) {
+      borderStyle = {
+        backgroundColor: lineColor,
+      };
+    } else {
+      borderStyle = {
+        background: lineColor,
+      };
+    }
+  } else if (lineDash) {
     if (figure === 'circle' || figure === 'oval') {
       borderStyle = {
         border: `${scaledLineWidth}px solid transparent`,
         backgroundImage: `repeating-conic-gradient(from 0deg, ${lineColor} 0deg, ${
-          (dash / (Math.PI * 100)) * 360
+          (dash / (Math.PI * 66)) * 360
         }deg, transparent ${(dash / (Math.PI * 100)) * 360}deg, transparent ${
-          ((dash + gap) / (Math.PI * 100)) * 360
+          ((dash + gap) / (Math.PI * 66)) * 360
         }deg)`,
         backgroundSize: '100% 100%',
         backgroundPosition: '0 0',
@@ -132,13 +142,6 @@ const Shapes: React.FC<ShapesToolbarProps> = ({ onChange }: ShapesToolbarProps) 
       border: `${scaledLineWidth}px solid ${lineColor}`,
     };
   }
-
-  fillStyle = {
-    backgroundImage: `repeating-linear-gradient(45deg, ${fillColor ?? 'transparent'} 0px, ${
-      fillColor ?? 'transparent'
-    } 10px, transparent 10px, transparent 20px)`,
-    backgroundSize: '100% 100%',
-  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -303,31 +306,49 @@ const Shapes: React.FC<ShapesToolbarProps> = ({ onChange }: ShapesToolbarProps) 
       </div>
 
       <div
-        className={`mt-4 flex items-center justify-center rounded border border-gray-200 dark:border-gray-700 ${
-          isLightColor(lineColor) ? 'checkerboard-dark' : 'checkerboard-light'
-        }`}
+        className={`mt-4 flex items-center justify-center rounded border border-gray-200 dark:border-gray-700 ${chessClass}`}
         style={{ height: '224px', overflow: 'auto' }}
       >
         <div
           style={{
-            boxSizing: 'border-box',
+            position: 'relative',
             flexShrink: 0,
             width: `${figure === 'line' ? '80%' : '40%'}`,
             height: `${figure === 'line' ? `${Math.round(scaledLineWidth)}px` : '40%'}`,
-            opacity: alpha,
-            borderRadius: figure === 'circle' || figure === 'oval' ? '50%' : '0',
-            ...borderStyle,
           }}
         >
-          {figure !== 'line' && (
-            <div
-              style={{
-                width: '100%',
-                height: '100%',
-                borderRadius: figure === 'circle' || figure === 'oval' ? '50%' : '0',
-                ...fillStyle,
-              }}
-            />
+          <div
+            style={{
+              boxSizing: 'border-box',
+              position: 'absolute',
+              inset: 0,
+              opacity: alpha,
+              borderRadius: figure === 'circle' || figure === 'oval' ? '50%' : '0',
+              ...borderStyle,
+            }}
+          />
+
+          {figure !== 'line' && !!lineDash && (
+            <>
+              <div
+                className={chessClass}
+                style={{
+                  position: 'absolute',
+                  inset: scaledLineWidth,
+                  borderRadius: figure === 'circle' || figure === 'oval' ? '50%' : '0',
+                }}
+              />
+              <div
+                style={{
+                  display: fillColor ? 'block' : 'none',
+                  position: 'absolute',
+                  inset: scaledLineWidth / 2,
+                  opacity: alpha,
+                  background: fillColor ?? 'transparent',
+                  borderRadius: figure === 'circle' || figure === 'oval' ? '50%' : '0',
+                }}
+              />
+            </>
           )}
         </div>
       </div>

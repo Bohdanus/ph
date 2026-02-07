@@ -1,4 +1,4 @@
-import { useContext, useLayoutEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ImageContext } from '../../contexts/ImageContext';
 import { CropToolArea } from './CropToolArea.tsx';
 import { DrawToolArea } from './DrawToolArea.tsx';
@@ -14,10 +14,12 @@ import { ShapeToolArea } from './ShapeToolArea.tsx';
 const Main = () => {
   const {
     canvasRef,
+    canvasCtxRef,
     containerRef,
     originalImage,
     _setOriginalImage,
     openLoadImageDialog,
+    historyLength,
     toolName,
     size,
     zoomDataRef,
@@ -28,7 +30,6 @@ const Main = () => {
 
   const overlayRef = useRef<HTMLCanvasElement>(null);
 
-  const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const overlayCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
   let interactionMode = 'zoom';
@@ -42,30 +43,20 @@ const Main = () => {
     interactionMode = 'text';
   }
 
-  // caches the context
-  useLayoutEffect(() => {
-    const canvas = canvasRef.current;
-
-    if (!canvas) return;
-    canvasCtxRef.current = canvas.getContext('2d')!;
+  useEffect(() => {
     canvasCtxRef.current.imageSmoothingEnabled = false;
-
-    const overlay = overlayRef.current!;
-    overlayCtxRef.current = overlay.getContext('2d')!;
-    overlayCtxRef.current.imageSmoothingEnabled = false;
-
-    return () => {
-      canvasCtxRef.current = null;
-      overlayCtxRef.current = null;
-    };
-  }, [canvasRef]);
+  }, [toolName, historyLength]);
 
   useLayoutEffect(() => {
+    // reset overlay ALWAYS
     if (!overlayRef.current) return;
     const { width, height } = size;
     overlayRef.current.width = width;
     overlayRef.current.height = height;
-  }, [size]);
+
+    overlayCtxRef.current = overlayRef.current.getContext('2d')!;
+    overlayCtxRef.current.imageSmoothingEnabled = false;
+  }, [size, toolName, historyLength]);
 
   const handleDragOver = (event: React.DragEvent) => {
     event.preventDefault();

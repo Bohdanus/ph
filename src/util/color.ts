@@ -1,4 +1,6 @@
 export const isLightColor = (color: string): boolean => {
+  if (!color) return true;
+
   const hex = color.replace('#', '');
   const r = parseInt(hex.substring(0, 2), 16);
   const g = parseInt(hex.substring(2, 4), 16);

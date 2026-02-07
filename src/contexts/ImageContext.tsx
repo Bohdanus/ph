@@ -71,6 +71,7 @@ interface ImageContextType {
   createBlankImage: (width: number, height: number) => void;
   _setOriginalImage: (image?: File) => Promise<void>; // use with caution now and refactor later
   isSaved: boolean;
+  historyLength: number;
 
   toolName: ToolName | null | undefined;
   toolArgs: ToolArgs | undefined;
@@ -112,6 +113,7 @@ export const ImageContext = createContext<ImageContextType>({
   createBlankImage: () => {},
   _setOriginalImage: () => Promise.resolve(),
   isSaved: false,
+  historyLength: 0,
 
   toolName: null,
   toolArgs: {} as ToolArgs,

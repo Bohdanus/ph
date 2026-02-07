@@ -22,7 +22,7 @@ export const setDrawTool = (ctx: CanvasRenderingContext2D, args: DrawToolSetting
   ctx.strokeStyle = color;
   ctx.lineWidth = lineWidth;
   ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
+  ctx.lineCap = penType === 'pen' ? 'round' : 'square';
   ctx.globalAlpha = alpha;
 
   lineDash && ctx.setLineDash(lineDash);
