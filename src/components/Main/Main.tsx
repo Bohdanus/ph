@@ -44,7 +44,9 @@ const Main = () => {
   }
 
   useEffect(() => {
-    canvasCtxRef.current.imageSmoothingEnabled = false;
+    if (canvasCtxRef.current) {
+      canvasCtxRef.current.imageSmoothingEnabled = false;
+    }
   }, [toolName, historyLength]);
 
   useLayoutEffect(() => {

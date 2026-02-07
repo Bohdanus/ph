@@ -1,4 +1,4 @@
-import React, { useState, type ReactNode, useRef, useLayoutEffect } from 'react';
+import React, { useState, type ReactNode, useRef } from 'react';
 import { loadImageFile } from './loadFromFile.ts';
 import { saveImage } from './saveToFile.ts';
 import SaveDialog from '../components/SaveDialog/SaveDialog.tsx';
@@ -39,10 +39,6 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });
   const [, forceUpdate] = useState(0);
-
-  useLayoutEffect(() => {
-    canvasCtxRef.current = canvasRef.current!.getContext('2d')!;
-  }, []);
 
   const setZoomData = (data: ZoomData) => {
     zoomDataRef.current = data;
@@ -126,9 +122,9 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const canvas = canvasRef.current!;
     canvas.width = width;
     canvas.height = height;
-    const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, width, height);
+    canvasCtxRef.current = canvas.getContext('2d')!;
+    canvasCtxRef.current.fillStyle = 'white';
+    canvasCtxRef.current.fillRect(0, 0, width, height);
 
     setFileName('new-image.png');
     await handleNewImage(width, height);
@@ -267,7 +263,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return;
     }
 
-    // todo save current state when doing undo
+    // todo save current state when doing undo, by autoFinishLastTool
     const newLength = historyLength - 1;
     setHistoryLength(newLength);
 

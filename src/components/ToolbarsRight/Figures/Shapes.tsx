@@ -328,7 +328,7 @@ const Shapes: React.FC<ShapesToolbarProps> = ({ onChange }: ShapesToolbarProps) 
             }}
           />
 
-          {figure !== 'line' && !!lineDash && (
+          {figure !== 'line' && (!!lineDash || !!fillColor) && (
             <>
               <div
                 className={chessClass}
@@ -342,7 +342,7 @@ const Shapes: React.FC<ShapesToolbarProps> = ({ onChange }: ShapesToolbarProps) 
                 style={{
                   display: fillColor ? 'block' : 'none',
                   position: 'absolute',
-                  inset: scaledLineWidth / 2,
+                  inset: scaledLineWidth,
                   opacity: alpha,
                   background: fillColor ?? 'transparent',
                   borderRadius: figure === 'circle' || figure === 'oval' ? '50%' : '0',
