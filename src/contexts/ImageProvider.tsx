@@ -248,11 +248,6 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setToolDirty();
   }
 
-  function resetArgs() {
-    setIsToolDirty(false);
-    setArgs(defaultSettings[toolName]);
-  }
-
   function undo() {
     if (!canUndo()) return;
 
@@ -326,7 +321,6 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     undo,
     canRedo,
     redo,
-    resetArgs,
 
     zoomDataRef,
     setZoomData,

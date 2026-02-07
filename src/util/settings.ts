@@ -18,7 +18,8 @@ export function saveSettings(toolName: ToolName, args: ToolArgs | SavedSettings)
   } else if (toolName === 'crop') {
     const { rect, ...rest } = args as CropToolArgs;
     defaultSettings.crop = rest;
-  } else {
+    // deliberately not storing for those three, because they have a different philosophy, unfortunately
+  } else if (toolName !== 'blur' && toolName !== 'levels' && toolName !== 'colors') {
     defaultSettings[toolName] = args;
   }
 }

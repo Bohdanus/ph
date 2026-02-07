@@ -88,7 +88,6 @@ interface ImageContextType {
   redo: () => void;
   canUndo: () => boolean;
   canRedo: () => boolean;
-  resetArgs: () => void;
 
   zoomDataRef: { current: ZoomData };
   setZoomData: (data: ZoomData) => void;
@@ -130,7 +129,6 @@ export const ImageContext = createContext<ImageContextType>({
   redo: () => {},
   canUndo: () => false,
   canRedo: () => false,
-  resetArgs: () => {},
 
   zoomDataRef: { current: { dx: 0, dy: 0, zoom: 1 } },
   setZoomData: () => {},

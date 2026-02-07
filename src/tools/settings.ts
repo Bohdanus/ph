@@ -1,6 +1,4 @@
-// the idea is to hold here the last used settings
-// localStorage
-// use default initially
+import { cloneDeep } from 'lodash-es';
 
 import { type ToolName } from '../contexts/ImageContext.tsx';
 import type { DrawToolSettings, DrawToolArgs, PenType } from './draw.ts';
@@ -79,4 +77,6 @@ export type SavedSettings =
   | ColorsToolArgs
   | LevelsToolArgs
   | TransformToolArgs
-  | CropToolArgs; // >>>???
+  | CropToolArgs;
+
+export const initialSettings = cloneDeep(defaultSettings);
