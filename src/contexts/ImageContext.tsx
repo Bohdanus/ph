@@ -71,7 +71,6 @@ interface ImageContextType {
   createBlankImage: (width: number, height: number) => void;
   _setOriginalImage: (image?: File) => Promise<void>; // use with caution now and refactor later
   isSaved: boolean;
-  historyLength: number;
 
   toolName: ToolName | null | undefined;
   toolArgs: ToolArgs | undefined;
@@ -84,12 +83,13 @@ interface ImageContextType {
   addCanvasToHistory: (args: ToolArgs) => void;
   updateLastHistoryItem: (args: ToolArgs) => void;
 
+  history: HistoryItem[];
+  historyLength: number;
   canUndo: () => boolean;
   undo: () => void;
   canRedo: () => boolean;
   redo: () => void;
   goToHistoryIndex: (index: number) => void;
-  getHistory: () => HistoryItem[];
 
   zoomDataRef: { current: ZoomData };
   setZoomData: (data: ZoomData) => void;
@@ -114,7 +114,6 @@ export const ImageContext = createContext<ImageContextType>({
   createBlankImage: () => {},
   _setOriginalImage: () => Promise.resolve(),
   isSaved: false,
-  historyLength: 0,
 
   toolName: null,
   toolArgs: {} as ToolArgs,
@@ -127,12 +126,13 @@ export const ImageContext = createContext<ImageContextType>({
   addCanvasToHistory: () => {},
   updateLastHistoryItem: () => {},
 
+  history: [],
+  historyLength: 0,
   canUndo: () => false,
   undo: () => {},
   canRedo: () => false,
   redo: () => {},
   goToHistoryIndex: () => {},
-  getHistory: () => [],
 
   zoomDataRef: { current: { dx: 0, dy: 0, zoom: 1 } },
   setZoomData: () => {},

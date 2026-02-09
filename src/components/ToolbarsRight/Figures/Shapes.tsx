@@ -90,7 +90,7 @@ const Shapes: React.FC<ShapesToolbarProps> = ({ onChange }: ShapesToolbarProps) 
   const dash = lineDash ? lineDash[0] * brushScale : 0;
   const gap = lineDash ? lineDash[1] * brushScale : 0;
 
-  const chessClass = isLightColor(lineColor) ? 'checkerboard-dark' : 'checkerboard-light';
+  const chessClass = isLightColor(lineColor) ? 'chessboard-dark' : 'chessboard-light';
   let borderStyle: React.CSSProperties = {};
 
   if (figure === 'line') {

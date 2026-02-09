@@ -8,6 +8,7 @@ import NewImageDialog from '../NewImageDialog/NewImageDialog.tsx';
 
 import './Main.scss';
 import { ShapeToolArea } from './ShapeToolArea.tsx';
+import { useTheme } from '../../contexts/ThemeContext.tsx';
 //
 // const pointers = new Map<number, PointerEvent>();
 
@@ -25,6 +26,8 @@ const Main = () => {
     zoomDataRef,
     createBlankImage,
   } = useContext(ImageContext);
+  const { theme } = useTheme();
+
   const [isDragging, setIsDragging] = useState(false);
   const [showNewDialog, setShowNewDialog] = useState(false);
 
@@ -115,7 +118,7 @@ const Main = () => {
 
     return (
       <div
-        className="absolute left-0 top-0 flex h-full w-full items-center justify-center"
+        className={`absolute left-0 top-0 flex h-full w-full items-center justify-center ${theme === 'dark' ? 'chessboard-dark' : 'chessboard-light'}`}
         style={{ display: originalImage ? undefined : 'none' }}
       >
         <div

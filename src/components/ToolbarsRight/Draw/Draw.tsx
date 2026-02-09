@@ -191,7 +191,7 @@ const Draw: React.FC<DrawToolbarProps> = ({ onChange }) => {
 
       <div
         className={`mt-4 flex items-center justify-center rounded border border-gray-200 dark:border-gray-700 ${
-          isLightColor(color) ? 'checkerboard-dark' : 'checkerboard-light'
+          isLightColor(color) ? 'chessboard-dark' : 'chessboard-light'
         }`}
         style={{ height: '224px', overflow: 'auto' }}
       >

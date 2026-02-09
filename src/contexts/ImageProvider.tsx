@@ -334,7 +334,7 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     canRedo,
     redo,
     goToHistoryIndex,
-    getHistory: () => history.slice(0, history.length),
+    history,
     historyLength,
 
     zoomDataRef,

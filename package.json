@@ -13,6 +13,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@floating-ui/react": "^0.27.17",
     "@types/lodash-es": "^4.17.12",
     "lodash-es": "4.17.23",
     "react": "^19.2.0",
