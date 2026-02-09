@@ -84,10 +84,12 @@ interface ImageContextType {
   addCanvasToHistory: (args: ToolArgs) => void;
   updateLastHistoryItem: (args: ToolArgs) => void;
 
-  undo: () => void;
-  redo: () => void;
   canUndo: () => boolean;
+  undo: () => void;
   canRedo: () => boolean;
+  redo: () => void;
+  goToHistoryIndex: (index: number) => void;
+  getHistory: () => HistoryItem[];
 
   zoomDataRef: { current: ZoomData };
   setZoomData: (data: ZoomData) => void;
@@ -125,10 +127,12 @@ export const ImageContext = createContext<ImageContextType>({
   addCanvasToHistory: () => {},
   updateLastHistoryItem: () => {},
 
-  undo: () => {},
-  redo: () => {},
   canUndo: () => false,
+  undo: () => {},
   canRedo: () => false,
+  redo: () => {},
+  goToHistoryIndex: () => {},
+  getHistory: () => [],
 
   zoomDataRef: { current: { dx: 0, dy: 0, zoom: 1 } },
   setZoomData: () => {},

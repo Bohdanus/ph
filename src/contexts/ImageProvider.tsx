@@ -280,6 +280,19 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     onHistoryMove(historyItem);
   }
 
+  function goToHistoryIndex(index: number) {
+    if (index < 0 || index >= history.length) return;
+    if (index === historyLength - 1) return; // already at this index
+    if (index === historyLength - 2) {
+      undo(); // do special treatment for going back one step, to just clear the tool state
+      return;
+    }
+
+    setHistoryLength(index + 1);
+    const historyItem = history[index];
+    onHistoryMove(historyItem);
+  }
+
   function isSaved() {
     if (historyLength === 0) return true;
     return history[historyLength - 1].saved!;
@@ -304,7 +317,6 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     createBlankImage,
     _setOriginalImage: handleImageUpload,
     isSaved: isSaved(),
-    historyLength,
 
     toolName,
     toolArgs: args,
@@ -321,6 +333,9 @@ export const ImageProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     undo,
     canRedo,
     redo,
+    goToHistoryIndex,
+    getHistory: () => history.slice(0, history.length),
+    historyLength,
 
     zoomDataRef,
     setZoomData,
