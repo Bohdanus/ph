@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import Menu from './components/Menu/Menu';
 import Footer from './components/Footer/Footer';
 import SidebarLeft from './components/SidebarLeft/SidebarLeft';
@@ -6,6 +7,9 @@ import BottomToolbar from './components/BottomToolbar/BottomToolbar';
 import Main from './components/Main/Main.tsx';
 import { ImageProvider } from './contexts/ImageProvider';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { LandingPage } from './components/LandingPage/LandingPage';
+
+const LANDING_PAGE_VIEWED_KEY = 'lightshopy_landing_viewed';
 
 function AppContent() {
   return (
@@ -23,10 +27,33 @@ function AppContent() {
 }
 
 function App() {
+  const [showApp, setShowApp] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    // Check if landing page has been viewed
+    const hasViewedLanding = localStorage.getItem(LANDING_PAGE_VIEWED_KEY);
+    setShowApp(!!hasViewedLanding);
+  }, []);
+
+  const handleStartClick = () => {
+    // Mark landing page as viewed in localStorage
+    localStorage.setItem(LANDING_PAGE_VIEWED_KEY, 'true');
+    setShowApp(true);
+  };
+
+  // Show loading state while checking localStorage
+  if (showApp === null) {
+    return null;
+  }
+
   return (
     <ThemeProvider>
       <ImageProvider>
-        <AppContent />
+        {showApp ? (
+          <AppContent />
+        ) : (
+          <LandingPage onStart={handleStartClick} />
+        )}
       </ImageProvider>
     </ThemeProvider>
   );
