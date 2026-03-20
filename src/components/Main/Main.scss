@@ -20,3 +20,19 @@
 .cursor-text {
   cursor: text;
 }
+
+.cursor-move {
+  cursor: pointer;
+}
+
+.cursor-grab {
+  cursor: grab !important;
+}
+
+.cursor-grabbing {
+  cursor: grabbing !important;
+}
+
+.cursor-pointer {
+  cursor: pointer !important;
+}

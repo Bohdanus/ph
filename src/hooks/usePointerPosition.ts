@@ -1,6 +1,6 @@
 import React, { type RefObject, useEffect, useRef } from 'react';
 import { useResizeObserverRAF } from './useResizeObserver.ts';
-import type { Point, Rect, Size } from '../contexts/ImageContext.tsx';
+import type { Point, Pos, Size } from '../contexts/general-types.ts';
 
 export type ContainDimensions = {
   innerWidth: number; // inner image
@@ -14,12 +14,10 @@ export type ContainDimensions = {
 
 export function usePointerPosition<T extends HTMLElement>(
   {
-    enabled = true,
     ref,
     imageSize,
     onResize,
   }: {
-    enabled?: boolean;
     ref: RefObject<T | null>;
     imageSize: Size;
     onResize?: (rect: ContainDimensions) => void;
@@ -30,7 +28,7 @@ export function usePointerPosition<T extends HTMLElement>(
   //   panY = 0,
   // } = {}
 ) {
-  const containerRectRef = useRef<Rect | null>(null);
+  const containerRectRef = useRef<Pos | null>(null);
   const activePointerId = useRef<number | null>(null);
   const isMouseDown = useRef(false);
 
@@ -46,13 +44,11 @@ export function usePointerPosition<T extends HTMLElement>(
   });
 
   const calculateDimensions = () => {
-    // todo move this fn down
-    if (!enabled) return;
+    // todo reposition this fn down
+    const rect = containerRectRef.current || ref.current?.getBoundingClientRect();
+    if (!rect) return;
 
-    // prevent calculation before resizeObserver first run
-    if (!containerRectRef.current) return;
-
-    const { width: outerWidth, height: outerHeight } = containerRectRef.current;
+    const { width: outerWidth, height: outerHeight } = rect;
     const { width: imageWidth, height: imageHeight } = imageSize;
 
     const scaleX = outerWidth / imageWidth;
@@ -79,27 +75,22 @@ export function usePointerPosition<T extends HTMLElement>(
   };
 
   useEffect(() => {
-    if (!enabled) {
-      // dropCurrentEvent();
-      return;
-    }
-
     calculateDimensions();
-  }, [enabled, imageSize]);
+  }, [imageSize]);
 
-  useResizeObserverRAF(ref, (rect: Rect) => {
+  useResizeObserverRAF(ref, (rect: Pos) => {
     // For simplicity, leave resize observer working and calculating tiny things.
     // The plus od doing this is the instant response having rect in place.
     containerRectRef.current = rect;
-    if (!enabled) return;
-
     calculateDimensions();
   });
 
   function clearEvent(e: React.PointerEvent<T>) {
     // Safe even if capture was already lost
     try {
-      e.currentTarget.releasePointerCapture(activePointerId.current!);
+      if (activePointerId.current) {
+        e.currentTarget.releasePointerCapture(activePointerId.current);
+      }
     } catch {
       // ignore
     }
@@ -108,10 +99,10 @@ export function usePointerPosition<T extends HTMLElement>(
     activePointerId.current = null;
   }
 
-  const onPointerDown = (e: React.PointerEvent<T>) => {
+  const isPointerDownValid = (e: React.PointerEvent<T>) => {
     if (e.button !== 0) return false; // Only handle left click
 
-    // First pointer wins
+    // First pointer wins (this should prevent against multiclick??)
     if (activePointerId.current !== null) return false;
 
     isMouseDown.current = true;
@@ -121,20 +112,26 @@ export function usePointerPosition<T extends HTMLElement>(
     return true;
   };
 
-  const onPointerUp = (e: React.PointerEvent<T>) => {
+  const isPointerMoveValid = (e: React.PointerEvent<T>) => {
     if (activePointerId.current !== e.pointerId) return false;
-    if (!isMouseDown.current) {
-      throw 'this should never happen, very interesting, todo kill this check';
-    }
+
+    return true;
+  };
+
+  // heads up, we rely on this being called
+  const isPointerUpValid = (e: React.PointerEvent<T>) => {
+    if (activePointerId.current !== e.pointerId) return false;
 
     clearEvent(e);
 
     return true;
   };
 
+  // in theory its managed internally by this hook, so not exposed outside
   const onPointerCancel = (e: PointerEvent) => {
     if (activePointerId.current === e.pointerId) {
       activePointerId.current = null;
+      isMouseDown.current = false;
     }
   };
 
@@ -164,11 +161,12 @@ export function usePointerPosition<T extends HTMLElement>(
   };
 
   return {
+    pointerIdRef: activePointerId,
     dimensionsRef,
     getLocalCoords,
     isMouseDown,
-    onPointerCancel,
-    onPointerDown,
-    onPointerUp,
+    isPointerDownValid, // tells if the event was captured (therefore should be handled)
+    isPointerMoveValid, // tells if the event was captured (therefore should be handled)
+    isPointerUpValid, // tells if the event was captured (therefore should be handled)
   };
 }

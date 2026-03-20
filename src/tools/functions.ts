@@ -7,6 +7,7 @@
 // }
 
 import type { ResizeCb } from '../components/ToolbarsRight/types.ts';
+import type { BitmapSource } from '../contexts/general-types.ts';
 
 export function exp1_1(val: number, k: number = 2) {
   val = val / 100;
@@ -15,7 +16,7 @@ export function exp1_1(val: number, k: number = 2) {
 }
 
 export function writeImageToCanvas(
-  image: HTMLImageElement | ImageBitmap,
+  image: BitmapSource,
   canvas: HTMLCanvasElement,
   callback?: ResizeCb
 ): CanvasRenderingContext2D {

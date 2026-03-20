@@ -1,21 +1,22 @@
 import { useState, useEffect } from 'react';
+import type { ImageSaveResponse } from '../../contexts/useFile.tsx';
 
 interface SaveDialogProps {
   proposedName: string;
   onClose: () => void;
-  onSave: (filename: string, format: string) => void;
+  onSave: (data: ImageSaveResponse) => void;
 }
 
 const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
-  const [filename, setFilename] = useState(proposedName);
+  const [fileName, setFileName] = useState(proposedName);
   const [format, setFormat] = useState('image/png');
 
   useEffect(() => {
-    setFilename(proposedName);
+    setFileName(proposedName);
   }, [proposedName]);
 
   const handleSave = () => {
-    onSave(filename, format);
+    onSave({ fileName, format });
     onClose();
   };
 
@@ -42,8 +43,8 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
                 type="text"
                 className="w-full rounded border px-3 py-2 leading-tight text-gray-700 shadow focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
                 id="filenameInput"
-                value={filename}
-                onChange={(e) => setFilename(e.target.value)}
+                value={fileName}
+                onChange={(e) => setFileName(e.target.value)}
               />
             </div>
             <div className="mb-4">

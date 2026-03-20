@@ -1,42 +1,47 @@
-import React, { type ChangeEvent, useContext } from 'react';
-import { ImageContext } from '../../../contexts/ImageContext.tsx';
+import React, { type ChangeEvent } from 'react';
 import { calculateNewRect } from '../../../util/rect.ts';
 import type { TextToolArgs } from '../../../tools/text.ts';
+import { useStore } from '../../../contexts/StoreContext.tsx';
+import { useLayers } from '../../../contexts/useLayer.ts';
+import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
+import FontSelect from './FontSelect.tsx';
+import { useApp } from '../../../hooks/useApp.ts';
 
-interface TextToolbarProps {
-  onChange: (args: TextToolArgs) => void;
-}
+const Text: React.FC<{}> = () => {
+  const [{ canvasRef, textareaRef, totalSize }] = useStore();
+  const { createLayerFromTool } = useLayers();
+  const { clearOverlay } = useApp();
+  const { toolArgs, setToolArgs } = useCurrentTool();
 
-const Text: React.FC<TextToolbarProps> = ({ onChange }) => {
-  const { size: imageSize, textareaRef, canvasRef, toolArgs, updateLastHistoryItem } = useContext(ImageContext);
   const args = toolArgs as TextToolArgs;
   const { text, fontSize, lineHeight, rect, bold, italic, fontFamily, color, align } = args;
+
+  const onChange = setToolArgs;
 
   const handleTextChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const textValue = event.target.value;
     const newArgs = { ...args, text: textValue };
-    const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
+    const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
   };
 
   const handleFontSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
     const fontSize = Number(event.target.value);
     const newArgs = { ...args, fontSize };
-    const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
+    const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
   };
 
   const handleLineHeightChange = (event: ChangeEvent<HTMLInputElement>) => {
     const newLineHeight = Number(event.target.value);
     const newArgs = { ...args, lineHeight: newLineHeight };
-    const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
+    const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
   };
 
-  const handleFontFamilyChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const fontFamily = event.target.value;
+  const handleFontFamilyChange = (fontFamily: string) => {
     const newArgs = { ...args, fontFamily };
-    const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
+    const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
   };
 
@@ -54,25 +59,31 @@ const Text: React.FC<TextToolbarProps> = ({ onChange }) => {
 
   const toggleBold = () => {
     const newArgs = { ...args, bold: !bold };
-    const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
+    const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
   };
 
   const toggleItalic = () => {
     const newArgs = { ...args, italic: !italic };
-    const newRect = calculateNewRect(newArgs, canvasRef, imageSize);
+    const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
   };
 
   const applyText = () => {
     if (text && rect) {
-      updateLastHistoryItem(args);
+      createLayerFromTool({ toolName: 'text', args });
+      clearOverlay();
     }
   };
 
   const clear = () => {
     onChange({ ...args, text: '', rect: null });
   };
+
+  // useEffect(() => {
+  //   // TOFO this wont work when savoing the image
+  //   return applyText;
+  // }, []);
 
   return (
     <div className="flex flex-col gap-4">
@@ -142,26 +153,7 @@ const Text: React.FC<TextToolbarProps> = ({ onChange }) => {
         <label htmlFor="font-family-select" className="text-sm font-medium text-gray-700 dark:text-gray-300">
           Font Family
         </label>
-        <select
-          id="font-family-select"
-          value={fontFamily}
-          onChange={handleFontFamilyChange}
-          className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-        >
-          <option value="Arial">Arial</option>
-          <option value="Helvetica">Helvetica</option>
-          <option value="Times New Roman">Times New Roman</option>
-          <option value="Courier New">Courier New</option>
-          <option value="Verdana">Verdana</option>
-          <option value="Georgia">Georgia</option>
-          <option value="Palatino">Palatino</option>
-          <option value="Garamond">Garamond</option>
-          <option value="Comic Sans MS">Comic Sans MS</option>
-          <option value="Impact">Impact</option>
-          <option value="Trebuchet MS">Trebuchet MS</option>
-          <option value="Tahoma">Tahoma</option>
-          <option value="Brush Script MT">Brush Script MT</option>
-        </select>
+        <FontSelect value={fontFamily} onChange={handleFontFamilyChange} />
       </div>
 
       <div className="flex flex-col gap-2">

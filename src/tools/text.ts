@@ -1,6 +1,6 @@
-import type { RectXY } from '../contexts/ImageContext.tsx';
 import { TEXT_PADDING } from '../util/constants.ts';
-import type { ImageProcParams } from './toolsMap.ts';
+import type { CreatorToolParams } from './toolsMap.ts';
+import type { Ctx2D, RectXYSorted } from '../contexts/general-types.ts';
 
 export type TextToolArgs = {
   align: 'left' | 'center' | 'right';
@@ -11,12 +11,12 @@ export type TextToolArgs = {
   italic: boolean;
   lineHeight: number;
   text?: string;
-  rect?: RectXY | null;
+  rect?: RectXYSorted | null;
 };
 
 export type TextToolSettings = Omit<TextToolArgs, 'text' | 'rect'>;
 
-export function renderText(ctx: CanvasRenderingContext2D, args: TextToolArgs) {
+export function renderText(ctx: Ctx2D, args: TextToolArgs) {
   const { text, fontSize, lineHeight, fontFamily, color, rect, align, bold, italic } = args;
   if (!text || !rect) return;
 
@@ -59,9 +59,12 @@ export function getTextWidth(ctx: CanvasRenderingContext2D, args: TextToolArgs):
 }
 
 export const text =
-  ({ ctx, bitmap }: ImageProcParams) =>
+  ({ size }: CreatorToolParams) =>
   (args: TextToolArgs) => {
-    ctx.drawImage(bitmap, 0, 0);
+    const canvas = new OffscreenCanvas(size.width, size.height);
+    const ctx = canvas.getContext('2d')!;
 
     renderText(ctx, args);
+
+    return [canvas];
   };

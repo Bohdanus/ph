@@ -1,6 +1,31 @@
-import type { Point } from '../contexts/ImageContext.tsx';
+import type { Ctx2D, Point, Pos } from '../contexts/general-types.ts';
+import type { DrawToolArgs } from '../tools/draw.ts';
+import { hexToRgb } from './rect.ts';
 
-export function bezierSmoothedLine(ctx: CanvasRenderingContext2D, points: Point[]) {
+export function pointsBoundingPos({ lineWidth, points }: DrawToolArgs): Pos {
+  const pp = points!;
+  let minX = pp[0].x;
+  let minY = pp[0].y;
+  let maxX = pp[0].x;
+  let maxY = pp[0].y;
+
+  for (let i = 1; i < pp.length; i++) {
+    const p = pp[i];
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+
+  return {
+    x: minX - lineWidth,
+    y: minY - lineWidth,
+    width: maxX - minX + 2 * lineWidth,
+    height: maxY - minY + 2 * lineWidth,
+  };
+}
+
+export function bezierSmoothedLine(ctx: Ctx2D, points: Point[]) {
   const lengthBy2 = Math.ceil(points.length / 2);
   let firstFreePoint = 0;
 
@@ -20,7 +45,7 @@ export function bezierSmoothedLine(ctx: CanvasRenderingContext2D, points: Point[
   }
 }
 
-export function drawSmoothLine(ctx: CanvasRenderingContext2D, points: Point[]) {
+export function drawSmoothLine(ctx: Ctx2D, points: Point[]) {
   if (points.length < 1) return;
   if (points.length < 2) {
     ctx.lineTo(points[0].x, points[0].y);
@@ -50,3 +75,50 @@ export function catmullRomToBezier(ctx: CanvasRenderingContext2D, pts: Point[], 
     ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
   }
 }
+
+export type DrawStrokeParams = {
+  args: DrawToolArgs;
+  ctx: Ctx2D; // overlay ctx
+};
+
+export const drawLine = (params: DrawStrokeParams) => {
+  const {
+    args: { penType },
+  } = params;
+
+  if (penType === 'pen' || penType === 'pen-dashed') {
+    drawPen(params);
+  } else if (penType === 'spray') {
+    drawSpray(params);
+  }
+};
+
+export const drawPen = ({ args, ctx }: DrawStrokeParams) => {
+  const points = args.points!;
+
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  bezierSmoothedLine(ctx, points);
+  ctx.stroke();
+};
+
+export const drawSpray = ({ args, ctx }: DrawStrokeParams) => {
+  const points = args.points!;
+
+  const alpha = args.alpha;
+  const color = hexToRgb(args.color);
+  const colorStart = `rgba(${color}, ${alpha / 4})`;
+  const colorStop = `rgba(${color}, 0)`;
+  const radius = args.lineWidth;
+
+  for (let i = 0; i < points.length; i++) {
+    const g = ctx.createRadialGradient(points[i].x, points[i].y, 0, points[i].x, points[i].y, radius);
+    g.addColorStop(0, colorStart);
+    g.addColorStop(1, colorStop);
+
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(points[i].x, points[i].y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+};

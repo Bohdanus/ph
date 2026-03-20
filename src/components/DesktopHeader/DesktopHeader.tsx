@@ -1,45 +1,48 @@
-import { useState, useEffect, useRef, useCallback, useContext } from 'react';
-import { ImageContext } from '../../contexts/ImageContext';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTheme } from '../../contexts/ThemeContext';
 import HistoryControls from '../HistoryControls/HistoryControls';
-import NewImageDialog from '../NewImageDialog/NewImageDialog';
+import { useStore } from '../../contexts/StoreContext.tsx';
+import { useApp } from '../../hooks/useApp.ts';
+import { useFile } from '../../contexts/useFile.tsx';
 
 const DesktopHeader = () => {
-  const { isSaved, startTool, openLoadImageDialog, openSaveImageDialog, createBlankImage } = useContext(ImageContext);
+  const [{ canvasRef, fileName, hasUnsavedChanges }] = useStore();
+  const { goToTool, setBlankImage, setImageFromUpload, handleImageSave } = useApp();
+  const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
+
   const { theme, toggleTheme } = useTheme();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
-  const [showNewDialog, setShowNewDialog] = useState(false);
 
   const fileMenuRef = useRef<HTMLLIElement>(null);
   const editMenuRef = useRef<HTMLLIElement>(null);
 
   const handleColors = () => {
-    startTool('colors');
+    goToTool('color');
     setOpenMenu(null);
   };
 
   const handleBlur = () => {
-    startTool('blur');
+    goToTool('blur');
     setOpenMenu(null);
   };
 
   const handleLevels = () => {
-    startTool('levels');
+    goToTool('levels');
     setOpenMenu(null);
   };
 
   const handleTransform = () => {
-    startTool('transform');
+    goToTool('transform');
     setOpenMenu(null);
   };
 
   const handleDraw = () => {
-    startTool('draw');
+    goToTool('draw');
     setOpenMenu(null);
   };
 
   const handleText = () => {
-    startTool('text');
+    goToTool('text');
     setOpenMenu(null);
   };
 
@@ -82,9 +85,10 @@ const DesktopHeader = () => {
                 <button
                   className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
                   type="button"
-                  onClick={() => {
-                    if (isSaved || confirm('All unsaved changes to current image will be lost. Continue?.')) {
-                      setShowNewDialog(true);
+                  onClick={async () => {
+                    if (hasUnsavedChanges || confirm('All unsaved changes to current image will be lost. Continue?.')) {
+                      const data = await openNewImageDialog();
+                      data && setBlankImage(data);
                       setOpenMenu(null);
                     }
                   }}
@@ -96,8 +100,9 @@ const DesktopHeader = () => {
                 <button
                   className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
                   type="button"
-                  onClick={() => {
-                    openLoadImageDialog();
+                  onClick={async () => {
+                    const data = await openLoadImageDialog();
+                    data && setImageFromUpload(data);
                     setOpenMenu(null);
                   }}
                 >
@@ -108,8 +113,9 @@ const DesktopHeader = () => {
                 <button
                   className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
                   type="button"
-                  onClick={() => {
-                    openSaveImageDialog();
+                  onClick={async () => {
+                    const data = await openSaveImageDialog({ canvas: canvasRef.current!, fileName });
+                    data && handleImageSave(data);
                     setOpenMenu(null);
                   }}
                 >
@@ -206,7 +212,6 @@ const DesktopHeader = () => {
         </button>
         <HistoryControls />
       </div>
-      {showNewDialog && <NewImageDialog onClose={() => setShowNewDialog(false)} onCreate={createBlankImage} />}
     </header>
   );
 };

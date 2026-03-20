@@ -1,24 +1,25 @@
-import React, { useContext } from 'react';
-import { ImageContext } from '../../../contexts/ImageContext.tsx';
+import React from 'react';
 import type { CropToolArgs } from '../../../tools/crop.ts';
+import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
+import { useLayers } from '../../../contexts/useLayer.ts';
 
-interface CropToolbarProps {
-  onChange: (args: CropToolArgs) => void;
-}
+const aspectRatios = [
+  { label: 'Free', value: null },
+  { label: 'Square (1:1)', value: 1 },
+  { label: '3:4', value: 3 / 4 },
+  { label: '4:3', value: 4 / 3 },
+  { label: '16:9', value: 16 / 9 },
+  { label: '9:16', value: 9 / 16 },
+];
 
-const Crop: React.FC<CropToolbarProps> = ({ onChange }) => {
-  const { toolArgs, updateLastHistoryItem } = useContext(ImageContext);
+const Crop: React.FC<{}> = () => {
+  const { updateLayerByTool } = useLayers();
+  const { toolArgs, setToolArgs } = useCurrentTool();
+
   const args = toolArgs as CropToolArgs;
   const { aspectRatio, rect } = args;
 
-  const aspectRatios = [
-    { label: 'Free', value: null },
-    { label: 'Square (1:1)', value: 1 },
-    { label: '3:4', value: 3 / 4 },
-    { label: '4:3', value: 4 / 3 },
-    { label: '16:9', value: 16 / 9 },
-    { label: '9:16', value: 9 / 16 },
-  ];
+  const onChange = setToolArgs;
 
   return (
     <div className="flex flex-col gap-4">
@@ -48,7 +49,9 @@ const Crop: React.FC<CropToolbarProps> = ({ onChange }) => {
         className="w-full rounded bg-blue-600 px-4 py-2 font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
         disabled={!rect}
         onClick={() => {
-          updateLastHistoryItem(args);
+          // const fullArgs: FullArgs = { toolName: 'crop', args, rect: sortedRectToRect(rect!) };
+          updateLayerByTool({ toolName: 'crop', toolArgs: args });
+          onChange({ ...args, rect: null });
         }}
       >
         Apply Crop

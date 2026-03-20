@@ -1,7 +1,7 @@
 import { type RefObject, useLayoutEffect, useRef } from 'react';
-import type { Rect } from '../contexts/ImageContext.tsx';
+import type { Pos } from '../contexts/general-types.ts';
 
-export function useResizeObserverRAF(ref: RefObject<HTMLElement | null>, onResize: (size: Rect) => void) {
+export function useResizeObserverRAF(ref: RefObject<HTMLElement | null>, onResize: (size: Pos) => void) {
   const frameRef = useRef<number | null>(null);
 
   useLayoutEffect(() => {

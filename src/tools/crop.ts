@@ -1,7 +1,6 @@
-import type { RectXYSorted } from '../contexts/ImageContext.tsx';
 import { trimRect } from '../util/rect.ts';
-import type { ResizeCb } from '../components/ToolbarsRight/types.ts';
-import type { ImageProcParams } from './toolsMap.ts';
+import type { ProcessorToolParams } from './toolsMap.ts';
+import type { RectXYSorted } from '../contexts/general-types.ts';
 
 export type CropToolArgs = {
   rect?: RectXYSorted | null;
@@ -9,18 +8,17 @@ export type CropToolArgs = {
 };
 
 export const crop =
-  ({ canvas, ctx, bitmap }: ImageProcParams) =>
-  ({ rect }: CropToolArgs, callback: ResizeCb) => {
-    const imageSize = {
-      width: canvas.width,
-      height: canvas.height,
-    };
-    const { x, y, width, height } = trimRect(rect!, imageSize);
+  ({ bitmap, size }: ProcessorToolParams) =>
+  ({ rect }: CropToolArgs) => {
+    const canvas = new OffscreenCanvas(size.width, size.height);
+
+    const { x, y, width, height } = trimRect(rect!, size);
 
     canvas.width = width;
     canvas.height = height;
 
+    const ctx = canvas.getContext('2d')!;
     ctx.drawImage(bitmap, x, y, width, height, 0, 0, width, height);
 
-    callback(width, height);
+    return [canvas, { width, height }];
   };

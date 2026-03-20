@@ -1,38 +1,31 @@
-import React, { useRef, useCallback, useContext } from 'react';
+import React, { useRef } from 'react';
 import type { TransformToolArgs } from '../../../tools/transform.ts';
-import { transform } from '../../../tools/transform.ts';
-import { ImageContext } from '../../../contexts/ImageContext.tsx';
+import { useLayers } from '../../../contexts/useLayer.ts';
+import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 
-interface TransformToolbarProps {
-  onChange: (args: TransformToolArgs) => void;
-}
+const Transform: React.FC<{}> = () => {
+  const { tempUpdateLayer } = useLayers();
+  const { toolArgs, setToolArgs } = useCurrentTool();
 
-const Transform: React.FC<TransformToolbarProps> = ({ onChange }) => {
-  const { getBitmap, canvasRef, canvasCtxRef, setSizeMemo, toolArgs } = useContext(ImageContext);
   const args = toolArgs as TransformToolArgs;
   const pendingUpdateRef = useRef<TransformToolArgs | null>(null);
   const rafIdRef = useRef<number | null>(null);
 
-  const throttledOnChange = useCallback(
-    (newArgs: TransformToolArgs) => {
-      pendingUpdateRef.current = newArgs;
+  const throttledOnChange = (newArgs: TransformToolArgs) => {
+    pendingUpdateRef.current = newArgs;
 
-      if (rafIdRef.current === null) {
-        rafIdRef.current = requestAnimationFrame(() => {
-          if (pendingUpdateRef.current !== null) {
-            transform({ bitmap: getBitmap()!, canvas: canvasRef.current!, ctx: canvasCtxRef.current })(
-              pendingUpdateRef.current,
-              setSizeMemo
-            );
-            onChange(pendingUpdateRef.current);
-            pendingUpdateRef.current = null;
-          }
-          rafIdRef.current = null;
-        });
-      }
-    },
-    [onChange, getBitmap, canvasRef, canvasCtxRef, setSizeMemo]
-  );
+    if (rafIdRef.current === null) {
+      rafIdRef.current = requestAnimationFrame(() => {
+        if (pendingUpdateRef.current !== null) {
+          tempUpdateLayer({ toolName: 'transform', toolArgs: pendingUpdateRef.current });
+          setToolArgs(pendingUpdateRef.current);
+          pendingUpdateRef.current = null;
+        }
+        rafIdRef.current = null;
+      });
+    }
+  };
+
   const { rotate = 0, mirrorH, mirrorV, skewX = 0, skewY = 0, trapezoid = 0, resizeX = 100, resizeY = 100 } = args;
   //
   // function compensateCropCorners({ rotate: newRotate, mirrorV: newMirrorV, mirrorH: newMirrorH }: TransformToolType) {
@@ -133,9 +126,6 @@ const Transform: React.FC<TransformToolbarProps> = ({ onChange }) => {
       resizeY: 100,
     });
   };
-
-  // todo add some stratching and free transform
-  // const hasDefaultTransform = isEqual(args, defaultSettings.transform);
 
   return (
     <div className="flex flex-col gap-4">

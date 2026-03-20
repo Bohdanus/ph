@@ -34,3 +34,8 @@ export function deleteCharAt(str: string, charIndex: number): string {
 
   return str.slice(0, start) + str.slice(end);
 }
+
+export function ellipsify(str: string = '', maxLength: number = 20): string {
+  if (str.length <= maxLength) return str;
+  return str.slice(0, maxLength - 3) + '...';
+}

@@ -1,19 +1,33 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { PRESETS, computePixelsFromPreset } from '../../constants/imagePresets';
+import type { BlankImageParams } from '../../contexts/tool-types.ts';
 
 interface NewImageDialogProps {
   onClose: () => void;
-  onCreate: (width: number, height: number) => void;
+  // width/height in pixels, dpi (optional), background color (optional)
+  // last parameter indicates whether background should be opaque; if false, background is transparent
+  onCreate: (params: BlankImageParams) => void;
 }
 
 const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
   const [width, setWidth] = useState(800);
   const [height, setHeight] = useState(600);
+  const [presetId, setPresetId] = useState<string>('custom');
+  const [dpi, setDpi] = useState<number>(300);
+  const [background, setBackground] = useState<string>('#ffffff');
+  const [opacity, setOpacity] = useState<number>(1);
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    onCreate(width, height);
+    onCreate({ color: background, opacity, size: { width, height }, isBedrock: true });
     onClose();
   };
+
+  useEffect(() => {
+    return () => {
+      onClose();
+    };
+  }, []);
 
   return (
     <div className="fixed inset-0 z-[1050] flex items-center justify-center overflow-y-auto overflow-x-hidden outline-none focus:outline-none">
@@ -31,6 +45,95 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
           </div>
           <form onSubmit={handleCreate}>
             <div className="relative flex-auto p-6">
+              <div className={`mb-4 grid gap-3 ${PRESETS[presetId]?.unit !== 'px' ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                <div>
+                  <label
+                    htmlFor="presetSelect"
+                    className="mb-2 block text-sm font-bold text-gray-700 dark:text-gray-300"
+                  >
+                    Preset
+                  </label>
+                  <select
+                    id="presetSelect"
+                    value={presetId}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setPresetId(id);
+                      if (id !== 'custom') {
+                        const preset = PRESETS[id];
+                        if (preset) {
+                          const { width: w, height: h } = computePixelsFromPreset({ ...preset, id }, dpi);
+                          // clamp
+                          setWidth(Math.min(10000, Math.max(1, w)) || 1);
+                          setHeight(Math.min(10000, Math.max(1, h)) || 1);
+                        }
+                      }
+                    }}
+                    className="w-full rounded border px-3 py-2 text-gray-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+                  >
+                    {Object.entries(PRESETS).map(([id, p]) => (
+                      <option key={id} value={id}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {PRESETS[presetId]?.unit !== 'px' && (
+                  <div>
+                    <label htmlFor="dpiInput" className="mb-2 block text-sm font-bold text-gray-700 dark:text-gray-300">
+                      DPI
+                    </label>
+                    <input
+                      id="dpiInput"
+                      type="number"
+                      min={1}
+                      max={2400}
+                      value={dpi}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value) || 1;
+                        setDpi(v);
+                        if (presetId !== 'custom') {
+                          const preset = PRESETS[presetId];
+                          if (preset) {
+                            const { width: w, height: h } = computePixelsFromPreset({ ...preset, id: presetId }, v);
+                            setWidth(Math.min(10000, Math.max(1, w)) || 1);
+                            setHeight(Math.min(10000, Math.max(1, h)) || 1);
+                          }
+                        }
+                      }}
+                      className="w-full rounded border px-3 py-2 text-gray-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+                    />
+                  </div>
+                )}{' '}
+                <div>
+                  <label
+                    htmlFor="bgColorInput"
+                    className="mb-2 block text-sm font-bold text-gray-700 dark:text-gray-300"
+                  >
+                    Background
+                  </label>
+                  <input
+                    id="bgColorInput"
+                    type="color"
+                    value={background}
+                    onChange={(e) => setBackground(e.target.value)}
+                    className="h-10 w-full rounded border px-3 py-2 text-gray-700 dark:border-gray-600 dark:bg-gray-700"
+                    disabled={opacity === 0}
+                  />
+                  <label className="mt-2 block text-sm font-bold text-gray-700 dark:text-gray-300">
+                    Opacity: {(opacity * 100).toFixed(0)}%
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={opacity}
+                    onChange={(e) => setOpacity(parseFloat(e.target.value))}
+                    className="mt-2 w-full"
+                  />
+                </div>
+              </div>
               <div className="mb-4">
                 <label htmlFor="widthInput" className="mb-2 block text-sm font-bold text-gray-700 dark:text-gray-300">
                   Width (px)
@@ -42,7 +145,10 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
                   min="1"
                   max="10000"
                   value={width}
-                  onChange={(e) => setWidth(parseInt(e.target.value) || 0)}
+                  onChange={(e) => {
+                    setWidth(parseInt(e.target.value) || 0);
+                    setPresetId('custom');
+                  }}
                   required
                 />
               </div>
@@ -57,7 +163,10 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
                   min="1"
                   max="10000"
                   value={height}
-                  onChange={(e) => setHeight(parseInt(e.target.value) || 0)}
+                  onChange={(e) => {
+                    setHeight(parseInt(e.target.value) || 0);
+                    setPresetId('custom');
+                  }}
                   required
                 />
               </div>

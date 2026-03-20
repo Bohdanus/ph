@@ -1,44 +1,38 @@
-import React, { useRef, useCallback, useContext } from 'react';
+import React, { useRef } from 'react';
 
 import UndoButton from '../../Common/UndoButton.tsx';
-import { type BlurToolArgs, blur } from '../../../tools/blur.ts';
-import { ImageContext } from '../../../contexts/ImageContext.tsx';
+import { type BlurToolArgs } from '../../../tools/blur.ts';
+import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
+import { useLayers } from '../../../contexts/useLayer.ts';
 
-interface BlurToolbarProps {
-  onChange: (args: BlurToolArgs) => void;
-}
+const Blur: React.FC<{}> = () => {
+  const { tempUpdateLayer } = useLayers();
+  const { toolArgs, setToolArgs } = useCurrentTool();
 
-const Blur: React.FC<BlurToolbarProps> = ({ onChange }) => {
-  const { getBitmap, canvasRef, canvasCtxRef, toolArgs } = useContext(ImageContext);
   const args = toolArgs as BlurToolArgs;
+  const { radius } = args;
+
   const pendingUpdateRef = useRef<BlurToolArgs | null>(null);
   const rafIdRef = useRef<number | null>(null);
 
-  const throttledOnChange = useCallback(
-    (newArgs: BlurToolArgs) => {
-      pendingUpdateRef.current = newArgs;
+  const throttledOnChange = (newArgs: BlurToolArgs) => {
+    pendingUpdateRef.current = newArgs;
 
-      if (rafIdRef.current === null) {
-        rafIdRef.current = requestAnimationFrame(() => {
-          if (pendingUpdateRef.current !== null) {
-            blur({ bitmap: getBitmap()!, canvas: canvasRef.current!, ctx: canvasCtxRef.current })(
-              pendingUpdateRef.current
-            );
-            onChange(pendingUpdateRef.current);
-            pendingUpdateRef.current = null;
-          }
-          rafIdRef.current = null;
-        });
-      }
-    },
-    [onChange, getBitmap, canvasRef, canvasCtxRef]
-  );
+    if (rafIdRef.current === null) {
+      rafIdRef.current = requestAnimationFrame(() => {
+        if (pendingUpdateRef.current !== null) {
+          tempUpdateLayer({ toolName: 'blur', toolArgs: pendingUpdateRef.current });
+          setToolArgs(pendingUpdateRef.current);
+          pendingUpdateRef.current = null;
+        }
+        rafIdRef.current = null;
+      });
+    }
+  };
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     throttledOnChange({ radius: Number(event.target.value) });
   };
-  const { radius } = args;
-  const hasDefaultValues = radius === 0;
 
   return (
     <div className="flex flex-col gap-3">
@@ -60,7 +54,7 @@ const Blur: React.FC<BlurToolbarProps> = ({ onChange }) => {
         </span>
       </div>
 
-      <UndoButton disabled={hasDefaultValues} text="Undo Blur" />
+      <UndoButton text="Undo Blur" />
     </div>
   );
 };

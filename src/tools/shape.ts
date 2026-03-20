@@ -1,5 +1,5 @@
-import type { Point } from '../contexts/ImageContext.tsx';
-import type { ImageProcParams } from './toolsMap.ts';
+import type { CreatorToolParams } from './toolsMap.ts';
+import type { Ctx2D, Point } from '../contexts/general-types.ts';
 
 export type FigureType = 'line' | 'circle' | 'rectangle' | 'square' | 'oval';
 
@@ -16,7 +16,7 @@ export type ShapeToolArgs = {
 
 export type ShapeToolSettings = Omit<ShapeToolArgs, 'start' | 'end'>;
 
-export const setShapeTool = (ctx: CanvasRenderingContext2D, args: ShapeToolArgs) => {
+export const setShapeCtx = (ctx: Ctx2D, args: ShapeToolArgs) => {
   const { alpha, lineColor, fillColor, lineWidth, lineDash } = args;
 
   ctx.strokeStyle = lineColor;
@@ -28,7 +28,7 @@ export const setShapeTool = (ctx: CanvasRenderingContext2D, args: ShapeToolArgs)
   lineDash && ctx.setLineDash(lineDash);
 };
 
-export const drawShape = (ctx: CanvasRenderingContext2D, args: ShapeToolArgs) => {
+export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
   const { figure, fillColor, start, end } = args;
 
   if (!start || !end) return;
@@ -69,11 +69,14 @@ export const drawShape = (ctx: CanvasRenderingContext2D, args: ShapeToolArgs) =>
 };
 
 export const shape =
-  ({ ctx, bitmap }: ImageProcParams) =>
+  ({ size }: CreatorToolParams) =>
   (args: ShapeToolArgs) => {
-    ctx.drawImage(bitmap, 0, 0);
+    const canvas = new OffscreenCanvas(size.width, size.height);
+    const ctx = canvas.getContext('2d')!;
 
-    setShapeTool(ctx, args);
+    setShapeCtx(ctx, args);
 
     drawShape(ctx, args);
+
+    return [canvas];
   };

@@ -28,6 +28,21 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+@keyframes height-increase {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: 3rem;
+    opacity: 1;
+  }
+}
+
+.animate-height-increase {
+  animation: height-increase 0.21s ease-in-out forwards;
+}
+
 html, body, #root {
   height: 100%;
 }
@@ -35,6 +50,10 @@ html, body, #root {
 body {
   margin: 0;
   min-width: 320px;
+}
+
+.cursor-grabbing * {
+  cursor: grabbing !important;
 }
 
 // Global styles for mobile

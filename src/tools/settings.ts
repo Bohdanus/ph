@@ -1,6 +1,5 @@
 import { cloneDeep } from 'lodash-es';
 
-import { type ToolName } from '../contexts/ImageContext.tsx';
 import type { DrawToolSettings, DrawToolArgs, PenType } from './draw.ts';
 import type { TextToolArgs, TextToolSettings } from './text.ts';
 import type { CropToolArgs } from './crop.ts';
@@ -9,13 +8,8 @@ import type { ColorsToolArgs } from './colors.ts';
 import type { LevelsToolArgs } from './levels.ts';
 import type { BlurToolArgs } from './blur.ts';
 import type { FigureType, ShapeToolSettings, ShapeToolArgs } from './shape.ts';
-
-// type DrawSettings = { // todo use Omit
-//   alpha: number;
-//   color?: string;
-//   lineWidth: number;
-//   lineDash?: null | number[];
-// };
+import type { ToolName } from '../contexts/tool-types.ts';
+import type { RepositionToolArgs } from './reposition.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType'>;
 type FigureSettings = Omit<ShapeToolArgs, 'lineColor' | 'fillColor' | 'start' | 'end' | 'figure'>;
@@ -35,9 +29,9 @@ export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
 };
 
 export const defaultSettings: Record<ToolName, SavedSettings> = {
-  blur: { radius: 0 } as BlurToolArgs,
-  colors: { grayscale: 0, sepia: 0, saturation: 0 } as ColorsToolArgs,
-  levels: { brightness: 0, contrast: 0 } as LevelsToolArgs,
+  blur: { radius: 0 } satisfies BlurToolArgs,
+  color: { grayscale: 0, sepia: 0, saturation: 0 } satisfies ColorsToolArgs,
+  levels: { brightness: 0, contrast: 0 } satisfies LevelsToolArgs,
   transform: {
     rotate: 0,
     mirrorH: false,
@@ -47,16 +41,18 @@ export const defaultSettings: Record<ToolName, SavedSettings> = {
     trapezoid: 0,
     resizeX: 100,
     resizeY: 100,
-  } as TransformToolArgs,
-  crop: { aspectRatio: null, rect: null } as CropToolArgs,
-  draw: { ...savedDrawPerPen['pen'], color: '#000000', points: [], penType: 'pen' } as DrawToolArgs,
+  } satisfies TransformToolArgs,
+  crop: { aspectRatio: null, rect: null } satisfies CropToolArgs,
+  // @ts-expect-error s
+  draw: { ...savedDrawPerPen['pen'], color: '#000000', points: [], penType: 'pen' } satisfies DrawToolArgs,
   shape: {
     ...savedArgsPerFigure['rectangle'],
     figure: 'rectangle',
     lineColor: '#000000',
     fillColor: null,
-  } as ShapeToolArgs,
+  } satisfies ShapeToolArgs,
   text: {
+    // @ts-expect-error s
     text: '',
     fontSize: 64,
     lineHeight: 1.1,
@@ -66,7 +62,8 @@ export const defaultSettings: Record<ToolName, SavedSettings> = {
     align: 'left',
     bold: false,
     italic: false,
-  } as TextToolArgs,
+  } satisfies TextToolArgs,
+  reposition: { move: { x: 0, y: 0 } } satisfies RepositionToolArgs,
 };
 
 export type SavedSettings =
@@ -77,6 +74,7 @@ export type SavedSettings =
   | ColorsToolArgs
   | LevelsToolArgs
   | TransformToolArgs
-  | CropToolArgs;
+  | CropToolArgs
+  | RepositionToolArgs;
 
-export const initialSettings = cloneDeep(defaultSettings);
+export const lastSavedSettings = cloneDeep(defaultSettings);

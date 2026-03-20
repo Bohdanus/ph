@@ -1,48 +1,55 @@
-import { type PointerEvent, type RefObject, useContext, useRef } from 'react';
-import { ImageContext, type Point } from '../../contexts/ImageContext';
+import { type PointerEvent, type RefObject, useRef } from 'react';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
-import { drawShape, setShapeTool, type ShapeToolArgs } from '../../tools/shape.ts';
+import { drawShape, setShapeCtx, type ShapeToolArgs } from '../../tools/shape.ts';
+import { useLayers } from '../../contexts/useLayer.ts';
+import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import { useStore } from '../../contexts/StoreContext.tsx';
+import type { Point } from '../../contexts/general-types.ts';
+import type { FullArgs } from '../../contexts/tool-types.ts';
+import { useApp } from '../../hooks/useApp.ts';
 
 type ShapeHandlerProps = {
   className?: string;
-  canvasCtxRef: RefObject<CanvasRenderingContext2D | null>;
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
-  overlayRef: RefObject<HTMLCanvasElement | null>;
 };
 
-export const ShapeToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayRef }: ShapeHandlerProps) => {
-  const { addCanvasToHistory, containerRef, size, toolArgs } = useContext(ImageContext);
+export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) => {
+  const [{ containerRef, toolOverlayRef, totalSize }] = useStore();
+  const { createLayerFromTool } = useLayers();
+  const { clearOverlay } = useApp();
+  const { toolArgs } = useCurrentTool();
+
   const args = toolArgs as ShapeToolArgs;
   const startRef = useRef<Point | null>(null);
   const endRef = useRef<Point | null>(null);
   const frameRequested = useRef<number | null>(null);
 
-  const { onPointerDown, onPointerUp, getLocalCoords, isMouseDown } = usePointerPosition({
+  const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown } = usePointerPosition({
     ref: containerRef,
-    imageSize: size,
+    imageSize: totalSize,
   });
 
   const flushDrawingFrame = () => {
     frameRequested.current = null;
 
     const ctx = overlayCtxRef.current!;
-    ctx.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height); // todo you can clear smaller shape
+    ctx.clearRect(0, 0, toolOverlayRef.current!.width, toolOverlayRef.current!.height); // todo you can clear smaller shape
 
     const newArgs = { ...args, start: startRef.current!, end: endRef.current! };
     drawShape(ctx, newArgs);
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (!onPointerDown(event)) return;
+    if (!isPointerDownValid(event)) return;
 
     const ctx = overlayCtxRef.current!;
-    setShapeTool(ctx, args);
+    setShapeCtx(ctx, args);
 
     startRef.current = getLocalCoords(event);
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (!isMouseDown.current) return;
+    if (!isMouseDown.current || !isPointerMoveValid(event)) return;
 
     endRef.current = getLocalCoords(event);
 
@@ -52,19 +59,73 @@ export const ShapeToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayR
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
-    if (!onPointerUp(event)) return;
+    if (!isPointerUpValid(event)) return;
 
     endRef.current = getLocalCoords(event);
 
     if (frameRequested.current !== null) {
       cancelAnimationFrame(frameRequested.current);
     }
-    flushDrawingFrame();
+    // flushDrawingFrame();
 
-    canvasCtxRef.current!.drawImage(overlayRef.current!, 0, 0);
-    overlayCtxRef.current!.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
+    const start = { ...startRef.current! };
+    const end = { ...endRef.current! };
+    const halfLineWidth = args.lineWidth / 2;
+    const pos = {
+      x: Math.min(start.x, end.x) - halfLineWidth - 1,
+      y: Math.min(start.y, end.y) - halfLineWidth - 1,
+      width: Math.abs(start.x - end.x) + args.lineWidth + 2,
+      height: Math.abs(start.y - end.y) + args.lineWidth + 2,
+    };
 
-    addCanvasToHistory({ ...args, start: startRef.current!, end: endRef.current });
+    if (pos.width === 0 || pos.height === 0) return;
+
+    // For circles, ovals and squares, recalculate the bounding box
+    if (args.figure === 'circle' || args.figure === 'oval' || args.figure === 'square') {
+      if (args.figure === 'square') {
+        let w = end.x - start.x;
+        let h = end.y - start.y;
+        const side = Math.max(Math.abs(w), Math.abs(h));
+        w = Math.sign(w) * side;
+        h = Math.sign(h) * side;
+        const newEnd = { x: start.x + w, y: start.y + h };
+
+        pos.x = Math.min(start.x, newEnd.x) - halfLineWidth - 1;
+        pos.y = Math.min(start.y, newEnd.y) - halfLineWidth - 1;
+        pos.width = Math.abs(start.x - newEnd.x) + args.lineWidth + 2;
+        pos.height = Math.abs(start.y - newEnd.y) + args.lineWidth + 2;
+      } else {
+        const cx = (start.x + end.x) / 2;
+        const cy = (start.y + end.y) / 2;
+        let rx = Math.abs(end.x - start.x) / 2;
+        let ry = Math.abs(end.y - start.y) / 2;
+
+        if (args.figure === 'circle') {
+          const r = Math.max(rx, ry);
+          rx = ry = r;
+        }
+
+        // Bounding box for circle/oval including line width
+        pos.x = Math.floor(cx - rx - args.lineWidth / 2 - 1);
+        pos.y = Math.floor(cy - ry - args.lineWidth / 2 - 1);
+        pos.width = Math.ceil(2 * rx + args.lineWidth + 2);
+        pos.height = Math.ceil(2 * ry + args.lineWidth + 2);
+      }
+    }
+
+    start.x -= pos.x;
+    start.y -= pos.y;
+    end.x -= pos.x;
+    end.y -= pos.y;
+    const newArgs = { ...args, start, end };
+
+    const fullArgs: FullArgs = {
+      toolName: 'shape',
+      args: newArgs,
+      pos: pos,
+    };
+    createLayerFromTool(fullArgs);
+    clearOverlay();
   };
 
   return (

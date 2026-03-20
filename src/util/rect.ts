@@ -1,7 +1,7 @@
-import type { Rect, RectXY, Size } from '../contexts/ImageContext.tsx';
 import type { RefObject } from 'react';
 import { getTextWidth, type TextToolArgs } from '../tools/text.ts';
 import { TEXT_PADDING } from './constants.ts';
+import type { Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
 
 export function getCanvasSize(canvasRef: RefObject<HTMLCanvasElement | null>): Size {
   if (!canvasRef.current) return { width: 0, height: 0 };
@@ -22,7 +22,7 @@ export function sortRect(rect: RectXY): RectXY {
   return { x1: newX1, y1: newY1, x2: newX2, y2: newY2 };
 }
 
-type TrimmedRect = Rect & { isTrimmed: boolean };
+type TrimmedRect = Pos & { isTrimmed: boolean };
 
 export function trimRect(rectSorted: RectXY, imageSize: Size): TrimmedRect {
   let { x1, y1, x2, y2 } = rectSorted;
@@ -56,6 +56,37 @@ export function trimRect2(rectSorted: RectXY, imageSize: Size): RectXY {
   return { x1, y1, x2, y2 };
 }
 
+export function sortedRectToPos(rectSorted: RectXYSorted): Pos {
+  let { x1, y1, x2, y2 } = rectSorted;
+
+  const x = x1;
+  const y = y1;
+  const width = x2 - x1;
+  const height = y2 - y1;
+
+  return { x, y, width, height };
+}
+
+export function reduceRect(sortedRect: RectXYSorted, pos: Pos) {
+  return {
+    x1: sortedRect.x1 - pos.x,
+    y1: sortedRect.y1 - pos.y,
+    x2: sortedRect.x2 - pos.x,
+    y2: sortedRect.y2 - pos.y,
+  };
+}
+
+export function posToSortedRect(rect: Pos): RectXYSorted {
+  let { x, y, width, height } = rect;
+
+  const x1 = x;
+  const y1 = y;
+  const x2 = x1 + width;
+  const y2 = y1 + height;
+
+  return { x1, y1, x2, y2 };
+}
+
 export function hexToRgb(hex: string): string {
   // Remove the #
   hex = hex.replace('#', '');
@@ -72,9 +103,9 @@ export const calculateNewRect = (
   newArgs: TextToolArgs,
   canvasRef: RefObject<HTMLCanvasElement | null>,
   imageSize: Size
-) => {
-  const { align, text, fontSize, lineHeight, rect } = newArgs;
-  if (!rect) return null;
+): RectXYSorted | null => {
+  const { align, text, fontSize, lineHeight } = newArgs;
+  const rect = newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 };
 
   if (!text)
     return {
@@ -109,9 +140,9 @@ export const calculateNewRect = (
   const lineCount = lines.length;
   const requiredHeight = lineCount * fontSize * lineHeight + TEXT_PADDING * 2;
 
-  const currentHeight = rect.y2 - rect.y1;
+  const currentHeight = newRect.y2 - newRect.y1;
   if (requiredHeight > currentHeight) {
-    newRect = { ...newRect, y2: rect.y1 + requiredHeight };
+    newRect = { ...newRect, y2: newRect.y1 + requiredHeight };
   }
 
   return trimRect2(newRect, imageSize);

@@ -1,22 +1,21 @@
-import React, { type ChangeEvent, useContext, useRef, useState } from 'react';
+import React, { type ChangeEvent, useRef, useState } from 'react';
 import { savedArgsPerFigure } from '../../../tools/settings.ts';
-import { ImageContext } from '../../../contexts/ImageContext.tsx';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
-import type { FigureType, ShapeToolArgs, ShapeToolSettings } from '../../../tools/shape.ts';
+import type { FigureType, ShapeToolArgs } from '../../../tools/shape.ts';
 import { isLightColor } from '../../../util/color.ts';
+import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
+import { useStore } from '../../../contexts/StoreContext.tsx';
 
-interface ShapesToolbarProps {
-  onChange: (args: ShapeToolSettings) => void;
-}
+const Shape: React.FC<{}> = () => {
+  const [{ containerRef, totalSize }] = useStore();
+  const { toolArgs, setToolArgs } = useCurrentTool();
 
-const Shapes: React.FC<ShapesToolbarProps> = ({ onChange }: ShapesToolbarProps) => {
-  const { containerRef, size: imageSize, toolArgs } = useContext(ImageContext);
   const args = toolArgs as ShapeToolArgs;
   const [brushScale, setBrushScale] = useState<number>(0);
   const savedFillColorRef = useRef(args.fillColor);
   const savedLineDashRef = useRef(args.lineDash);
 
-  usePointerPosition({ ref: containerRef, imageSize, onResize: ({ scale }) => setBrushScale(scale) });
+  usePointerPosition({ ref: containerRef, imageSize: totalSize, onResize: ({ scale }) => setBrushScale(scale) });
 
   const handleChange = (newArgs: ShapeToolArgs) => {
     savedArgsPerFigure[newArgs.figure] = {
@@ -24,7 +23,7 @@ const Shapes: React.FC<ShapesToolbarProps> = ({ onChange }: ShapesToolbarProps) 
       lineWidth: newArgs.lineWidth,
       lineDash: newArgs.lineDash,
     };
-    onChange(newArgs);
+    setToolArgs(newArgs);
   };
 
   const handleColorChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -356,4 +355,4 @@ const Shapes: React.FC<ShapesToolbarProps> = ({ onChange }: ShapesToolbarProps) 
   );
 };
 
-export default Shapes;
+export default Shape;

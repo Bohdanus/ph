@@ -1,20 +1,19 @@
-import React, { type ChangeEvent, useContext, useState } from 'react';
+import React, { type ChangeEvent, useState } from 'react';
 import type { DrawToolSettings, PenType } from '../../../tools/draw.ts';
 import { savedDrawPerPen } from '../../../tools/settings.ts';
-import { ImageContext } from '../../../contexts/ImageContext.tsx';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
 import { isLightColor } from '../../../util/color.ts';
+import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
+import { useStore } from '../../../contexts/StoreContext.tsx';
 
-interface DrawToolbarProps {
-  onChange: (args: DrawToolSettings) => void;
-}
+const Draw: React.FC<{}> = () => {
+  const [{ containerRef, totalSize }] = useStore();
+  const { toolArgs, setToolArgs } = useCurrentTool();
 
-const Draw: React.FC<DrawToolbarProps> = ({ onChange }) => {
-  const { containerRef, size: imageSize, toolArgs } = useContext(ImageContext);
   const args = toolArgs as DrawToolSettings;
   const [brushScale, setBrushScale] = useState<number>(0);
 
-  usePointerPosition({ ref: containerRef, imageSize, onResize: ({ scale }) => setBrushScale(scale) });
+  usePointerPosition({ ref: containerRef, imageSize: totalSize, onResize: ({ scale }) => setBrushScale(scale) });
 
   const handleChange = (newArgs: DrawToolSettings) => {
     savedDrawPerPen[newArgs.penType] = {
@@ -22,7 +21,7 @@ const Draw: React.FC<DrawToolbarProps> = ({ onChange }) => {
       lineWidth: newArgs.lineWidth,
       lineDash: newArgs.lineDash,
     };
-    onChange(newArgs);
+    setToolArgs(newArgs);
   };
 
   const handleColorChange = (event: ChangeEvent<HTMLInputElement>) => {

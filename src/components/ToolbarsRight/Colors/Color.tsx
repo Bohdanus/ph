@@ -1,39 +1,31 @@
-import React, { useRef, useCallback, useContext } from 'react';
-import { defaultSettings } from '../../../tools/settings.ts';
-import { isEqual } from 'lodash-es';
+import React, { useRef } from 'react';
 import UndoButton from '../../Common/UndoButton.tsx';
-import { ImageContext } from '../../../contexts/ImageContext.tsx';
-import { type ColorsToolArgs, colors } from '../../../tools/colors.ts';
+import { type ColorsToolArgs } from '../../../tools/colors.ts';
+import { useLayers } from '../../../contexts/useLayer.ts';
+import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 
-interface ColorsToolbarProps {
-  onChange: (args: ColorsToolArgs) => void;
-}
+const Color: React.FC<{}> = () => {
+  const { tempUpdateLayer, mergeAllLayers } = useLayers();
+  const { toolArgs, setToolArgs } = useCurrentTool();
 
-const Colors: React.FC<ColorsToolbarProps> = ({ onChange }) => {
-  const { getBitmap, canvasRef, canvasCtxRef, toolArgs } = useContext(ImageContext);
   const args = toolArgs as ColorsToolArgs;
   const pendingUpdateRef = useRef<ColorsToolArgs | null>(null);
   const rafIdRef = useRef<number | null>(null);
 
-  const throttledOnChange = useCallback(
-    (newArgs: ColorsToolArgs) => {
-      pendingUpdateRef.current = newArgs;
+  const throttledOnChange = (newArgs: ColorsToolArgs) => {
+    pendingUpdateRef.current = newArgs;
 
-      if (rafIdRef.current === null) {
-        rafIdRef.current = requestAnimationFrame(() => {
-          if (pendingUpdateRef.current !== null) {
-            colors({ bitmap: getBitmap()!, canvas: canvasRef.current!, ctx: canvasCtxRef.current })(
-              pendingUpdateRef.current
-            );
-            onChange(pendingUpdateRef.current);
-            pendingUpdateRef.current = null;
-          }
-          rafIdRef.current = null;
-        });
-      }
-    },
-    [onChange, getBitmap, canvasRef, canvasCtxRef]
-  );
+    if (rafIdRef.current === null) {
+      rafIdRef.current = requestAnimationFrame(() => {
+        if (pendingUpdateRef.current !== null) {
+          tempUpdateLayer({ toolName: 'color', toolArgs: pendingUpdateRef.current });
+          setToolArgs(pendingUpdateRef.current);
+          pendingUpdateRef.current = null;
+        }
+        rafIdRef.current = null;
+      });
+    }
+  };
 
   const handleGrayscaleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const grayscale = Number(event.target.value);
@@ -51,10 +43,13 @@ const Colors: React.FC<ColorsToolbarProps> = ({ onChange }) => {
   };
 
   const { grayscale, sepia, saturation } = args;
-  const hasDefaultValues = isEqual(args, defaultSettings.colors);
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="rounded-md bg-blue-50 p-3 dark:bg-blue-900/30">
+        <p className="text-xs text-blue-700 dark:text-blue-300">Tool will be applied to selected layer only</p>
+      </div>
+
       <div className="flex flex-col gap-1">
         <label htmlFor="grayscale-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
           Grayscale
@@ -115,9 +110,16 @@ const Colors: React.FC<ColorsToolbarProps> = ({ onChange }) => {
         </div>
       </div>
 
-      <UndoButton disabled={hasDefaultValues} />
+      <UndoButton />
+
+      <button
+        onClick={mergeAllLayers}
+        className="mt-2 w-full rounded-md bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+      >
+        Merge all layers
+      </button>
     </div>
   );
 };
 
-export default Colors;
+export default Color;

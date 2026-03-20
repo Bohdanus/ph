@@ -5,47 +5,60 @@ import { transform } from './transform';
 import { crop } from './crop';
 import { draw } from './draw';
 import { text } from './text';
-import type { ToolArgs } from '../contexts/ImageContext.tsx';
-import Colors from '../components/ToolbarsRight/Colors/Colors.tsx';
+import Color from '../components/ToolbarsRight/Colors/Color.tsx';
 import Blur from '../components/ToolbarsRight/Blur/Blur.tsx';
 import Levels from '../components/ToolbarsRight/Levels/Levels.tsx';
 import Transform from '../components/ToolbarsRight/Transform/Transform.tsx';
 import Draw from '../components/ToolbarsRight/Draw/Draw.tsx';
-import Shapes from '../components/ToolbarsRight/Figures/Shapes.tsx';
+import Shape from '../components/ToolbarsRight/Figures/Shape.tsx';
 import Text from '../components/ToolbarsRight/Text/Text.tsx';
 import type { ToolbarRightComponent } from '../components/ToolbarsRight/types.ts';
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
 import { shape } from './shape.ts';
+import Reposition from '../components/ToolbarsRight/Move/Reposition.tsx';
+import type { BitmapSource, Pos, Size } from '../contexts/general-types.ts';
+import type { ToolArgs } from '../contexts/tool-types.ts';
+import { reposition } from './reposition.ts';
 
-export type ImageProcParams = {
-  canvas: HTMLCanvasElement;
-  ctx: CanvasRenderingContext2D;
-  bitmap: ImageBitmap;
+export type ProcessorToolParams = {
+  size: Size;
+  bitmap: BitmapSource; // source bitmap that should be processed
+};
+
+export type CreatorToolParams = {
+  size: Size;
 };
 
 type ToolsMap = Record<
   string,
   {
+    creator?: boolean;
     icon: string;
     imageProcessor: (
-      param: ImageProcParams
-    ) => (args: ToolArgs, callback: (newWidth: number, newHeight: number) => void) => Promise<ImageBitmap>;
+      param: ProcessorToolParams | CreatorToolParams
+    ) => (args: ToolArgs) => [BitmapSource, Pos | Size | never];
     toolboxComponent: ToolbarRightComponent;
   }
 >;
 
 export const toolsMap: ToolsMap = {
+  reposition: {
+    icon: 'reposition',
+    // @ts-expect-error args
+    imageProcessor: reposition,
+    toolboxComponent: Reposition,
+  },
   blur: {
     icon: 'blur',
     // @ts-expect-error args
     imageProcessor: blur,
     toolboxComponent: Blur,
   },
-  colors: {
-    icon: 'colors',
+  color: {
+    icon: 'color',
     // @ts-expect-error args
     imageProcessor: colors,
-    toolboxComponent: Colors,
+    toolboxComponent: Color,
   },
   levels: {
     icon: 'levels',
@@ -66,21 +79,28 @@ export const toolsMap: ToolsMap = {
     toolboxComponent: Crop,
   },
   draw: {
+    creator: true,
     icon: 'draw',
     // @ts-expect-error args
     imageProcessor: draw,
     toolboxComponent: Draw,
   },
   shape: {
+    creator: true,
     icon: 'shape',
     // @ts-expect-error args
     imageProcessor: shape,
-    toolboxComponent: Shapes,
+    toolboxComponent: Shape,
   },
   text: {
+    creator: true,
     icon: 'text',
     // @ts-expect-error args
     imageProcessor: text,
     toolboxComponent: Text,
   },
+  // load: {
+  //   creational: true,
+  //   icon: 'load',
+  // }
 };

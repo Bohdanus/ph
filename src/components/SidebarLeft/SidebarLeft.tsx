@@ -1,41 +1,44 @@
-import { useContext } from 'react';
-
-import { ImageContext } from '../../contexts/ImageContext.tsx';
-import Zoom from '../Zoom/Zoom.tsx';
+import { useStore } from '../../contexts/StoreContext.tsx';
+import { useApp } from '../../hooks/useApp.ts';
 
 const SidebarLeft = () => {
-  const { originalImage, startTool, toolName } = useContext(ImageContext);
+  const [{ hasImage, toolName }] = useStore();
+  const { goToTool } = useApp();
+
+  const handleMove = () => {
+    goToTool('reposition');
+  };
 
   const handleColors = () => {
-    startTool('colors');
+    goToTool('color');
   };
 
   const handleBlur = () => {
-    startTool('blur');
+    goToTool('blur');
   };
 
   const handleLevels = () => {
-    startTool('levels');
+    goToTool('levels');
   };
 
   const handleTransform = () => {
-    startTool('transform');
+    goToTool('transform');
   };
 
   const handleCrop = () => {
-    startTool('crop');
+    goToTool('crop');
   };
 
   const handleDraw = () => {
-    startTool('draw');
+    goToTool('draw');
   };
 
   const handleShapes = () => {
-    startTool('shape');
+    goToTool('shape');
   };
 
   const handleText = () => {
-    startTool('text');
+    goToTool('text');
   };
 
   return (
@@ -46,11 +49,24 @@ const SidebarLeft = () => {
           <li className="mb-1">
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'colors'
+                toolName === 'reposition'
                   ? 'bg-blue-600 text-white'
                   : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!originalImage}
+              disabled={!hasImage}
+              onClick={handleMove}
+            >
+              Select & Move
+            </button>
+          </li>
+          <li className="mb-1">
+            <button
+              className={`w-full rounded px-3 py-2 text-left transition-colors ${
+                toolName === 'color'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
+              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
+              disabled={!hasImage}
               onClick={handleColors}
             >
               Colors
@@ -63,7 +79,7 @@ const SidebarLeft = () => {
                   ? 'bg-blue-600 text-white'
                   : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!originalImage}
+              disabled={!hasImage}
               onClick={handleBlur}
             >
               Blur
@@ -76,7 +92,7 @@ const SidebarLeft = () => {
                   ? 'bg-blue-600 text-white'
                   : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!originalImage}
+              disabled={!hasImage}
               onClick={handleLevels}
             >
               Levels
@@ -89,7 +105,7 @@ const SidebarLeft = () => {
                   ? 'bg-blue-600 text-white'
                   : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!originalImage}
+              disabled={!hasImage}
               onClick={handleTransform}
             >
               Transform
@@ -102,7 +118,7 @@ const SidebarLeft = () => {
                   ? 'bg-blue-600 text-white'
                   : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!originalImage}
+              disabled={!hasImage}
               onClick={handleCrop}
             >
               Crop
@@ -115,7 +131,7 @@ const SidebarLeft = () => {
                   ? 'bg-blue-600 text-white'
                   : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!originalImage}
+              disabled={!hasImage}
               onClick={handleDraw}
             >
               Draw
@@ -128,7 +144,7 @@ const SidebarLeft = () => {
                   ? 'bg-blue-600 text-white'
                   : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!originalImage}
+              disabled={!hasImage}
               onClick={handleShapes}
             >
               Shapes
@@ -141,7 +157,7 @@ const SidebarLeft = () => {
                   ? 'bg-blue-600 text-white'
                   : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!originalImage}
+              disabled={!hasImage}
               onClick={handleText}
             >
               Text

@@ -1,18 +1,21 @@
-import { type RefObject, useContext, useEffect } from 'react';
-import { ImageContext, type RectXY, type RectXYSorted } from '../../contexts/ImageContext';
+import { type RefObject, useEffect } from 'react';
 import { renderText, type TextToolArgs } from '../../tools/text.ts';
 import { useRect } from '../../hooks/useRect.ts';
 import { calculateNewRect } from '../../util/rect.ts';
+import { useStore } from '../../contexts/StoreContext.tsx';
+import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import type { RectXY, RectXYSorted } from '../../contexts/general-types.ts';
 
 type TextToolAreaProps = {
   className?: string;
   canvasCtxRef: RefObject<CanvasRenderingContext2D | null>;
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
-  overlayRef: RefObject<HTMLCanvasElement | null>;
 };
 
-export const TextToolArea = ({ className, overlayCtxRef, overlayRef }: TextToolAreaProps) => {
-  const { containerRef, textareaRef, toolArgs, size: imageSize, setToolArgs } = useContext(ImageContext);
+export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) => {
+  const [{ containerRef, textareaRef, toolOverlayRef, totalSize }] = useStore();
+  const { toolArgs, setToolArgs } = useCurrentTool();
+
   const args = toolArgs as TextToolArgs;
 
   // // because dragging should happen outside react state management
@@ -23,18 +26,18 @@ export const TextToolArea = ({ className, overlayCtxRef, overlayRef }: TextToolA
   // // const composingTextRef = useRef<string>('');
 
   const pointerEvents = useRect({
-    imageSize,
+    imageSize: totalSize,
     initialRect: args.rect,
     containerRef,
-    overlayRef,
-    overlayCtxRef,
+    overlayRef: toolOverlayRef,
     onChange: (rect: RectXYSorted) => {
       handleUpdate(rect);
     },
     onChangeEnd: (rect: RectXYSorted) => {
-      const newRect = calculateNewRect({ ...args, rect }, overlayRef, imageSize);
+      const newRect = calculateNewRect({ ...args, rect }, toolOverlayRef, totalSize)!;
 
-      setToolArgs({ ...args, rect: newRect });
+      const newArgs = { ...args, rect: newRect };
+      setToolArgs(newArgs);
 
       textareaRef.current!.focus();
     },

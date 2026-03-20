@@ -1,5 +1,6 @@
-import type { Point } from '../contexts/ImageContext.tsx';
-import type { ImageProcParams } from './toolsMap.ts';
+import type { CreatorToolParams } from './toolsMap.ts';
+import { drawLine } from '../util/draw.ts';
+import type { Ctx2D, Point } from '../contexts/general-types.ts';
 
 export type PenType = 'pen' | 'pen-dashed' | 'spray';
 
@@ -14,7 +15,7 @@ export type DrawToolArgs = {
 
 export type DrawToolSettings = Omit<DrawToolArgs, 'points'>;
 
-export const setDrawTool = (ctx: CanvasRenderingContext2D, args: DrawToolSettings) => {
+export const setupDrawCtx = (ctx: Ctx2D, args: DrawToolSettings) => {
   const { alpha, color, penType, lineDash, lineWidth } = args;
 
   if (penType === 'spray') return;
@@ -29,23 +30,17 @@ export const setDrawTool = (ctx: CanvasRenderingContext2D, args: DrawToolSetting
 };
 
 export const draw =
-  ({ ctx, bitmap }: ImageProcParams) =>
+  ({ size }: CreatorToolParams) =>
   (args: DrawToolArgs) => {
-    ctx.drawImage(bitmap, 0, 0);
+    const canvas = new OffscreenCanvas(size.width, size.height);
+    const ctx = canvas.getContext('2d')!;
 
-    // if (args.penType === 'spray') {
-    throw 'rewriting from history not implemented';
-    // }
+    setupDrawCtx(ctx, args);
 
-    const { points } = args;
-    if (!points || points.length === 0) return;
+    drawLine({
+      args,
+      ctx,
+    });
 
-    setDrawTool(ctx, args);
-
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) {
-      ctx.lineTo(points[i].x, points[i].y);
-    }
-    ctx.stroke();
+    return [canvas];
   };

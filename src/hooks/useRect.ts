@@ -1,46 +1,63 @@
 import { type PointerEvent, type RefObject, useEffect, useRef } from 'react';
-import type { Point, RectXY, RectXYSorted, Size } from '../contexts/ImageContext.tsx';
+import type { Point, RectXY, RectXYSorted, Size } from '../contexts/general-types.ts';
 import { usePointerPosition } from './usePointerPosition.ts';
-import { getCanvasSize, sortRect, trimRect } from '../util/rect.ts';
+import { getCanvasSize, posToSortedRect, sortRect, trimRect } from '../util/rect.ts';
 import { CURSOR_MAP, HANDLE_SIZE } from '../util/constants.ts';
+import { isEqual } from 'lodash-es';
+import type { Layer } from '../contexts/layer-types.ts';
 
 type UseRectProps = {
-  enabled?: boolean;
+  aspectRatio?: number | null;
   imageSize: Size;
   initialRect?: RectXYSorted | null; // can be set using props
+
+  hideBlend?: boolean;
+  isMoveTool?: boolean;
+
   containerRef: RefObject<HTMLDivElement | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
-  overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
-  onChange?: (sortedRect: RectXYSorted) => void; // is called when dragging, after each mouse move (RAF throttling is done)
+
+  onChange?: (sortedRect: RectXYSorted) => void; // is called when dragging, on each mouse movement (RAF throttling is done)
   onChangeEnd: (sortedRect: RectXYSorted) => void; // is called after final change, when mouse is up
-  aspectRatio?: number | null;
 };
 
 export function useRect({
+  aspectRatio = null,
   imageSize,
   initialRect,
+  hideBlend,
+  isMoveTool,
+
   containerRef,
   overlayRef,
-  overlayCtxRef,
+
   onChange,
   onChangeEnd,
-  aspectRatio = null,
 }: UseRectProps) {
+  const startRectRef = useRef<RectXYSorted | null>(null);
   const rectUnsortedRef = useRef<RectXY | null>(null); // might become unsorted while dragging
+
   const startPointRef = useRef<Point | null>(null);
-  const movingEdgeRef = useRef<string | null>(null);
+  const currentEdgeRef = useRef<string | null>(null);
   const customAspectRatioRef = useRef<number | null>(null);
 
   const pendingPoint = useRef<Point | null>(null);
   const frameRequested = useRef<number | null>(null);
 
+  const ctx = overlayRef.current!.getContext('2d')!;
+
   useEffect(() => {
-    rectUnsortedRef.current = initialRect ?? null;
     if (aspectRatio && initialRect) {
       const patch = adjustWidthRatio(initialRect, aspectRatio);
-      rectUnsortedRef.current = { ...initialRect, ...patch };
+      startRectRef.current = { ...initialRect, ...patch };
+    } else {
+      startRectRef.current = initialRect ? { ...initialRect } : null;
     }
-    drawMask();
+
+    if (!isEqual(startRectRef.current, rectUnsortedRef.current)) {
+      rectUnsortedRef.current = startRectRef.current ? { ...startRectRef.current } : null;
+      drawMask();
+    }
   }, [aspectRatio, initialRect]);
 
   useEffect(() => {
@@ -49,15 +66,21 @@ export function useRect({
     };
   }, []);
 
-  const { dimensionsRef, onPointerDown, onPointerUp, getLocalCoords, isMouseDown } = usePointerPosition({
+  const pointerPositionData = usePointerPosition({
     ref: containerRef,
     imageSize,
-    onResize: drawMask,
+    onResize: () => {
+      drawMask();
+    },
   });
 
-  function getEdgeAtPoint(point: Point, event?: PointerEvent<HTMLDivElement>): string | undefined {
-    if (initialRect) {
-      const { x1, y1, x2, y2 } = initialRect;
+  const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown, dimensionsRef } =
+    pointerPositionData;
+
+  function getEdgeAtPoint(point: Point, event?: PointerEvent<HTMLDivElement>): string | null {
+    const _initialRect = startRectRef.current;
+    if (_initialRect) {
+      const { x1, y1, x2, y2 } = _initialRect;
       const { scale } = dimensionsRef.current;
       const h2 = HANDLE_SIZE / scale / 2;
 
@@ -99,17 +122,18 @@ export function useRect({
         return 'inside';
       }
     }
+
+    return null;
   }
 
-  function setMouseCursor(edge: string | undefined, event: PointerEvent<HTMLDivElement>) {
+  function setMouseCursor(edge: string | null, event: PointerEvent<HTMLDivElement>) {
     const eventTarget = event.target as HTMLDivElement;
     const cursor = CURSOR_MAP[edge as keyof typeof CURSOR_MAP];
 
     eventTarget.style.cursor = cursor ?? '';
   }
 
-  function drawMask() {
-    const ctx = overlayCtxRef.current!;
+  function drawMask(triggerOnChange?: boolean) {
     const { scale } = dimensionsRef.current;
 
     ctx.clearRect(0, 0, imageSize.width, imageSize.height);
@@ -119,13 +143,15 @@ export function useRect({
 
     const { x, y, width, height } = trimRect(sortRect(rect), getCanvasSize(overlayRef));
 
-    // Draw semi-transparent overlay
-    // eslint-disable-next-line react-compiler/react-compiler
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    ctx.fillRect(0, 0, imageSize.width, imageSize.height);
+    if (!hideBlend) {
+      // Draw semi-transparent overlay
+      // eslint-disable-next-line react-compiler/react-compiler
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(0, 0, imageSize.width, imageSize.height);
 
-    // Clear the selection area
-    ctx.clearRect(x, y, width, height);
+      // Clear the selection area
+      ctx.clearRect(x, y, width, height);
+    }
 
     ctx.strokeStyle = '#007bff';
     ctx.lineWidth = 2 / scale;
@@ -143,7 +169,9 @@ export function useRect({
     ctx.fillRect(x + width - h2, y + height - h2, h1, h1);
 
     // todo update status bar - add func on each update
-    onChange?.(sortRect(rect));
+    if (triggerOnChange) {
+      onChange?.(sortRect(rect));
+    }
   }
 
   function adjustHeightRatio({ x1, y1, x2, y2 }: RectXY, _aspectRatio: number | null) {
@@ -198,16 +226,17 @@ export function useRect({
     return { x1, y1, x2, y2 };
   }
 
-  function calculateCropRect(point: Point) {
+  function calculateMaskRect(point: Point) {
     let x1, x2, y1, y2;
+    const _initialRect = startRectRef.current;
     const startPoint = startPointRef.current!;
-    const startEdge = movingEdgeRef.current;
+    const edge = currentEdgeRef.current;
 
     const _aspectRatio = customAspectRatioRef.current ?? aspectRatio;
 
-    if (initialRect && startEdge) {
-      ({ x1, y1, x2, y2 } = initialRect);
-      switch (startEdge) {
+    if (_initialRect && edge) {
+      ({ x1, y1, x2, y2 } = _initialRect);
+      switch (edge) {
         case 'inside':
           const dx = point.x - startPoint.x;
           const dy = point.y - startPoint.y;
@@ -239,122 +268,138 @@ export function useRect({
       ({ x1, y1, x2, y2 } = adjustFreePoint(point, _aspectRatio));
     }
 
-    const rect = {
+    const result = {
       x1,
       y1,
       x2,
       y2,
     };
-    rectUnsortedRef.current = rect; // save for resize to work
+    rectUnsortedRef.current = result; // save for resize to work
 
-    return rect;
+    return result;
   }
 
   ////////////////////////////
 
-  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (!onPointerDown(event)) return;
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>, layerUnderPointer?: Layer): boolean => {
+    if (!isPointerDownValid(event)) return false;
 
-    startPointRef.current = null;
-    movingEdgeRef.current = null;
+    let isHandleClicked = false;
+
+    currentEdgeRef.current = null;
 
     const point = getLocalCoords(event);
+    startPointRef.current = point;
 
-    if (initialRect) {
+    const selectionRect = startRectRef.current;
+
+    if (selectionRect) {
       const edge = getEdgeAtPoint(point, event);
+      currentEdgeRef.current = edge;
+
+      isHandleClicked = !!edge;
+
       setMouseCursor(edge, event);
 
       switch (edge) {
-        case 'inside':
-          startPointRef.current = point;
-          movingEdgeRef.current = edge;
-          return;
         case 'top-left':
           startPointRef.current = {
-            x: initialRect.x2,
-            y: initialRect.y2,
+            x: selectionRect.x2,
+            y: selectionRect.y2,
           };
-          movingEdgeRef.current = edge;
-          return;
+          break;
         case 'top-right':
           startPointRef.current = {
-            x: initialRect.x1,
-            y: initialRect.y2,
+            x: selectionRect.x1,
+            y: selectionRect.y2,
           };
-          movingEdgeRef.current = edge;
-          return;
+          break;
         case 'bottom-left':
           startPointRef.current = {
-            x: initialRect.x2,
-            y: initialRect.y1,
+            x: selectionRect.x2,
+            y: selectionRect.y1,
           };
-          movingEdgeRef.current = edge;
-          return;
+          break;
         case 'bottom-right':
           startPointRef.current = {
-            x: initialRect.x1,
-            y: initialRect.y1,
+            x: selectionRect.x1,
+            y: selectionRect.y1,
           };
-          movingEdgeRef.current = edge;
-          return;
-        case 'top':
-        case 'left':
-        case 'bottom':
-        case 'right':
-          movingEdgeRef.current = edge;
-          return;
+          break;
       }
     }
 
-    startPointRef.current = point;
+    if (!isHandleClicked && layerUnderPointer && !layerUnderPointer.isBedrock) {
+      rectUnsortedRef.current = posToSortedRect(layerUnderPointer.pos);
+      startRectRef.current = { ...rectUnsortedRef.current };
+
+      currentEdgeRef.current = 'inside';
+      setMouseCursor('inside', event);
+      drawMask();
+    }
+
+    return isHandleClicked;
   };
 
-  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>): boolean => {
     const point = getLocalCoords(event);
 
+    // detect mouse over drag handles
     if (!isMouseDown.current) {
       const edge = getEdgeAtPoint(point);
       setMouseCursor(edge, event);
-      return;
+      return !!edge;
     }
 
+    if (!isPointerMoveValid(event)) return false;
+    if (isMoveTool && !startRectRef.current) return false;
+
     pendingPoint.current = point;
-    if (frameRequested.current !== null) return;
+    if (frameRequested.current !== null) return false;
 
     frameRequested.current = requestAnimationFrame(() => {
       frameRequested.current = null;
 
-      calculateCropRect(pendingPoint.current!);
-      drawMask();
+      calculateMaskRect(pendingPoint.current!);
+      drawMask(true);
     });
+
+    return false;
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
-    if (!onPointerUp(event)) return;
+    if (!isPointerUpValid(event)) return;
 
     (event.target as HTMLDivElement).style.cursor = '';
 
+    if (isMoveTool && !startRectRef.current) return;
+
     const point = getLocalCoords(event);
-    const sortedRect = sortRect(calculateCropRect(point));
+    const sortedRect = sortRect(calculateMaskRect(point));
     onChangeEnd(sortedRect);
 
+    startRectRef.current = { ...sortedRect };
     startPointRef.current = null;
-    movingEdgeRef.current = null;
-
-    if (frameRequested.current !== null) {
-      cancelAnimationFrame(frameRequested.current);
-      frameRequested.current = null;
-    }
-
+    currentEdgeRef.current = null;
     customAspectRatioRef.current = null;
 
-    // commented out because useEffect after initialRect change is doing the shit anyway
-    // drawMask();
+    cancelAnimationFrame(frameRequested.current!);
+    frameRequested.current = null;
+
+    drawMask();
   };
 
   return {
+    ...pointerPositionData,
     onPointerDown: handlePointerDown,
     onPointerMove: handlePointerMove,
     onPointerUp: handlePointerUp,
+    clearSelection: () => {
+      startRectRef.current = null;
+      rectUnsortedRef.current = null;
+      currentEdgeRef.current = null;
+      customAspectRatioRef.current = null;
+      drawMask();
+    },
   };
 }

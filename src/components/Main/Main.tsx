@@ -1,42 +1,36 @@
-import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ImageContext } from '../../contexts/ImageContext';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CropToolArea } from './CropToolArea.tsx';
 import { DrawToolArea } from './DrawToolArea.tsx';
 import { TextToolArea } from './TextToolArea.tsx';
 import { DummyToolArea } from './DummyToolArea.tsx';
-import NewImageDialog from '../NewImageDialog/NewImageDialog.tsx';
 
 import './Main.scss';
 import { ShapeToolArea } from './ShapeToolArea.tsx';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
-//
-// const pointers = new Map<number, PointerEvent>();
+import { useStore } from '../../contexts/StoreContext.tsx';
+import { useApp } from '../../hooks/useApp.ts';
+import { useFile } from '../../contexts/useFile.tsx';
+import { loadImageFile } from '../../contexts/image-load-save-utils.ts';
+import { MoveToolArea } from './MoveToolArea.tsx';
+import { useLayers } from '../../contexts/useLayer.ts';
 
 const Main = () => {
-  const {
-    canvasRef,
-    canvasCtxRef,
-    containerRef,
-    originalImage,
-    _setOriginalImage,
-    openLoadImageDialog,
-    historyLength,
-    toolName,
-    size,
-    zoomDataRef,
-    createBlankImage,
-  } = useContext(ImageContext);
+  const [{ canvasRef, containerRef, toolOverlayRef, rectOverlayRef, hasImage, layers, toolName, totalSize }] =
+    useStore();
   const { theme } = useTheme();
+  const { setBlankImage, setImageFromUpload } = useApp();
+  const { openLoadImageDialog, openNewImageDialog } = useFile();
+  const { drawAllLayers } = useLayers();
 
   const [isDragging, setIsDragging] = useState(false);
-  const [showNewDialog, setShowNewDialog] = useState(false);
 
-  const overlayRef = useRef<HTMLCanvasElement>(null);
-
+  const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const overlayCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
   let interactionMode = 'zoom';
-  if (toolName === 'crop') {
+  if (toolName === 'reposition') {
+    interactionMode = 'reposition';
+  } else if (toolName === 'crop') {
     interactionMode = 'crop';
   } else if (toolName === 'draw') {
     interactionMode = 'draw';
@@ -47,25 +41,34 @@ const Main = () => {
   }
 
   useEffect(() => {
+    drawAllLayers();
+  }, [layers]);
+
+  useLayoutEffect(() => {
+    const { width, height } = totalSize;
+    if (toolOverlayRef.current) {
+      toolOverlayRef.current.width = width;
+      toolOverlayRef.current.height = height;
+
+      overlayCtxRef.current = toolOverlayRef.current.getContext('2d')!;
+      overlayCtxRef.current.imageSmoothingEnabled = false;
+    }
+
+    if (rectOverlayRef.current) {
+      rectOverlayRef.current.width = width;
+      rectOverlayRef.current.height = height;
+    }
+
     if (canvasCtxRef.current) {
       canvasCtxRef.current.imageSmoothingEnabled = false;
     }
-  }, [toolName, historyLength]);
-
-  useLayoutEffect(() => {
-    // reset overlay ALWAYS
-    if (!overlayRef.current) return;
-    const { width, height } = size;
-    overlayRef.current.width = width;
-    overlayRef.current.height = height;
-
-    overlayCtxRef.current = overlayRef.current.getContext('2d')!;
-    overlayCtxRef.current.imageSmoothingEnabled = false;
-  }, [size, toolName, historyLength]);
+  }); // UPDATE ON EVERY RENDER
 
   const handleDragOver = (event: React.DragEvent) => {
-    event.preventDefault();
-    setIsDragging(true);
+    if (event.dataTransfer.types.includes('Files')) {
+      event.preventDefault();
+      setIsDragging(true);
+    }
   };
 
   const handleDragLeave = () => {
@@ -73,74 +76,64 @@ const Main = () => {
   };
 
   const handleDrop = async (event: React.DragEvent) => {
-    event.preventDefault();
-    setIsDragging(false);
-    const file = event.dataTransfer.files?.[0];
+    if (event.dataTransfer.types.includes('Files')) {
+      event.preventDefault();
+      setIsDragging(false);
+      const file = event.dataTransfer.files?.[0];
+      if (!file) return;
+      const fileName = file.name;
 
-    await _setOriginalImage(file);
+      const image = await loadImageFile(file);
+      if (image) {
+        setImageFromUpload({ image, fileName });
+      }
+    }
   };
-  //
-  // const getCanvasCoordinates = (event: PointerEvent<HTMLDivElement>) => {
-  //   const { offsetX, offsetY, scale } = dimensionsRef.current;
-  //
-  //   const xBeforeZoom = (event.nativeEvent.offsetX - offsetX) / scale;
-  //   const yBeforeZoom = (event.nativeEvent.offsetY - offsetY) / scale;
-  //
-  //   const { dx, dy, zoom } = zoomDataRef.current;
-  //
-  //   // account for zoom transformation: translate then scale
-  //   // reverse the transformation: (point - translate) / scale
-  //   const x = (xBeforeZoom - dx) / zoom;
-  //   const y = (yBeforeZoom - dy) / zoom;
-  //
-  //   return { x, y };
-  // };
-  //
-  // const getOverlayCoordinates = (event: PointerEvent<HTMLDivElement>) => {
-  //   const { offsetX, offsetY, scale } = dimensionsRef.current;
-  //
-  //   const x = (event.nativeEvent.offsetX - offsetX) / scale;
-  //   const y = (event.nativeEvent.offsetY - offsetY) / scale;
-  //
-  //   return { x, y };
-  // };
 
   const renderContent = () => {
-    const { dx, dy, zoom } = zoomDataRef.current;
-
-    const ComponentsMap = {
-      crop: CropToolArea,
-      draw: DrawToolArea,
-      shape: ShapeToolArea,
-      text: TextToolArea,
-    };
-    const EventHandler = originalImage ? (ComponentsMap[interactionMode] ?? DummyToolArea) : DummyToolArea;
+    let EventHandler: any = DummyToolArea;
+    if (hasImage) {
+      if (interactionMode === 'reposition') EventHandler = MoveToolArea;
+      else if (interactionMode === 'crop') EventHandler = CropToolArea;
+      else if (interactionMode === 'draw') EventHandler = DrawToolArea;
+      else if (interactionMode === 'shape') EventHandler = ShapeToolArea;
+      else if (interactionMode === 'text') EventHandler = TextToolArea;
+      else EventHandler = DummyToolArea;
+    }
 
     return (
       <div
         className={`absolute left-0 top-0 flex h-full w-full items-center justify-center ${theme === 'dark' ? 'chessboard-dark' : 'chessboard-light'}`}
-        style={{ display: originalImage ? undefined : 'none' }}
+        style={{ display: hasImage ? undefined : 'none' }}
       >
         <div
           className="zoom-container h-full w-full"
-          style={{
-            transform: `translate(${dx}px, ${dy}px) scale(${zoom})`,
-          }}
+          style={
+            {
+              // transform: `translate(${dx}px, ${dy}px) scale(${zoom})`,
+            }
+          }
         >
           <canvas ref={canvasRef} className="h-full w-full object-contain pointer-events-none" />
         </div>
         <canvas
-          ref={overlayRef}
+          ref={toolOverlayRef}
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
-            display: ['draw', 'crop', 'text', 'shape'].includes(interactionMode) ? 'block' : 'none',
+            display: ['draw', 'crop', 'text', 'shape', 'reposition'].includes(interactionMode) ? 'block' : 'none',
+          }}
+        />
+        <canvas
+          ref={rectOverlayRef}
+          className="h-full w-full object-contain absolute pointer-events-none"
+          style={{
+            display: ['reposition'].includes(interactionMode) ? 'block' : 'none',
           }}
         />
         <EventHandler
           className="absolute inset-0 h-full w-full"
           canvasCtxRef={canvasCtxRef}
           overlayCtxRef={overlayCtxRef}
-          overlayRef={overlayRef}
         />
       </div>
     );
@@ -153,29 +146,36 @@ const Main = () => {
         isDragging
           ? 'bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-blue-500'
           : 'bg-white dark:bg-[#1a1a1a]'
-      } ${originalImage ? '' : 'flex items-center justify-center'}`}
+      } ${hasImage ? '' : 'flex items-center justify-center'}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       {renderContent()}
-      {!originalImage && (
+      {!hasImage && (
         <div className="flex flex-col items-center gap-4">
           <button
             className="rounded bg-blue-600 px-6 py-3 text-xl text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-            onClick={openLoadImageDialog}
+            onClick={() =>
+              openLoadImageDialog().then((data) => {
+                data && setImageFromUpload(data);
+              })
+            }
           >
             Open File
           </button>
           <button
             className="text-blue-600 hover:underline dark:text-blue-400 focus:outline-none"
-            onClick={() => setShowNewDialog(true)}
+            onClick={() =>
+              openNewImageDialog().then((data) => {
+                data && setBlankImage(data);
+              })
+            }
           >
             blank image
           </button>
         </div>
       )}
-      {showNewDialog && <NewImageDialog onClose={() => setShowNewDialog(false)} onCreate={createBlankImage} />}
     </main>
   );
 };

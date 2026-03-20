@@ -1,98 +1,63 @@
-import { type PointerEvent, type RefObject, useContext, useRef } from 'react';
-import { ImageContext, type Point } from '../../contexts/ImageContext';
-import { type DrawToolSettings, setDrawTool } from '../../tools/draw.ts';
+import { type PointerEvent, type RefObject, useRef } from 'react';
+import { type DrawToolArgs, setupDrawCtx } from '../../tools/draw.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
-import { hexToRgb } from '../../util/rect.ts';
-import { bezierSmoothedLine } from '../../util/draw.ts';
+import { useStore } from '../../contexts/StoreContext.tsx';
+import { useLayers } from '../../contexts/useLayer.ts';
+import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import { drawLine, pointsBoundingPos } from '../../util/draw.ts';
+import type { Point } from '../../contexts/general-types.ts';
+import type { FullArgs } from '../../contexts/tool-types.ts';
+import { useApp } from '../../hooks/useApp.ts';
 
 type DrawHandlerProps = {
   className?: string;
-  canvasCtxRef: RefObject<CanvasRenderingContext2D | null>;
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
-  overlayRef: RefObject<HTMLCanvasElement | null>;
 };
 
-export const DrawToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayRef }: DrawHandlerProps) => {
-  const { addCanvasToHistory, containerRef, size, toolArgs } = useContext(ImageContext);
-  const args = toolArgs as DrawToolSettings;
+export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => {
+  const [{ containerRef, totalSize }] = useStore();
+  const { createLayerFromTool } = useLayers();
+  const { clearOverlay } = useApp();
+  const { toolArgs } = useCurrentTool();
+
+  const args = toolArgs as DrawToolArgs;
   const pointsRef = useRef<Point[]>([]);
-  const pendingPoints = useRef<Point[]>([]);
   const frameRequested = useRef<number | null>(null);
 
-  const { onPointerDown, onPointerUp, getLocalCoords, isMouseDown } = usePointerPosition({
+  const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown } = usePointerPosition({
     ref: containerRef,
-    imageSize: size,
+    imageSize: totalSize,
   });
-
-  const drawPen = () => {
-    const pp = pendingPoints.current;
-    pointsRef.current.push(...pp);
-
-    const ctx = overlayCtxRef.current!;
-
-    ctx.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
-    ctx.beginPath();
-    const points = pointsRef.current;
-    ctx.moveTo(points[0].x, points[0].y);
-    bezierSmoothedLine(ctx, points);
-    ctx.stroke();
-  };
-
-  const drawSpray = () => {
-    const pp = pendingPoints.current;
-    pointsRef.current.push(...pp);
-
-    const alpha = args.alpha;
-    const color = hexToRgb(args.color);
-    const colorStart = `rgba(${color}, ${alpha / 4})`;
-    const colorStop = `rgba(${color}, 0)`;
-    const radius = args.lineWidth;
-    const ctx = overlayCtxRef.current!;
-
-    for (let i = 0; i < pp.length; i++) {
-      const g = ctx.createRadialGradient(pp[i].x, pp[i].y, 0, pp[i].x, pp[i].y, radius);
-      g.addColorStop(0, colorStart);
-      g.addColorStop(1, colorStop);
-
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(pp[i].x, pp[i].y, radius, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  };
 
   const flushDrawingFrame = () => {
     frameRequested.current = null;
-    // if (pendingPoints.current.length === 0) return;
 
-    const penType = args.penType;
-    if (penType === 'pen' || penType === 'pen-dashed') {
-      drawPen();
-    } else if (penType === 'spray') {
-      drawSpray();
-    }
+    overlayCtxRef.current!.clearRect(0, 0, totalSize.width, totalSize.height);
 
-    pendingPoints.current = [];
+    args.points = pointsRef.current;
+    drawLine({
+      args,
+      ctx: overlayCtxRef.current!,
+    });
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (!onPointerDown(event)) return;
+    if (!isPointerDownValid(event)) return;
 
     const ctx = overlayCtxRef.current!;
-    setDrawTool(ctx, args);
+    setupDrawCtx(ctx, args);
 
     const coords = getLocalCoords(event);
-    pointsRef.current = [];
-    pendingPoints.current = [coords];
+    pointsRef.current = [coords];
 
     flushDrawingFrame();
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (!isMouseDown.current) return;
+    if (!isMouseDown.current || !isPointerMoveValid(event)) return;
 
     const coords = getLocalCoords(event);
-    pendingPoints.current.push(coords);
+    pointsRef.current.push(coords);
 
     if (frameRequested.current !== null) return;
 
@@ -100,18 +65,35 @@ export const DrawToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayRe
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
-    if (!onPointerUp(event)) return;
+    if (!isPointerUpValid(event)) return;
 
     if (frameRequested.current !== null) {
       cancelAnimationFrame(frameRequested.current);
     }
 
-    flushDrawingFrame();
+    // flushDrawingFrame();
 
-    canvasCtxRef.current!.drawImage(overlayRef.current!, 0, 0);
-    overlayCtxRef.current!.clearRect(0, 0, overlayRef.current!.width, overlayRef.current!.height);
+    // canvasCtxRef.current!.drawImage(toolOverlayRef.current!, 0, 0);
+    // overlayCtxRef.current!.clearRect(0, 0, toolOverlayRef.current!.width, toolOverlayRef.current!.height);
 
-    addCanvasToHistory({ ...args, points: pointsRef.current });
+    const coords = getLocalCoords(event);
+    pointsRef.current.push(coords);
+    const oldPoints = pointsRef.current;
+    const newPoints = []; // avoid passing the original array
+
+    const pos = pointsBoundingPos(args);
+    for (let i = 0; i < oldPoints.length; i++) {
+      newPoints.push({ x: oldPoints[i].x - pos.x, y: oldPoints[i].y - pos.y });
+    }
+    args.points = newPoints;
+
+    const fullArgs: FullArgs = {
+      toolName: 'draw',
+      args,
+      pos,
+    };
+    createLayerFromTool(fullArgs);
+    clearOverlay();
   };
 
   return (
@@ -120,6 +102,6 @@ export const DrawToolArea = ({ className, canvasCtxRef, overlayCtxRef, overlayRe
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-    ></div>
+    />
   );
 };

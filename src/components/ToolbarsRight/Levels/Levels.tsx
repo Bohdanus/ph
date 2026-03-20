@@ -1,39 +1,33 @@
-import React, { useContext, useRef, useCallback } from 'react';
-import { defaultSettings } from '../../../tools/settings.ts';
-import { isEqual } from 'lodash-es';
+import React, { useRef } from 'react';
 import UndoButton from '../../Common/UndoButton.tsx';
-import { ImageContext } from '../../../contexts/ImageContext.tsx';
-import { type LevelsToolArgs, levels } from '../../../tools/levels.ts';
+import { type LevelsToolArgs } from '../../../tools/levels.ts';
+import { useLayers } from '../../../contexts/useLayer.ts';
+import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
+import { useStore } from '../../../contexts/StoreContext.tsx';
 
-interface LevelsToolbarProps {
-  onChange: (args: LevelsToolArgs) => void;
-}
+const Levels: React.FC<{}> = () => {
+  const { tempUpdateLayer } = useLayers();
+  const [{ activeLayerId }] = useStore();
+  const { toolArgs, setToolArgs } = useCurrentTool();
 
-const Levels: React.FC<LevelsToolbarProps> = ({ onChange }) => {
-  const { getBitmap, canvasRef, canvasCtxRef, toolArgs } = useContext(ImageContext);
   const args = toolArgs as LevelsToolArgs;
   const pendingUpdateRef = useRef<LevelsToolArgs | null>(null);
   const rafIdRef = useRef<number | null>(null);
 
-  const throttledOnChange = useCallback(
-    (newArgs: LevelsToolArgs) => {
-      pendingUpdateRef.current = newArgs;
+  const throttledOnChange = (newArgs: LevelsToolArgs) => {
+    pendingUpdateRef.current = newArgs;
 
-      if (rafIdRef.current === null) {
-        rafIdRef.current = requestAnimationFrame(() => {
-          if (pendingUpdateRef.current !== null) {
-            levels({ bitmap: getBitmap()!, canvas: canvasRef.current!, ctx: canvasCtxRef.current })(
-              pendingUpdateRef.current
-            );
-            onChange(pendingUpdateRef.current);
-            pendingUpdateRef.current = null;
-          }
-          rafIdRef.current = null;
-        });
-      }
-    },
-    [onChange, getBitmap, canvasRef, canvasCtxRef]
-  );
+    if (rafIdRef.current === null) {
+      rafIdRef.current = requestAnimationFrame(() => {
+        if (pendingUpdateRef.current !== null) {
+          tempUpdateLayer({ id: activeLayerId!, toolName: 'levels', toolArgs: pendingUpdateRef.current });
+          setToolArgs(pendingUpdateRef.current);
+          pendingUpdateRef.current = null;
+        }
+        rafIdRef.current = null;
+      });
+    }
+  };
 
   const handleBrightnessChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const brightness = Number(event.target.value);
@@ -46,7 +40,6 @@ const Levels: React.FC<LevelsToolbarProps> = ({ onChange }) => {
   };
 
   const { brightness, contrast } = args;
-  const hasDefaultValues = isEqual(args, defaultSettings.levels);
 
   return (
     <div className="flex flex-col gap-4">
@@ -89,7 +82,7 @@ const Levels: React.FC<LevelsToolbarProps> = ({ onChange }) => {
         </div>
       </div>
 
-      <UndoButton disabled={hasDefaultValues} />
+      <UndoButton />
     </div>
   );
 };
