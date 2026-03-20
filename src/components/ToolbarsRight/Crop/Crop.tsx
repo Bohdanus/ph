@@ -22,9 +22,12 @@ const Crop: React.FC<{}> = () => {
   const onChange = setToolArgs;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <label htmlFor="aspect-ratio" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+    <div className="flex flex-row items-center gap-6 h-full">
+      <div className="flex items-center gap-2">
+        <label
+          htmlFor="aspect-ratio"
+          className="whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300"
+        >
           Aspect Ratio
         </label>
         <select
@@ -35,7 +38,7 @@ const Crop: React.FC<{}> = () => {
             const newAspectRatio = val === '' ? null : Number(val);
             onChange({ ...args, aspectRatio: newAspectRatio });
           }}
-          className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+          className="rounded border border-gray-300 bg-white px-3 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         >
           {aspectRatios.map((ratio) => (
             <option key={ratio.label} value={ratio.value ?? ''}>
@@ -45,25 +48,26 @@ const Crop: React.FC<{}> = () => {
         </select>
       </div>
 
-      <button
-        className="w-full rounded bg-blue-600 px-4 py-2 font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-        disabled={!rect}
-        onClick={() => {
-          // const fullArgs: FullArgs = { toolName: 'crop', args, rect: sortedRectToRect(rect!) };
-          updateLayerByTool({ toolName: 'crop', toolArgs: args });
-          onChange({ ...args, rect: null });
-        }}
-      >
-        Apply Crop
-      </button>
+      <div className="flex gap-2">
+        <button
+          className="rounded bg-blue-600 px-4 py-1 text-sm font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none disabled:opacity-50"
+          disabled={!rect}
+          onClick={() => {
+            updateLayerByTool({ toolName: 'crop', toolArgs: args });
+            onChange({ ...args, rect: null });
+          }}
+        >
+          Apply
+        </button>
 
-      <button
-        className="w-full rounded border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
-        disabled={!rect}
-        onClick={() => onChange({ ...args, rect: null })}
-      >
-        Clear Crop
-      </button>
+        <button
+          className="rounded border border-gray-300 bg-white px-4 py-1 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+          disabled={!rect}
+          onClick={() => onChange({ ...args, rect: null })}
+        >
+          Clear
+        </button>
+      </div>
     </div>
   );
 };

@@ -45,79 +45,73 @@ const Color: React.FC<{}> = () => {
   const { grayscale, sepia, saturation } = args;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="rounded-md bg-blue-50 p-3 dark:bg-blue-900/30">
-        <p className="text-xs text-blue-700 dark:text-blue-300">Tool will be applied to selected layer only</p>
-      </div>
-
-      <div className="flex flex-col gap-1">
-        <label htmlFor="grayscale-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+    <div className="flex flex-row items-center gap-6 h-full">
+      <div className="flex flex-col">
+        <label
+          htmlFor="grayscale-slider"
+          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+        >
           Grayscale
+          <span className="font-bold text-gray-900 dark:text-gray-200">{grayscale}%</span>
         </label>
-        <div className="flex items-center gap-2">
-          <input
-            id="grayscale-slider"
-            type="range"
-            min="0"
-            max="100"
-            value={grayscale}
-            onChange={handleGrayscaleChange}
-            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
-          />
-          <span className="min-w-[40px] text-right text-sm dark:text-gray-400">
-            <b className="text-gray-900 dark:text-gray-200">{grayscale}%</b>
-          </span>
-        </div>
+        <input
+          id="grayscale-slider"
+          type="range"
+          min="0"
+          max="100"
+          value={grayscale}
+          onChange={handleGrayscaleChange}
+          className="h-1.5 w-32 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+        />
       </div>
 
-      <div className="flex flex-col gap-1">
-        <label htmlFor="sepia-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+      <div className="flex flex-col">
+        <label
+          htmlFor="sepia-slider"
+          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+        >
           Sepia
+          <span className="font-bold text-gray-900 dark:text-gray-200">{sepia}%</span>
         </label>
-        <div className="flex items-center gap-2">
-          <input
-            id="sepia-slider"
-            type="range"
-            min="0"
-            max="100"
-            value={sepia}
-            onChange={handleSepiaChange}
-            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
-          />
-          <span className="min-w-[40px] text-right text-sm dark:text-gray-400">
-            <b className="text-gray-900 dark:text-gray-200">{sepia}%</b>
-          </span>
-        </div>
+        <input
+          id="sepia-slider"
+          type="range"
+          min="0"
+          max="100"
+          value={sepia}
+          onChange={handleSepiaChange}
+          className="h-1.5 w-32 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+        />
       </div>
 
-      <div className="flex flex-col gap-1">
-        <label htmlFor="saturation-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+      <div className="flex flex-col">
+        <label
+          htmlFor="saturation-slider"
+          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+        >
           Saturation
+          <span className="font-bold text-gray-900 dark:text-gray-200">{saturation}%</span>
         </label>
-        <div className="flex items-center gap-2">
-          <input
-            id="saturation-slider"
-            type="range"
-            min={0}
-            max={100}
-            value={saturation}
-            onChange={handleSaturationChange}
-            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
-          />
-          <span className="min-w-[40px] text-right text-sm dark:text-gray-400">
-            <b className="text-gray-900 dark:text-gray-200">{saturation}%</b>
-          </span>
-        </div>
+        <input
+          id="saturation-slider"
+          type="range"
+          min={0}
+          max={100}
+          value={saturation}
+          onChange={handleSaturationChange}
+          className="h-1.5 w-32 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+        />
       </div>
 
-      <UndoButton />
-
-      <button
-        onClick={mergeAllLayers}
-        className="mt-2 w-full rounded-md bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-      >
-        Merge all layers
-      </button>
+      <div className="flex gap-2 items-center h-8 self-end mb-1">
+        <UndoButton />
+        <button
+          onClick={mergeAllLayers}
+          className="rounded-md bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+        >
+          Merge all
+        </button>
+      </div>
     </div>
   );
 };

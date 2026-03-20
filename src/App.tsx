@@ -15,7 +15,7 @@ const LANDING_PAGE_VIEWED_KEY = 'lightshopy_landing_viewed';
 
 function AppContainer() {
   return (
-    <div className="grid h-full grid-rows-[auto_1fr_auto] grid-cols-[250px_1fr_250px] [grid-template-areas:'header_header_header''left_main_right''footer_footer_footer'] max-md:grid-cols-1 max-md:grid-rows-[50px_1fr] max-md:[grid-template-areas:'header''main'] dark:bg-gray-900">
+    <div className="grid h-full grid-rows-[auto_auto_1fr_auto] grid-cols-[250px_1fr_250px] [grid-template-areas:'header_header_header''toolbar_toolbar_toolbar''left_main_right''footer_footer_footer'] max-md:grid-cols-1 max-md:grid-rows-[50px_1fr] max-md:[grid-template-areas:'header''main'] dark:bg-gray-900">
       <Menu />
       <SidebarLeft />
 
@@ -52,11 +52,7 @@ function App() {
       <ThemeProvider>
         <StoreProvider>
           <CurrentToolProvider>
-            {showApp ? (
-              <AppContainer />
-            ) : (
-              <LandingPage onStart={handleStartClick} />
-            )}
+            {showApp ? <AppContainer /> : <LandingPage onStart={handleStartClick} />}
           </CurrentToolProvider>
         </StoreProvider>
       </ThemeProvider>

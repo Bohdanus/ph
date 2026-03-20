@@ -36,6 +36,10 @@ export type StoreType = {
   history: HistoryItem[];
   historyIndex: number;
 
+  // colors
+  color: string;
+  backgroundColor: string;
+
   // // misc
   // zoomDataRef: React.MutableRefObject<ZoomData>;
   // setZoomData: (d: ZoomData) => void;
@@ -59,7 +63,9 @@ type Action =
   | { type: 'REPLACE_HISTORY'; payload: HistoryItem[] }
   | { type: 'UNDO' }
   | { type: 'REDO' }
-  | { type: 'SET_HISTORY_INDEX'; payload: number };
+  | { type: 'SET_HISTORY_INDEX'; payload: number }
+  | { type: 'SET_COLOR'; payload: string }
+  | { type: 'SET_BACKGROUND_COLOR'; payload: string };
 
 const initialState: StoreType = {
   canvasRef: { current: null },
@@ -84,6 +90,9 @@ const initialState: StoreType = {
 
   history: [],
   historyIndex: 0,
+
+  color: '#000000',
+  backgroundColor: '#ffffff',
 };
 
 function reducer(state: StoreType, action: Action): StoreType {
@@ -152,6 +161,10 @@ function reducer(state: StoreType, action: Action): StoreType {
         historyIndex: action.payload,
         hasUnsavedChanges: true,
       };
+    case 'SET_COLOR':
+      return { ...state, color: action.payload };
+    case 'SET_BACKGROUND_COLOR':
+      return { ...state, backgroundColor: action.payload };
     default:
       return state;
   }

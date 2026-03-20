@@ -14,7 +14,7 @@ const Text: React.FC<{}> = () => {
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as TextToolArgs;
-  const { text, fontSize, lineHeight, rect, bold, italic, fontFamily, color, align } = args;
+  const { text, fontSize, lineHeight, rect, bold, italic, fontFamily, align } = args;
 
   const onChange = setToolArgs;
 
@@ -43,12 +43,6 @@ const Text: React.FC<{}> = () => {
     const newArgs = { ...args, fontFamily };
     const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
-  };
-
-  const handleColorChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const color = event.target.value;
-    const newArgs = { ...args, color };
-    onChange(newArgs);
   };
 
   const handleAlignChange = (event: ChangeEvent<HTMLSelectElement>) => {
@@ -86,17 +80,9 @@ const Text: React.FC<{}> = () => {
   // }, []);
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
-        <p className="mb-1 font-semibold">How to use:</p>
-        <ul className="ml-4 list-disc space-y-1">
-          <li>Click on the canvas to set text position</li>
-          <li>Press Enter for new line</li>
-        </ul>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <label htmlFor="text-input" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+    <div className="flex flex-row items-center gap-4 h-full">
+      <div className="flex flex-col">
+        <label htmlFor="text-input" className="text-[10px] font-medium text-gray-700 dark:text-gray-300">
           Text
         </label>
         <textarea
@@ -104,18 +90,27 @@ const Text: React.FC<{}> = () => {
           id="text-input"
           value={text}
           onChange={handleTextChange}
-          placeholder="Enter text here..."
-          rows={3}
-          className="w-full rounded border border-gray-400 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-300 dark:bg-white dark:text-gray-900 dark:placeholder-gray-500"
+          placeholder="Enter text..."
+          rows={1}
+          className="rounded border border-gray-400 bg-white px-2 py-0.5 text-xs text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-300 dark:bg-white dark:text-gray-900 w-32"
         />
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col">
+        <label htmlFor="font-family-select" className="text-[10px] font-medium text-gray-700 dark:text-gray-300">
+          Font
+        </label>
+        <div className="w-32 h-6 flex items-center">
+          <FontSelect value={fontFamily} onChange={handleFontFamilyChange} />
+        </div>
+      </div>
+
+      <div className="flex flex-col">
         <label
           htmlFor="font-size-slider"
-          className="flex justify-between text-sm font-medium text-gray-700 dark:text-gray-300"
+          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
-          Font Size
+          Size
           <span className="font-bold text-gray-900 dark:text-gray-200">{fontSize}px</span>
         </label>
         <input
@@ -125,16 +120,16 @@ const Text: React.FC<{}> = () => {
           max="500"
           value={fontSize}
           onChange={handleFontSizeChange}
-          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+          className="h-1.5 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col">
         <label
           htmlFor="line-height-slider"
-          className="flex justify-between text-sm font-medium text-gray-700 dark:text-gray-300"
+          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
-          Line Height
+          L.Height
           <span className="font-bold text-gray-900 dark:text-gray-200">{lineHeight.toFixed(1)}</span>
         </label>
         <input
@@ -145,62 +140,19 @@ const Text: React.FC<{}> = () => {
           step="0.05"
           value={lineHeight}
           onChange={handleLineHeightChange}
-          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+          className="h-1.5 w-20 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>
 
-      <div className="flex flex-col gap-2">
-        <label htmlFor="font-family-select" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          Font Family
-        </label>
-        <FontSelect value={fontFamily} onChange={handleFontFamilyChange} />
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <label htmlFor="text-color-picker" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          Color
-        </label>
-        <input
-          id="text-color-picker"
-          type="color"
-          value={color}
-          onChange={handleColorChange}
-          className="h-10 w-full cursor-pointer rounded border border-gray-300 p-1 dark:border-gray-600 dark:bg-gray-700"
-        />
-      </div>
-
-      <div className="flex gap-2">
-        <button
-          className={`flex flex-1 items-center justify-center rounded border px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-            bold
-              ? 'border-blue-600 bg-blue-600 text-white'
-              : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
-          }`}
-          onClick={toggleBold}
-        >
-          <strong>Bold</strong>
-        </button>
-        <button
-          className={`flex flex-1 items-center justify-center rounded border px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-            italic
-              ? 'border-blue-600 bg-blue-600 text-white'
-              : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
-          }`}
-          onClick={toggleItalic}
-        >
-          <em>Italic</em>
-        </button>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <label htmlFor="align-select" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          Alignment
+      <div className="flex flex-col">
+        <label htmlFor="align-select" className="text-[10px] font-medium text-gray-700 dark:text-gray-300">
+          Align
         </label>
         <select
           id="align-select"
           value={align}
           onChange={handleAlignChange}
-          className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+          className="rounded border border-gray-300 bg-white px-2 py-0.5 text-xs focus:border-blue-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         >
           <option value="left">Left</option>
           <option value="center">Center</option>
@@ -208,23 +160,47 @@ const Text: React.FC<{}> = () => {
         </select>
       </div>
 
-      <hr className="my-2 border-gray-300 dark:border-gray-700" />
+      <div className="flex gap-1 h-6 self-end mb-1">
+        <button
+          className={`w-6 flex items-center justify-center rounded border text-xs transition-colors focus:outline-none ${
+            bold
+              ? 'border-blue-600 bg-blue-600 text-white'
+              : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200'
+          }`}
+          onClick={toggleBold}
+          title="Bold"
+        >
+          B
+        </button>
+        <button
+          className={`w-6 flex items-center justify-center rounded border text-xs transition-colors focus:outline-none ${
+            italic
+              ? 'border-blue-600 bg-blue-600 text-white'
+              : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200'
+          }`}
+          onClick={toggleItalic}
+          title="Italic"
+        >
+          I
+        </button>
+      </div>
 
-      <button
-        className="w-full rounded bg-blue-600 px-4 py-2 font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-        disabled={!text || !rect}
-        onClick={applyText}
-      >
-        Apply
-      </button>
-
-      <button
-        className="w-full rounded border border-gray-300 bg-white px-4 py-2 font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
-        disabled={!text || !rect}
-        onClick={clear}
-      >
-        Clear
-      </button>
+      <div className="flex gap-2 h-8 self-end mb-1 ml-2">
+        <button
+          className="rounded bg-blue-600 px-3 py-1 text-xs font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none disabled:opacity-50"
+          disabled={!text || !rect}
+          onClick={applyText}
+        >
+          Apply
+        </button>
+        <button
+          className="rounded border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+          disabled={!text || !rect}
+          onClick={clear}
+        >
+          Clear
+        </button>
+      </div>
     </div>
   );
 };

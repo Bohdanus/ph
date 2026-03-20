@@ -7,12 +7,12 @@ import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 
 const Shape: React.FC<{}> = () => {
-  const [{ containerRef, totalSize }] = useStore();
+  const [{ containerRef, color: lineColor, backgroundColor: fillColor, totalSize }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as ShapeToolArgs;
   const [brushScale, setBrushScale] = useState<number>(0);
-  const savedFillColorRef = useRef(args.fillColor);
+  const savedFillColorRef = useRef(fillColor);
   const savedLineDashRef = useRef(args.lineDash);
 
   usePointerPosition({ ref: containerRef, imageSize: totalSize, onResize: ({ scale }) => setBrushScale(scale) });
@@ -26,20 +26,10 @@ const Shape: React.FC<{}> = () => {
     setToolArgs(newArgs);
   };
 
-  const handleColorChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const lineColor = event.target.value;
-    handleChange({ ...args, lineColor });
-  };
-
-  const handleFillColorChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const fillColor = event.target.value;
-    handleChange({ ...args, fillColor });
-  };
-
   const handleFillToggle = (event: ChangeEvent<HTMLInputElement>) => {
     const fill = event.target.checked;
-    if (args.fillColor !== null) {
-      savedFillColorRef.current = args.fillColor;
+    if (fillColor !== null) {
+      savedFillColorRef.current = fillColor;
     }
     const fillColor = fill ? (savedFillColorRef.current ?? '#000000') : null;
     handleChange({ ...args, fillColor });
@@ -83,7 +73,7 @@ const Shape: React.FC<{}> = () => {
     handleChange(newArgs);
   };
 
-  const { alpha, lineColor, fillColor, lineWidth, figure, lineDash } = args;
+  const { alpha, lineWidth, figure, lineDash } = args;
 
   const scaledLineWidth = lineWidth * brushScale;
   const dash = lineDash ? lineDash[0] * brushScale : 0;
@@ -143,16 +133,16 @@ const Shape: React.FC<{}> = () => {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <label htmlFor="figure-type" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          <b>Figure Type</b>
+    <div className="flex flex-row items-center gap-6 h-full">
+      <div className="flex items-center gap-2">
+        <label htmlFor="figure-type" className="whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300">
+          Figure
         </label>
         <select
           id="figure-type"
           value={figure}
           onChange={handleFigureChange}
-          className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+          className="rounded border border-gray-300 bg-white px-3 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         >
           <option value="line">Line</option>
           <option value="rectangle">Rectangle</option>
@@ -162,27 +152,12 @@ const Shape: React.FC<{}> = () => {
         </select>
       </div>
 
-      <hr className="border-gray-300 dark:border-gray-700" />
-
-      <div className="flex flex-col gap-2">
-        <label htmlFor="color-picker" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          Line Color
-        </label>
-        <input
-          id="color-picker"
-          type="color"
-          value={lineColor}
-          onChange={handleColorChange}
-          className="h-10 w-full cursor-pointer rounded border border-gray-300 p-1 dark:border-gray-600 dark:bg-gray-700"
-        />
-      </div>
-
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col">
         <label
           htmlFor="size-slider"
-          className="flex justify-between text-sm font-medium text-gray-700 dark:text-gray-300"
+          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
-          Line Thickness
+          Thickness
           <span className="font-bold text-gray-900 dark:text-gray-200">{lineWidth}px</span>
         </label>
         <input
@@ -193,101 +168,51 @@ const Shape: React.FC<{}> = () => {
           step="0.5"
           value={lineWidth}
           onChange={handleSizeChange}
-          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+          className="h-1.5 w-32 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>
 
-      <hr className="border-gray-300 dark:border-gray-700" />
-
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2">
           <input
             id="dash-toggle"
             type="checkbox"
             checked={!!lineDash}
             onChange={handleDashToggle}
-            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
           />
-          <label htmlFor="dash-toggle" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Dashed Line
+          <label htmlFor="dash-toggle" className="text-[10px] font-medium text-gray-700 dark:text-gray-300">
+            Dashed
           </label>
         </div>
         {lineDash && (
-          <div className="flex gap-4">
-            <div className="flex flex-1 flex-col gap-1">
-              <label
-                htmlFor="dash-size"
-                className="flex justify-between text-xs font-medium text-gray-700 dark:text-gray-300"
-              >
-                Dash
-                <span className="font-bold text-gray-900 dark:text-gray-200">{lineDash[0]}px</span>
-              </label>
-              <input
-                id="dash-size"
-                type="range"
-                min="1"
-                max="100"
-                value={lineDash[0]}
-                onChange={handleDashChange}
-                className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
-              />
-            </div>
-            <div className="flex flex-1 flex-col gap-1">
-              <label
-                htmlFor="gap-size"
-                className="flex justify-between text-xs font-medium text-gray-700 dark:text-gray-300"
-              >
-                Gap
-                <span className="font-bold text-gray-900 dark:text-gray-200">{lineDash[1]}px</span>
-              </label>
-              <input
-                id="gap-size"
-                type="range"
-                min="1"
-                max="100"
-                value={lineDash[1]}
-                onChange={handleGapChange}
-                className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
-              />
-            </div>
-          </div>
-        )}
-      </div>
-
-      <hr className="my-1 border-gray-300 dark:border-gray-700" />
-
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <input
-            id="fill"
-            type="checkbox"
-            checked={fillColor !== null}
-            onChange={handleFillToggle}
-            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-          />
-          <label htmlFor="fill" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Fill
-          </label>
-        </div>
-        {fillColor && (
-          <div className="flex gap-4">
+          <div className="flex gap-2">
             <input
-              id="fill-color-picker"
-              type="color"
-              value={fillColor}
-              onChange={handleFillColorChange}
-              className="h-10 w-full cursor-pointer rounded border border-gray-300 p-1 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700"
+              type="range"
+              min="1"
+              max="100"
+              value={lineDash[0]}
+              onChange={handleDashChange}
+              title={`Dash: ${lineDash[0]}px`}
+              className="h-1 w-12 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+            />
+            <input
+              type="range"
+              min="1"
+              max="100"
+              value={lineDash[1]}
+              onChange={handleGapChange}
+              title={`Gap: ${lineDash[1]}px`}
+              className="h-1 w-12 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
             />
           </div>
         )}
       </div>
 
-      <hr className="my-1 border-gray-300 dark:border-gray-700" />
-
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col">
         <label
           htmlFor="alpha-slider"
-          className="flex justify-between text-sm font-medium text-gray-700 dark:text-gray-300"
+          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
           Opacity
           <span className="font-bold text-gray-900 dark:text-gray-200">{Math.round(alpha * 100)}%</span>
@@ -300,20 +225,18 @@ const Shape: React.FC<{}> = () => {
           step="0.01"
           value={alpha}
           onChange={handleAlphaChange}
-          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+          className="h-1.5 w-32 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>
 
       <div
-        className={`mt-4 flex items-center justify-center rounded border border-gray-200 dark:border-gray-700 ${chessClass}`}
-        style={{ height: '224px', overflow: 'auto' }}
+        className={`flex h-8 w-8 items-center justify-center rounded border border-gray-300 dark:border-gray-600 flex-shrink-0 ${chessClass}`}
       >
         <div
           style={{
             position: 'relative',
-            flexShrink: 0,
-            width: `${figure === 'line' ? '80%' : '40%'}`,
-            height: `${figure === 'line' ? `${Math.round(scaledLineWidth)}px` : '40%'}`,
+            width: '24px',
+            height: '24px',
           }}
         >
           <div
@@ -324,31 +247,9 @@ const Shape: React.FC<{}> = () => {
               opacity: alpha,
               borderRadius: figure === 'circle' || figure === 'oval' ? '50%' : '0',
               ...borderStyle,
+              borderWidth: `${Math.min(8, Math.max(1, scaledLineWidth / 5))}px`,
             }}
           />
-
-          {figure !== 'line' && (!!lineDash || !!fillColor) && (
-            <>
-              <div
-                className={chessClass}
-                style={{
-                  position: 'absolute',
-                  inset: scaledLineWidth,
-                  borderRadius: figure === 'circle' || figure === 'oval' ? '50%' : '0',
-                }}
-              />
-              <div
-                style={{
-                  display: fillColor ? 'block' : 'none',
-                  position: 'absolute',
-                  inset: scaledLineWidth,
-                  opacity: alpha,
-                  background: fillColor ?? 'transparent',
-                  borderRadius: figure === 'circle' || figure === 'oval' ? '50%' : '0',
-                }}
-              />
-            </>
-          )}
         </div>
       </div>
     </div>

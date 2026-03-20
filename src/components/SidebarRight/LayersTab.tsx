@@ -95,7 +95,7 @@ export default function LayersTab() {
       {sortedLayers.length === 0 ? (
         <div className="text-sm text-gray-500 dark:text-gray-400">No layers yet.</div>
       ) : (
-        <ul className="flex flex-col list-none p-0 gap-1 overflow-y-auto min-h-0">
+        <ul className="flex flex-col list-none p-0 pt-1 gap-1 overflow-y-auto min-h-0">
           {sortedLayers.map((layer, index) => {
             const isActive = activeLayerId === layer.id;
             const isPickedLayer = draggedLayerId === layer.id;
@@ -112,7 +112,7 @@ export default function LayersTab() {
                   listItemRefs.current[layer.id] = el;
                 }}
                 className={`relative transition-all duration-200 ease-in-out  
-                  ${isAnimating && isShrinking ? 'h-0 opacity-0' : 'h-12 opacity-100'} 
+                  ${isAnimating && isShrinking ? 'h-0 opacity-0' : 'h-10 opacity-100'} 
                   ${isAnimating && isExpanding ? 'animate-height-increase' : ''}`}
                 style={{
                   cursor: 'grab',
@@ -169,7 +169,7 @@ export default function LayersTab() {
                   onMouseEnter={() => setHoveredId(layer.id)}
                   onMouseLeave={() => setHoveredId(null)}
                   className={[
-                    'flex items-center gap-2 rounded px-2 py-2 select-none',
+                    'flex items-center gap-2 rounded px-2 py-1 select-none',
                     'border border-transparent',
                     'hover:bg-white/70 dark:hover:bg-gray-700/40',
                     isActive ? 'bg-white dark:bg-gray-700/60 border-gray-200 dark:border-gray-600' : 'bg-transparent',

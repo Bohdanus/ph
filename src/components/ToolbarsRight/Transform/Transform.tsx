@@ -128,39 +128,32 @@ const Transform: React.FC<{}> = () => {
   };
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Rotate</label>
-        <div className="flex flex-wrap gap-2">
+    <div className="flex flex-row items-center gap-4 h-full">
+      <div className="flex flex-col">
+        <div className="flex gap-1">
           <button
-            className="flex h-10 flex-1 min-w-[40px] items-center justify-center rounded border border-gray-300 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
+            className="flex h-6 w-10 items-center justify-center rounded border border-gray-300 bg-white text-[10px] hover:bg-gray-50 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
             onClick={handleRotateLeft}
             title="Rotate 90° Left"
           >
             -90°
           </button>
           <button
-            className="flex h-10 flex-1 min-w-[40px] items-center justify-center rounded border border-gray-300 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
+            className="flex h-6 w-10 items-center justify-center rounded border border-gray-300 bg-white text-[10px] hover:bg-gray-50 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
             onClick={() => throttledOnChange({ ...args, rotate: (rotate + 180) % 360 })}
             title="Rotate 180°"
           >
             180°
           </button>
           <button
-            className="flex h-10 flex-1 min-w-[40px] items-center justify-center rounded border border-gray-300 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white dark:hover:bg-gray-600"
+            className="flex h-6 w-10 items-center justify-center rounded border border-gray-300 bg-white text-[10px] hover:bg-gray-50 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
             onClick={handleRotateRight}
             title="Rotate 90° Right"
           >
             +90°
           </button>
         </div>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <label htmlFor="rotate-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          Rotate Degree
-        </label>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 mt-1">
           <input
             id="rotate-slider"
             type="range"
@@ -168,118 +161,103 @@ const Transform: React.FC<{}> = () => {
             max={90}
             value={rotate}
             onChange={handleRotateSliderChange}
-            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+            className="h-1 w-20 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
           />
-          <span className="min-w-[40px] text-right text-sm font-bold text-gray-900 dark:text-gray-200">{rotate}°</span>
+          <span className="text-[10px] font-bold text-gray-900 dark:text-gray-200 w-6">{rotate}°</span>
         </div>
-        <button
-          className="self-end text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-          onClick={resetAll}
+      </div>
+
+      <div className="flex flex-col">
+        <label
+          htmlFor="skew-x-slider"
+          className="text-[10px] font-medium text-gray-700 dark:text-gray-300 flex justify-between"
         >
-          Reset All
-        </button>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <label htmlFor="skew-x-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          Skew X
+          Skew X <span>{skewX}°</span>
         </label>
-        <div className="flex items-center gap-2">
-          <input
-            id="skew-x-slider"
-            type="range"
-            min={-45}
-            max={45}
-            value={skewX}
-            onChange={handleSkewXChange}
-            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
-          />
-          <span className="min-w-[40px] text-right text-sm font-bold text-gray-900 dark:text-gray-200">{skewX}°</span>
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <label htmlFor="skew-y-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          Skew Y
+        <input
+          id="skew-x-slider"
+          type="range"
+          min={-45}
+          max={45}
+          value={skewX}
+          onChange={handleSkewXChange}
+          className="h-1 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+        />
+        <label
+          htmlFor="skew-y-slider"
+          className="text-[10px] font-medium text-gray-700 dark:text-gray-300 flex justify-between mt-1"
+        >
+          Skew Y <span>{skewY}°</span>
         </label>
-        <div className="flex items-center gap-2">
-          <input
-            id="skew-y-slider"
-            type="range"
-            min={-45}
-            max={45}
-            value={skewY}
-            onChange={handleSkewYChange}
-            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
-          />
-          <span className="min-w-[40px] text-right text-sm font-bold text-gray-900 dark:text-gray-200">{skewY}°</span>
-        </div>
+        <input
+          id="skew-y-slider"
+          type="range"
+          min={-45}
+          max={45}
+          value={skewY}
+          onChange={handleSkewYChange}
+          className="h-1 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+        />
       </div>
 
-      <div className="flex flex-col gap-2">
-        <label htmlFor="trapezoid-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          Trapezoid
+      <div className="flex flex-col">
+        <label
+          htmlFor="trapezoid-slider"
+          className="text-[10px] font-medium text-gray-700 dark:text-gray-300 flex justify-between"
+        >
+          Trapezoid <span>{trapezoid}%</span>
         </label>
-        <div className="flex items-center gap-2">
-          <input
-            id="trapezoid-slider"
-            type="range"
-            min={-85}
-            max={85}
-            value={trapezoid}
-            onChange={handleTrapezoidChange}
-            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
-          />
-          <span className="min-w-[40px] text-right text-sm font-bold text-gray-900 dark:text-gray-200">
-            {trapezoid}%
-          </span>
-        </div>
+        <input
+          id="trapezoid-slider"
+          type="range"
+          min={-85}
+          max={85}
+          value={trapezoid}
+          onChange={handleTrapezoidChange}
+          className="h-1 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+        />
       </div>
 
-      <div className="flex flex-col gap-2">
-        <label htmlFor="resize-x-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          Resize X
+      <div className="flex flex-col">
+        <label
+          htmlFor="resize-x-slider"
+          className="text-[10px] font-medium text-gray-700 dark:text-gray-300 flex justify-between"
+        >
+          Resize X <span>{resizeX}%</span>
         </label>
-        <div className="flex items-center gap-2">
-          <input
-            id="resize-x-slider"
-            type="range"
-            min={10}
-            max={300}
-            value={resizeX}
-            onChange={handleResizeXChange}
-            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
-          />
-          <span className="min-w-[40px] text-right text-sm font-bold text-gray-900 dark:text-gray-200">{resizeX}%</span>
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <label htmlFor="resize-y-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          Resize Y
+        <input
+          id="resize-x-slider"
+          type="range"
+          min={10}
+          max={300}
+          value={resizeX}
+          onChange={handleResizeXChange}
+          className="h-1 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+        />
+        <label
+          htmlFor="resize-y-slider"
+          className="text-[10px] font-medium text-gray-700 dark:text-gray-300 flex justify-between mt-1"
+        >
+          Resize Y <span>{resizeY}%</span>
         </label>
-        <div className="flex items-center gap-2">
-          <input
-            id="resize-y-slider"
-            type="range"
-            min={10}
-            max={300}
-            value={resizeY}
-            onChange={handleResizeYChange}
-            className="h-2 flex-grow cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
-          />
-          <span className="min-w-[40px] text-right text-sm font-bold text-gray-900 dark:text-gray-200">{resizeY}%</span>
-        </div>
+        <input
+          id="resize-y-slider"
+          type="range"
+          min={10}
+          max={300}
+          value={resizeY}
+          onChange={handleResizeYChange}
+          className="h-1 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+        />
       </div>
 
-      <div className="flex flex-col gap-2">
-        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Mirror</label>
-        <div className="flex gap-2">
+      <div className="flex flex-col gap-1">
+        <div className="flex gap-1">
           <button
-            className={`flex h-10 flex-1 items-center justify-center rounded border transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            className={`flex h-6 w-8 items-center justify-center rounded border transition-colors focus:outline-none ${
               mirrorH
                 ? 'border-blue-600 bg-blue-600 text-white'
-                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200'
             }`}
             onClick={toggleMirrorH}
             title="Mirror Horizontal"
@@ -287,10 +265,10 @@ const Transform: React.FC<{}> = () => {
             ↔
           </button>
           <button
-            className={`flex h-10 flex-1 items-center justify-center rounded border transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            className={`flex h-6 w-8 items-center justify-center rounded border transition-colors focus:outline-none ${
               mirrorV
                 ? 'border-blue-600 bg-blue-600 text-white'
-                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200'
             }`}
             onClick={toggleMirrorV}
             title="Mirror Vertical"
@@ -298,6 +276,12 @@ const Transform: React.FC<{}> = () => {
             ↕
           </button>
         </div>
+        <button
+          className="text-[10px] text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 mt-1"
+          onClick={resetAll}
+        >
+          Reset All
+        </button>
       </div>
     </div>
   );

@@ -6,7 +6,7 @@ import PreviewTooltip from '../PreviewTooltip/BmpPreviewTooltip.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 
 export default function HistoryTab() {
-  const [{ history, historyIndex, layers, deletedLayers }] = useStore();
+  const [{ history, historyIndex }] = useStore();
   const { resetHistoryTo, toggleDisabled } = useHistory();
 
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
@@ -34,7 +34,6 @@ export default function HistoryTab() {
             const originalIndex = history.indexOf(item);
             const isActive = originalIndex <= historyIndex;
             const isCurrent = originalIndex === historyIndex;
-            const layer = layers[item.layerId] ?? deletedLayers[item.layerId];
 
             return (
               <li
@@ -46,12 +45,16 @@ export default function HistoryTab() {
                 onMouseEnter={() => setHoveredIndex(originalIndex)}
                 onMouseLeave={() => setHoveredIndex(null)}
                 className={[
-                  'flex items-center gap-2 rounded px-2 py-2 select-none cursor-pointer',
+                  'flex items-center gap-2 rounded px-2 py-0 select-none cursor-pointer',
                   'border border-transparent cursor-pointer',
                   'hover:bg-white/70 dark:hover:bg-gray-700/40',
                   isCurrent ? 'bg-white dark:bg-gray-700/60 border-gray-200 dark:border-gray-600' : 'bg-transparent',
                   item.disabled ? 'opacity-45' : !isActive ? 'opacity-50' : 'opacity-100',
                 ].join(' ')}
+                style={{
+                  paddingTop: '1px',
+                  paddingBottom: '1px',
+                }}
                 title="Click to go back to this state"
               >
                 <button
@@ -80,9 +83,6 @@ export default function HistoryTab() {
                       </span>
                     )}
                   </div>
-                  {layer && (
-                    <div className="text-xs text-gray-500 dark:text-gray-400 truncate">Layer: {layer.name}</div>
-                  )}
                 </div>
               </li>
             );

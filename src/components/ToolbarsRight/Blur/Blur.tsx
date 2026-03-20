@@ -35,10 +35,14 @@ const Blur: React.FC<{}> = () => {
   };
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-2">
-        <label htmlFor="blur-slider" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+    <div className="flex flex-row items-center gap-6 h-full">
+      <div className="flex flex-col">
+        <label
+          htmlFor="blur-slider"
+          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+        >
           Blur Radius
+          <span className="font-bold text-gray-900 dark:text-gray-200">{radius}px</span>
         </label>
         <input
           id="blur-slider"
@@ -47,11 +51,8 @@ const Blur: React.FC<{}> = () => {
           max="100"
           value={radius}
           onChange={handleChange}
-          className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+          className="h-1.5 w-48 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
-        <span className="text-sm text-gray-600 dark:text-gray-400">
-          Radius: <b className="text-gray-900 dark:text-gray-200">{radius}px</b>
-        </span>
       </div>
 
       <UndoButton text="Undo Blur" />
