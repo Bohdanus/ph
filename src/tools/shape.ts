@@ -5,8 +5,9 @@ export type FigureType = 'line' | 'circle' | 'rectangle' | 'square' | 'oval';
 
 export type ShapeToolArgs = {
   alpha: number;
-  lineColor: string;
-  fillColor: null | string;
+  color: string;
+  backgroundColor: string;
+  hasFill?: boolean;
   figure: FigureType;
   lineWidth: number;
   lineDash?: null | number[];
@@ -14,14 +15,14 @@ export type ShapeToolArgs = {
   end?: Point;
 };
 
-export type ShapeToolSettings = Omit<ShapeToolArgs, 'start' | 'end'>;
+export type ShapeToolSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end'>;
 
 export const setShapeCtx = (ctx: Ctx2D, args: ShapeToolArgs) => {
-  const { alpha, lineColor, fillColor, lineWidth, lineDash } = args;
+  const { alpha, color, backgroundColor, hasFill, lineWidth, lineDash } = args;
 
-  ctx.strokeStyle = lineColor;
-  if (fillColor) {
-    ctx.fillStyle = fillColor;
+  ctx.strokeStyle = color;
+  if (hasFill) {
+    ctx.fillStyle = backgroundColor;
   }
   ctx.lineWidth = lineWidth;
   ctx.globalAlpha = alpha;
@@ -29,7 +30,7 @@ export const setShapeCtx = (ctx: Ctx2D, args: ShapeToolArgs) => {
 };
 
 export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
-  const { figure, fillColor, start, end } = args;
+  const { figure, hasFill, start, end } = args;
 
   if (!start || !end) return;
 
@@ -46,7 +47,7 @@ export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
       w = Math.sign(w) * side;
       h = Math.sign(h) * side;
     }
-    if (fillColor) {
+    if (hasFill) {
       ctx.fillRect(start.x, start.y, w, h);
     }
     ctx.strokeRect(start.x, start.y, w, h);
@@ -61,7 +62,7 @@ export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
     }
     ctx.beginPath();
     ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-    if (fillColor) {
+    if (hasFill) {
       ctx.fill();
     }
     ctx.stroke();

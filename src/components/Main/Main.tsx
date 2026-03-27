@@ -41,6 +41,11 @@ const Main = () => {
   }
 
   useEffect(() => {
+    // Disable image smoothing for sharp rendering
+    if (canvasCtxRef.current) {
+      canvasCtxRef.current.imageSmoothingEnabled = false;
+      canvasCtxRef.current.imageSmoothingQuality = 'low'; // For better performance and sharpness
+    }
     drawAllLayers();
   }, [layers]);
 

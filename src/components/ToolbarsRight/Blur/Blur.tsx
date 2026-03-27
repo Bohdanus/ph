@@ -39,7 +39,7 @@ const Blur: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="blur-slider"
-          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
           Blur Radius
           <span className="font-bold text-gray-900 dark:text-gray-200">{radius}px</span>

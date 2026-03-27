@@ -1,4 +1,4 @@
-import React, { type ChangeEvent } from 'react';
+import React, { type ChangeEvent, useEffect } from 'react';
 import { calculateNewRect } from '../../../util/rect.ts';
 import type { TextToolArgs } from '../../../tools/text.ts';
 import { useStore } from '../../../contexts/StoreContext.tsx';
@@ -8,15 +8,17 @@ import FontSelect from './FontSelect.tsx';
 import { useApp } from '../../../hooks/useApp.ts';
 
 const Text: React.FC<{}> = () => {
-  const [{ canvasRef, textareaRef, totalSize }] = useStore();
+  const [{ canvasRef, color, textareaRef, totalSize }] = useStore();
   const { createLayerFromTool } = useLayers();
   const { clearOverlay } = useApp();
-  const { toolArgs, setToolArgs } = useCurrentTool();
+  const { toolArgs, setToolArgs: onChange } = useCurrentTool();
 
   const args = toolArgs as TextToolArgs;
   const { text, fontSize, lineHeight, rect, bold, italic, fontFamily, align } = args;
 
-  const onChange = setToolArgs;
+  useEffect(() => {
+    onChange({ ...args, color });
+  }, [color]);
 
   const handleTextChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const textValue = event.target.value;

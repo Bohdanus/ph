@@ -1,10 +1,13 @@
-import React, { type ChangeEvent, useState } from 'react';
-import type { DrawToolSettings, PenType } from '../../../tools/draw.ts';
+import React, { type ChangeEvent, useEffect, useRef, useState } from 'react';
+import { draw, type DrawToolArgs, type DrawToolSettings, type PenType } from '../../../tools/draw.ts';
 import { savedDrawPerPen } from '../../../tools/settings.ts';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
 import { isLightColor } from '../../../util/color.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
+import type { Point } from '../../../contexts/general-types.ts';
+
+const PREVIEW_SIZE = 40;
 
 const Draw: React.FC<{}> = () => {
   const [{ color, containerRef, totalSize }] = useStore();
@@ -12,8 +15,13 @@ const Draw: React.FC<{}> = () => {
 
   const args = toolArgs as DrawToolSettings;
   const [brushScale, setBrushScale] = useState<number>(0);
+  const previewRef = useRef<HTMLCanvasElement | null>(null);
 
   usePointerPosition({ ref: containerRef, imageSize: totalSize, onResize: ({ scale }) => setBrushScale(scale) });
+
+  useEffect(() => {
+    setToolArgs({ ...args, color });
+  }, [color]);
 
   const handleChange = (newArgs: DrawToolSettings) => {
     savedDrawPerPen[newArgs.penType] = {
@@ -21,7 +29,7 @@ const Draw: React.FC<{}> = () => {
       lineWidth: newArgs.lineWidth,
       lineDash: newArgs.lineDash,
     };
-    setToolArgs(newArgs);
+    setToolArgs(newArgs as DrawToolArgs);
   };
 
   const handleSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -53,23 +61,43 @@ const Draw: React.FC<{}> = () => {
 
   const { alpha, lineWidth: brushSize, penType, lineDash } = args;
 
-  const scaledBrushSize = brushSize * brushScale + (penType === 'pen-dashed' ? 1 : 0);
-  const dash = lineDash ? lineDash[0] * brushScale : 0;
-  const gap = lineDash ? lineDash[1] * brushScale : 0;
+  useEffect(() => {
+    if (previewRef.current && brushScale) {
+      const canvas = previewRef.current;
+      const ctx = canvas.getContext('2d')!;
+      // Disable image smoothing for sharp rendering
+      ctx.imageSmoothingEnabled = false;
+      ctx.imageSmoothingQuality = 'low'; // For better performance and sharpness
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  let previewStyle: React.CSSProperties = {};
+      const size = { width: PREVIEW_SIZE / brushScale, height: PREVIEW_SIZE / brushScale };
 
-  if (penType === 'pen-dashed' && lineDash) {
-    previewStyle = {
-      background: `repeating-linear-gradient(
-        to right,
-        ${color} 0px, ${color} ${dash + scaledBrushSize}px, transparent ${dash + scaledBrushSize}px, transparent ${dash + scaledBrushSize + gap}px)`,
-    };
-  } else {
-    previewStyle = {
-      background: color,
-    };
-  }
+      const arcPoints: Point[] = [];
+      const radius = size.width / 3;
+      const centerX = size.width / 2.3;
+      const centerY = size.height / 2.3;
+
+      // Generate points for a quarter-circle arc from 0 to 90 degrees
+      for (let angle = -1 / 2; angle <= Math.PI / 2 + 1; angle += Math.PI / 24) {
+        const x = centerX + Math.cos(angle) * radius;
+        const y = centerY + Math.sin(angle) * radius;
+        arcPoints.push({ x, y });
+      }
+
+      const previewArgs = { ...args, color, points: arcPoints };
+
+      // Draw the toolCanvas into previewCanvas with scaling and centering
+      const [toolCanvas] = draw({ size })(previewArgs);
+
+      const scaledWidth = toolCanvas.width * brushScale;
+      const scaledHeight = toolCanvas.height * brushScale;
+
+      const offsetX = (canvas.width - scaledWidth) / 2;
+      const offsetY = (canvas.height - scaledHeight) / 2;
+
+      ctx.drawImage(toolCanvas, 0, 0, toolCanvas.width, toolCanvas.height, offsetX, offsetY, scaledWidth, scaledHeight);
+    }
+  }, [args, brushScale]);
 
   return (
     <div className="flex flex-row items-center gap-6 h-full">
@@ -94,7 +122,7 @@ const Draw: React.FC<{}> = () => {
           <div className="flex flex-col">
             <label
               htmlFor="dash-size"
-              className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+              className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
             >
               Dash
               <span className="font-bold text-gray-900 dark:text-gray-200">{lineDash[0]}px</span>
@@ -112,7 +140,7 @@ const Draw: React.FC<{}> = () => {
           <div className="flex flex-col">
             <label
               htmlFor="gap-size"
-              className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+              className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
             >
               Gap
               <span className="font-bold text-gray-900 dark:text-gray-200">{lineDash[1]}px</span>
@@ -133,7 +161,7 @@ const Draw: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="size-slider"
-          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
           Size
           <span className="font-bold text-gray-900 dark:text-gray-200">{brushSize}px</span>
@@ -153,7 +181,7 @@ const Draw: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="alpha-slider"
-          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
           Opacity
           <span className="font-bold text-gray-900 dark:text-gray-200">{Math.round(alpha * 100)}%</span>
@@ -171,19 +199,11 @@ const Draw: React.FC<{}> = () => {
       </div>
 
       <div
-        className={`flex h-8 w-8 items-center justify-center rounded border border-gray-300 dark:border-gray-600 flex-shrink-0 ${
+        className={`flex h-10 w-10 items-center justify-center rounded border border-gray-300 dark:border-gray-600 flex-shrink-0 ${
           isLightColor(color) ? 'chessboard-dark' : 'chessboard-light'
         }`}
       >
-        <div
-          style={{
-            width: penType === 'pen-dashed' ? '80%' : `${Math.min(24, Math.max(2, scaledBrushSize))}px`,
-            height: `${Math.min(24, Math.max(2, scaledBrushSize))}px`,
-            opacity: alpha,
-            borderRadius: penType === 'pen-dashed' ? '2px' : '50%',
-            ...previewStyle,
-          }}
-        />
+        <canvas ref={previewRef} width={PREVIEW_SIZE} height={PREVIEW_SIZE} />
       </div>
     </div>
   );

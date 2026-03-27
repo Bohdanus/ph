@@ -46,7 +46,7 @@ const Levels: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="brightness-slider"
-          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
           Brightness
           <span className="font-bold text-gray-900 dark:text-gray-200">{brightness}%</span>
@@ -64,7 +64,7 @@ const Levels: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="contrast-slider"
-          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
           Contrast
           <span className="font-bold text-gray-900 dark:text-gray-200">{contrast}%</span>

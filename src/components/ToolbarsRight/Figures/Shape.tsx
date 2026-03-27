@@ -1,4 +1,4 @@
-import React, { type ChangeEvent, useRef, useState } from 'react';
+import React, { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { savedArgsPerFigure } from '../../../tools/settings.ts';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
 import type { FigureType, ShapeToolArgs } from '../../../tools/shape.ts';
@@ -7,15 +7,18 @@ import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 
 const Shape: React.FC<{}> = () => {
-  const [{ containerRef, color: lineColor, backgroundColor: fillColor, totalSize }] = useStore();
+  const [{ containerRef, color, backgroundColor, totalSize }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as ShapeToolArgs;
   const [brushScale, setBrushScale] = useState<number>(0);
-  const savedFillColorRef = useRef(fillColor);
   const savedLineDashRef = useRef(args.lineDash);
 
   usePointerPosition({ ref: containerRef, imageSize: totalSize, onResize: ({ scale }) => setBrushScale(scale) });
+
+  useEffect(() => {
+    setToolArgs({ ...args, color, backgroundColor });
+  }, [color, backgroundColor]);
 
   const handleChange = (newArgs: ShapeToolArgs) => {
     savedArgsPerFigure[newArgs.figure] = {
@@ -26,13 +29,9 @@ const Shape: React.FC<{}> = () => {
     setToolArgs(newArgs);
   };
 
-  const handleFillToggle = (event: ChangeEvent<HTMLInputElement>) => {
-    const fill = event.target.checked;
-    if (fillColor !== null) {
-      savedFillColorRef.current = fillColor;
-    }
-    const fillColor = fill ? (savedFillColorRef.current ?? '#000000') : null;
-    handleChange({ ...args, fillColor });
+  const handleFillToggle = () => {
+    const hasFill = !!args.hasFill;
+    handleChange({ ...args, hasFill });
   };
 
   const handleSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -73,7 +72,8 @@ const Shape: React.FC<{}> = () => {
     handleChange(newArgs);
   };
 
-  const { alpha, lineWidth, figure, lineDash } = args;
+  const { alpha, hasFill, lineWidth, figure, lineDash } = args;
+  const lineColor = color;
 
   const scaledLineWidth = lineWidth * brushScale;
   const dash = lineDash ? lineDash[0] * brushScale : 0;
@@ -155,7 +155,7 @@ const Shape: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="size-slider"
-          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
           Thickness
           <span className="font-bold text-gray-900 dark:text-gray-200">{lineWidth}px</span>
@@ -170,6 +170,21 @@ const Shape: React.FC<{}> = () => {
           onChange={handleSizeChange}
           className="h-1.5 w-32 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-2">
+          <input
+            id="filled-toggle"
+            type="checkbox"
+            checked={hasFill}
+            onChange={handleFillToggle}
+            className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          />
+          <label htmlFor="filled-toggle" className="text-[10px] font-medium text-gray-700 dark:text-gray-300">
+            Filled
+          </label>
+        </div>
       </div>
 
       <div className="flex flex-col gap-1">
@@ -212,7 +227,7 @@ const Shape: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="alpha-slider"
-          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
           Opacity
           <span className="font-bold text-gray-900 dark:text-gray-200">{Math.round(alpha * 100)}%</span>

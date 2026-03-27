@@ -8,11 +8,11 @@ import type { ColorsToolArgs } from './colors.ts';
 import type { LevelsToolArgs } from './levels.ts';
 import type { BlurToolArgs } from './blur.ts';
 import type { FigureType, ShapeToolSettings, ShapeToolArgs } from './shape.ts';
-import type { ToolName } from '../contexts/tool-types.ts';
+import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
 import type { RepositionToolArgs } from './reposition.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType'>;
-type FigureSettings = Omit<ShapeToolArgs, 'lineColor' | 'fillColor' | 'start' | 'end' | 'figure'>;
+type FigureSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end' | 'figure'>;
 
 export const savedDrawPerPen: Record<PenType, PenSettings> = {
   pen: { alpha: 0.9, lineWidth: 10 },
@@ -28,7 +28,7 @@ export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
   oval: { alpha: 1, lineWidth: 5 },
 };
 
-export const defaultSettings: Record<ToolName, SavedSettings> = {
+export const defaultSettings: Record<ToolName, ToolArgs> = {
   blur: { radius: 0 } satisfies BlurToolArgs,
   color: { grayscale: 0, sepia: 0, saturation: 0 } satisfies ColorsToolArgs,
   levels: { brightness: 0, contrast: 0 } satisfies LevelsToolArgs,
@@ -43,16 +43,14 @@ export const defaultSettings: Record<ToolName, SavedSettings> = {
     resizeY: 100,
   } satisfies TransformToolArgs,
   crop: { aspectRatio: null, rect: null } satisfies CropToolArgs,
-  // @ts-expect-error s
   draw: { ...savedDrawPerPen['pen'], color: '#000000', points: [], penType: 'pen' } satisfies DrawToolArgs,
   shape: {
     ...savedArgsPerFigure['rectangle'],
     figure: 'rectangle',
-    lineColor: '#000000',
-    fillColor: null,
+    color: '#000000',
+    backgroundColor: null,
   } satisfies ShapeToolArgs,
   text: {
-    // @ts-expect-error s
     text: '',
     fontSize: 64,
     lineHeight: 1.1,

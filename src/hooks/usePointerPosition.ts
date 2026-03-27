@@ -79,8 +79,6 @@ export function usePointerPosition<T extends HTMLElement>(
   }, [imageSize]);
 
   useResizeObserverRAF(ref, (rect: Pos) => {
-    // For simplicity, leave resize observer working and calculating tiny things.
-    // The plus od doing this is the instant response having rect in place.
     containerRectRef.current = rect;
     calculateDimensions();
   });

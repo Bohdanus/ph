@@ -170,7 +170,7 @@ const Transform: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="skew-x-slider"
-          className="text-[10px] font-medium text-gray-700 dark:text-gray-300 flex justify-between"
+          className="text-[10px] font-medium mb-1 text-gray-700 dark:text-gray-300 flex justify-between"
         >
           Skew X <span>{skewX}°</span>
         </label>
@@ -185,7 +185,7 @@ const Transform: React.FC<{}> = () => {
         />
         <label
           htmlFor="skew-y-slider"
-          className="text-[10px] font-medium text-gray-700 dark:text-gray-300 flex justify-between mt-1"
+          className="text-[10px] font-medium mb-1 text-gray-700 dark:text-gray-300 flex justify-between mt-1"
         >
           Skew Y <span>{skewY}°</span>
         </label>
@@ -203,7 +203,7 @@ const Transform: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="trapezoid-slider"
-          className="text-[10px] font-medium text-gray-700 dark:text-gray-300 flex justify-between"
+          className="text-[10px] font-medium mb-1 text-gray-700 dark:text-gray-300 flex justify-between"
         >
           Trapezoid <span>{trapezoid}%</span>
         </label>
@@ -221,7 +221,7 @@ const Transform: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="resize-x-slider"
-          className="text-[10px] font-medium text-gray-700 dark:text-gray-300 flex justify-between"
+          className="text-[10px] font-medium mb-1 text-gray-700 dark:text-gray-300 flex justify-between"
         >
           Resize X <span>{resizeX}%</span>
         </label>
@@ -236,7 +236,7 @@ const Transform: React.FC<{}> = () => {
         />
         <label
           htmlFor="resize-y-slider"
-          className="text-[10px] font-medium text-gray-700 dark:text-gray-300 flex justify-between mt-1"
+          className="text-[10px] font-medium mb-1 text-gray-700 dark:text-gray-300 flex justify-between mt-1"
         >
           Resize Y <span>{resizeY}%</span>
         </label>

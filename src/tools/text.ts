@@ -14,7 +14,7 @@ export type TextToolArgs = {
   rect?: RectXYSorted | null;
 };
 
-export type TextToolSettings = Omit<TextToolArgs, 'text' | 'rect'>;
+export type TextToolSettings = Omit<TextToolArgs, 'color' | 'text' | 'rect'>;
 
 export function renderText(ctx: Ctx2D, args: TextToolArgs) {
   const { text, fontSize, lineHeight, fontFamily, color, rect, align, bold, italic } = args;

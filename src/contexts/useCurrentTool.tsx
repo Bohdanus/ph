@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { cloneDeep, isEqual } from 'lodash-es';
-import { defaultSettings } from '../tools/settings.ts';
+import { defaultSettings, lastSavedSettings } from '../tools/settings.ts';
 import type { ToolName, ToolArgs } from './tool-types.ts';
 import { saveSettings } from '../util/settings.ts';
 import { useStore } from './StoreContext.tsx';
@@ -26,14 +26,14 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
   }, [toolArgs]);
 
   function resetToLastSavedArgs(_toolName = toolName) {
-    setToolArgs(cloneDeep(defaultSettings[_toolName]));
+    setToolArgs(cloneDeep(lastSavedSettings[_toolName]));
     setToolDirty(false);
   }
 
   const _setToolArgs = (args: ToolArgs) => {
     saveSettings(toolName, args);
     setToolArgs(args);
-    setToolDirty(isEqual(args, defaultSettings[toolName]));
+    setToolDirty(isEqual(args, lastSavedSettings[toolName]));
   };
 
   const value = {

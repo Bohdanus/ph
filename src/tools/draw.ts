@@ -13,9 +13,9 @@ export type DrawToolArgs = {
   points?: Point[];
 };
 
-export type DrawToolSettings = Omit<DrawToolArgs, 'points'>;
+export type DrawToolSettings = Omit<DrawToolArgs, 'color' | 'points'>;
 
-export const setupDrawCtx = (ctx: Ctx2D, args: DrawToolSettings) => {
+export const setupDrawCtx = (ctx: Ctx2D, args: DrawToolArgs) => {
   const { alpha, color, penType, lineDash, lineWidth } = args;
 
   if (penType === 'spray') return;

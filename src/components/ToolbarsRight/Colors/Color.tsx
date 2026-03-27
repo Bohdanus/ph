@@ -49,7 +49,7 @@ const Color: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="grayscale-slider"
-          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
           Grayscale
           <span className="font-bold text-gray-900 dark:text-gray-200">{grayscale}%</span>
@@ -68,7 +68,7 @@ const Color: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="sepia-slider"
-          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
           Sepia
           <span className="font-bold text-gray-900 dark:text-gray-200">{sepia}%</span>
@@ -87,7 +87,7 @@ const Color: React.FC<{}> = () => {
       <div className="flex flex-col">
         <label
           htmlFor="saturation-slider"
-          className="flex justify-between text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
           Saturation
           <span className="font-bold text-gray-900 dark:text-gray-200">{saturation}%</span>
