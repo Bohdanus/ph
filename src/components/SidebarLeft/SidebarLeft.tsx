@@ -47,18 +47,16 @@ const SidebarLeft = () => {
     goToTool('text');
   };
 
-  const handleColorClick = (
-    e: React.MouseEvent<HTMLDivElement>,
-    squareRef: RefObject<HTMLDivElement | null>,
-    inputRef: RefObject<HTMLInputElement | null>
-  ) => {
-    if (squareRef.current) {
-      const rect = e.currentTarget.getBoundingClientRect();
-      squareRef.current.style.position = 'absolute';
-      squareRef.current.style.left = `${rect.left + 15}px`;
-      squareRef.current.style.top = `${rect.bottom + 15}px`;
-    }
-    inputRef.current?.click();
+  const handleColorClick = (e: React.MouseEvent<HTMLDivElement>, inputRef: RefObject<HTMLInputElement | null>) => {
+    if (!inputRef.current) return;
+
+    const parentRect = e.currentTarget.parentElement!.getBoundingClientRect();
+    const squareRect = e.currentTarget.getBoundingClientRect();
+    const offsetX = squareRect.left - parentRect.left;
+    const offsetY = squareRect.top - parentRect.top;
+    inputRef.current.style.left = `${offsetX}px`;
+    inputRef.current.style.top = `${offsetY + 5}px`;
+    inputRef.current.click();
   };
 
   const handleColorChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -205,14 +203,14 @@ const SidebarLeft = () => {
             <div
               className="absolute top-4 left-4 w-8 h-8 cursor-pointer rounded border border-gray-400 dark:border-gray-500 shadow-sm"
               style={{ backgroundColor }}
-              onClick={(e) => handleColorClick(e, bgColorSquareRef, bgColorInputRef)}
+              onClick={(e) => handleColorClick(e, bgColorInputRef)}
               title="Background Color"
               ref={bgColorSquareRef}
             />
             <div
               className="absolute top-0 left-0 w-8 h-8 cursor-pointer rounded border border-gray-400 dark:border-gray-500 shadow-md"
               style={{ backgroundColor: color }}
-              onClick={(e) => handleColorClick(e, colorSquareRef, colorInputRef)}
+              onClick={(e) => handleColorClick(e, colorInputRef)}
               title="Foreground Color"
               ref={colorSquareRef}
             />

@@ -1,14 +1,17 @@
 import React, { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { savedArgsPerFigure } from '../../../tools/settings.ts';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
-import type { FigureType, ShapeToolArgs } from '../../../tools/shape.ts';
+import { type FigureType, shape, type ShapeToolArgs } from '../../../tools/shape.ts';
 import { isLightColor } from '../../../util/color.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 
+const PREVIEW_SIZE = 46;
+
 const Shape: React.FC<{}> = () => {
   const [{ containerRef, color, backgroundColor, totalSize }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
+  const previewRef = useRef<HTMLCanvasElement | null>(null);
 
   const args = toolArgs as ShapeToolArgs;
   const [brushScale, setBrushScale] = useState<number>(0);
@@ -29,19 +32,14 @@ const Shape: React.FC<{}> = () => {
     setToolArgs(newArgs);
   };
 
-  const handleFillToggle = () => {
-    const hasFill = !!args.hasFill;
-    handleChange({ ...args, hasFill });
-  };
-
   const handleSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
     const lineWidth = Number(event.target.value);
     handleChange({ ...args, lineWidth });
   };
 
-  const handleAlphaChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const alpha = Number(event.target.value);
-    handleChange({ ...args, alpha });
+  const handleFillToggle = () => {
+    const hasFill = !args.hasFill;
+    handleChange({ ...args, hasFill });
   };
 
   const handleFigureChange = (event: ChangeEvent<HTMLSelectElement>) => {
@@ -72,65 +70,40 @@ const Shape: React.FC<{}> = () => {
     handleChange(newArgs);
   };
 
+  const handleAlphaChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const alpha = Number(event.target.value);
+    handleChange({ ...args, alpha });
+  };
+
   const { alpha, hasFill, lineWidth, figure, lineDash } = args;
-  const lineColor = color;
 
-  const scaledLineWidth = lineWidth * brushScale;
-  const dash = lineDash ? lineDash[0] * brushScale : 0;
-  const gap = lineDash ? lineDash[1] * brushScale : 0;
+  useEffect(() => {
+    if (previewRef.current && brushScale) {
+      const canvas = previewRef.current;
+      const ctx = canvas.getContext('2d')!;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'low'; // For better performance and sharpness
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const chessClass = isLightColor(lineColor) ? 'chessboard-dark' : 'chessboard-light';
-  let borderStyle: React.CSSProperties = {};
+      const size = { width: PREVIEW_SIZE / brushScale, height: PREVIEW_SIZE / brushScale };
 
-  if (figure === 'line') {
-    if (lineDash) {
-      borderStyle = {
-        backgroundColor: lineColor,
-      };
-    } else {
-      borderStyle = {
-        background: lineColor,
-      };
+      const margin = (2 + Math.sqrt(lineWidth)) / brushScale;
+      const start = { x: margin, y: margin };
+      const end = { x: PREVIEW_SIZE / brushScale - margin, y: PREVIEW_SIZE / brushScale - margin };
+
+      const previewArgs = { ...args, color, start, end };
+
+      // Draw the toolCanvas into previewCanvas with scaling and centering
+      const [toolCanvas] = shape({ size })(previewArgs);
+
+      const scaledWidth = toolCanvas.width * brushScale;
+      const scaledHeight = toolCanvas.height * brushScale;
+      const offsetX = (canvas.width - scaledWidth) / 2;
+      const offsetY = (canvas.height - scaledHeight) / 2;
+
+      ctx.drawImage(toolCanvas, 0, 0, toolCanvas.width, toolCanvas.height, offsetX, offsetY, scaledWidth, scaledHeight);
     }
-  } else if (lineDash) {
-    if (figure === 'circle' || figure === 'oval') {
-      borderStyle = {
-        border: `${scaledLineWidth}px solid transparent`,
-        backgroundImage: `repeating-conic-gradient(from 0deg, ${lineColor} 0deg, ${
-          (dash / (Math.PI * 66)) * 360
-        }deg, transparent ${(dash / (Math.PI * 100)) * 360}deg, transparent ${
-          ((dash + gap) / (Math.PI * 66)) * 360
-        }deg)`,
-        backgroundSize: '100% 100%',
-        backgroundPosition: '0 0',
-        backgroundRepeat: 'repeat',
-        backgroundOrigin: 'border-box',
-        backgroundClip: 'border-box',
-      };
-    } else {
-      borderStyle = {
-        border: `${scaledLineWidth}px solid transparent`,
-        backgroundImage: `repeating-linear-gradient(to right, ${lineColor}, ${lineColor} ${dash}px, transparent ${dash}px, transparent ${
-          dash + gap
-        }px), repeating-linear-gradient(to bottom, ${lineColor}, ${lineColor} ${dash}px, transparent ${dash}px, transparent ${
-          dash + gap
-        }px), repeating-linear-gradient(to left, ${lineColor}, ${lineColor} ${dash}px, transparent ${dash}px, transparent ${
-          dash + gap
-        }px), repeating-linear-gradient(to top, ${lineColor}, ${lineColor} ${dash}px, transparent ${dash}px, transparent ${
-          dash + gap
-        }px)`,
-        backgroundSize: `100% ${scaledLineWidth}px, ${scaledLineWidth}px 100%, 100% ${scaledLineWidth}px, ${scaledLineWidth}px 100%`,
-        backgroundPosition: `0 0, 100% 0, 100% 100%, 0 100%`,
-        backgroundRepeat: 'repeat-x, repeat-y, repeat-x, repeat-y',
-        backgroundOrigin: 'border-box, border-box, border-box, border-box',
-        backgroundClip: 'border-box, border-box, border-box, border-box',
-      };
-    }
-  } else {
-    borderStyle = {
-      border: `${scaledLineWidth}px solid ${lineColor}`,
-    };
-  }
+  }, [args, brushScale]);
 
   return (
     <div className="flex flex-row items-center gap-6 h-full">
@@ -154,25 +127,25 @@ const Shape: React.FC<{}> = () => {
 
       <div className="flex flex-col">
         <label
-          htmlFor="size-slider"
+          htmlFor="thickness-slider"
           className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
           Thickness
           <span className="font-bold text-gray-900 dark:text-gray-200">{lineWidth}px</span>
         </label>
         <input
-          id="size-slider"
+          id="thickness-slider"
           type="range"
           min="0.5"
           max="500"
           step="0.5"
           value={lineWidth}
           onChange={handleSizeChange}
-          className="h-1.5 w-32 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+          className="h-1.5 w-38 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>
 
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col">
         <div className="flex items-center gap-2">
           <input
             id="filled-toggle"
@@ -187,7 +160,7 @@ const Shape: React.FC<{}> = () => {
         </div>
       </div>
 
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col">
         <div className="flex items-center gap-2">
           <input
             id="dash-toggle"
@@ -200,29 +173,51 @@ const Shape: React.FC<{}> = () => {
             Dashed
           </label>
         </div>
-        {lineDash && (
-          <div className="flex gap-2">
+      </div>
+
+      {lineDash && (
+        <>
+          <div className="flex flex-col ml-[-13px]">
+            <label
+              htmlFor="dash-slider"
+              className="flex justify-between mb-2 text-[10px] font-medium text-gray-700 dark:text-gray-300"
+            >
+              Dash
+              <span className="font-bold text-gray-900 dark:text-gray-200">{lineDash[0]}px</span>
+            </label>
             <input
+              id="dash-slider"
               type="range"
               min="1"
               max="100"
               value={lineDash[0]}
               onChange={handleDashChange}
               title={`Dash: ${lineDash[0]}px`}
-              className="h-1 w-12 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+              className="h-1 w-17 mb-1 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
             />
+          </div>
+
+          <div className="flex flex-col ml-[-15px]">
+            <label
+              htmlFor="gap-slider"
+              className="flex justify-between mb-2 text-[10px] font-medium text-gray-700 dark:text-gray-300"
+            >
+              Gap
+              <span className="font-bold text-gray-900 dark:text-gray-200">{lineDash[1]}px</span>
+            </label>
             <input
+              id="gap-slider"
               type="range"
               min="1"
               max="100"
               value={lineDash[1]}
               onChange={handleGapChange}
               title={`Gap: ${lineDash[1]}px`}
-              className="h-1 w-12 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+              className="h-1 w-17 mb-1 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
             />
           </div>
-        )}
-      </div>
+        </>
+      )}
 
       <div className="flex flex-col">
         <label
@@ -240,32 +235,16 @@ const Shape: React.FC<{}> = () => {
           step="0.01"
           value={alpha}
           onChange={handleAlphaChange}
-          className="h-1.5 w-32 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+          className="h-1.5 w-30 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>
 
       <div
-        className={`flex h-8 w-8 items-center justify-center rounded border border-gray-300 dark:border-gray-600 flex-shrink-0 ${chessClass}`}
+        className={`flex h-12 w-12 items-center justify-center rounded border border-gray-300 dark:border-gray-600 flex-shrink-0 ${
+          isLightColor(color) ? 'chessboard-dark' : 'chessboard-light'
+        }`}
       >
-        <div
-          style={{
-            position: 'relative',
-            width: '24px',
-            height: '24px',
-          }}
-        >
-          <div
-            style={{
-              boxSizing: 'border-box',
-              position: 'absolute',
-              inset: 0,
-              opacity: alpha,
-              borderRadius: figure === 'circle' || figure === 'oval' ? '50%' : '0',
-              ...borderStyle,
-              borderWidth: `${Math.min(8, Math.max(1, scaledLineWidth / 5))}px`,
-            }}
-          />
-        </div>
+        <canvas ref={previewRef} width={PREVIEW_SIZE} height={PREVIEW_SIZE} />
       </div>
     </div>
   );

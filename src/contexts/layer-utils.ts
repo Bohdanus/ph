@@ -28,13 +28,13 @@ export function layersArrayToRecord(layersArray: Layer[]): Record<LayerId, Layer
 
 export const minLayerOrder = (layers: LayersRecord) => {
   const values = Object.values(layers);
-  if (values.length === 0) return 1;
+  if (values.length === 0) return 0;
   return values.reduce((min, layer) => Math.min(min, layer.order), Infinity);
 };
 
 export const maxLayerOrder = (layers: LayersRecord) => {
   const values = Object.values(layers);
-  if (values.length === 0) return 1;
+  if (values.length === 0) return 0;
   return values.reduce((max, layer) => Math.max(max, layer.order), -Infinity);
 };
 

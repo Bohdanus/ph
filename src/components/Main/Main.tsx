@@ -41,11 +41,6 @@ const Main = () => {
   }
 
   useEffect(() => {
-    // Disable image smoothing for sharp rendering
-    if (canvasCtxRef.current) {
-      canvasCtxRef.current.imageSmoothingEnabled = false;
-      canvasCtxRef.current.imageSmoothingQuality = 'low'; // For better performance and sharpness
-    }
     drawAllLayers();
   }, [layers]);
 
@@ -56,16 +51,20 @@ const Main = () => {
       toolOverlayRef.current.height = height;
 
       overlayCtxRef.current = toolOverlayRef.current.getContext('2d')!;
-      overlayCtxRef.current.imageSmoothingEnabled = false;
+      overlayCtxRef.current.imageSmoothingEnabled = true;
+      overlayCtxRef.current.imageSmoothingQuality = 'low';
     }
 
     if (rectOverlayRef.current) {
       rectOverlayRef.current.width = width;
       rectOverlayRef.current.height = height;
+      const rectCtx = rectOverlayRef.current.getContext('2d')!;
+      rectCtx.imageSmoothingEnabled = false;
     }
 
     if (canvasCtxRef.current) {
-      canvasCtxRef.current.imageSmoothingEnabled = false;
+      canvasCtxRef.current.imageSmoothingEnabled = true;
+      canvasCtxRef.current.imageSmoothingQuality = 'low';
     }
   }); // UPDATE ON EVERY RENDER
 

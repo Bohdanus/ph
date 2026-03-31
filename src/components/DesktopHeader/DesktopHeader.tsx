@@ -67,9 +67,6 @@ const DesktopHeader = () => {
 
   return (
     <header className="flex h-[50px] items-center bg-[#212529] px-3 max-md:hidden [grid-area:header] dark:bg-gray-950">
-      <a className="mr-4 text-xl text-white no-underline" href="#">
-        Logo
-      </a>
       <ul className="mr-auto flex list-none items-center p-0">
         <li className="relative" ref={fileMenuRef}>
           <button

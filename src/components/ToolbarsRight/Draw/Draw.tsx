@@ -7,17 +7,23 @@ import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import type { Point } from '../../../contexts/general-types.ts';
 
-const PREVIEW_SIZE = 40;
+const PREVIEW_SIZE = 46;
 
 const Draw: React.FC<{}> = () => {
   const [{ color, containerRef, totalSize }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
-
-  const args = toolArgs as DrawToolSettings;
   const [brushScale, setBrushScale] = useState<number>(0);
   const previewRef = useRef<HTMLCanvasElement | null>(null);
 
-  usePointerPosition({ ref: containerRef, imageSize: totalSize, onResize: ({ scale }) => setBrushScale(scale) });
+  const args = toolArgs as DrawToolSettings;
+
+  usePointerPosition({
+    ref: containerRef,
+    imageSize: totalSize,
+    onResize: ({ scale }) => {
+      setBrushScale(scale);
+    },
+  });
 
   useEffect(() => {
     setToolArgs({ ...args, color });
@@ -65,8 +71,7 @@ const Draw: React.FC<{}> = () => {
     if (previewRef.current && brushScale) {
       const canvas = previewRef.current;
       const ctx = canvas.getContext('2d')!;
-      // Disable image smoothing for sharp rendering
-      ctx.imageSmoothingEnabled = false;
+      ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'low'; // For better performance and sharpness
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -79,7 +84,7 @@ const Draw: React.FC<{}> = () => {
 
       // Generate points for a quarter-circle arc from 0 to 90 degrees
       for (let angle = -1 / 2; angle <= Math.PI / 2 + 1; angle += Math.PI / 24) {
-        const x = centerX + Math.cos(angle) * radius;
+        const x = centerX + Math.cos(angle) * radius + 1;
         const y = centerY + Math.sin(angle) * radius;
         arcPoints.push({ x, y });
       }
@@ -117,6 +122,26 @@ const Draw: React.FC<{}> = () => {
         </select>
       </div>
 
+      <div className="flex flex-col">
+        <label
+          htmlFor="size-slider"
+          className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
+        >
+          Size
+          <span className="font-bold text-gray-900 dark:text-gray-200">{brushSize}px</span>
+        </label>
+        <input
+          id="size-slider"
+          type="range"
+          min="0.5"
+          max="500"
+          step="0.5"
+          value={brushSize}
+          onChange={handleSizeChange}
+          className="h-1.5 w-40 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+        />
+      </div>
+
       {penType === 'pen-dashed' && lineDash && (
         <div className="flex gap-4 items-center">
           <div className="flex flex-col">
@@ -137,6 +162,7 @@ const Draw: React.FC<{}> = () => {
               className="h-1.5 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
             />
           </div>
+
           <div className="flex flex-col">
             <label
               htmlFor="gap-size"
@@ -160,26 +186,6 @@ const Draw: React.FC<{}> = () => {
 
       <div className="flex flex-col">
         <label
-          htmlFor="size-slider"
-          className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
-        >
-          Size
-          <span className="font-bold text-gray-900 dark:text-gray-200">{brushSize}px</span>
-        </label>
-        <input
-          id="size-slider"
-          type="range"
-          min="0.5"
-          max="500"
-          step="0.5"
-          value={brushSize}
-          onChange={handleSizeChange}
-          className="h-1.5 w-32 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
-        />
-      </div>
-
-      <div className="flex flex-col">
-        <label
           htmlFor="alpha-slider"
           className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
         >
@@ -194,12 +200,12 @@ const Draw: React.FC<{}> = () => {
           step="0.01"
           value={alpha}
           onChange={handleAlphaChange}
-          className="h-1.5 w-32 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+          className="h-1.5 w-30 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>
 
       <div
-        className={`flex h-10 w-10 items-center justify-center rounded border border-gray-300 dark:border-gray-600 flex-shrink-0 ${
+        className={`flex h-12 w-12 items-center justify-center rounded border border-gray-300 dark:border-gray-600 flex-shrink-0 ${
           isLightColor(color) ? 'chessboard-dark' : 'chessboard-light'
         }`}
       >
