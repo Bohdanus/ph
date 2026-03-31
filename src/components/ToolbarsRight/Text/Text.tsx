@@ -184,7 +184,7 @@ const Text: React.FC<{}> = () => {
         <button
           className={`w-9 h-9 flex items-center justify-center rounded border text-[20px] transition-colors focus:outline-none ${
             italic
-              ? 'border-blue-600 bg-blue-600 text-white'
+              ? 'border-blue-600 bg-blue-600 text-white dark:text-black'
               : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200'
           }`}
           onClick={toggleItalic}
