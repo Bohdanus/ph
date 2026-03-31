@@ -38,7 +38,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
 
     containerRef,
     overlayRef: rectOverlayRef,
-    onChange: (sortedRect: RectXYSorted) => {
+    onRepaint: (sortedRect: RectXYSorted) => {
       const newPos = sortedRectToPos(sortedRect);
       const toolArgs: RepositionToolArgs = wasCurrentLayerResized(newPos) ? { resize: newPos } : { move: newPos };
       tempUpdateLayer({ id: selectedLayerIdRef.current, toolName: 'reposition', toolArgs });

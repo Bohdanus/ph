@@ -25,7 +25,7 @@ const Main = () => {
   const [isDragging, setIsDragging] = useState(false);
 
   const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
-  const overlayCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const toolCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
   let interactionMode = 'zoom';
   if (toolName === 'reposition') {
@@ -50,9 +50,9 @@ const Main = () => {
       toolOverlayRef.current.width = width;
       toolOverlayRef.current.height = height;
 
-      overlayCtxRef.current = toolOverlayRef.current.getContext('2d')!;
-      overlayCtxRef.current.imageSmoothingEnabled = true;
-      overlayCtxRef.current.imageSmoothingQuality = 'low';
+      toolCtxRef.current = toolOverlayRef.current.getContext('2d')!;
+      toolCtxRef.current.imageSmoothingEnabled = true;
+      toolCtxRef.current.imageSmoothingQuality = 'low';
     }
 
     if (rectOverlayRef.current) {
@@ -137,7 +137,7 @@ const Main = () => {
         <EventHandler
           className="absolute inset-0 h-full w-full"
           canvasCtxRef={canvasCtxRef}
-          overlayCtxRef={overlayCtxRef}
+          overlayCtxRef={toolCtxRef}
         />
       </div>
     );

@@ -17,7 +17,8 @@ type UseRectProps = {
   containerRef: RefObject<HTMLDivElement | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
 
-  onChange?: (sortedRect: RectXYSorted) => void; // is called when dragging, on each mouse movement (RAF throttling is done)
+  onRepaint?: (sortedRect: RectXYSorted) => void; // is called on redraw (RAF throttled)
+  onChange?: (sortedRect: RectXYSorted) => void; // is called on resize (RAF throttled)
   onChangeEnd: (sortedRect: RectXYSorted) => void; // is called after final change, when mouse is up
 };
 
@@ -31,6 +32,7 @@ export function useRect({
   containerRef,
   overlayRef,
 
+  onRepaint,
   onChange,
   onChangeEnd,
 }: UseRectProps) {
@@ -133,7 +135,7 @@ export function useRect({
     eventTarget.style.cursor = cursor ?? '';
   }
 
-  function drawMask(triggerOnChange?: boolean) {
+  function drawMask(hasRectChanged?: boolean) {
     const { scale } = dimensionsRef.current;
 
     ctx.clearRect(0, 0, imageSize.width, imageSize.height);
@@ -169,8 +171,11 @@ export function useRect({
     ctx.fillRect(x + width - h2, y + height - h2, h1, h1);
 
     // todo update status bar - add func on each update
-    if (triggerOnChange) {
-      onChange?.(sortRect(rect));
+    const sortedRect = sortRect(rect);
+    onRepaint?.(sortedRect);
+
+    if (hasRectChanged) {
+      onChange?.(sortedRect);
     }
   }
 

@@ -76,12 +76,12 @@ const FontSelect: React.FC<FontSelectProps> = ({ value, onChange }) => {
         id="font-family-select"
         type="button"
         onClick={handleToggle}
-        className="flex w-full items-center justify-between rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+        className="flex w-full items-center justify-between rounded border border-gray-300 bg-white px-2 h-9 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         style={{ fontFamily: value }}
       >
         <span>{value}</span>
         <svg
-          className={`ml-2 h-4 w-4 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          className={`ml-1 h-4 w-4 transition-transform ${isOpen ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -91,7 +91,7 @@ const FontSelect: React.FC<FontSelectProps> = ({ value, onChange }) => {
       </button>
 
       {isOpen && (
-        <div className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-600 dark:bg-gray-700">
+        <div className="absolute z-10 max-h-60 w-full overflow-auto rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-600 dark:bg-gray-700">
           {FONTS.map((font) => (
             <button
               key={font}

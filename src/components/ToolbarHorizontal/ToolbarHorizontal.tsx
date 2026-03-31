@@ -13,7 +13,7 @@ const ToolbarHorizontal = () => {
   const ToolComponent = toolsMap[toolName].toolboxComponent;
 
   return (
-    <div className="bg-gray-100 dark:bg-gray-800 border-b border-gray-300 dark:border-gray-700 h-[50px] [grid-area:toolbar] max-md:hidden flex items-center px-4 overflow-x-auto">
+    <div className="bg-gray-100 dark:bg-gray-800 border-b border-gray-300 dark:border-gray-700 h-[50px] [grid-area:toolbar] max-md:hidden flex items-center px-4 overflow-visible">
       <ToolComponent key={toolName} />
     </div>
   );

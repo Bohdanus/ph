@@ -13,7 +13,7 @@ type TextToolAreaProps = {
 };
 
 export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) => {
-  const [{ containerRef, textareaRef, toolOverlayRef, totalSize }] = useStore();
+  const [{ containerRef, textareaRef, toolOverlayRef, color, totalSize }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as TextToolArgs;
@@ -30,13 +30,11 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
     initialRect: args.rect,
     containerRef,
     overlayRef: toolOverlayRef,
-    onChange: (rect: RectXYSorted) => {
-      handleUpdate(rect);
-    },
+    onRepaint: redrawText,
     onChangeEnd: (rect: RectXYSorted) => {
       const newRect = calculateNewRect({ ...args, rect }, toolOverlayRef, totalSize)!;
 
-      const newArgs = { ...args, rect: newRect };
+      const newArgs = { ...args, color, rect: newRect };
       setToolArgs(newArgs);
 
       textareaRef.current!.focus();
@@ -48,12 +46,12 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
   }, []);
 
   // this redraws avoiding react re-renders, to achieve high FPS
-  function handleUpdate(rect: RectXY) {
+  function redrawText(rect: RectXY) {
     if (!args.text) return;
 
     const ctx = overlayCtxRef.current!;
 
-    const _args = { ...args, rect };
+    const _args = { ...args, color, rect };
 
     renderText(ctx, _args);
   }
