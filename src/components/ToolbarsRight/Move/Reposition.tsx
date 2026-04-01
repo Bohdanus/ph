@@ -1,6 +1,7 @@
 import React from 'react';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
+import { SECONDARY_BUTTON } from '../buttonStyles.ts';
 
 const Reposition: React.FC<{}> = () => {
   const [{ layers, activeLayerId }] = useStore();
@@ -19,7 +20,7 @@ const Reposition: React.FC<{}> = () => {
 
       <button
         onClick={mergeAllLayers}
-        className="rounded-md bg-gray-100 px-3 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+        className={SECONDARY_BUTTON}
       >
         Merge all
       </button>

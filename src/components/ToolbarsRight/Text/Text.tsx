@@ -6,6 +6,7 @@ import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import FontSelect from './FontSelect.tsx';
 import { useApp } from '../../../hooks/useApp.ts';
+import { PRIMARY_BUTTON, SECONDARY_BUTTON, TOGGLE_BUTTON_ACTIVE, TOGGLE_BUTTON_INACTIVE } from '../buttonStyles.ts';
 
 const Text: React.FC<{}> = () => {
   const [{ canvasRef, color, textareaRef, totalSize }] = useStore();
@@ -172,9 +173,7 @@ const Text: React.FC<{}> = () => {
       <div className="flex gap-2">
         <button
           className={`w-9 h-9 flex items-center justify-center rounded border text-[20px] transition-colors focus:outline-none ${
-            bold
-              ? 'border-blue-600 bg-blue-600 text-white dark:text-black'
-              : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200'
+            bold ? TOGGLE_BUTTON_ACTIVE : TOGGLE_BUTTON_INACTIVE
           }`}
           onClick={toggleBold}
           title="Bold"
@@ -183,9 +182,7 @@ const Text: React.FC<{}> = () => {
         </button>
         <button
           className={`w-9 h-9 flex items-center justify-center rounded border text-[20px] transition-colors focus:outline-none ${
-            italic
-              ? 'border-blue-600 bg-blue-600 text-white dark:text-black'
-              : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200'
+            italic ? TOGGLE_BUTTON_ACTIVE : TOGGLE_BUTTON_INACTIVE
           }`}
           onClick={toggleItalic}
           title="Italic"
@@ -196,14 +193,14 @@ const Text: React.FC<{}> = () => {
 
       <div className="flex gap-2 ml-2">
         <button
-          className="rounded bg-blue-600 px-3 h-9 text-xs font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none disabled:opacity-50"
+          className={PRIMARY_BUTTON}
           disabled={!text || !rect}
           onClick={applyText}
         >
           Apply
         </button>
         <button
-          className="rounded border border-gray-300 bg-white px-3 h-9 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+          className={SECONDARY_BUTTON}
           disabled={!text || !rect}
           onClick={clear}
         >

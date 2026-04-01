@@ -11,7 +11,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
         <h1 className="text-6xl font-bold text-white mb-8">Hello</h1>
         <button
           onClick={onStart}
-          className="px-8 py-3 bg-white text-blue-600 font-semibold rounded-lg hover:bg-gray-100 transition-colors duration-200 shadow-lg hover:shadow-xl"
+          className="px-8 py-3 bg-white text-blue-600 font-semibold rounded-lg hover:bg-gray-50 transition-colors duration-200 shadow-lg hover:shadow-xl focus:outline-none focus:ring-2 focus:ring-blue-300"
         >
           Start
         </button>

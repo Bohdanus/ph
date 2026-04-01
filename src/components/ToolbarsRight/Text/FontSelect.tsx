@@ -96,8 +96,10 @@ const FontSelect: React.FC<FontSelectProps> = ({ value, onChange }) => {
             <button
               key={font}
               type="button"
-              className={`w-full px-3 py-2 text-left text-sm transition-colors hover:bg-blue-90 dark:hover:bg-blue-900/70 ${
-                font === value ? 'bg-blue-100 font-bold dark:bg-blue-900/90' : 'text-gray-900 dark:text-white'
+              className={`w-full px-3 py-2 text-left text-sm transition-colors ${
+                font === value
+                  ? 'bg-blue-600 font-bold text-white dark:bg-blue-700 dark:text-white'
+                  : 'text-gray-900 hover:bg-gray-100 dark:text-white dark:hover:bg-gray-600'
               }`}
               style={{ fontFamily: font }}
               onClick={() => handleSelect(font)}

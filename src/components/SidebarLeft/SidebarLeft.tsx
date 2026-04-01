@@ -1,6 +1,7 @@
 import { type ChangeEvent, type RefObject, useRef } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useApp } from '../../hooks/useApp.ts';
+import { TOOLBAR_MENU_BUTTON_ACTIVE, TOOLBAR_MENU_BUTTON_INACTIVE } from '../ToolbarsRight/buttonStyles.ts';
 
 const SidebarLeft = () => {
   const [{ hasImage, toolName, color, backgroundColor }, dispatch] = useStore();
@@ -81,8 +82,8 @@ const SidebarLeft = () => {
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
                 toolName === 'reposition'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
+                  ? TOOLBAR_MENU_BUTTON_ACTIVE
+                  : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleMove}
@@ -94,8 +95,8 @@ const SidebarLeft = () => {
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
                 toolName === 'color'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
+                  ? TOOLBAR_MENU_BUTTON_ACTIVE
+                  : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleColors}
@@ -107,8 +108,8 @@ const SidebarLeft = () => {
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
                 toolName === 'blur'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
+                  ? TOOLBAR_MENU_BUTTON_ACTIVE
+                  : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleBlur}
@@ -120,8 +121,8 @@ const SidebarLeft = () => {
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
                 toolName === 'levels'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
+                  ? TOOLBAR_MENU_BUTTON_ACTIVE
+                  : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleLevels}
@@ -133,8 +134,8 @@ const SidebarLeft = () => {
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
                 toolName === 'transform'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
+                  ? TOOLBAR_MENU_BUTTON_ACTIVE
+                  : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleTransform}
@@ -146,8 +147,8 @@ const SidebarLeft = () => {
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
                 toolName === 'crop'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
+                  ? TOOLBAR_MENU_BUTTON_ACTIVE
+                  : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleCrop}
@@ -159,8 +160,8 @@ const SidebarLeft = () => {
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
                 toolName === 'draw'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
+                  ? TOOLBAR_MENU_BUTTON_ACTIVE
+                  : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleDraw}
@@ -172,8 +173,8 @@ const SidebarLeft = () => {
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
                 toolName === 'shape'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
+                  ? TOOLBAR_MENU_BUTTON_ACTIVE
+                  : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleShapes}
@@ -185,8 +186,8 @@ const SidebarLeft = () => {
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
                 toolName === 'text'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-gray-700'
+                  ? TOOLBAR_MENU_BUTTON_ACTIVE
+                  : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleText}

@@ -1,6 +1,7 @@
 import React from 'react';
 import { useHistory } from '../../contexts/useHistory.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import { SECONDARY_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 
 interface UndoButtonProps {
   text?: string;
@@ -22,7 +23,7 @@ const UndoButton: React.FC<UndoButtonProps> = ({ text }) => {
 
   return (
     <button
-      className="w-full rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+      className={`${SECONDARY_BUTTON} w-full focus:ring-2 focus:ring-blue-500`}
       disabled={!_canUndo}
       onClick={_undo}
     >

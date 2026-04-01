@@ -2,6 +2,7 @@ import React from 'react';
 import type { CropToolArgs } from '../../../tools/crop.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
+import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
 
 const aspectRatios = [
   { label: 'Free', value: null },
@@ -50,7 +51,7 @@ const Crop: React.FC<{}> = () => {
 
       <div className="flex gap-2">
         <button
-          className="rounded bg-blue-600 px-4 py-1 text-sm font-bold text-white transition-colors hover:bg-blue-700 focus:outline-none disabled:opacity-50"
+          className={PRIMARY_BUTTON}
           disabled={!rect}
           onClick={() => {
             updateLayerByTool({ toolName: 'crop', toolArgs: args });
@@ -61,7 +62,7 @@ const Crop: React.FC<{}> = () => {
         </button>
 
         <button
-          className="rounded border border-gray-300 bg-white px-4 py-1 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+          className={SECONDARY_BUTTON}
           disabled={!rect}
           onClick={() => onChange({ ...args, rect: null })}
         >

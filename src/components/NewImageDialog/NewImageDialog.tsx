@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { PRESETS, computePixelsFromPreset } from '../../constants/imagePresets';
 import type { BlankImageParams } from '../../contexts/tool-types.ts';
+import { PRIMARY_BUTTON, DIALOG_SECONDARY_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 
 interface NewImageDialogProps {
   onClose: () => void;
@@ -40,7 +41,7 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
               className="ml-auto border-0 bg-transparent p-1 text-3xl font-semibold leading-none text-black opacity-50 outline-none hover:opacity-100 focus:outline-none dark:text-white"
               onClick={onClose}
             >
-              <span className="block h-6 w-6 text-2xl">×</span>
+              <span className="relative top-[-7px] block h-6 w-6 text-2xl">×</span>
             </button>
           </div>
           <form onSubmit={handleCreate}>
@@ -172,17 +173,10 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
               </div>
             </div>
             <div className="flex items-center justify-end rounded-b border-t border-solid border-gray-200 p-4 dark:border-gray-700">
-              <button
-                className="mr-2 rounded px-4 py-2 font-bold text-gray-600 hover:bg-gray-100 focus:outline-none dark:text-gray-400 dark:hover:bg-gray-700"
-                type="button"
-                onClick={onClose}
-              >
+              <button className={DIALOG_SECONDARY_BUTTON} type="button" onClick={onClose}>
                 Cancel
               </button>
-              <button
-                className="rounded bg-blue-600 px-10 py-2 font-bold text-white hover:bg-blue-700 focus:outline-none"
-                type="submit"
-              >
+              <button className={`${PRIMARY_BUTTON} px-10 ml-3`} type="submit">
                 OK
               </button>
             </div>

@@ -8,6 +8,7 @@ import { TrashIcon } from '../Icons/TrashIcon.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { DragHandleIcon } from '../Icons/DragHandleIcon.tsx';
 import PreviewTooltip, { type MaybeBitmap } from '../PreviewTooltip/BmpPreviewTooltip.tsx';
+import { ICON_TOGGLE_BUTTON_VISIBLE, ICON_TOGGLE_BUTTON_HIDDEN, DELETE_BUTTON_ICON } from '../ToolbarsRight/buttonStyles.ts';
 import { RENAME_LAYER_ACTION } from '../../util/constants.ts';
 
 export default function LayersTab() {
@@ -185,9 +186,8 @@ export default function LayersTab() {
                     className={[
                       'h-6 w-6 grid place-items-center rounded border',
                       layer.visible
-                        ? 'border-gray-300 text-gray-700 bg-white dark:bg-gray-800 dark:border-gray-600 dark:text-gray-200'
-                        : 'border-gray-300 text-gray-400 bg-white dark:bg-gray-800 dark:border-gray-600 dark:text-gray-500',
-                      'hover:border-gray-400 dark:hover:border-gray-500',
+                        ? ICON_TOGGLE_BUTTON_VISIBLE
+                        : ICON_TOGGLE_BUTTON_HIDDEN,
                     ].join(' ')}
                     aria-label={layer.visible ? 'Hide layer' : 'Show layer'}
                     title={layer.visible ? 'Hide layer' : 'Show layer'}
@@ -253,9 +253,7 @@ export default function LayersTab() {
                       e.stopPropagation();
                       handleConfirmRemove(layer.id);
                     }}
-                    className={
-                      'h-8 w-8 grid place-items-center rounded text-gray-500 hover:text-red-600 cursor-pointer dark:text-gray-400 dark:hover:text-red-400 hover:bg-white/70 dark:hover:bg-gray-700/40'
-                    }
+                    className={DELETE_BUTTON_ICON}
                     aria-label="Remove layer"
                     title="Remove layer"
                   >

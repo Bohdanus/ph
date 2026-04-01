@@ -2,6 +2,7 @@ import React, { useRef } from 'react';
 import type { TransformToolArgs } from '../../../tools/transform.ts';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
+import { ICON_BUTTON, SMALL_TOGGLE_BUTTON_ACTIVE, SMALL_TOGGLE_BUTTON_INACTIVE, TEXT_LINK_BUTTON } from '../buttonStyles.ts';
 
 const Transform: React.FC<{}> = () => {
   const { tempUpdateLayer } = useLayers();
@@ -132,21 +133,21 @@ const Transform: React.FC<{}> = () => {
       <div className="flex flex-col">
         <div className="flex gap-1">
           <button
-            className="flex h-6 w-10 items-center justify-center rounded border border-gray-300 bg-white text-[10px] hover:bg-gray-50 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            className={`flex h-6 w-10 items-center justify-center rounded border transition-colors focus:outline-none ${ICON_BUTTON}`}
             onClick={handleRotateLeft}
             title="Rotate 90° Left"
           >
             -90°
           </button>
           <button
-            className="flex h-6 w-10 items-center justify-center rounded border border-gray-300 bg-white text-[10px] hover:bg-gray-50 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            className={`flex h-6 w-10 items-center justify-center rounded border transition-colors focus:outline-none ${ICON_BUTTON}`}
             onClick={() => throttledOnChange({ ...args, rotate: (rotate + 180) % 360 })}
             title="Rotate 180°"
           >
             180°
           </button>
           <button
-            className="flex h-6 w-10 items-center justify-center rounded border border-gray-300 bg-white text-[10px] hover:bg-gray-50 focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+            className={`flex h-6 w-10 items-center justify-center rounded border transition-colors focus:outline-none ${ICON_BUTTON}`}
             onClick={handleRotateRight}
             title="Rotate 90° Right"
           >
@@ -255,9 +256,7 @@ const Transform: React.FC<{}> = () => {
         <div className="flex gap-1">
           <button
             className={`flex h-6 w-8 items-center justify-center rounded border transition-colors focus:outline-none ${
-              mirrorH
-                ? 'border-blue-600 bg-blue-600 text-white'
-                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200'
+              mirrorH ? SMALL_TOGGLE_BUTTON_ACTIVE : SMALL_TOGGLE_BUTTON_INACTIVE
             }`}
             onClick={toggleMirrorH}
             title="Mirror Horizontal"
@@ -266,9 +265,7 @@ const Transform: React.FC<{}> = () => {
           </button>
           <button
             className={`flex h-6 w-8 items-center justify-center rounded border transition-colors focus:outline-none ${
-              mirrorV
-                ? 'border-blue-600 bg-blue-600 text-white'
-                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200'
+              mirrorV ? SMALL_TOGGLE_BUTTON_ACTIVE : SMALL_TOGGLE_BUTTON_INACTIVE
             }`}
             onClick={toggleMirrorV}
             title="Mirror Vertical"
@@ -277,7 +274,7 @@ const Transform: React.FC<{}> = () => {
           </button>
         </div>
         <button
-          className="text-[10px] text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 mt-1"
+          className={`text-[10px] ${TEXT_LINK_BUTTON} mt-1`}
           onClick={resetAll}
         >
           Reset All

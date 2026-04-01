@@ -1,5 +1,6 @@
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useHistory } from '../../contexts/useHistory.ts';
+import { TRANSPARENT_DARK_ICON_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 
 const HistoryControls = () => {
   const { isToolDirty, resetToLastSavedArgs } = useCurrentTool();
@@ -18,7 +19,7 @@ const HistoryControls = () => {
   return (
     <div className="flex gap-1">
       <button
-        className="flex h-8 w-8 items-center justify-center rounded bg-transparent text-white opacity-75 hover:bg-gray-700 hover:opacity-100 disabled:opacity-25 disabled:hover:bg-transparent"
+        className={TRANSPARENT_DARK_ICON_BUTTON}
         onClick={_undo}
         disabled={!_canUndo}
         aria-label="Undo"
@@ -27,7 +28,7 @@ const HistoryControls = () => {
         ↩️
       </button>
       <button
-        className="flex h-8 w-8 items-center justify-center rounded bg-transparent text-white opacity-75 hover:bg-gray-700 hover:opacity-100 disabled:opacity-25 disabled:hover:bg-transparent"
+        className={TRANSPARENT_DARK_ICON_BUTTON}
         onClick={redo}
         disabled={!canRedo()}
         aria-label="Redo"

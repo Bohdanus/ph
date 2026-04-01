@@ -8,6 +8,7 @@ import './Main.scss';
 import { ShapeToolArea } from './ShapeToolArea.tsx';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
+import { PRIMARY_BUTTON_LARGE, TEXT_LINK_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 import { useApp } from '../../hooks/useApp.ts';
 import { useFile } from '../../contexts/useFile.tsx';
 import { loadImageFile } from '../../contexts/image-load-save-utils.ts';
@@ -159,7 +160,7 @@ const Main = () => {
       {!hasImage && (
         <div className="flex flex-col items-center gap-4">
           <button
-            className="rounded bg-blue-600 px-6 py-3 text-xl text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            className={PRIMARY_BUTTON_LARGE}
             onClick={() =>
               openLoadImageDialog().then((data) => {
                 data && setImageFromUpload(data);
@@ -169,7 +170,7 @@ const Main = () => {
             Open File
           </button>
           <button
-            className="text-blue-600 hover:underline dark:text-blue-400 focus:outline-none"
+            className={`${TEXT_LINK_BUTTON} focus:outline-none`}
             onClick={() =>
               openNewImageDialog().then((data) => {
                 data && setBlankImage(data);

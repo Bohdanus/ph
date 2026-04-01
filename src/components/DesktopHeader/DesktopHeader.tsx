@@ -4,6 +4,7 @@ import HistoryControls from '../HistoryControls/HistoryControls';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useApp } from '../../hooks/useApp.ts';
 import { useFile } from '../../contexts/useFile.tsx';
+import { MENU_ITEM_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 
 const DesktopHeader = () => {
   const [{ canvasRef, fileName, hasUnsavedChanges }] = useStore();
@@ -134,7 +135,7 @@ const DesktopHeader = () => {
             <ul className="absolute left-0 top-full z-10 m-0 min-w-[160px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800">
               <li>
                 <button
-                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                  className={MENU_ITEM_BUTTON}
                   type="button"
                   onClick={handleColors}
                 >
@@ -143,7 +144,7 @@ const DesktopHeader = () => {
               </li>
               <li>
                 <button
-                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                  className={MENU_ITEM_BUTTON}
                   type="button"
                   onClick={handleBlur}
                 >
@@ -152,7 +153,7 @@ const DesktopHeader = () => {
               </li>
               <li>
                 <button
-                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                  className={MENU_ITEM_BUTTON}
                   type="button"
                   onClick={handleLevels}
                 >
@@ -161,7 +162,7 @@ const DesktopHeader = () => {
               </li>
               <li>
                 <button
-                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                  className={MENU_ITEM_BUTTON}
                   type="button"
                   onClick={handleTransform}
                 >
@@ -170,7 +171,7 @@ const DesktopHeader = () => {
               </li>
               <li>
                 <button
-                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                  className={MENU_ITEM_BUTTON}
                   type="button"
                   onClick={handleDraw}
                 >
@@ -179,7 +180,7 @@ const DesktopHeader = () => {
               </li>
               <li>
                 <button
-                  className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                  className={MENU_ITEM_BUTTON}
                   type="button"
                   onClick={handleText}
                 >

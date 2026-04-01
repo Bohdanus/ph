@@ -70,6 +70,9 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
 
     const start = { ...startRef.current! };
     const end = { ...endRef.current! };
+    // ignore just clicks
+    if (start.x === end.x && start.y === end.y) return;
+
     const halfLineWidth = args.lineWidth / 2;
     const pos = {
       x: Math.min(start.x, end.x) - halfLineWidth - 1,
@@ -77,8 +80,6 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
       width: Math.abs(start.x - end.x) + args.lineWidth + 2,
       height: Math.abs(start.y - end.y) + args.lineWidth + 2,
     };
-
-    if (pos.width === 0 || pos.height === 0) return;
 
     // For circles, ovals and squares, recalculate the bounding box
     if (args.figure === 'circle' || args.figure === 'oval' || args.figure === 'square') {

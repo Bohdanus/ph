@@ -6,7 +6,8 @@ import { isLightColor } from '../../../util/color.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 
-const PREVIEW_SIZE = 46;
+const PREVIEW_WIDTH = 96;
+const PREVIEW_HEIGHT = 48;
 
 const Shape: React.FC<{}> = () => {
   const [{ containerRef, color, backgroundColor, totalSize }] = useStore();
@@ -78,31 +79,33 @@ const Shape: React.FC<{}> = () => {
   const { alpha, hasFill, lineWidth, figure, lineDash } = args;
 
   useEffect(() => {
-    if (previewRef.current && brushScale) {
-      const canvas = previewRef.current;
-      const ctx = canvas.getContext('2d')!;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'low'; // For better performance and sharpness
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!previewRef.current || !brushScale) return;
 
-      const size = { width: PREVIEW_SIZE / brushScale, height: PREVIEW_SIZE / brushScale };
+    const canvas = previewRef.current;
+    const ctx = canvas.getContext('2d')!;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'low'; // For better performance and sharpness
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      const margin = (2 + Math.sqrt(lineWidth)) / brushScale;
-      const start = { x: margin, y: margin };
-      const end = { x: PREVIEW_SIZE / brushScale - margin, y: PREVIEW_SIZE / brushScale - margin };
+    const scaledWidth = PREVIEW_WIDTH / brushScale;
+    const scaledHeight = PREVIEW_HEIGHT / brushScale;
 
-      const previewArgs = { ...args, color, start, end };
+    const margin = ((figure === 'circle' ? 24 : 2.5) + Math.sqrt(lineWidth)) / brushScale;
 
-      // Draw the toolCanvas into previewCanvas with scaling and centering
-      const [toolCanvas] = shape({ size })(previewArgs);
-
-      const scaledWidth = toolCanvas.width * brushScale;
-      const scaledHeight = toolCanvas.height * brushScale;
-      const offsetX = (canvas.width - scaledWidth) / 2;
-      const offsetY = (canvas.height - scaledHeight) / 2;
-
-      ctx.drawImage(toolCanvas, 0, 0, toolCanvas.width, toolCanvas.height, offsetX, offsetY, scaledWidth, scaledHeight);
+    let start, end;
+    if (figure === 'square') {
+      start = { x: scaledWidth / 4 + margin, y: margin };
+      end = { x: (scaledWidth * 3) / 4 - margin, y: scaledHeight - margin };
+    } else {
+      start = { x: margin, y: margin };
+      end = { x: scaledWidth - margin, y: scaledHeight - margin };
     }
+    const previewArgs = { ...args, color, start, end };
+
+    const [toolCanvas] = shape({ size: { width: scaledWidth, height: scaledHeight } })(previewArgs);
+
+    // Draw the toolCanvas into previewCanvas with scaling and centering
+    ctx.drawImage(toolCanvas, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
   }, [args, brushScale]);
 
   return (
@@ -240,11 +243,11 @@ const Shape: React.FC<{}> = () => {
       </div>
 
       <div
-        className={`flex h-12 w-12 items-center justify-center rounded border border-gray-300 dark:border-gray-600 flex-shrink-0 ${
+        className={`flex h-12 w-24 items-center justify-center flex-shrink-0 ${
           isLightColor(color) ? 'chessboard-dark' : 'chessboard-light'
         }`}
       >
-        <canvas ref={previewRef} width={PREVIEW_SIZE} height={PREVIEW_SIZE} />
+        <canvas ref={previewRef} width={PREVIEW_WIDTH} height={PREVIEW_HEIGHT} />
       </div>
     </div>
   );

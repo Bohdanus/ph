@@ -3,6 +3,7 @@ import UndoButton from '../../Common/UndoButton.tsx';
 import { type ColorsToolArgs } from '../../../tools/colors.ts';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
+import { SECONDARY_BUTTON } from '../buttonStyles.ts';
 
 const Color: React.FC<{}> = () => {
   const { tempUpdateLayer, mergeAllLayers } = useLayers();
@@ -107,7 +108,7 @@ const Color: React.FC<{}> = () => {
         <UndoButton />
         <button
           onClick={mergeAllLayers}
-          className="rounded-md bg-gray-100 px-3 py-1 text-xs text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+          className={SECONDARY_BUTTON}
         >
           Merge all
         </button>

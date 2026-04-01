@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { ImageSaveResponse } from '../../contexts/useFile.tsx';
+import { PRIMARY_BUTTON, DIALOG_SECONDARY_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 
 interface SaveDialogProps {
   proposedName: string;
@@ -65,14 +66,14 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
           </div>
           <div className="flex items-center justify-end rounded-b border-t border-solid border-gray-200 p-4 dark:border-gray-700">
             <button
-              className="mr-2 rounded px-4 py-2 font-bold text-gray-600 hover:bg-gray-100 focus:outline-none dark:text-gray-400 dark:hover:bg-gray-700"
+              className={DIALOG_SECONDARY_BUTTON}
               type="button"
               onClick={onClose}
             >
               Cancel
             </button>
             <button
-              className="rounded bg-blue-600 px-4 py-2 font-bold text-white hover:bg-blue-700 focus:outline-none"
+              className={PRIMARY_BUTTON}
               type="button"
               onClick={handleSave}
             >

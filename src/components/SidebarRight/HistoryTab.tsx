@@ -4,6 +4,7 @@ import { useHistory } from '../../contexts/useHistory.ts';
 import { useState, useRef } from 'react';
 import PreviewTooltip from '../PreviewTooltip/BmpPreviewTooltip.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
+import { ICON_TOGGLE_BUTTON_VISIBLE, ICON_TOGGLE_BUTTON_HIDDEN } from '../ToolbarsRight/buttonStyles.ts';
 
 export default function HistoryTab() {
   const [{ history, historyIndex }] = useStore();
@@ -66,9 +67,8 @@ export default function HistoryTab() {
                   className={[
                     'h-6 w-6 grid place-items-center rounded border',
                     !item.disabled
-                      ? 'border-gray-300 text-gray-700 bg-white dark:bg-gray-800 dark:border-gray-600 dark:text-gray-200'
-                      : 'border-gray-300 text-gray-400 bg-white dark:bg-gray-800 dark:border-gray-600 dark:text-gray-500',
-                    'hover:border-gray-400 dark:hover:border-gray-500',
+                      ? ICON_TOGGLE_BUTTON_VISIBLE
+                      : ICON_TOGGLE_BUTTON_HIDDEN,
                   ].join(' ')}
                   title={!item.disabled ? 'Disable history item' : 'Enable history item'}
                 >
