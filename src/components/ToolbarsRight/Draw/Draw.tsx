@@ -7,7 +7,8 @@ import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import type { Point } from '../../../contexts/general-types.ts';
 
-const PREVIEW_SIZE = 46;
+const PREVIEW_WIDTH = 96;
+const PREVIEW_HEIGHT = 48;
 
 const Draw: React.FC<{}> = () => {
   const [{ color, containerRef, totalSize }] = useStore();
@@ -68,40 +69,36 @@ const Draw: React.FC<{}> = () => {
   const { alpha, lineWidth: brushSize, penType, lineDash } = args;
 
   useEffect(() => {
-    if (previewRef.current && brushScale) {
-      const canvas = previewRef.current;
-      const ctx = canvas.getContext('2d')!;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'low'; // For better performance and sharpness
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!previewRef.current || !brushScale) return;
 
-      const size = { width: PREVIEW_SIZE / brushScale, height: PREVIEW_SIZE / brushScale };
+    const canvas = previewRef.current;
+    const ctx = canvas.getContext('2d')!;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'low'; // For better performance and sharpness
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      const arcPoints: Point[] = [];
-      const radius = size.width / 3;
-      const centerX = size.width / 2.3;
-      const centerY = size.height / 2.3;
+    const scaledWidth = PREVIEW_WIDTH / brushScale;
+    const scaledHeight = PREVIEW_HEIGHT / brushScale;
 
-      // Generate points for a quarter-circle arc from 0 to 90 degrees
-      for (let angle = -1 / 2; angle <= Math.PI / 2 + 1; angle += Math.PI / 24) {
-        const x = centerX + Math.cos(angle) * radius + 1;
-        const y = centerY + Math.sin(angle) * radius;
-        arcPoints.push({ x, y });
-      }
+    const arcPoints: Point[] = [];
+    const radius = PREVIEW_HEIGHT / 2.2 / brushScale; // Adjust radius based on brush scale
+    const centerX = PREVIEW_WIDTH / 2.1 / brushScale;
+    const centerY = PREVIEW_HEIGHT / 2.4 / brushScale;
 
-      const previewArgs = { ...args, color, points: arcPoints };
-
-      // Draw the toolCanvas into previewCanvas with scaling and centering
-      const [toolCanvas] = draw({ size })(previewArgs);
-
-      const scaledWidth = toolCanvas.width * brushScale;
-      const scaledHeight = toolCanvas.height * brushScale;
-
-      const offsetX = (canvas.width - scaledWidth) / 2;
-      const offsetY = (canvas.height - scaledHeight) / 2;
-
-      ctx.drawImage(toolCanvas, 0, 0, toolCanvas.width, toolCanvas.height, offsetX, offsetY, scaledWidth, scaledHeight);
+    // Generate points for an arc from 0 to 90 degrees
+    for (let angle = -1 / 2; angle <= Math.PI / 2 + 1.2; angle += Math.PI / 2) {
+      const x = centerX + 2 * Math.cos(angle) * radius;
+      const y = centerY + Math.sin(angle) * radius;
+      arcPoints.push({ x, y });
     }
+
+    const previewArgs = { ...args, color, points: arcPoints };
+
+    // Draw the toolCanvas into previewCanvas with scaling and centering
+    const [toolCanvas] = draw({ size: { width: scaledWidth, height: scaledHeight } })(previewArgs);
+
+    // Draw the toolCanvas into previewCanvas with scaling and centering
+    ctx.drawImage(toolCanvas, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
   }, [args, brushScale]);
 
   return (
@@ -205,11 +202,11 @@ const Draw: React.FC<{}> = () => {
       </div>
 
       <div
-        className={`flex h-12 w-12 items-center justify-center rounded border border-gray-300 dark:border-gray-600 flex-shrink-0 ${
+        className={`flex h-12 w-24 items-center justify-center flex-shrink-0 ${
           isLightColor(color) ? 'chessboard-dark' : 'chessboard-light'
         }`}
       >
-        <canvas ref={previewRef} width={PREVIEW_SIZE} height={PREVIEW_SIZE} />
+        <canvas ref={previewRef} width={PREVIEW_WIDTH} height={PREVIEW_HEIGHT} />
       </div>
     </div>
   );

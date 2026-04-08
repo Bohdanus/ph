@@ -6,7 +6,6 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import type { Point } from '../../contexts/general-types.ts';
 import type { FullArgs } from '../../contexts/tool-types.ts';
-import { useApp } from '../../hooks/useApp.ts';
 
 type ShapeHandlerProps = {
   className?: string;
@@ -16,7 +15,6 @@ type ShapeHandlerProps = {
 export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) => {
   const [{ containerRef, toolOverlayRef, totalSize }] = useStore();
   const { createLayerFromTool } = useLayers();
-  const { clearOverlay } = useApp();
   const { toolArgs } = useCurrentTool();
 
   const args = toolArgs as ShapeToolArgs;
@@ -126,7 +124,6 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
       pos: pos,
     };
     createLayerFromTool(fullArgs);
-    clearOverlay();
   };
 
   return (

@@ -73,17 +73,16 @@ const SidebarLeft = () => {
     dispatch({ type: 'SET_BACKGROUND_COLOR', payload: color });
   };
 
+  if (!hasImage) return;
+
   return (
     <aside className="bg-gray-100 dark:bg-gray-800 dark:border-r dark:border-gray-700 max-md:hidden [grid-area:left]">
       <div className="p-3">
-        <h5 className="mb-3 text-lg font-bold dark:text-gray-200">Toolbox</h5>
         <ul className="flex flex-col list-none p-0">
           <li className="mb-1">
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'reposition'
-                  ? TOOLBAR_MENU_BUTTON_ACTIVE
-                  : TOOLBAR_MENU_BUTTON_INACTIVE
+                toolName === 'reposition' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleMove}
@@ -94,9 +93,7 @@ const SidebarLeft = () => {
           <li className="mb-1">
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'color'
-                  ? TOOLBAR_MENU_BUTTON_ACTIVE
-                  : TOOLBAR_MENU_BUTTON_INACTIVE
+                toolName === 'color' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleColors}
@@ -107,9 +104,7 @@ const SidebarLeft = () => {
           <li className="mb-1">
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'blur'
-                  ? TOOLBAR_MENU_BUTTON_ACTIVE
-                  : TOOLBAR_MENU_BUTTON_INACTIVE
+                toolName === 'blur' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleBlur}
@@ -120,9 +115,7 @@ const SidebarLeft = () => {
           <li className="mb-1">
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'levels'
-                  ? TOOLBAR_MENU_BUTTON_ACTIVE
-                  : TOOLBAR_MENU_BUTTON_INACTIVE
+                toolName === 'levels' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleLevels}
@@ -133,9 +126,7 @@ const SidebarLeft = () => {
           <li className="mb-1">
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'transform'
-                  ? TOOLBAR_MENU_BUTTON_ACTIVE
-                  : TOOLBAR_MENU_BUTTON_INACTIVE
+                toolName === 'transform' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleTransform}
@@ -146,9 +137,7 @@ const SidebarLeft = () => {
           <li className="mb-1">
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'crop'
-                  ? TOOLBAR_MENU_BUTTON_ACTIVE
-                  : TOOLBAR_MENU_BUTTON_INACTIVE
+                toolName === 'crop' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleCrop}
@@ -159,9 +148,7 @@ const SidebarLeft = () => {
           <li className="mb-1">
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'draw'
-                  ? TOOLBAR_MENU_BUTTON_ACTIVE
-                  : TOOLBAR_MENU_BUTTON_INACTIVE
+                toolName === 'draw' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleDraw}
@@ -172,9 +159,7 @@ const SidebarLeft = () => {
           <li className="mb-1">
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'shape'
-                  ? TOOLBAR_MENU_BUTTON_ACTIVE
-                  : TOOLBAR_MENU_BUTTON_INACTIVE
+                toolName === 'shape' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleShapes}
@@ -185,9 +170,7 @@ const SidebarLeft = () => {
           <li className="mb-1">
             <button
               className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'text'
-                  ? TOOLBAR_MENU_BUTTON_ACTIVE
-                  : TOOLBAR_MENU_BUTTON_INACTIVE
+                toolName === 'text' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
               } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
               disabled={!hasImage}
               onClick={handleText}
@@ -196,7 +179,6 @@ const SidebarLeft = () => {
             </button>
           </li>
         </ul>
-
         <hr className="my-3 border-gray-300 dark:border-gray-700" />
 
         <div className="flex flex-col items-center mt-4">

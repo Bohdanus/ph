@@ -36,6 +36,11 @@ export const useLayers = () => {
   ] = useStore();
   const { addHistoryEntry } = useHistory();
 
+  function clearOverlay() {
+    const overlayCtx = toolOverlayRef.current?.getContext('2d')!;
+    overlayCtx.clearRect(0, 0, totalSize.width, totalSize.height);
+  }
+
   const _addLayer = (layer: Layer, historyEntry: HistoryEntry) => {
     const newLayers = { ...layers, [layer.id]: layer } as LayersRecord;
     dispatch({ type: 'ADD_LAYER', payload: { layers: newLayers, activeLayerId: layer.id } });
@@ -44,7 +49,7 @@ export const useLayers = () => {
   };
 
   const createBlankLayer = (params: BlankImageParams) => {
-    commitDirtyLayer();
+    commitDirtyTool();
 
     const source: BlankLayerSource = { kind: 'blank', ...params };
     const newLayer = createLayerSource({ layers, source });
@@ -57,7 +62,7 @@ export const useLayers = () => {
   };
 
   const createLayerFromBitmap = (params: FileImageParams) => {
-    commitDirtyLayer();
+    commitDirtyTool();
 
     const source: ImageLayerSource = {
       kind: 'image',
@@ -73,7 +78,8 @@ export const useLayers = () => {
   };
 
   const createLayerFromTool = (sourceArgs: Optional<FullArgs, 'pos'>) => {
-    commitDirtyLayer();
+    // commented out because causes infinite recursion
+    // commitDirtyTool();
 
     const { args, pos, toolName } = sourceArgs;
     let source: ToolLayerSource;
@@ -97,13 +103,15 @@ export const useLayers = () => {
       toolName,
       args: source,
     });
+
+    clearOverlay();
   };
 
   const updateLayerByTool = ({ id = activeLayerId, toolName, toolArgs }: LayerEditParams) => {
     // should mark layer dirty
     tempUpdateLayer({ id, toolName, toolArgs });
     // should pick that dirty later and do all hardening
-    commitDirtyLayer();
+    commitDirtyTool();
 
     addHistoryEntry({
       layerId: id!,
@@ -112,28 +120,26 @@ export const useLayers = () => {
     });
   };
 
-  const commitDirtyLayer = () => {
+  // honestly, the only dirty tool that needs saving is text and maybe crop
+  const commitDirtyTool = () => {
     // can be run safely if no dirty layer
 
     // special case
-    if (toolName === 'text') {
+    if (toolName === 'text' /* || toolName === 'crop'*/) {
       const args = currentArgs.current!;
       if (!args.text || !args.rect) return;
 
       createLayerFromTool({
-        toolName: 'text',
+        toolName,
         args,
       });
       return;
     }
 
-    // Scan all layers for tool layers with dirty flag, and update them.
+    // Find dirty layer and save it
     for (const layer of Object.values(layers)) {
       if (layer.tmpCanvas) {
         saveLayerCanvas(layer);
-        dispatch({ type: 'UPDATE_LAYERS', payload: { ...layers } });
-        drawAllLayers();
-
         break;
       }
     }
@@ -261,7 +267,7 @@ export const useLayers = () => {
   }
 
   async function mergeAllLayers() {
-    commitDirtyLayer();
+    commitDirtyTool();
 
     // getBitmap of the canvas
     const canvasBitmap = await createImageBitmap(canvasRef.current!);
@@ -296,7 +302,7 @@ export const useLayers = () => {
 
     tempUpdateLayer,
     updateLayerByTool,
-    commitDirtyLayer,
+    commitDirtyTool,
 
     removeLayer,
 

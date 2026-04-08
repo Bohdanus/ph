@@ -105,6 +105,7 @@ export const useHistory = () => {
   }
 
   function resetHistoryTo(targetIndex: number, _history: HistoryItem[] = history) {
+    // async commitDirtyTool(); todo
     let newLayers: LayersRecord = {};
     let totalSize: Size | null = null;
 
@@ -179,6 +180,7 @@ export const useHistory = () => {
   }
 
   function toggleDisabled(historyId: string) {
+    // todo commit dirty tool
     const itemIndex = history.findIndex((item) => item.id === historyId);
     if (itemIndex === -1) return;
 

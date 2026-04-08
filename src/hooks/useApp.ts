@@ -3,7 +3,6 @@ import { useStore } from '../contexts/StoreContext.tsx';
 import type { BlankImageParams, NewBedrockSize, ToolName } from '../contexts/tool-types.ts';
 import { useLayers } from '../contexts/useLayer.ts';
 import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/useFile.tsx';
-import { useCurrentTool } from '../contexts/useCurrentTool.tsx';
 
 export interface UseAppType {
   setBlankImage: (data: BlankImageParams) => void;
@@ -11,7 +10,6 @@ export interface UseAppType {
 
   handleImageSave: (data: ImageSaveResponse) => void;
 
-  clearOverlay: () => void;
   goToTool: (toolName: ToolName) => void;
 }
 
@@ -22,10 +20,8 @@ export interface UseAppType {
 
  */
 export const useApp = (): UseAppType => {
-  const [{ canvasRef, toolOverlayRef, totalSize }, dispatch] = useStore();
-  // TODO this is a performance bottleneck?????
-  const { resetToLastSavedArgs } = useCurrentTool();
-  const { createBlankLayer, createLayerFromBitmap, commitDirtyLayer } = useLayers();
+  const [{ canvasRef }, dispatch] = useStore();
+  const { createBlankLayer, createLayerFromBitmap, commitDirtyTool } = useLayers();
 
   function handleImageCreate(size: Size) {
     dispatch({
@@ -67,19 +63,11 @@ export const useApp = (): UseAppType => {
     createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true });
   }
 
-  function clearOverlay() {
-    const overlayCtx = toolOverlayRef.current?.getContext('2d')!;
-    overlayCtx.clearRect(0, 0, totalSize.width, totalSize.height);
-  }
-
   function goToTool(toolName: ToolName) {
     // commit any dirty tool changes before switching
-    commitDirtyLayer();
-    clearOverlay();
+    commitDirtyTool();
 
     dispatch({ type: 'SET_TOOL_NAME', payload: toolName });
-
-    resetToLastSavedArgs(toolName);
   }
 
   return {
@@ -87,7 +75,6 @@ export const useApp = (): UseAppType => {
     setImageFromUpload,
     handleImageSave,
 
-    clearOverlay,
     goToTool,
   };
 };

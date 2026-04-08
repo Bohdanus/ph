@@ -5,13 +5,11 @@ import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import FontSelect from './FontSelect.tsx';
-import { useApp } from '../../../hooks/useApp.ts';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON, TOGGLE_BUTTON_ACTIVE, TOGGLE_BUTTON_INACTIVE } from '../buttonStyles.ts';
 
 const Text: React.FC<{}> = () => {
   const [{ canvasRef, color, textareaRef, totalSize }] = useStore();
   const { createLayerFromTool } = useLayers();
-  const { clearOverlay } = useApp();
   const { toolArgs, setToolArgs: onChange } = useCurrentTool();
 
   const args = toolArgs as TextToolArgs;
@@ -69,7 +67,6 @@ const Text: React.FC<{}> = () => {
   const applyText = () => {
     if (text && rect) {
       createLayerFromTool({ toolName: 'text', args });
-      clearOverlay();
     }
   };
 
@@ -192,18 +189,10 @@ const Text: React.FC<{}> = () => {
       </div>
 
       <div className="flex gap-2 ml-2">
-        <button
-          className={PRIMARY_BUTTON}
-          disabled={!text || !rect}
-          onClick={applyText}
-        >
+        <button className={PRIMARY_BUTTON} disabled={!text || !rect} onClick={applyText}>
           Apply
         </button>
-        <button
-          className={SECONDARY_BUTTON}
-          disabled={!text || !rect}
-          onClick={clear}
-        >
+        <button className={SECONDARY_BUTTON} disabled={!text || !rect} onClick={clear}>
           Clear
         </button>
       </div>

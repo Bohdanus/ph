@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useRef, useReducer } from 'react';
+import React, { createContext, useContext, useRef, useReducer, type Dispatch } from 'react';
 import { DEFAULT_TOOL } from '../util/constants.ts';
 
 import type { ReactNode, RefObject } from 'react';
@@ -7,7 +7,7 @@ import type { Size } from './general-types.ts';
 import type { ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 
-export type StoreType = {
+export type StoreData = {
   // refs
   canvasRef: RefObject<HTMLCanvasElement | null>;
   toolOverlayRef: RefObject<HTMLCanvasElement | null>;
@@ -26,6 +26,7 @@ export type StoreType = {
 
   // tool state (that changes not so frequently)
   toolName: ToolName;
+  isToolDirty: boolean;
 
   // layers
   layers: LayersRecord;
@@ -45,7 +46,9 @@ export type StoreType = {
   // setZoomData: (d: ZoomData) => void;
 };
 
-const StoreContext = createContext<[StoreType, any] | undefined>(undefined);
+type StoreDispatch = Dispatch<Action>;
+
+const StoreContext = createContext<[StoreData, StoreDispatch] | undefined>(undefined);
 
 type Action =
   | { type: 'SET_HAS_IMAGE'; payload: boolean }
@@ -54,11 +57,12 @@ type Action =
   | { type: 'SET_ORIGINAL_IMAGE'; payload: boolean }
   | { type: 'SET_SIZE'; payload: Size }
   | { type: 'SET_TOOL_NAME'; payload: ToolName }
+  | { type: 'SET_TOOL_DIRTY'; payload: boolean }
   | { type: 'SET_LAYERS'; payload: LayersRecord }
   | { type: 'SET_ACTIVE_LAYER'; payload: LayerId | null }
   | { type: 'ADD_LAYER'; payload: { layers: LayersRecord; activeLayerId: LayerId } }
   | { type: 'UPDATE_LAYERS'; payload: LayersRecord }
-  | { type: 'BATCH_UPDATES'; payload: Partial<StoreType> }
+  | { type: 'BATCH_UPDATES'; payload: Partial<StoreData> }
   | { type: 'ADD_HISTORY_ITEM'; payload: HistoryItem }
   | { type: 'REPLACE_HISTORY'; payload: HistoryItem[] }
   | { type: 'UNDO' }
@@ -67,7 +71,7 @@ type Action =
   | { type: 'SET_COLOR'; payload: string }
   | { type: 'SET_BACKGROUND_COLOR'; payload: string };
 
-const initialState: StoreType = {
+const initialState: StoreData = {
   canvasRef: { current: null },
   toolOverlayRef: { current: null },
   rectOverlayRef: { current: null },
@@ -82,7 +86,7 @@ const initialState: StoreType = {
   fileName: '',
   totalSize: { width: 0, height: 0 },
 
-  toolName: (DEFAULT_TOOL as ToolName) ?? 'draw',
+  toolName: (DEFAULT_TOOL as ToolName) ?? 'reposition',
 
   layers: {} as LayersRecord,
   deletedLayers: {} as LayersRecord,
@@ -93,9 +97,11 @@ const initialState: StoreType = {
 
   color: '#000000',
   backgroundColor: '#ffffff',
+
+  isToolDirty: false,
 };
 
-function reducer(state: StoreType, action: Action): StoreType {
+function reducer(state: StoreData, action: Action): StoreData {
   switch (action.type) {
     case 'SET_HAS_IMAGE':
       return { ...state, hasImage: action.payload };
@@ -104,12 +110,23 @@ function reducer(state: StoreType, action: Action): StoreType {
     case 'SET_FILE_NAME':
       return { ...state, fileName: action.payload };
     case 'SET_SIZE':
+      if (state.totalSize.width === action.payload.width && state.totalSize.height === action.payload.height) {
+        return state;
+      }
       return { ...state, totalSize: action.payload };
     case 'SET_TOOL_NAME':
-      return { ...state, toolName: action.payload };
+      return { ...state, isToolDirty: false, toolName: action.payload };
+    case 'SET_TOOL_DIRTY':
+      if (state.isToolDirty === action.payload) {
+        return state;
+      }
+      return { ...state, isToolDirty: action.payload };
     case 'SET_LAYERS':
       return { ...state, layers: action.payload };
     case 'SET_ACTIVE_LAYER':
+      if (state.activeLayerId === action.payload) {
+        return state;
+      }
       return { ...state, activeLayerId: action.payload };
     case 'ADD_LAYER':
       return {
@@ -211,7 +228,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   return <StoreContext.Provider value={[store, dispatch]}>{children}</StoreContext.Provider>;
 }
 
-export const useStore = (): [StoreType, any] => {
+export const useStore = (): [StoreData, StoreDispatch] => {
   const ctx = useContext(StoreContext);
   if (!ctx) throw new Error('useStore must be used within StoreProvider');
   return ctx;

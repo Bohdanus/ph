@@ -1,10 +1,10 @@
-// src/components/SidebarRight/HistoryTab.tsx
+import { useState, useRef } from 'react';
+
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useHistory } from '../../contexts/useHistory.ts';
-import { useState, useRef } from 'react';
+import { ICON_TOGGLE_BUTTON_VISIBLE, ICON_TOGGLE_BUTTON_HIDDEN } from '../ToolbarsRight/buttonStyles.ts';
 import PreviewTooltip from '../PreviewTooltip/BmpPreviewTooltip.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
-import { ICON_TOGGLE_BUTTON_VISIBLE, ICON_TOGGLE_BUTTON_HIDDEN } from '../ToolbarsRight/buttonStyles.ts';
 
 export default function HistoryTab() {
   const [{ history, historyIndex }] = useStore();
@@ -12,9 +12,6 @@ export default function HistoryTab() {
 
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
   const listItemRefs = useRef<Record<number, HTMLLIElement | null>>({});
-  //
-  // // TODO: Add the preview capability similar to the layers list. Currently there is no data to display in the preview, so leave todo instead
-  // const bitmapPromise = Promise.resolve(null as any);
 
   const sortedHistory = [...history].reverse();
 
@@ -66,9 +63,7 @@ export default function HistoryTab() {
                   }}
                   className={[
                     'h-6 w-6 grid place-items-center rounded border',
-                    !item.disabled
-                      ? ICON_TOGGLE_BUTTON_VISIBLE
-                      : ICON_TOGGLE_BUTTON_HIDDEN,
+                    !item.disabled ? ICON_TOGGLE_BUTTON_VISIBLE : ICON_TOGGLE_BUTTON_HIDDEN,
                   ].join(' ')}
                   title={!item.disabled ? 'Disable history item' : 'Enable history item'}
                 >

@@ -7,7 +7,6 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { drawLine, pointsBoundingPos } from '../../util/draw.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import type { FullArgs } from '../../contexts/tool-types.ts';
-import { useApp } from '../../hooks/useApp.ts';
 
 type DrawHandlerProps = {
   className?: string;
@@ -17,7 +16,6 @@ type DrawHandlerProps = {
 export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => {
   const [{ containerRef, totalSize }] = useStore();
   const { createLayerFromTool } = useLayers();
-  const { clearOverlay } = useApp();
   const { toolArgs } = useCurrentTool();
 
   const args = toolArgs as DrawToolArgs;
@@ -93,7 +91,6 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
       pos,
     };
     createLayerFromTool(fullArgs);
-    clearOverlay();
   };
 
   return (
