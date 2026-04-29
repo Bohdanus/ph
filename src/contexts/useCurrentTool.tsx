@@ -23,13 +23,17 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
     currentArgs.current = toolArgs;
   }, [toolArgs]);
 
+  useEffect(() => {
+    resetToLastSavedArgs();
+  }, [toolName]);
+
   function resetToLastSavedArgs(_toolName = toolName) {
     setToolArgs(cloneDeep(lastSavedSettings[_toolName]));
   }
 
   const _setToolArgs = (args: ToolArgs) => {
     saveSettings(toolName, args);
-    setToolArgs(args);
+    setToolArgs({ ...args, toolName });
   };
 
   const value = {

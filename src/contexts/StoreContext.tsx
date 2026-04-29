@@ -4,7 +4,7 @@ import { DEFAULT_TOOL } from '../util/constants.ts';
 import type { ReactNode, RefObject } from 'react';
 import type { LayerId, LayersRecord } from './layer-types.ts';
 import type { Size } from './general-types.ts';
-import type { ToolName } from './tool-types.ts';
+import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 
 export type StoreData = {
@@ -16,7 +16,7 @@ export type StoreData = {
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   canvasCtxRef: React.RefObject<CanvasRenderingContext2D | null | undefined>;
 
-  currentArgs: React.RefObject<Record<string, any>>;
+  currentArgs: React.RefObject<ToolArgs>;
 
   // file / image state
   hasImage: boolean;

@@ -26,6 +26,7 @@ export function useRect({
   aspectRatio = null,
   imageSize,
   initialRect,
+
   hideBlend,
   isMoveTool,
 

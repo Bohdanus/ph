@@ -1,12 +1,14 @@
-import type { ToolArgs, ToolName } from './tool-types.ts';
+import type { ToolArgs } from './tool-types.ts';
 import type { LayerId, LayerSource } from './layer-types.ts';
-import type { CustomTool } from '../util/constants.ts';
+import type { ActionType } from '../util/constants.ts';
 
 export type HistoryItem = {
   id: string;
-  disabled?: boolean;
+  actionName: ActionType;
+
   layerId: LayerId;
-  toolName: ToolName | CustomTool;
   args: ToolArgs | LayerSource | object;
+
+  disabled?: boolean;
   imagePromise: Promise<ImageBitmap | null>;
 };

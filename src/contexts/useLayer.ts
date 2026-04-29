@@ -8,13 +8,13 @@ import type {
   ToolLayerSource,
 } from './layer-types.ts';
 import { createLayerSource, getSortedLayersArray, reorderLayers, saveLayerCanvas } from './layer-utils.ts';
-import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs, ToolName } from './tool-types.ts';
+import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs } from './tool-types.ts';
 import { type CreatorToolParams, type ProcessorToolParams, toolsMap } from '../tools/toolsMap.ts';
 import { type HistoryEntry, useHistory } from './useHistory.ts';
 import { reduceRect, sortedRectToPos } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
 import {
-  type CustomTool,
+  type ActionType,
   HIDE_LAYER_ACTION,
   MERGE_ACTION,
   REMOVE_ACTION,
@@ -22,10 +22,10 @@ import {
   SHOW_LAYER_ACTION,
   UPDATE_LAYER_ACTION,
 } from '../util/constants.ts';
+import type { TextToolArgs } from '../tools/text.ts';
 
 export type LayerEditParams = {
   id?: LayerId | null;
-  toolName: ToolName;
   toolArgs: ToolArgs;
 };
 
@@ -81,7 +81,7 @@ export const useLayers = () => {
     // commented out because causes infinite recursion
     // commitDirtyTool();
 
-    const { args, pos, toolName } = sourceArgs;
+    const { args, pos } = sourceArgs;
     let source: ToolLayerSource;
 
     if (!pos) {
@@ -107,9 +107,9 @@ export const useLayers = () => {
     clearOverlay();
   };
 
-  const updateLayerByTool = ({ id = activeLayerId, toolName, toolArgs }: LayerEditParams) => {
+  const updateLayerByTool = ({ id = activeLayerId, toolArgs }: LayerEditParams) => {
     // should mark layer dirty
-    tempUpdateLayer({ id, toolName, toolArgs });
+    tempUpdateLayer({ id, toolArgs });
     // should pick that dirty later and do all hardening
     commitDirtyTool();
 
@@ -126,11 +126,10 @@ export const useLayers = () => {
 
     // special case
     if (toolName === 'text' /* || toolName === 'crop'*/) {
-      const args = currentArgs.current!;
+      const args = currentArgs.current as TextToolArgs & ToolArgs;
       if (!args.text || !args.rect) return;
 
       createLayerFromTool({
-        toolName,
         args,
       });
       return;
@@ -179,7 +178,7 @@ export const useLayers = () => {
     ctx.clearRect(0, 0, totalSize.width, totalSize.height);
   };
 
-  const updateLayer = (id: LayerId, patch: Partial<Layer>, action?: CustomTool) => {
+  const updateLayer = (id: LayerId, patch: Partial<Layer>, action?: ActionType) => {
     const layer = layers[id];
     if (!layer) return;
     const newLayers = { ...layers, [id]: { ...layer, ...patch } } as LayersRecord;
@@ -214,11 +213,14 @@ export const useLayers = () => {
   };
 
   // THE MAIN POINT IS THAT THIS method does not leave any trace in history and REACT lifecycle
-  function tempUpdateLayer({ id = activeLayerId, toolName, toolArgs }: LayerEditParams) {
+  function tempUpdateLayer({ id = activeLayerId, toolArgs }: LayerEditParams) {
     if (!id) return;
 
     const layer = layers[id];
-    const bitmap = layer?.bitmap;
+    if (!layer) return;
+
+    const { toolName } = toolArgs;
+    const bitmap = layer.bitmap;
     if (!bitmap && !toolsMap[toolName].creator) {
       console.error('No active layer or bitmap to update preview');
       return;

@@ -13,7 +13,7 @@ import type { BitmapSource, Pos, Size } from './general-types.ts';
 
 export type ToolName = keyof typeof toolsMap;
 
-export type ToolArgs =
+export type ToolArgs = (
   | RepositionToolArgs
   | BlurToolArgs
   | ColorsToolArgs
@@ -22,10 +22,10 @@ export type ToolArgs =
   | LevelsToolArgs
   | TextToolArgs
   | TransformToolArgs
-  | ShapeToolArgs;
+  | ShapeToolArgs
+) & { toolName: ToolName };
 
 export type FullArgs = {
-  toolName: string;
   args: ToolArgs;
   canvas?: HTMLCanvasElement;
   pos: Pos; // honestly, this should be copied from args :/

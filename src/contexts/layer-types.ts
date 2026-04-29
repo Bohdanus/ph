@@ -1,5 +1,5 @@
 import type { BitmapSource, Pos } from './general-types.ts';
-import type { NewLayerData, ToolArgs, ToolName } from './tool-types.ts';
+import type { NewLayerData, ToolArgs } from './tool-types.ts';
 
 export type LayerId = string;
 
@@ -19,7 +19,6 @@ export type ImageLayerSource = {
 
 export type ToolLayerSource = {
   kind: 'tool';
-  toolName: ToolName;
   args: ToolArgs;
 } & NewLayerData;
 

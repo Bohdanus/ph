@@ -3,10 +3,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { useStore } from './StoreContext.tsx';
 import type { LayerId, LayerSource, LayersRecord } from './layer-types.ts';
 import type { HistoryItem } from './history-types.ts';
-import type { NewBedrockSize, ToolArgs, ToolName } from './tool-types.ts';
+import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { toolsMap } from '../tools/toolsMap.ts';
 import { createLayerSource, getSortedLayersArray, reorderLayers, saveLayerCanvas } from './layer-utils.ts';
 import {
+  type ActionType,
   HIDE_LAYER_ACTION,
   MAX_HISTORY_IMAGE_COUNT,
   MERGE_ACTION,
@@ -16,12 +17,13 @@ import {
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
   SHOW_LAYER_ACTION,
+  TOOL_ACTION,
 } from '../util/constants.ts';
 import type { Size } from './general-types.ts';
 
 export type HistoryEntry = {
   layerId: LayerId;
-  toolName: ToolName;
+  actionName: ActionType;
   args: ToolArgs | LayerSource | object;
 };
 
@@ -32,9 +34,9 @@ export const useHistory = () => {
     dispatch({ type: 'SET_HISTORY_INDEX', payload: index });
   };
 
-  const addHistoryEntry = ({ layerId, toolName, args }: HistoryEntry) => {
+  const addHistoryEntry = ({ layerId, actionName, args }: HistoryEntry) => {
     const historyItemId = uuidv4();
-    const imagePromise = NO_BMP_UPDATE_ACTIONS.includes(toolName)
+    const imagePromise = NO_BMP_UPDATE_ACTIONS.includes(actionName)
       ? history[historyIndex - 1].imagePromise
       : new Promise<ImageBitmap>((resolve) => {
           setTimeout(() => {
@@ -42,7 +44,7 @@ export const useHistory = () => {
           });
         });
 
-    const newHistoryItem: HistoryItem = { id: historyItemId, layerId, toolName, args, imagePromise };
+    const newHistoryItem: HistoryItem = { id: historyItemId, actionName, args, layerId, imagePromise };
 
     if (historyIndex < history.length - 1) {
       const trimmedHistory = history.slice(0, historyIndex + 1);
@@ -107,53 +109,50 @@ export const useHistory = () => {
   function resetHistoryTo(targetIndex: number, _history: HistoryItem[] = history) {
     // async commitDirtyTool(); todo
     let newLayers: LayersRecord = {};
-    let totalSize: Size | null = null;
+    let totalSize: Size | undefined = undefined;
 
     for (let i = 0; i <= targetIndex; i++) {
-      const { disabled, layerId, toolName, args } = _history[i];
+      const { disabled, layerId, actionName, args } = _history[i];
       if ((args as LayerSource).isBedrock) {
         totalSize = (args as NewBedrockSize).size;
       }
       if (disabled) continue;
 
-      if (toolName === NEW_LAYER_ACTION) {
+      if (actionName === NEW_LAYER_ACTION) {
         const source = args as LayerSource;
         const newLayer = createLayerSource({ layerId, layers: newLayers, source });
         newLayers[newLayer.id] = newLayer;
-      } else if (toolName === SHOW_LAYER_ACTION) {
+      } else if (actionName === SHOW_LAYER_ACTION) {
         newLayers[layerId].visible = true;
-      } else if (toolName === HIDE_LAYER_ACTION) {
+      } else if (actionName === HIDE_LAYER_ACTION) {
         newLayers[layerId].visible = false;
-      } else if (toolName === RENAME_LAYER_ACTION) {
+      } else if (actionName === RENAME_LAYER_ACTION) {
         newLayers[layerId].name = (args as any).name;
-      } else if (toolName === REORDER_ACTION) {
+      } else if (actionName === REORDER_ACTION) {
         const { layerToMoveId, afterWhichLayerId } = args as any;
         reorderLayers({ layers: newLayers, layerToMoveId, afterWhichLayerId });
-      } else if (toolName === MERGE_ACTION) {
+      } else if (actionName === MERGE_ACTION) {
         const mergedLayer = createLayerSource({ layerId, layers: newLayers, source: args as LayerSource });
         newLayers = {};
         newLayers[layerId] = mergedLayer;
-      } else if (toolName === REMOVE_ACTION) {
+      } else if (actionName === REMOVE_ACTION) {
         delete newLayers[layerId];
-      } else if (toolsMap[toolName].creator) {
-        // Creation tools
-        const newLayer = createLayerSource({ layerId, layers: newLayers, source: args as LayerSource });
-        newLayers[newLayer.id] = newLayer;
-      } else if (newLayers[layerId]) {
-        // layer can be mentioned in history, but disabled history item causes disruption
-        // Processing tools
-        const layer = newLayers[layerId];
-        const bitmap = layer.tmpCanvas!;
+      } else if (actionName === TOOL_ACTION) {
+        // if a previous history entry has been disabled than the layer could have not be created at the first place
+        if (newLayers[layerId]) {
+          const layer = newLayers[layerId];
+          const bitmap = layer.tmpCanvas!;
 
-        const [canvas, patch] = toolsMap[toolName].imageProcessor({
-          bitmap,
-          size: layer.pos,
-        })(args as ToolArgs);
+          const [canvas, patch] = toolsMap[(args as ToolArgs).toolName].imageProcessor({
+            bitmap,
+            size: layer.pos,
+          })(args as ToolArgs);
 
-        if (patch) {
-          layer.pos = { ...layer.pos, ...patch };
+          if (patch) {
+            layer.pos = { ...layer.pos, ...patch };
+          }
+          layer.tmpCanvas = canvas;
         }
-        layer.tmpCanvas = canvas;
       }
     }
 
