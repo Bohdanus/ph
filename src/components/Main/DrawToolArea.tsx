@@ -86,7 +86,6 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     args.points = newPoints;
 
     const fullArgs: FullArgs = {
-      toolName: 'draw',
       args,
       pos,
     };

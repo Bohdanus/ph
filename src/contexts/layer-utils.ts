@@ -122,7 +122,7 @@ function getNameFromSource(source: LayerSource) {
     case 'blank':
       return 'Blank';
     case 'tool':
-      return source.toolName;
+      return source.args.toolName;
   }
 }
 
@@ -179,7 +179,9 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     saveLayerCanvas(layer);
   } else if (kind === 'tool') {
     // and this is a creator tool
-    const [canvas, patch] = toolsMap[source.toolName].imageProcessor({ size: pos } as CreatorToolParams)(source.args);
+    const [canvas, patch] = toolsMap[source.args.toolName].imageProcessor({ size: pos } as CreatorToolParams)(
+      source.args
+    );
     if (patch) {
       layer.pos = { ...layer.pos, ...patch };
     }

@@ -22,6 +22,13 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   const hoveredLayerIdRef = useRef<LayerId | null>(null);
   const selectedLayerIdRef = useRef<LayerId | null>(null);
 
+  function getArgs(sortedRect: RectXYSorted): RepositionToolArgs {
+    const newPos = sortedRectToPos(sortedRect);
+    return wasCurrentLayerResized(newPos)
+      ? { resize: newPos, toolName: 'reposition' }
+      : { move: newPos, toolName: 'reposition' };
+  }
+
   const {
     // no initial rect here, instead passing rect in mouseDown
     getLocalCoords,
@@ -39,14 +46,12 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     containerRef,
     overlayRef: rectOverlayRef,
     onRepaint: (sortedRect: RectXYSorted) => {
-      const newPos = sortedRectToPos(sortedRect);
-      const toolArgs: RepositionToolArgs = wasCurrentLayerResized(newPos) ? { resize: newPos } : { move: newPos };
-      tempUpdateLayer({ id: selectedLayerIdRef.current, toolName: 'reposition', toolArgs });
+      const toolArgs = getArgs(sortedRect);
+      tempUpdateLayer({ id: selectedLayerIdRef.current, toolArgs });
     },
     onChangeEnd: (sortedRect: RectXYSorted) => {
-      const newPos = sortedRectToPos(sortedRect);
-      const toolArgs: RepositionToolArgs = wasCurrentLayerResized(newPos) ? { resize: newPos } : { move: newPos };
-      updateLayerByTool({ id: selectedLayerIdRef.current, toolName: 'reposition', toolArgs });
+      const toolArgs = getArgs(sortedRect);
+      updateLayerByTool({ id: selectedLayerIdRef.current, toolArgs });
     },
   });
 

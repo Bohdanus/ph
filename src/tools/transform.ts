@@ -9,6 +9,8 @@ export type TransformToolArgs = {
   trapezoid: number;
   resizeX: number;
   resizeY: number;
+
+  toolName: 'transform';
 };
 
 export const transform =

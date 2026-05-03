@@ -119,7 +119,6 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     const newArgs = { ...args, start, end };
 
     const fullArgs: FullArgs = {
-      toolName: 'shape',
       args: newArgs,
       pos: pos,
     };

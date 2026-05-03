@@ -12,6 +12,8 @@ export type TextToolArgs = {
   lineHeight: number;
   text?: string;
   rect?: RectXYSorted | null;
+
+  toolName: 'text';
 };
 
 export type TextToolSettings = Omit<TextToolArgs, 'color' | 'text' | 'rect'>;

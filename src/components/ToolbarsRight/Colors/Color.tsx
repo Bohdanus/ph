@@ -19,7 +19,7 @@ const Color: React.FC<{}> = () => {
     if (rafIdRef.current === null) {
       rafIdRef.current = requestAnimationFrame(() => {
         if (pendingUpdateRef.current !== null) {
-          tempUpdateLayer({ toolName: 'color', toolArgs: pendingUpdateRef.current });
+          tempUpdateLayer({ toolArgs: pendingUpdateRef.current });
           setToolArgs(pendingUpdateRef.current);
           pendingUpdateRef.current = null;
         }
@@ -106,10 +106,7 @@ const Color: React.FC<{}> = () => {
 
       <div className="flex gap-2 items-center h-8 self-end mb-1">
         <UndoButton />
-        <button
-          onClick={mergeAllLayers}
-          className={SECONDARY_BUTTON}
-        >
+        <button onClick={mergeAllLayers} className={SECONDARY_BUTTON}>
           Merge all
         </button>
       </div>

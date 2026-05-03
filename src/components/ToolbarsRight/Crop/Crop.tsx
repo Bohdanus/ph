@@ -54,18 +54,14 @@ const Crop: React.FC<{}> = () => {
           className={PRIMARY_BUTTON}
           disabled={!rect}
           onClick={() => {
-            updateLayerByTool({ toolName: 'crop', toolArgs: args });
+            updateLayerByTool({ toolArgs: args });
             onChange({ ...args, rect: null });
           }}
         >
           Apply
         </button>
 
-        <button
-          className={SECONDARY_BUTTON}
-          disabled={!rect}
-          onClick={() => onChange({ ...args, rect: null })}
-        >
+        <button className={SECONDARY_BUTTON} disabled={!rect} onClick={() => onChange({ ...args, rect: null })}>
           Clear
         </button>
       </div>

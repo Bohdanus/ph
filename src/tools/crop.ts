@@ -5,6 +5,8 @@ import type { RectXYSorted } from '../contexts/general-types.ts';
 export type CropToolArgs = {
   rect?: RectXYSorted | null;
   aspectRatio?: number | null;
+
+  toolName: 'crop';
 };
 
 export const crop =

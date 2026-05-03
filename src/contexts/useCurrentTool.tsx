@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { cloneDeep } from 'lodash-es';
 import { defaultSettings, lastSavedSettings } from '../tools/settings.ts';
 import type { ToolName, ToolArgs } from './tool-types.ts';
-import { saveSettings } from '../util/settings.ts';
+import { saveLastSettings } from '../util/settings.ts';
 import { useStore } from './StoreContext.tsx';
 
 export interface CurrentToolContextState {
@@ -12,12 +12,14 @@ export interface CurrentToolContextState {
   resetToLastSavedArgs: (toolName?: ToolName) => void;
 }
 
+const initialArgs = cloneDeep(defaultSettings.draw) as ToolArgs;
+
 const CurrentToolContext = createContext<CurrentToolContextState | undefined>(undefined);
 
 /* this provider is meant for fast updates. keep it away from Main component */
 export const CurrentToolProvider = ({ children }: { children: React.ReactNode }) => {
   const [{ currentArgs, toolName }] = useStore();
-  const [toolArgs, setToolArgs] = useState<ToolArgs>(cloneDeep(defaultSettings.draw));
+  const [toolArgs, setToolArgs] = useState<ToolArgs>(initialArgs);
 
   useEffect(() => {
     currentArgs.current = toolArgs;
@@ -28,12 +30,15 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
   }, [toolName]);
 
   function resetToLastSavedArgs(_toolName = toolName) {
-    setToolArgs(cloneDeep(lastSavedSettings[_toolName]));
+    const args = cloneDeep(lastSavedSettings[_toolName]) as ToolArgs;
+    // @ts-ignore i have no idea
+    args.toolName = toolName;
+    setToolArgs(args);
   }
 
   const _setToolArgs = (args: ToolArgs) => {
-    saveSettings(toolName, args);
-    setToolArgs({ ...args, toolName });
+    saveLastSettings(args);
+    setToolArgs(args);
   };
 
   const value = {

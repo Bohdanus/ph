@@ -5,6 +5,8 @@ import type { Point, Pos } from '../contexts/general-types.ts';
 export type RepositionToolArgs = {
   move?: Point;
   resize?: Pos;
+
+  toolName: 'reposition';
 };
 
 export const reposition =

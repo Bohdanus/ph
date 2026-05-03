@@ -21,7 +21,7 @@ const Blur: React.FC<{}> = () => {
     if (rafIdRef.current === null) {
       rafIdRef.current = requestAnimationFrame(() => {
         if (pendingUpdateRef.current !== null) {
-          tempUpdateLayer({ toolName: 'blur', toolArgs: pendingUpdateRef.current });
+          tempUpdateLayer({ toolArgs: pendingUpdateRef.current });
           setToolArgs(pendingUpdateRef.current);
           pendingUpdateRef.current = null;
         }
@@ -31,7 +31,7 @@ const Blur: React.FC<{}> = () => {
   };
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    throttledOnChange({ radius: Number(event.target.value) });
+    throttledOnChange({ radius: Number(event.target.value), toolName: 'blur' });
   };
 
   return (

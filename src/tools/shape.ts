@@ -6,13 +6,15 @@ export type FigureType = 'line' | 'circle' | 'rectangle' | 'square' | 'oval';
 export type ShapeToolArgs = {
   alpha: number;
   color: string;
-  backgroundColor: string;
+  backgroundColor: null | string;
   hasFill?: boolean;
   figure: FigureType;
   lineWidth: number;
   lineDash?: null | number[];
   start?: Point;
   end?: Point;
+
+  toolName: 'shape';
 };
 
 export type ShapeToolSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end'>;
@@ -21,7 +23,7 @@ export const setShapeCtx = (ctx: Ctx2D, args: ShapeToolArgs) => {
   const { alpha, color, backgroundColor, hasFill, lineWidth, lineDash } = args;
 
   ctx.strokeStyle = color;
-  if (hasFill) {
+  if (hasFill && backgroundColor) {
     ctx.fillStyle = backgroundColor;
   }
   ctx.lineWidth = lineWidth;

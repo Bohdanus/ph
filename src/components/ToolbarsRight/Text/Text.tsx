@@ -66,7 +66,7 @@ const Text: React.FC<{}> = () => {
 
   const applyText = () => {
     if (text && rect) {
-      createLayerFromTool({ toolName: 'text', args });
+      createLayerFromTool({ args });
     }
   };
 

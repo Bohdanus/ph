@@ -2,7 +2,12 @@ import React, { useRef } from 'react';
 import type { TransformToolArgs } from '../../../tools/transform.ts';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
-import { ICON_BUTTON, SMALL_TOGGLE_BUTTON_ACTIVE, SMALL_TOGGLE_BUTTON_INACTIVE, TEXT_LINK_BUTTON } from '../buttonStyles.ts';
+import {
+  ICON_BUTTON,
+  SMALL_TOGGLE_BUTTON_ACTIVE,
+  SMALL_TOGGLE_BUTTON_INACTIVE,
+  TEXT_LINK_BUTTON,
+} from '../buttonStyles.ts';
 
 const Transform: React.FC<{}> = () => {
   const { tempUpdateLayer } = useLayers();
@@ -18,7 +23,7 @@ const Transform: React.FC<{}> = () => {
     if (rafIdRef.current === null) {
       rafIdRef.current = requestAnimationFrame(() => {
         if (pendingUpdateRef.current !== null) {
-          tempUpdateLayer({ toolName: 'transform', toolArgs: pendingUpdateRef.current });
+          tempUpdateLayer({ toolArgs: pendingUpdateRef.current });
           setToolArgs(pendingUpdateRef.current);
           pendingUpdateRef.current = null;
         }
@@ -125,6 +130,8 @@ const Transform: React.FC<{}> = () => {
       trapezoid: 0,
       resizeX: 100,
       resizeY: 100,
+
+      toolName: 'transform',
     });
   };
 
@@ -273,10 +280,7 @@ const Transform: React.FC<{}> = () => {
             ↕
           </button>
         </div>
-        <button
-          className={`text-[10px] ${TEXT_LINK_BUTTON} mt-1`}
-          onClick={resetAll}
-        >
+        <button className={`text-[10px] ${TEXT_LINK_BUTTON} mt-1`} onClick={resetAll}>
           Reset All
         </button>
       </div>

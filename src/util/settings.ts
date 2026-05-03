@@ -1,12 +1,17 @@
 import { cloneDeep } from 'lodash-es';
 import { lastSavedSettings } from '../tools/settings.ts';
-import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
+import type { ToolArgs } from '../contexts/tool-types.ts';
 
 import type { TextToolArgs } from '../tools/text.ts';
 import type { ShapeToolArgs } from '../tools/shape.ts';
 import type { CropToolArgs } from '../tools/crop.ts';
 
-export function saveSettings(toolName: ToolName, args: ToolArgs) {
+export function saveLastSettings(args: ToolArgs) {
+  const { toolName } = args;
+  if (!toolName) {
+    throw new Error('Tool name required');
+  }
+
   if (toolName === 'draw') {
     lastSavedSettings.draw = cloneDeep({ ...args, points: [] });
   } else if (toolName === 'text') {

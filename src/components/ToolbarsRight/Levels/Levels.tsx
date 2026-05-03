@@ -20,7 +20,7 @@ const Levels: React.FC<{}> = () => {
     if (rafIdRef.current === null) {
       rafIdRef.current = requestAnimationFrame(() => {
         if (pendingUpdateRef.current !== null) {
-          tempUpdateLayer({ id: activeLayerId!, toolName: 'levels', toolArgs: pendingUpdateRef.current });
+          tempUpdateLayer({ id: activeLayerId!, toolArgs: pendingUpdateRef.current });
           setToolArgs(pendingUpdateRef.current);
           pendingUpdateRef.current = null;
         }

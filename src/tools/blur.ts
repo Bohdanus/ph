@@ -1,6 +1,6 @@
 import type { ProcessorToolParams } from './toolsMap.ts';
 
-export type BlurToolArgs = { radius: number };
+export type BlurToolArgs = { radius: number; toolName: 'blur' };
 
 export const blur =
   ({ bitmap, size }: ProcessorToolParams) =>

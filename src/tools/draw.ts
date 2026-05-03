@@ -11,6 +11,8 @@ export type DrawToolArgs = {
   lineWidth: number;
   lineDash?: null | number[];
   points?: Point[];
+
+  toolName: 'draw';
 };
 
 export type DrawToolSettings = Omit<DrawToolArgs, 'color' | 'points'>;

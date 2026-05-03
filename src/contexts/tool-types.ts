@@ -13,7 +13,7 @@ import type { BitmapSource, Pos, Size } from './general-types.ts';
 
 export type ToolName = keyof typeof toolsMap;
 
-export type ToolArgs = (
+export type ToolSettings =
   | RepositionToolArgs
   | BlurToolArgs
   | ColorsToolArgs
@@ -22,8 +22,9 @@ export type ToolArgs = (
   | LevelsToolArgs
   | TextToolArgs
   | TransformToolArgs
-  | ShapeToolArgs
-) & { toolName: ToolName };
+  | ShapeToolArgs;
+
+export type ToolArgs = ToolSettings & { toolName: ToolName };
 
 export type FullArgs = {
   args: ToolArgs;

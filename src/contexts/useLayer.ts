@@ -17,10 +17,11 @@ import {
   type ActionType,
   HIDE_LAYER_ACTION,
   MERGE_ACTION,
+  NEW_LAYER_ACTION,
   REMOVE_ACTION,
   REORDER_ACTION,
   SHOW_LAYER_ACTION,
-  UPDATE_LAYER_ACTION,
+  TOOL_ACTION,
 } from '../util/constants.ts';
 import type { TextToolArgs } from '../tools/text.ts';
 
@@ -56,7 +57,7 @@ export const useLayers = () => {
 
     _addLayer(newLayer, {
       layerId: newLayer.id,
-      toolName: 'new layer',
+      actionName: NEW_LAYER_ACTION,
       args: source,
     });
   };
@@ -72,7 +73,7 @@ export const useLayers = () => {
 
     _addLayer(newLayer, {
       layerId: newLayer.id,
-      toolName: 'new layer',
+      actionName: NEW_LAYER_ACTION,
       args: source,
     });
   };
@@ -100,7 +101,7 @@ export const useLayers = () => {
 
     _addLayer(newLayer, {
       layerId: newLayer.id,
-      toolName,
+      actionName: TOOL_ACTION,
       args: source,
     });
 
@@ -115,7 +116,7 @@ export const useLayers = () => {
 
     addHistoryEntry({
       layerId: id!,
-      toolName,
+      actionName: TOOL_ACTION,
       args: toolArgs,
     });
   };
@@ -129,9 +130,7 @@ export const useLayers = () => {
       const args = currentArgs.current as TextToolArgs & ToolArgs;
       if (!args.text || !args.rect) return;
 
-      createLayerFromTool({
-        args,
-      });
+      createLayerFromTool({ args });
       return;
     }
 
@@ -170,7 +169,7 @@ export const useLayers = () => {
 
     addHistoryEntry({
       layerId: id!,
-      toolName: REMOVE_ACTION,
+      actionName: REMOVE_ACTION,
       args: {},
     });
 
@@ -178,7 +177,7 @@ export const useLayers = () => {
     ctx.clearRect(0, 0, totalSize.width, totalSize.height);
   };
 
-  const updateLayer = (id: LayerId, patch: Partial<Layer>, action?: ActionType) => {
+  const updateLayer = (id: LayerId, patch: Partial<Layer>, actionName: ActionType) => {
     const layer = layers[id];
     if (!layer) return;
     const newLayers = { ...layers, [id]: { ...layer, ...patch } } as LayersRecord;
@@ -187,8 +186,8 @@ export const useLayers = () => {
 
     addHistoryEntry({
       layerId: id!,
-      toolName: action ?? UPDATE_LAYER_ACTION,
-      args: patch as any as ToolArgs,
+      actionName,
+      args: patch,
     });
   };
 
@@ -200,7 +199,7 @@ export const useLayers = () => {
 
     addHistoryEntry({
       layerId: layerToMoveId,
-      toolName: REORDER_ACTION,
+      actionName: REORDER_ACTION,
       args: { layerToMoveId, afterWhichLayerId } as any as ToolArgs,
     });
   };
@@ -292,7 +291,7 @@ export const useLayers = () => {
 
     addHistoryEntry({
       layerId: layer.id,
-      toolName: MERGE_ACTION,
+      actionName: MERGE_ACTION,
       args: source,
     });
   }

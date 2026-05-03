@@ -79,7 +79,7 @@ const initialState: StoreData = {
   textareaRef: { current: null },
   canvasCtxRef: { current: null },
 
-  currentArgs: { current: {} },
+  currentArgs: { current: {} as ToolArgs },
 
   hasImage: false,
   hasUnsavedChanges: false,
@@ -196,7 +196,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
-  const currentArgs = useRef<Record<string, any>>({});
+  const currentArgsRef = useRef<ToolArgs>({} as ToolArgs);
 
   // reducer-managed state (file/tool/layers)
   const [store, dispatch] = useReducer(reducer, {
@@ -208,7 +208,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     textareaRef,
     canvasCtxRef,
 
-    currentArgs,
+    currentArgs: currentArgsRef,
   });
   //
   // function setSizeMemo(width: number, height: number) {

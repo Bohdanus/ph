@@ -1,7 +1,7 @@
 import { exp1_1 } from './functions.ts';
 import type { ProcessorToolParams } from './toolsMap.ts';
 
-export type LevelsToolArgs = { brightness: number; contrast: number };
+export type LevelsToolArgs = { brightness: number; contrast: number; toolName: 'levels' };
 
 export const levels =
   ({ bitmap, size }: ProcessorToolParams) =>
