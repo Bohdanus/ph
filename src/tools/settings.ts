@@ -10,6 +10,7 @@ import type { BlurToolArgs } from './blur.ts';
 import type { FigureType, ShapeToolSettings, ShapeToolArgs } from './shape.ts';
 import type { ToolName, ToolSettings } from '../contexts/tool-types.ts';
 import type { RepositionToolArgs } from './reposition.ts';
+import type { LassoToolArgs, PolygonSelectionToolSettings } from './polygonSelection.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
 type FigureSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end' | 'figure' | 'toolName'>;
@@ -73,6 +74,22 @@ export const defaultSettings: Record<ToolName, ToolSettings> = {
     toolName: 'text',
   } satisfies TextToolArgs,
   reposition: { move: { x: 0, y: 0 }, toolName: 'reposition' } satisfies RepositionToolArgs,
+  'polygonal-lasso': {
+    alpha: 1,
+    lineWidth: 3,
+    color: '#FF0000',
+    fill: false,
+    points: [],
+    toolName: 'polygonal-lasso',
+  } satisfies LassoToolArgs,
+  'freehand-lasso': {
+    alpha: 1,
+    lineWidth: 3,
+    color: '#FF0000',
+    fill: false,
+    points: [],
+    toolName: 'freehand-lasso',
+  } satisfies LassoToolArgs,
 };
 
 export type SavedSettings =
@@ -84,6 +101,7 @@ export type SavedSettings =
   | LevelsToolArgs
   | TransformToolArgs
   | CropToolArgs
-  | RepositionToolArgs;
+  | RepositionToolArgs
+  | PolygonSelectionToolSettings;
 
 export const lastSavedSettings = cloneDeep(defaultSettings);

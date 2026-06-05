@@ -1,11 +1,10 @@
 import { useState, useRef } from 'react';
 
 import { useStore } from '../../contexts/StoreContext.tsx';
-import { useHistory } from '../../contexts/useHistory.ts';
+import { getHistoryItemTitle, useHistory } from '../../contexts/useHistory.ts';
 import { ICON_TOGGLE_BUTTON_VISIBLE, ICON_TOGGLE_BUTTON_HIDDEN } from '../ToolbarsRight/buttonStyles.ts';
 import PreviewTooltip from '../PreviewTooltip/BmpPreviewTooltip.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
-import type { ToolArgs } from '../../contexts/tool-types.ts';
 
 export default function HistoryTab() {
   const [{ history, historyIndex }] = useStore();
@@ -33,7 +32,7 @@ export default function HistoryTab() {
             const originalIndex = history.indexOf(item);
             const isActive = originalIndex <= historyIndex;
             const isCurrent = originalIndex === historyIndex;
-            const itemName = (item.args as ToolArgs).toolName || item.actionName;
+            const itemTitle = getHistoryItemTitle(item);
 
             return (
               <li
@@ -73,7 +72,7 @@ export default function HistoryTab() {
                 </button>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-gray-800 dark:text-gray-100 truncate flex items-center gap-2">
-                    <span className="capitalize">{itemName}</span>
+                    <span className="capitalize">{itemTitle}</span>
                     {isCurrent && (
                       <span className="ml-1" title="Current state">
                         👈

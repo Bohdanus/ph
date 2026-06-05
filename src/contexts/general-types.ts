@@ -14,5 +14,12 @@ export type RectXYSorted = RectXY;
 export type ZoomData = { dx: number; dy: number; zoom: number };
 export type Delta = { dx: number; dy: number };
 
+export type Selection = {
+  id: string;
+  points: Point[];
+  isActive: boolean;
+  pos: Pos;
+};
+
 export type BitmapSource = ImageBitmap | HTMLImageElement | OffscreenCanvas;
 export type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;

@@ -10,7 +10,7 @@ import type {
 import { createLayerSource, getSortedLayersArray, reorderLayers, saveLayerCanvas } from './layer-utils.ts';
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs } from './tool-types.ts';
 import { type CreatorToolParams, type ProcessorToolParams, toolsMap } from '../tools/toolsMap.ts';
-import { type HistoryEntry, useHistory } from './useHistory.ts';
+import { useHistory } from './useHistory.ts';
 import { reduceRect, sortedRectToPos } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
 import {
@@ -24,6 +24,7 @@ import {
   TOOL_ACTION,
 } from '../util/constants.ts';
 import type { TextToolArgs } from '../tools/text.ts';
+import type { NewHistoryItem } from './history-types.ts';
 
 export type LayerEditParams = {
   id?: LayerId | null;
@@ -42,11 +43,11 @@ export const useLayers = () => {
     overlayCtx.clearRect(0, 0, totalSize.width, totalSize.height);
   }
 
-  const _addLayer = (layer: Layer, historyEntry: HistoryEntry) => {
+  const _addLayer = (layer: Layer, historyItem: NewHistoryItem) => {
     const newLayers = { ...layers, [layer.id]: layer } as LayersRecord;
     dispatch({ type: 'ADD_LAYER', payload: { layers: newLayers, activeLayerId: layer.id } });
 
-    addHistoryEntry(historyEntry);
+    addHistoryEntry(historyItem);
   };
 
   const createBlankLayer = (params: BlankImageParams) => {
@@ -58,7 +59,7 @@ export const useLayers = () => {
     _addLayer(newLayer, {
       layerId: newLayer.id,
       actionName: NEW_LAYER_ACTION,
-      args: source,
+      layerSource: source,
     });
   };
 
@@ -74,7 +75,7 @@ export const useLayers = () => {
     _addLayer(newLayer, {
       layerId: newLayer.id,
       actionName: NEW_LAYER_ACTION,
-      args: source,
+      layerSource: source,
     });
   };
 
@@ -102,7 +103,7 @@ export const useLayers = () => {
     _addLayer(newLayer, {
       layerId: newLayer.id,
       actionName: TOOL_ACTION,
-      args: source,
+      layerSource: source,
     });
 
     clearOverlay();

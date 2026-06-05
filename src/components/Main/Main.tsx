@@ -6,6 +6,7 @@ import { DummyToolArea } from './DummyToolArea.tsx';
 
 import './Main.scss';
 import { ShapeToolArea } from './ShapeToolArea.tsx';
+import { LassoToolArea } from './LassoToolArea.tsx';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { PRIMARY_BUTTON_LARGE, TEXT_LINK_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
@@ -39,6 +40,8 @@ const Main = () => {
     interactionMode = 'shape';
   } else if (toolName === 'text') {
     interactionMode = 'text';
+  } else if (toolName === 'polygonal-lasso' || toolName === 'freehand-lasso') {
+    interactionMode = 'lasso';
   }
 
   useEffect(() => {
@@ -103,6 +106,7 @@ const Main = () => {
       else if (interactionMode === 'draw') EventHandler = DrawToolArea;
       else if (interactionMode === 'shape') EventHandler = ShapeToolArea;
       else if (interactionMode === 'text') EventHandler = TextToolArea;
+      else if (interactionMode === 'lasso') EventHandler = LassoToolArea;
       else EventHandler = DummyToolArea;
     }
 
@@ -125,7 +129,7 @@ const Main = () => {
           ref={toolOverlayRef}
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
-            display: ['draw', 'crop', 'text', 'shape', 'reposition'].includes(interactionMode) ? 'block' : 'none',
+            display: ['draw', 'crop', 'text', 'shape', 'reposition', 'lasso'].includes(interactionMode) ? 'block' : 'none',
           }}
         />
         <canvas

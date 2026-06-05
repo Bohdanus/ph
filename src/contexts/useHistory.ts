@@ -2,12 +2,11 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { useStore } from './StoreContext.tsx';
 import type { LayerId, LayerSource, LayersRecord } from './layer-types.ts';
-import type { HistoryItem } from './history-types.ts';
+import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { toolsMap } from '../tools/toolsMap.ts';
 import { createLayerSource, getSortedLayersArray, reorderLayers, saveLayerCanvas } from './layer-utils.ts';
 import {
-  type ActionType,
   HIDE_LAYER_ACTION,
   MAX_HISTORY_IMAGE_COUNT,
   MERGE_ACTION,
@@ -21,11 +20,19 @@ import {
 } from '../util/constants.ts';
 import type { Size } from './general-types.ts';
 
-export type HistoryEntry = {
-  layerId: LayerId;
-  actionName: ActionType;
-  args: ToolArgs | LayerSource | object;
-};
+export function getHistoryItemTitle(item: HistoryItem) {
+  const { actionName, args, layerSource } = item;
+
+  if (layerSource?.kind === 'tool') {
+    return layerSource.args.toolName;
+  }
+
+  if (actionName === TOOL_ACTION) {
+    return (args as ToolArgs).toolName;
+  }
+
+  return actionName;
+}
 
 export const useHistory = () => {
   const [{ canvasRef, history, historyIndex, layers: oldLayers, deletedLayers }, dispatch] = useStore();
@@ -34,9 +41,9 @@ export const useHistory = () => {
     dispatch({ type: 'SET_HISTORY_INDEX', payload: index });
   };
 
-  const addHistoryEntry = ({ layerId, actionName, args }: HistoryEntry) => {
+  const addHistoryEntry = (inputItem: NewHistoryItem) => {
     const historyItemId = uuidv4();
-    const imagePromise = NO_BMP_UPDATE_ACTIONS.includes(actionName)
+    const imagePromise = NO_BMP_UPDATE_ACTIONS.includes(inputItem.actionName)
       ? history[historyIndex - 1].imagePromise
       : new Promise<ImageBitmap>((resolve) => {
           setTimeout(() => {
@@ -44,7 +51,7 @@ export const useHistory = () => {
           });
         });
 
-    const newHistoryItem: HistoryItem = { id: historyItemId, actionName, args, layerId, imagePromise };
+    const newHistoryItem: HistoryItem = { ...inputItem, id: historyItemId, imagePromise };
 
     if (historyIndex < history.length - 1) {
       const trimmedHistory = history.slice(0, historyIndex + 1);

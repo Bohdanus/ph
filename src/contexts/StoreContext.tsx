@@ -3,7 +3,7 @@ import { DEFAULT_TOOL } from '../util/constants.ts';
 
 import type { ReactNode, RefObject } from 'react';
 import type { LayerId, LayersRecord } from './layer-types.ts';
-import type { Size } from './general-types.ts';
+import type { Size, Selection } from './general-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 
@@ -32,6 +32,9 @@ export type StoreData = {
   layers: LayersRecord;
   deletedLayers: LayersRecord;
   activeLayerId: LayerId | null;
+
+  // selections (supports multiple selections for future extensions)
+  selections: Selection[];
 
   // history
   history: HistoryItem[];
@@ -69,7 +72,10 @@ type Action =
   | { type: 'REDO' }
   | { type: 'SET_HISTORY_INDEX'; payload: number }
   | { type: 'SET_COLOR'; payload: string }
-  | { type: 'SET_BACKGROUND_COLOR'; payload: string };
+  | { type: 'SET_BACKGROUND_COLOR'; payload: string }
+  | { type: 'SET_SELECTIONS'; payload: Selection[] }
+  | { type: 'ADD_SELECTION'; payload: Selection }
+  | { type: 'CLEAR_SELECTIONS' };
 
 const initialState: StoreData = {
   canvasRef: { current: null },
@@ -91,6 +97,8 @@ const initialState: StoreData = {
   layers: {} as LayersRecord,
   deletedLayers: {} as LayersRecord,
   activeLayerId: null,
+
+  selections: [],
 
   history: [],
   historyIndex: 0,
@@ -182,6 +190,12 @@ function reducer(state: StoreData, action: Action): StoreData {
       return { ...state, color: action.payload };
     case 'SET_BACKGROUND_COLOR':
       return { ...state, backgroundColor: action.payload };
+    case 'SET_SELECTIONS':
+      return { ...state, selections: action.payload };
+    case 'ADD_SELECTION':
+      return { ...state, selections: [...state.selections, action.payload] };
+    case 'CLEAR_SELECTIONS':
+      return { ...state, selections: [] };
     default:
       return state;
   }

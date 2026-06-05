@@ -5,6 +5,7 @@ import { transform } from './transform';
 import { crop } from './crop';
 import { draw } from './draw';
 import { text } from './text';
+import { selection } from './selection.ts';
 import Color from '../components/ToolbarsRight/Colors/Color.tsx';
 import Blur from '../components/ToolbarsRight/Blur/Blur.tsx';
 import Levels from '../components/ToolbarsRight/Levels/Levels.tsx';
@@ -12,6 +13,8 @@ import Transform from '../components/ToolbarsRight/Transform/Transform.tsx';
 import Draw from '../components/ToolbarsRight/Draw/Draw.tsx';
 import Shape from '../components/ToolbarsRight/Figures/Shape.tsx';
 import Text from '../components/ToolbarsRight/Text/Text.tsx';
+import PolygonalLasso from '../components/ToolbarsRight/Lasso/PolygonalLasso.tsx';
+import FreehandLasso from '../components/ToolbarsRight/Lasso/FreehandLasso.tsx';
 import type { ToolbarRightComponent } from '../components/ToolbarsRight/types.ts';
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
 import { shape } from './shape.ts';
@@ -21,7 +24,7 @@ import type { ToolArgs } from '../contexts/tool-types.ts';
 import { reposition } from './reposition.ts';
 
 export type ProcessorToolParams = {
-  size: Size;
+  size: Size; // why size??
   bitmap: BitmapSource; // source bitmap that should be processed
 };
 
@@ -29,14 +32,14 @@ export type CreatorToolParams = {
   size: Size;
 };
 
+export type ToolResult = [BitmapSource, Pos | Size | never];
+
 type ToolsMap = Record<
   string,
   {
     creator?: boolean;
     icon: string;
-    imageProcessor: (
-      param: ProcessorToolParams | CreatorToolParams
-    ) => (args: ToolArgs) => [BitmapSource, Pos | Size | never];
+    imageProcessor: (param: ProcessorToolParams | CreatorToolParams) => (args: ToolArgs) => ToolResult;
     toolboxComponent: ToolbarRightComponent;
   }
 >;
@@ -98,6 +101,20 @@ export const toolsMap: ToolsMap = {
     // @ts-expect-error args
     imageProcessor: text,
     toolboxComponent: Text,
+  },
+  'polygonal-lasso': {
+    creator: true,
+    icon: 'lasso',
+    // @ts-expect-error args
+    imageProcessor: polygonSelection,
+    toolboxComponent: PolygonalLasso,
+  },
+  'freehand-lasso': {
+    creator: true,
+    icon: 'lasso',
+    // @ts-expect-error args
+    imageProcessor: selection,
+    toolboxComponent: FreehandLasso,
   },
   // load: {
   //   creational: true,

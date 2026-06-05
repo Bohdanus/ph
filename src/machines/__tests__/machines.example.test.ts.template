@@ -1,0 +1,190 @@
+/**
+ * Testing Guide for XState Machines
+ *
+ * This file demonstrates how to test the XState machines in isolation,
+ * ensuring they handle all state transitions correctly.
+ *
+ * Key advantages:
+ * - Machines are pure functions, easy to test
+ * - No React hooks or side effects in machine logic
+ * - Can snapshot state transitions directly
+ * - Perfect for regression testing
+ *
+ * HOW TO USE THIS TEMPLATE:
+ * 1. Install Jest and types: npm install --save-dev @types/jest
+ * 2. Add 'jest' to types field in tsconfig.json
+ * 3. Rename this file to machines.test.ts
+ * 4. Run: npm test
+ *
+ * EXAMPLE TESTS:
+ */
+
+import { toolWorkflowMachine } from '../../machines/toolWorkflow';
+import { appLifecycleMachine } from '../../machines/appLifecycle';
+import type { ToolWorkflowEvent } from '../../machines/toolWorkflow';
+import type { AppLifecycleEvent } from '../../machines/appLifecycle';
+
+/**
+ * Tool Workflow Machine Tests
+ */
+describe('toolWorkflowMachine', () => {
+  describe('State Transitions', () => {
+    it('should start with idle state', () => {
+      const initialState = toolWorkflowMachine.getInitialState();
+      expect(initialState.value).toBe('idle');
+    });
+
+    it('should transition from idle to preview on START_TOOL', () => {
+      const idleState = toolWorkflowMachine.getInitialState();
+
+      const nextState = toolWorkflowMachine.transition(idleState, {
+        type: 'START_TOOL',
+        payload: {
+          toolName: 'draw',
+          args: { points: [] },
+          activeLayerId: 'layer-1',
+        },
+      } as ToolWorkflowEvent);
+
+      expect(nextState.value).toBe('preview');
+      expect(nextState.context.currentToolName).toBe('draw');
+      expect(nextState.context.isDirty).toBe(false);
+    });
+
+    it('should transition from preview to committing on COMMIT_CHANGES', () => {
+      const idleState = toolWorkflowMachine.getInitialState();
+      const previewState = toolWorkflowMachine.transition(idleState, {
+        type: 'START_TOOL',
+        payload: {
+          toolName: 'draw',
+          args: { points: [] },
+          activeLayerId: 'layer-1',
+        },
+      } as ToolWorkflowEvent);
+
+      const committingState = toolWorkflowMachine.transition(previewState, {
+        type: 'COMMIT_CHANGES',
+        payload: {
+          toolName: 'draw',
+          args: { points: [{ x: 10, y: 20 }] },
+          pos: { x: 0, y: 0, width: 100, height: 100 },
+        },
+      } as ToolWorkflowEvent);
+
+      expect(committingState.value).toBe('committing');
+      expect(committingState.context.pendingFullArgs).toBeDefined();
+    });
+
+    it('should transition from committing to completed on COMMIT_COMPLETE', () => {
+      const idleState = toolWorkflowMachine.getInitialState();
+      const previewState = toolWorkflowMachine.transition(idleState, {
+        type: 'START_TOOL',
+        payload: {
+          toolName: 'draw',
+          args: { points: [] },
+          activeLayerId: 'layer-1',
+        },
+      } as ToolWorkflowEvent);
+
+      const committingState = toolWorkflowMachine.transition(previewState, {
+        type: 'COMMIT_CHANGES',
+        payload: {
+          toolName: 'draw',
+          args: { points: [{ x: 10, y: 20 }] },
+          pos: { x: 0, y: 0, width: 100, height: 100 },
+        },
+      } as ToolWorkflowEvent);
+
+      const completedState = toolWorkflowMachine.transition(committingState, {
+        type: 'COMMIT_COMPLETE',
+      } as ToolWorkflowEvent);
+
+      expect(completedState.value).toBe('completed');
+      expect(completedState.context.isDirty).toBe(false);
+    });
+
+    it('should cancel tool and return to idle', () => {
+      const idleState = toolWorkflowMachine.getInitialState();
+      const previewState = toolWorkflowMachine.transition(idleState, {
+        type: 'START_TOOL',
+        payload: {
+          toolName: 'draw',
+          args: { points: [] },
+          activeLayerId: 'layer-1',
+        },
+      } as ToolWorkflowEvent);
+
+      const cancelledState = toolWorkflowMachine.transition(previewState, {
+        type: 'CANCEL',
+      } as ToolWorkflowEvent);
+
+      expect(cancelledState.value).toBe('idle');
+      expect(cancelledState.context.currentToolName).toBeNull();
+    });
+  });
+});
+
+/**
+ * App Lifecycle Machine Tests
+ */
+describe('appLifecycleMachine', () => {
+  describe('State Transitions', () => {
+    it('should start with landing state', () => {
+      const initialState = appLifecycleMachine.getInitialState();
+      expect(initialState.value).toBe('landing');
+      expect(initialState.context.hasImage).toBe(false);
+    });
+
+    it('should transition to imageReady on CREATE_BLANK_IMAGE', () => {
+      const landingState = appLifecycleMachine.getInitialState();
+      const nextState = appLifecycleMachine.transition(landingState, {
+        type: 'CREATE_BLANK_IMAGE',
+        payload: { size: { width: 800, height: 600 } },
+      } as AppLifecycleEvent);
+
+      expect(nextState.value).toBe('imageReady');
+      expect(nextState.context.hasImage).toBe(true);
+      expect(nextState.context.imageSize).toEqual({ width: 800, height: 600 });
+    });
+
+    it('should transition to loadingImage on LOAD_IMAGE', () => {
+      const landingState = appLifecycleMachine.getInitialState();
+      const nextState = appLifecycleMachine.transition(landingState, {
+        type: 'LOAD_IMAGE',
+        payload: { file: new File([], 'test.jpg') },
+      } as AppLifecycleEvent);
+
+      expect(nextState.value).toBe('loadingImage');
+    });
+
+    it('should transition from imageReady to saving on SAVE_IMAGE', () => {
+      const landingState = appLifecycleMachine.getInitialState();
+      const readyState = appLifecycleMachine.transition(landingState, {
+        type: 'CREATE_BLANK_IMAGE',
+        payload: { size: { width: 800, height: 600 } },
+      } as AppLifecycleEvent);
+
+      const savingState = appLifecycleMachine.transition(readyState, {
+        type: 'SAVE_IMAGE',
+        payload: { fileName: 'image.jpg' },
+      } as AppLifecycleEvent);
+
+      expect(savingState.value).toBe('saving');
+    });
+
+    it('should track unsaved changes', () => {
+      const landingState = appLifecycleMachine.getInitialState();
+      const readyState = appLifecycleMachine.transition(landingState, {
+        type: 'CREATE_BLANK_IMAGE',
+        payload: { size: { width: 800, height: 600 } },
+      } as AppLifecycleEvent);
+
+      const dirtyState = appLifecycleMachine.transition(readyState, {
+        type: 'MARK_UNSAVED_CHANGES',
+      } as AppLifecycleEvent);
+
+      expect(dirtyState.context.hasUnsavedChanges).toBe(true);
+    });
+  });
+});
+

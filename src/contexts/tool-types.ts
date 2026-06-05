@@ -7,6 +7,7 @@ import type { BlurToolArgs } from '../tools/blur.ts';
 import type { ShapeToolArgs } from '../tools/shape.ts';
 import type { LevelsToolArgs } from '../tools/levels.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
+import type { SelectionToolArgs } from '../tools/selection.ts';
 
 import { toolsMap } from '../tools/toolsMap.ts';
 import type { BitmapSource, Pos, Size } from './general-types.ts';
@@ -22,7 +23,8 @@ export type ToolSettings =
   | LevelsToolArgs
   | TextToolArgs
   | TransformToolArgs
-  | ShapeToolArgs;
+  | ShapeToolArgs
+  | SelectionToolArgs;
 
 export type ToolArgs = ToolSettings & { toolName: ToolName };
 

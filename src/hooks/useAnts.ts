@@ -1,15 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { type RefObject, useEffect, useRef } from 'react';
 import type { Pos } from '../contexts/general-types.ts';
 import type { Layer } from '../contexts/layer-types.ts';
 
-const DASH_LENGTH = 6;
-const GAP_LENGTH = 6;
-const LINE_WIDTH = 1;
-const SPEED = 1; // pixels per frame
+export const DASH_LENGTH = 6;
+export const GAP_LENGTH = 6;
+export const LINE_WIDTH = 1;
+export const SPEED = 1; // pixels per frame
 
 export type AntsProps = {
-  overlayRef: React.RefObject<HTMLCanvasElement | null>;
-  containerRef: React.RefObject<HTMLDivElement | null>;
+  overlayRef: RefObject<HTMLCanvasElement | null>;
+  containerRef: RefObject<HTMLDivElement | null>;
 };
 
 export function useMarchingAnts({ overlayRef, containerRef }: AntsProps) {
@@ -23,7 +23,7 @@ export function useMarchingAnts({ overlayRef, containerRef }: AntsProps) {
 
   // todo more fancy optimisation can be done here. for example if pos has not changed
   // than there is no need for cleraring the area. Think on this some day.
-  // TODO so yes, i think the crutial part is to compare previous pos with the new on no know if any painting is needed!
+  // TODO so yes, i think the crutial part is to compare previous pos with the new to know if any painting is needed!
   const isClearedRef = useRef(true);
 
   const clear = () => {
@@ -59,7 +59,7 @@ export function useMarchingAnts({ overlayRef, containerRef }: AntsProps) {
     ctx.lineDashOffset = dashOffsetRef.current;
     ctx.strokeRect(x, y, width, height);
 
-    // White stroke (offset half pattern)
+    // White stroke (offset the dash)
     ctx.strokeStyle = 'white';
     ctx.lineDashOffset = dashOffsetRef.current + DASH_LENGTH;
     ctx.strokeRect(x, y, width, height);
@@ -88,5 +88,5 @@ export function useMarchingAnts({ overlayRef, containerRef }: AntsProps) {
     return () => clear();
   }, []);
 
-  return { draw, clear };
+  return { draw, clear }; // todo pause marching (currently this is not needed, but maybe)
 }

@@ -4,6 +4,8 @@ import type { NewLayerData, ToolArgs } from './tool-types.ts';
 export type LayerId = string;
 
 // SOURCES
+// @ts-expect-error not used
+type LayerSourceKind = 'blank' | 'image' | 'tool';
 
 export type BlankLayerSource = {
   kind: 'blank';

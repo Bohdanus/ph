@@ -1,0 +1,134 @@
+// ... existing code ...
+
+const SidebarLeft = () => {
+  const [{ hasImage, toolName, color, backgroundColor }, dispatch] = useStore();
+  const { goToTool } = useApp();
+
+  const colorInputRef = useRef<HTMLInputElement>(null);
+  const bgColorInputRef = useRef<HTMLInputElement>(null);
+  const colorPickerRef = useRef<HTMLDivElement>(null);
+  const bgColorPickerRef = useRef<HTMLDivElement>(null);
+
+  const handleMove = () => {
+    goToTool('reposition');
+  };
+
+  const handleColors = () => {
+    goToTool('color');
+  };
+
+  const handleBlur = () => {
+    goToTool('blur');
+  };
+
+  const handleLevels = () => {
+    goToTool('levels');
+  };
+
+  const handleTransform = () => {
+    goToTool('transform');
+  };
+
+  const handleCrop = () => {
+    goToTool('crop');
+  };
+
+  const handleDraw = () => {
+    goToTool('draw');
+  };
+
+  const handleShapes = () => {
+    goToTool('shape');
+  };
+
+  const handleText = () => {
+    goToTool('text');
+  };
+
+  const handleColorClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (colorPickerRef.current) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      colorPickerRef.current.style.position = 'absolute';
+      colorPickerRef.current.style.left = `${rect.left}px`;
+      colorPickerRef.current.style.top = `${rect.bottom}px`;
+    }
+    colorInputRef.current?.click();
+  };
+
+  const handleBgColorClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (bgColorPickerRef.current) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      bgColorPickerRef.current.style.position = 'absolute';
+      bgColorPickerRef.current.style.left = `${rect.left}px`;
+      bgColorPickerRef.current.style.top = `${rect.bottom}px`;
+    }
+    bgColorInputRef.current?.click();
+  };
+
+  const handleColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    dispatch({ type: 'SET_COLOR', payload: e.target.value });
+  };
+
+  const handleBgColorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    dispatch({ type: 'SET_BACKGROUND_COLOR', payload: e.target.value });
+  };
+
+  const handleSwapColors = () => {
+    dispatch({ type: 'SET_COLOR', payload: backgroundColor });
+    dispatch({ type: 'SET_BACKGROUND_COLOR', payload: color });
+  };
+
+  return (
+    <aside className="bg-gray-100 dark:bg-gray-800 dark:border-r dark:border-gray-700 max-md:hidden [grid-area:left]">
+      <div className="p-3">
+        <h5 className="mb-3 text-lg font-bold dark:text-gray-200">Toolbox</h5>
+        <ul className="flex flex-col list-none p-0">
+          {/* ... existing code ... */}
+        </ul>
+
+        <hr className="my-3 border-gray-300 dark:border-gray-700" />
+
+        <div className="flex flex-col items-center mt-4">
+          <div className="relative w-14 h-14">
+            <div
+              className="absolute top-4 left-4 w-8 h-8 cursor-pointer rounded border border-gray-400 dark:border-gray-500 shadow-sm"
+              style={{ backgroundColor }}
+              onClick={handleBgColorClick}
+              title="Background Color"
+              ref={bgColorPickerRef}
+            />
+            <div
+              className="absolute top-0 left-0 w-8 h-8 cursor-pointer rounded border border-gray-400 dark:border-gray-500 shadow-md"
+              style={{ backgroundColor: color }}
+              onClick={handleColorClick}
+              title="Foreground Color"
+              ref={colorPickerRef}
+            />
+
+            <input type="color" ref={colorInputRef} className="hidden" value={color} onChange={handleColorChange} />
+            <input
+              type="color"
+              ref={bgColorInputRef}
+              className="hidden"
+              value={backgroundColor}
+              onChange={handleBgColorChange}
+            />
+          </div>
+
+          <button
+            onClick={handleSwapColors}
+            className="mt-1 text-[8px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 uppercase font-bold"
+            title="Swap Colors"
+          >
+            ⇅ Swap
+          </button>
+        </div>
+
+        <hr className="my-3 border-gray-300 dark:border-gray-700" />
+        {/*<Zoom />*/}
+      </div>
+    </aside>
+  );
+};
+
+export default SidebarLeft;
