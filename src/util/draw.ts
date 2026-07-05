@@ -2,7 +2,7 @@ import type { Ctx2D, Point, Pos } from '../contexts/general-types.ts';
 import type { DrawToolArgs } from '../tools/draw.ts';
 import { hexToRgb } from './rect.ts';
 
-export function pointsBoundingPos({ lineWidth, points }: { lineWidth: number; points: Point[] }): Pos {
+export function pointsBoundingPos({ lineWidth = 1, points }: { lineWidth?: number; points: Point[] }): Pos {
   const pp = points!;
   let minX = pp[0].x;
   let minY = pp[0].y;
