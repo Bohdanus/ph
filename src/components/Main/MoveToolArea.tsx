@@ -1,4 +1,4 @@
-import { type RefObject, useRef } from 'react';
+import { type RefObject, useEffect, useMemo, useRef } from 'react';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { getLayerIdByPoint } from '../../contexts/layer-utils.ts';
@@ -6,7 +6,7 @@ import type { Pos, RectXYSorted } from '../../contexts/general-types.ts';
 import { useMarchingAnts } from '../../hooks/useAnts.ts';
 import type { LayerId } from '../../contexts/layer-types.ts';
 import { useRect } from '../../hooks/useRect.ts';
-import { sortedRectToPos } from '../../util/rect.ts';
+import { posToSortedRect, sortedRectToPos } from '../../util/rect.ts';
 import type { RepositionToolArgs } from '../../tools/reposition.ts';
 
 type moveToolAreaProps = {
@@ -19,12 +19,21 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   const { tempUpdateLayer, setActiveLayer, updateLayerByTool } = useLayers();
   const ants = useMarchingAnts({ overlayRef: toolOverlayRef, containerRef });
 
+  const activeLayer = activeLayerId ? layers[activeLayerId] : null;
+  const activeLayerRect = useMemo(
+    () => (activeLayer && !activeLayer.isBedrock ? posToSortedRect(activeLayer.pos) : null),
+    [activeLayer]
+  );
+
   const hoveredLayerIdRef = useRef<LayerId | null>(null);
   const selectedLayerIdRef = useRef<LayerId | null>(null);
+  const interactionLayerIdRef = useRef<LayerId | null>(null);
+  const interactionStartPosRef = useRef<Pos | null>(null);
+  const isInteractionActiveRef = useRef(false);
 
-  function getArgs(sortedRect: RectXYSorted): RepositionToolArgs {
+  function getArgs(sortedRect: RectXYSorted, layerId: LayerId): RepositionToolArgs {
     const newPos = sortedRectToPos(sortedRect);
-    return wasCurrentLayerResized(newPos)
+    return wasLayerResized(layerId, newPos)
       ? { resize: newPos, toolName: 'reposition' }
       : { move: newPos, toolName: 'reposition' };
   }
@@ -40,24 +49,46 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     clearSelection,
   } = useRect({
     imageSize: totalSize,
+    initialRect: activeLayerRect,
     hideBlend: true,
     isMoveTool: true,
 
     containerRef,
     overlayRef: rectOverlayRef,
     onRepaint: (sortedRect: RectXYSorted) => {
-      const toolArgs = getArgs(sortedRect);
-      tempUpdateLayer({ id: selectedLayerIdRef.current, toolArgs });
+      const layerId = interactionLayerIdRef.current;
+      if (!isInteractionActiveRef.current || !layerId) return;
+
+      const toolArgs = getArgs(sortedRect, layerId);
+      tempUpdateLayer({ id: layerId, toolArgs });
     },
     onChangeEnd: (sortedRect: RectXYSorted) => {
-      const toolArgs = getArgs(sortedRect);
-      updateLayerByTool({ id: selectedLayerIdRef.current, toolArgs });
+      const layerId = interactionLayerIdRef.current;
+      const startPos = interactionStartPosRef.current;
+      if (!layerId || !startPos) return;
+
+      const newPos = sortedRectToPos(sortedRect);
+      const didPosChange =
+        startPos.x !== newPos.x ||
+        startPos.y !== newPos.y ||
+        startPos.width !== newPos.width ||
+        startPos.height !== newPos.height;
+
+      if (!didPosChange) return;
+
+      const toolArgs = getArgs(sortedRect, layerId);
+      updateLayerByTool({ id: layerId, toolArgs });
     },
   });
 
-  function wasCurrentLayerResized(newPos: Pos) {
-    if (!selectedLayerIdRef.current) return false;
-    const oldPos = layers[selectedLayerIdRef.current].pos;
+  useEffect(() => {
+    selectedLayerIdRef.current = activeLayer && !activeLayer.isBedrock ? activeLayer.id : null;
+  }, [activeLayer]);
+
+  function wasLayerResized(layerId: LayerId, newPos: Pos) {
+    const oldPos = interactionStartPosRef.current ?? layers[layerId]?.pos;
+    if (!oldPos) return false;
+
     return oldPos.width !== newPos.width || oldPos.height !== newPos.height;
   }
 
@@ -70,14 +101,26 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     const layer = layers[layerUnderPointerId!] ?? null;
 
     const dragHandleClicked = handlePointerDown_useRect(event, layer);
-    if (dragHandleClicked) return;
+    if (dragHandleClicked) {
+      const layerId = selectedLayerIdRef.current;
+      interactionLayerIdRef.current = layerId;
+      interactionStartPosRef.current = layerId ? { ...layers[layerId].pos } : null;
+      isInteractionActiveRef.current = !!layerId;
+      return;
+    }
 
     if (layer && layer.isBedrock) {
       clearSelection();
       selectedLayerIdRef.current = null;
+      interactionLayerIdRef.current = null;
+      interactionStartPosRef.current = null;
+      isInteractionActiveRef.current = false;
       // indicate somehow bedrock is selected
     } else {
       selectedLayerIdRef.current = layerUnderPointerId;
+      interactionLayerIdRef.current = layerUnderPointerId;
+      interactionStartPosRef.current = layerUnderPointerId ? { ...layers[layerUnderPointerId].pos } : null;
+      isInteractionActiveRef.current = !!layerUnderPointerId;
       containerRef.current!.classList.add('cursor-grabbing');
     }
 
@@ -112,11 +155,19 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   function handlePointerUp(event: React.PointerEvent<HTMLDivElement>) {
     handlePointerUp_useRect(event);
 
+    isInteractionActiveRef.current = false;
+    interactionLayerIdRef.current = null;
+    interactionStartPosRef.current = null;
+
     containerRef.current!.classList.remove('cursor-grabbing');
   }
 
   function handlePointerLeave(event: React.PointerEvent) {
     if (pointerIdRef.current !== event.pointerId) return;
+
+    isInteractionActiveRef.current = false;
+    interactionLayerIdRef.current = null;
+    interactionStartPosRef.current = null;
 
     hoveredLayerIdRef.current = null;
     ants.clear();
