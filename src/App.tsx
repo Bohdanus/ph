@@ -10,12 +10,15 @@ import { StoreProvider } from './contexts/StoreContext.tsx';
 import { CurrentToolProvider } from './contexts/useCurrentTool.tsx';
 import { FileProvider } from './contexts/useFile.tsx';
 import { LandingPage } from './components/LandingPage/LandingPage';
+import { KeyboardEventsProvider } from './hooks/useKeyboardEvents.tsx';
+import { AppKeyboardShortcuts } from './components/Common/AppKeyboardShortcuts.tsx';
 
 const LANDING_PAGE_VIEWED_KEY = 'lightshopy_landing_viewed';
 
 function AppContainer() {
   return (
     <div className="grid h-full grid-rows-[auto_auto_1fr_auto] grid-cols-[250px_1fr_250px] [grid-template-areas:'header_header_header''toolbar_toolbar_toolbar''left_main_right''footer_footer_footer'] max-md:grid-cols-1 max-md:grid-rows-[50px_1fr] max-md:[grid-template-areas:'header''main'] dark:bg-gray-900">
+      <AppKeyboardShortcuts />
       <Menu />
       <SidebarLeft />
 
@@ -51,9 +54,11 @@ function App() {
     <FileProvider>
       <ThemeProvider>
         <StoreProvider>
-          <CurrentToolProvider>
-            {showApp ? <AppContainer /> : <LandingPage onStart={handleStartClick} />}
-          </CurrentToolProvider>
+          <KeyboardEventsProvider>
+            <CurrentToolProvider>
+              {showApp ? <AppContainer /> : <LandingPage onStart={handleStartClick} />}
+            </CurrentToolProvider>
+          </KeyboardEventsProvider>
         </StoreProvider>
       </ThemeProvider>
     </FileProvider>

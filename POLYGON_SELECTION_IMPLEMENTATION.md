@@ -56,7 +56,7 @@ Implemented a Photoshop-style polygon selection tool that allows users to create
   - Added proper property destructuring (color, lineWidth, alpha, fill)
   - Tool name remains `'lasso'` for backward compatibility
 
-- **`src/components/Main/LassoToolArea.tsx`** (Completely Refactored)
+- **`src/components/Main/PolygonClickToolArea.tsx`** (Completely Refactored)
   - Removed continuous drawing by default (uses click-to-place)
   - Added left-click handling for placing points
   - Added right-click handling for finishing selection

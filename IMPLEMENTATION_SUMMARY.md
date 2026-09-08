@@ -46,7 +46,7 @@ src/
 ├── components/
 │   ├── Main/
 │   │   ├── Main.tsx              (unchanged, already supported lasso mode)
-│   │   └── LassoToolArea.tsx      (🔄 REFACTORED: click-to-place + advanced modes)
+│   │   └── PolygonClickToolArea.tsx      (🔄 REFACTORED: click-to-place + advanced modes)
 │   └── ToolbarsRight/
 │       └── Lasso/Lasso.tsx        (+ fill toggle, help text with shortcuts)
 ```

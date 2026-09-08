@@ -102,13 +102,13 @@ export const toolsMap: ToolsMap = {
     imageProcessor: text,
     toolboxComponent: Text,
   },
-  // 'polygonal-lasso': {
-  //   creator: true,
-  //   icon: 'lasso',
-  //   // @ts-expect-error args
-  //   imageProcessor: polygonSelection,
-  //   toolboxComponent: PolygonalLasso,
-  // },
+  'polygonal-lasso': {
+    creator: true,
+    icon: 'lasso',
+    // @ts-expect-error args
+    imageProcessor: selection,
+    toolboxComponent: PolygonalLasso,
+  },
   'freehand-lasso': {
     creator: true,
     icon: 'lasso',

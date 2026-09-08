@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useKeyDownShortcut } from '../../../hooks/useKeyboardEvents.tsx';
 
 const FONTS = [
   'Arial',
@@ -27,6 +28,15 @@ const FontSelect: React.FC<FontSelectProps> = ({ value, onChange }) => {
   const [initialValue, setInitialValue] = useState(value);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  useKeyDownShortcut({
+    key: 'Escape',
+    enabled: isOpen,
+    onKeyDown: () => {
+      onChange(initialValue);
+      setIsOpen(false);
+    },
+  });
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -37,19 +47,10 @@ const FontSelect: React.FC<FontSelectProps> = ({ value, onChange }) => {
       }
     };
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && isOpen) {
-        onChange(initialValue);
-        setIsOpen(false);
-      }
-    };
-
     document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('keydown', handleKeyDown);
 
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleKeyDown);
     };
   }, [isOpen, initialValue, onChange]);
 
