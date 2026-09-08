@@ -16,7 +16,7 @@ type PolygonClickToolProps = {
 };
 
 export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickToolProps) => {
-  const [{ containerRef, totalSize }] = useStore();
+  const [{ containerRef, totalSize }, dispatch] = useStore();
   const { toolArgs } = useCurrentTool();
 
   const isFreehand = (toolArgs?.toolName ?? '') === 'freehand-lasso';
@@ -37,7 +37,8 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     const newPoints: Point[] = oldPoints.map((p) => ({ x: p.x - pos.x, y: p.y - pos.y }));
 
     // commit selection into global store
-    const [{}, dispatch] = useStore();
+    // `dispatch` obtained from top-level useStore() call to avoid invalid hook calls
+    
     dispatch({
       type: 'ADD_SELECTION',
       payload: {
