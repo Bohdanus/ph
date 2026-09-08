@@ -120,7 +120,7 @@ export const useHistory = () => {
 
     for (let i = 0; i <= targetIndex; i++) {
       const { disabled, layerId, actionName, args } = _history[i];
-      if ((args as LayerSource).isBedrock) {
+      if (args && (args as LayerSource).isBedrock) {
         totalSize = (args as NewBedrockSize).size;
       }
       if (disabled) continue;
