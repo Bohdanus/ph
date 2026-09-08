@@ -119,14 +119,22 @@ export const useHistory = () => {
     let totalSize: Size | undefined = undefined;
 
     for (let i = 0; i <= targetIndex; i++) {
-      const { disabled, layerId, actionName, args } = _history[i];
-      if (args && (args as LayerSource).isBedrock) {
+      const { disabled, layerId, actionName, args, layerSource } = _history[i];
+      const source = layerSource ?? (args as LayerSource | undefined);
+
+      if (source?.isBedrock) {
+        totalSize = source.size;
+      } else if ((args as NewBedrockSize | undefined)?.isBedrock) {
         totalSize = (args as NewBedrockSize).size;
       }
       if (disabled) continue;
 
       if (actionName === NEW_LAYER_ACTION) {
-        const source = args as LayerSource;
+        if (!source) {
+          console.error('skipped history item without layer source', _history[i]);
+          continue;
+        }
+
         const newLayer = createLayerSource({ layerId, layers: newLayers, source });
         newLayers[newLayer.id] = newLayer;
       } else if (actionName === SHOW_LAYER_ACTION) {
@@ -139,7 +147,12 @@ export const useHistory = () => {
         const { layerToMoveId, afterWhichLayerId } = args as any;
         reorderLayers({ layers: newLayers, layerToMoveId, afterWhichLayerId });
       } else if (actionName === MERGE_ACTION) {
-        const mergedLayer = createLayerSource({ layerId, layers: newLayers, source: args as LayerSource });
+        if (!source) {
+          console.error('skipped merge history item without layer source', _history[i]);
+          continue;
+        }
+
+        const mergedLayer = createLayerSource({ layerId, layers: newLayers, source });
         newLayers = {};
         newLayers[layerId] = mergedLayer;
       } else if (actionName === REMOVE_ACTION) {
