@@ -1,11 +1,13 @@
-import React, { type ChangeEvent, useEffect } from 'react';
+import React, { type ChangeEvent, useEffect, useState } from 'react';
 import { type LassoToolArgs, type PolygonSelectionToolSettings } from '../../../tools/polygonSelection.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
+import { copyPolygonToCanvas, copyCanvasToClipboard } from '../../../util/selection.ts';
 
 const Lasso: React.FC<{}> = () => {
-  const [{ color }] = useStore();
+  const [{ color, selections, canvasCtxRef }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
+  const [isCopying, setIsCopying] = useState(false);
 
   const args = toolArgs as LassoToolArgs;
 
@@ -29,6 +31,40 @@ const Lasso: React.FC<{}> = () => {
     handleChange({ ...args, fill: !args.fill });
   };
 
+  const handleCopySelection = async () => {
+    try {
+      const activeSelection = selections.find((s) => s.isActive);
+      if (!activeSelection) {
+        alert('No active selection to copy');
+        return;
+      }
+
+      const canvas = canvasCtxRef.current?.canvas;
+      if (!canvas) {
+        alert('Canvas not available');
+        return;
+      }
+
+      setIsCopying(true);
+
+      // Create ImageBitmap from canvas
+      const imageBitmap = await createImageBitmap(canvas);
+
+      // Extract the selection region using the polygon points
+      const selectionCanvas = copyPolygonToCanvas(imageBitmap, activeSelection.points);
+
+      // Copy to clipboard
+      await copyCanvasToClipboard(selectionCanvas);
+
+      alert('Selection copied to clipboard!');
+    } catch (error) {
+      console.error('Error copying selection:', error);
+      alert('Failed to copy selection to clipboard');
+    } finally {
+      setIsCopying(false);
+    }
+  };
+
   const { alpha, lineWidth, fill } = args;
 
   return (
@@ -46,6 +82,19 @@ const Lasso: React.FC<{}> = () => {
           {fill ? 'Fill' : 'Outline'}
         </button>
       </div>
+
+      <button
+        onClick={handleCopySelection}
+        disabled={isCopying || selections.length === 0}
+        className={`px-3 py-1 rounded border text-sm transition-colors ${
+          selections.length === 0 || isCopying
+            ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed dark:bg-gray-800 dark:text-gray-600 dark:border-gray-700'
+            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 active:bg-gray-100 dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600 dark:hover:bg-gray-600'
+        }`}
+        title={selections.length === 0 ? 'No selections to copy' : 'Copy selection to clipboard'}
+      >
+        {isCopying ? 'Copying...' : 'Copy'}
+      </button>
 
       {!fill && (
         <div className="flex flex-col">

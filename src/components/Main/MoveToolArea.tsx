@@ -62,23 +62,23 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       const toolArgs = getArgs(sortedRect, layerId);
       tempUpdateLayer({ id: layerId, toolArgs });
     },
-    onChangeEnd: (sortedRect: RectXYSorted) => {
-      const layerId = interactionLayerIdRef.current;
-      const startPos = interactionStartPosRef.current;
-      if (!layerId || !startPos) return;
+    onChangeEnd: async (sortedRect: RectXYSorted) => {
+       const layerId = interactionLayerIdRef.current;
+       const startPos = interactionStartPosRef.current;
+       if (!layerId || !startPos) return;
 
-      const newPos = sortedRectToPos(sortedRect);
-      const didPosChange =
-        startPos.x !== newPos.x ||
-        startPos.y !== newPos.y ||
-        startPos.width !== newPos.width ||
-        startPos.height !== newPos.height;
+       const newPos = sortedRectToPos(sortedRect);
+       const didPosChange =
+         startPos.x !== newPos.x ||
+         startPos.y !== newPos.y ||
+         startPos.width !== newPos.width ||
+         startPos.height !== newPos.height;
 
-      if (!didPosChange) return;
+       if (!didPosChange) return;
 
-      const toolArgs = getArgs(sortedRect, layerId);
-      updateLayerByTool({ id: layerId, toolArgs });
-    },
+       const toolArgs = getArgs(sortedRect, layerId);
+       await updateLayerByTool({ id: layerId, toolArgs });
+     },
   });
 
   useEffect(() => {

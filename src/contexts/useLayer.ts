@@ -109,7 +109,14 @@ export const useLayers = () => {
     clearOverlay();
   };
 
-  const updateLayerByTool = ({ id = activeLayerId, toolArgs }: LayerEditParams) => {
+  const updateLayerByTool = async ({ id = activeLayerId, toolArgs }: LayerEditParams) => {
+    const toolName = (toolArgs as ToolArgs).toolName;
+
+    // Check if tool requires flattening layers
+    if (toolsMap[toolName].flattenRequired) {
+      await mergeAllLayers();
+    }
+
     // should mark layer dirty
     tempUpdateLayer({ id, toolArgs });
     // should pick that dirty later and do all hardening

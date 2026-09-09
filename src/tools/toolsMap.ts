@@ -38,6 +38,7 @@ type ToolsMap = Record<
   string,
   {
     creator?: boolean;
+    flattenRequired?: boolean;
     icon: string;
     imageProcessor: (param: ProcessorToolParams | CreatorToolParams) => (args: ToolArgs) => ToolResult;
     toolboxComponent: ToolbarRightComponent;
@@ -75,12 +76,13 @@ export const toolsMap: ToolsMap = {
     imageProcessor: transform,
     toolboxComponent: Transform,
   },
-  crop: {
-    icon: 'crop',
-    // @ts-expect-error args
-    imageProcessor: crop,
-    toolboxComponent: Crop,
-  },
+   crop: {
+     icon: 'crop',
+     flattenRequired: true,
+     // @ts-expect-error args
+     imageProcessor: crop,
+     toolboxComponent: Crop,
+   },
   draw: {
     creator: true,
     icon: 'draw',

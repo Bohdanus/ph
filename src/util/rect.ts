@@ -36,6 +36,10 @@ export function trimRect(rectSorted: RectXY, imageSize: Size): TrimmedRect {
     y2 = Math.min(imageHeight, y2);
   }
 
+  // Ensure coordinates are in correct order (handle inverted coordinates)
+  if (x1 > x2) [x1, x2] = [x2, x1];
+  if (y1 > y2) [y1, y2] = [y2, y1];
+
   const x = Math.round(x1);
   const y = Math.round(y1);
   const width = Math.round(x2 - x1);

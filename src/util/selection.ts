@@ -21,6 +21,8 @@ export function copyPolygonToCanvas(sourceCanvas: BitmapSource, points: Point[])
   ctx.closePath();
 
   // Clip drawing to polygon
+  // Note: Self-intersecting polygons are handled gracefully using the non-zero winding rule.
+  // The clipping will simply exclude regions based on the winding number, which prevents crashes.
   ctx.clip();
 
   // Draw source canvas shifted so polygon aligns
@@ -29,4 +31,18 @@ export function copyPolygonToCanvas(sourceCanvas: BitmapSource, points: Point[])
   ctx.restore();
 
   return destCanvas;
+}
+
+export async function copyCanvasToClipboard(canvas: OffscreenCanvas): Promise<void> {
+  try {
+    const blob = await canvas.convertToBlob();
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        [blob.type]: blob,
+      }),
+    ]);
+  } catch (error) {
+    console.error('Failed to copy to clipboard:', error);
+    throw error;
+  }
 }

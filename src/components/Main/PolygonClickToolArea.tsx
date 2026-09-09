@@ -2,7 +2,6 @@ import { type PointerEvent, type RefObject, useRef, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
-import { useDoubleClick } from '../../hooks/useDoubleClick.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import { pointsBoundingPos } from '../../util/draw.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
@@ -23,6 +22,10 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
 
   const pointsRef = useRef<Point[]>([]);
   const previewRef = useRef<Point | null>(null);
+
+  // Custom double-click detection for closing the polygon
+  const lastClickTimeRef = useRef(0);
+  const lastClickPosRef = useRef<Point | null>(null);
 
   const { getLocalCoords } = usePointerPosition({
     ref: containerRef,
@@ -49,13 +52,32 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
       },
     });
 
-    // clear working state
-    pointsRef.current = [];
-    previewRef.current = null;
-    clearOverlay();
-  };
+     // clear working state
+     pointsRef.current = [];
+     previewRef.current = null;
+     clearOverlay();
+   };
 
-  const { handleClick: handleDoubleClick } = useDoubleClick(finishSelection);
+   // Check if the current click is a double-click on the first point to close the polygon
+   function checkDoubleClickOnFirstPoint(coords: Point): boolean {
+     if (pointsRef.current.length < MIN_POINTS_FOR_SELECTION) {
+       return false;
+     }
+
+     const first = pointsRef.current[0];
+     const timeSinceLastClick = Date.now() - lastClickTimeRef.current;
+     const distanceToLastClick = lastClickPosRef.current ? distance(coords, lastClickPosRef.current) : Infinity;
+     const distanceToFirstPoint = distance(coords, first);
+
+     // Double-click detected if:
+     // 1. Current click is close to the FIRST point
+     // 2. AND previous click was also close to the first point
+     // 3. AND both clicks were within time threshold (300ms)
+     const isCurrentOnFirst = distanceToFirstPoint < CLOSE_START_THRESHOLD;
+     const isLastOnFirst = lastClickPosRef.current && distanceToLastClick < CLOSE_START_THRESHOLD;
+
+     return isCurrentOnFirst && isLastOnFirst && timeSinceLastClick < 300 && timeSinceLastClick > 0;
+   }
 
   function distance(a: Point, b: Point) {
     const dx = a.x - b.x;
@@ -138,31 +160,31 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     }
   }
 
-  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
+    const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
 
-    event.preventDefault();
+      event.preventDefault();
 
-    const coords = getLocalCoords(event);
+      const coords = getLocalCoords(event);
 
-    // If clicking the starting point (close) and we have enough points -> finish
-    if (pointsRef.current.length >= MIN_POINTS_FOR_SELECTION) {
-      const first = pointsRef.current[0];
-      if (distance(coords, first) < CLOSE_START_THRESHOLD) {
+      // Check if this is a double-click on the first point to close the polygon
+      if (checkDoubleClickOnFirstPoint(coords)) {
+        pointsRef.current.pop(); // Remove the duplicate point added on first click
         finishSelection();
+        lastClickTimeRef.current = 0;
+        lastClickPosRef.current = null;
         return;
       }
-    }
 
-    // Double click handling - do not add duplicate point on second click
-    const isDouble = handleDoubleClick(coords, pointsRef);
-    if (isDouble) return;
+      // Record this click for potential double-click detection
+      lastClickTimeRef.current = Date.now();
+      lastClickPosRef.current = coords;
 
-    // Freehand mode: add point on move as well; polygonal mode: add point only on click
-    pointsRef.current.push(coords);
-    previewRef.current = null;
-    redrawOverlay();
-  };
+      // Freehand mode: add point on move as well; polygonal mode: add point only on click
+      pointsRef.current.push(coords);
+      previewRef.current = null;
+      redrawOverlay();
+    };
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const coords = getLocalCoords(event);
