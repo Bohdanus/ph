@@ -66,15 +66,15 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
 
      const first = pointsRef.current[0];
      const timeSinceLastClick = Date.now() - lastClickTimeRef.current;
-     const distanceToLastClick = lastClickPosRef.current ? distance(coords, lastClickPosRef.current) : Infinity;
      const distanceToFirstPoint = distance(coords, first);
+     const distanceLastClickToFirst = lastClickPosRef.current ? distance(lastClickPosRef.current, first) : Infinity;
 
      // Double-click detected if:
      // 1. Current click is close to the FIRST point
      // 2. AND previous click was also close to the first point
      // 3. AND both clicks were within time threshold (300ms)
      const isCurrentOnFirst = distanceToFirstPoint < CLOSE_START_THRESHOLD;
-     const isLastOnFirst = lastClickPosRef.current && distanceToLastClick < CLOSE_START_THRESHOLD;
+     const isLastOnFirst = lastClickPosRef.current && distanceLastClickToFirst < CLOSE_START_THRESHOLD;
 
      return isCurrentOnFirst && isLastOnFirst && timeSinceLastClick < 300 && timeSinceLastClick > 0;
    }
