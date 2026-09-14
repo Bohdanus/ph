@@ -31,8 +31,8 @@ const PolygonalLasso: React.FC<{}> = () => {
       </div>
 
       <div className="text-[10px] text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded border border-blue-200 dark:border-blue-800 max-w-xs">
-        <div>Click points • Double-click to finish</div>
-        <div className="text-[9px] mt-1 opacity-75">just nice line !</div>
+        <div>Click to add corners • Double-click to close</div>
+        <div className="text-[9px] mt-1 opacity-75">Right-click also finishes the selection</div>
       </div>
     </div>
   );

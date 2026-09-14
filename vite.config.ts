@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [
     react({
+      // @ts-expect-error Plugin runtime supports Babel options, but the installed Vite 8 plugin types omit this key.
       babel: {
         plugins: [['babel-plugin-react-compiler', { target: '19' }]],
       },

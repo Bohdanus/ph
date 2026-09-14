@@ -4,6 +4,7 @@ import { type TextToolArgs } from '../../../tools/text.ts';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
+import { isTextToolArgs } from '../../../util/typeGuards.ts';
 import FontSelect from './FontSelect.tsx';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON, TOGGLE_BUTTON_ACTIVE, TOGGLE_BUTTON_INACTIVE } from '../buttonStyles.ts';
 
@@ -12,66 +13,69 @@ const Text: React.FC<{}> = () => {
   const { createLayerFromTool } = useLayers();
   const { toolArgs, setToolArgs: onChange } = useCurrentTool();
 
-  const args = toolArgs as TextToolArgs;
-  const { text, fontSize, lineHeight, rect, bold, italic, fontFamily, align } = args;
+  if (!isTextToolArgs(toolArgs)) {
+    return null;
+  }
+
+  const { text = '', fontSize = 64, lineHeight = 1.1, rect = null, bold = false, italic = false, fontFamily = 'Arial', align = 'left' } = toolArgs;
 
   useEffect(() => {
-    onChange({ ...args, color });
-  }, [color]);
+    onChange({ ...toolArgs, color });
+  }, [color, toolArgs, onChange]);
 
   const handleTextChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const textValue = event.target.value;
-    const newArgs = { ...args, text: textValue };
+    const newArgs = { ...toolArgs, text: textValue };
     const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
   };
 
   const handleFontSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
     const fontSize = Number(event.target.value);
-    const newArgs = { ...args, fontSize };
+    const newArgs = { ...toolArgs, fontSize };
     const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
   };
 
   const handleLineHeightChange = (event: ChangeEvent<HTMLInputElement>) => {
     const newLineHeight = Number(event.target.value);
-    const newArgs = { ...args, lineHeight: newLineHeight };
+    const newArgs = { ...toolArgs, lineHeight: newLineHeight };
     const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
   };
 
   const handleFontFamilyChange = (fontFamily: string) => {
-    const newArgs = { ...args, fontFamily };
+    const newArgs = { ...toolArgs, fontFamily };
     const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
   };
 
   const handleAlignChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const align = event.target.value as 'left' | 'center' | 'right';
-    const newArgs = { ...args, align };
+    const newArgs = { ...toolArgs, align };
     onChange(newArgs);
   };
 
   const toggleBold = () => {
-    const newArgs = { ...args, bold: !bold };
+    const newArgs = { ...toolArgs, bold: !bold };
     const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
   };
 
   const toggleItalic = () => {
-    const newArgs = { ...args, italic: !italic };
+    const newArgs = { ...toolArgs, italic: !italic };
     const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
   };
 
   const applyText = () => {
     if (text && rect) {
-      createLayerFromTool({ args });
+      createLayerFromTool({ args: toolArgs });
     }
   };
 
   const clear = () => {
-    onChange({ ...args, text: '', rect: null });
+    onChange({ ...toolArgs, text: '', rect: null });
   };
 
   return (

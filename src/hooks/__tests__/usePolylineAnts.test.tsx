@@ -1,32 +1,53 @@
-import React, { useEffect, useRef } from 'react';
+/**
+ * @vitest-environment jsdom
+ */
+
+import { useEffect, useRef } from 'react';
 import { render, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import type { Mock } from 'vitest';
 import { useMarchingPath } from '../usePolylineAnts';
 
+const testGlobal = globalThis as typeof globalThis & { Path2D?: typeof Path2D };
+
 describe('useMarchingPath basic behavior', () => {
-  let origRaf: any;
-  let origCancel: any;
+  let origRaf: typeof requestAnimationFrame;
+  let origCancel: typeof cancelAnimationFrame;
+  let origPath2D: typeof Path2D | undefined;
 
   beforeEach(() => {
     // Provide simple rAF/cancel implementations that use setTimeout so we can
     // observe calls. We wrap them with vi.fn so assertions are possible.
-    origRaf = global.requestAnimationFrame;
-    origCancel = global.cancelAnimationFrame;
+    origRaf = testGlobal.requestAnimationFrame;
+    origCancel = testGlobal.cancelAnimationFrame;
+    origPath2D = testGlobal.Path2D;
 
-    global.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
+    testGlobal.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
       // schedule the callback but return the timeout id as the raf id
       return setTimeout(cb as TimerHandler, 16) as unknown as number;
     });
 
-    global.cancelAnimationFrame = vi.fn((id: number) => {
+    testGlobal.cancelAnimationFrame = vi.fn((id: number) => {
       clearTimeout(id as unknown as number);
     });
+
+    testGlobal.Path2D = vi.fn().mockImplementation(function MockPath2D() {
+      return {
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+      };
+    }) as unknown as typeof Path2D;
   });
 
   afterEach(() => {
     // restore
-    global.requestAnimationFrame = origRaf;
-    global.cancelAnimationFrame = origCancel;
+    testGlobal.requestAnimationFrame = origRaf;
+    testGlobal.cancelAnimationFrame = origCancel;
+    if (origPath2D) {
+      testGlobal.Path2D = origPath2D;
+    } else {
+      delete (testGlobal as { Path2D?: typeof Path2D }).Path2D;
+    }
     vi.restoreAllMocks();
   });
 
@@ -59,7 +80,7 @@ describe('useMarchingPath basic behavior', () => {
       apiRef.current.draw();
     });
 
-    expect((global.requestAnimationFrame as unknown as vi.Mock).mock.calls.length).toBeGreaterThan(0);
+    expect((testGlobal.requestAnimationFrame as unknown as Mock).mock.calls.length).toBeGreaterThan(0);
   });
 
   it('clear() cancels the animation and clears the canvas', () => {
@@ -97,8 +118,8 @@ describe('useMarchingPath basic behavior', () => {
     });
 
     // cancelAnimationFrame should have been called when clear() was invoked
-    expect((global.cancelAnimationFrame as unknown as vi.Mock).mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect((testGlobal.cancelAnimationFrame as unknown as Mock).mock.calls.length).toBeGreaterThanOrEqual(1);
     // the canvas clearRect should also have been called
-    expect((mockCtx.clearRect as unknown as vi.Mock).mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect((mockCtx.clearRect as unknown as Mock).mock.calls.length).toBeGreaterThanOrEqual(1);
   });
 });

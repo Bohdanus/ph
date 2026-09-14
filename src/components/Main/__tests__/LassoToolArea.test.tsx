@@ -1,7 +1,14 @@
+/**
+ * @vitest-environment jsdom
+ */
+
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { fireEvent, render } from '@testing-library/react';
 import type { Point } from '../../../contexts/general-types.ts';
 import { pointsBoundingPos } from '../../../util/draw.ts';
+import { PolygonClickToolArea } from '../PolygonClickToolArea.tsx';
+
+const dispatchMock = vi.hoisted(() => vi.fn());
 
 // Mock dependencies
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
@@ -25,7 +32,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       toolOverlayRef: { current: document.createElement('canvas') },
       totalSize: { width: 800, height: 600 },
     },
-    vi.fn(),
+    dispatchMock,
   ],
 }));
 
@@ -36,6 +43,10 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
 }));
 
 describe('PolygonClickToolArea', () => {
+  beforeEach(() => {
+    dispatchMock.mockClear();
+  });
+
   it('pointsBoundingPos calculates correct bounding box', () => {
     const points: Point[] = [
       { x: 10, y: 20 },
@@ -87,5 +98,48 @@ describe('PolygonClickToolArea', () => {
     expect(pos.y).toBe(-20);
     expect(pos.width).toBe(50); // 10 + 2*20
     expect(pos.height).toBe(50); // 10 + 2*20
+  });
+
+  it('finishes a polygonal selection on double-click without adding a duplicate final point', () => {
+    const mockCtx = {
+      canvas: { width: 800, height: 600 },
+      clearRect: vi.fn(),
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      stroke: vi.fn(),
+      fill: vi.fn(),
+      arc: vi.fn(),
+      setLineDash: vi.fn(),
+      strokeStyle: '',
+      fillStyle: '',
+      lineWidth: 1,
+    } as unknown as CanvasRenderingContext2D;
+
+    const { container } = render(
+      <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+    );
+
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 10 });
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 101, clientY: 101 });
+
+    expect(dispatchMock).toHaveBeenCalledTimes(1);
+    expect(dispatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'ADD_SELECTION',
+        payload: expect.objectContaining({
+          points: [
+            { x: 1, y: 1 },
+            { x: 91, y: 1 },
+            { x: 91, y: 91 },
+          ],
+          pos: { x: 9, y: 9, width: 92, height: 92 },
+        }),
+      })
+    );
   });
 });
