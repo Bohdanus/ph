@@ -4,11 +4,12 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
-import type { Point } from '../../../contexts/general-types.ts';
+import type { Point, Selection } from '../../../contexts/general-types.ts';
 import { pointsBoundingPos } from '../../../util/draw.ts';
 import { PolygonClickToolArea } from '../PolygonClickToolArea.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
+const storeState = vi.hoisted((): { selections: Selection[] } => ({ selections: [] }));
 
 // Mock dependencies
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
@@ -29,6 +30,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
     {
       containerRef: { current: document.createElement('div') },
+      selections: storeState.selections,
       toolOverlayRef: { current: document.createElement('canvas') },
       totalSize: { width: 800, height: 600 },
     },
@@ -45,7 +47,27 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
 describe('PolygonClickToolArea', () => {
   beforeEach(() => {
     dispatchMock.mockClear();
+    storeState.selections = [];
   });
+
+  const createMockContext = () =>
+    ({
+      canvas: { width: 800, height: 600 },
+      clearRect: vi.fn(),
+      beginPath: vi.fn(),
+      closePath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      stroke: vi.fn(),
+      fill: vi.fn(),
+      arc: vi.fn(),
+      save: vi.fn(),
+      restore: vi.fn(),
+      setLineDash: vi.fn(),
+      strokeStyle: '',
+      fillStyle: '',
+      lineWidth: 1,
+    }) as unknown as CanvasRenderingContext2D;
 
   it('pointsBoundingPos calculates correct bounding box', () => {
     const points: Point[] = [
@@ -101,20 +123,7 @@ describe('PolygonClickToolArea', () => {
   });
 
   it('finishes a polygonal selection on double-click without adding a duplicate final point', () => {
-    const mockCtx = {
-      canvas: { width: 800, height: 600 },
-      clearRect: vi.fn(),
-      beginPath: vi.fn(),
-      moveTo: vi.fn(),
-      lineTo: vi.fn(),
-      stroke: vi.fn(),
-      fill: vi.fn(),
-      arc: vi.fn(),
-      setLineDash: vi.fn(),
-      strokeStyle: '',
-      fillStyle: '',
-      lineWidth: 1,
-    } as unknown as CanvasRenderingContext2D;
+    const mockCtx = createMockContext();
 
     const { container } = render(
       <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
@@ -141,5 +150,129 @@ describe('PolygonClickToolArea', () => {
         }),
       })
     );
+  });
+
+  it('draws active committed selections from store state so the lasso stays visible after finishing', () => {
+    storeState.selections = [
+      {
+        id: 'selection-1',
+        isActive: true,
+        pos: { x: 9, y: 9, width: 92, height: 92 },
+        points: [
+          { x: 1, y: 1 },
+          { x: 91, y: 1 },
+          { x: 91, y: 91 },
+        ],
+      },
+    ];
+
+    const mockCtx = createMockContext();
+
+    render(<PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />);
+
+    expect(mockCtx.moveTo).toHaveBeenCalledWith(10, 10);
+    expect(mockCtx.lineTo).toHaveBeenCalledWith(100, 10);
+    expect(mockCtx.lineTo).toHaveBeenCalledWith(100, 100);
+    expect(mockCtx.closePath).toHaveBeenCalled();
+    expect(mockCtx.stroke).toHaveBeenCalled();
+  });
+
+  it('updates an active committed anchor when dragging an individual point', () => {
+    storeState.selections = [
+      {
+        id: 'selection-1',
+        isActive: true,
+        pos: { x: 9, y: 9, width: 92, height: 92 },
+        points: [
+          { x: 1, y: 1 },
+          { x: 91, y: 1 },
+          { x: 91, y: 91 },
+        ],
+      },
+    ];
+
+    const mockCtx = createMockContext();
+    const { container } = render(
+      <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(toolArea, { clientX: 20, clientY: 20 });
+
+    expect(dispatchMock).toHaveBeenCalledWith({
+      type: 'UPDATE_SELECTION',
+      payload: expect.objectContaining({
+        id: 'selection-1',
+        pos: { x: 19, y: 9, width: 82, height: 92 },
+        points: [
+          { x: 1, y: 11 },
+          { x: 81, y: 1 },
+          { x: 81, y: 91 },
+        ],
+      }),
+    });
+  });
+
+  it('moves the whole active committed selection when dragging inside the polygon', () => {
+    storeState.selections = [
+      {
+        id: 'selection-1',
+        isActive: true,
+        pos: { x: 9, y: 9, width: 92, height: 92 },
+        points: [
+          { x: 1, y: 1 },
+          { x: 91, y: 1 },
+          { x: 91, y: 91 },
+        ],
+      },
+    ];
+
+    const mockCtx = createMockContext();
+    const { container } = render(
+      <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 40 });
+    fireEvent.pointerMove(toolArea, { clientX: 90, clientY: 55 });
+
+    expect(dispatchMock).toHaveBeenCalledWith({
+      type: 'UPDATE_SELECTION',
+      payload: expect.objectContaining({
+        id: 'selection-1',
+        pos: { x: 19, y: 24, width: 92, height: 92 },
+        points: [
+          { x: 1, y: 1 },
+          { x: 91, y: 1 },
+          { x: 91, y: 91 },
+        ],
+      }),
+    });
+  });
+
+  it('changes cursor when hovering a committed anchor point', () => {
+    storeState.selections = [
+      {
+        id: 'selection-1',
+        isActive: true,
+        pos: { x: 9, y: 9, width: 92, height: 92 },
+        points: [
+          { x: 1, y: 1 },
+          { x: 91, y: 1 },
+          { x: 91, y: 91 },
+        ],
+      },
+    ];
+
+    const mockCtx = createMockContext();
+    const { container } = render(
+      <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerMove(toolArea, { clientX: 10, clientY: 10 });
+
+    expect(toolArea.style.cursor).toBe('grab');
   });
 });

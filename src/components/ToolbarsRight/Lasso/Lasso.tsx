@@ -2,7 +2,7 @@ import React, { type ChangeEvent, useEffect, useState } from 'react';
 import { type LassoToolArgs, type PolygonSelectionToolSettings } from '../../../tools/polygonSelection.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
-import { copyPolygonToCanvas, copyCanvasToClipboard } from '../../../util/selection.ts';
+import { copyPolygonToCanvas, copyCanvasToClipboard, getSelectionAbsolutePoints } from '../../../util/selection.ts';
 
 const Lasso: React.FC<{}> = () => {
   const [{ color, selections, canvasCtxRef }] = useStore();
@@ -50,8 +50,8 @@ const Lasso: React.FC<{}> = () => {
       // Create ImageBitmap from canvas
       const imageBitmap = await createImageBitmap(canvas);
 
-      // Extract the selection region using the polygon points
-      const selectionCanvas = copyPolygonToCanvas(imageBitmap, activeSelection.points);
+      // Extract the selection region using absolute polygon points.
+      const selectionCanvas = copyPolygonToCanvas(imageBitmap, getSelectionAbsolutePoints(activeSelection));
 
       // Copy to clipboard
       await copyCanvasToClipboard(selectionCanvas);

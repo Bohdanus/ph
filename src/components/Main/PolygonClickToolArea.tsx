@@ -2,10 +2,17 @@ import { type PointerEvent, type RefObject, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
-import type { Point } from '../../contexts/general-types.ts';
+import type { Point, Selection } from '../../contexts/general-types.ts';
 import { pointsBoundingPos } from '../../util/draw.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useDoubleClick } from '../../hooks/useDoubleClick.ts';
+import {
+  drawSelectionOutline,
+  findSelectionAnchorAtPoint,
+  getSelectionAtPoint,
+  moveSelectionAnchor,
+  moveSelectionByDelta,
+} from '../../util/selection.ts';
 
 const MIN_POINTS_FOR_SELECTION = 3;
 const CLOSE_START_THRESHOLD = 10; // px in image coordinate space
@@ -16,14 +23,27 @@ type PolygonClickToolProps = {
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
 };
 
+type SelectionDragState =
+  | {
+      type: 'anchor';
+      anchorIndex: number;
+      selection: Selection;
+    }
+  | {
+      type: 'selection';
+      origin: Point;
+      selection: Selection;
+    };
+
 export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickToolProps) => {
-  const [{ containerRef, totalSize }, dispatch] = useStore();
+  const [{ containerRef, selections, totalSize }, dispatch] = useStore();
   const { toolArgs } = useCurrentTool();
 
   const isFreehand = (toolArgs?.toolName ?? '') === 'freehand-lasso';
 
   const pointsRef = useRef<Point[]>([]);
   const previewRef = useRef<Point | null>(null);
+  const selectionDragRef = useRef<SelectionDragState | null>(null);
 
   const { getLocalCoords } = usePointerPosition({
     ref: containerRef,
@@ -70,6 +90,33 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
+  function updateSelection(selection: Selection) {
+    dispatch({ type: 'UPDATE_SELECTION', payload: selection });
+  }
+
+  function setCursor(event: PointerEvent<HTMLDivElement>, cursor: string) {
+    try {
+      event.currentTarget.style.cursor = cursor;
+    } catch {
+      // Ignore cursor updates in non-DOM test environments.
+    }
+  }
+
+  function getAnchorSelectionAtPoint(point: Point): Selection | null {
+    return (
+      selections.find((selection) =>
+        selection.isActive ? findSelectionAnchorAtPoint(selection, point) !== null : false
+      ) ?? null
+    );
+  }
+
+  function redrawCommittedSelections() {
+    const ctx = overlayCtxRef.current;
+    if (!ctx) return;
+
+    selections.forEach((selection) => drawSelectionOutline(ctx, selection));
+  }
+
   function resetInteractionState() {
     pointsRef.current = [];
     previewRef.current = null;
@@ -82,6 +129,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     if (!ctx) return;
     const canvas = ctx.canvas;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    redrawCommittedSelections();
 
     const pts = pointsRef.current;
     if (!pts || pts.length === 0) return;
@@ -157,6 +205,22 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
 
     const coords = getLocalCoords(event);
 
+    const activeSelection = getSelectionAtPoint(selections, coords);
+    const activeAnchorSelection = getAnchorSelectionAtPoint(coords);
+
+    if (activeAnchorSelection) {
+      const anchorIndex = findSelectionAnchorAtPoint(activeAnchorSelection, coords);
+      if (anchorIndex !== null) {
+        selectionDragRef.current = { type: 'anchor', anchorIndex, selection: activeAnchorSelection };
+        return;
+      }
+    }
+
+    if (activeSelection) {
+      selectionDragRef.current = { type: 'selection', origin: coords, selection: activeSelection };
+      return;
+    }
+
     if (doubleClick.handleClick(coords, pointsRef)) {
       return;
     }
@@ -168,12 +232,22 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   };
 
   const handlePointerUp = () => {
+    if (selectionDragRef.current) {
+      selectionDragRef.current = null;
+      return;
+    }
+
     if (isFreehand) {
       finishSelection();
     }
   };
 
   const handlePointerLeave = () => {
+    if (selectionDragRef.current) {
+      selectionDragRef.current = null;
+      return;
+    }
+
     if (isFreehand) {
       finishSelection();
     }
@@ -181,6 +255,22 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const coords = getLocalCoords(event);
+
+    const selectionDrag = selectionDragRef.current;
+    if (selectionDrag) {
+      if (selectionDrag.type === 'anchor') {
+        const nextSelection = moveSelectionAnchor(selectionDrag.selection, selectionDrag.anchorIndex, coords);
+        selectionDragRef.current = { ...selectionDrag, selection: nextSelection };
+        updateSelection(nextSelection);
+        return;
+      }
+
+      const delta = { x: coords.x - selectionDrag.origin.x, y: coords.y - selectionDrag.origin.y };
+      const nextSelection = moveSelectionByDelta(selectionDrag.selection, delta);
+      selectionDragRef.current = { ...selectionDrag, origin: coords, selection: nextSelection };
+      updateSelection(nextSelection);
+      return;
+    }
 
     // In freehand-lasso mode collect points continuously after the initial click
     if (isFreehand) {
@@ -192,17 +282,22 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     }
 
     // Polygonal mode: only preview line
-    if (pointsRef.current.length === 0) return;
+    if (pointsRef.current.length === 0) {
+      if (getAnchorSelectionAtPoint(coords)) {
+        setCursor(event, 'grab');
+      } else if (getSelectionAtPoint(selections, coords)) {
+        setCursor(event, 'move');
+      } else {
+        setCursor(event, 'crosshair');
+      }
+      return;
+    }
 
     previewRef.current = coords;
 
     // show pointer hint when near start
     const canClose = pointsRef.current.length >= MIN_POINTS_FOR_SELECTION && distance(coords, pointsRef.current[0]) < CLOSE_START_THRESHOLD;
-    try {
-      (event.currentTarget as HTMLDivElement).style.cursor = canClose ? 'pointer' : 'crosshair';
-    } catch {
-      // Ignore cursor updates in non-DOM test environments.
-    }
+    setCursor(event, canClose ? 'pointer' : 'crosshair');
 
     redrawOverlay();
   };
@@ -211,6 +306,17 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     event.preventDefault();
     finishSelection();
   };
+
+  useEffect(() => {
+    const ctx = overlayCtxRef.current;
+    if (!ctx) return;
+
+    const canvas = ctx.canvas;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    redrawCommittedSelections();
+    redrawOverlay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selections]);
 
   useEffect(() => {
     return () => {

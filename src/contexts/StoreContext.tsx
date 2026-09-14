@@ -75,6 +75,7 @@ type Action =
   | { type: 'SET_BACKGROUND_COLOR'; payload: string }
   | { type: 'SET_SELECTIONS'; payload: Selection[] }
   | { type: 'ADD_SELECTION'; payload: Selection }
+  | { type: 'UPDATE_SELECTION'; payload: Selection }
   | { type: 'CLEAR_SELECTIONS' };
 
 const initialState: StoreData = {
@@ -193,7 +194,17 @@ function reducer(state: StoreData, action: Action): StoreData {
     case 'SET_SELECTIONS':
       return { ...state, selections: action.payload };
     case 'ADD_SELECTION':
-      return { ...state, selections: [...state.selections, action.payload] };
+      return {
+        ...state,
+        selections: [...state.selections.map((selection) => ({ ...selection, isActive: false })), action.payload],
+      };
+    case 'UPDATE_SELECTION':
+      return {
+        ...state,
+        selections: state.selections.map((selection) =>
+          selection.id === action.payload.id ? action.payload : selection
+        ),
+      };
     case 'CLEAR_SELECTIONS':
       return { ...state, selections: [] };
     default:
