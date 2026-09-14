@@ -15,13 +15,15 @@ import Shape from '../components/ToolbarsRight/Figures/Shape.tsx';
 import Text from '../components/ToolbarsRight/Text/Text.tsx';
 import PolygonalLasso from '../components/ToolbarsRight/Lasso/PolygonalLasso.tsx';
 import FreehandLasso from '../components/ToolbarsRight/Lasso/FreehandLasso.tsx';
+import RectangularSelection from '../components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx';
 import type { ToolbarRightComponent } from '../components/ToolbarsRight/types.ts';
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
 import { shape } from './shape.ts';
 import Reposition from '../components/ToolbarsRight/Move/Reposition.tsx';
 import type { BitmapSource, Pos, Size } from '../contexts/general-types.ts';
-import type { ToolArgs } from '../contexts/tool-types.ts';
+import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
 import { reposition } from './reposition.ts';
+import { rectangularSelection } from './rectangularSelection.ts';
 
 export type ProcessorToolParams = {
   size: Size; // why size??
@@ -35,7 +37,7 @@ export type CreatorToolParams = {
 export type ToolResult = [BitmapSource, Pos | Size | never];
 
 type ToolsMap = Record<
-  string,
+  ToolName,
   {
     creator?: boolean;
     flattenRequired?: boolean;
@@ -117,6 +119,13 @@ export const toolsMap: ToolsMap = {
     // @ts-expect-error args
     imageProcessor: selection,
     toolboxComponent: FreehandLasso,
+  },
+  'rectangular-selection': {
+    creator: true,
+    icon: 'rectangular-selection',
+    // @ts-expect-error args
+    imageProcessor: rectangularSelection,
+    toolboxComponent: RectangularSelection,
   },
   // load: {
   //   creational: true,

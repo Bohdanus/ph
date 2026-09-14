@@ -79,7 +79,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     const oldPoints = pointsRef.current;
     const newPoints = []; // avoid passing the original array
 
-    const pos = pointsBoundingPos(args);
+    const pos = pointsBoundingPos({ points: oldPoints, lineWidth: args.lineWidth });
     for (let i = 0; i < oldPoints.length; i++) {
       newPoints.push({ x: oldPoints[i].x - pos.x, y: oldPoints[i].y - pos.y });
     }

@@ -1,7 +1,3 @@
-/**
- * @vitest-environment jsdom
- */
-
 import { useEffect, useRef } from 'react';
 import { render, act } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';

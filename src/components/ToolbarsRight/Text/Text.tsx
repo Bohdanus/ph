@@ -1,6 +1,5 @@
 import React, { type ChangeEvent, useEffect } from 'react';
 import { calculateNewRect } from '../../../util/rect.ts';
-import { type TextToolArgs } from '../../../tools/text.ts';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';

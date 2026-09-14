@@ -3,10 +3,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import type { Point, Selection } from '../../contexts/general-types.ts';
-import { pointsBoundingPos } from '../../util/draw.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useDoubleClick } from '../../hooks/useDoubleClick.ts';
 import {
+  createCommittedPolygonSelection,
+  distanceBetweenPoints,
   drawSelectionOutline,
   findSelectionAnchorAtPoint,
   getSelectionAtPoint,
@@ -40,6 +41,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   const { toolArgs } = useCurrentTool();
 
   const isFreehand = (toolArgs?.toolName ?? '') === 'freehand-lasso';
+  const selectionSourceTool = isFreehand ? 'freehand-lasso' : 'polygonal-lasso';
 
   const pointsRef = useRef<Point[]>([]);
   const previewRef = useRef<Point | null>(null);
@@ -54,19 +56,16 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     const oldPoints = pointsRef.current;
     if (oldPoints.length < MIN_POINTS_FOR_SELECTION) return;
 
-    const pos = pointsBoundingPos({ points: oldPoints });
-    const newPoints: Point[] = oldPoints.map((p) => ({ x: p.x - pos.x, y: p.y - pos.y }));
+    const selection = createCommittedPolygonSelection({
+      id: uuidv4(),
+      points: oldPoints,
+      sourceTool: selectionSourceTool,
+    });
+    if (!selection) return;
 
-    // commit selection into global store
-    // `dispatch` obtained from top-level useStore() call to avoid invalid hook calls
     dispatch({
-      type: 'ADD_SELECTION',
-      payload: {
-        id: uuidv4(),
-        points: newPoints,
-        isActive: true,
-        pos,
-      },
+      type: 'COMMIT_SELECTION',
+      payload: selection,
     });
 
     resetInteractionState();
@@ -76,12 +75,6 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     distanceThreshold: DOUBLE_CLICK_DISTANCE_THRESHOLD,
     minPointsForDetection: MIN_POINTS_FOR_SELECTION - 1,
   });
-
-  function distance(a: Point, b: Point) {
-    const dx = a.x - b.x;
-    const dy = a.y - b.y;
-    return Math.sqrt(dx * dx + dy * dy);
-  }
 
   function clearOverlay() {
     const ctx = overlayCtxRef.current;
@@ -168,7 +161,8 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
       const last = pts[pts.length - 1];
 
       // If preview is near the first point, highlight it
-      const canCloseAtStart = pts.length >= MIN_POINTS_FOR_SELECTION && distance(preview, pts[0]) < CLOSE_START_THRESHOLD;
+      const canCloseAtStart =
+        pts.length >= MIN_POINTS_FOR_SELECTION && distanceBetweenPoints(preview, pts[0]) < CLOSE_START_THRESHOLD;
       if (canCloseAtStart) {
         // indicate closable
         ctx.beginPath();
@@ -221,8 +215,16 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
       return;
     }
 
+    if (selections.some((selection) => selection.isActive) && pointsRef.current.length === 0) {
+      return;
+    }
+
     if (doubleClick.handleClick(coords, pointsRef)) {
       return;
+    }
+
+    if (pointsRef.current.length === 0) {
+      dispatch({ type: 'START_SELECTION_DRAFT', payload: { sourceTool: selectionSourceTool } });
     }
 
     pointsRef.current.push(coords);
@@ -296,7 +298,9 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     previewRef.current = coords;
 
     // show pointer hint when near start
-    const canClose = pointsRef.current.length >= MIN_POINTS_FOR_SELECTION && distance(coords, pointsRef.current[0]) < CLOSE_START_THRESHOLD;
+    const canClose =
+      pointsRef.current.length >= MIN_POINTS_FOR_SELECTION &&
+      distanceBetweenPoints(coords, pointsRef.current[0]) < CLOSE_START_THRESHOLD;
     setCursor(event, canClose ? 'pointer' : 'crosshair');
 
     redrawOverlay();

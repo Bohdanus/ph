@@ -1,17 +1,16 @@
 import React from 'react';
-import { type SelectionMode, type SelectionToolArgs } from '../../../tools/selection.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 
 const PolygonalLasso: React.FC<{}> = () => {
-  const { toolArgs, setToolArgs } = useCurrentTool();
+  const { getToolArgs, patchToolArgs } = useCurrentTool();
 
-  const args = toolArgs as SelectionToolArgs;
-  const { mode } = args;
-  const isFill = mode === 'fill';
+  const args = getToolArgs('polygonal-lasso');
+  if (!args) return null;
+
+  const isFill = args.fill;
 
   const handleFillToggle = () => {
-    const newMode: SelectionMode = isFill ? 'outline' : 'fill';
-    setToolArgs({ ...args, mode: newMode } as SelectionToolArgs);
+    patchToolArgs('polygonal-lasso', { fill: !isFill });
   };
 
   return (

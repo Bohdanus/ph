@@ -1,5 +1,13 @@
-import type { TextToolArgs, DrawToolArgs, ShapeToolArgs, CropToolArgs, TransformToolArgs, ColorsToolArgs, BlurToolArgs, LevelsToolArgs, RepositionToolArgs } from '../tools';
-import type { ToolArgs } from '../contexts/tool-types';
+import type { BlurToolArgs } from '../tools/blur.ts';
+import type { ColorsToolArgs } from '../tools/colors.ts';
+import type { CropToolArgs } from '../tools/crop.ts';
+import type { DrawToolArgs } from '../tools/draw.ts';
+import type { LevelsToolArgs } from '../tools/levels.ts';
+import type { RepositionToolArgs } from '../tools/reposition.ts';
+import type { ShapeToolArgs } from '../tools/shape.ts';
+import type { TextToolArgs } from '../tools/text.ts';
+import type { TransformToolArgs } from '../tools/transform.ts';
+import type { ToolArgs } from '../contexts/tool-types.ts';
 
 export function isTextToolArgs(args: ToolArgs): args is TextToolArgs & { toolName: 'text' } {
   return args.toolName === 'text' && args !== null && typeof args === 'object';

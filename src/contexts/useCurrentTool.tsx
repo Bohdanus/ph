@@ -1,13 +1,16 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { cloneDeep } from 'lodash-es';
 import { defaultSettings, lastSavedSettings } from '../tools/settings.ts';
-import type { ToolName, ToolArgs } from './tool-types.ts';
+import type { ToolName, ToolArgs, ToolArgsFor, ToolPatch } from './tool-types.ts';
 import { saveLastSettings } from '../util/settings.ts';
 import { useStore } from './StoreContext.tsx';
 
 export interface CurrentToolContextState {
   toolArgs: ToolArgs;
+  isToolDirty: boolean;
   setToolArgs: (args: ToolArgs) => void;
+  getToolArgs: <TName extends ToolName>(toolName: TName) => ToolArgsFor<TName> | null;
+  patchToolArgs: <TName extends ToolName>(toolName: TName, patch: ToolPatch<TName>) => void;
 
   resetToLastSavedArgs: (toolName?: ToolName) => void;
 }
@@ -16,9 +19,13 @@ const initialArgs = cloneDeep(defaultSettings.draw) as ToolArgs;
 
 const CurrentToolContext = createContext<CurrentToolContextState | undefined>(undefined);
 
+function cloneSavedToolArgs<TName extends ToolName>(toolName: TName): ToolArgsFor<TName> {
+  return cloneDeep(lastSavedSettings[toolName]) as ToolArgsFor<TName>;
+}
+
 /* this provider is meant for fast updates. keep it away from Main component */
 export const CurrentToolProvider = ({ children }: { children: React.ReactNode }) => {
-  const [{ currentArgs, toolName }] = useStore();
+  const [{ currentArgs, toolName, isToolDirty }] = useStore();
   const [toolArgs, setToolArgs] = useState<ToolArgs>(initialArgs);
 
   useEffect(() => {
@@ -29,24 +36,40 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
     resetToLastSavedArgs();
   }, [toolName]);
 
-  function resetToLastSavedArgs(_toolName = toolName) {
-    const args = cloneDeep(lastSavedSettings[_toolName]) as ToolArgs;
-    // @ts-ignore i have no idea
-    args.toolName = toolName;
+  const resetToLastSavedArgs = useCallback((nextToolName = toolName) => {
+    const args = cloneSavedToolArgs(nextToolName);
     setToolArgs(args);
-  }
+  }, [toolName]);
 
-  const _setToolArgs = (args: ToolArgs) => {
+  const _setToolArgs = useCallback((args: ToolArgs) => {
     saveLastSettings(args);
     setToolArgs(args);
-  };
+  }, []);
 
-  const value = {
+  const getToolArgs = useCallback(
+    <TName extends ToolName>(name: TName): ToolArgsFor<TName> | null => {
+      return toolArgs.toolName === name ? (toolArgs as ToolArgsFor<TName>) : null;
+    },
+    [toolArgs]
+  );
+
+  const patchToolArgs = useCallback(
+    <TName extends ToolName>(name: TName, patch: ToolPatch<TName>) => {
+      const base = toolArgs.toolName === name ? (toolArgs as ToolArgsFor<TName>) : cloneSavedToolArgs(name);
+      _setToolArgs({ ...base, ...patch, toolName: name } as ToolArgsFor<TName>);
+    },
+    [_setToolArgs, toolArgs]
+  );
+
+  const value = useMemo(() => ({
     toolArgs,
+    isToolDirty,
     setToolArgs: _setToolArgs,
+    getToolArgs,
+    patchToolArgs,
 
     resetToLastSavedArgs,
-  };
+  }), [_setToolArgs, getToolArgs, isToolDirty, patchToolArgs, resetToLastSavedArgs, toolArgs]);
 
   return <CurrentToolContext.Provider value={value}>{children}</CurrentToolContext.Provider>;
 };

@@ -1,7 +1,3 @@
-/**
- * @vitest-environment jsdom
- */
-
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import type { Point, Selection } from '../../../contexts/general-types.ts';
@@ -10,6 +6,7 @@ import { PolygonClickToolArea } from '../PolygonClickToolArea.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
 const storeState = vi.hoisted((): { selections: Selection[] } => ({ selections: [] }));
+const currentToolState = vi.hoisted(() => ({ toolName: 'polygonal-lasso' }));
 
 // Mock dependencies
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
@@ -40,7 +37,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
-    toolArgs: { toolName: 'polygonal-lasso', mode: 'outline' },
+    toolArgs: { toolName: currentToolState.toolName, mode: 'outline' },
   }),
 }));
 
@@ -48,6 +45,7 @@ describe('PolygonClickToolArea', () => {
   beforeEach(() => {
     dispatchMock.mockClear();
     storeState.selections = [];
+    currentToolState.toolName = 'polygonal-lasso';
   });
 
   const createMockContext = () =>
@@ -136,17 +134,61 @@ describe('PolygonClickToolArea', () => {
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 101, clientY: 101 });
 
-    expect(dispatchMock).toHaveBeenCalledTimes(1);
+    expect(dispatchMock).toHaveBeenCalledTimes(2);
+    expect(dispatchMock).toHaveBeenNthCalledWith(1, {
+      type: 'START_SELECTION_DRAFT',
+      payload: { sourceTool: 'polygonal-lasso' },
+    });
     expect(dispatchMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'ADD_SELECTION',
+        type: 'COMMIT_SELECTION',
         payload: expect.objectContaining({
+          geometry: 'polygon',
+          lifecycle: 'committed',
+          sourceTool: 'polygonal-lasso',
           points: [
             { x: 1, y: 1 },
             { x: 91, y: 1 },
             { x: 91, y: 91 },
           ],
           pos: { x: 9, y: 9, width: 92, height: 92 },
+        }),
+      })
+    );
+  });
+
+  it('finishes a freehand selection on pointer up and commits normalized points', () => {
+    currentToolState.toolName = 'freehand-lasso';
+    const mockCtx = createMockContext();
+
+    const { container } = render(
+      <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+    );
+
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(toolArea, { clientX: 30, clientY: 20 });
+    fireEvent.pointerMove(toolArea, { clientX: 40, clientY: 50 });
+    fireEvent.pointerUp(toolArea, { clientX: 40, clientY: 50 });
+
+    expect(dispatchMock).toHaveBeenCalledWith({
+      type: 'START_SELECTION_DRAFT',
+      payload: { sourceTool: 'freehand-lasso' },
+    });
+    expect(dispatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'COMMIT_SELECTION',
+        payload: expect.objectContaining({
+          geometry: 'polygon',
+          lifecycle: 'committed',
+          sourceTool: 'freehand-lasso',
+          points: [
+            { x: 1, y: 1 },
+            { x: 21, y: 11 },
+            { x: 31, y: 41 },
+          ],
+          pos: { x: 9, y: 9, width: 32, height: 42 },
         }),
       })
     );
@@ -202,9 +244,10 @@ describe('PolygonClickToolArea', () => {
 
     expect(dispatchMock).toHaveBeenCalledWith({
       type: 'UPDATE_SELECTION',
-      payload: expect.objectContaining({
-        id: 'selection-1',
-        pos: { x: 19, y: 9, width: 82, height: 92 },
+        payload: expect.objectContaining({
+          id: 'selection-1',
+          metadata: { movedAtVersion: 1 },
+          pos: { x: 19, y: 9, width: 82, height: 92 },
         points: [
           { x: 1, y: 11 },
           { x: 81, y: 1 },
@@ -239,9 +282,10 @@ describe('PolygonClickToolArea', () => {
 
     expect(dispatchMock).toHaveBeenCalledWith({
       type: 'UPDATE_SELECTION',
-      payload: expect.objectContaining({
-        id: 'selection-1',
-        pos: { x: 19, y: 24, width: 92, height: 92 },
+        payload: expect.objectContaining({
+          id: 'selection-1',
+          metadata: { movedAtVersion: 1 },
+          pos: { x: 19, y: 24, width: 92, height: 92 },
         points: [
           { x: 1, y: 1 },
           { x: 91, y: 1 },
@@ -274,5 +318,33 @@ describe('PolygonClickToolArea', () => {
     fireEvent.pointerMove(toolArea, { clientX: 10, clientY: 10 });
 
     expect(toolArea.style.cursor).toBe('grab');
+  });
+
+  it('ignores outside canvas clicks while an active committed selection is closed', () => {
+    storeState.selections = [
+      {
+        id: 'selection-1',
+        isActive: true,
+        pos: { x: 9, y: 9, width: 92, height: 92 },
+        points: [
+          { x: 1, y: 1 },
+          { x: 91, y: 1 },
+          { x: 91, y: 91 },
+        ],
+      },
+    ];
+
+    const mockCtx = createMockContext();
+    const { container } = render(
+      <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 300, clientY: 300 });
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 350, clientY: 300 });
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 350, clientY: 350 });
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 351, clientY: 351 });
+
+    expect(dispatchMock).not.toHaveBeenCalled();
   });
 });

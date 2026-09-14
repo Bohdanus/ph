@@ -7,26 +7,35 @@ import type { BlurToolArgs } from '../tools/blur.ts';
 import type { ShapeToolArgs } from '../tools/shape.ts';
 import type { LevelsToolArgs } from '../tools/levels.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
-import type { SelectionToolArgs } from '../tools/selection.ts';
+import type { LassoToolArgs } from '../tools/polygonSelection.ts';
+import type { RectangularSelectionToolArgs } from '../tools/rectangularSelection.ts';
 
-import { toolsMap } from '../tools/toolsMap.ts';
 import type { BitmapSource, Pos, Size } from './general-types.ts';
 
-export type ToolName = keyof typeof toolsMap;
+export type ToolArgsByName = {
+  reposition: RepositionToolArgs;
+  blur: BlurToolArgs;
+  color: ColorsToolArgs;
+  levels: LevelsToolArgs;
+  transform: TransformToolArgs;
+  crop: CropToolArgs;
+  draw: DrawToolArgs;
+  shape: ShapeToolArgs;
+  text: TextToolArgs;
+  'polygonal-lasso': LassoToolArgs & { toolName: 'polygonal-lasso' };
+  'freehand-lasso': LassoToolArgs & { toolName: 'freehand-lasso' };
+  'rectangular-selection': RectangularSelectionToolArgs;
+};
 
-export type ToolSettings =
-  | RepositionToolArgs
-  | BlurToolArgs
-  | ColorsToolArgs
-  | CropToolArgs
-  | DrawToolArgs
-  | LevelsToolArgs
-  | TextToolArgs
-  | TransformToolArgs
-  | ShapeToolArgs
-  | SelectionToolArgs;
+export type ToolName = keyof ToolArgsByName;
 
-export type ToolArgs = ToolSettings & { toolName: ToolName };
+export type ToolArgsFor<TName extends ToolName> = ToolArgsByName[TName];
+
+export type ToolArgs = ToolArgsByName[ToolName];
+
+export type ToolSettings = ToolArgs;
+
+export type ToolPatch<TName extends ToolName> = Partial<Omit<ToolArgsFor<TName>, 'toolName'>>;
 
 export type FullArgs = {
   args: ToolArgs;

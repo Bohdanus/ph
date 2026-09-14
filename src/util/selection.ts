@@ -1,8 +1,39 @@
-import type { BitmapSource, Point, Selection } from '../contexts/general-types.ts';
+import type { BitmapSource, Point, Selection, SelectionSourceTool } from '../contexts/general-types.ts';
 import { pointsBoundingPos } from './draw.ts';
 
 export const SELECTION_ANCHOR_RADIUS = 5;
 export const SELECTION_ANCHOR_HIT_RADIUS = 8;
+
+export function normalizeSelectionPoints(points: Point[]): Pick<Selection, 'points' | 'pos'> | null {
+  if (points.length < 3) return null;
+
+  const pos = pointsBoundingPos({ points });
+  const normalizedPoints = points.map((point) => ({ x: point.x - pos.x, y: point.y - pos.y }));
+
+  return { points: normalizedPoints, pos };
+}
+
+export function createCommittedPolygonSelection({
+  id,
+  points,
+  sourceTool,
+}: {
+  id: string;
+  points: Point[];
+  sourceTool: Extract<SelectionSourceTool, 'polygonal-lasso' | 'freehand-lasso'>;
+}): Selection | null {
+  const normalized = normalizeSelectionPoints(points);
+  if (!normalized) return null;
+
+  return {
+    id,
+    ...normalized,
+    isActive: true,
+    lifecycle: 'committed',
+    geometry: 'polygon',
+    sourceTool,
+  };
+}
 
 export function getSelectionAbsolutePoints(selection: Selection): Point[] {
   return selection.points.map((point) => ({
@@ -104,13 +135,16 @@ export function moveSelectionAnchor(selection: Selection, anchorIndex: number, p
 
   points[anchorIndex] = point;
 
-  const pos = pointsBoundingPos({ points });
-  const nextPoints = points.map((nextPoint) => ({ x: nextPoint.x - pos.x, y: nextPoint.y - pos.y }));
+  const normalized = normalizeSelectionPoints(points);
+  if (!normalized) return selection;
 
   return {
     ...selection,
-    points: nextPoints,
-    pos,
+    ...normalized,
+    metadata: {
+      ...selection.metadata,
+      movedAtVersion: (selection.metadata?.movedAtVersion ?? 0) + 1,
+    },
   };
 }
 
@@ -121,6 +155,10 @@ export function moveSelectionByDelta(selection: Selection, delta: Point): Select
       ...selection.pos,
       x: selection.pos.x + delta.x,
       y: selection.pos.y + delta.y,
+    },
+    metadata: {
+      ...selection.metadata,
+      movedAtVersion: (selection.metadata?.movedAtVersion ?? 0) + 1,
     },
   };
 }

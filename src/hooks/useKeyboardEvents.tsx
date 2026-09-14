@@ -37,7 +37,7 @@ function isEditableTarget(target: EventTarget | null) {
     return true;
   }
 
-  return target.isContentEditable || !!target.closest('[contenteditable="true"]');
+  return (target instanceof HTMLElement && target.isContentEditable) || !!target.closest('[contenteditable="true"]');
 }
 
 function matchesShortcut(event: KeyboardEvent, shortcut: KeyboardShortcut) {

@@ -24,7 +24,15 @@ export function saveLastSettings(args: ToolArgs) {
     const { rect, ...rest } = args as CropToolArgs;
     lastSavedSettings.crop = cloneDeep(rest);
     // deliberately not storing for those three because they have a different philosophy, unfortunately
-  } else if (toolName !== 'blur' && toolName !== 'levels' && toolName !== 'color') {
-    lastSavedSettings[toolName] = cloneDeep(args);
+  } else if (toolName === 'transform') {
+    lastSavedSettings.transform = cloneDeep(args);
+  } else if (toolName === 'reposition') {
+    lastSavedSettings.reposition = cloneDeep(args);
+  } else if (toolName === 'polygonal-lasso') {
+    lastSavedSettings['polygonal-lasso'] = cloneDeep(args);
+  } else if (toolName === 'freehand-lasso') {
+    lastSavedSettings['freehand-lasso'] = cloneDeep(args);
+  } else if (toolName === 'rectangular-selection') {
+    lastSavedSettings['rectangular-selection'] = cloneDeep(args);
   }
 }

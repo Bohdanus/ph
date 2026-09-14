@@ -1,17 +1,16 @@
 import React from 'react';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
-import type { SelectionMode, SelectionToolArgs } from '../../../tools/selection.ts';
 
 const FreehandLasso: React.FC<{}> = () => {
-  const { toolArgs, setToolArgs } = useCurrentTool();
+  const { getToolArgs, patchToolArgs } = useCurrentTool();
 
-  const args = toolArgs as SelectionToolArgs;
-  const { mode } = args;
-  const isFill = mode === 'fill';
+  const args = getToolArgs('freehand-lasso');
+  if (!args) return null;
+
+  const isFill = args.fill;
 
   const handleFillToggle = () => {
-    const newMode: SelectionMode = isFill ? 'outline' : 'fill';
-    setToolArgs({ ...args, mode: newMode } as SelectionToolArgs);
+    patchToolArgs('freehand-lasso', { fill: !isFill });
   };
 
   return (

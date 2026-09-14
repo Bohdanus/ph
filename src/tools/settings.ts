@@ -8,9 +8,10 @@ import type { ColorsToolArgs } from './colors.ts';
 import type { LevelsToolArgs } from './levels.ts';
 import type { BlurToolArgs } from './blur.ts';
 import type { FigureType, ShapeToolSettings, ShapeToolArgs } from './shape.ts';
-import type { ToolName, ToolSettings } from '../contexts/tool-types.ts';
+import type { ToolArgsByName } from '../contexts/tool-types.ts';
 import type { RepositionToolArgs } from './reposition.ts';
 import type { LassoToolArgs, PolygonSelectionToolSettings } from './polygonSelection.ts';
+import type { RectangularSelectionToolArgs } from './rectangularSelection.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
 type FigureSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end' | 'figure' | 'toolName'>;
@@ -29,7 +30,7 @@ export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
   oval: { alpha: 1, lineWidth: 5 },
 };
 
-export const defaultSettings: Record<ToolName, ToolSettings> = {
+export const defaultSettings = {
   blur: { radius: 0, toolName: 'blur' } satisfies BlurToolArgs,
   color: { grayscale: 0, sepia: 0, saturation: 0, toolName: 'color' } satisfies ColorsToolArgs,
   levels: { brightness: 0, contrast: 0, toolName: 'levels' } satisfies LevelsToolArgs,
@@ -90,7 +91,10 @@ export const defaultSettings: Record<ToolName, ToolSettings> = {
     points: [],
     toolName: 'freehand-lasso',
   } satisfies LassoToolArgs,
-};
+  'rectangular-selection': { rect: null, toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,
+} satisfies ToolArgsByName;
+
+export type DefaultSettings = typeof defaultSettings;
 
 export type SavedSettings =
   | DrawToolSettings
@@ -102,6 +106,7 @@ export type SavedSettings =
   | TransformToolArgs
   | CropToolArgs
   | RepositionToolArgs
+  | RectangularSelectionToolArgs
   | PolygonSelectionToolSettings;
 
-export const lastSavedSettings = cloneDeep(defaultSettings);
+export const lastSavedSettings: ToolArgsByName = cloneDeep(defaultSettings);

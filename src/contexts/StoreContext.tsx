@@ -3,7 +3,7 @@ import { DEFAULT_TOOL } from '../util/constants.ts';
 
 import type { ReactNode, RefObject } from 'react';
 import type { LayerId, LayersRecord } from './layer-types.ts';
-import type { Size, Selection } from './general-types.ts';
+import type { ClearedSelectionState, Selection, SelectionDraftState, SelectionSourceTool, Size } from './general-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 
@@ -35,6 +35,9 @@ export type StoreData = {
 
   // selections (supports multiple selections for future extensions)
   selections: Selection[];
+  activeSelectionId: string | null;
+  selectionDraft: SelectionDraftState;
+  selectionCleared: ClearedSelectionState | null;
 
   // history
   history: HistoryItem[];
@@ -75,7 +78,12 @@ type Action =
   | { type: 'SET_BACKGROUND_COLOR'; payload: string }
   | { type: 'SET_SELECTIONS'; payload: Selection[] }
   | { type: 'ADD_SELECTION'; payload: Selection }
+  | { type: 'COMMIT_SELECTION'; payload: Selection }
   | { type: 'UPDATE_SELECTION'; payload: Selection }
+  | { type: 'SET_ACTIVE_SELECTION'; payload: string | null }
+  | { type: 'START_SELECTION_DRAFT'; payload: { sourceTool: SelectionSourceTool } }
+  | { type: 'CANCEL_SELECTION_DRAFT' }
+  | { type: 'MARK_SELECTION_COPIED'; payload: { id: string } }
   | { type: 'CLEAR_SELECTIONS' };
 
 const initialState: StoreData = {
@@ -100,6 +108,9 @@ const initialState: StoreData = {
   activeLayerId: null,
 
   selections: [],
+  activeSelectionId: null,
+  selectionDraft: { status: 'idle' },
+  selectionCleared: null,
 
   history: [],
   historyIndex: 0,
@@ -109,6 +120,23 @@ const initialState: StoreData = {
 
   isToolDirty: false,
 };
+
+function commitSelection(state: StoreData, selection: Selection): StoreData {
+  const committedSelection: Selection = {
+    ...selection,
+    isActive: true,
+    lifecycle: 'committed',
+    geometry: selection.geometry ?? 'polygon',
+  };
+
+  return {
+    ...state,
+    selections: [...state.selections.map((current) => ({ ...current, isActive: false })), committedSelection],
+    activeSelectionId: committedSelection.id,
+    selectionDraft: { status: 'idle' },
+    selectionCleared: null,
+  };
+}
 
 function reducer(state: StoreData, action: Action): StoreData {
   switch (action.type) {
@@ -192,21 +220,62 @@ function reducer(state: StoreData, action: Action): StoreData {
     case 'SET_BACKGROUND_COLOR':
       return { ...state, backgroundColor: action.payload };
     case 'SET_SELECTIONS':
-      return { ...state, selections: action.payload };
-    case 'ADD_SELECTION':
       return {
         ...state,
-        selections: [...state.selections.map((selection) => ({ ...selection, isActive: false })), action.payload],
+        selections: action.payload,
+        activeSelectionId: action.payload.find((selection) => selection.isActive)?.id ?? null,
       };
+    case 'ADD_SELECTION':
+    case 'COMMIT_SELECTION':
+      return commitSelection(state, action.payload);
     case 'UPDATE_SELECTION':
       return {
         ...state,
         selections: state.selections.map((selection) =>
           selection.id === action.payload.id ? action.payload : selection
         ),
+        activeSelectionId: action.payload.isActive ? action.payload.id : state.activeSelectionId,
+      };
+    case 'SET_ACTIVE_SELECTION':
+      return {
+        ...state,
+        activeSelectionId: action.payload,
+        selections: state.selections.map((selection) => ({ ...selection, isActive: selection.id === action.payload })),
+      };
+    case 'START_SELECTION_DRAFT':
+      return {
+        ...state,
+        selectionDraft: { status: 'draft', sourceTool: action.payload.sourceTool },
+      };
+    case 'CANCEL_SELECTION_DRAFT':
+      if (state.selectionDraft.status === 'idle') {
+        return state;
+      }
+
+      return { ...state, selectionDraft: { status: 'idle' } };
+    case 'MARK_SELECTION_COPIED':
+      return {
+        ...state,
+        selections: state.selections.map((selection) =>
+          selection.id === action.payload.id
+            ? {
+                ...selection,
+                metadata: {
+                  ...selection.metadata,
+                  copiedAtVersion: (selection.metadata?.copiedAtVersion ?? 0) + 1,
+                },
+              }
+            : selection
+        ),
       };
     case 'CLEAR_SELECTIONS':
-      return { ...state, selections: [] };
+      return {
+        ...state,
+        selections: [],
+        activeSelectionId: null,
+        selectionDraft: { status: 'idle' },
+        selectionCleared: { status: 'cleared', version: (state.selectionCleared?.version ?? 0) + 1 },
+      };
     default:
       return state;
   }
