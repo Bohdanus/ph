@@ -94,5 +94,13 @@ export const AppKeyboardShortcuts = () => {
     onKeyDown: () => goToTool('freehand-lasso'),
   });
 
+  useKeyDownShortcut({
+    key: 'l',
+    mod: false,
+    shift: true,
+    enabled: hasImage,
+    onKeyDown: () => goToTool('feather-magnetic-lasso'),
+  });
+
   return null;
 };

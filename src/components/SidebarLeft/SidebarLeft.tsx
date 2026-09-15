@@ -56,6 +56,10 @@ const SidebarLeft = () => {
     goToTool('freehand-lasso');
   };
 
+  const handleFeatherMagneticLasso = () => {
+    goToTool('feather-magnetic-lasso');
+  };
+
   const handleColorClick = (e: React.MouseEvent<HTMLDivElement>, inputRef: RefObject<HTMLInputElement | null>) => {
     if (!inputRef.current) return;
 
@@ -206,6 +210,17 @@ const SidebarLeft = () => {
               onClick={handlePolygonalLasso}
             >
               Polygonal Lasso
+            </button>
+          </li>
+          <li className="mb-1">
+            <button
+              className={`w-full rounded px-3 py-2 text-left transition-colors ${
+                toolName === 'feather-magnetic-lasso' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
+              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
+              disabled={!hasImage}
+              onClick={handleFeatherMagneticLasso}
+            >
+              Feather Magnetic Lasso
             </button>
           </li>
         </ul>

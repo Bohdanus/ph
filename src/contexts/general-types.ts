@@ -14,7 +14,11 @@ export type RectXYSorted = RectXY;
 export type ZoomData = { dx: number; dy: number; zoom: number };
 export type Delta = { dx: number; dy: number };
 
-export type SelectionSourceTool = 'polygonal-lasso' | 'freehand-lasso' | 'rectangular-selection';
+export type SelectionSourceTool =
+  | 'polygonal-lasso'
+  | 'freehand-lasso'
+  | 'feather-magnetic-lasso'
+  | 'rectangular-selection';
 export type SelectionGeometry = 'polygon' | 'rectangle';
 
 export type IdleSelectionDraftState = { status: 'idle' };
@@ -32,6 +36,16 @@ export type ClearedSelectionState = {
 export type SelectionMetadata = {
   copiedAtVersion?: number;
   movedAtVersion?: number;
+  featherRadius?: number;
+  magneticLasso?: {
+    width: number;
+    contrast: number;
+    frequency: number;
+    snapStrength: number;
+    smoothing: number;
+    antiAlias: boolean;
+    pathPointCount: number;
+  };
 };
 
 export type Selection = {
@@ -45,5 +59,5 @@ export type Selection = {
   metadata?: SelectionMetadata;
 };
 
-export type BitmapSource = ImageBitmap | HTMLImageElement | OffscreenCanvas;
+export type BitmapSource = ImageBitmap | HTMLCanvasElement | HTMLImageElement | OffscreenCanvas;
 export type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;

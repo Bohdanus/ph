@@ -15,6 +15,7 @@ import Shape from '../components/ToolbarsRight/Figures/Shape.tsx';
 import Text from '../components/ToolbarsRight/Text/Text.tsx';
 import PolygonalLasso from '../components/ToolbarsRight/Lasso/PolygonalLasso.tsx';
 import FreehandLasso from '../components/ToolbarsRight/Lasso/FreehandLasso.tsx';
+import FeatherMagneticLasso from '../components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx';
 import RectangularSelection from '../components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx';
 import type { ToolbarRightComponent } from '../components/ToolbarsRight/types.ts';
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
@@ -24,6 +25,7 @@ import type { BitmapSource, Pos, Size } from '../contexts/general-types.ts';
 import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
 import { reposition } from './reposition.ts';
 import { rectangularSelection } from './rectangularSelection.ts';
+import { featherMagneticLasso } from './featherMagneticLasso.ts';
 
 export type ProcessorToolParams = {
   size: Size; // why size??
@@ -119,6 +121,12 @@ export const toolsMap: ToolsMap = {
     // @ts-expect-error args
     imageProcessor: selection,
     toolboxComponent: FreehandLasso,
+  },
+  'feather-magnetic-lasso': {
+    icon: 'lasso',
+    // @ts-expect-error args
+    imageProcessor: featherMagneticLasso,
+    toolboxComponent: FeatherMagneticLasso,
   },
   'rectangular-selection': {
     creator: true,

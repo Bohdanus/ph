@@ -1,38 +1,69 @@
-import { type RefObject } from 'react';
+import { type PointerEvent, type RefObject, useMemo, useRef } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 import { useRect } from '../../hooks/useRect.ts';
-import { trimRect } from '../../util/rect.ts';
-import type { RectangularSelectionToolArgs } from '../../tools/rectangularSelection.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
-import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { RectXYSorted } from '../../contexts/general-types.ts';
+import {
+  createCommittedRectangleSelection,
+  getActiveRectangularSelection,
+  getSelectionRect,
+} from '../../util/selection.ts';
 
 type rectangularSelectionToolAreaProps = {
   className?: string;
-  canvasCtxRef: RefObject<CanvasRenderingContext2D | null>;
-  overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
+  canvasCtxRef?: RefObject<CanvasRenderingContext2D | null>;
+  overlayCtxRef?: RefObject<CanvasRenderingContext2D | null>;
 };
 
 export const RectangularSelectionToolArea = ({ className }: rectangularSelectionToolAreaProps) => {
-  const [{ containerRef, toolOverlayRef, totalSize }] = useStore();
-  const { toolArgs, setToolArgs } = useCurrentTool();
+  const [{ containerRef, toolOverlayRef, totalSize, selections, activeSelectionId }, dispatch] = useStore();
+  const isEditingCommittedSelectionRef = useRef(false);
 
-  const args = toolArgs as RectangularSelectionToolArgs;
+  const activeRectangleSelection = getActiveRectangularSelection(selections, activeSelectionId);
+  const activeRectangleRect = useMemo(
+    () => (activeRectangleSelection ? getSelectionRect(activeRectangleSelection) : null),
+    [activeRectangleSelection]
+  );
 
   const pointerEvents = useRect({
     imageSize: totalSize,
-    initialRect: args.rect,
+    initialRect: activeRectangleRect,
     containerRef,
     overlayRef: toolOverlayRef,
     onChangeEnd: (rect: RectXYSorted) => {
-      const trimmedRect = trimRect(rect, totalSize);
+      const existingSelection = isEditingCommittedSelectionRef.current ? activeRectangleSelection : null;
+      const metadata = existingSelection
+        ? {
+            ...existingSelection.metadata,
+            movedAtVersion: (existingSelection.metadata?.movedAtVersion ?? 0) + 1,
+          }
+        : undefined;
+      const selection = createCommittedRectangleSelection({
+        id: existingSelection?.id ?? uuidv4(),
+        rect,
+        imageSize: totalSize,
+        metadata,
+      });
 
-      if (trimmedRect.width === 0 || trimmedRect.height === 0) {
-        setToolArgs({ ...args, rect: null });
-      } else {
-        setToolArgs({ ...args, rect });
+      isEditingCommittedSelectionRef.current = false;
+
+      if (!selection) {
+        dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
+        return;
       }
+
+      dispatch({ type: existingSelection ? 'MOVE_SELECTION' : 'COMMIT_SELECTION', payload: selection });
     },
   });
 
-  return <div className={`${className} cursor-crosshair`} {...pointerEvents}></div>;
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    const isEditingCommittedSelection = pointerEvents.onPointerDown(event);
+    isEditingCommittedSelectionRef.current = isEditingCommittedSelection;
+
+    if (!isEditingCommittedSelection) {
+      dispatch({ type: 'START_SELECTION_DRAFT', payload: { sourceTool: 'rectangular-selection' } });
+    }
+  };
+
+  return <div className={`${className} cursor-crosshair`} {...pointerEvents} onPointerDown={handlePointerDown}></div>;
 };

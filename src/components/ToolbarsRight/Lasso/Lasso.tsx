@@ -2,10 +2,15 @@ import React, { type ChangeEvent, useEffect, useState } from 'react';
 import { type LassoToolArgs, type PolygonSelectionToolSettings } from '../../../tools/polygonSelection.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
-import { copyPolygonToCanvas, copyCanvasToClipboard, getSelectionAbsolutePoints } from '../../../util/selection.ts';
+import {
+  copyPolygonToCanvas,
+  copyCanvasToClipboard,
+  getActiveSelection,
+  getSelectionAbsolutePoints,
+} from '../../../util/selection.ts';
 
 const Lasso: React.FC<{}> = () => {
-  const [{ color, selections, canvasCtxRef }] = useStore();
+  const [{ color, selections, activeSelectionId, canvasCtxRef }, dispatch] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
   const [isCopying, setIsCopying] = useState(false);
 
@@ -33,7 +38,7 @@ const Lasso: React.FC<{}> = () => {
 
   const handleCopySelection = async () => {
     try {
-      const activeSelection = selections.find((s) => s.isActive);
+      const activeSelection = getActiveSelection(selections, activeSelectionId);
       if (!activeSelection) {
         alert('No active selection to copy');
         return;
@@ -56,6 +61,8 @@ const Lasso: React.FC<{}> = () => {
       // Copy to clipboard
       await copyCanvasToClipboard(selectionCanvas);
 
+      dispatch({ type: 'MARK_SELECTION_COPIED', payload: { id: activeSelection.id } });
+
       alert('Selection copied to clipboard!');
     } catch (error) {
       console.error('Error copying selection:', error);
@@ -66,6 +73,7 @@ const Lasso: React.FC<{}> = () => {
   };
 
   const { alpha, lineWidth, fill } = args;
+  const hasActiveSelection = !!getActiveSelection(selections, activeSelectionId);
 
   return (
     <div className="flex flex-row items-center gap-6 h-full">
@@ -85,13 +93,13 @@ const Lasso: React.FC<{}> = () => {
 
       <button
         onClick={handleCopySelection}
-        disabled={isCopying || selections.length === 0}
+        disabled={isCopying || !hasActiveSelection}
         className={`px-3 py-1 rounded border text-sm transition-colors ${
-          selections.length === 0 || isCopying
+          !hasActiveSelection || isCopying
             ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed dark:bg-gray-800 dark:text-gray-600 dark:border-gray-700'
             : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 active:bg-gray-100 dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600 dark:hover:bg-gray-600'
         }`}
-        title={selections.length === 0 ? 'No selections to copy' : 'Copy selection to clipboard'}
+        title={!hasActiveSelection ? 'No active selection to copy' : 'Copy selection to clipboard'}
       >
         {isCopying ? 'Copying...' : 'Copy'}
       </button>

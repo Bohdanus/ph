@@ -12,6 +12,7 @@ import type { ToolArgsByName } from '../contexts/tool-types.ts';
 import type { RepositionToolArgs } from './reposition.ts';
 import type { LassoToolArgs, PolygonSelectionToolSettings } from './polygonSelection.ts';
 import type { RectangularSelectionToolArgs } from './rectangularSelection.ts';
+import type { FeatherMagneticLassoToolArgs, FeatherMagneticLassoToolSettings } from './featherMagneticLasso.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
 type FigureSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end' | 'figure' | 'toolName'>;
@@ -91,7 +92,19 @@ export const defaultSettings = {
     points: [],
     toolName: 'freehand-lasso',
   } satisfies LassoToolArgs,
-  'rectangular-selection': { rect: null, toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,
+  'feather-magnetic-lasso': {
+    featherRadius: 12,
+    magneticWidth: 18,
+    edgeContrast: 30,
+    frequency: 40,
+    snapStrength: 0.85,
+    smoothing: 1.5,
+    antiAlias: true,
+    previewFeather: true,
+    points: [],
+    toolName: 'feather-magnetic-lasso',
+  } satisfies FeatherMagneticLassoToolArgs,
+  'rectangular-selection': { toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,
 } satisfies ToolArgsByName;
 
 export type DefaultSettings = typeof defaultSettings;
@@ -107,6 +120,7 @@ export type SavedSettings =
   | CropToolArgs
   | RepositionToolArgs
   | RectangularSelectionToolArgs
+  | FeatherMagneticLassoToolSettings
   | PolygonSelectionToolSettings;
 
 export const lastSavedSettings: ToolArgsByName = cloneDeep(defaultSettings);

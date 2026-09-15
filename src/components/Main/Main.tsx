@@ -8,6 +8,7 @@ import './Main.scss';
 import { ShapeToolArea } from './ShapeToolArea.tsx';
 import { PolygonClickToolArea } from './PolygonClickToolArea.tsx';
 import { RectangularSelectionToolArea } from './RectangularSelectionToolArea.tsx';
+import { FeatherMagneticLassoToolArea } from './FeatherMagneticLassoToolArea.tsx';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { PRIMARY_BUTTON_LARGE, TEXT_LINK_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
@@ -43,6 +44,8 @@ const Main = () => {
     interactionMode = 'text';
   } else if (toolName === 'polygonal-lasso' || toolName === 'freehand-lasso') {
     interactionMode = 'lasso';
+  } else if (toolName === 'feather-magnetic-lasso') {
+    interactionMode = 'feather-magnetic-lasso';
   } else if (toolName === 'rectangular-selection') {
     interactionMode = 'rectangular-selection';
   }
@@ -110,6 +113,7 @@ const Main = () => {
       else if (interactionMode === 'shape') EventHandler = ShapeToolArea;
       else if (interactionMode === 'text') EventHandler = TextToolArea;
       else if (interactionMode === 'lasso') EventHandler = PolygonClickToolArea;
+      else if (interactionMode === 'feather-magnetic-lasso') EventHandler = FeatherMagneticLassoToolArea;
       else if (interactionMode === 'rectangular-selection') EventHandler = RectangularSelectionToolArea;
       else EventHandler = DummyToolArea;
     }
@@ -133,7 +137,16 @@ const Main = () => {
           ref={toolOverlayRef}
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
-            display: ['draw', 'crop', 'text', 'shape', 'reposition', 'lasso', 'rectangular-selection'].includes(interactionMode)
+            display: [
+              'draw',
+              'crop',
+              'text',
+              'shape',
+              'reposition',
+              'lasso',
+              'feather-magnetic-lasso',
+              'rectangular-selection',
+            ].includes(interactionMode)
               ? 'block'
               : 'none',
           }}

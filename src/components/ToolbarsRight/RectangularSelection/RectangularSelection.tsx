@@ -1,31 +1,32 @@
 import React from 'react';
-import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
-import type { RectangularSelectionToolArgs } from '../../../tools/rectangularSelection.ts';
 import { copyRectToClipboard } from '../../../util/clipboard.ts';
-import { trimRect } from '../../../util/rect.ts';
+import { getActiveRectangularSelection, getSelectionRect } from '../../../util/selection.ts';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
 
 const RectangularSelection: React.FC<{}> = () => {
-  const [{ canvasRef, totalSize }] = useStore();
-  const { toolArgs, setToolArgs } = useCurrentTool();
+  const [{ canvasRef, totalSize, selections, activeSelectionId }, dispatch] = useStore();
 
-  const args = toolArgs as RectangularSelectionToolArgs;
-  const { rect } = args;
-
-  const hasRect =
-    !!rect &&
-    (() => {
-      const { width, height } = trimRect(rect, totalSize);
-      return width > 0 && height > 0;
-    })();
+  const activeRectangleSelection = getActiveRectangularSelection(selections, activeSelectionId);
+  const activeRectangleRect = activeRectangleSelection ? getSelectionRect(activeRectangleSelection) : null;
+  const hasRect = !!activeRectangleRect;
 
   const handleCopy = async () => {
-    await copyRectToClipboard({
+    if (!activeRectangleSelection || !activeRectangleRect) return;
+
+    const didCopy = await copyRectToClipboard({
       sourceCanvas: canvasRef.current,
-      rect,
+      rect: activeRectangleRect,
       imageSize: totalSize,
     });
+
+    if (didCopy) {
+      dispatch({ type: 'MARK_SELECTION_COPIED', payload: { id: activeRectangleSelection.id } });
+    }
+  };
+
+  const handleClear = () => {
+    dispatch({ type: 'CLEAR_SELECTIONS' });
   };
 
   return (
@@ -37,7 +38,7 @@ const RectangularSelection: React.FC<{}> = () => {
         <button className={PRIMARY_BUTTON} disabled={!hasRect} onClick={handleCopy}>
           Copy
         </button>
-        <button className={SECONDARY_BUTTON} disabled={!hasRect} onClick={() => setToolArgs({ ...args, rect: null })}>
+        <button className={SECONDARY_BUTTON} disabled={!hasRect} onClick={handleClear}>
           Clear
         </button>
       </div>

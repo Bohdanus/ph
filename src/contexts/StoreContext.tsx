@@ -80,6 +80,7 @@ type Action =
   | { type: 'ADD_SELECTION'; payload: Selection }
   | { type: 'COMMIT_SELECTION'; payload: Selection }
   | { type: 'UPDATE_SELECTION'; payload: Selection }
+  | { type: 'MOVE_SELECTION'; payload: Selection }
   | { type: 'SET_ACTIVE_SELECTION'; payload: string | null }
   | { type: 'START_SELECTION_DRAFT'; payload: { sourceTool: SelectionSourceTool } }
   | { type: 'CANCEL_SELECTION_DRAFT' }
@@ -135,6 +136,23 @@ function commitSelection(state: StoreData, selection: Selection): StoreData {
     activeSelectionId: committedSelection.id,
     selectionDraft: { status: 'idle' },
     selectionCleared: null,
+  };
+}
+
+function updateCommittedSelection(state: StoreData, selection: Selection): StoreData {
+  const committedSelection: Selection = {
+    ...selection,
+    lifecycle: 'committed',
+    geometry: selection.geometry ?? 'polygon',
+  };
+
+  return {
+    ...state,
+    selections: state.selections.map((current) =>
+      current.id === committedSelection.id ? committedSelection : current
+    ),
+    activeSelectionId: committedSelection.isActive ? committedSelection.id : state.activeSelectionId,
+    selectionDraft: { status: 'idle' },
   };
 }
 
@@ -229,13 +247,8 @@ function reducer(state: StoreData, action: Action): StoreData {
     case 'COMMIT_SELECTION':
       return commitSelection(state, action.payload);
     case 'UPDATE_SELECTION':
-      return {
-        ...state,
-        selections: state.selections.map((selection) =>
-          selection.id === action.payload.id ? action.payload : selection
-        ),
-        activeSelectionId: action.payload.isActive ? action.payload.id : state.activeSelectionId,
-      };
+    case 'MOVE_SELECTION':
+      return updateCommittedSelection(state, action.payload);
     case 'SET_ACTIVE_SELECTION':
       return {
         ...state,

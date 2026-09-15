@@ -1,5 +1,14 @@
-import type { BitmapSource, Point, Selection, SelectionSourceTool } from '../contexts/general-types.ts';
+import type {
+  BitmapSource,
+  Ctx2D,
+  Point,
+  RectXYSorted,
+  Selection,
+  SelectionSourceTool,
+  Size,
+} from '../contexts/general-types.ts';
 import { pointsBoundingPos } from './draw.ts';
+import { posToSortedRect, sortRect, trimRect } from './rect.ts';
 
 export const SELECTION_ANCHOR_RADIUS = 5;
 export const SELECTION_ANCHOR_HIT_RADIUS = 8;
@@ -15,12 +24,14 @@ export function normalizeSelectionPoints(points: Point[]): Pick<Selection, 'poin
 
 export function createCommittedPolygonSelection({
   id,
+  metadata,
   points,
   sourceTool,
 }: {
   id: string;
+  metadata?: Selection['metadata'];
   points: Point[];
-  sourceTool: Extract<SelectionSourceTool, 'polygonal-lasso' | 'freehand-lasso'>;
+  sourceTool: Extract<SelectionSourceTool, 'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso'>;
 }): Selection | null {
   const normalized = normalizeSelectionPoints(points);
   if (!normalized) return null;
@@ -32,7 +43,65 @@ export function createCommittedPolygonSelection({
     lifecycle: 'committed',
     geometry: 'polygon',
     sourceTool,
+    metadata,
   };
+}
+
+export function normalizeRectangleSelectionRect(
+  rect: RectXYSorted,
+  imageSize: Size
+): Pick<Selection, 'points' | 'pos'> | null {
+  const { x, y, width, height } = trimRect(sortRect(rect), imageSize);
+  if (width <= 0 || height <= 0) return null;
+
+  return {
+    pos: { x, y, width, height },
+    points: [
+      { x: 0, y: 0 },
+      { x: width, y: 0 },
+      { x: width, y: height },
+      { x: 0, y: height },
+    ],
+  };
+}
+
+export function createCommittedRectangleSelection({
+  id,
+  rect,
+  imageSize,
+  metadata,
+}: {
+  id: string;
+  rect: RectXYSorted;
+  imageSize: Size;
+  metadata?: Selection['metadata'];
+}): Selection | null {
+  const normalized = normalizeRectangleSelectionRect(rect, imageSize);
+  if (!normalized) return null;
+
+  return {
+    id,
+    ...normalized,
+    isActive: true,
+    lifecycle: 'committed',
+    geometry: 'rectangle',
+    sourceTool: 'rectangular-selection',
+    metadata,
+  };
+}
+
+export function getSelectionRect(selection: Selection): RectXYSorted {
+  return posToSortedRect(selection.pos);
+}
+
+export function getActiveSelection(selections: Selection[], activeSelectionId: string | null): Selection | null {
+  return selections.find((selection) => selection.id === activeSelectionId) ?? selections.find((selection) => selection.isActive) ?? null;
+}
+
+export function getActiveRectangularSelection(selections: Selection[], activeSelectionId: string | null): Selection | null {
+  const activeSelection = getActiveSelection(selections, activeSelectionId);
+
+  return activeSelection?.geometry === 'rectangle' ? activeSelection : null;
 }
 
 export function getSelectionAbsolutePoints(selection: Selection): Point[] {
@@ -135,6 +204,25 @@ export function moveSelectionAnchor(selection: Selection, anchorIndex: number, p
 
   points[anchorIndex] = point;
 
+  if (selection.geometry === 'rectangle') {
+    const pos = pointsBoundingPos({ points, lineWidth: 0 });
+
+    return {
+      ...selection,
+      pos,
+      points: [
+        { x: 0, y: 0 },
+        { x: pos.width, y: 0 },
+        { x: pos.width, y: pos.height },
+        { x: 0, y: pos.height },
+      ],
+      metadata: {
+        ...selection.metadata,
+        movedAtVersion: (selection.metadata?.movedAtVersion ?? 0) + 1,
+      },
+    };
+  }
+
   const normalized = normalizeSelectionPoints(points);
   if (!normalized) return selection;
 
@@ -163,24 +251,52 @@ export function moveSelectionByDelta(selection: Selection, delta: Point): Select
   };
 }
 
-export function copyPolygonToCanvas(sourceCanvas: BitmapSource, points: Point[]): OffscreenCanvas {
+export type ClipboardCanvas = OffscreenCanvas | HTMLCanvasElement;
+
+function createSelectionCanvas(width: number, height: number): ClipboardCanvas {
+  const safeWidth = Math.max(1, Math.ceil(width));
+  const safeHeight = Math.max(1, Math.ceil(height));
+
+  if (typeof OffscreenCanvas !== 'undefined') {
+    return new OffscreenCanvas(safeWidth, safeHeight);
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = safeWidth;
+  canvas.height = safeHeight;
+
+  return canvas;
+}
+
+function getSelectionCanvasContext(canvas: ClipboardCanvas): Ctx2D | null {
+  return canvas.getContext('2d') as Ctx2D | null;
+}
+
+function drawPolygonPath(ctx: Ctx2D, points: Point[]): void {
+  if (points.length === 0) return;
+
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.closePath();
+}
+
+export function copyPolygonToCanvas(sourceCanvas: BitmapSource, points: Point[]): ClipboardCanvas {
   const bounds = pointsBoundingPos({ points, lineWidth: 0 });
 
-  const destCanvas = new OffscreenCanvas(bounds.width, bounds.height);
+  const destCanvas = createSelectionCanvas(bounds.width, bounds.height);
   const { x: minX, y: minY } = bounds;
 
-  const ctx = destCanvas.getContext('2d')!;
+  const ctx = getSelectionCanvasContext(destCanvas)!;
   ctx.save();
 
   // Build polygon path relative to new canvas
-  ctx.beginPath();
-  ctx.moveTo(points[0].x - minX, points[0].y - minY);
-
-  for (let i = 1; i < points.length; i++) {
-    ctx.lineTo(points[i].x - minX, points[i].y - minY);
-  }
-
-  ctx.closePath();
+  drawPolygonPath(
+    ctx,
+    points.map((point) => ({ x: point.x - minX, y: point.y - minY }))
+  );
 
   // Clip drawing to polygon
   // Note: Self-intersecting polygons are handled gracefully using the non-zero winding rule.
@@ -188,16 +304,204 @@ export function copyPolygonToCanvas(sourceCanvas: BitmapSource, points: Point[])
   ctx.clip();
 
   // Draw source canvas shifted so polygon aligns
-  ctx.drawImage(sourceCanvas, -minX, -minY);
+  ctx.drawImage(sourceCanvas as CanvasImageSource, -minX, -minY);
 
   ctx.restore();
 
   return destCanvas;
 }
 
-export async function copyCanvasToClipboard(canvas: OffscreenCanvas): Promise<void> {
+function rasterizePolygonMask(points: Point[], width: number, height: number): Uint8Array {
+  const canvas = createSelectionCanvas(width, height);
+  const ctx = getSelectionCanvasContext(canvas);
+
+  if (ctx) {
+    try {
+      ctx.save();
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = 'black';
+      drawPolygonPath(ctx, points);
+      ctx.fill();
+      ctx.restore();
+
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const mask = new Uint8Array(width * height);
+      for (let i = 0; i < mask.length; i++) {
+        mask[i] = imageData.data[i * 4 + 3] > 0 ? 1 : 0;
+      }
+
+      return mask;
+    } catch (_error) {
+      // Fall through to CPU rasterization for tests and reduced canvas environments.
+    }
+  }
+
+  const mask = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      mask[y * width + x] = isPointInPolygon({ x: x + 0.5, y: y + 0.5 }, points) ? 1 : 0;
+    }
+  }
+
+  return mask;
+}
+
+function chamferDistanceFromSeeds(seedMask: Uint8Array, width: number, height: number): Float32Array {
+  const distance = new Float32Array(width * height);
+  const infinity = 1_000_000;
+
+  for (let i = 0; i < distance.length; i++) {
+    distance[i] = seedMask[i] ? 0 : infinity;
+  }
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = y * width + x;
+      let best = distance[index];
+
+      if (x > 0) best = Math.min(best, distance[index - 1] + 1);
+      if (y > 0) best = Math.min(best, distance[index - width] + 1);
+      if (x > 0 && y > 0) best = Math.min(best, distance[index - width - 1] + Math.SQRT2);
+      if (x < width - 1 && y > 0) best = Math.min(best, distance[index - width + 1] + Math.SQRT2);
+
+      distance[index] = best;
+    }
+  }
+
+  for (let y = height - 1; y >= 0; y--) {
+    for (let x = width - 1; x >= 0; x--) {
+      const index = y * width + x;
+      let best = distance[index];
+
+      if (x < width - 1) best = Math.min(best, distance[index + 1] + 1);
+      if (y < height - 1) best = Math.min(best, distance[index + width] + 1);
+      if (x < width - 1 && y < height - 1) best = Math.min(best, distance[index + width + 1] + Math.SQRT2);
+      if (x > 0 && y < height - 1) best = Math.min(best, distance[index + width - 1] + Math.SQRT2);
+
+      distance[index] = best;
+    }
+  }
+
+  return distance;
+}
+
+function smoothStep(value: number): number {
+  return value * value * (3 - 2 * value);
+}
+
+export function alphaFromSignedDistance(signedDistance: number, featherRadius: number, antiAlias = true): number {
+  const safeFeatherRadius = Math.max(0, featherRadius);
+
+  if (safeFeatherRadius === 0) {
+    if (!antiAlias) return signedDistance > 0 ? 255 : 0;
+
+    return Math.round(Math.max(0, Math.min(1, signedDistance + 0.5)) * 255);
+  }
+
+  const t = Math.max(0, Math.min(1, (signedDistance + safeFeatherRadius) / (safeFeatherRadius * 2)));
+
+  return Math.round(smoothStep(t) * 255);
+}
+
+export function createFeatheredAlphaMask(
+  binaryMask: Uint8Array,
+  width: number,
+  height: number,
+  featherRadius: number,
+  antiAlias = true
+): Uint8Array {
+  const outsideSeeds = new Uint8Array(binaryMask.length);
+  const insideSeeds = new Uint8Array(binaryMask.length);
+
+  for (let i = 0; i < binaryMask.length; i++) {
+    insideSeeds[i] = binaryMask[i];
+    outsideSeeds[i] = binaryMask[i] ? 0 : 1;
+  }
+
+  const distanceToOutside = chamferDistanceFromSeeds(outsideSeeds, width, height);
+  const distanceToInside = chamferDistanceFromSeeds(insideSeeds, width, height);
+  const alphaMask = new Uint8Array(binaryMask.length);
+
+  for (let i = 0; i < binaryMask.length; i++) {
+    const signedDistance = binaryMask[i] ? distanceToOutside[i] : -distanceToInside[i];
+    alphaMask[i] = alphaFromSignedDistance(signedDistance, featherRadius, antiAlias);
+  }
+
+  return alphaMask;
+}
+
+export function copyFeatheredPolygonToCanvas(
+  sourceCanvas: BitmapSource,
+  points: Point[],
+  {
+    antiAlias = true,
+    featherRadius = 0,
+    imageSize,
+  }: {
+    antiAlias?: boolean;
+    featherRadius?: number;
+    imageSize?: Size;
+  } = {}
+): ClipboardCanvas {
+  if (points.length < 3) {
+    return createSelectionCanvas(1, 1);
+  }
+
+  const padding = Math.max(antiAlias ? 1 : 0, Math.ceil(featherRadius));
+  const bounds = pointsBoundingPos({ points, lineWidth: padding });
+  let minX = Math.floor(bounds.x);
+  let minY = Math.floor(bounds.y);
+  let maxX = Math.ceil(bounds.x + bounds.width);
+  let maxY = Math.ceil(bounds.y + bounds.height);
+
+  if (imageSize) {
+    minX = Math.max(0, minX);
+    minY = Math.max(0, minY);
+    maxX = Math.min(imageSize.width, maxX);
+    maxY = Math.min(imageSize.height, maxY);
+  }
+
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+  const relativePoints = points.map((point) => ({ x: point.x - minX, y: point.y - minY }));
+  const destCanvas = createSelectionCanvas(width, height);
+  const ctx = getSelectionCanvasContext(destCanvas)!;
+
+  ctx.drawImage(sourceCanvas as CanvasImageSource, minX, minY, width, height, 0, 0, width, height);
+
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const mask = rasterizePolygonMask(relativePoints, width, height);
+  const alphaMask = createFeatheredAlphaMask(mask, width, height, featherRadius, antiAlias);
+
+  for (let i = 0; i < alphaMask.length; i++) {
+    const alphaIndex = i * 4 + 3;
+    imageData.data[alphaIndex] = Math.round((imageData.data[alphaIndex] * alphaMask[i]) / 255);
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+
+  return destCanvas;
+}
+
+function canvasToBlob(canvas: ClipboardCanvas): Promise<Blob> {
+  if ('convertToBlob' in canvas) {
+    return canvas.convertToBlob({ type: 'image/png' });
+  }
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) {
+        resolve(blob);
+      } else {
+        reject(new Error('Failed to serialize canvas'));
+      }
+    }, 'image/png');
+  });
+}
+
+export async function copyCanvasToClipboard(canvas: ClipboardCanvas): Promise<void> {
   try {
-    const blob = await canvas.convertToBlob();
+    const blob = await canvasToBlob(canvas);
     await navigator.clipboard.write([
       new ClipboardItem({
         [blob.type]: blob,
