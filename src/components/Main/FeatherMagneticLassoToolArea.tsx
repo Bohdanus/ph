@@ -37,6 +37,11 @@ type LastClickState = {
   time: number;
 };
 
+type PendingPointerMove = {
+  coords: Point;
+  magneticEnabled: boolean;
+};
+
 export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: FeatherMagneticLassoToolAreaProps) => {
   const [{ canvasRef, containerRef, selections, totalSize }, dispatch] = useStore();
   const { toolArgs } = useCurrentTool();
@@ -49,6 +54,8 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   const edgeMapRef = useRef<EdgeMap | null>(null);
   const lastClickRef = useRef<LastClickState | null>(null);
   const lastAutoAnchorTimeRef = useRef(0);
+  const pendingPointerMoveRef = useRef<PendingPointerMove | null>(null);
+  const pointerMoveFrameRef = useRef<number | null>(null);
 
   const { getLocalCoords } = usePointerPosition({
     ref: containerRef,
@@ -195,6 +202,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   }
 
   function resetInteractionState() {
+    cancelPendingPointerMoveFrame();
     anchorsRef.current = [];
     segmentsRef.current = [];
     pointsRef.current = [];
@@ -203,6 +211,58 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     lastClickRef.current = null;
     lastAutoAnchorTimeRef.current = 0;
     clearOverlay();
+  }
+
+  function cancelPendingPointerMoveFrame() {
+    if (pointerMoveFrameRef.current !== null) {
+      cancelAnimationFrame(pointerMoveFrameRef.current);
+      pointerMoveFrameRef.current = null;
+    }
+
+    pendingPointerMoveRef.current = null;
+  }
+
+  function processPointerMovePreview({ coords, magneticEnabled }: PendingPointerMove) {
+    if (anchorsRef.current.length === 0) return;
+
+    const start = anchorsRef.current[0];
+    const shouldClose =
+      anchorsRef.current.length >= MIN_POINTS_FOR_SELECTION && distanceBetweenPoints(coords, start) <= CLOSE_START_THRESHOLD;
+    const target = shouldClose ? start : coords;
+    const segment = makeSegment(target, magneticEnabled);
+    if (!segment) return;
+
+    previewRef.current = segment;
+
+    if (!shouldClose && magneticEnabled && maybeCommitAutoAnchor(segment)) {
+      redrawOverlay();
+      return;
+    }
+
+    redrawOverlay();
+  }
+
+  function flushPointerMoveFrame() {
+    pointerMoveFrameRef.current = null;
+
+    const pending = pendingPointerMoveRef.current;
+    pendingPointerMoveRef.current = null;
+    if (!pending) return;
+
+    processPointerMovePreview(pending);
+  }
+
+  function flushPendingPointerMoveFrame() {
+    if (pointerMoveFrameRef.current !== null) {
+      cancelAnimationFrame(pointerMoveFrameRef.current);
+      pointerMoveFrameRef.current = null;
+    }
+
+    const pending = pendingPointerMoveRef.current;
+    pendingPointerMoveRef.current = null;
+    if (!pending) return;
+
+    processPointerMovePreview(pending);
   }
 
   function cancelSelectionDraft() {
@@ -235,6 +295,8 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   }
 
   function removeLastAnchor() {
+    cancelPendingPointerMoveFrame();
+
     if (anchorsRef.current.length === 0) {
       dispatch({ type: 'CLEAR_SELECTIONS' });
       return;
@@ -273,6 +335,8 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
 
   function finishSelection() {
     if (anchorsRef.current.length === 0) return;
+
+    flushPendingPointerMoveFrame();
 
     if (previewRef.current && pathLength(previewRef.current.path) > 1) {
       commitSegment(previewRef.current);
@@ -359,6 +423,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     if (event.button !== 0) return;
 
     event.preventDefault();
+    cancelPendingPointerMoveFrame();
 
     const coords = clampToImage(getLocalCoords(event));
     if (anchorsRef.current.length === 0) {
@@ -390,21 +455,10 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     const coords = clampToImage(getLocalCoords(event));
     if (anchorsRef.current.length === 0) return;
 
-    const start = anchorsRef.current[0];
-    const shouldClose =
-      anchorsRef.current.length >= MIN_POINTS_FOR_SELECTION && distanceBetweenPoints(coords, start) <= CLOSE_START_THRESHOLD;
-    const target = shouldClose ? start : coords;
-    const segment = makeSegment(target, !event.altKey);
-    if (!segment) return;
+    pendingPointerMoveRef.current = { coords, magneticEnabled: !event.altKey };
+    if (pointerMoveFrameRef.current !== null) return;
 
-    previewRef.current = segment;
-
-    if (!shouldClose && !event.altKey && maybeCommitAutoAnchor(segment)) {
-      redrawOverlay();
-      return;
-    }
-
-    redrawOverlay();
+    pointerMoveFrameRef.current = requestAnimationFrame(flushPointerMoveFrame);
   };
 
   const handleContextMenu = (event: PointerEvent<HTMLDivElement>) => {

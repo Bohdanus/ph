@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { afterEach, describe, expect, it, beforeEach, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import type { Selection } from '../../../contexts/general-types.ts';
 import { FeatherMagneticLassoToolArea } from '../FeatherMagneticLassoToolArea.tsx';
@@ -48,11 +48,33 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
 }));
 
 describe('FeatherMagneticLassoToolArea', () => {
+  let rafCallbacks: FrameRequestCallback[] = [];
+  let requestAnimationFrameSpy: ReturnType<typeof vi.spyOn> | null = null;
+  let cancelAnimationFrameSpy: ReturnType<typeof vi.spyOn> | null = null;
+
   beforeEach(() => {
     dispatchMock.mockClear();
     shortcutHandlers.clear();
     storeState.selections = [];
+    rafCallbacks = [];
   });
+
+  afterEach(() => {
+    requestAnimationFrameSpy?.mockRestore();
+    cancelAnimationFrameSpy?.mockRestore();
+    requestAnimationFrameSpy = null;
+    cancelAnimationFrameSpy = null;
+  });
+
+  function installManualRaf() {
+    requestAnimationFrameSpy = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+      rafCallbacks.push(callback);
+      return rafCallbacks.length;
+    });
+    cancelAnimationFrameSpy = vi.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation((id) => {
+      rafCallbacks[id - 1] = () => undefined;
+    });
+  }
 
   const createMockContext = () =>
     ({
@@ -135,5 +157,33 @@ describe('FeatherMagneticLassoToolArea', () => {
     shortcutHandlers.get('Escape')?.();
 
     expect(dispatchMock).toHaveBeenCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+  });
+
+  it('throttles magnetic pointer-move preview work to one requestAnimationFrame', () => {
+    installManualRaf();
+
+    const mockCtx = createMockContext();
+    const { container } = render(
+      <FeatherMagneticLassoToolArea overlayCtxRef={{ current: mockCtx }} className="test-feather-lasso-area" />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+    vi.mocked(mockCtx.lineTo).mockClear();
+
+    fireEvent.pointerMove(toolArea, { clientX: 20, clientY: 10 });
+    fireEvent.pointerMove(toolArea, { clientX: 30, clientY: 10 });
+    fireEvent.pointerMove(toolArea, { clientX: 40, clientY: 10 });
+
+    expect(requestAnimationFrameSpy).toHaveBeenCalledTimes(1);
+    expect(mockCtx.lineTo).not.toHaveBeenCalled();
+
+    rafCallbacks[0](performance.now());
+
+    expect(mockCtx.lineTo).toHaveBeenCalledWith(40, 10);
+
+    fireEvent.pointerMove(toolArea, { clientX: 50, clientY: 10 });
+
+    expect(requestAnimationFrameSpy).toHaveBeenCalledTimes(2);
   });
 });

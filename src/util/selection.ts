@@ -2,6 +2,7 @@ import type {
   BitmapSource,
   Ctx2D,
   Point,
+  Pos,
   RectXYSorted,
   Selection,
   SelectionSourceTool,
@@ -31,7 +32,10 @@ export function createCommittedPolygonSelection({
   id: string;
   metadata?: Selection['metadata'];
   points: Point[];
-  sourceTool: Extract<SelectionSourceTool, 'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso'>;
+  sourceTool: Extract<
+    SelectionSourceTool,
+    'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso' | 'magic-wand'
+  >;
 }): Selection | null {
   const normalized = normalizeSelectionPoints(points);
   if (!normalized) return null;
@@ -137,16 +141,18 @@ export function drawSelectionOutline(ctx: CanvasRenderingContext2D, selection: S
   ctx.setLineDash([6, 4]);
   drawClosedSelectionPath(ctx, points);
 
-  ctx.setLineDash([]);
-  points.forEach((point, index) => {
-    ctx.beginPath();
-    ctx.fillStyle = 'white';
-    ctx.strokeStyle = index === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.65)';
-    ctx.lineWidth = 2;
-    ctx.arc(point.x, point.y, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  });
+  if (selection.sourceTool !== 'freehand-lasso' && selection.sourceTool !== 'magic-wand') {
+    ctx.setLineDash([]);
+    points.forEach((point, index) => {
+      ctx.beginPath();
+      ctx.fillStyle = 'white';
+      ctx.strokeStyle = index === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.65)';
+      ctx.lineWidth = 2;
+      ctx.arc(point.x, point.y, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
+  }
 
   ctx.restore();
 }
@@ -158,6 +164,8 @@ export function distanceBetweenPoints(a: Point, b: Point): number {
 }
 
 export function findSelectionAnchorAtPoint(selection: Selection, point: Point): number | null {
+  if (selection.sourceTool === 'freehand-lasso' || selection.sourceTool === 'magic-wand') return null;
+
   const points = getSelectionAbsolutePoints(selection);
   const anchorIndex = points.findIndex((anchor) => distanceBetweenPoints(anchor, point) <= SELECTION_ANCHOR_HIT_RADIUS);
 
@@ -253,6 +261,11 @@ export function moveSelectionByDelta(selection: Selection, delta: Point): Select
 
 export type ClipboardCanvas = OffscreenCanvas | HTMLCanvasElement;
 
+export type SelectionCanvasSnapshot = {
+  bitmap: ClipboardCanvas;
+  pos: Pos;
+};
+
 function createSelectionCanvas(width: number, height: number): ClipboardCanvas {
   const safeWidth = Math.max(1, Math.ceil(width));
   const safeHeight = Math.max(1, Math.ceil(height));
@@ -283,8 +296,47 @@ function drawPolygonPath(ctx: Ctx2D, points: Point[]): void {
   ctx.closePath();
 }
 
-export function copyPolygonToCanvas(sourceCanvas: BitmapSource, points: Point[]): ClipboardCanvas {
-  const bounds = pointsBoundingPos({ points, lineWidth: 0 });
+function getSelectionCanvasBounds(points: Point[], padding = 0, imageSize?: Size): Pos | null {
+  if (points.length === 0) return null;
+
+  const bounds = pointsBoundingPos({ points, lineWidth: padding });
+  let minX = Math.floor(bounds.x);
+  let minY = Math.floor(bounds.y);
+  let maxX = Math.ceil(bounds.x + bounds.width);
+  let maxY = Math.ceil(bounds.y + bounds.height);
+
+  if (imageSize) {
+    minX = Math.max(0, minX);
+    minY = Math.max(0, minY);
+    maxX = Math.min(imageSize.width, maxX);
+    maxY = Math.min(imageSize.height, maxY);
+  }
+
+  const width = maxX - minX;
+  const height = maxY - minY;
+  if (width <= 0 || height <= 0) return null;
+
+  return { x: minX, y: minY, width, height };
+}
+
+export function cloneBitmapToCanvas(source: BitmapSource): ClipboardCanvas {
+  const destCanvas = createSelectionCanvas(source.width, source.height);
+  const ctx = getSelectionCanvasContext(destCanvas)!;
+
+  ctx.drawImage(source as CanvasImageSource, 0, 0);
+
+  return destCanvas;
+}
+
+export function copyPolygonSelectionToCanvas(
+  sourceCanvas: BitmapSource,
+  points: Point[],
+  { imageSize }: { imageSize?: Size } = {}
+): SelectionCanvasSnapshot | null {
+  if (points.length < 3) return null;
+
+  const bounds = getSelectionCanvasBounds(points, 0, imageSize);
+  if (!bounds) return null;
 
   const destCanvas = createSelectionCanvas(bounds.width, bounds.height);
   const { x: minX, y: minY } = bounds;
@@ -308,7 +360,11 @@ export function copyPolygonToCanvas(sourceCanvas: BitmapSource, points: Point[])
 
   ctx.restore();
 
-  return destCanvas;
+  return { bitmap: destCanvas, pos: bounds };
+}
+
+export function copyPolygonToCanvas(sourceCanvas: BitmapSource, points: Point[]): ClipboardCanvas {
+  return copyPolygonSelectionToCanvas(sourceCanvas, points)?.bitmap ?? createSelectionCanvas(1, 1);
 }
 
 function rasterizePolygonMask(points: Point[], width: number, height: number): Uint8Array {
@@ -443,31 +499,42 @@ export function copyFeatheredPolygonToCanvas(
     imageSize?: Size;
   } = {}
 ): ClipboardCanvas {
+  return (
+    copyFeatheredPolygonSelectionToCanvas(sourceCanvas, points, {
+      antiAlias,
+      featherRadius,
+      imageSize,
+    })?.bitmap ?? createSelectionCanvas(1, 1)
+  );
+}
+
+export function copyFeatheredPolygonSelectionToCanvas(
+  sourceCanvas: BitmapSource,
+  points: Point[],
+  {
+    antiAlias = true,
+    featherRadius = 0,
+    imageSize,
+  }: {
+    antiAlias?: boolean;
+    featherRadius?: number;
+    imageSize?: Size;
+  } = {}
+): SelectionCanvasSnapshot | null {
   if (points.length < 3) {
-    return createSelectionCanvas(1, 1);
+    return null;
   }
 
   const padding = Math.max(antiAlias ? 1 : 0, Math.ceil(featherRadius));
-  const bounds = pointsBoundingPos({ points, lineWidth: padding });
-  let minX = Math.floor(bounds.x);
-  let minY = Math.floor(bounds.y);
-  let maxX = Math.ceil(bounds.x + bounds.width);
-  let maxY = Math.ceil(bounds.y + bounds.height);
+  const bounds = getSelectionCanvasBounds(points, padding, imageSize);
+  if (!bounds) return null;
 
-  if (imageSize) {
-    minX = Math.max(0, minX);
-    minY = Math.max(0, minY);
-    maxX = Math.min(imageSize.width, maxX);
-    maxY = Math.min(imageSize.height, maxY);
-  }
-
-  const width = Math.max(1, maxX - minX);
-  const height = Math.max(1, maxY - minY);
-  const relativePoints = points.map((point) => ({ x: point.x - minX, y: point.y - minY }));
+  const { x, y, width, height } = bounds;
+  const relativePoints = points.map((point) => ({ x: point.x - x, y: point.y - y }));
   const destCanvas = createSelectionCanvas(width, height);
   const ctx = getSelectionCanvasContext(destCanvas)!;
 
-  ctx.drawImage(sourceCanvas as CanvasImageSource, minX, minY, width, height, 0, 0, width, height);
+  ctx.drawImage(sourceCanvas as CanvasImageSource, x, y, width, height, 0, 0, width, height);
 
   const imageData = ctx.getImageData(0, 0, width, height);
   const mask = rasterizePolygonMask(relativePoints, width, height);
@@ -480,7 +547,45 @@ export function copyFeatheredPolygonToCanvas(
 
   ctx.putImageData(imageData, 0, 0);
 
-  return destCanvas;
+  return { bitmap: destCanvas, pos: bounds };
+}
+
+export function copyRectSelectionToCanvas(
+  sourceCanvas: BitmapSource,
+  rect: RectXYSorted,
+  imageSize: Size
+): SelectionCanvasSnapshot | null {
+  const { x, y, width, height } = trimRect(sortRect(rect), imageSize);
+  if (width <= 0 || height <= 0) return null;
+
+  const destCanvas = createSelectionCanvas(width, height);
+  const ctx = getSelectionCanvasContext(destCanvas)!;
+  ctx.drawImage(sourceCanvas as CanvasImageSource, x, y, width, height, 0, 0, width, height);
+
+  return { bitmap: destCanvas, pos: { x, y, width, height } };
+}
+
+export function copySelectionToCanvas(
+  sourceCanvas: BitmapSource | null | undefined,
+  selection: Selection,
+  imageSize: Size
+): SelectionCanvasSnapshot | null {
+  if (!sourceCanvas) return null;
+
+  if (selection.geometry === 'rectangle') {
+    return copyRectSelectionToCanvas(sourceCanvas, getSelectionRect(selection), imageSize);
+  }
+
+  const points = getSelectionAbsolutePoints(selection);
+  if (selection.sourceTool === 'feather-magnetic-lasso') {
+    return copyFeatheredPolygonSelectionToCanvas(sourceCanvas, points, {
+      antiAlias: selection.metadata?.magneticLasso?.antiAlias ?? true,
+      featherRadius: selection.metadata?.featherRadius ?? 0,
+      imageSize,
+    });
+  }
+
+  return copyPolygonSelectionToCanvas(sourceCanvas, points, { imageSize });
 }
 
 function canvasToBlob(canvas: ClipboardCanvas): Promise<Blob> {

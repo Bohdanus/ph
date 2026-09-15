@@ -3,7 +3,14 @@ import { DEFAULT_TOOL } from '../util/constants.ts';
 
 import type { ReactNode, RefObject } from 'react';
 import type { LayerId, LayersRecord } from './layer-types.ts';
-import type { ClearedSelectionState, Selection, SelectionDraftState, SelectionSourceTool, Size } from './general-types.ts';
+import type {
+  ClearedSelectionState,
+  Selection,
+  SelectionClipboard,
+  SelectionDraftState,
+  SelectionSourceTool,
+  Size,
+} from './general-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 
@@ -38,6 +45,7 @@ export type StoreData = {
   activeSelectionId: string | null;
   selectionDraft: SelectionDraftState;
   selectionCleared: ClearedSelectionState | null;
+  selectionClipboard: SelectionClipboard | null;
 
   // history
   history: HistoryItem[];
@@ -84,6 +92,7 @@ type Action =
   | { type: 'SET_ACTIVE_SELECTION'; payload: string | null }
   | { type: 'START_SELECTION_DRAFT'; payload: { sourceTool: SelectionSourceTool } }
   | { type: 'CANCEL_SELECTION_DRAFT' }
+  | { type: 'SET_SELECTION_CLIPBOARD'; payload: SelectionClipboard | null }
   | { type: 'MARK_SELECTION_COPIED'; payload: { id: string } }
   | { type: 'CLEAR_SELECTIONS' };
 
@@ -112,6 +121,7 @@ const initialState: StoreData = {
   activeSelectionId: null,
   selectionDraft: { status: 'idle' },
   selectionCleared: null,
+  selectionClipboard: null,
 
   history: [],
   historyIndex: 0,
@@ -266,6 +276,11 @@ function reducer(state: StoreData, action: Action): StoreData {
       }
 
       return { ...state, selectionDraft: { status: 'idle' } };
+    case 'SET_SELECTION_CLIPBOARD':
+      return {
+        ...state,
+        selectionClipboard: action.payload,
+      };
     case 'MARK_SELECTION_COPIED':
       return {
         ...state,

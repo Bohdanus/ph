@@ -16,6 +16,7 @@ import Text from '../components/ToolbarsRight/Text/Text.tsx';
 import PolygonalLasso from '../components/ToolbarsRight/Lasso/PolygonalLasso.tsx';
 import FreehandLasso from '../components/ToolbarsRight/Lasso/FreehandLasso.tsx';
 import FeatherMagneticLasso from '../components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx';
+import MagicWand from '../components/ToolbarsRight/MagicWand/MagicWand.tsx';
 import RectangularSelection from '../components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx';
 import type { ToolbarRightComponent } from '../components/ToolbarsRight/types.ts';
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
@@ -26,6 +27,7 @@ import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
 import { reposition } from './reposition.ts';
 import { rectangularSelection } from './rectangularSelection.ts';
 import { featherMagneticLasso } from './featherMagneticLasso.ts';
+import { magicWand } from './magicWand.ts';
 
 export type ProcessorToolParams = {
   size: Size; // why size??
@@ -127,6 +129,12 @@ export const toolsMap: ToolsMap = {
     // @ts-expect-error args
     imageProcessor: featherMagneticLasso,
     toolboxComponent: FeatherMagneticLasso,
+  },
+  'magic-wand': {
+    icon: 'magic-wand',
+    // @ts-expect-error args
+    imageProcessor: magicWand,
+    toolboxComponent: MagicWand,
   },
   'rectangular-selection': {
     creator: true,

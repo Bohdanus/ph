@@ -1,16 +1,45 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
+import { useStore } from '../../../contexts/StoreContext.tsx';
+import { useSelectionClipboard } from '../../../contexts/useSelectionClipboard.ts';
+import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
 
 const FreehandLasso: React.FC<{}> = () => {
+  const [, dispatch] = useStore();
   const { getToolArgs, patchToolArgs } = useCurrentTool();
+  const { activeSelection, copyActiveSelection, hasSelectionClipboard, pasteSelectionClipboard } = useSelectionClipboard();
+  const [isCopying, setIsCopying] = useState(false);
 
   const args = getToolArgs('freehand-lasso');
   if (!args) return null;
 
   const isFill = args.fill;
+  const hasActivePolygonSelection = !!activeSelection && activeSelection.geometry !== 'rectangle';
 
   const handleFillToggle = () => {
     patchToolArgs('freehand-lasso', { fill: !isFill });
+  };
+
+  const handleCopySelection = async () => {
+    if (!activeSelection || activeSelection.geometry === 'rectangle') return;
+
+    try {
+      setIsCopying(true);
+      copyActiveSelection(activeSelection);
+    } catch (error) {
+      console.error('Error copying freehand lasso selection:', error);
+      alert('Failed to copy selection');
+    } finally {
+      setIsCopying(false);
+    }
+  };
+
+  const handlePasteSelection = () => {
+    pasteSelectionClipboard();
+  };
+
+  const handleClear = () => {
+    dispatch({ type: 'CLEAR_SELECTIONS' });
   };
 
   return (
@@ -29,9 +58,21 @@ const FreehandLasso: React.FC<{}> = () => {
         </button>
       </div>
 
+      <div className="flex gap-2">
+        <button className={PRIMARY_BUTTON} disabled={!hasActivePolygonSelection || isCopying} onClick={handleCopySelection}>
+          {isCopying ? 'Copying...' : 'Copy'}
+        </button>
+        <button className={PRIMARY_BUTTON} disabled={!hasSelectionClipboard} onClick={handlePasteSelection}>
+          Paste
+        </button>
+        <button className={SECONDARY_BUTTON} disabled={!hasActivePolygonSelection} onClick={handleClear}>
+          Clear
+        </button>
+      </div>
+
       <div className="text-[10px] text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded border border-blue-200 dark:border-blue-800 max-w-xs">
         <div>Click and drag to draw • Release to finish</div>
-        <div className="text-[9px] mt-1 opacity-75">Hold Shift while dragging to constrain (not working)</div>
+        <div className="text-[9px] mt-1 opacity-75">Drag around the object; the path closes automatically.</div>
       </div>
     </div>
   );

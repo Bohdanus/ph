@@ -1,7 +1,40 @@
 import { type ChangeEvent, type RefObject, useRef } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useApp } from '../../hooks/useApp.ts';
-import { TOOLBAR_MENU_BUTTON_ACTIVE, TOOLBAR_MENU_BUTTON_INACTIVE } from '../ToolbarsRight/buttonStyles.ts';
+import type { ToolName } from '../../contexts/tool-types.ts';
+import { toolIcons } from './toolIcons.tsx';
+
+type SidebarTool = {
+  label: string;
+  name: ToolName;
+  shortcut?: string;
+};
+
+const SIDEBAR_TOOLS = [
+  { label: 'Select & Move', name: 'reposition', shortcut: 'V' },
+  { label: 'Rectangular Selection', name: 'rectangular-selection', shortcut: 'M' },
+  { label: 'Freehand Lasso', name: 'freehand-lasso', shortcut: 'L' },
+  { label: 'Polygonal Lasso', name: 'polygonal-lasso' },
+  { label: 'Feather Magnetic Lasso', name: 'feather-magnetic-lasso', shortcut: 'Shift+L' },
+  { label: 'Magic Wand', name: 'magic-wand', shortcut: 'W' },
+  { label: 'Crop', name: 'crop', shortcut: 'C' },
+  { label: 'Draw', name: 'draw', shortcut: 'B' },
+  { label: 'Shapes', name: 'shape', shortcut: 'U' },
+  { label: 'Text', name: 'text', shortcut: 'T' },
+  { label: 'Colors', name: 'color' },
+  { label: 'Blur', name: 'blur' },
+  { label: 'Levels', name: 'levels' },
+  { label: 'Transform', name: 'transform' },
+] satisfies SidebarTool[];
+
+const TOOL_BUTTON_BASE_CLASS =
+  'group relative flex h-11 w-11 items-center justify-center rounded-md border text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 focus:ring-offset-gray-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:focus:ring-offset-gray-800';
+
+const TOOL_BUTTON_ACTIVE_CLASS =
+  'border-blue-500 bg-blue-100 shadow-[inset_0_0_0_1px_rgba(37,99,235,0.45)] text-blue-700 dark:border-blue-400 dark:bg-blue-500/20 dark:text-blue-100';
+
+const TOOL_BUTTON_INACTIVE_CLASS =
+  'border-gray-300 bg-gray-200/80 hover:border-gray-400 hover:bg-white dark:border-gray-700 dark:bg-gray-900/60 dark:hover:border-gray-500 dark:hover:bg-gray-700';
 
 const SidebarLeft = () => {
   const [{ hasImage, toolName, color, backgroundColor }, dispatch] = useStore();
@@ -11,54 +44,6 @@ const SidebarLeft = () => {
   const bgColorInputRef = useRef<HTMLInputElement>(null);
   const colorSquareRef = useRef<HTMLDivElement>(null);
   const bgColorSquareRef = useRef<HTMLDivElement>(null);
-
-  const handleMove = () => {
-    goToTool('reposition');
-  };
-
-  const handleColors = () => {
-    goToTool('color');
-  };
-
-  const handleBlur = () => {
-    goToTool('blur');
-  };
-
-  const handleLevels = () => {
-    goToTool('levels');
-  };
-
-  const handleTransform = () => {
-    goToTool('transform');
-  };
-
-  const handleCrop = () => {
-    goToTool('crop');
-  };
-
-  const handleDraw = () => {
-    goToTool('draw');
-  };
-
-  const handleShapes = () => {
-    goToTool('shape');
-  };
-
-  const handleText = () => {
-    goToTool('text');
-  };
-
-  const handlePolygonalLasso = () => {
-    goToTool('polygonal-lasso');
-  };
-
-  const handleFreehandLasso = () => {
-    goToTool('freehand-lasso');
-  };
-
-  const handleFeatherMagneticLasso = () => {
-    goToTool('feather-magnetic-lasso');
-  };
 
   const handleColorClick = (e: React.MouseEvent<HTMLDivElement>, inputRef: RefObject<HTMLInputElement | null>) => {
     if (!inputRef.current) return;
@@ -88,141 +73,31 @@ const SidebarLeft = () => {
   if (!hasImage) return;
 
   return (
-    <aside className="bg-gray-100 dark:bg-gray-800 dark:border-r dark:border-gray-700 max-md:hidden [grid-area:left]">
-      <div className="p-3">
-        <ul className="flex flex-col list-none p-0">
-          <li className="mb-1">
-            <button
-              className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'reposition' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
-              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!hasImage}
-              onClick={handleMove}
-            >
-              Select & Move
-            </button>
-          </li>
-          <li className="mb-1">
-            <button
-              className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'color' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
-              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!hasImage}
-              onClick={handleColors}
-            >
-              Colors
-            </button>
-          </li>
-          <li className="mb-1">
-            <button
-              className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'blur' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
-              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!hasImage}
-              onClick={handleBlur}
-            >
-              Blur
-            </button>
-          </li>
-          <li className="mb-1">
-            <button
-              className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'levels' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
-              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!hasImage}
-              onClick={handleLevels}
-            >
-              Levels
-            </button>
-          </li>
-          <li className="mb-1">
-            <button
-              className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'transform' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
-              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!hasImage}
-              onClick={handleTransform}
-            >
-              Transform
-            </button>
-          </li>
-          <li className="mb-1">
-            <button
-              className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'crop' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
-              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!hasImage}
-              onClick={handleCrop}
-            >
-              Crop
-            </button>
-          </li>
-          <li className="mb-1">
-            <button
-              className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'draw' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
-              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!hasImage}
-              onClick={handleDraw}
-            >
-              Draw
-            </button>
-          </li>
-          <li className="mb-1">
-            <button
-              className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'shape' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
-              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!hasImage}
-              onClick={handleShapes}
-            >
-              Shapes
-            </button>
-          </li>
-          <li className="mb-1">
-            <button
-              className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'text' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
-              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!hasImage}
-              onClick={handleText}
-            >
-              Text
-            </button>
-          </li>
-          <li className="mb-1">
-            <button
-              className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'freehand-lasso' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
-              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!hasImage}
-              onClick={handleFreehandLasso}
-            >
-              Freehand Lasso
-            </button>
-          </li>
-          <li className="mb-1">
-            <button
-              className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'polygonal-lasso' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
-              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!hasImage}
-              onClick={handlePolygonalLasso}
-            >
-              Polygonal Lasso
-            </button>
-          </li>
-          <li className="mb-1">
-            <button
-              className={`w-full rounded px-3 py-2 text-left transition-colors ${
-                toolName === 'feather-magnetic-lasso' ? TOOLBAR_MENU_BUTTON_ACTIVE : TOOLBAR_MENU_BUTTON_INACTIVE
-              } disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent dark:disabled:text-gray-600`}
-              disabled={!hasImage}
-              onClick={handleFeatherMagneticLasso}
-            >
-              Feather Magnetic Lasso
-            </button>
-          </li>
+    <aside className="max-md:hidden border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]">
+      <div className="flex h-full flex-col items-center px-3 py-4">
+        <ul className="grid list-none grid-cols-2 gap-1.5 rounded-lg border border-gray-300 bg-gray-200/70 p-1.5 shadow-inner dark:border-gray-700 dark:bg-gray-950/35">
+          {SIDEBAR_TOOLS.map(({ label, name, shortcut }) => {
+            const Icon = toolIcons[name];
+            const isSelected = toolName === name;
+            const title = shortcut ? `${label} (${shortcut})` : label;
+
+            return (
+              <li key={name}>
+                <button
+                  aria-label={title}
+                  aria-pressed={isSelected}
+                  className={`${TOOL_BUTTON_BASE_CLASS} ${isSelected ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}`}
+                  disabled={!hasImage}
+                  onClick={() => goToTool(name)}
+                  title={title}
+                  type="button"
+                >
+                  <Icon title={label} />
+                  <span className="sr-only">{title}</span>
+                </button>
+              </li>
+            );
+          })}
         </ul>
         <hr className="my-3 border-gray-300 dark:border-gray-700" />
 

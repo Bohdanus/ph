@@ -13,6 +13,7 @@ import type { RepositionToolArgs } from './reposition.ts';
 import type { LassoToolArgs, PolygonSelectionToolSettings } from './polygonSelection.ts';
 import type { RectangularSelectionToolArgs } from './rectangularSelection.ts';
 import type { FeatherMagneticLassoToolArgs, FeatherMagneticLassoToolSettings } from './featherMagneticLasso.ts';
+import type { MagicWandToolArgs, MagicWandToolSettings } from './magicWand.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
 type FigureSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end' | 'figure' | 'toolName'>;
@@ -104,6 +105,11 @@ export const defaultSettings = {
     points: [],
     toolName: 'feather-magnetic-lasso',
   } satisfies FeatherMagneticLassoToolArgs,
+  'magic-wand': {
+    tolerance: 28,
+    smoothing: 1.5,
+    toolName: 'magic-wand',
+  } satisfies MagicWandToolArgs,
   'rectangular-selection': { toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,
 } satisfies ToolArgsByName;
 
@@ -120,6 +126,7 @@ export type SavedSettings =
   | CropToolArgs
   | RepositionToolArgs
   | RectangularSelectionToolArgs
+  | MagicWandToolSettings
   | FeatherMagneticLassoToolSettings
   | PolygonSelectionToolSettings;
 

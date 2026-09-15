@@ -34,6 +34,8 @@ export function saveLastSettings(args: ToolArgs) {
     lastSavedSettings['freehand-lasso'] = cloneDeep(args);
   } else if (toolName === 'feather-magnetic-lasso') {
     lastSavedSettings['feather-magnetic-lasso'] = cloneDeep({ ...args, points: [] });
+  } else if (toolName === 'magic-wand') {
+    lastSavedSettings['magic-wand'] = cloneDeep(args);
   } else if (toolName === 'rectangular-selection') {
     lastSavedSettings['rectangular-selection'] = cloneDeep({ toolName: 'rectangular-selection' });
   }

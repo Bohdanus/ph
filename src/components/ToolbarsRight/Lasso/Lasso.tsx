@@ -2,16 +2,12 @@ import React, { type ChangeEvent, useEffect, useState } from 'react';
 import { type LassoToolArgs, type PolygonSelectionToolSettings } from '../../../tools/polygonSelection.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
-import {
-  copyPolygonToCanvas,
-  copyCanvasToClipboard,
-  getActiveSelection,
-  getSelectionAbsolutePoints,
-} from '../../../util/selection.ts';
+import { useSelectionClipboard } from '../../../contexts/useSelectionClipboard.ts';
 
 const Lasso: React.FC<{}> = () => {
-  const [{ color, selections, activeSelectionId, canvasCtxRef }, dispatch] = useStore();
+  const [{ color }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
+  const { activeSelection, copyActiveSelection, hasSelectionClipboard, pasteSelectionClipboard } = useSelectionClipboard();
   const [isCopying, setIsCopying] = useState(false);
 
   const args = toolArgs as LassoToolArgs;
@@ -38,42 +34,29 @@ const Lasso: React.FC<{}> = () => {
 
   const handleCopySelection = async () => {
     try {
-      const activeSelection = getActiveSelection(selections, activeSelectionId);
-      if (!activeSelection) {
+      if (!activeSelection || activeSelection.geometry === 'rectangle') {
         alert('No active selection to copy');
         return;
       }
 
-      const canvas = canvasCtxRef.current?.canvas;
-      if (!canvas) {
-        alert('Canvas not available');
-        return;
-      }
-
       setIsCopying(true);
-
-      // Create ImageBitmap from canvas
-      const imageBitmap = await createImageBitmap(canvas);
-
-      // Extract the selection region using absolute polygon points.
-      const selectionCanvas = copyPolygonToCanvas(imageBitmap, getSelectionAbsolutePoints(activeSelection));
-
-      // Copy to clipboard
-      await copyCanvasToClipboard(selectionCanvas);
-
-      dispatch({ type: 'MARK_SELECTION_COPIED', payload: { id: activeSelection.id } });
-
-      alert('Selection copied to clipboard!');
+      if (!copyActiveSelection(activeSelection)) {
+        alert('Failed to copy selection');
+      }
     } catch (error) {
       console.error('Error copying selection:', error);
-      alert('Failed to copy selection to clipboard');
+      alert('Failed to copy selection');
     } finally {
       setIsCopying(false);
     }
   };
 
+  const handlePasteSelection = () => {
+    pasteSelectionClipboard();
+  };
+
   const { alpha, lineWidth, fill } = args;
-  const hasActiveSelection = !!getActiveSelection(selections, activeSelectionId);
+  const hasActiveSelection = !!activeSelection && activeSelection.geometry !== 'rectangle';
 
   return (
     <div className="flex flex-row items-center gap-6 h-full">
@@ -99,9 +82,22 @@ const Lasso: React.FC<{}> = () => {
             ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed dark:bg-gray-800 dark:text-gray-600 dark:border-gray-700'
             : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 active:bg-gray-100 dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600 dark:hover:bg-gray-600'
         }`}
-        title={!hasActiveSelection ? 'No active selection to copy' : 'Copy selection to clipboard'}
+        title={!hasActiveSelection ? 'No active selection to copy' : 'Copy selection inside this app'}
       >
         {isCopying ? 'Copying...' : 'Copy'}
+      </button>
+
+      <button
+        onClick={handlePasteSelection}
+        disabled={!hasSelectionClipboard}
+        className={`px-3 py-1 rounded border text-sm transition-colors ${
+          !hasSelectionClipboard
+            ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed dark:bg-gray-800 dark:text-gray-600 dark:border-gray-700'
+            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 active:bg-gray-100 dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600 dark:hover:bg-gray-600'
+        }`}
+        title={!hasSelectionClipboard ? 'No in-app copied selection to paste' : 'Paste copied selection as a new layer'}
+      >
+        Paste
       </button>
 
       {!fill && (

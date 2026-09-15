@@ -10,6 +10,7 @@ import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { LassoToolArgs } from '../tools/polygonSelection.ts';
 import type { RectangularSelectionToolArgs } from '../tools/rectangularSelection.ts';
 import type { FeatherMagneticLassoToolArgs } from '../tools/featherMagneticLasso.ts';
+import type { MagicWandToolArgs } from '../tools/magicWand.ts';
 
 import type { BitmapSource, Pos, Size } from './general-types.ts';
 
@@ -26,6 +27,7 @@ export type ToolArgsByName = {
   'polygonal-lasso': LassoToolArgs & { toolName: 'polygonal-lasso' };
   'freehand-lasso': LassoToolArgs & { toolName: 'freehand-lasso' };
   'feather-magnetic-lasso': FeatherMagneticLassoToolArgs;
+  'magic-wand': MagicWandToolArgs;
   'rectangular-selection': RectangularSelectionToolArgs;
 };
 

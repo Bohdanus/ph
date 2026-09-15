@@ -2,10 +2,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Selection } from '../../../../contexts/general-types.ts';
 import RectangularSelection from '../RectangularSelection.tsx';
-import { copyRectToClipboard } from '../../../../util/clipboard.ts';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
 const sourceCanvas = vi.hoisted(() => document.createElement('canvas'));
+const copyActiveSelectionMock = vi.hoisted(() => vi.fn());
+const pasteSelectionClipboardMock = vi.hoisted(() => vi.fn());
 const storeState = vi.hoisted(
   (): { selections: Selection[]; activeSelectionId: string | null } => ({ selections: [], activeSelectionId: null })
 );
@@ -22,15 +23,19 @@ vi.mock('../../../../contexts/StoreContext.tsx', () => ({
   ],
 }));
 
-vi.mock('../../../../util/clipboard.ts', () => ({
-  copyRectToClipboard: vi.fn(),
+vi.mock('../../../../contexts/useSelectionClipboard.ts', () => ({
+  useSelectionClipboard: () => ({
+    copyActiveSelection: copyActiveSelectionMock,
+    hasSelectionClipboard: true,
+    pasteSelectionClipboard: pasteSelectionClipboardMock,
+  }),
 }));
 
 describe('RectangularSelection toolbar', () => {
   beforeEach(() => {
     dispatchMock.mockClear();
-    vi.mocked(copyRectToClipboard).mockReset();
-    vi.mocked(copyRectToClipboard).mockResolvedValue(true);
+    copyActiveSelectionMock.mockClear();
+    pasteSelectionClipboardMock.mockClear();
     storeState.activeSelectionId = 'selection-1';
     storeState.selections = [
       {
@@ -56,16 +61,21 @@ describe('RectangularSelection toolbar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
 
     await waitFor(() => {
-      expect(copyRectToClipboard).toHaveBeenCalledWith({
-        sourceCanvas,
-        rect: { x1: 10, y1: 20, x2: 40, y2: 60 },
-        imageSize: { width: 800, height: 600 },
-      });
+      expect(copyActiveSelectionMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'selection-1',
+          geometry: 'rectangle',
+        })
+      );
     });
-    expect(dispatchMock).toHaveBeenCalledWith({
-      type: 'MARK_SELECTION_COPIED',
-      payload: { id: 'selection-1' },
-    });
+  });
+
+  it('pastes the in-app copied selection as a new layer', () => {
+    render(<RectangularSelection />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Paste' }));
+
+    expect(pasteSelectionClipboardMock).toHaveBeenCalledTimes(1);
   });
 
   it('clears committed selections through the explicit selection clear action', () => {

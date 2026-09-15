@@ -194,6 +194,102 @@ describe('PolygonClickToolArea', () => {
     );
   });
 
+  it('cancels a freehand draft when the drag is too short to form a selection', () => {
+    currentToolState.toolName = 'freehand-lasso';
+    const mockCtx = createMockContext();
+
+    const { container } = render(
+      <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+    );
+
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(toolArea, { clientX: 11, clientY: 11 });
+    fireEvent.pointerUp(toolArea, { clientX: 11, clientY: 11 });
+
+    expect(dispatchMock).toHaveBeenCalledWith({
+      type: 'START_SELECTION_DRAFT',
+      payload: { sourceTool: 'freehand-lasso' },
+    });
+    expect(dispatchMock).toHaveBeenCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+    expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'COMMIT_SELECTION' }));
+  });
+
+  it('does not collect freehand points after the pointer is released', () => {
+    currentToolState.toolName = 'freehand-lasso';
+    const mockCtx = createMockContext();
+
+    const { container } = render(
+      <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+    );
+
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(toolArea, { clientX: 30, clientY: 20 });
+    fireEvent.pointerMove(toolArea, { clientX: 40, clientY: 50 });
+    fireEvent.pointerUp(toolArea, { clientX: 40, clientY: 50 });
+    dispatchMock.mockClear();
+
+    fireEvent.pointerMove(toolArea, { clientX: 120, clientY: 120 });
+    fireEvent.pointerUp(toolArea, { clientX: 120, clientY: 120 });
+
+    expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'COMMIT_SELECTION' }));
+    expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'START_SELECTION_DRAFT' }));
+  });
+
+  it('ignores freehand drags that start outside image bounds', () => {
+    currentToolState.toolName = 'freehand-lasso';
+    const mockCtx = createMockContext();
+
+    const { container } = render(
+      <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+    );
+
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: -20, clientY: -20 });
+    fireEvent.pointerMove(toolArea, { clientX: 20, clientY: 20 });
+    fireEvent.pointerUp(toolArea, { clientX: 20, clientY: 20 });
+
+    expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
+  it('clamps freehand samples to the image bounds and previews the automatic closing edge', () => {
+    currentToolState.toolName = 'freehand-lasso';
+    const mockCtx = createMockContext();
+
+    const { container } = render(
+      <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+    );
+
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(toolArea, { clientX: 900, clientY: 700 });
+    fireEvent.pointerMove(toolArea, { clientX: 400, clientY: 300 });
+
+    expect(mockCtx.lineTo).toHaveBeenCalledWith(10, 10);
+
+    fireEvent.pointerUp(toolArea, { clientX: 400, clientY: 300 });
+
+    expect(dispatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'COMMIT_SELECTION',
+        payload: expect.objectContaining({
+          points: [
+            { x: 1, y: 1 },
+            { x: 791, y: 591 },
+            { x: 391, y: 291 },
+          ],
+          pos: { x: 9, y: 9, width: 792, height: 592 },
+          sourceTool: 'freehand-lasso',
+        }),
+      })
+    );
+  });
+
   it('draws active committed selections from store state so the lasso stays visible after finishing', () => {
     storeState.selections = [
       {

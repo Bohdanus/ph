@@ -18,6 +18,7 @@ export type SelectionSourceTool =
   | 'polygonal-lasso'
   | 'freehand-lasso'
   | 'feather-magnetic-lasso'
+  | 'magic-wand'
   | 'rectangular-selection';
 export type SelectionGeometry = 'polygon' | 'rectangle';
 
@@ -46,6 +47,19 @@ export type SelectionMetadata = {
     antiAlias: boolean;
     pathPointCount: number;
   };
+  magicWand?: {
+    tolerance: number;
+    smoothing: number;
+    selectedPixelCount: number;
+    boundaryPointCount: number;
+    seed: Point;
+    sampleColor: {
+      r: number;
+      g: number;
+      b: number;
+      a: number;
+    };
+  };
 };
 
 export type Selection = {
@@ -61,3 +75,12 @@ export type Selection = {
 
 export type BitmapSource = ImageBitmap | HTMLCanvasElement | HTMLImageElement | OffscreenCanvas;
 export type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
+export type SelectionClipboard = {
+  bitmap: BitmapSource;
+  copiedAt: number;
+  name: string;
+  pos: Pos;
+  sourceSelectionId: string;
+  sourceTool?: SelectionSourceTool;
+};

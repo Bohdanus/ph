@@ -18,6 +18,7 @@ import {
 const MIN_POINTS_FOR_SELECTION = 3;
 const CLOSE_START_THRESHOLD = 10; // px in image coordinate space
 const DOUBLE_CLICK_DISTANCE_THRESHOLD = 12;
+const FREEHAND_MIN_POINT_DISTANCE = 2;
 
 type PolygonClickToolProps = {
   className?: string;
@@ -46,15 +47,24 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   const pointsRef = useRef<Point[]>([]);
   const previewRef = useRef<Point | null>(null);
   const selectionDragRef = useRef<SelectionDragState | null>(null);
+  const freehandDrawingRef = useRef(false);
+  const freehandPointerIdRef = useRef<number | null>(null);
 
   const { getLocalCoords } = usePointerPosition({
     ref: containerRef,
     imageSize: totalSize,
   });
 
-  const finishSelection = () => {
+  const finishSelection = ({ cancelIncomplete = false }: { cancelIncomplete?: boolean } = {}) => {
     const oldPoints = pointsRef.current;
-    if (oldPoints.length < MIN_POINTS_FOR_SELECTION) return;
+    if (oldPoints.length < MIN_POINTS_FOR_SELECTION) {
+      if (cancelIncomplete && oldPoints.length > 0) {
+        resetInteractionState();
+        dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
+      }
+
+      return;
+    }
 
     const selection = createCommittedPolygonSelection({
       id: uuidv4(),
@@ -81,6 +91,58 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     if (!ctx) return;
     const canvas = ctx.canvas;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  function getPointerId(event: PointerEvent<HTMLDivElement>): number | null {
+    return typeof event.pointerId === 'number' ? event.pointerId : null;
+  }
+
+  function isActiveFreehandPointer(event: PointerEvent<HTMLDivElement>): boolean {
+    const activePointerId = freehandPointerIdRef.current;
+
+    return activePointerId === null || activePointerId === getPointerId(event);
+  }
+
+  function captureFreehandPointer(event: PointerEvent<HTMLDivElement>) {
+    const pointerId = getPointerId(event);
+    freehandPointerIdRef.current = pointerId;
+    freehandDrawingRef.current = true;
+
+    if (pointerId === null) return;
+
+    try {
+      event.currentTarget.setPointerCapture(pointerId);
+    } catch {
+      // Pointer capture is not available in some test/browser fallback environments.
+    }
+  }
+
+  function releaseFreehandPointer(event?: PointerEvent<HTMLDivElement>) {
+    const pointerId = freehandPointerIdRef.current;
+    freehandPointerIdRef.current = null;
+    freehandDrawingRef.current = false;
+
+    if (pointerId === null || !event) return;
+
+    try {
+      event.currentTarget.releasePointerCapture(pointerId);
+    } catch {
+      // Pointer capture may already be released.
+    }
+  }
+
+  function clampToImage(point: Point): Point {
+    const maxX = Math.max(0, totalSize.width);
+    const maxY = Math.max(0, totalSize.height);
+
+    return {
+      x: Math.max(0, Math.min(maxX, point.x)),
+      y: Math.max(0, Math.min(maxY, point.y)),
+    };
+  }
+
+  function isPointInsideImage(point: Point): boolean {
+    return point.x >= 0 && point.y >= 0 && point.x <= totalSize.width && point.y <= totalSize.height;
   }
 
   function updateSelection(selection: Selection) {
@@ -113,8 +175,55 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   function resetInteractionState() {
     pointsRef.current = [];
     previewRef.current = null;
+    releaseFreehandPointer();
     doubleClick.reset();
     clearOverlay();
+  }
+
+  function appendFreehandPoint(point: Point, { force = false }: { force?: boolean } = {}): boolean {
+    const points = pointsRef.current;
+    const lastPoint = points[points.length - 1];
+    if (!lastPoint) {
+      points.push(point);
+      return true;
+    }
+
+    if (!force && distanceBetweenPoints(lastPoint, point) < FREEHAND_MIN_POINT_DISTANCE) {
+      return false;
+    }
+
+    points.push(point);
+    return true;
+  }
+
+  function startFreehandSelection(event: PointerEvent<HTMLDivElement>, coords: Point) {
+    pointsRef.current = [coords];
+    previewRef.current = null;
+    captureFreehandPointer(event);
+    dispatch({ type: 'START_SELECTION_DRAFT', payload: { sourceTool: 'freehand-lasso' } });
+    redrawOverlay();
+  }
+
+  function finishFreehandSelection(event: PointerEvent<HTMLDivElement>) {
+    if (!freehandDrawingRef.current || !isActiveFreehandPointer(event)) return;
+
+    appendFreehandPoint(clampToImage(getLocalCoords(event)));
+    releaseFreehandPointer(event);
+    finishSelection({ cancelIncomplete: true });
+  }
+
+  function cancelFreehandSelection(event: PointerEvent<HTMLDivElement>) {
+    if (!freehandDrawingRef.current || !isActiveFreehandPointer(event)) return;
+
+    releaseFreehandPointer(event);
+    const hadDraft = pointsRef.current.length > 0;
+    pointsRef.current = [];
+    previewRef.current = null;
+    clearOverlay();
+
+    if (hadDraft) {
+      dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
+    }
   }
 
   function redrawOverlay({ closePath = false }: { closePath?: boolean } = {}) {
@@ -143,16 +252,42 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     ctx.setLineDash([]);
     ctx.stroke();
 
-    // Draw anchors
-    for (let i = 0; i < pts.length; i++) {
+    if (isFreehand && pts.length >= MIN_POINTS_FOR_SELECTION) {
+      const last = pts[pts.length - 1];
       ctx.beginPath();
-      ctx.fillStyle = i === 0 ? 'white' : 'white';
-      ctx.strokeStyle = i === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.6)';
-      ctx.lineWidth = 2;
-      const r = 5;
-      ctx.arc(pts[i].x, pts[i].y, r, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,123,255,0.45)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.moveTo(last.x, last.y);
+      ctx.lineTo(pts[0].x, pts[0].y);
       ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Draw anchors for polygonal lasso only. Freehand paths can have hundreds of sampled points.
+    if (isFreehand) {
+      const start = pts[0];
+      const end = pts[pts.length - 1];
+      [start, end].forEach((point, index) => {
+        ctx.beginPath();
+        ctx.fillStyle = index === 0 ? 'white' : 'rgba(0,123,255,0.9)';
+        ctx.strokeStyle = index === 0 ? 'rgba(0,123,255,1)' : 'rgba(255,255,255,0.95)';
+        ctx.lineWidth = 2;
+        ctx.arc(point.x, point.y, index === 0 ? 5 : 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      });
+    } else {
+      for (let i = 0; i < pts.length; i++) {
+        ctx.beginPath();
+        ctx.fillStyle = i === 0 ? 'white' : 'white';
+        ctx.strokeStyle = i === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.6)';
+        ctx.lineWidth = 2;
+        const r = 5;
+        ctx.arc(pts[i].x, pts[i].y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
     }
 
     // Draw preview edge
@@ -219,6 +354,13 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
       return;
     }
 
+    if (isFreehand) {
+      if (!isPointInsideImage(coords)) return;
+
+      startFreehandSelection(event, clampToImage(coords));
+      return;
+    }
+
     if (doubleClick.handleClick(coords, pointsRef)) {
       return;
     }
@@ -233,25 +375,36 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     redrawOverlay();
   };
 
-  const handlePointerUp = () => {
+  const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
     if (selectionDragRef.current) {
       selectionDragRef.current = null;
       return;
     }
 
     if (isFreehand) {
-      finishSelection();
+      finishFreehandSelection(event);
     }
   };
 
-  const handlePointerLeave = () => {
+  const handlePointerLeave = (event: PointerEvent<HTMLDivElement>) => {
     if (selectionDragRef.current) {
       selectionDragRef.current = null;
       return;
     }
 
     if (isFreehand) {
-      finishSelection();
+      finishFreehandSelection(event);
+    }
+  };
+
+  const handlePointerCancel = (event: PointerEvent<HTMLDivElement>) => {
+    if (selectionDragRef.current) {
+      selectionDragRef.current = null;
+      return;
+    }
+
+    if (isFreehand) {
+      cancelFreehandSelection(event);
     }
   };
 
@@ -276,10 +429,21 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
 
     // In freehand-lasso mode collect points continuously after the initial click
     if (isFreehand) {
-      if (pointsRef.current.length === 0) return;
+      if (!freehandDrawingRef.current || !isActiveFreehandPointer(event)) {
+        if (getAnchorSelectionAtPoint(coords)) {
+          setCursor(event, 'grab');
+        } else if (getSelectionAtPoint(selections, coords)) {
+          setCursor(event, 'move');
+        } else {
+          setCursor(event, 'crosshair');
+        }
 
-      pointsRef.current.push(coords);
-      redrawOverlay();
+        return;
+      }
+
+      if (appendFreehandPoint(clampToImage(coords))) {
+        redrawOverlay();
+      }
       return;
     }
 
@@ -337,6 +501,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerLeave}
+      onPointerCancel={handlePointerCancel}
       style={{ userSelect: 'none' }}
     />
   );

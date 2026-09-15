@@ -9,6 +9,7 @@ import { ShapeToolArea } from './ShapeToolArea.tsx';
 import { PolygonClickToolArea } from './PolygonClickToolArea.tsx';
 import { RectangularSelectionToolArea } from './RectangularSelectionToolArea.tsx';
 import { FeatherMagneticLassoToolArea } from './FeatherMagneticLassoToolArea.tsx';
+import { MagicWandToolArea } from './MagicWandToolArea.tsx';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { PRIMARY_BUTTON_LARGE, TEXT_LINK_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
@@ -46,6 +47,8 @@ const Main = () => {
     interactionMode = 'lasso';
   } else if (toolName === 'feather-magnetic-lasso') {
     interactionMode = 'feather-magnetic-lasso';
+  } else if (toolName === 'magic-wand') {
+    interactionMode = 'magic-wand';
   } else if (toolName === 'rectangular-selection') {
     interactionMode = 'rectangular-selection';
   }
@@ -114,6 +117,7 @@ const Main = () => {
       else if (interactionMode === 'text') EventHandler = TextToolArea;
       else if (interactionMode === 'lasso') EventHandler = PolygonClickToolArea;
       else if (interactionMode === 'feather-magnetic-lasso') EventHandler = FeatherMagneticLassoToolArea;
+      else if (interactionMode === 'magic-wand') EventHandler = MagicWandToolArea;
       else if (interactionMode === 'rectangular-selection') EventHandler = RectangularSelectionToolArea;
       else EventHandler = DummyToolArea;
     }
@@ -145,6 +149,7 @@ const Main = () => {
               'reposition',
               'lasso',
               'feather-magnetic-lasso',
+              'magic-wand',
               'rectangular-selection',
             ].includes(interactionMode)
               ? 'block'
