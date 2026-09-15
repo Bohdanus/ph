@@ -102,7 +102,7 @@ export const useLayers = () => {
 
     _addLayer(newLayer, {
       layerId: newLayer.id,
-      actionName: TOOL_ACTION,
+      actionName: NEW_LAYER_ACTION,
       layerSource: source,
     });
 
@@ -234,8 +234,7 @@ export const useLayers = () => {
     }
 
     const [canvas, positionPatch] = toolsMap[toolName].imageProcessor({ bitmap, size: layer.pos } as
-      | CreatorToolParams
-      | ProcessorToolParams)(toolArgs);
+      CreatorToolParams | ProcessorToolParams)(toolArgs);
 
     if (positionPatch) {
       layer.pos = { ...layer.pos, ...positionPatch };

@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 
 import { useStore } from './StoreContext.tsx';
-import type { LayerId, LayerSource, LayersRecord } from './layer-types.ts';
+import type { LayerSource, LayersRecord } from './layer-types.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { toolsMap } from '../tools/toolsMap.ts';
@@ -35,21 +35,25 @@ export function getHistoryItemTitle(item: HistoryItem) {
 }
 
 export const useHistory = () => {
-  const [{ canvasRef, history, historyIndex, layers: oldLayers, deletedLayers }, dispatch] = useStore();
+  const [
+    { canvasRef, history, historyIndex, layers: oldLayers, deletedLayers, activeLayerId, totalSize: currentSize },
+    dispatch,
+  ] = useStore();
 
   const setHistoryIndex = (index: number) => {
-    dispatch({ type: 'SET_HISTORY_INDEX', payload: index });
+    resetHistoryTo(index);
   };
 
   const addHistoryEntry = (inputItem: NewHistoryItem) => {
     const historyItemId = uuidv4();
-    const imagePromise = NO_BMP_UPDATE_ACTIONS.includes(inputItem.actionName)
-      ? history[historyIndex - 1].imagePromise
-      : new Promise<ImageBitmap>((resolve) => {
-          setTimeout(() => {
-            resolve(createImageBitmap(canvasRef.current!));
+    const imagePromise =
+      NO_BMP_UPDATE_ACTIONS.includes(inputItem.actionName) && history[historyIndex]
+        ? history[historyIndex].imagePromise
+        : new Promise<ImageBitmap>((resolve) => {
+            setTimeout(() => {
+              resolve(createImageBitmap(canvasRef.current!));
+            });
           });
-        });
 
     const newHistoryItem: HistoryItem = { ...inputItem, id: historyItemId, imagePromise };
 
@@ -90,7 +94,12 @@ export const useHistory = () => {
   // }
 
   function _drawAllLayers(layers: LayersRecord, totalSize: Size) {
-    const ctx = canvasRef.current!.getContext('2d')!;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (canvas.width !== totalSize.width) canvas.width = totalSize.width;
+    if (canvas.height !== totalSize.height) canvas.height = totalSize.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
     ctx.clearRect(0, 0, totalSize.width, totalSize.height);
 
     const sorted = getSortedLayersArray(layers);
@@ -99,7 +108,7 @@ export const useHistory = () => {
       if (!layer.visible) continue;
 
       const { blendMode, opacity, pos } = layer;
-      const bmp = layer.tmpCanvas;
+      const bmp = layer.tmpCanvas ?? layer.bitmap;
       if (!bmp || bmp.width === 0 || bmp.height === 0) {
         console.error('skipped layer without bitmap', layer.id);
         continue;
@@ -114,37 +123,39 @@ export const useHistory = () => {
   }
 
   function resetHistoryTo(targetIndex: number, _history: HistoryItem[] = history) {
+    if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= _history.length) return;
     // async commitDirtyTool(); todo
     let newLayers: LayersRecord = {};
-    let totalSize: Size | undefined = undefined;
+    let totalSize = currentSize;
 
     for (let i = 0; i <= targetIndex; i++) {
       const { disabled, layerId, actionName, args, layerSource } = _history[i];
       const source = layerSource ?? (args as LayerSource | undefined);
 
+      if (disabled) continue;
       if (source?.isBedrock) {
         totalSize = source.size;
       } else if ((args as NewBedrockSize | undefined)?.isBedrock) {
         totalSize = (args as NewBedrockSize).size;
       }
-      if (disabled) continue;
 
-      if (actionName === NEW_LAYER_ACTION) {
+      if (actionName === NEW_LAYER_ACTION || (actionName === TOOL_ACTION && layerSource?.kind === 'tool')) {
         if (!source) {
           console.error('skipped history item without layer source', _history[i]);
           continue;
         }
 
-        const newLayer = createLayerSource({ layerId, layers: newLayers, source });
+        const newLayer = createLayerSource({ layerId, layers: newLayers, source, deferSave: true });
         newLayers[newLayer.id] = newLayer;
       } else if (actionName === SHOW_LAYER_ACTION) {
-        newLayers[layerId].visible = true;
+        if (newLayers[layerId]) newLayers[layerId].visible = true;
       } else if (actionName === HIDE_LAYER_ACTION) {
-        newLayers[layerId].visible = false;
+        if (newLayers[layerId]) newLayers[layerId].visible = false;
       } else if (actionName === RENAME_LAYER_ACTION) {
-        newLayers[layerId].name = (args as any).name;
+        if (newLayers[layerId]) newLayers[layerId].name = (args as { name: string }).name;
       } else if (actionName === REORDER_ACTION) {
         const { layerToMoveId, afterWhichLayerId } = args as any;
+        if (!newLayers[layerToMoveId] || (afterWhichLayerId && !newLayers[afterWhichLayerId])) continue;
         reorderLayers({ layers: newLayers, layerToMoveId, afterWhichLayerId });
       } else if (actionName === MERGE_ACTION) {
         if (!source) {
@@ -152,7 +163,7 @@ export const useHistory = () => {
           continue;
         }
 
-        const mergedLayer = createLayerSource({ layerId, layers: newLayers, source });
+        const mergedLayer = createLayerSource({ layerId, layers: newLayers, source, deferSave: true });
         newLayers = {};
         newLayers[layerId] = mergedLayer;
       } else if (actionName === REMOVE_ACTION) {
@@ -161,7 +172,7 @@ export const useHistory = () => {
         // if a previous history entry has been disabled than the layer could have not be created at the first place
         if (newLayers[layerId]) {
           const layer = newLayers[layerId];
-          const bitmap = layer.tmpCanvas!;
+          const bitmap = (layer.tmpCanvas ?? layer.bitmap)!;
 
           const [canvas, patch] = toolsMap[(args as ToolArgs).toolName].imageProcessor({
             bitmap,
@@ -181,21 +192,24 @@ export const useHistory = () => {
       saveLayerCanvas(layer);
     }
 
-    for (const layerId in oldLayers) {
-      deletedLayers[layerId as LayerId] = oldLayers[layerId];
-    }
+    const sortedLayers = getSortedLayersArray(newLayers);
+    const nextActiveLayerId =
+      activeLayerId && newLayers[activeLayerId] ? activeLayerId : (sortedLayers[sortedLayers.length - 1]?.id ?? null);
 
     dispatch({
       type: 'BATCH_UPDATES',
       payload: {
         layers: newLayers,
-        deletedLayers: { ...deletedLayers },
+        deletedLayers: { ...deletedLayers, ...oldLayers },
+        activeLayerId: nextActiveLayerId,
         totalSize,
         historyIndex: targetIndex,
+        hasUnsavedChanges: true,
+        ...(_history !== history ? { history: _history } : {}),
       },
     });
 
-    _drawAllLayers(newLayers, totalSize!);
+    _drawAllLayers(newLayers, totalSize);
   }
 
   function toggleDisabled(historyId: string) {
@@ -205,8 +219,6 @@ export const useHistory = () => {
 
     const newHistory = [...history];
     newHistory[itemIndex] = { ...newHistory[itemIndex], disabled: !newHistory[itemIndex].disabled };
-
-    dispatch({ type: 'REPLACE_HISTORY', payload: newHistory });
 
     // recalculate current state
     resetHistoryTo(historyIndex, newHistory);

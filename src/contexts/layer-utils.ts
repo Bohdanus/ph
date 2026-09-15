@@ -102,7 +102,15 @@ export const maxLayerOrder = (layers: LayersRecord) => {
 // }
 
 export function saveLayerCanvas(layer: Layer) {
-  createImageBitmap(layer.tmpCanvas!).then((bitmap) => {
+  const canvas = layer.tmpCanvas;
+  if (!canvas) return;
+
+  return createImageBitmap(canvas).then((bitmap) => {
+    // A newer preview or deletion may have replaced this canvas while saving.
+    if (layer.tmpCanvas !== canvas) {
+      bitmap.close();
+      return;
+    }
     layer.bitmap = bitmap;
     layer.tmpCanvas = null;
     return bitmap;
@@ -113,6 +121,7 @@ type LayerSourceParams = {
   layerId?: LayerId;
   layers: LayersRecord;
   source: LayerSource;
+  deferSave?: boolean;
 };
 
 function getNameFromSource(source: LayerSource) {
@@ -126,7 +135,12 @@ function getNameFromSource(source: LayerSource) {
   }
 }
 
-export function createLayerSource({ layerId: idFromHistory, layers, source }: LayerSourceParams): Layer {
+export function createLayerSource({
+  layerId: idFromHistory,
+  layers,
+  source,
+  deferSave = false,
+}: LayerSourceParams): Layer {
   const { kind, isBedrock } = source;
   const id = idFromHistory ?? uuidv4(); // when layer is re-created from history it should get the saved id
   const maxOrder = maxLayerOrder(layers) + 1;
@@ -176,7 +190,7 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     }
 
     layer.tmpCanvas = canvas;
-    saveLayerCanvas(layer);
+    if (!deferSave) saveLayerCanvas(layer);
   } else if (kind === 'tool') {
     // and this is a creator tool
     const [canvas, patch] = toolsMap[source.args.toolName].imageProcessor({ size: pos } as CreatorToolParams)(
@@ -187,7 +201,7 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     }
 
     layer.tmpCanvas = canvas;
-    saveLayerCanvas(layer);
+    if (!deferSave) saveLayerCanvas(layer);
   }
 
   return layer;
