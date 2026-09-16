@@ -1,18 +1,25 @@
-import React, { createContext, useContext, useRef, useState, type PropsWithChildren } from 'react';
-import { loadImageFile, saveImageToDisk } from './image-load-save-utils.ts';
+import React, { createContext, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
+import { downloadBlob, loadDocumentFile, saveImageToDisk } from './image-load-save-utils.ts';
+import type { PsdDocument } from './psd-utils.ts';
+import type { LayersRecord } from './layer-types.ts';
+import type { Size } from './general-types.ts';
 import SaveDialog from '../components/SaveDialog/SaveDialog.tsx';
 import NewImageDialog from '../components/NewImageDialog/NewImageDialog.tsx';
 import type { BlankImageParams } from './tool-types.ts';
 
-export type ImageUploadResponse = {
-  image: HTMLImageElement;
-  fileName: string;
-};
+export type ImageUploadResponse =
+  | { fileName: string; document: PsdDocument }
+  | {
+      image: HTMLImageElement;
+      fileName: string;
+    };
 
 export type ImageSaveInput = {
   canvas: HTMLCanvasElement;
   fileName: string;
   format?: string;
+  layers: LayersRecord;
+  size: Size;
 };
 
 export type ImageSaveResponse = {
@@ -43,6 +50,16 @@ export const FileProvider = ({ children }: FileProviderProps) => {
   const newResolverRef = useRef<((data: BlankImageParams | null) => void) | null>(null);
   const saveResolverRef = useRef<((res: ImageSaveResponse | null) => void) | null>(null);
 
+  useEffect(() => {
+    const input = fileInputRef.current;
+    const cancel = () => {
+      uploadResolverRef.current?.(null);
+      uploadResolverRef.current = null;
+    };
+    input?.addEventListener('cancel', cancel);
+    return () => input?.removeEventListener('cancel', cancel);
+  }, []);
+
   const handleFileInputChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
 
@@ -54,13 +71,13 @@ export const FileProvider = ({ children }: FileProviderProps) => {
     }
 
     try {
-      const img = await loadImageFile(file);
-      const name = file.name;
+      const data = await loadDocumentFile(file);
       // Resolve any waiting promise
-      uploadResolverRef.current?.({ image: img, fileName: name });
+      uploadResolverRef.current?.(data);
       uploadResolverRef.current = null;
     } catch (error) {
       console.error('Failed to load image:', error);
+      window.alert(`Failed to open file: ${error instanceof Error ? error.message : String(error)}`);
       uploadResolverRef.current?.(null);
       uploadResolverRef.current = null;
     }
@@ -96,13 +113,20 @@ export const FileProvider = ({ children }: FileProviderProps) => {
 
   async function handleImageSave({ fileName, format }: ImageSaveResponse) {
     try {
-      const { canvas } = fileInput!;
-      await saveImageToDisk(canvas, fileName, format);
+      const { canvas, layers, size } = fileInput!;
+      if (format === 'psd') {
+        const { savePsd } = await import('./psd-utils.ts');
+        const buffer = await savePsd(layers, size);
+        downloadBlob(new Blob([buffer], { type: 'image/vnd.adobe.photoshop' }), fileName, 'psd');
+      } else {
+        await saveImageToDisk(canvas, fileName, format);
+      }
       // Resolve the waiting promise with the save info
       saveResolverRef.current?.({ fileName, format });
       saveResolverRef.current = null;
     } catch (e) {
       console.error('Failed to save image:', e);
+      window.alert(`Failed to save file: ${e instanceof Error ? e.message : String(e)}`);
       saveResolverRef.current?.(null);
       saveResolverRef.current = null;
     } finally {
@@ -136,12 +160,16 @@ export const FileProvider = ({ children }: FileProviderProps) => {
         type="file"
         ref={fileInputRef}
         onChange={handleFileInputChange}
-        accept="image/*"
+        accept="image/*,.psd"
         style={{ display: 'none' }}
       />
       {showNewDialog && <NewImageDialog onClose={handleNewImageClose} onCreate={handleNewImageCreate} />}
       {showSaveDialog && (
-        <SaveDialog proposedName={`${fileInput?.fileName} (copy)`} onClose={handleSaveClose} onSave={handleImageSave} />
+        <SaveDialog
+          proposedName={`${fileInput?.fileName.replace(/\.(psd|png|jpe?g|webp)$/i, '')} (copy)`}
+          onClose={handleSaveClose}
+          onSave={handleImageSave}
+        />
       )}
     </FileContext.Provider>
   );

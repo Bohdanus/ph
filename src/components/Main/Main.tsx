@@ -15,13 +15,24 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { PRIMARY_BUTTON_LARGE, TEXT_LINK_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 import { useApp } from '../../hooks/useApp.ts';
 import { useFile } from '../../contexts/useFile.tsx';
-import { loadImageFile } from '../../contexts/image-load-save-utils.ts';
+import { loadDocumentFile } from '../../contexts/image-load-save-utils.ts';
 import { MoveToolArea } from './MoveToolArea.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 
 const Main = () => {
-  const [{ canvasRef, containerRef, toolOverlayRef, rectOverlayRef, hasImage, layers, toolName, totalSize }] =
-    useStore();
+  const [
+    {
+      canvasRef,
+      containerRef,
+      toolOverlayRef,
+      rectOverlayRef,
+      hasImage,
+      hasUnsavedChanges,
+      layers,
+      toolName,
+      totalSize,
+    },
+  ] = useStore();
   const { theme } = useTheme();
   const { setBlankImage, setImageFromUpload } = useApp();
   const { openLoadImageDialog, openNewImageDialog } = useFile();
@@ -98,11 +109,11 @@ const Main = () => {
       setIsDragging(false);
       const file = event.dataTransfer.files?.[0];
       if (!file) return;
-      const fileName = file.name;
-
-      const image = await loadImageFile(file);
-      if (image) {
-        setImageFromUpload({ image, fileName });
+      if (hasUnsavedChanges && !confirm('Discard unsaved changes and open another file?')) return;
+      try {
+        setImageFromUpload(await loadDocumentFile(file));
+      } catch (error) {
+        window.alert(`Failed to open file: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   };

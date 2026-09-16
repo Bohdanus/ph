@@ -129,10 +129,17 @@ export const useHistory = () => {
     let totalSize = currentSize;
 
     for (let i = 0; i <= targetIndex; i++) {
-      const { disabled, layerId, actionName, args, layerSource } = _history[i];
+      const { disabled, layerId, actionName, args, layerSource, documentSource } = _history[i];
       const source = layerSource ?? (args as LayerSource | undefined);
 
       if (disabled) continue;
+      if (documentSource) {
+        newLayers = Object.fromEntries(
+          Object.values(documentSource.layers).map((layer) => [layer.id, { ...layer, pos: { ...layer.pos } }])
+        );
+        totalSize = { ...documentSource.size };
+        continue;
+      }
       if (source?.isBedrock) {
         totalSize = source.size;
       } else if ((args as NewBedrockSize | undefined)?.isBedrock) {

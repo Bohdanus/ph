@@ -1,0 +1,123 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useApp } from '../useApp.ts';
+import type { PsdDocument } from '../../contexts/psd-utils.ts';
+import { OPEN_DOCUMENT_ACTION } from '../../util/constants.ts';
+
+const mocks = vi.hoisted(() => ({
+  useStore: vi.fn(),
+  createBlankLayer: vi.fn(),
+  createLayerFromBitmap: vi.fn(),
+  commitDirtyTool: vi.fn(),
+}));
+vi.mock('../../contexts/StoreContext.tsx', () => ({ useStore: mocks.useStore }));
+vi.mock('../../contexts/useLayer.ts', () => ({ useLayers: () => mocks }));
+
+function setup(warnings: string[] = []) {
+  const layer = {
+    id: 'top', name: 'Imported top', isBedrock: false, tmpCanvas: null,
+    bitmap: { width: 20, height: 30 } as ImageBitmap,
+    visible: false, opacity: 0.4, locked: true, blendMode: 'multiply' as const,
+    order: 9, pos: { x: -3, y: 7, width: 20, height: 30 },
+  };
+  const document: PsdDocument = {
+    size: { width: 320, height: 180 }, warnings,
+    layers: { top: layer, bottom: { ...layer, id: 'bottom', order: 2, pos: { ...layer.pos } } },
+  };
+  const state = {
+    canvasRef: { current: { width: 10, height: 10 } },
+    toolOverlayRef: { current: { width: 10, height: 10 } },
+    rectOverlayRef: { current: { width: 10, height: 10 } },
+    currentArgs: { current: { toolName: 'text', text: 'Uncommitted' } },
+    layers: { old: layer }, deletedLayers: { deleted: layer }, history: [{ id: 'old' }],
+    historyIndex: 4, selections: [{ id: 'old-selection' }], hasUnsavedChanges: true,
+  };
+  const dispatch = vi.fn();
+  mocks.useStore.mockReturnValue([state, dispatch]);
+  return { document, state, dispatch };
+}
+
+describe('useApp PSD replacement', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+  });
+
+  it('replaces the document atomically with an independent, metadata-preserving history baseline', async () => {
+    const { document, state, dispatch } = setup();
+    const confirm = vi.spyOn(window, 'confirm');
+    useApp().setImageFromUpload({ fileName: 'design.psd', document });
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const action = dispatch.mock.calls[0][0];
+    expect(action).toEqual({
+      type: 'BATCH_UPDATES',
+      payload: {
+        fileName: 'design.psd', totalSize: document.size, layers: document.layers,
+        activeLayerId: 'top', deletedLayers: {}, hasImage: true, hasUnsavedChanges: false,
+        isToolDirty: false, toolName: 'reposition', selections: [], activeSelectionId: null,
+        selectionDraft: { status: 'idle' }, selectionCleared: null, selectionClipboard: null,
+        historyIndex: 0,
+        history: [{
+          id: expect.any(String), actionName: OPEN_DOCUMENT_ACTION, layerId: 'top',
+          documentSource: { layers: document.layers, size: document.size }, imagePromise: expect.any(Promise),
+        }],
+      },
+    });
+    expect(state.currentArgs.current).toEqual({});
+    for (const ref of [state.canvasRef, state.toolOverlayRef, state.rectOverlayRef]) {
+      expect(ref.current).toEqual(document.size);
+    }
+    const baseline = action.payload.history[0].documentSource;
+    expect(baseline.layers).not.toBe(document.layers);
+    expect(baseline.size).not.toBe(document.size);
+    for (const layer of Object.values(document.layers)) {
+      expect(baseline.layers[layer.id]).not.toBe(layer);
+      expect(baseline.layers[layer.id].pos).not.toBe(layer.pos);
+      expect(baseline.layers[layer.id].bitmap).toBe(layer.bitmap);
+    }
+    document.layers.top.pos.x = 99;
+    document.layers.top.name = 'Edited';
+    document.size.width = 999;
+    expect(baseline.layers.top).toMatchObject({ name: 'Imported top', pos: { x: -3 } });
+    expect(baseline.size.width).toBe(320);
+    await expect(action.payload.history[0].imagePromise).resolves.toBeNull();
+    expect(mocks.createBlankLayer).not.toHaveBeenCalled();
+    expect(mocks.createLayerFromBitmap).not.toHaveBeenCalled();
+    expect(mocks.commitDirtyTool).not.toHaveBeenCalled();
+  });
+
+  it('leaves the old document, dirty tool, and canvases untouched when warnings are declined', () => {
+    const { document, state, dispatch } = setup(['Masks are unsupported']);
+    const args = state.currentArgs.current;
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    useApp().setImageFromUpload({ fileName: 'design.psd', document });
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining(document.warnings[0]));
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(state.currentArgs.current).toBe(args);
+    for (const ref of [state.canvasRef, state.toolOverlayRef, state.rectOverlayRef]) {
+      expect(ref.current).toEqual({ width: 10, height: 10 });
+    }
+    expect(mocks.commitDirtyTool).not.toHaveBeenCalled();
+    expect(mocks.createLayerFromBitmap).not.toHaveBeenCalled();
+  });
+
+  it('opens the PSD after its warnings are accepted', () => {
+    const { document, dispatch } = setup(['Text is rasterized']);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    useApp().setImageFromUpload({ fileName: 'design.psd', document });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls[0][0].payload.layers).toBe(document.layers);
+  });
+
+  it('retains the raster upload path rather than creating a PSD baseline', () => {
+    const { dispatch } = setup();
+    const image = { width: 80, height: 40 } as HTMLImageElement;
+    useApp().setImageFromUpload({ fileName: 'photo.png', image });
+    expect(mocks.createLayerFromBitmap).toHaveBeenCalledExactlyOnceWith({
+      bitmap: image, name: 'photo.png', size: { width: 80, height: 40 }, isBedrock: true,
+    });
+    expect(dispatch).toHaveBeenCalledWith({ type: 'SET_FILE_NAME', payload: 'photo.png' });
+    expect(dispatch.mock.calls.every(([action]) => !action.payload?.history)).toBe(true);
+  });
+});

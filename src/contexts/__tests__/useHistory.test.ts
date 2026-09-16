@@ -4,6 +4,7 @@ import {
   HIDE_LAYER_ACTION,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
+  OPEN_DOCUMENT_ACTION,
   REMOVE_ACTION,
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
@@ -320,5 +321,104 @@ describe('useHistory undo replay', () => {
     await save;
     expect(layer.tmpCanvas).toBe(newerCanvas);
     expect(layer.bitmap).toBe(originalBitmap);
+  });
+
+  it('preserves PSD baseline metadata through tool edits and removal undo/redo', async () => {
+    const bitmap = { width: 40, height: 20 } as ImageBitmap;
+    const layers: LayersRecord = {
+      top: {
+        id: 'top',
+        name: 'PSD artwork',
+        bitmap,
+        tmpCanvas: null,
+        isBedrock: false,
+        visible: true,
+        opacity: 0.35,
+        locked: true,
+        blendMode: 'multiply',
+        order: 7,
+        pos: { x: -8, y: 13, width: 40, height: 20 },
+      },
+      bottom: {
+        id: 'bottom',
+        name: 'Hidden background',
+        bitmap,
+        tmpCanvas: null,
+        isBedrock: false,
+        visible: false,
+        opacity: 0.8,
+        locked: false,
+        blendMode: 'screen',
+        order: 2,
+        pos: { x: 4, y: -2, width: 40, height: 20 },
+      },
+    };
+    const size = { width: 300, height: 200 };
+    const original = Object.fromEntries(
+      Object.entries(layers).map(([id, layer]) => [id, { ...layer, pos: { ...layer.pos } }])
+    );
+    const canvas = new OffscreenCanvas(40, 20);
+    const processor = vi
+      .spyOn(toolsMap.shape, 'imageProcessor')
+      .mockReturnValue(() => [canvas, { x: 22, y: 31, width: 40, height: 20 }]);
+    const { state } = setup([
+      {
+        id: 'psd',
+        layerId: 'top',
+        actionName: OPEN_DOCUMENT_ACTION,
+        documentSource: { layers, size },
+        imagePromise: Promise.resolve(null),
+      },
+      {
+        id: 'edit',
+        layerId: 'top',
+        actionName: TOOL_ACTION,
+        args: { toolName: 'shape' },
+        imagePromise: Promise.resolve(null),
+      },
+      { id: 'remove', layerId: 'top', actionName: REMOVE_ACTION, imagePromise: Promise.resolve(null) },
+    ]);
+    useHistory().resetHistoryTo(0);
+    expect(state.layers).toEqual(original);
+    expect(state.totalSize).toEqual(size);
+    expect(state.totalSize).not.toBe(size);
+    expect(state.canvasRef.current).toMatchObject(size);
+    expect(state.activeLayerId).toBe('top');
+    expect(state.layers.top).not.toBe(layers.top);
+    expect(state.layers.top.pos).not.toBe(layers.top.pos);
+
+    useHistory().redo();
+    expect(processor).toHaveBeenCalledWith({ bitmap, size: original.top.pos });
+    expect(state.layers.top).toMatchObject({
+      ...original.top,
+      tmpCanvas: canvas,
+      pos: { ...original.top.pos, x: 22, y: 31 },
+    });
+    await Promise.resolve();
+    expect(state.layers.top.tmpCanvas).toBeNull();
+    expect(state.layers.bottom).toEqual(original.bottom);
+    useHistory().undo();
+    expect(state.layers).toEqual(original);
+    expect(state.layers.top.bitmap).toBe(bitmap);
+
+    useHistory().redo();
+    await Promise.resolve();
+    useHistory().redo();
+    expect(state.layers.top).toBeUndefined();
+    expect(state.activeLayerId).toBe('bottom');
+    useHistory().undo();
+    expect(state.layers.top).toMatchObject({
+      ...original.top,
+      tmpCanvas: canvas,
+      pos: { ...original.top.pos, x: 22, y: 31 },
+    });
+    await Promise.resolve();
+    useHistory().redo();
+    expect(state.layers).toEqual({ bottom: original.bottom });
+    expect(state.historyIndex).toBe(2);
+    expect(state.totalSize).toEqual(size);
+    expect(layers).toEqual(original);
+    expect(layers.top.bitmap).toBe(bitmap);
+    expect(size).toEqual({ width: 300, height: 200 });
   });
 });

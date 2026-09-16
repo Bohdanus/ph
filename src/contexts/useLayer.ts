@@ -107,6 +107,7 @@ export const useLayers = () => {
     });
 
     clearOverlay();
+    return newLayer;
   };
 
   const updateLayerByTool = async ({ id = activeLayerId, toolArgs }: LayerEditParams) => {
@@ -136,10 +137,11 @@ export const useLayers = () => {
     // special case
     if (toolName === 'text' /* || toolName === 'crop'*/) {
       const args = currentArgs.current as TextToolArgs & ToolArgs;
-      if (!args.text || !args.rect) return;
+      if (!args.text || !args.rect) return layers;
 
-      createLayerFromTool({ args });
-      return;
+      const layer = createLayerFromTool({ args });
+      currentArgs.current = { ...args, text: '' };
+      return { ...layers, [layer.id]: layer };
     }
 
     // Find dirty layer and save it
@@ -149,6 +151,7 @@ export const useLayers = () => {
         break;
       }
     }
+    return layers;
   };
 
   const removeLayer = (id: LayerId) => {

@@ -3,6 +3,8 @@ import { useStore } from '../contexts/StoreContext.tsx';
 import type { BlankImageParams, NewBedrockSize, ToolName } from '../contexts/tool-types.ts';
 import { useLayers } from '../contexts/useLayer.ts';
 import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/useFile.tsx';
+import { v4 as uuidv4 } from 'uuid';
+import { OPEN_DOCUMENT_ACTION } from '../util/constants.ts';
 
 export interface UseAppType {
   setBlankImage: (data: BlankImageParams) => void;
@@ -20,7 +22,7 @@ export interface UseAppType {
 
  */
 export const useApp = (): UseAppType => {
-  const [{ canvasRef }, dispatch] = useStore();
+  const [{ canvasRef, currentArgs, toolOverlayRef, rectOverlayRef }, dispatch] = useStore();
   const { createBlankLayer, createLayerFromBitmap, commitDirtyTool } = useLayers();
 
   function handleImageCreate(size: Size) {
@@ -56,7 +58,55 @@ export const useApp = (): UseAppType => {
     createBlankLayer(params);
   }
 
-  function setImageFromUpload({ fileName, image }: ImageUploadResponse) {
+  function setImageFromUpload(data: ImageUploadResponse) {
+    const { fileName } = data;
+    if ('document' in data) {
+      const { size, layers, warnings } = data.document;
+      if (warnings.length && !window.confirm(`PSD import limitations:\n\n${warnings.join('\n')}\n\nOpen anyway?`))
+        return;
+      const activeLayerId = Object.values(layers).sort((a, b) => b.order - a.order)[0]?.id ?? null;
+      const baseline = Object.fromEntries(
+        Object.values(layers).map((layer) => [layer.id, { ...layer, pos: { ...layer.pos } }])
+      );
+      currentArgs.current = {} as typeof currentArgs.current;
+      for (const ref of [canvasRef, toolOverlayRef, rectOverlayRef]) {
+        if (ref.current) {
+          ref.current.width = size.width;
+          ref.current.height = size.height;
+        }
+      }
+      dispatch({
+        type: 'BATCH_UPDATES',
+        payload: {
+          fileName,
+          totalSize: size,
+          layers,
+          activeLayerId,
+          deletedLayers: {},
+          hasImage: true,
+          hasUnsavedChanges: false,
+          isToolDirty: false,
+          toolName: 'reposition',
+          selections: [],
+          activeSelectionId: null,
+          selectionDraft: { status: 'idle' },
+          selectionCleared: null,
+          selectionClipboard: null,
+          historyIndex: 0,
+          history: [
+            {
+              id: uuidv4(),
+              actionName: OPEN_DOCUMENT_ACTION,
+              layerId: activeLayerId ?? '',
+              documentSource: { layers: baseline, size: { ...size } },
+              imagePromise: Promise.resolve(null),
+            },
+          ],
+        },
+      });
+      return;
+    }
+    const { image } = data;
     _setFileName(fileName);
     const size = { width: image.width, height: image.height };
     handleImageCreate(size);

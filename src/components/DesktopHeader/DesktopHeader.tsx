@@ -5,9 +5,12 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useApp } from '../../hooks/useApp.ts';
 import { useFile } from '../../contexts/useFile.tsx';
 import { MENU_ITEM_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
+import { useLayers } from '../../contexts/useLayer.ts';
+import { flushSync } from 'react-dom';
 
 const DesktopHeader = () => {
-  const [{ canvasRef, fileName, hasUnsavedChanges }] = useStore();
+  const [{ canvasRef, fileName, hasUnsavedChanges, totalSize, hasImage }] = useStore();
+  const { commitDirtyTool } = useLayers();
   const { goToTool, setBlankImage, setImageFromUpload, handleImageSave } = useApp();
   const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
 
@@ -99,6 +102,7 @@ const DesktopHeader = () => {
                   className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
                   type="button"
                   onClick={async () => {
+                    if (hasUnsavedChanges && !confirm('Discard unsaved changes and open another file?')) return;
                     const data = await openLoadImageDialog();
                     data && setImageFromUpload(data);
                     setOpenMenu(null);
@@ -112,7 +116,17 @@ const DesktopHeader = () => {
                   className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
                   type="button"
                   onClick={async () => {
-                    const data = await openSaveImageDialog({ canvas: canvasRef.current!, fileName });
+                    if (!hasImage || !canvasRef.current) return;
+                    let exportLayers!: ReturnType<typeof commitDirtyTool>;
+                    flushSync(() => {
+                      exportLayers = commitDirtyTool();
+                    });
+                    const data = await openSaveImageDialog({
+                      canvas: canvasRef.current,
+                      fileName,
+                      layers: exportLayers,
+                      size: totalSize,
+                    });
                     data && handleImageSave(data);
                     setOpenMenu(null);
                   }}
@@ -134,56 +148,32 @@ const DesktopHeader = () => {
           {openMenu === 'edit' && (
             <ul className="absolute left-0 top-full z-10 m-0 min-w-[160px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800">
               <li>
-                <button
-                  className={MENU_ITEM_BUTTON}
-                  type="button"
-                  onClick={handleColors}
-                >
+                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleColors}>
                   Colors
                 </button>
               </li>
               <li>
-                <button
-                  className={MENU_ITEM_BUTTON}
-                  type="button"
-                  onClick={handleBlur}
-                >
+                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleBlur}>
                   Blur
                 </button>
               </li>
               <li>
-                <button
-                  className={MENU_ITEM_BUTTON}
-                  type="button"
-                  onClick={handleLevels}
-                >
+                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleLevels}>
                   Levels
                 </button>
               </li>
               <li>
-                <button
-                  className={MENU_ITEM_BUTTON}
-                  type="button"
-                  onClick={handleTransform}
-                >
+                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleTransform}>
                   Transform
                 </button>
               </li>
               <li>
-                <button
-                  className={MENU_ITEM_BUTTON}
-                  type="button"
-                  onClick={handleDraw}
-                >
+                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleDraw}>
                   Draw
                 </button>
               </li>
               <li>
-                <button
-                  className={MENU_ITEM_BUTTON}
-                  type="button"
-                  onClick={handleText}
-                >
+                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleText}>
                   Text
                 </button>
               </li>
