@@ -31,7 +31,10 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
   }, []);
 
   return (
-    <div className="fixed inset-0 z-[1050] flex items-center justify-center overflow-y-auto overflow-x-hidden outline-none focus:outline-none">
+    <div
+      className="fixed inset-0 z-[1050] flex items-center justify-center overflow-y-auto overflow-x-hidden outline-none focus:outline-none"
+      data-testid="new-image-dialog"
+    >
       <div className="fixed inset-0 bg-black bg-opacity-25 transition-opacity" onClick={onClose} />
       <div className="relative mx-auto my-6 w-full max-w-lg px-4">
         <div className="relative flex w-full flex-col rounded-lg border-0 bg-white shadow-lg outline-none focus:outline-none dark:bg-gray-800 dark:text-gray-100">
@@ -40,11 +43,12 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
             <button
               className="ml-auto border-0 bg-transparent p-1 text-3xl font-semibold leading-none text-black opacity-50 outline-none hover:opacity-100 focus:outline-none dark:text-white"
               onClick={onClose}
+              data-testid="new-image-dialog-close-button"
             >
               <span className="relative top-[-7px] block h-6 w-6 text-2xl">×</span>
             </button>
           </div>
-          <form onSubmit={handleCreate}>
+          <form onSubmit={handleCreate} data-testid="new-image-dialog-form">
             <div className="relative flex-auto p-6">
               <div className={`mb-4 grid gap-3 ${PRESETS[presetId]?.unit !== 'px' ? 'grid-cols-3' : 'grid-cols-2'}`}>
                 <div>
@@ -71,6 +75,7 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
                       }
                     }}
                     className="w-full rounded border px-3 py-2 text-gray-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+                    data-testid="new-image-preset-select"
                   >
                     {Object.entries(PRESETS).map(([id, p]) => (
                       <option key={id} value={id}>
@@ -103,6 +108,7 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
                         }
                       }}
                       className="w-full rounded border px-3 py-2 text-gray-700 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
+                      data-testid="new-image-dpi-input"
                     />
                   </div>
                 )}{' '}
@@ -151,6 +157,7 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
                     setPresetId('custom');
                   }}
                   required
+                  data-testid="new-image-width-input"
                 />
               </div>
               <div className="mb-4">
@@ -169,14 +176,15 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
                     setPresetId('custom');
                   }}
                   required
+                  data-testid="new-image-height-input"
                 />
               </div>
             </div>
             <div className="flex items-center justify-end rounded-b border-t border-solid border-gray-200 p-4 dark:border-gray-700">
-              <button className={DIALOG_SECONDARY_BUTTON} type="button" onClick={onClose}>
+              <button className={DIALOG_SECONDARY_BUTTON} type="button" onClick={onClose} data-testid="new-image-dialog-cancel-button">
                 Cancel
               </button>
-              <button className={`${PRIMARY_BUTTON} px-10 ml-3`} type="submit">
+              <button className={`${PRIMARY_BUTTON} px-10 ml-3`} type="submit" data-testid="new-image-dialog-submit-button">
                 OK
               </button>
             </div>

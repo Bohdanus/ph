@@ -74,9 +74,15 @@ const SidebarLeft = () => {
   if (!hasImage) return;
 
   return (
-    <aside className="max-md:hidden border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]">
+    <aside
+      className="max-md:hidden border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]"
+      data-testid="left-sidebar"
+    >
       <div className="flex h-full flex-col items-center px-3 py-4">
-        <ul className="grid list-none grid-cols-2 gap-1.5 rounded-lg border border-gray-300 bg-gray-200/70 p-1.5 shadow-inner dark:border-gray-700 dark:bg-gray-950/35">
+        <ul
+          className="grid list-none grid-cols-2 gap-1.5 rounded-lg border border-gray-300 bg-gray-200/70 p-1.5 shadow-inner dark:border-gray-700 dark:bg-gray-950/35"
+          data-testid="left-toolbar-tools"
+        >
           {SIDEBAR_TOOLS.map(({ label, name, shortcut }) => {
             const Icon = toolIcons[name];
             const isSelected = toolName === name;
@@ -91,6 +97,7 @@ const SidebarLeft = () => {
                     disabled={!hasImage}
                     onClick={() => goToTool(name)}
                     type="button"
+                    data-testid={`tool-button-${name}`}
                   >
                     <Icon title={label} />
                   </button>
@@ -102,13 +109,14 @@ const SidebarLeft = () => {
         <hr className="my-3 border-gray-300 dark:border-gray-700" />
 
         <div className="flex flex-col items-center mt-4">
-          <div className="relative w-14 h-14">
+          <div className="relative w-14 h-14" data-testid="color-pickers">
             <div
               className="absolute top-4 left-4 w-8 h-8 cursor-pointer rounded border border-gray-400 dark:border-gray-500 shadow-sm"
               style={{ backgroundColor }}
               onClick={(e) => handleColorClick(e, bgColorInputRef)}
               title="Background Color"
               ref={bgColorSquareRef}
+              data-testid="background-color-swatch"
             />
             <div
               className="absolute top-0 left-0 w-8 h-8 cursor-pointer rounded border border-gray-400 dark:border-gray-500 shadow-md"
@@ -116,6 +124,7 @@ const SidebarLeft = () => {
               onClick={(e) => handleColorClick(e, colorInputRef)}
               title="Foreground Color"
               ref={colorSquareRef}
+              data-testid="foreground-color-swatch"
             />
 
             <input
@@ -124,6 +133,7 @@ const SidebarLeft = () => {
               className="absolute opacity-0 pointer-events-none"
               value={color}
               onChange={handleColorChange}
+              data-testid="foreground-color-input"
             />
             <input
               type="color"
@@ -131,6 +141,7 @@ const SidebarLeft = () => {
               className="absolute opacity-0 pointer-events-none"
               value={backgroundColor}
               onChange={handleBgColorChange}
+              data-testid="background-color-input"
             />
           </div>
 
@@ -138,6 +149,7 @@ const SidebarLeft = () => {
             onClick={handleSwapColors}
             className="mt-1 text-[8px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 uppercase font-bold"
             title="Swap Colors"
+            data-testid="swap-colors-button"
           >
             ⇅ Swap
           </button>

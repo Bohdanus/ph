@@ -77,6 +77,7 @@ const DesktopHeader = () => {
             className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
             type="button"
             onClick={() => setOpenMenu(openMenu === 'file' ? null : 'file')}
+            data-testid="header-file-menu-button"
           >
             File
           </button>
@@ -93,6 +94,7 @@ const DesktopHeader = () => {
                       setOpenMenu(null);
                     }
                   }}
+                  data-testid="header-file-new-button"
                 >
                   New
                 </button>
@@ -107,6 +109,7 @@ const DesktopHeader = () => {
                     data && setImageFromUpload(data);
                     setOpenMenu(null);
                   }}
+                  data-testid="header-file-open-button"
                 >
                   Open
                 </button>
@@ -130,6 +133,7 @@ const DesktopHeader = () => {
                     data && handleImageSave(data);
                     setOpenMenu(null);
                   }}
+                  data-testid="header-file-save-button"
                 >
                   Save
                 </button>
@@ -142,38 +146,39 @@ const DesktopHeader = () => {
             className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
             type="button"
             onClick={() => setOpenMenu(openMenu === 'edit' ? null : 'edit')}
+            data-testid="header-edit-menu-button"
           >
             Edit
           </button>
           {openMenu === 'edit' && (
             <ul className="absolute left-0 top-full z-10 m-0 min-w-[160px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800">
               <li>
-                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleColors}>
+                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleColors} data-testid="edit-menu-colors-button">
                   Colors
                 </button>
               </li>
               <li>
-                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleBlur}>
+                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleBlur} data-testid="edit-menu-blur-button">
                   Blur
                 </button>
               </li>
               <li>
-                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleLevels}>
+                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleLevels} data-testid="edit-menu-levels-button">
                   Levels
                 </button>
               </li>
               <li>
-                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleTransform}>
+                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleTransform} data-testid="edit-menu-transform-button">
                   Transform
                 </button>
               </li>
               <li>
-                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleDraw}>
+                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleDraw} data-testid="edit-menu-draw-button">
                   Draw
                 </button>
               </li>
               <li>
-                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleText}>
+                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleText} data-testid="edit-menu-text-button">
                   Text
                 </button>
               </li>
@@ -187,6 +192,7 @@ const DesktopHeader = () => {
           type="button"
           onClick={toggleTheme}
           aria-label="Toggle theme"
+          data-testid="theme-toggle-button"
         >
           {theme === 'light' ? (
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16">

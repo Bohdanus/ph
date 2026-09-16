@@ -26,6 +26,7 @@ const UndoButton: React.FC<UndoButtonProps> = ({ text }) => {
       className={`${SECONDARY_BUTTON} w-full focus:ring-2 focus:ring-blue-500`}
       disabled={!_canUndo}
       onClick={_undo}
+      data-testid="undo-button-reset"
     >
       {text ?? 'Reset'}
     </button>

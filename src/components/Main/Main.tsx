@@ -205,6 +205,7 @@ const Main = () => {
                 data && setImageFromUpload(data);
               })
             }
+            data-testid="main-open-file-button"
           >
             Open File
           </button>
@@ -215,6 +216,7 @@ const Main = () => {
                 data && setBlankImage(data);
               })
             }
+            data-testid="main-blank-image-button"
           >
             blank image
           </button>

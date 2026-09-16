@@ -27,7 +27,10 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
   };
 
   return (
-    <div className="fixed inset-0 z-[1050] flex items-center justify-center overflow-y-auto overflow-x-hidden outline-none focus:outline-none">
+    <div
+      className="fixed inset-0 z-[1050] flex items-center justify-center overflow-y-auto overflow-x-hidden outline-none focus:outline-none"
+      data-testid="save-dialog"
+    >
       <div className="fixed inset-0 bg-black bg-opacity-25 transition-opacity" onClick={saving ? undefined : onClose} />
       <div className="relative mx-auto my-6 w-full max-w-lg px-4">
         <div className="relative flex w-full flex-col rounded-lg border-0 bg-white shadow-lg outline-none focus:outline-none dark:bg-gray-800 dark:text-gray-100">
@@ -37,6 +40,7 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
               className="ml-auto border-0 bg-transparent p-1 text-3xl font-semibold leading-none text-black opacity-50 outline-none hover:opacity-100 focus:outline-none dark:text-white"
               onClick={onClose}
               disabled={saving}
+              data-testid="save-dialog-close-button"
             >
               <span className="block h-6 w-6 text-2xl">×</span>
             </button>
@@ -52,6 +56,7 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
                 id="filenameInput"
                 value={fileName}
                 onChange={(e) => setFileName(e.target.value)}
+                data-testid="save-dialog-filename-input"
               />
             </div>
             <div className="mb-4">
@@ -63,6 +68,7 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
                 id="formatSelect"
                 value={format}
                 onChange={(e) => setFormat(e.target.value)}
+                data-testid="save-dialog-format-select"
               >
                 <option value="image/png">PNG</option>
                 <option value="image/jpeg">JPEG</option>
@@ -77,10 +83,22 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
             </div>
           </div>
           <div className="flex items-center justify-end rounded-b border-t border-solid border-gray-200 p-4 dark:border-gray-700">
-            <button className={DIALOG_SECONDARY_BUTTON} type="button" onClick={onClose} disabled={saving}>
+            <button
+              className={DIALOG_SECONDARY_BUTTON}
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              data-testid="save-dialog-cancel-button"
+            >
               Cancel
             </button>
-            <button className={PRIMARY_BUTTON} type="button" onClick={handleSave} disabled={saving || !fileName.trim()}>
+            <button
+              className={PRIMARY_BUTTON}
+              type="button"
+              onClick={handleSave}
+              disabled={saving || !fileName.trim()}
+              data-testid="save-dialog-submit-button"
+            >
               {saving ? 'Saving...' : 'Save'}
             </button>
           </div>

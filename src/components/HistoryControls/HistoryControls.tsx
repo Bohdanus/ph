@@ -15,13 +15,14 @@ const HistoryControls = () => {
   }
 
   return (
-    <div className="flex gap-1">
+    <div className="flex gap-1" data-testid="history-controls">
       <button
         className={TRANSPARENT_DARK_ICON_BUTTON}
         onClick={_undo}
         disabled={!canUndo() && !isToolDirty}
         aria-label="Undo"
         title="Undo"
+        data-testid="undo-button"
       >
         ↩️
       </button>
@@ -31,6 +32,7 @@ const HistoryControls = () => {
         disabled={!canRedo()}
         aria-label="Redo"
         title="Redo"
+        data-testid="redo-button"
       >
         ↪️
       </button>
