@@ -42,4 +42,18 @@ describe('SaveDialog asynchronous save', () => {
     fireEvent.click(cancel);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('exposes JPEG quality and sends the selected value with the save request', () => {
+    const onSave = vi.fn(() => Promise.resolve());
+    const onClose = vi.fn();
+    render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
+
+    fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'image/jpeg' } });
+    const quality = screen.getByLabelText('JPEG quality') as HTMLInputElement;
+    expect(quality.value).toBe('0.92');
+    fireEvent.change(quality, { target: { value: '0.35' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(onSave).toHaveBeenCalledExactlyOnceWith({ fileName: 'design', format: 'image/jpeg', quality: 0.35 });
+  });
 });

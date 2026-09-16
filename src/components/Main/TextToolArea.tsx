@@ -37,13 +37,13 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
       const newArgs = { ...args, color, rect: newRect };
       setToolArgs(newArgs);
 
-      textareaRef.current!.focus();
+      textareaRef.current?.focus();
     },
   });
 
   useEffect(() => {
-    textareaRef.current!.focus();
-  }, []);
+    textareaRef.current?.focus();
+  }, [textareaRef, toolArgs.toolName]);
 
   // this redraws avoiding react re-renders, to achieve high FPS
   function redrawText(rect: RectXY) {

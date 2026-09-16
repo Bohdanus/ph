@@ -12,15 +12,17 @@ const Text: React.FC<{}> = () => {
   const { createLayerFromTool } = useLayers();
   const { toolArgs, setToolArgs: onChange } = useCurrentTool();
 
+  useEffect(() => {
+    if (isTextToolArgs(toolArgs)) {
+      onChange({ ...toolArgs, color });
+    }
+  }, [color, toolArgs, onChange]);
+
   if (!isTextToolArgs(toolArgs)) {
     return null;
   }
 
   const { text = '', fontSize = 64, lineHeight = 1.1, rect = null, bold = false, italic = false, fontFamily = 'Arial', align = 'left' } = toolArgs;
-
-  useEffect(() => {
-    onChange({ ...toolArgs, color });
-  }, [color, toolArgs, onChange]);
 
   const handleTextChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const textValue = event.target.value;

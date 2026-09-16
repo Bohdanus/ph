@@ -1,12 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { downloadBlob, loadDocumentFile, saveImageToDisk } from '../image-load-save-utils.ts';
 
-const { loadPsd } = vi.hoisted(() => ({ loadPsd: vi.fn() }));
+const { encodeTiff, loadPsd, loadTiffFile } = vi.hoisted(() => ({
+  encodeTiff: vi.fn(),
+  loadPsd: vi.fn(),
+  loadTiffFile: vi.fn(),
+}));
 vi.mock('../psd-utils.ts', () => ({ loadPsd }));
+vi.mock('../tiff-utils.ts', () => ({ encodeTiff, loadTiffFile }));
 
 describe('document file routing', () => {
   beforeEach(() => {
+    encodeTiff.mockReset();
     loadPsd.mockReset();
+    loadTiffFile.mockReset();
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -66,6 +73,19 @@ describe('document file routing', () => {
     expect(loadPsd).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['photo.tiff', 'image/tiff', 'not a signature'],
+    ['photo.tif', '', 'not a signature'],
+    ['renamed.bin', 'application/octet-stream', new Uint8Array([0x49, 0x49, 0x2a, 0x00])],
+  ])('routes %s to the TIFF loader', async (name, type, content) => {
+    const file = new File([content], name, { type });
+    const image = { width: 10, height: 20 } as HTMLImageElement;
+    loadTiffFile.mockResolvedValue(image);
+    await expect(loadDocumentFile(file)).resolves.toEqual({ fileName: name, image });
+    expect(loadTiffFile).toHaveBeenCalledExactlyOnceWith(file);
+    expect(loadPsd).not.toHaveBeenCalled();
+  });
+
   it('propagates PSD decoding failures without falling back to raster', async () => {
     loadPsd.mockRejectedValue(new Error('Invalid PSD header'));
     const file = new File(['bad'], 'broken.psd');
@@ -115,6 +135,26 @@ describe('document downloads', () => {
     }
   );
 
+  it('encodes TIFF pixels and downloads the result with a TIFF extension', async () => {
+    const blob = new Blob(['tiff'], { type: 'image/tiff' });
+    const canvas = document.createElement('canvas');
+    encodeTiff.mockResolvedValue(blob);
+    await saveImageToDisk(canvas, 'design.webp', 'image/tiff');
+    expect(encodeTiff).toHaveBeenCalledExactlyOnceWith(canvas);
+    expect(downloads).toEqual([{ name: 'design.tiff', href: 'blob:export', attached: true }]);
+  });
+
+  it('passes JPEG quality to the canvas encoder', async () => {
+    const blob = new Blob(['jpeg'], { type: 'image/jpeg' });
+    const canvas = document.createElement('canvas');
+    const toBlob = vi.spyOn(canvas, 'toBlob').mockImplementation((callback) => {
+      callback(blob);
+    });
+    await saveImageToDisk(canvas, 'design', 'image/jpeg', 0.35);
+    expect(toBlob).toHaveBeenCalledWith(expect.any(Function), 'image/jpeg', 0.35);
+    expect(downloads[0].name).toBe('design.jpeg');
+  });
+
   it.each(['design.png', 'design.jpeg', 'design.jpg', 'design.webp', 'design.PSD', 'design'])(
     'downloads a PSD blob named %s without doubling extensions',
     (name) => {
@@ -128,6 +168,12 @@ describe('document downloads', () => {
       expect(revokeObjectURL).toHaveBeenCalledWith('blob:export');
     }
   );
+
+  it('keeps a WebP filename correct when the format is provided as a MIME type', () => {
+    const blob = new Blob(['webp'], { type: 'image/webp' });
+    downloadBlob(blob, 'design.webp', 'image/webp');
+    expect(downloads[0].name).toBe('design.webp');
+  });
 
   it('rejects a failed canvas encoding without downloading', async () => {
     const canvas = document.createElement('canvas');

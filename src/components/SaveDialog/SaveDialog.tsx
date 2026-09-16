@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { ImageSaveResponse } from '../../contexts/useFile.tsx';
 import { PRIMARY_BUTTON, DIALOG_SECONDARY_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
+import { DEFAULT_JPEG_QUALITY, IMAGE_FORMATS, PSD_FORMAT } from '../../constants/imageFormats.ts';
 
 interface SaveDialogProps {
   proposedName: string;
@@ -11,6 +12,7 @@ interface SaveDialogProps {
 const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
   const [fileName, setFileName] = useState(proposedName);
   const [format, setFormat] = useState('image/png');
+  const [jpegQuality, setJpegQuality] = useState(DEFAULT_JPEG_QUALITY);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -20,7 +22,7 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await onSave({ fileName, format });
+      await onSave(format === 'image/jpeg' ? { fileName, format, quality: jpegQuality } : { fileName, format });
     } finally {
       setSaving(false);
     }
@@ -70,11 +72,33 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
                 onChange={(e) => setFormat(e.target.value)}
                 data-testid="save-dialog-format-select"
               >
-                <option value="image/png">PNG</option>
-                <option value="image/jpeg">JPEG</option>
-                <option value="image/webp">WebP</option>
-                <option value="psd">Photoshop PSD (layers)</option>
+                {IMAGE_FORMATS.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+                <option value={PSD_FORMAT.value}>{PSD_FORMAT.label}</option>
               </select>
+              {format === 'image/jpeg' && (
+                <div className="mt-4">
+                  <div className="mb-2 flex items-center justify-between text-sm font-bold text-gray-700 dark:text-gray-300">
+                    <label htmlFor="jpegQuality">JPEG quality</label>
+                    <span>{Math.round(jpegQuality * 100)}%</span>
+                  </div>
+                  <input
+                    id="jpegQuality"
+                    type="range"
+                    min="0.1"
+                    max="1"
+                    step="0.01"
+                    value={jpegQuality}
+                    onChange={(e) => setJpegQuality(Number(e.target.value))}
+                    disabled={saving}
+                    className="w-full"
+                    data-testid="save-dialog-jpeg-quality"
+                  />
+                </div>
+              )}
               {format === 'psd' && (
                 <p className="mt-2 text-sm">
                   Preserves raster layers. Photoshop groups, editable text, masks, and effects are not exported.

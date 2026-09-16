@@ -1,4 +1,28 @@
 import type { ImageUploadResponse } from './useFile.tsx';
+import { resolveImageFormat, withFileExtension } from '../constants/imageFormats.ts';
+
+const TIFF_MIME_TYPES = new Set(['image/tif', 'image/tiff', 'image/x-tiff']);
+const BROWSER_IMAGE_EXTENSIONS = /\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i;
+
+function hasTiffSignature(signature: Uint8Array): boolean {
+  return (
+    signature.length >= 4 &&
+    ((signature[0] === 0x49 &&
+      signature[1] === 0x49 &&
+      (signature[2] === 0x2a || signature[2] === 0x2b) &&
+      signature[3] === 0x00) ||
+      (signature[0] === 0x4d &&
+        signature[1] === 0x4d &&
+        signature[2] === 0x00 &&
+        (signature[3] === 0x2a || signature[3] === 0x2b)))
+  );
+}
+
+function isTiffFile(file: File, signature: Uint8Array): boolean {
+  return (
+    /\.(?:tif|tiff)$/i.test(file.name) || TIFF_MIME_TYPES.has(file.type.toLowerCase()) || hasTiffSignature(signature)
+  );
+}
 
 export async function loadDocumentFile(file: File): Promise<ImageUploadResponse> {
   const signature = new Uint8Array(await file.slice(0, 4).arrayBuffer());
@@ -10,6 +34,10 @@ export async function loadDocumentFile(file: File): Promise<ImageUploadResponse>
     const { loadPsd } = await import('./psd-utils.ts');
     return { fileName: file.name, document: await loadPsd(await file.arrayBuffer()) };
   }
+  if (isTiffFile(file, signature)) {
+    const { loadTiffFile } = await import('./tiff-utils.ts');
+    return { fileName: file.name, image: await loadTiffFile(file) };
+  }
   return { fileName: file.name, image: await loadImageFile(file) };
 }
 
@@ -17,7 +45,7 @@ export function downloadBlob(blob: Blob, fileName: string, extension: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${fileName.replace(/\.(psd|png|jpe?g|webp)$/i, '')}.${extension}`;
+  link.download = withFileExtension(fileName, extension);
   document.body.appendChild(link);
   try {
     link.click();
@@ -29,7 +57,7 @@ export function downloadBlob(blob: Blob, fileName: string, extension: string) {
 
 export const loadImageFile = (file: File): Promise<HTMLImageElement> => {
   return new Promise((resolve, reject) => {
-    if (!file || !file.type.startsWith('image/')) {
+    if (!file || (!file.type.startsWith('image/') && !BROWSER_IMAGE_EXTENSIONS.test(file.name))) {
       reject(new Error('Not an image file'));
       return;
     }
@@ -52,14 +80,26 @@ export const loadImageFile = (file: File): Promise<HTMLImageElement> => {
   });
 };
 
-export async function saveImageToDisk(canvas: HTMLCanvasElement, fileName: string, format: string): Promise<void> {
-  const extension = format.replace(/^image\//, '');
+export async function saveImageToDisk(
+  canvas: HTMLCanvasElement,
+  fileName: string,
+  format: string,
+  quality?: number
+): Promise<void> {
+  const imageFormat = resolveImageFormat(format);
+  if (imageFormat.encoding === 'tiff') {
+    const { encodeTiff } = await import('./tiff-utils.ts');
+    const blob = await encodeTiff(canvas);
+    downloadBlob(blob, fileName, imageFormat.extension);
+    return;
+  }
+
   return new Promise((resolve, reject) => {
     // Create a blob from the canvas and trigger download
-    canvas.toBlob((blob) => {
+    const handleBlob = (blob: Blob | null) => {
       if (blob) {
         try {
-          downloadBlob(blob, fileName, extension);
+          downloadBlob(blob, fileName, imageFormat.extension);
           resolve();
         } catch (error) {
           reject(error);
@@ -67,6 +107,18 @@ export async function saveImageToDisk(canvas: HTMLCanvasElement, fileName: strin
       } else {
         reject(new Error('Failed to create blob from canvas'));
       }
-    }, `image/${extension}`);
+    };
+
+    try {
+      const normalizedQuality =
+        quality === undefined || !Number.isFinite(quality) ? undefined : Math.min(1, Math.max(0, quality));
+      if (imageFormat.supportsQuality && normalizedQuality !== undefined) {
+        canvas.toBlob(handleBlob, imageFormat.mimeType, normalizedQuality);
+      } else {
+        canvas.toBlob(handleBlob, imageFormat.mimeType);
+      }
+    } catch (error) {
+      reject(error);
+    }
   });
 }

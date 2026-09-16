@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { FileProvider, useFile, type FileContextType } from '../useFile.tsx';
-import { downloadBlob, loadDocumentFile } from '../image-load-save-utils.ts';
+import { downloadBlob, loadDocumentFile, saveImageToDisk } from '../image-load-save-utils.ts';
 import { savePsd } from '../psd-utils.ts';
 
 vi.mock('../image-load-save-utils.ts', () => ({
@@ -118,6 +118,34 @@ describe('FileProvider PSD integration', () => {
     expect(resolved).toHaveBeenCalledWith(null);
     expect(window.alert).toHaveBeenCalledWith('Failed to save file: Encoding failed');
     expect(console.error).toHaveBeenCalledWith('Failed to save image:', new Error('Encoding failed'));
+  });
+
+  it('passes JPEG quality through to raster encoding and resolves the save details', async () => {
+    vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
+    render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const input = {
+      canvas: document.createElement('canvas'),
+      fileName: 'drawing.psd',
+      layers: {},
+      size: { width: 10, height: 8 },
+    };
+    const resolved = vi.fn();
+    act(() => {
+      void files.openSaveImageDialog(input).then(resolved);
+    });
+    fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'image/jpeg' } });
+    fireEvent.change(screen.getByLabelText('JPEG quality'), { target: { value: '0.35' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(saveImageToDisk).toHaveBeenCalledWith(input.canvas, 'drawing (copy)', 'image/jpeg', 0.35)
+    );
+    expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'image/jpeg', quality: 0.35 });
+    expect(screen.queryByText('Save File As...')).toBeNull();
   });
 
   it('resolves PSD load failure with null, no document, and alert', async () => {
