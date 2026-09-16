@@ -2,6 +2,7 @@ import { type ChangeEvent, type RefObject, useRef } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useApp } from '../../hooks/useApp.ts';
 import type { ToolName } from '../../contexts/tool-types.ts';
+import ToolTooltip from './ToolTooltip.tsx';
 import { toolIcons } from './toolIcons.tsx';
 
 type SidebarTool = {
@@ -79,22 +80,21 @@ const SidebarLeft = () => {
           {SIDEBAR_TOOLS.map(({ label, name, shortcut }) => {
             const Icon = toolIcons[name];
             const isSelected = toolName === name;
-            const title = shortcut ? `${label} (${shortcut})` : label;
 
             return (
               <li key={name}>
-                <button
-                  aria-label={title}
-                  aria-pressed={isSelected}
-                  className={`${TOOL_BUTTON_BASE_CLASS} ${isSelected ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}`}
-                  disabled={!hasImage}
-                  onClick={() => goToTool(name)}
-                  title={title}
-                  type="button"
-                >
-                  <Icon title={label} />
-                  <span className="sr-only">{title}</span>
-                </button>
+                <ToolTooltip label={label} shortcut={shortcut}>
+                  <button
+                    aria-label={label}
+                    aria-pressed={isSelected}
+                    className={`${TOOL_BUTTON_BASE_CLASS} ${isSelected ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}`}
+                    disabled={!hasImage}
+                    onClick={() => goToTool(name)}
+                    type="button"
+                  >
+                    <Icon title={label} />
+                  </button>
+                </ToolTooltip>
               </li>
             );
           })}
