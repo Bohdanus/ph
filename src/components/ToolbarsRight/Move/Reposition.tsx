@@ -18,10 +18,7 @@ const Reposition: React.FC<{}> = () => {
         </div>
       </div>
 
-      <button
-        onClick={mergeAllLayers}
-        className={SECONDARY_BUTTON}
-      >
+      <button onClick={mergeAllLayers} className={SECONDARY_BUTTON}>
         Merge all
       </button>
 

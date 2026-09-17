@@ -148,7 +148,7 @@ export function useRect({
 
     if (!hideBlend) {
       // Draw semi-transparent overlay
-      // eslint-disable-next-line react-compiler/react-compiler
+
       ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
       ctx.fillRect(0, 0, imageSize.width, imageSize.height);
 
@@ -215,8 +215,8 @@ export function useRect({
   }
 
   function adjustFreePoint(point: Point, _aspectRatio: number | null) {
-    let x1 = startPointRef.current!.x;
-    let y1 = startPointRef.current!.y;
+    const x1 = startPointRef.current!.x;
+    const y1 = startPointRef.current!.y;
     let x2 = point.x;
     let y2 = point.y;
 

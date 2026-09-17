@@ -14,7 +14,7 @@ describe('SaveDialog asynchronous save', () => {
         })
     );
     const onClose = vi.fn();
-    const { container } = render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
+    render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
     fireEvent.change(screen.getByLabelText('Filename'), { target: { value: 'export' } });
     fireEvent.change(screen.getByLabelText('Format'), { target: { value: format } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -24,13 +24,13 @@ describe('SaveDialog asynchronous save', () => {
     const saving = screen.getByRole('button', { name: 'Saving...' }) as HTMLButtonElement;
     expect(saving.disabled).toBe(true);
     const cancel = screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement;
-    const close = screen.getAllByRole('button')[0] as HTMLButtonElement;
+    const close = screen.getByTestId('save-dialog-close-button') as HTMLButtonElement;
     expect(cancel.disabled).toBe(true);
     expect(close.disabled).toBe(true);
     fireEvent.click(saving);
     fireEvent.click(cancel);
     fireEvent.click(close);
-    fireEvent.click(container.querySelector('.bg-opacity-25')!);
+    fireEvent.click(screen.getByTestId('save-dialog-backdrop'));
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onClose).not.toHaveBeenCalled();
 

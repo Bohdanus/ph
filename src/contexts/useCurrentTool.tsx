@@ -25,20 +25,22 @@ function cloneSavedToolArgs<TName extends ToolName>(toolName: TName): ToolArgsFo
 
 /* this provider is meant for fast updates. keep it away from Main component */
 export const CurrentToolProvider = ({ children }: { children: React.ReactNode }) => {
-  const [{ currentArgs, toolName, isToolDirty }] = useStore();
+  const [{ currentArgs: currentArgsRef, toolName, isToolDirty }] = useStore();
   const [toolArgs, setToolArgs] = useState<ToolArgs>(initialArgs);
 
+  const resetToLastSavedArgs = (nextToolName: ToolName = toolName) => {
+    const args = cloneSavedToolArgs(nextToolName);
+    setToolArgs(args);
+  };
+
   useEffect(() => {
-    currentArgs.current = toolArgs;
+    // eslint-disable-next-line react-compiler/react-compiler
+    currentArgsRef.current = toolArgs;
   }, [toolArgs]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     resetToLastSavedArgs();
-  }, [toolName]);
-
-  const resetToLastSavedArgs = useCallback((nextToolName = toolName) => {
-    const args = cloneSavedToolArgs(nextToolName);
-    setToolArgs(args);
   }, [toolName]);
 
   const _setToolArgs = useCallback((args: ToolArgs) => {
@@ -61,15 +63,18 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
     [_setToolArgs, toolArgs]
   );
 
-  const value = useMemo(() => ({
-    toolArgs,
-    isToolDirty,
-    setToolArgs: _setToolArgs,
-    getToolArgs,
-    patchToolArgs,
+  const value = useMemo(
+    () => ({
+      toolArgs,
+      isToolDirty,
+      setToolArgs: _setToolArgs,
+      getToolArgs,
+      patchToolArgs,
 
-    resetToLastSavedArgs,
-  }), [_setToolArgs, getToolArgs, isToolDirty, patchToolArgs, resetToLastSavedArgs, toolArgs]);
+      resetToLastSavedArgs,
+    }),
+    [_setToolArgs, getToolArgs, isToolDirty, patchToolArgs, resetToLastSavedArgs, toolArgs]
+  );
 
   return <CurrentToolContext.Provider value={value}>{children}</CurrentToolContext.Provider>;
 };

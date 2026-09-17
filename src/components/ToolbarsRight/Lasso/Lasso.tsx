@@ -7,7 +7,8 @@ import { useSelectionClipboard } from '../../../contexts/useSelectionClipboard.t
 const Lasso: React.FC<{}> = () => {
   const [{ color }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
-  const { activeSelection, copyActiveSelection, hasSelectionClipboard, pasteSelectionClipboard } = useSelectionClipboard();
+  const { activeSelection, copyActiveSelection, hasSelectionClipboard, pasteSelectionClipboard } =
+    useSelectionClipboard();
   const [isCopying, setIsCopying] = useState(false);
 
   const args = toolArgs as LassoToolArgs;

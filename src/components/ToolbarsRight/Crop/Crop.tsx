@@ -50,16 +50,16 @@ const Crop: React.FC<{}> = () => {
       </div>
 
       <div className="flex gap-2">
-       <button
-         className={PRIMARY_BUTTON}
-         disabled={!rect}
-         onClick={async () => {
-           await updateLayerByTool({ toolArgs: args });
-           onChange({ ...args, rect: null });
-         }}
-       >
-         Apply
-       </button>
+        <button
+          className={PRIMARY_BUTTON}
+          disabled={!rect}
+          onClick={async () => {
+            await updateLayerByTool({ toolArgs: args });
+            onChange({ ...args, rect: null });
+          }}
+        >
+          Apply
+        </button>
 
         <button className={SECONDARY_BUTTON} disabled={!rect} onClick={() => onChange({ ...args, rect: null })}>
           Clear

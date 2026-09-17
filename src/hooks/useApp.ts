@@ -22,7 +22,7 @@ export interface UseAppType {
 
  */
 export const useApp = (): UseAppType => {
-  const [{ canvasRef, currentArgs, toolOverlayRef, rectOverlayRef }, dispatch] = useStore();
+  const [{ canvasRef, currentArgs: currentArgsRef, toolOverlayRef, rectOverlayRef }, dispatch] = useStore();
   const { createBlankLayer, createLayerFromBitmap, commitDirtyTool } = useLayers();
 
   function handleImageCreate(size: Size) {
@@ -34,6 +34,7 @@ export const useApp = (): UseAppType => {
         totalSize: size,
       },
     });
+    // eslint-disable-next-line react-compiler/react-compiler
     canvasRef.current!.width = size.width;
     canvasRef.current!.height = size.height;
   }
@@ -68,7 +69,7 @@ export const useApp = (): UseAppType => {
       const baseline = Object.fromEntries(
         Object.values(layers).map((layer) => [layer.id, { ...layer, pos: { ...layer.pos } }])
       );
-      currentArgs.current = {} as typeof currentArgs.current;
+      currentArgsRef.current = {} as typeof currentArgsRef.current;
       for (const ref of [canvasRef, toolOverlayRef, rectOverlayRef]) {
         if (ref.current) {
           ref.current.width = size.width;

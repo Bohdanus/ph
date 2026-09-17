@@ -128,12 +128,7 @@ describe('PSD codec binary roundtrip', () => {
             name: 'Background',
             left: 0,
             top: 0,
-            imageData: pixels(
-              12, 24, 36, 255,
-              48, 60, 72, 255,
-              84, 96, 108, 255,
-              120, 132, 144, 255
-            ),
+            imageData: pixels(12, 24, 36, 255, 48, 60, 72, 255, 84, 96, 108, 255, 120, 132, 144, 255),
           },
           {
             name: 'Foreground',
@@ -190,14 +185,10 @@ describe('PSD codec binary roundtrip', () => {
     expect({ width: background.width, height: background.height }).toEqual({ width: 2, height: 2 });
     expect({ width: foreground.width, height: foreground.height }).toEqual({ width: 2, height: 1 });
     expect(Array.from(background.getContext('2d')!.getImageData(0, 0, 2, 2).data)).toEqual([
-      12, 24, 36, 255,
-      48, 60, 72, 255,
-      84, 96, 108, 255,
-      120, 132, 144, 255,
+      12, 24, 36, 255, 48, 60, 72, 255, 84, 96, 108, 255, 120, 132, 144, 255,
     ]);
     expect(Array.from(foreground.getContext('2d')!.getImageData(0, 0, 2, 1).data)).toEqual([
-      220, 10, 20, 255,
-      30, 40, 50, 128,
+      220, 10, 20, 255, 30, 40, 50, 128,
     ]);
 
     const display = document.createElement('canvas');
@@ -215,12 +206,7 @@ describe('PSD codec binary roundtrip', () => {
     expect(drawImage).toHaveBeenNthCalledWith(1, background, 0, 0, 2, 2);
     expect(drawImage).toHaveBeenNthCalledWith(2, foreground, 1, 0, 2, 1);
     expect(Array.from(displayContext.getImageData(0, 0, 3, 2).data)).toEqual([
-      12, 24, 36, 255,
-      183, 21, 31, 255,
-      30, 40, 50, 100,
-      84, 96, 108, 255,
-      120, 132, 144, 255,
-      0, 0, 0, 0,
+      12, 24, 36, 255, 183, 21, 31, 255, 30, 40, 50, 100, 84, 96, 108, 255, 120, 132, 144, 255, 0, 0, 0, 0,
     ]);
     expect(imported.document.warnings).toEqual([]);
   });

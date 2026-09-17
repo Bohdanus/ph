@@ -15,11 +15,7 @@ export type ZoomData = { dx: number; dy: number; zoom: number };
 export type Delta = { dx: number; dy: number };
 
 export type SelectionSourceTool =
-  | 'polygonal-lasso'
-  | 'freehand-lasso'
-  | 'feather-magnetic-lasso'
-  | 'magic-wand'
-  | 'rectangular-selection';
+  'polygonal-lasso' | 'freehand-lasso' | 'feather-magnetic-lasso' | 'magic-wand' | 'rectangular-selection';
 export type SelectionGeometry = 'polygon' | 'rectangle';
 
 export type IdleSelectionDraftState = { status: 'idle' };

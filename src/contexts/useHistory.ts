@@ -96,8 +96,13 @@ export const useHistory = () => {
   function _drawAllLayers(layers: LayersRecord, totalSize: Size) {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    if (canvas.width !== totalSize.width) canvas.width = totalSize.width;
-    if (canvas.height !== totalSize.height) canvas.height = totalSize.height;
+    if (canvas.width !== totalSize.width) {
+      // eslint-disable-next-line react-compiler/react-compiler
+      canvas.width = totalSize.width;
+    }
+    if (canvas.height !== totalSize.height) {
+      canvas.height = totalSize.height;
+    }
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, totalSize.width, totalSize.height);

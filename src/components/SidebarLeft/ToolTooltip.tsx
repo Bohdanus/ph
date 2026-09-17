@@ -31,7 +31,13 @@ const ToolTooltip = ({ children, label, shortcut }: ToolTooltipProps) => {
   };
 
   return (
-    <span className="group relative flex" onBlur={hideTooltip} onFocus={showTooltip} onMouseEnter={showTooltip} onMouseLeave={hideTooltip}>
+    <span
+      className="group relative flex"
+      onBlur={hideTooltip}
+      onFocus={showTooltip}
+      onMouseEnter={showTooltip}
+      onMouseLeave={hideTooltip}
+    >
       {cloneElement(children, { 'aria-describedby': isVisible ? tooltipId : undefined })}
       {isVisible && (
         <span
@@ -40,7 +46,11 @@ const ToolTooltip = ({ children, label, shortcut }: ToolTooltipProps) => {
           role="tooltip"
         >
           {label}
-          {shortcut && <kbd className="rounded border border-white/25 px-1.5 py-0.5 text-[10px] font-semibold leading-none dark:border-black/20">{shortcut}</kbd>}
+          {shortcut && (
+            <kbd className="rounded border border-white/25 px-1.5 py-0.5 text-[10px] font-semibold leading-none dark:border-black/20">
+              {shortcut}
+            </kbd>
+          )}
         </span>
       )}
     </span>

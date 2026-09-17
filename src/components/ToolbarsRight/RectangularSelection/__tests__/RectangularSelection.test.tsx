@@ -7,9 +7,10 @@ const dispatchMock = vi.hoisted(() => vi.fn());
 const sourceCanvas = vi.hoisted(() => document.createElement('canvas'));
 const copyActiveSelectionMock = vi.hoisted(() => vi.fn());
 const pasteSelectionClipboardMock = vi.hoisted(() => vi.fn());
-const storeState = vi.hoisted(
-  (): { selections: Selection[]; activeSelectionId: string | null } => ({ selections: [], activeSelectionId: null })
-);
+const storeState = vi.hoisted((): { selections: Selection[]; activeSelectionId: string | null } => ({
+  selections: [],
+  activeSelectionId: null,
+}));
 
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [

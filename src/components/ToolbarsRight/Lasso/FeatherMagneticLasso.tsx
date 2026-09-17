@@ -54,7 +54,8 @@ const SETTING_HELP = [
 const FeatherMagneticLasso: React.FC<{}> = () => {
   const [, dispatch] = useStore();
   const { getToolArgs, patchToolArgs } = useCurrentTool();
-  const { activeSelection, copyActiveSelection, hasSelectionClipboard, pasteSelectionClipboard } = useSelectionClipboard();
+  const { activeSelection, copyActiveSelection, hasSelectionClipboard, pasteSelectionClipboard } =
+    useSelectionClipboard();
   const [isCopying, setIsCopying] = useState(false);
   const [isInfoHovered, setIsInfoHovered] = useState(false);
   const [isInfoPinned, setIsInfoPinned] = useState(false);

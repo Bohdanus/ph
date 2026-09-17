@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 
 export type KeyboardShortcut = {
   key: string;
@@ -133,7 +133,9 @@ export function useKeyDownShortcut(shortcut: KeyboardShortcut) {
   const { registerKeyDownShortcut } = useKeyboardEvents();
   const shortcutRef = useRef(shortcut);
 
-  shortcutRef.current = shortcut;
+  useLayoutEffect(() => {
+    shortcutRef.current = shortcut;
+  }, [shortcut]);
 
   useEffect(() => {
     return registerKeyDownShortcut(() => shortcutRef.current);

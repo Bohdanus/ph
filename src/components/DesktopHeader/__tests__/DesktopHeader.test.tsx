@@ -1,12 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import DesktopHeader from '../DesktopHeader.tsx';
-import { useStore } from '../../../contexts/StoreContext.tsx';
-import { useApp } from '../../../hooks/useApp.ts';
-import { useFile } from '../../../contexts/useFile.tsx';
-import { useHistory } from '../../../contexts/useHistory.ts';
-import { useLayers } from '../../../contexts/useLayer.ts';
-import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 
 const storeState = {
   canvasRef: { current: null },
@@ -53,8 +47,10 @@ vi.mock('../../../contexts/useFile.tsx', () => ({ useFile: () => file }));
 vi.mock('../../../contexts/useHistory.ts', () => ({ useHistory: () => history }));
 vi.mock('../../../contexts/useLayer.ts', () => ({ useLayers: () => layers }));
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({ useCurrentTool: () => currentTool }));
+const themeState = { theme: 'light', toggleTheme: vi.fn() };
+
 vi.mock('../../../contexts/ThemeContext.tsx', () => ({
-  useTheme: () => [{ theme: 'light', toggleTheme: vi.fn() }],
+  useTheme: () => themeState,
 }));
 
 describe('DesktopHeader', () => {
@@ -63,6 +59,10 @@ describe('DesktopHeader', () => {
     storeState.hasUnsavedChanges = false;
     history.canUndo.mockReturnValue(false);
     history.canRedo.mockReturnValue(false);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('renders File and Edit menu buttons', () => {
@@ -119,8 +119,19 @@ describe('DesktopHeader', () => {
     expect(screen.getByRole('button', { name: 'Toggle theme' })).toBeTruthy();
   });
 
+  it('calls toggleTheme when the theme toggle button is clicked', () => {
+    render(<DesktopHeader />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle theme' }));
+
+    expect(themeState.toggleTheme).toHaveBeenCalledTimes(1);
+  });
+
   it('opens the new file dialog when File > New is clicked', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true)
+    );
     file.openNewImageDialog.mockResolvedValue(undefined);
     render(<DesktopHeader />);
 
@@ -129,12 +140,13 @@ describe('DesktopHeader', () => {
     fireEvent.click(screen.getByTestId('header-file-new-button'));
 
     expect(file.openNewImageDialog).toHaveBeenCalled();
-
-    vi.restoreAllMocks();
   });
 
   it('opens the load file dialog when File > Open is clicked', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true)
+    );
     file.openLoadImageDialog.mockResolvedValue(undefined);
     render(<DesktopHeader />);
 
@@ -143,13 +155,14 @@ describe('DesktopHeader', () => {
     fireEvent.click(screen.getByTestId('header-file-open-button'));
 
     expect(file.openLoadImageDialog).toHaveBeenCalled();
-
-    vi.restoreAllMocks();
   });
 
   it('shows Confirm dialog when opening file with unsaved changes', async () => {
     storeState.hasUnsavedChanges = true;
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => false)
+    );
     file.openLoadImageDialog.mockResolvedValue(undefined);
 
     render(<DesktopHeader />);
@@ -160,7 +173,5 @@ describe('DesktopHeader', () => {
 
     expect(window.confirm).toHaveBeenCalled();
     expect(file.openLoadImageDialog).not.toHaveBeenCalled();
-
-    vi.restoreAllMocks();
   });
 });

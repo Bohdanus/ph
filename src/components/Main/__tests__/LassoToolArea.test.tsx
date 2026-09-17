@@ -340,10 +340,10 @@ describe('PolygonClickToolArea', () => {
 
     expect(dispatchMock).toHaveBeenCalledWith({
       type: 'UPDATE_SELECTION',
-        payload: expect.objectContaining({
-          id: 'selection-1',
-          metadata: { movedAtVersion: 1 },
-          pos: { x: 19, y: 9, width: 82, height: 92 },
+      payload: expect.objectContaining({
+        id: 'selection-1',
+        metadata: { movedAtVersion: 1 },
+        pos: { x: 19, y: 9, width: 82, height: 92 },
         points: [
           { x: 1, y: 11 },
           { x: 81, y: 1 },
@@ -378,10 +378,10 @@ describe('PolygonClickToolArea', () => {
 
     expect(dispatchMock).toHaveBeenCalledWith({
       type: 'UPDATE_SELECTION',
-        payload: expect.objectContaining({
-          id: 'selection-1',
-          metadata: { movedAtVersion: 1 },
-          pos: { x: 19, y: 24, width: 92, height: 92 },
+      payload: expect.objectContaining({
+        id: 'selection-1',
+        metadata: { movedAtVersion: 1 },
+        pos: { x: 19, y: 24, width: 92, height: 92 },
         points: [
           { x: 1, y: 1 },
           { x: 91, y: 1 },

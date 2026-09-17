@@ -1,8 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import Transform from '../Transform.tsx';
-import { useLayers } from '../../../../contexts/useLayer.ts';
-import { useCurrentTool } from '../../../../contexts/useCurrentTool.tsx';
 
 const toolArgs = {
   toolName: 'transform',

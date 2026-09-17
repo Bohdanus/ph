@@ -73,6 +73,7 @@ const Main = () => {
   useLayoutEffect(() => {
     const { width, height } = totalSize;
     if (toolOverlayRef.current) {
+      // eslint-disable-next-line react-compiler/react-compiler
       toolOverlayRef.current.width = width;
       toolOverlayRef.current.height = height;
 

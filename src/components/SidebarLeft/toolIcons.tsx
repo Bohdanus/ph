@@ -7,8 +7,10 @@ type ToolIconProps = {
 };
 
 type SvgIconFactory = (props: ToolIconProps) => ReactElement;
+export type ToolIconName = ToolName | `shape-${'rectangle' | 'oval' | 'square' | 'circle' | 'line'}`;
 
 const SVG_CLASS_NAME = 'h-7 w-7 overflow-visible';
+const STROKE = 'currentColor';
 
 const IconShell = ({ children, title }: ToolIconProps & { children: ReactNode }) => (
   <svg
@@ -24,150 +26,185 @@ const IconShell = ({ children, title }: ToolIconProps & { children: ReactNode })
   </svg>
 );
 
+// The toolbar uses the same visual language as Photoshop's compact toolbar:
+// mostly solid silhouettes, short strokes, and no tool-specific color coding.
 const MoveIcon: SvgIconFactory = ({ title }) => (
   <IconShell title={title}>
-    <path d="M16 4v24M4 16h24" stroke="currentColor" strokeLinecap="round" strokeWidth="2.5" />
-    <path d="M16 4l-4 4h8l-4-4ZM16 28l4-4h-8l4 4ZM4 16l4 4v-8l-4 4ZM28 16l-4-4v8l4-4Z" fill="currentColor" />
+    <path d="M16 3.5v25M3.5 16h25" stroke={STROKE} strokeLinecap="round" strokeWidth="2.1" />
+    <path
+      d="m16 3.5-4.1 4.1h8.2L16 3.5ZM16 28.5l4.1-4.1h-8.2l4.1 4.1ZM3.5 16l4.1-4.1v8.2L3.5 16ZM28.5 16l-4.1 4.1v-8.2l4.1 4.1Z"
+      fill={STROKE}
+    />
   </IconShell>
 );
 
 const ColorIcon: SvgIconFactory = ({ title }) => (
   <IconShell title={title}>
-    <circle cx="16" cy="16" r="10" fill="currentColor" opacity="0.16" stroke="currentColor" strokeWidth="2" />
-    <path d="M16 6a10 10 0 0 1 10 10h-10V6Z" fill="#ef4444" />
-    <path d="M26 16a10 10 0 0 1-10 10V16h10Z" fill="#22c55e" />
-    <path d="M16 26A10 10 0 0 1 6 16h10v10Z" fill="#3b82f6" />
-    <path d="M6 16A10 10 0 0 1 16 6v10H6Z" fill="#facc15" />
-    <circle cx="16" cy="16" r="3" fill="currentColor" />
+    <rect x="5" y="4" width="16" height="16" fill="white" stroke={STROKE} strokeWidth="1.8" />
+    <rect x="11" y="12" width="16" height="16" fill="black" stroke={STROKE} strokeWidth="1.8" />
+    <path d="m25 4 3 3M25 7l3-3" stroke={STROKE} strokeLinecap="round" strokeWidth="1.5" />
   </IconShell>
 );
 
 const BlurIcon: SvgIconFactory = ({ title }) => (
   <IconShell title={title}>
-    <path d="M16 4s8 9 8 15a8 8 0 0 1-16 0c0-6 8-15 8-15Z" fill="currentColor" opacity="0.18" />
-    <path d="M16 4s8 9 8 15a8 8 0 0 1-16 0c0-6 8-15 8-15Z" stroke="currentColor" strokeWidth="2" />
-    <circle cx="12" cy="20" r="1.5" fill="currentColor" opacity="0.38" />
-    <circle cx="17" cy="18" r="1.5" fill="currentColor" opacity="0.48" />
-    <circle cx="20" cy="22" r="1.5" fill="currentColor" opacity="0.34" />
+    <path d="M16 3.5s8 9.3 8 15a8 8 0 1 1-16 0c0-5.7 8-15 8-15Z" fill={STROKE} opacity=".22" />
+    <path d="M16 3.5s8 9.3 8 15a8 8 0 1 1-16 0c0-5.7 8-15 8-15Z" stroke={STROKE} strokeWidth="1.8" />
+    <path d="M11.5 18.5c.4 2.2 1.8 3.8 4 4.4" stroke={STROKE} strokeLinecap="round" strokeWidth="1.5" opacity=".65" />
+    <circle cx="20" cy="17" r="1.2" fill={STROKE} opacity=".55" />
   </IconShell>
 );
 
 const LevelsIcon: SvgIconFactory = ({ title }) => (
   <IconShell title={title}>
-    <path d="M5 25h22" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
-    <path d="M7 23V11M13 23V6M19 23V14M25 23V9" stroke="currentColor" strokeLinecap="round" strokeWidth="3" />
-    <path d="M7 16h4M13 10h4M19 19h4M23 14h4" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" />
+    <path d="M4 26.5h24" stroke={STROKE} strokeLinecap="round" strokeWidth="1.8" />
+    <path d="M6 24V18h3v6M11 24V11h3v13M16 24V7h3v17M21 24v-9h3v9M26 24v-4h1v4" fill={STROKE} />
+    <path d="M6 7v2M16 4v2M26 7v2" stroke={STROKE} strokeLinecap="round" strokeWidth="1.5" />
   </IconShell>
 );
 
 const TransformIcon: SvgIconFactory = ({ title }) => (
   <IconShell title={title}>
-    <rect x="8" y="8" width="16" height="16" stroke="currentColor" strokeWidth="2" />
-    <path d="M5 5h7M5 5v7M27 27h-7M27 27v-7" stroke="currentColor" strokeLinecap="round" strokeWidth="2.4" />
-    <path d="M6 6l6 6M26 26l-6-6" stroke="currentColor" strokeLinecap="round" strokeWidth="2" />
+    <rect x="8" y="8" width="16" height="16" stroke={STROKE} strokeWidth="1.8" />
+    <path
+      d="M5 11V5h6M21 5h6v6M27 21v6h-6M11 27H5v-6"
+      stroke={STROKE}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2.1"
+    />
+    <path
+      d="m5 5 4 4M27 5l-4 4M27 27l-4-4M5 27l4-4"
+      stroke={STROKE}
+      strokeLinecap="round"
+      strokeWidth="1.4"
+      opacity=".7"
+    />
   </IconShell>
 );
 
 const CropIcon: SvgIconFactory = ({ title }) => (
   <IconShell title={title}>
-    <path d="M10 4v18h18" stroke="currentColor" strokeLinecap="round" strokeWidth="2.5" />
-    <path d="M4 10h18v18" stroke="currentColor" strokeLinecap="round" strokeWidth="2.5" />
-    <path d="M10 10h12v12H10z" fill="currentColor" opacity="0.12" />
+    <path d="M10 4v18h18M4 10h18v18" stroke={STROKE} strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" />
+    <path d="M10 10h12v12H10z" fill={STROKE} opacity=".12" />
+    <path d="M7 7h6M7 7v6M25 25h-6M25 25v-6" stroke={STROKE} strokeLinecap="round" strokeWidth="1.5" opacity=".7" />
   </IconShell>
 );
 
 const DrawIcon: SvgIconFactory = ({ title }) => (
   <IconShell title={title}>
-    <path d="M8 24 21.5 10.5l3 3L11 27H8v-3Z" fill="currentColor" opacity="0.22" />
-    <path d="M8 24 21.5 10.5l3 3L11 27H8v-3Z" stroke="currentColor" strokeLinejoin="round" strokeWidth="2" />
-    <path d="M19.5 8.5 23 5l4 4-3.5 3.5-4-4Z" fill="currentColor" />
-    <path d="M5 8c3 0 3 4 6 4s3-4 6-4" stroke="currentColor" strokeLinecap="round" strokeWidth="1.6" />
+    <path d="m7 25 13.8-13.8 4 4L11 29H7v-4Z" fill={STROKE} opacity=".2" />
+    <path d="m7 25 13.8-13.8 4 4L11 29H7v-4Z" stroke={STROKE} strokeLinejoin="round" strokeWidth="1.8" />
+    <path d="m20.8 11.2 3.5-3.5 4 4-3.5 3.5-4-4Z" fill={STROKE} />
+    <path
+      d="M8.5 8.5c2.6 0 2.6 3.5 5.2 3.5s2.6-3.5 5.2-3.5"
+      stroke={STROKE}
+      strokeLinecap="round"
+      strokeWidth="1.5"
+      opacity=".7"
+    />
   </IconShell>
 );
 
 const ShapeIcon: SvgIconFactory = ({ title }) => (
   <IconShell title={title}>
-    <rect x="5" y="6" width="11" height="11" stroke="currentColor" strokeWidth="2" />
-    <circle cx="22" cy="21" r="6" fill="currentColor" opacity="0.18" stroke="currentColor" strokeWidth="2" />
-    <path d="M13 25h-7l3.5-6 3.5 6Z" fill="currentColor" />
+    <path d="M5 7h12v10H5z" fill={STROKE} opacity=".16" stroke={STROKE} strokeWidth="1.8" />
+    <circle cx="21.5" cy="21" r="6.5" fill={STROKE} opacity=".25" stroke={STROKE} strokeWidth="1.8" />
+    <path d="m12 27-4-6-4 6h8Z" fill={STROKE} opacity=".8" />
+  </IconShell>
+);
+
+const RectangleShapeIcon: SvgIconFactory = ({ title }) => (
+  <IconShell title={title}>
+    <rect x="6" y="7" width="20" height="18" fill={STROKE} opacity=".14" stroke={STROKE} strokeWidth="1.8" />
+  </IconShell>
+);
+
+const EllipseShapeIcon: SvgIconFactory = ({ title }) => (
+  <IconShell title={title}>
+    <ellipse cx="16" cy="16" rx="11" ry="8.5" fill={STROKE} opacity=".14" stroke={STROKE} strokeWidth="1.8" />
+  </IconShell>
+);
+
+const SquareShapeIcon: SvgIconFactory = ({ title }) => (
+  <IconShell title={title}>
+    <rect x="7" y="7" width="18" height="18" fill={STROKE} opacity=".14" stroke={STROKE} strokeWidth="1.8" />
+  </IconShell>
+);
+
+const CircleShapeIcon: SvgIconFactory = ({ title }) => (
+  <IconShell title={title}>
+    <circle cx="16" cy="16" r="9" fill={STROKE} opacity=".14" stroke={STROKE} strokeWidth="1.8" />
+  </IconShell>
+);
+
+const LineShapeIcon: SvgIconFactory = ({ title }) => (
+  <IconShell title={title}>
+    <path d="m6 26 20-20" stroke={STROKE} strokeLinecap="round" strokeWidth="2.2" />
+    <path d="m6 26 4-1M6 26l1-4M26 6l-4 1M26 6l-1 4" stroke={STROKE} strokeLinecap="round" strokeWidth="1.5" />
   </IconShell>
 );
 
 const TextIcon: SvgIconFactory = ({ title }) => (
   <IconShell title={title}>
-    <path d="M6 8V5h20v3M16 5v22M12 27h8" stroke="currentColor" strokeLinecap="round" strokeWidth="2.5" />
-    <path d="M10 13h12" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" opacity="0.35" />
+    <path d="M5 5h22v4M16 5v22M11 27h10" stroke={STROKE} strokeLinecap="round" strokeWidth="2.3" />
+    <path d="M8 9h16" stroke={STROKE} strokeLinecap="round" strokeWidth="1.3" opacity=".55" />
   </IconShell>
 );
 
 const FreehandLassoIcon: SvgIconFactory = ({ title }) => (
   <IconShell title={title}>
     <path
-      d="M7 18c-2-7 8-12 16-7 5 3 3 11-3 13-7 2-15-1-13-6Z"
-      fill="currentColor"
-      opacity="0.14"
-      stroke="currentColor"
-      strokeDasharray="3 2"
+      d="M7 17c-1.7-5.6 5.4-10.9 12.8-8.4 6.9 2.3 6.8 9.5 1.2 13.1-5.2 3.4-13.3 1.9-14-2.4Z"
+      stroke={STROKE}
+      strokeDasharray="2.5 1.8"
       strokeLinecap="round"
       strokeWidth="2"
     />
-    <path d="M19 23l6 5" stroke="currentColor" strokeLinecap="round" strokeWidth="2.3" />
+    <path d="M19.5 21.8c1.8 1.6 3.5 3.2 5.6 5.7" stroke={STROKE} strokeLinecap="round" strokeWidth="2.1" />
+    <circle cx="19.5" cy="21.8" r="1.8" fill={STROKE} />
   </IconShell>
 );
 
 const PolygonalLassoIcon: SvgIconFactory = ({ title }) => (
   <IconShell title={title}>
-    <path d="M7 19 11 8l12 3 2 11-10 4-8-7Z" fill="currentColor" opacity="0.12" />
-    <path d="M7 19 11 8l12 3 2 11-10 4-8-7Z" stroke="currentColor" strokeLinejoin="round" strokeWidth="2" />
-    <path d="M11 8 25 22M23 11 15 26" stroke="currentColor" strokeLinecap="round" strokeWidth="1.4" opacity="0.36" />
+    <path d="m6 21 5-13 14 4 1 10-11 5-9-6Z" stroke={STROKE} strokeLinejoin="round" strokeWidth="1.8" />
+    <path d="m6 21 5-13 14 4" stroke={STROKE} strokeDasharray="2 1.5" strokeWidth="1.2" opacity=".6" />
+    <circle cx="6" cy="21" r="2" fill={STROKE} />
+    <path d="m15 27 8 1" stroke={STROKE} strokeLinecap="round" strokeWidth="1.8" />
   </IconShell>
 );
 
 const FeatherMagneticLassoIcon: SvgIconFactory = ({ title }) => (
   <IconShell title={title}>
     <path
-      d="M8 18c-1-7 8-12 15-7 5 3 4 10-2 13-6 3-14 0-13-6Z"
-      stroke="currentColor"
+      d="M7 17c-1.1-5.5 5.7-10.4 12.5-8.3 6.3 2 6.7 8.9 1.4 12.5-5.4 3.7-12.9 2.3-13.9-1.7Z"
+      stroke={STROKE}
+      strokeDasharray="2.5 1.8"
       strokeLinecap="round"
-      strokeWidth="2"
+      strokeWidth="1.9"
     />
-    <path d="M20 23l5 5" stroke="currentColor" strokeLinecap="round" strokeWidth="2.2" />
-    <path
-      d="M10 7v5M14 5v5M18 5v5M22 7v5"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeWidth="1.5"
-      opacity="0.46"
-    />
-    <circle cx="16" cy="17" r="2" fill="currentColor" />
+    <path d="m19.8 21.5 6 5.8" stroke={STROKE} strokeLinecap="round" strokeWidth="2" />
+    <path d="M9 8.5v3M13 6.8v3M17 6.5v3M21 8v3" stroke={STROKE} strokeLinecap="round" strokeWidth="1.5" />
+    <circle cx="16" cy="17" r="2" fill={STROKE} />
   </IconShell>
 );
 
 const MagicWandIcon: SvgIconFactory = ({ title }) => (
   <IconShell title={title}>
-    <path d="M9 25 24 10" stroke="currentColor" strokeLinecap="round" strokeWidth="3" />
-    <path d="M20.5 7.5 26.5 13.5" stroke="currentColor" strokeLinecap="round" strokeWidth="2" opacity="0.55" />
-    <path d="M7 7l1.2 2.8L11 11l-2.8 1.2L7 15l-1.2-2.8L3 11l2.8-1.2L7 7Z" fill="currentColor" />
-    <path d="M18 3l0.9 2.1L21 6l-2.1 0.9L18 9l-0.9-2.1L15 6l2.1-0.9L18 3Z" fill="currentColor" opacity="0.8" />
-    <path d="M25 20l0.9 2.1L28 23l-2.1 0.9L25 26l-0.9-2.1L22 23l2.1-0.9L25 20Z" fill="currentColor" opacity="0.8" />
-    <circle cx="14" cy="20" r="3.5" fill="currentColor" opacity="0.13" />
+    <path d="m8 25 15-15" stroke={STROKE} strokeLinecap="round" strokeWidth="2.8" />
+    <path d="m20.5 7.5 4 4" stroke={STROKE} strokeLinecap="round" strokeWidth="1.7" opacity=".65" />
+    <path
+      d="m7 5 .9 2.1L10 8l-2.1.9L7 11l-.9-2.1L4 8l2.1-.9L7 5ZM17 3l.8 1.7L19.5 5l-1.7.8L17 7.5l-.8-1.7L14.5 5l1.7-.8L17 3ZM25 19l.8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8.8-1.7Z"
+      fill={STROKE}
+    />
   </IconShell>
 );
 
 const RectangularSelectionIcon: SvgIconFactory = ({ title }) => (
   <IconShell title={title}>
-    <rect
-      x="7"
-      y="8"
-      width="18"
-      height="16"
-      fill="currentColor"
-      opacity="0.08"
-      stroke="currentColor"
-      strokeDasharray="3 2"
-      strokeWidth="2"
-    />
-    <path d="M11 12h10v8H11z" stroke="currentColor" strokeWidth="1.4" opacity="0.35" />
+    <rect x="6" y="7" width="20" height="18" fill={STROKE} opacity=".08" />
+    <path d="M6 12V7h5M21 7h5v5M26 20v5h-5M11 25H6v-5" stroke={STROKE} strokeDasharray="3 2" strokeWidth="1.9" />
   </IconShell>
 );
 
@@ -180,10 +217,15 @@ export const toolIcons = {
   crop: CropIcon,
   draw: DrawIcon,
   shape: ShapeIcon,
+  'shape-rectangle': RectangleShapeIcon,
+  'shape-oval': EllipseShapeIcon,
+  'shape-square': SquareShapeIcon,
+  'shape-circle': CircleShapeIcon,
+  'shape-line': LineShapeIcon,
   text: TextIcon,
   'freehand-lasso': FreehandLassoIcon,
   'polygonal-lasso': PolygonalLassoIcon,
   'feather-magnetic-lasso': FeatherMagneticLassoIcon,
   'magic-wand': MagicWandIcon,
   'rectangular-selection': RectangularSelectionIcon,
-} satisfies Record<ToolName, SvgIconFactory>;
+} satisfies Record<ToolIconName, SvgIconFactory>;

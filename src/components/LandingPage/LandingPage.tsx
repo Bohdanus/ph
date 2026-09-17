@@ -20,4 +20,3 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onStart }) => {
     </div>
   );
 };
-

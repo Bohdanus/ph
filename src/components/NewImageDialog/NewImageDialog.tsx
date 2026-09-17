@@ -181,10 +181,19 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
               </div>
             </div>
             <div className="flex items-center justify-end rounded-b border-t border-solid border-gray-200 p-4 dark:border-gray-700">
-              <button className={DIALOG_SECONDARY_BUTTON} type="button" onClick={onClose} data-testid="new-image-dialog-cancel-button">
+              <button
+                className={DIALOG_SECONDARY_BUTTON}
+                type="button"
+                onClick={onClose}
+                data-testid="new-image-dialog-cancel-button"
+              >
                 Cancel
               </button>
-              <button className={`${PRIMARY_BUTTON} px-10 ml-3`} type="submit" data-testid="new-image-dialog-submit-button">
+              <button
+                className={`${PRIMARY_BUTTON} px-10 ml-3`}
+                type="submit"
+                data-testid="new-image-dialog-submit-button"
+              >
                 OK
               </button>
             </div>

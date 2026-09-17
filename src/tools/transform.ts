@@ -61,16 +61,16 @@ export const transform =
       const trapY = p.y;
 
       // Apply resize scaling before other transforms
-      let x = (trapX - initialWidth / 2) * scaleX;
-      let y = (trapY - initialHeight / 2) * scaleY;
+      const x = (trapX - initialWidth / 2) * scaleX;
+      const y = (trapY - initialHeight / 2) * scaleY;
 
       // Apply rotation
-      let rx = x * cos - y * sin;
-      let ry = x * sin + y * cos;
+      const rx = x * cos - y * sin;
+      const ry = x * sin + y * cos;
 
       // Apply skew
-      let sx = rx + ry * tanX;
-      let sy = ry + rx * tanY;
+      const sx = rx + ry * tanX;
+      const sy = ry + rx * tanY;
 
       return { x: sx, y: sy };
     });

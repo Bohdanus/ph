@@ -82,13 +82,13 @@ export const toolsMap: ToolsMap = {
     imageProcessor: transform,
     toolboxComponent: Transform,
   },
-   crop: {
-     icon: 'crop',
-     flattenRequired: true,
-     // @ts-expect-error args
-     imageProcessor: crop,
-     toolboxComponent: Crop,
-   },
+  crop: {
+    icon: 'crop',
+    flattenRequired: true,
+    // @ts-expect-error args
+    imageProcessor: crop,
+    toolboxComponent: Crop,
+  },
   draw: {
     creator: true,
     icon: 'draw',

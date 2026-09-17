@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { getHistoryItemTitle, useHistory } from '../../contexts/useHistory.ts';
@@ -11,7 +11,7 @@ export default function HistoryTab() {
   const { resetHistoryTo, toggleDisabled } = useHistory();
 
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const listItemRefs = useRef<Record<number, HTMLLIElement | null>>({});
+  const [hoveredElement, setHoveredElement] = useState<HTMLElement | null>(null);
 
   const sortedHistory = [...history].reverse();
 
@@ -19,7 +19,7 @@ export default function HistoryTab() {
     <div className="flex flex-col gap-2 h-full">
       <PreviewTooltip
         open={hoveredIndex !== null}
-        hoveredElement={hoveredIndex !== null ? listItemRefs.current[hoveredIndex] : null}
+        hoveredElement={hoveredElement}
         bitmapPromise={hoveredIndex !== null ? history[hoveredIndex].imagePromise : Promise.resolve(null)}
         placement="left"
       />
@@ -37,12 +37,15 @@ export default function HistoryTab() {
             return (
               <li
                 key={item.id}
-                ref={(el) => {
-                  listItemRefs.current[originalIndex] = el;
-                }}
                 onClick={() => resetHistoryTo(originalIndex)}
-                onMouseEnter={() => setHoveredIndex(originalIndex)}
-                onMouseLeave={() => setHoveredIndex(null)}
+                onMouseEnter={(event) => {
+                  setHoveredIndex(originalIndex);
+                  setHoveredElement(event.currentTarget);
+                }}
+                onMouseLeave={() => {
+                  setHoveredIndex(null);
+                  setHoveredElement(null);
+                }}
                 className={[
                   'flex items-center gap-2 rounded px-2 py-0 select-none cursor-pointer',
                   'border border-transparent cursor-pointer',

@@ -168,6 +168,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       {showNewDialog && <NewImageDialog onClose={handleNewImageClose} onCreate={handleNewImageCreate} />}
       {showSaveDialog && (
         <SaveDialog
+          key={stripOutputFileExtension(fileInput?.fileName ?? '')}
           proposedName={`${stripOutputFileExtension(fileInput?.fileName ?? '')} (copy)`}
           onClose={handleSaveClose}
           onSave={handleImageSave}

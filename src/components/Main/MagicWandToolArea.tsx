@@ -104,5 +104,7 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return <div className={`${className} cursor-crosshair`} onPointerDown={handlePointerDown} style={{ userSelect: 'none' }} />;
+  return (
+    <div className={`${className} cursor-crosshair`} onPointerDown={handlePointerDown} style={{ userSelect: 'none' }} />
+  );
 };

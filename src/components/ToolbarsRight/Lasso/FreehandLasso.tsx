@@ -7,7 +7,8 @@ import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
 const FreehandLasso: React.FC<{}> = () => {
   const [, dispatch] = useStore();
   const { getToolArgs, patchToolArgs } = useCurrentTool();
-  const { activeSelection, copyActiveSelection, hasSelectionClipboard, pasteSelectionClipboard } = useSelectionClipboard();
+  const { activeSelection, copyActiveSelection, hasSelectionClipboard, pasteSelectionClipboard } =
+    useSelectionClipboard();
   const [isCopying, setIsCopying] = useState(false);
 
   const args = getToolArgs('freehand-lasso');
@@ -59,7 +60,11 @@ const FreehandLasso: React.FC<{}> = () => {
       </div>
 
       <div className="flex gap-2">
-        <button className={PRIMARY_BUTTON} disabled={!hasActivePolygonSelection || isCopying} onClick={handleCopySelection}>
+        <button
+          className={PRIMARY_BUTTON}
+          disabled={!hasActivePolygonSelection || isCopying}
+          onClick={handleCopySelection}
+        >
           {isCopying ? 'Copying...' : 'Copy'}
         </button>
         <button className={PRIMARY_BUTTON} disabled={!hasSelectionClipboard} onClick={handlePasteSelection}>

@@ -10,12 +10,18 @@ describe('useMarchingAnts', () => {
   beforeEach(() => {
     frames = new Map();
     nextId = 0;
-    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
-      const id = nextId++;
-      frames.set(id, callback);
-      return id;
-    }));
-    vi.stubGlobal('cancelAnimationFrame', vi.fn((id: number) => frames.delete(id)));
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn((callback: FrameRequestCallback) => {
+        const id = nextId++;
+        frames.set(id, callback);
+        return id;
+      })
+    );
+    vi.stubGlobal(
+      'cancelAnimationFrame',
+      vi.fn((id: number) => frames.delete(id))
+    );
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -23,7 +29,7 @@ describe('useMarchingAnts', () => {
   function frame() {
     const pending = [...frames.values()];
     frames.clear();
-    act(() => pending.forEach(callback => callback(0)));
+    act(() => pending.forEach((callback) => callback(0)));
   }
 
   function setup() {
@@ -39,8 +45,16 @@ describe('useMarchingAnts', () => {
   it('closes arbitrary contours and animates both strokes without changing the cursor', () => {
     const { result, ctx, containerRef } = setup();
     const offsets: number[] = [];
-    vi.mocked(ctx.stroke).mockImplementation(() => { offsets.push(ctx.lineDashOffset); });
-    act(() => result.current.drawPoints([{ x: 10, y: 20 }, { x: 40, y: 25 }, { x: 15, y: 50 }]));
+    vi.mocked(ctx.stroke).mockImplementation(() => {
+      offsets.push(ctx.lineDashOffset);
+    });
+    act(() =>
+      result.current.drawPoints([
+        { x: 10, y: 20 },
+        { x: 40, y: 25 },
+        { x: 15, y: 50 },
+      ])
+    );
     frame();
     const path = vi.mocked(ctx.stroke).mock.calls.at(-1)![0] as Path2D;
     expect(path.moveTo).toHaveBeenCalledWith(10, 20);
@@ -57,7 +71,15 @@ describe('useMarchingAnts', () => {
 
   it('supports open drafts and clears old geometry when replaced by a custom path', () => {
     const { result, ctx } = setup();
-    act(() => result.current.drawPoints([{ x: 0, y: 0 }, { x: 10, y: 20 }], false));
+    act(() =>
+      result.current.drawPoints(
+        [
+          { x: 0, y: 0 },
+          { x: 10, y: 20 },
+        ],
+        false
+      )
+    );
     frame();
     const draft = vi.mocked(ctx.stroke).mock.calls.at(-1)![0] as Path2D;
     expect(draft.closePath).not.toHaveBeenCalled();
@@ -90,7 +112,12 @@ describe('useMarchingAnts', () => {
 
   it('cleans up a painted canvas even after its ref is detached', () => {
     const { result, ctx, overlayRef, unmount } = setup();
-    act(() => result.current.drawPoints([{ x: 0, y: 0 }, { x: 10, y: 10 }]));
+    act(() =>
+      result.current.drawPoints([
+        { x: 0, y: 0 },
+        { x: 10, y: 10 },
+      ])
+    );
     frame();
     overlayRef.current = null;
     unmount();
@@ -100,7 +127,12 @@ describe('useMarchingAnts', () => {
 
   it('can mount without a canvas or container', () => {
     const { result, unmount } = renderHook(() => useMarchingAnts({ overlayRef: { current: null } }));
-    act(() => result.current.drawPoints([{ x: 0, y: 0 }, { x: 10, y: 10 }]));
+    act(() =>
+      result.current.drawPoints([
+        { x: 0, y: 0 },
+        { x: 10, y: 10 },
+      ])
+    );
     frame();
     expect(frames.size).toBe(0);
     unmount();

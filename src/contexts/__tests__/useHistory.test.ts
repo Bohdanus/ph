@@ -296,7 +296,8 @@ describe('useHistory undo replay', () => {
 
   it('ignores invalid history targets', () => {
     const { dispatch } = setup();
-    for (const index of [-1, 2, 0.5, NaN]) useHistory().resetHistoryTo(index);
+    const historyApi = useHistory();
+    for (const index of [-1, 2, 0.5, NaN]) historyApi.resetHistoryTo(index);
     expect(dispatch).not.toHaveBeenCalled();
   });
 

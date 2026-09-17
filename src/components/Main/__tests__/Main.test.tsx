@@ -1,11 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import Main from '../Main.tsx';
-import { useStore } from '../../../contexts/StoreContext.tsx';
-import { useApp } from '../../../hooks/useApp.ts';
-import { useFile } from '../../../contexts/useFile.tsx';
-import { useLayers } from '../../../contexts/useLayer.ts';
-import { useTheme } from '../../../contexts/ThemeContext.tsx';
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
@@ -45,7 +40,7 @@ vi.mock('../../../contexts/useLayer.ts', () => ({
 }));
 
 vi.mock('../../../contexts/ThemeContext.tsx', () => ({
-  useTheme: () => [{ theme: 'light' }],
+  useTheme: () => ({ theme: 'light' }),
 }));
 
 describe('Main', () => {

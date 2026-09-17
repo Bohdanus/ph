@@ -32,9 +32,9 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
 
     overlayCtxRef.current!.clearRect(0, 0, totalSize.width, totalSize.height);
 
-    args.points = pointsRef.current;
+    const drawArgs = { ...args, points: pointsRef.current };
     drawLine({
-      args,
+      args: drawArgs,
       ctx: overlayCtxRef.current!,
     });
   };
@@ -83,10 +83,11 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     for (let i = 0; i < oldPoints.length; i++) {
       newPoints.push({ x: oldPoints[i].x - pos.x, y: oldPoints[i].y - pos.y });
     }
-    args.points = newPoints;
+
+    const finalArgs = { ...args, points: newPoints };
 
     const fullArgs: FullArgs = {
-      args,
+      args: finalArgs,
       pos,
     };
     createLayerFromTool(fullArgs);

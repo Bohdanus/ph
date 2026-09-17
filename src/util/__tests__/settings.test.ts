@@ -26,10 +26,19 @@ describe('saveLastSettings', () => {
       color: '#ff0000',
       penType: 'pen',
       lineWidth: 5,
-      points: [{ x: 1, y: 2 }, { x: 3, y: 4 }],
+      points: [
+        { x: 1, y: 2 },
+        { x: 3, y: 4 },
+      ],
       toolName: 'draw',
     });
-    expect(lastSavedSettings.draw).toMatchObject({ alpha: 0.8, color: '#ff0000', penType: 'pen', lineWidth: 5, toolName: 'draw' });
+    expect(lastSavedSettings.draw).toMatchObject({
+      alpha: 0.8,
+      color: '#ff0000',
+      penType: 'pen',
+      lineWidth: 5,
+      toolName: 'draw',
+    });
     expect((lastSavedSettings.draw as any).points).toEqual([]);
   });
 
@@ -108,16 +117,37 @@ describe('saveLastSettings', () => {
   });
 
   it('stores freehand-lasso and polygonal-lasso settings verbatim', () => {
-    saveLastSettings({ points: [{ x: 0, y: 0 }], color: '#ff0000', lineWidth: 2, alpha: 1, fill: false, toolName: 'freehand-lasso' });
-    expect(lastSavedSettings['freehand-lasso']).toMatchObject({ color: '#ff0000', lineWidth: 2, toolName: 'freehand-lasso' });
+    saveLastSettings({
+      points: [{ x: 0, y: 0 }],
+      color: '#ff0000',
+      lineWidth: 2,
+      alpha: 1,
+      fill: false,
+      toolName: 'freehand-lasso',
+    });
+    expect(lastSavedSettings['freehand-lasso']).toMatchObject({
+      color: '#ff0000',
+      lineWidth: 2,
+      toolName: 'freehand-lasso',
+    });
 
-    saveLastSettings({ points: [{ x: 0, y: 0 }], color: '#0000ff', lineWidth: 4, alpha: 0.5, fill: true, toolName: 'polygonal-lasso' });
+    saveLastSettings({
+      points: [{ x: 0, y: 0 }],
+      color: '#0000ff',
+      lineWidth: 4,
+      alpha: 0.5,
+      fill: true,
+      toolName: 'polygonal-lasso',
+    });
     expect(lastSavedSettings['polygonal-lasso']).toMatchObject({ color: '#0000ff', fill: true });
   });
 
   it('stores feather-magnetic-lasso settings without points', () => {
     saveLastSettings({
-      points: [{ x: 1, y: 2 }, { x: 3, y: 4 }],
+      points: [
+        { x: 1, y: 2 },
+        { x: 3, y: 4 },
+      ],
       featherRadius: 10,
       magneticWidth: 20,
       edgeContrast: 30,
@@ -179,12 +209,36 @@ describe('defaultSettings and lastSavedSettings', () => {
   });
 
   it('defaultSettings has the expected structure for each tool', () => {
-    expect(defaultSettings.draw).toMatchObject({ alpha: 0.9, color: '#000000', penType: 'pen', lineWidth: 10, toolName: 'draw', points: [] });
-    expect(defaultSettings.text).toMatchObject({ fontSize: 64, lineHeight: 1.1, fontFamily: 'Arial', color: '#000000', text: '', align: 'left', toolName: 'text' });
-    expect(defaultSettings.shape).toMatchObject({ figure: 'rectangle', color: '#000000', backgroundColor: null, toolName: 'shape' });
+    expect(defaultSettings.draw).toMatchObject({
+      alpha: 0.9,
+      color: '#000000',
+      penType: 'pen',
+      lineWidth: 10,
+      toolName: 'draw',
+      points: [],
+    });
+    expect(defaultSettings.text).toMatchObject({
+      fontSize: 64,
+      lineHeight: 1.1,
+      fontFamily: 'Arial',
+      color: '#000000',
+      text: '',
+      align: 'left',
+      toolName: 'text',
+    });
+    expect(defaultSettings.shape).toMatchObject({
+      figure: 'rectangle',
+      color: '#000000',
+      backgroundColor: null,
+      toolName: 'shape',
+    });
     expect(defaultSettings.crop).toMatchObject({ aspectRatio: null, rect: null, toolName: 'crop' });
     expect(defaultSettings['magic-wand']).toMatchObject({ tolerance: 28, smoothing: 1.5, toolName: 'magic-wand' });
     expect(defaultSettings['rectangular-selection']).toEqual({ toolName: 'rectangular-selection' });
-    expect(defaultSettings['feather-magnetic-lasso']).toMatchObject({ featherRadius: 12, magneticWidth: 18, toolName: 'feather-magnetic-lasso' });
+    expect(defaultSettings['feather-magnetic-lasso']).toMatchObject({
+      featherRadius: 12,
+      magneticWidth: 18,
+      toolName: 'feather-magnetic-lasso',
+    });
   });
 });

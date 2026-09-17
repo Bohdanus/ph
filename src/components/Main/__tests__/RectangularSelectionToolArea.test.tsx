@@ -4,9 +4,10 @@ import type { Selection } from '../../../contexts/general-types.ts';
 import { RectangularSelectionToolArea } from '../RectangularSelectionToolArea.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
-const storeState = vi.hoisted(
-  (): { selections: Selection[]; activeSelectionId: string | null } => ({ selections: [], activeSelectionId: null })
-);
+const storeState = vi.hoisted((): { selections: Selection[]; activeSelectionId: string | null } => ({
+  selections: [],
+  activeSelectionId: null,
+}));
 const useRectProps = vi.hoisted((): { current: any } => ({ current: null }));
 const useRectPointerDownMock = vi.hoisted(() => vi.fn(() => false));
 

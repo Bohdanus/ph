@@ -81,6 +81,7 @@ const Text: React.FC<{}> = () => {
   const applyText = () => {
     if (text && rect) {
       createLayerFromTool({ args: toolArgs });
+      // eslint-disable-next-line react-compiler/react-compiler
       currentArgs.current = { ...toolArgs, text: '', rect: null };
       onChange({ ...toolArgs, text: '', rect: null });
     }

@@ -70,7 +70,7 @@ export function useMarchingAnts({ overlayRef, containerRef }: AntsProps) {
   const schedule = (outline: Outline, grabCursor = false) => {
     outlineRef.current = outline;
     cursorContainerRef.current?.classList.remove('cursor-grab');
-    cursorContainerRef.current = grabCursor ? containerRef?.current ?? null : null;
+    cursorContainerRef.current = grabCursor ? (containerRef?.current ?? null) : null;
     cursorContainerRef.current?.classList.add('cursor-grab');
     if (animationIdRef.current === null) {
       animationIdRef.current = requestAnimationFrame(animate);

@@ -42,14 +42,21 @@ function makeMockCtx() {
 describe('pointsBoundingPos', () => {
   it('computes bounds with default lineWidth of 1', () => {
     const result = pointsBoundingPos({
-      points: [{ x: 0, y: 0 }, { x: 10, y: 5 }, { x: -3, y: 8 }],
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 5 },
+        { x: -3, y: 8 },
+      ],
     });
     expect(result).toEqual({ x: -4, y: -1, width: 15, height: 10 });
   });
 
   it('respects a custom lineWidth', () => {
     const result = pointsBoundingPos({
-      points: [{ x: 0, y: 0 }, { x: 10, y: 10 }],
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 10 },
+      ],
       lineWidth: 3,
     });
     expect(result).toEqual({ x: -3, y: -3, width: 16, height: 16 });
@@ -59,7 +66,13 @@ describe('pointsBoundingPos', () => {
 describe('bezierSmoothedLine', () => {
   it('draws bezier curves using every consecutive triple of points', () => {
     const ctx = makeMockCtx();
-    const points = [{ x: 0, y: 0 }, { x: 10, y: 10 }, { x: 20, y: 20 }, { x: 30, y: 30 }, { x: 40, y: 40 }];
+    const points = [
+      { x: 0, y: 0 },
+      { x: 10, y: 10 },
+      { x: 20, y: 20 },
+      { x: 30, y: 30 },
+      { x: 40, y: 40 },
+    ];
     bezierSmoothedLine(ctx, points);
     expect(ctx.bezierCurveTo).toHaveBeenCalledTimes(2);
     expect(ctx.bezierCurveTo).toHaveBeenNthCalledWith(1, 0, 0, 10, 10, 20, 20);
@@ -68,7 +81,12 @@ describe('bezierSmoothedLine', () => {
 
   it('falls back to lineTo for trailing points that do not form a triple', () => {
     const ctx = makeMockCtx();
-    const points = [{ x: 0, y: 0 }, { x: 10, y: 10 }, { x: 20, y: 20 }, { x: 30, y: 30 }];
+    const points = [
+      { x: 0, y: 0 },
+      { x: 10, y: 10 },
+      { x: 20, y: 20 },
+      { x: 30, y: 30 },
+    ];
     bezierSmoothedLine(ctx, points);
     expect(ctx.bezierCurveTo).toHaveBeenCalledTimes(1);
     expect(ctx.bezierCurveTo).toHaveBeenCalledWith(0, 0, 10, 10, 20, 20);
@@ -78,7 +96,11 @@ describe('bezierSmoothedLine', () => {
 
   it('draws a single bezier for 3 points', () => {
     const ctx = makeMockCtx();
-    bezierSmoothedLine(ctx, [{ x: 1, y: 2 }, { x: 3, y: 4 }, { x: 5, y: 6 }]);
+    bezierSmoothedLine(ctx, [
+      { x: 1, y: 2 },
+      { x: 3, y: 4 },
+      { x: 5, y: 6 },
+    ]);
     expect(ctx.bezierCurveTo).toHaveBeenCalledTimes(1);
     expect(ctx.bezierCurveTo).toHaveBeenCalledWith(1, 2, 3, 4, 5, 6);
   });
@@ -101,7 +123,11 @@ describe('drawSmoothLine', () => {
 
   it('draws quadratic curves between midpoints for multiple points', () => {
     const ctx = makeMockCtx();
-    drawSmoothLine(ctx, [{ x: 0, y: 0 }, { x: 10, y: 10 }, { x: 20, y: 0 }]);
+    drawSmoothLine(ctx, [
+      { x: 0, y: 0 },
+      { x: 10, y: 10 },
+      { x: 20, y: 0 },
+    ]);
     expect(ctx.quadraticCurveTo).toHaveBeenCalledTimes(2);
     expect(ctx.quadraticCurveTo).toHaveBeenNthCalledWith(1, 0, 0, 5, 5);
     expect(ctx.quadraticCurveTo).toHaveBeenNthCalledWith(2, 10, 10, 15, 5);
@@ -111,14 +137,25 @@ describe('drawSmoothLine', () => {
 describe('catmullRomToBezier', () => {
   it('draws bezier curves for each consecutive pair', () => {
     const ctx = makeMockCtx();
-    const pts = [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 }];
+    const pts = [
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 20, y: 0 },
+    ];
     catmullRomToBezier(ctx, pts, 0.5);
     expect(ctx.bezierCurveTo).toHaveBeenCalledTimes(2);
   });
 
   it('clamps endpoints using duplicate points', () => {
     const ctx = makeMockCtx();
-    catmullRomToBezier(ctx, [{ x: 0, y: 0 }, { x: 0, y: 0 }], 1);
+    catmullRomToBezier(
+      ctx,
+      [
+        { x: 0, y: 0 },
+        { x: 0, y: 0 },
+      ],
+      1
+    );
     expect(ctx.bezierCurveTo).toHaveBeenCalledTimes(1);
   });
 });
@@ -127,7 +164,11 @@ describe('drawPen', () => {
   it('begins a path, moves to the first point, smooths the rest, then strokes', () => {
     const ctx = makeMockCtx();
     const args = {
-      points: [{ x: 1, y: 1 }, { x: 2, y: 2 }, { x: 3, y: 3 }],
+      points: [
+        { x: 1, y: 1 },
+        { x: 2, y: 2 },
+        { x: 3, y: 3 },
+      ],
       alpha: 1,
       color: '#000000',
       penType: 'pen' as const,
@@ -149,7 +190,10 @@ describe('drawSpray', () => {
     const gradient = { addColorStop: vi.fn() };
     vi.spyOn(ctx, 'createRadialGradient').mockReturnValue(gradient);
     const args = {
-      points: [{ x: 5, y: 5 }, { x: 15, y: 15 }],
+      points: [
+        { x: 5, y: 5 },
+        { x: 15, y: 15 },
+      ],
       alpha: 0.8,
       color: '#ff0000',
       lineWidth: 10,
@@ -169,7 +213,11 @@ describe('drawLine', () => {
   it('dispatches to drawPen for pen type', () => {
     const ctx = makeMockCtx();
     const args = {
-      points: [{ x: 1, y: 1 }, { x: 2, y: 2 }, { x: 3, y: 3 }],
+      points: [
+        { x: 1, y: 1 },
+        { x: 2, y: 2 },
+        { x: 3, y: 3 },
+      ],
       alpha: 1,
       color: '#000000',
       penType: 'pen' as const,
@@ -200,7 +248,11 @@ describe('drawLine', () => {
   it('does nothing for pen-dashed by delegating to drawPen', () => {
     const ctx = makeMockCtx();
     const args = {
-      points: [{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 2 }],
+      points: [
+        { x: 0, y: 0 },
+        { x: 1, y: 1 },
+        { x: 2, y: 2 },
+      ],
       alpha: 1,
       color: '#000000',
       penType: 'pen-dashed' as const,

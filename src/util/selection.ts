@@ -99,10 +99,17 @@ export function getSelectionRect(selection: Selection): RectXYSorted {
 }
 
 export function getActiveSelection(selections: Selection[], activeSelectionId: string | null): Selection | null {
-  return selections.find((selection) => selection.id === activeSelectionId) ?? selections.find((selection) => selection.isActive) ?? null;
+  return (
+    selections.find((selection) => selection.id === activeSelectionId) ??
+    selections.find((selection) => selection.isActive) ??
+    null
+  );
 }
 
-export function getActiveRectangularSelection(selections: Selection[], activeSelectionId: string | null): Selection | null {
+export function getActiveRectangularSelection(
+  selections: Selection[],
+  activeSelectionId: string | null
+): Selection | null {
   const activeSelection = getActiveSelection(selections, activeSelectionId);
 
   return activeSelection?.geometry === 'rectangle' ? activeSelection : null;
@@ -181,8 +188,7 @@ export function isPointInPolygon(point: Point, polygon: Point[]): boolean {
     const pi = polygon[i];
     const pj = polygon[j];
     const intersects =
-      pi.y > point.y !== pj.y > point.y &&
-      point.x < ((pj.x - pi.x) * (point.y - pi.y)) / (pj.y - pi.y) + pi.x;
+      pi.y > point.y !== pj.y > point.y && point.x < ((pj.x - pi.x) * (point.y - pi.y)) / (pj.y - pi.y) + pi.x;
 
     if (intersects) {
       isInside = !isInside;

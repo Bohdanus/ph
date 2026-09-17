@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import Menu from './components/Menu/Menu';
 import Footer from './components/Footer/Footer';
 import SidebarLeft from './components/SidebarLeft/SidebarLeft';
@@ -31,13 +31,7 @@ function AppContainer() {
 }
 
 function App() {
-  const [showApp, setShowApp] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    // Check if landing page has been viewed
-    const hasViewedLanding = localStorage.getItem(LANDING_PAGE_VIEWED_KEY);
-    setShowApp(!!hasViewedLanding);
-  }, []);
+  const [showApp, setShowApp] = useState<boolean | null>(() => localStorage.getItem(LANDING_PAGE_VIEWED_KEY) !== null);
 
   const handleStartClick = () => {
     // Mark landing page as viewed in localStorage

@@ -49,7 +49,9 @@ describe('TextToolArea', () => {
   });
 
   it('does not crash when the textarea ref is not attached yet', () => {
-    expect(() => render(<TextToolArea canvasCtxRef={{ current: null }} overlayCtxRef={{ current: null }} />)).not.toThrow();
+    expect(() =>
+      render(<TextToolArea canvasCtxRef={{ current: null }} overlayCtxRef={{ current: null }} />)
+    ).not.toThrow();
   });
 
   it('focuses the textarea after text arguments become active', () => {

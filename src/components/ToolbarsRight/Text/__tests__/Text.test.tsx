@@ -2,9 +2,6 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { KeyboardEventsProvider } from '../../../../hooks/useKeyboardEvents.tsx';
 import Text from '../Text.tsx';
-import { useStore } from '../../../../contexts/StoreContext.tsx';
-import { useLayers } from '../../../../contexts/useLayer.ts';
-import { useCurrentTool } from '../../../../contexts/useCurrentTool.tsx';
 
 const mockCreateLayerFromTool = vi.fn();
 

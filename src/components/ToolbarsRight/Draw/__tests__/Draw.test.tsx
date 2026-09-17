@@ -1,8 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import Draw from '../Draw.tsx';
-import { useStore } from '../../../../contexts/StoreContext.tsx';
-import { useCurrentTool } from '../../../../contexts/useCurrentTool.tsx';
 
 const storeState = {
   color: '#000000',

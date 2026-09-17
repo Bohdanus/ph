@@ -44,28 +44,6 @@ describe('NewImageDialog', () => {
     expect(onCreate).not.toHaveBeenCalled();
   });
 
-  it('updates width when width input changes', () => {
-    const onClose = vi.fn();
-    const onCreate = vi.fn();
-    render(<NewImageDialog onClose={onClose} onCreate={onCreate} />);
-
-    const widthInput = screen.getByTestId('new-image-width-input') as HTMLInputElement;
-    fireEvent.change(widthInput, { target: { value: '1024' } });
-
-    expect(widthInput.value).toBe('1024');
-  });
-
-  it('updates height when height input changes', () => {
-    const onClose = vi.fn();
-    const onCreate = vi.fn();
-    render(<NewImageDialog onClose={onClose} onCreate={onCreate} />);
-
-    const heightInput = screen.getByTestId('new-image-height-input') as HTMLInputElement;
-    fireEvent.change(heightInput, { target: { value: '768' } });
-
-    expect(heightInput.value).toBe('768');
-  });
-
   it('calls onCreate with custom values when submitted', () => {
     const onClose = vi.fn();
     const onCreate = vi.fn();

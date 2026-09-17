@@ -1,13 +1,21 @@
 import React, { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { savedArgsPerFigure } from '../../../tools/settings.ts';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
-import { type FigureType, shape, type ShapeToolArgs } from '../../../tools/shape.ts';
+import { shape, type ShapeToolArgs } from '../../../tools/shape.ts';
 import { isLightColor } from '../../../util/color.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 
 const PREVIEW_WIDTH = 96;
 const PREVIEW_HEIGHT = 48;
+
+const figureLabel = (figure: ShapeToolArgs['figure']) => {
+  if (figure === 'oval') return 'Ellipse Tool';
+  if (figure === 'circle') return 'Circle Tool';
+  if (figure === 'square') return 'Square Tool';
+  if (figure === 'line') return 'Line Tool';
+  return 'Rectangle Tool';
+};
 
 const Shape: React.FC<{}> = () => {
   const [{ containerRef, color, backgroundColor, totalSize }] = useStore();
@@ -41,11 +49,6 @@ const Shape: React.FC<{}> = () => {
   const handleFillToggle = () => {
     const hasFill = !args.hasFill;
     handleChange({ ...args, hasFill });
-  };
-
-  const handleFigureChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const figure = event.target.value as FigureType;
-    handleChange({ ...args, figure });
   };
 
   const handleDashToggle = (event: ChangeEvent<HTMLInputElement>) => {
@@ -110,22 +113,9 @@ const Shape: React.FC<{}> = () => {
 
   return (
     <div className="flex flex-row items-center gap-6 h-full">
-      <div className="flex items-center gap-2">
-        <label htmlFor="figure-type" className="whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300">
-          Figure
-        </label>
-        <select
-          id="figure-type"
-          value={figure}
-          onChange={handleFigureChange}
-          className="rounded border border-gray-300 bg-white px-3 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-        >
-          <option value="line">Line</option>
-          <option value="rectangle">Rectangle</option>
-          <option value="square">Square</option>
-          <option value="circle">Circle</option>
-          <option value="oval">Oval</option>
-        </select>
+      <div className="flex items-center gap-2" aria-label="Current shape">
+        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{figureLabel(figure)}</span>
+        <span className="text-[10px] text-gray-500 dark:text-gray-400">Choose a shape from the left toolbar</span>
       </div>
 
       <div className="flex flex-col">

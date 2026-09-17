@@ -68,7 +68,12 @@ function getToleranceDistance(tolerance: number): number {
   return (clamp(tolerance, 0, 100) / 100) * MAX_COLOR_DISTANCE;
 }
 
-function isPixelWithinTolerance(data: Uint8ClampedArray, pixelIndex: number, sampleColor: RgbaColor, tolerance: number) {
+function isPixelWithinTolerance(
+  data: Uint8ClampedArray,
+  pixelIndex: number,
+  sampleColor: RgbaColor,
+  tolerance: number
+) {
   return getMagicWandColorDistance(getPixelColor(data, pixelIndex), sampleColor) <= tolerance;
 }
 

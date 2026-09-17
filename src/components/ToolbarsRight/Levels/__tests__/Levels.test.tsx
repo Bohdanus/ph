@@ -1,9 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import Levels from '../Levels.tsx';
-import { useLayers } from '../../../../contexts/useLayer.ts';
-import { useCurrentTool } from '../../../../contexts/useCurrentTool.tsx';
-import { useStore } from '../../../../contexts/StoreContext.tsx';
 
 const toolArgs = {
   toolName: 'levels',

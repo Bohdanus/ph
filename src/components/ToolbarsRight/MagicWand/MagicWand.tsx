@@ -9,7 +9,8 @@ const SLIDER_CLASS = 'h-1.5 w-28 cursor-pointer appearance-none rounded-lg bg-gr
 const MagicWand: React.FC<{}> = () => {
   const [, dispatch] = useStore();
   const { getToolArgs, patchToolArgs } = useCurrentTool();
-  const { activeSelection, copyActiveSelection, hasSelectionClipboard, pasteSelectionClipboard } = useSelectionClipboard();
+  const { activeSelection, copyActiveSelection, hasSelectionClipboard, pasteSelectionClipboard } =
+    useSelectionClipboard();
   const [isCopying, setIsCopying] = useState(false);
 
   const args = getToolArgs('magic-wand');
@@ -85,7 +86,11 @@ const MagicWand: React.FC<{}> = () => {
       </label>
 
       <div className="flex gap-2">
-        <button className={PRIMARY_BUTTON} disabled={!hasActivePolygonSelection || isCopying} onClick={handleCopySelection}>
+        <button
+          className={PRIMARY_BUTTON}
+          disabled={!hasActivePolygonSelection || isCopying}
+          onClick={handleCopySelection}
+        >
           {isCopying ? 'Copying...' : 'Copy'}
         </button>
         <button className={PRIMARY_BUTTON} disabled={!hasSelectionClipboard} onClick={handlePasteSelection}>
@@ -99,7 +104,9 @@ const MagicWand: React.FC<{}> = () => {
       <div className="min-w-60 rounded border border-blue-200 bg-blue-50 px-2 py-1 text-[10px] text-blue-800 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
         <div>Click a color area to select connected similar pixels.</div>
         <div className="mt-1 text-[9px] opacity-75">
-          {selectedPixelCount ? `${selectedPixelCount.toLocaleString()} pixels selected` : 'Increase tolerance for broader regions.'}
+          {selectedPixelCount
+            ? `${selectedPixelCount.toLocaleString()} pixels selected`
+            : 'Increase tolerance for broader regions.'}
         </div>
       </div>
     </div>

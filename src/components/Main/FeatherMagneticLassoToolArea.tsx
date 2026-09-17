@@ -6,11 +6,7 @@ import type { Point } from '../../contexts/general-types.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import type { FeatherMagneticLassoToolArgs } from '../../tools/featherMagneticLasso.ts';
-import {
-  createCommittedPolygonSelection,
-  distanceBetweenPoints,
-  drawSelectionOutline,
-} from '../../util/selection.ts';
+import { createCommittedPolygonSelection, distanceBetweenPoints, drawSelectionOutline } from '../../util/selection.ts';
 import {
   createEdgeMapFromCanvas,
   createMagneticSegment,
@@ -227,7 +223,8 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
 
     const start = anchorsRef.current[0];
     const shouldClose =
-      anchorsRef.current.length >= MIN_POINTS_FOR_SELECTION && distanceBetweenPoints(coords, start) <= CLOSE_START_THRESHOLD;
+      anchorsRef.current.length >= MIN_POINTS_FOR_SELECTION &&
+      distanceBetweenPoints(coords, start) <= CLOSE_START_THRESHOLD;
     const target = shouldClose ? start : coords;
     const segment = makeSegment(target, magneticEnabled);
     if (!segment) return;
@@ -433,7 +430,10 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     }
 
     const start = anchorsRef.current[0];
-    if (anchorsRef.current.length >= MIN_POINTS_FOR_SELECTION && distanceBetweenPoints(coords, start) <= CLOSE_START_THRESHOLD) {
+    if (
+      anchorsRef.current.length >= MIN_POINTS_FOR_SELECTION &&
+      distanceBetweenPoints(coords, start) <= CLOSE_START_THRESHOLD
+    ) {
       finishSelection();
       return;
     }

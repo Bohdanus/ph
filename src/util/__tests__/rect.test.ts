@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
-import { sortRect, trimRect, trimRect2, sortedRectToPos, reduceRect, posToSortedRect, hexToRgb, calculateNewRect } from '../rect.ts';
+import {
+  sortRect,
+  trimRect,
+  trimRect2,
+  sortedRectToPos,
+  reduceRect,
+  posToSortedRect,
+  hexToRgb,
+  calculateNewRect,
+} from '../rect.ts';
 import type { RectXY, RectXYSorted, Pos, Size } from '../../contexts/general-types.ts';
 
 describe('sortRect', () => {
@@ -133,7 +142,14 @@ describe('calculateNewRect', () => {
   it('returns an expanded rect when text is empty', () => {
     const canvasRef = makeCanvasRef(0);
     const result = calculateNewRect(
-      { ...baseArgs, text: '', fontSize: 16, lineHeight: 1.2, rect: { x1: 0, y1: 0, x2: 0, y2: 0 }, align: 'left' } as any,
+      {
+        ...baseArgs,
+        text: '',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: { x1: 0, y1: 0, x2: 0, y2: 0 },
+        align: 'left',
+      } as any,
       canvasRef,
       imageSize
     );

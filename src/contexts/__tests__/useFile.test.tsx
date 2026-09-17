@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
+import { useLayoutEffect } from 'react';
 import { FileProvider, useFile, type FileContextType } from '../useFile.tsx';
 import { downloadBlob, loadDocumentFile, saveImageToDisk } from '../image-load-save-utils.ts';
 import { savePsd } from '../psd-utils.ts';
@@ -11,9 +12,12 @@ vi.mock('../image-load-save-utils.ts', () => ({
 }));
 vi.mock('../psd-utils.ts', () => ({ savePsd: vi.fn() }));
 
-let files: FileContextType;
+const filesRef = { current: null as FileContextType | null };
 function Consumer() {
-  files = useFile();
+  const files = useFile();
+  useLayoutEffect(() => {
+    filesRef.current = files;
+  });
   return null;
 }
 
@@ -49,7 +53,7 @@ describe('FileProvider PSD integration', () => {
     };
     const resolved = vi.fn();
     act(() => {
-      void files.openSaveImageDialog(input).then(resolved);
+      void filesRef.current!.openSaveImageDialog(input).then(resolved);
     });
     fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'psd' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -74,7 +78,7 @@ describe('FileProvider PSD integration', () => {
     );
     const resolved = vi.fn();
     act(() => {
-      void files.openLoadImageDialog().then(resolved);
+      void filesRef.current!.openLoadImageDialog().then(resolved);
     });
     const input = container.querySelector('input[type=file]')!;
     expect(input.getAttribute('accept')).toContain('.psd');
@@ -110,7 +114,7 @@ describe('FileProvider PSD integration', () => {
     };
     const resolved = vi.fn();
     act(() => {
-      void files.openSaveImageDialog(input).then(resolved);
+      void filesRef.current!.openSaveImageDialog(input).then(resolved);
     });
     fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'psd' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -140,7 +144,7 @@ describe('FileProvider PSD integration', () => {
     };
     const resolved = vi.fn();
     act(() => {
-      void files.openSaveImageDialog(input).then(resolved);
+      void filesRef.current!.openSaveImageDialog(input).then(resolved);
     });
     fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'image/jpeg' } });
     fireEvent.change(screen.getByLabelText('JPEG quality'), { target: { value: '0.35' } });
@@ -162,7 +166,7 @@ describe('FileProvider PSD integration', () => {
     );
     const resolved = vi.fn();
     act(() => {
-      void files.openLoadImageDialog().then(resolved);
+      void filesRef.current!.openLoadImageDialog().then(resolved);
     });
     const input = container.querySelector('input[type=file]')!;
     const file = new File([], 'drawing.psd');
@@ -181,7 +185,7 @@ describe('FileProvider PSD integration', () => {
     );
     const resolved = vi.fn();
     act(() => {
-      void files.openLoadImageDialog().then(resolved);
+      void filesRef.current!.openLoadImageDialog().then(resolved);
     });
     const input = container.querySelector('input[type=file]')!;
     await act(async () => {
@@ -214,7 +218,7 @@ describe('FileProvider openNewImageDialog', () => {
     );
     const resolved = vi.fn();
     act(() => {
-      void files.openNewImageDialog().then(resolved);
+      void filesRef.current!.openNewImageDialog().then(resolved);
     });
     fireEvent.click(screen.getByTestId('new-image-dialog-submit-button'));
     await waitFor(() =>
@@ -237,7 +241,7 @@ describe('FileProvider openNewImageDialog', () => {
     );
     const resolved = vi.fn();
     act(() => {
-      void files.openNewImageDialog().then(resolved);
+      void filesRef.current!.openNewImageDialog().then(resolved);
     });
     fireEvent.click(screen.getByTestId('new-image-dialog-cancel-button'));
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
@@ -251,7 +255,7 @@ describe('FileProvider openNewImageDialog', () => {
     );
     const resolved = vi.fn();
     act(() => {
-      void files.openNewImageDialog().then(resolved);
+      void filesRef.current!.openNewImageDialog().then(resolved);
     });
     fireEvent.click(screen.getByTestId('new-image-dialog-close-button'));
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
@@ -265,7 +269,7 @@ describe('FileProvider openNewImageDialog', () => {
     );
     const resolved = vi.fn();
     act(() => {
-      void files.openNewImageDialog().then(resolved);
+      void filesRef.current!.openNewImageDialog().then(resolved);
     });
     fireEvent.change(screen.getByTestId('new-image-preset-select'), {
       target: { value: 'us-letter' },
@@ -284,7 +288,7 @@ describe('FileProvider openNewImageDialog', () => {
     );
     const resolved = vi.fn();
     act(() => {
-      void files.openNewImageDialog().then(resolved);
+      void filesRef.current!.openNewImageDialog().then(resolved);
     });
     fireEvent.change(screen.getByTestId('new-image-preset-select'), {
       target: { value: 'us-letter' },
@@ -309,7 +313,7 @@ describe('FileProvider openNewImageDialog', () => {
     );
     const resolved = vi.fn();
     act(() => {
-      void files.openNewImageDialog().then(resolved);
+      void filesRef.current!.openNewImageDialog().then(resolved);
     });
     fireEvent.change(screen.getByTestId('new-image-preset-select'), {
       target: { value: 'us-letter' },
@@ -334,7 +338,7 @@ describe('FileProvider openNewImageDialog', () => {
     );
     const resolved = vi.fn();
     act(() => {
-      void files.openNewImageDialog().then(resolved);
+      void filesRef.current!.openNewImageDialog().then(resolved);
     });
     fireEvent.change(screen.getByTestId('new-image-width-input'), {
       target: { value: '1234' },
@@ -369,7 +373,7 @@ describe('FileProvider save dialog edge cases', () => {
       size: { width: 10, height: 10 },
     };
     act(() => {
-      void files.openSaveImageDialog(input);
+      void filesRef.current!.openSaveImageDialog(input);
     });
     fireEvent.change(screen.getByTestId('save-dialog-filename-input'), {
       target: { value: '' },
@@ -394,7 +398,7 @@ describe('FileProvider save dialog edge cases', () => {
       size: { width: 10, height: 10 },
     };
     act(() => {
-      void files.openSaveImageDialog(input);
+      void filesRef.current!.openSaveImageDialog(input);
     });
     expect(screen.queryByTestId('save-dialog-jpeg-quality')).toBeNull();
     fireEvent.change(screen.getByTestId('save-dialog-format-select'), {
@@ -420,7 +424,7 @@ describe('FileProvider save dialog edge cases', () => {
       size: { width: 10, height: 10 },
     };
     act(() => {
-      void files.openSaveImageDialog(input);
+      void filesRef.current!.openSaveImageDialog(input);
     });
     expect(screen.queryByText((content) => content.includes('Preserves raster layers'))).toBeNull();
     fireEvent.change(screen.getByTestId('save-dialog-format-select'), {
@@ -444,7 +448,7 @@ describe('FileProvider save dialog edge cases', () => {
     };
     const resolved = vi.fn();
     act(() => {
-      void files.openSaveImageDialog(input).then(resolved);
+      void filesRef.current!.openSaveImageDialog(input).then(resolved);
     });
     fireEvent.click(screen.getByTestId('save-dialog-cancel-button'));
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
@@ -466,7 +470,7 @@ describe('FileProvider save dialog edge cases', () => {
     };
     const resolved = vi.fn();
     act(() => {
-      void files.openSaveImageDialog(input).then(resolved);
+      void filesRef.current!.openSaveImageDialog(input).then(resolved);
     });
     fireEvent.click(screen.getByTestId('save-dialog-close-button'));
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
@@ -488,7 +492,7 @@ describe('FileProvider save dialog edge cases', () => {
     };
     const resolved = vi.fn();
     act(() => {
-      void files.openSaveImageDialog(input).then(resolved);
+      void filesRef.current!.openSaveImageDialog(input).then(resolved);
     });
     fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
     await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
@@ -517,7 +521,7 @@ describe('FileProvider save dialog edge cases', () => {
     };
     const resolved = vi.fn();
     act(() => {
-      void files.openSaveImageDialog(input).then(resolved);
+      void filesRef.current!.openSaveImageDialog(input).then(resolved);
     });
     fireEvent.change(screen.getByTestId('save-dialog-format-select'), {
       target: { value: 'psd' },
@@ -548,14 +552,14 @@ describe('FileProvider save dialog edge cases', () => {
     };
     const resolved1 = vi.fn();
     act(() => {
-      void files.openSaveImageDialog(input).then(resolved1);
+      void filesRef.current!.openSaveImageDialog(input).then(resolved1);
     });
     fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
     await waitFor(() => expect(resolved1).toHaveBeenCalledWith({ fileName: 'test (copy)', format: 'image/png' }));
 
     const resolved2 = vi.fn();
     act(() => {
-      void files.openSaveImageDialog(input).then(resolved2);
+      void filesRef.current!.openSaveImageDialog(input).then(resolved2);
     });
     fireEvent.change(screen.getByTestId('save-dialog-format-select'), {
       target: { value: 'image/jpeg' },
@@ -587,7 +591,7 @@ describe('FileProvider openLoadImageDialog edge cases', () => {
     );
     const resolved = vi.fn();
     act(() => {
-      void files.openLoadImageDialog().then(resolved);
+      void filesRef.current!.openLoadImageDialog().then(resolved);
     });
     const input = container.querySelector('input[type=file]')!;
     const file = new File(['test'], 'document.pdf');
@@ -606,7 +610,7 @@ describe('FileProvider openLoadImageDialog edge cases', () => {
     );
     const resolved = vi.fn();
     act(() => {
-      void files.openLoadImageDialog().then(resolved);
+      void filesRef.current!.openLoadImageDialog().then(resolved);
     });
     const input = container.querySelector('input[type=file]') as HTMLInputElement;
     const file = new File(['test'], 'test.png');
@@ -629,7 +633,7 @@ describe('FileProvider openLoadImageDialog edge cases', () => {
     for (let i = 0; i < 3; i++) {
       const resolved = vi.fn();
       act(() => {
-        void files.openLoadImageDialog().then(resolved);
+        void filesRef.current!.openLoadImageDialog().then(resolved);
       });
       const file = new File(['test'], `test${i}.png`);
       fireEvent.change(input, { target: { files: [file] } });

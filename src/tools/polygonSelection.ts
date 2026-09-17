@@ -10,4 +10,3 @@ export type LassoToolArgs = {
 };
 
 export type PolygonSelectionToolSettings = Omit<LassoToolArgs, 'points'>;
-

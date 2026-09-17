@@ -8,7 +8,11 @@ import { TrashIcon } from '../Icons/TrashIcon.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { DragHandleIcon } from '../Icons/DragHandleIcon.tsx';
 import PreviewTooltip, { type MaybeBitmap } from '../PreviewTooltip/BmpPreviewTooltip.tsx';
-import { ICON_TOGGLE_BUTTON_VISIBLE, ICON_TOGGLE_BUTTON_HIDDEN, DELETE_BUTTON_ICON } from '../ToolbarsRight/buttonStyles.ts';
+import {
+  ICON_TOGGLE_BUTTON_VISIBLE,
+  ICON_TOGGLE_BUTTON_HIDDEN,
+  DELETE_BUTTON_ICON,
+} from '../ToolbarsRight/buttonStyles.ts';
 import { RENAME_LAYER_ACTION } from '../../util/constants.ts';
 
 export default function LayersTab() {
@@ -26,6 +30,7 @@ export default function LayersTab() {
   const [isExpanding, setIsExpanding] = useState(false);
 
   const [hoveredId, setHoveredId] = useState<LayerId | null>(null);
+  const [hoveredElement, setHoveredElement] = useState<HTMLElement | null>(null);
   const listItemRefs = useRef<Record<LayerId, HTMLLIElement | null>>({});
   const dragImageRef = useRef<HTMLDivElement>(null);
   const dragImageNameRef = useRef<HTMLSpanElement>(null);
@@ -43,12 +48,11 @@ export default function LayersTab() {
       document.body.classList.remove('cursor-grabbing');
     };
   }, []);
-  ///////
+  /////
 
   const sortedLayers = useMemo(() => getSortedLayersArray(layers).reverse(), [layers]);
 
   const hoveredLayer = hoveredId ? layers[hoveredId] : null;
-  const referenceEl = hoveredId ? listItemRefs.current[hoveredId] : null;
 
   const bitmapPromise = Promise.resolve((hoveredLayer?.tmpCanvas ?? hoveredLayer?.bitmap) as MaybeBitmap);
 
@@ -88,7 +92,7 @@ export default function LayersTab() {
     <div className={`flex flex-col gap-2 h-full ${draggedLayerId ? 'is-dragging' : ''}`}>
       <PreviewTooltip
         open={hoveredId !== null && !!hoveredLayer}
-        hoveredElement={referenceEl}
+        hoveredElement={hoveredElement}
         bitmapPromise={bitmapPromise}
         placement="left"
       />
@@ -167,8 +171,14 @@ export default function LayersTab() {
                     animateMove(draggedLayerId, layer.id);
                   }}
                   onClick={() => setActiveLayer(layer.id)}
-                  onMouseEnter={() => setHoveredId(layer.id)}
-                  onMouseLeave={() => setHoveredId(null)}
+                  onMouseEnter={(e) => {
+                    setHoveredId(layer.id);
+                    setHoveredElement(e.currentTarget);
+                  }}
+                  onMouseLeave={() => {
+                    setHoveredId(null);
+                    setHoveredElement(null);
+                  }}
                   className={[
                     'flex items-center gap-2 rounded px-2 py-1 select-none',
                     'border border-transparent',
@@ -185,9 +195,7 @@ export default function LayersTab() {
                     }}
                     className={[
                       'h-6 w-6 grid place-items-center rounded border',
-                      layer.visible
-                        ? ICON_TOGGLE_BUTTON_VISIBLE
-                        : ICON_TOGGLE_BUTTON_HIDDEN,
+                      layer.visible ? ICON_TOGGLE_BUTTON_VISIBLE : ICON_TOGGLE_BUTTON_HIDDEN,
                     ].join(' ')}
                     aria-label={layer.visible ? 'Hide layer' : 'Show layer'}
                     title={layer.visible ? 'Hide layer' : 'Show layer'}

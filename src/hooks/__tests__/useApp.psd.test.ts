@@ -14,13 +14,21 @@ vi.mock('../../contexts/useLayer.ts', () => ({ useLayers: () => mocks }));
 
 function setup(warnings: string[] = []) {
   const layer = {
-    id: 'top', name: 'Imported top', isBedrock: false, tmpCanvas: null,
+    id: 'top',
+    name: 'Imported top',
+    isBedrock: false,
+    tmpCanvas: null,
     bitmap: { width: 20, height: 30 } as ImageBitmap,
-    visible: false, opacity: 0.4, locked: true, blendMode: 'multiply' as const,
-    order: 9, pos: { x: -3, y: 7, width: 20, height: 30 },
+    visible: false,
+    opacity: 0.4,
+    locked: true,
+    blendMode: 'multiply' as const,
+    order: 9,
+    pos: { x: -3, y: 7, width: 20, height: 30 },
   };
   const document: PsdDocument = {
-    size: { width: 320, height: 180 }, warnings,
+    size: { width: 320, height: 180 },
+    warnings,
     layers: { top: layer, bottom: { ...layer, id: 'bottom', order: 2, pos: { ...layer.pos } } },
   };
   const state = {
@@ -28,8 +36,12 @@ function setup(warnings: string[] = []) {
     toolOverlayRef: { current: { width: 10, height: 10 } },
     rectOverlayRef: { current: { width: 10, height: 10 } },
     currentArgs: { current: { toolName: 'text', text: 'Uncommitted' } },
-    layers: { old: layer }, deletedLayers: { deleted: layer }, history: [{ id: 'old' }],
-    historyIndex: 4, selections: [{ id: 'old-selection' }], hasUnsavedChanges: true,
+    layers: { old: layer },
+    deletedLayers: { deleted: layer },
+    history: [{ id: 'old' }],
+    historyIndex: 4,
+    selections: [{ id: 'old-selection' }],
+    hasUnsavedChanges: true,
   };
   const dispatch = vi.fn();
   mocks.useStore.mockReturnValue([state, dispatch]);
@@ -53,15 +65,30 @@ describe('useApp PSD replacement', () => {
     expect(action).toEqual({
       type: 'BATCH_UPDATES',
       payload: {
-        fileName: 'design.psd', totalSize: document.size, layers: document.layers,
-        activeLayerId: 'top', deletedLayers: {}, hasImage: true, hasUnsavedChanges: false,
-        isToolDirty: false, toolName: 'reposition', selections: [], activeSelectionId: null,
-        selectionDraft: { status: 'idle' }, selectionCleared: null, selectionClipboard: null,
+        fileName: 'design.psd',
+        totalSize: document.size,
+        layers: document.layers,
+        activeLayerId: 'top',
+        deletedLayers: {},
+        hasImage: true,
+        hasUnsavedChanges: false,
+        isToolDirty: false,
+        toolName: 'reposition',
+        selections: [],
+        activeSelectionId: null,
+        selectionDraft: { status: 'idle' },
+        selectionCleared: null,
+        selectionClipboard: null,
         historyIndex: 0,
-        history: [{
-          id: expect.any(String), actionName: OPEN_DOCUMENT_ACTION, layerId: 'top',
-          documentSource: { layers: document.layers, size: document.size }, imagePromise: expect.any(Promise),
-        }],
+        history: [
+          {
+            id: expect.any(String),
+            actionName: OPEN_DOCUMENT_ACTION,
+            layerId: 'top',
+            documentSource: { layers: document.layers, size: document.size },
+            imagePromise: expect.any(Promise),
+          },
+        ],
       },
     });
     expect(state.currentArgs.current).toEqual({});
@@ -115,7 +142,10 @@ describe('useApp PSD replacement', () => {
     const image = { width: 80, height: 40 } as HTMLImageElement;
     useApp().setImageFromUpload({ fileName: 'photo.png', image });
     expect(mocks.createLayerFromBitmap).toHaveBeenCalledExactlyOnceWith({
-      bitmap: image, name: 'photo.png', size: { width: 80, height: 40 }, isBedrock: true,
+      bitmap: image,
+      name: 'photo.png',
+      size: { width: 80, height: 40 },
+      isBedrock: true,
     });
     expect(dispatch).toHaveBeenCalledWith({ type: 'SET_FILE_NAME', payload: 'photo.png' });
     expect(dispatch.mock.calls.every(([action]) => !action.payload?.history)).toBe(true);

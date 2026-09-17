@@ -33,13 +33,23 @@ export type LayerEditParams = {
 
 export const useLayers = () => {
   const [
-    { canvasRef, toolOverlayRef, layers, deletedLayers, activeLayerId, totalSize, toolName, currentArgs },
+    {
+      canvasRef,
+      toolOverlayRef,
+      layers,
+      deletedLayers,
+      activeLayerId,
+      totalSize,
+      toolName,
+      currentArgs: currentArgsRef,
+    },
     dispatch,
   ] = useStore();
   const { addHistoryEntry } = useHistory();
 
   function clearOverlay() {
-    const overlayCtx = toolOverlayRef.current?.getContext('2d')!;
+    const overlayCtx = toolOverlayRef.current?.getContext('2d');
+    if (!overlayCtx) return;
     overlayCtx.clearRect(0, 0, totalSize.width, totalSize.height);
   }
 
@@ -136,11 +146,11 @@ export const useLayers = () => {
 
     // special case
     if (toolName === 'text' /* || toolName === 'crop'*/) {
-      const args = currentArgs.current as TextToolArgs & ToolArgs;
+      const args = currentArgsRef.current as TextToolArgs & ToolArgs;
       if (!args.text || !args.rect) return layers;
 
       const layer = createLayerFromTool({ args });
-      currentArgs.current = { ...args, text: '' };
+      currentArgsRef.current = { ...args, text: '' };
       return { ...layers, [layer.id]: layer };
     }
 

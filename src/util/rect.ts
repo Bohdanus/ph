@@ -61,7 +61,7 @@ export function trimRect2(rectSorted: RectXY, imageSize: Size): RectXY {
 }
 
 export function sortedRectToPos(rectSorted: RectXYSorted): Pos {
-  let { x1, y1, x2, y2 } = rectSorted;
+  const { x1, y1, x2, y2 } = rectSorted;
 
   const x = x1;
   const y = y1;
@@ -81,7 +81,7 @@ export function reduceRect(sortedRect: RectXYSorted, pos: Pos) {
 }
 
 export function posToSortedRect(rect: Pos): RectXYSorted {
-  let { x, y, width, height } = rect;
+  const { x, y, width, height } = rect;
 
   const x1 = x;
   const y1 = y;
