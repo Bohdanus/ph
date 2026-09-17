@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { initializeCanvas, readPsd, writePsd, type Layer as PsdLayer, type PixelData } from 'ag-psd';
 
 import { loadPsd, savePsd } from '../psd-utils.ts';
+import { loadDocumentFile } from '../image-load-save-utils.ts';
 import type { Layer } from '../layer-types.ts';
 
 const pixel = (r = 0, g = 0, b = 0, a = 255): PixelData => ({
@@ -38,8 +39,8 @@ beforeEach(() => {
         source: HTMLCanvasElement,
         x: number,
         y: number,
-        width = source.width,
-        height = source.height
+        width: number = source.width,
+        height: number = source.height
       ) {
         const input = source.getContext('2d')!.getImageData(0, 0, source.width, source.height).data;
         drawCalls.push({ mode: this.globalCompositeOperation, alpha: this.globalAlpha });
@@ -108,7 +109,122 @@ function binary(children: PsdLayer[]) {
   return writePsd({ width: 3, height: 2, children }, { noBackground: true });
 }
 
+function pixels(...values: number[]): PixelData {
+  return {
+    width: 2,
+    height: 2,
+    data: new Uint8ClampedArray(values),
+  };
+}
+
 describe('PSD codec binary roundtrip', () => {
+  it('opens a real layered PSD through the document loader with displayable leaf layers', async () => {
+    const buffer = await writePsd(
+      {
+        width: 3,
+        height: 2,
+        children: [
+          {
+            name: 'Background',
+            left: 0,
+            top: 0,
+            imageData: pixels(
+              12, 24, 36, 255,
+              48, 60, 72, 255,
+              84, 96, 108, 255,
+              120, 132, 144, 255
+            ),
+          },
+          {
+            name: 'Foreground',
+            left: 1,
+            top: 0,
+            imageData: {
+              width: 2,
+              height: 1,
+              data: new Uint8ClampedArray([220, 10, 20, 255, 30, 40, 50, 128]),
+            },
+            opacity: 200 / 255,
+          },
+        ],
+      },
+      { noBackground: true }
+    );
+    const file = new File([buffer], 'layered.PSD', { type: 'application/octet-stream' });
+
+    const imported = await loadDocumentFile(file);
+
+    expect(imported).toMatchObject({ fileName: 'layered.PSD' });
+    expect('document' in imported).toBe(true);
+    if (!('document' in imported)) throw new Error('Expected a PSD document');
+
+    const layers = Object.values(imported.document.layers).sort((a, b) => a.order - b.order);
+    expect(imported.document.size).toEqual({ width: 3, height: 2 });
+    expect(layers).toHaveLength(2);
+    expect(layers.map(({ name, order }) => [name, order])).toEqual([
+      ['Background', 0],
+      ['Foreground', 1],
+    ]);
+    expect(layers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'Background',
+          visible: true,
+          tmpCanvas: null,
+          pos: { x: 0, y: 0, width: 2, height: 2 },
+          bitmap: expect.any(HTMLCanvasElement),
+        }),
+        expect.objectContaining({
+          name: 'Foreground',
+          visible: true,
+          opacity: 200 / 255,
+          tmpCanvas: null,
+          pos: { x: 1, y: 0, width: 2, height: 1 },
+          bitmap: expect.any(HTMLCanvasElement),
+        }),
+      ])
+    );
+
+    const background = layers[0].bitmap as HTMLCanvasElement;
+    const foreground = layers[1].bitmap as HTMLCanvasElement;
+    expect({ width: background.width, height: background.height }).toEqual({ width: 2, height: 2 });
+    expect({ width: foreground.width, height: foreground.height }).toEqual({ width: 2, height: 1 });
+    expect(Array.from(background.getContext('2d')!.getImageData(0, 0, 2, 2).data)).toEqual([
+      12, 24, 36, 255,
+      48, 60, 72, 255,
+      84, 96, 108, 255,
+      120, 132, 144, 255,
+    ]);
+    expect(Array.from(foreground.getContext('2d')!.getImageData(0, 0, 2, 1).data)).toEqual([
+      220, 10, 20, 255,
+      30, 40, 50, 128,
+    ]);
+
+    const display = document.createElement('canvas');
+    display.width = imported.document.size.width;
+    display.height = imported.document.size.height;
+    const displayContext = display.getContext('2d')!;
+    const drawImage = vi.spyOn(displayContext, 'drawImage');
+    for (const layer of layers) {
+      if (!layer.visible || !layer.bitmap) continue;
+      displayContext.globalAlpha = layer.opacity;
+      displayContext.globalCompositeOperation = layer.blendMode;
+      displayContext.drawImage(layer.bitmap, layer.pos.x, layer.pos.y, layer.pos.width, layer.pos.height);
+    }
+    expect(drawImage).toHaveBeenCalledTimes(2);
+    expect(drawImage).toHaveBeenNthCalledWith(1, background, 0, 0, 2, 2);
+    expect(drawImage).toHaveBeenNthCalledWith(2, foreground, 1, 0, 2, 1);
+    expect(Array.from(displayContext.getImageData(0, 0, 3, 2).data)).toEqual([
+      12, 24, 36, 255,
+      183, 21, 31, 255,
+      30, 40, 50, 100,
+      84, 96, 108, 255,
+      120, 132, 144, 255,
+      0, 0, 0, 0,
+    ]);
+    expect(imported.document.warnings).toEqual([]);
+  });
+
   it('preserves metadata, bottom-first order, negative offsets, hidden pixels and locks', async () => {
     const imported = await loadPsd(
       binary([
@@ -141,6 +257,24 @@ describe('PSD codec binary roundtrip', () => {
       transparencyProtected: true,
     });
     expect(Array.from(result.children![1].imageData!.data)).toEqual([0, 255, 0, 255]);
+  });
+
+  it('warns when a layer uses non-default Blend If ranges', async () => {
+    const imported = await loadPsd(
+      binary([
+        {
+          name: 'Blend If',
+          imageData: pixel(255),
+          blendingRanges: {
+            compositeGrayBlendSource: [0, 0, 128, 255],
+            compositeGraphBlendDestinationRange: [0, 0, 255, 255],
+            ranges: [],
+          },
+        },
+      ])
+    );
+
+    expect(imported.warnings.join(' ')).toContain('Blend If');
   });
 
   it('uses tmpCanvas, scales pixels, sorts layers and composites visible layers with quantized opacity', async () => {
@@ -278,11 +412,40 @@ describe('PSD codec binary roundtrip', () => {
 
   it('rejects invalid layer geometry, opacity, and raster budgets', async () => {
     await expect(
-      savePsd({ input: layer({ pos: { x: 0.1, y: 0, width: 1, height: 1 } }) }, { width: 1, height: 1 })
+      savePsd({ input: layer({ pos: { x: NaN, y: 0, width: 1, height: 1 } }) }, { width: 1, height: 1 })
     ).rejects.toThrow('offset');
     await expect(savePsd({ input: layer({ opacity: NaN }) }, { width: 1, height: 1 })).rejects.toThrow('opacity');
     await expect(
       savePsd({ input: layer({ pos: { x: 0, y: 0, width: 8000, height: 8000 } }) }, { width: 8000, height: 8000 })
     ).rejects.toThrow('budget');
+  });
+
+  it('rasterizes fractional geometry into enclosing integer bounds', async () => {
+    const input = layer({ pos: { x: -0.5, y: 0.25, width: 1.75, height: 1.5 } });
+    const saved = await savePsd({ input }, { width: 3, height: 3 });
+    const result = readPsd(saved, { useImageData: true });
+    expect(result.children![0]).toMatchObject({ left: -1, top: 0, right: 2, bottom: 2 });
+    expect(input.pos).toEqual({ x: -0.5, y: 0.25, width: 1.75, height: 1.5 });
+  });
+
+  it('uses smart object previews and warns when previews are absent', async () => {
+    const placedLayer: NonNullable<PsdLayer['placedLayer']> = {
+      id: '12345678-1234-1234-1234-123456789abc',
+      type: 'raster',
+      transform: [0, 0, 1, 0, 1, 1, 0, 1],
+      width: 1,
+      height: 1,
+    };
+    const result = await loadPsd(
+      binary([
+        { name: 'Smart', placedLayer, imageData: pixel(25, 50, 75) },
+        { name: 'Missing', placedLayer },
+      ])
+    );
+    expect(result.warnings.filter((warning) => warning.includes('Smart object'))).toHaveLength(2);
+    expect(result.warnings.join(' ')).toContain('No raster preview');
+    const saved = readPsd(await savePsd(result.layers, result.size), { useImageData: true });
+    expect(Array.from(saved.children![0].imageData!.data)).toEqual([25, 50, 75, 255]);
+    expect(saved.children![0].placedLayer).toBeUndefined();
   });
 });

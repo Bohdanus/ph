@@ -53,7 +53,7 @@ describe('copyRectToClipboard', () => {
 
   it('returns false when sourceCanvas is null', async () => {
     const clipboard = { write: vi.fn() };
-    const ClipboardItemCtor = vi.fn();
+    const ClipboardItemCtor = vi.fn() as any;
     const result = await copyRectToClipboard({
       sourceCanvas: null,
       rect: { x1: 0, y1: 0, x2: 10, y2: 10 },
@@ -72,7 +72,7 @@ describe('copyRectToClipboard', () => {
       rect: null,
       imageSize: { width: 100, height: 100 },
       clipboard: { write: vi.fn() },
-      ClipboardItemCtor: vi.fn(),
+      ClipboardItemCtor: vi.fn() as any,
     });
     expect(result).toBe(false);
   });
@@ -84,7 +84,7 @@ describe('copyRectToClipboard', () => {
       rect: { x1: 0, y1: 0, x2: 10, y2: 10 },
       imageSize: { width: 100, height: 100 },
       clipboard: null,
-      ClipboardItemCtor: vi.fn(),
+      ClipboardItemCtor: vi.fn() as any,
     });
     expect(result).toBe(false);
   });
@@ -96,7 +96,7 @@ describe('copyRectToClipboard', () => {
       rect: { x1: 50, y1: 50, x2: 50, y2: 50 },
       imageSize: { width: 100, height: 100 },
       clipboard: { write: vi.fn() },
-      ClipboardItemCtor: vi.fn(),
+      ClipboardItemCtor: vi.fn() as any,
     });
     expect(result).toBe(false);
   });
@@ -114,7 +114,7 @@ describe('copyRectToClipboard', () => {
       rect: { x1: 0, y1: 0, x2: 50, y2: 50 },
       imageSize: { width: 100, height: 100 },
       clipboard: { write: vi.fn() },
-      ClipboardItemCtor: vi.fn(),
+      ClipboardItemCtor: vi.fn() as any,
     });
     expect(result).toBe(false);
   });
@@ -130,7 +130,7 @@ describe('copyRectToClipboard', () => {
     });
 
     const writeMock = vi.fn().mockResolvedValue(undefined);
-    const ClipboardItemCtor = vi.fn().mockImplementation(function () {
+    const ClipboardItemCtor: any = vi.fn().mockImplementation(function () {
       return {};
     });
 
@@ -162,7 +162,7 @@ describe('copyRectToClipboard', () => {
       clipboard: { write: vi.fn().mockRejectedValue(new Error('denied')) },
       ClipboardItemCtor: vi.fn().mockImplementation(function () {
         return {};
-      }),
+      }) as any,
     });
 
     expect(result).toBe(false);

@@ -8,7 +8,7 @@ import FontSelect from './FontSelect.tsx';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON, TOGGLE_BUTTON_ACTIVE, TOGGLE_BUTTON_INACTIVE } from '../buttonStyles.ts';
 
 const Text: React.FC<{}> = () => {
-  const [{ canvasRef, color, textareaRef, totalSize }] = useStore();
+  const [{ canvasRef, color, currentArgs, textareaRef, totalSize }] = useStore();
   const { createLayerFromTool } = useLayers();
   const { toolArgs, setToolArgs: onChange } = useCurrentTool();
 
@@ -22,7 +22,16 @@ const Text: React.FC<{}> = () => {
     return null;
   }
 
-  const { text = '', fontSize = 64, lineHeight = 1.1, rect = null, bold = false, italic = false, fontFamily = 'Arial', align = 'left' } = toolArgs;
+  const {
+    text = '',
+    fontSize = 64,
+    lineHeight = 1.1,
+    rect = null,
+    bold = false,
+    italic = false,
+    fontFamily = 'Arial',
+    align = 'left',
+  } = toolArgs;
 
   const handleTextChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const textValue = event.target.value;
@@ -72,6 +81,8 @@ const Text: React.FC<{}> = () => {
   const applyText = () => {
     if (text && rect) {
       createLayerFromTool({ args: toolArgs });
+      currentArgs.current = { ...toolArgs, text: '', rect: null };
+      onChange({ ...toolArgs, text: '', rect: null });
     }
   };
 

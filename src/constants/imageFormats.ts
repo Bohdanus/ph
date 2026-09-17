@@ -33,6 +33,46 @@ export const IMAGE_FORMATS = [
     encoding: 'tiff',
     supportsQuality: false,
   },
+  {
+    value: 'image/bmp',
+    label: 'BMP',
+    extension: 'bmp',
+    mimeType: 'image/bmp',
+    encoding: 'bmp',
+    supportsQuality: false,
+  },
+  {
+    value: 'image/gif',
+    label: 'GIF (static)',
+    extension: 'gif',
+    mimeType: 'image/gif',
+    encoding: 'gif',
+    supportsQuality: false,
+  },
+  {
+    value: 'image/avif',
+    label: 'AVIF',
+    extension: 'avif',
+    mimeType: 'image/avif',
+    encoding: 'avif',
+    supportsQuality: false,
+  },
+  {
+    value: 'image/x-icon',
+    label: 'ICO',
+    extension: 'ico',
+    mimeType: 'image/x-icon',
+    encoding: 'ico',
+    supportsQuality: false,
+  },
+  {
+    value: 'image/svg+xml',
+    label: 'SVG (flattened)',
+    extension: 'svg',
+    mimeType: 'image/svg+xml',
+    encoding: 'svg',
+    supportsQuality: false,
+  },
 ] as const;
 
 export const PSD_FORMAT = {
@@ -47,11 +87,11 @@ type ResolvedImageFormat = {
   label: string;
   extension: string;
   mimeType: string;
-  encoding: 'canvas' | 'tiff';
+  encoding: 'canvas' | 'tiff' | 'bmp' | 'gif' | 'avif' | 'ico' | 'svg';
   supportsQuality: boolean;
 };
 
-const OUTPUT_EXTENSION_PATTERN = /\.(?:psd|png|jpe?g|webp|tiff?)$/i;
+const OUTPUT_EXTENSION_PATTERN = /\.(?:psd|png|jpe?g|webp|tiff?|bmp|gif|avif|ico|svg)$/i;
 
 export function resolveImageFormat(format: string): ResolvedImageFormat {
   const normalized = format.trim().toLowerCase();
@@ -60,7 +100,11 @@ export function resolveImageFormat(format: string): ResolvedImageFormat {
       value === normalized ||
       extension === normalized ||
       (extension === 'jpeg' && (normalized === 'jpg' || normalized === 'image/jpg')) ||
-      (extension === 'tiff' && (normalized === 'tif' || normalized === 'image/tif' || normalized === 'image/x-tiff'))
+      (extension === 'tiff' && (normalized === 'tif' || normalized === 'image/tif' || normalized === 'image/x-tiff')) ||
+      (extension === 'bmp' && (normalized === 'image/x-bmp' || normalized === 'image/x-ms-bmp')) ||
+      (extension === 'ico' &&
+        (normalized === 'image/ico' || normalized === 'image/vnd.microsoft.icon' || normalized === 'icon')) ||
+      (extension === 'svg' && normalized === 'image/svg')
   );
 
   if (match) return match;

@@ -162,7 +162,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
         type="file"
         ref={fileInputRef}
         onChange={handleFileInputChange}
-        accept="image/*,.psd,.tif,.tiff"
+        accept="image/*,.psd,.tif,.tiff,.bmp,.gif,.avif,.ico,.svg"
         style={{ display: 'none' }}
       />
       {showNewDialog && <NewImageDialog onClose={handleNewImageClose} onCreate={handleNewImageCreate} />}

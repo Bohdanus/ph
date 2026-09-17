@@ -1,17 +1,50 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { downloadBlob, loadDocumentFile, saveImageToDisk } from '../image-load-save-utils.ts';
 
-const { encodeTiff, loadPsd, loadTiffFile } = vi.hoisted(() => ({
+const {
+  encodeAvif,
+  encodeBmp,
+  encodeGif,
+  encodeIco,
+  encodeSvg,
+  encodeTiff,
+  loadAvifFile,
+  loadBmpFile,
+  loadIcoFile,
+  loadPsd,
+  loadTiffFile,
+} = vi.hoisted(() => ({
+  encodeAvif: vi.fn(),
+  encodeBmp: vi.fn(),
+  encodeGif: vi.fn(),
+  encodeIco: vi.fn(),
+  encodeSvg: vi.fn(),
   encodeTiff: vi.fn(),
+  loadAvifFile: vi.fn(),
+  loadBmpFile: vi.fn(),
+  loadIcoFile: vi.fn(),
   loadPsd: vi.fn(),
   loadTiffFile: vi.fn(),
 }));
 vi.mock('../psd-utils.ts', () => ({ loadPsd }));
 vi.mock('../tiff-utils.ts', () => ({ encodeTiff, loadTiffFile }));
+vi.mock('../bmp-utils.ts', () => ({ encodeBmp, loadBmpFile }));
+vi.mock('../gif-utils.ts', () => ({ encodeGif }));
+vi.mock('../avif-utils.ts', () => ({ encodeAvif, loadAvifFile }));
+vi.mock('../ico-utils.ts', () => ({ encodeIco, loadIcoFile }));
+vi.mock('../svg-utils.ts', () => ({ encodeSvg }));
 
 describe('document file routing', () => {
   beforeEach(() => {
+    encodeAvif.mockReset();
+    encodeBmp.mockReset();
+    encodeGif.mockReset();
+    encodeIco.mockReset();
+    encodeSvg.mockReset();
     encodeTiff.mockReset();
+    loadAvifFile.mockReset();
+    loadBmpFile.mockReset();
+    loadIcoFile.mockReset();
     loadPsd.mockReset();
     loadTiffFile.mockReset();
   });
@@ -74,6 +107,45 @@ describe('document file routing', () => {
   });
 
   it.each([
+    ['renamed.gif', new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]), 'image/gif'],
+    ['renamed.bin', '<svg xmlns="http://www.w3.org/2000/svg"></svg>', 'image/svg+xml'],
+  ])('loads signature-detected %s through the native image decoder', async (name, content, mimeType) => {
+    const file = new File([content], name, { type: '' });
+    let reader!: { onload: (event: { target: { result: string } }) => void; readAsDataURL: (value: Blob) => void };
+    let readerInput!: Blob;
+    let image!: { onload: () => void; src: string };
+    vi.stubGlobal(
+      'FileReader',
+      class {
+        onload = () => {};
+        readAsDataURL(value: Blob) {
+          readerInput = value;
+        }
+        constructor() {
+          reader = this;
+        }
+      }
+    );
+    vi.stubGlobal(
+      'Image',
+      class {
+        onload = () => {};
+        src = '';
+        constructor() {
+          image = this;
+        }
+      }
+    );
+
+    const promise = loadDocumentFile(file);
+    await vi.waitFor(() => expect(readerInput).toBeInstanceOf(Blob));
+    expect(readerInput.type).toBe(mimeType);
+    reader.onload({ target: { result: `data:${mimeType};base64,test` } });
+    image.onload();
+    await expect(promise).resolves.toEqual({ fileName: name, image });
+  });
+
+  it.each([
     ['photo.tiff', 'image/tiff', 'not a signature'],
     ['photo.tif', '', 'not a signature'],
     ['renamed.bin', 'application/octet-stream', new Uint8Array([0x49, 0x49, 0x2a, 0x00])],
@@ -84,6 +156,18 @@ describe('document file routing', () => {
     await expect(loadDocumentFile(file)).resolves.toEqual({ fileName: name, image });
     expect(loadTiffFile).toHaveBeenCalledExactlyOnceWith(file);
     expect(loadPsd).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['photo.bmp', 'image/bmp', 'not a signature', loadBmpFile],
+    ['photo.avif', 'image/avif', 'not a signature', loadAvifFile],
+    ['photo.ico', 'image/x-icon', 'not a signature', loadIcoFile],
+  ])('routes %s to the appropriate image loader', async (name, type, content, loader) => {
+    const file = new File([content], name, { type });
+    const image = { width: 10, height: 20 } as HTMLImageElement;
+    vi.mocked(loader).mockResolvedValue(image);
+    await expect(loadDocumentFile(file)).resolves.toEqual({ fileName: name, image });
+    expect(loader).toHaveBeenCalledExactlyOnceWith(file);
   });
 
   it('propagates PSD decoding failures without falling back to raster', async () => {
@@ -142,6 +226,21 @@ describe('document downloads', () => {
     await saveImageToDisk(canvas, 'design.webp', 'image/tiff');
     expect(encodeTiff).toHaveBeenCalledExactlyOnceWith(canvas);
     expect(downloads).toEqual([{ name: 'design.tiff', href: 'blob:export', attached: true }]);
+  });
+
+  it.each([
+    ['image/bmp', encodeBmp, 'image/bmp', 'design.bmp'],
+    ['image/gif', encodeGif, 'image/gif', 'design.gif'],
+    ['image/avif', encodeAvif, 'image/avif', 'design.avif'],
+    ['image/x-icon', encodeIco, 'image/x-icon', 'design.ico'],
+    ['image/svg+xml', encodeSvg, 'image/svg+xml', 'design.svg'],
+  ])('uses the %s encoder and output extension', async (format, encoder, mimeType, name) => {
+    const blob = new Blob(['encoded'], { type: mimeType });
+    const canvas = document.createElement('canvas');
+    vi.mocked(encoder).mockReturnValue(blob);
+    await saveImageToDisk(canvas, 'design.webp', format);
+    expect(encoder).toHaveBeenCalledExactlyOnceWith(canvas);
+    expect(downloads[0].name).toBe(name);
   });
 
   it('passes JPEG quality to the canvas encoder', async () => {

@@ -7,15 +7,17 @@ import { useFile } from '../../contexts/useFile.tsx';
 import { MENU_ITEM_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { flushSync } from 'react-dom';
+import { hasPendingText } from '../../util/typeGuards.ts';
 
 const DesktopHeader = () => {
-  const [{ canvasRef, fileName, hasUnsavedChanges, totalSize, hasImage }] = useStore();
+  const [{ canvasRef, currentArgs, fileName, hasUnsavedChanges, totalSize, hasImage }] = useStore();
   const { commitDirtyTool } = useLayers();
   const { goToTool, setBlankImage, setImageFromUpload, handleImageSave } = useApp();
   const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
 
   const { theme, toggleTheme } = useTheme();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const hasPendingToolContent = hasPendingText(currentArgs.current);
 
   const fileMenuRef = useRef<HTMLLIElement>(null);
   const editMenuRef = useRef<HTMLLIElement>(null);
@@ -104,7 +106,11 @@ const DesktopHeader = () => {
                   className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
                   type="button"
                   onClick={async () => {
-                    if (hasUnsavedChanges && !confirm('Discard unsaved changes and open another file?')) return;
+                    if (
+                      (hasUnsavedChanges || hasPendingToolContent) &&
+                      !confirm('Discard unsaved changes and open another file?')
+                    )
+                      return;
                     const data = await openLoadImageDialog();
                     data && setImageFromUpload(data);
                     setOpenMenu(null);
@@ -153,32 +159,62 @@ const DesktopHeader = () => {
           {openMenu === 'edit' && (
             <ul className="absolute left-0 top-full z-10 m-0 min-w-[160px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800">
               <li>
-                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleColors} data-testid="edit-menu-colors-button">
+                <button
+                  className={MENU_ITEM_BUTTON}
+                  type="button"
+                  onClick={handleColors}
+                  data-testid="edit-menu-colors-button"
+                >
                   Colors
                 </button>
               </li>
               <li>
-                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleBlur} data-testid="edit-menu-blur-button">
+                <button
+                  className={MENU_ITEM_BUTTON}
+                  type="button"
+                  onClick={handleBlur}
+                  data-testid="edit-menu-blur-button"
+                >
                   Blur
                 </button>
               </li>
               <li>
-                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleLevels} data-testid="edit-menu-levels-button">
+                <button
+                  className={MENU_ITEM_BUTTON}
+                  type="button"
+                  onClick={handleLevels}
+                  data-testid="edit-menu-levels-button"
+                >
                   Levels
                 </button>
               </li>
               <li>
-                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleTransform} data-testid="edit-menu-transform-button">
+                <button
+                  className={MENU_ITEM_BUTTON}
+                  type="button"
+                  onClick={handleTransform}
+                  data-testid="edit-menu-transform-button"
+                >
                   Transform
                 </button>
               </li>
               <li>
-                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleDraw} data-testid="edit-menu-draw-button">
+                <button
+                  className={MENU_ITEM_BUTTON}
+                  type="button"
+                  onClick={handleDraw}
+                  data-testid="edit-menu-draw-button"
+                >
                   Draw
                 </button>
               </li>
               <li>
-                <button className={MENU_ITEM_BUTTON} type="button" onClick={handleText} data-testid="edit-menu-text-button">
+                <button
+                  className={MENU_ITEM_BUTTON}
+                  type="button"
+                  onClick={handleText}
+                  data-testid="edit-menu-text-button"
+                >
                   Text
                 </button>
               </li>

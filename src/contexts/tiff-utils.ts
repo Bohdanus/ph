@@ -1,13 +1,5 @@
 import UTIF from 'utif';
-
-function loadImageSource(source: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Failed to decode TIFF image'));
-    image.src = source;
-  });
-}
+import { imageDataToImage } from './raster-utils.ts';
 
 export async function loadTiffFile(file: Blob): Promise<HTMLImageElement> {
   const buffer = await file.arrayBuffer();
@@ -25,18 +17,7 @@ export async function loadTiffFile(file: Blob): Promise<HTMLImageElement> {
   }
 
   const rgba = UTIF.toRGBA8(page);
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d');
-  if (!context) {
-    throw new Error('Unable to create a canvas for TIFF decoding');
-  }
-
-  const imageData = context.createImageData(width, height);
-  imageData.data.set(rgba);
-  context.putImageData(imageData, 0, 0);
-  return loadImageSource(canvas.toDataURL('image/png'));
+  return imageDataToImage({ data: rgba, width, height }, 'Failed to decode TIFF image');
 }
 
 export async function encodeTiff(canvas: HTMLCanvasElement): Promise<Blob> {

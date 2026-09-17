@@ -13,6 +13,10 @@ export function isTextToolArgs(args: ToolArgs): args is TextToolArgs & { toolNam
   return args.toolName === 'text' && args !== null && typeof args === 'object';
 }
 
+export function hasPendingText(args: ToolArgs): boolean {
+  return isTextToolArgs(args) && Boolean(args.text && args.rect);
+}
+
 export function isDrawToolArgs(args: ToolArgs): args is DrawToolArgs & { toolName: 'draw' } {
   return args.toolName === 'draw' && args !== null && typeof args === 'object';
 }

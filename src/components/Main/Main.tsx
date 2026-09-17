@@ -18,6 +18,7 @@ import { useFile } from '../../contexts/useFile.tsx';
 import { loadDocumentFile } from '../../contexts/image-load-save-utils.ts';
 import { MoveToolArea } from './MoveToolArea.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
+import { hasPendingText } from '../../util/typeGuards.ts';
 
 const Main = () => {
   const [
@@ -28,6 +29,7 @@ const Main = () => {
       rectOverlayRef,
       hasImage,
       hasUnsavedChanges,
+      currentArgs,
       layers,
       toolName,
       totalSize,
@@ -109,7 +111,11 @@ const Main = () => {
       setIsDragging(false);
       const file = event.dataTransfer.files?.[0];
       if (!file) return;
-      if (hasUnsavedChanges && !confirm('Discard unsaved changes and open another file?')) return;
+      if (
+        (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
+        !confirm('Discard unsaved changes and open another file?')
+      )
+        return;
       try {
         setImageFromUpload(await loadDocumentFile(file));
       } catch (error) {

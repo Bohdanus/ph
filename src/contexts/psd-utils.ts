@@ -34,9 +34,15 @@ const maxPixels = 64 * 1024 * 1024;
 
 function validateSize({ width, height }: Size) {
   if (
-    !Number.isInteger(width) || !Number.isInteger(height) ||
-    width < 1 || height < 1 || width > 30000 || height > 30000 || width * height > maxPixels
-  ) throw new Error('Unsupported PSD dimensions (1..30000 pixels per side, at most 64 megapixels)');
+    !Number.isInteger(width) ||
+    !Number.isInteger(height) ||
+    width < 1 ||
+    height < 1 ||
+    width > 30000 ||
+    height > 30000 ||
+    width * height > maxPixels
+  )
+    throw new Error('Unsupported PSD dimensions (1..30000 pixels per side, at most 64 megapixels)');
 }
 
 function canvas2d(width: number, height: number) {
@@ -62,7 +68,9 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
   const layers: LayersRecord = {};
   const warnings: string[] = [];
   const psd = readPsd(buffer, {
-    useRawData: true, skipThumbnail: true, skipLinkedFilesData: true,
+    useRawData: true,
+    skipThumbnail: true,
+    skipLinkedFilesData: true,
     logMissingFeatures: true,
     log: (...messages: unknown[]) => warnings.push(`PSD reader: ${messages.join(' ')}`),
   });
@@ -75,14 +83,38 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
       const name = source.name ?? 'Layer';
       const warn = (message: string) => warnings.push(`"${name}": ${message}`);
       for (const key of [
-        'mask', 'realMask', 'vectorMask', 'effects', 'clipping', 'adjustment', 'vectorFill', 'vectorStroke',
-        'filterMask', 'filterEffectsMasks', 'artboard', 'knockout', 'channelBlendingRestrictions',
-        'animationFrames', 'timeline',
+        'mask',
+        'realMask',
+        'vectorMask',
+        'effects',
+        'clipping',
+        'adjustment',
+        'vectorFill',
+        'vectorStroke',
+        'filterMask',
+        'filterEffectsMasks',
+        'userMask',
+        'artboard',
+        'knockout',
+        'channelBlendingRestrictions',
+        'animationFrames',
+        'timeline',
       ] as const) {
         if (source[key]) warn(`${key} is unsupported and is not preserved; appearance may differ.`);
       }
       if (source.text) warn('Text is imported as a raster preview; editable text is not preserved.');
       if (source.placedLayer) warn('Smart object is imported as a raster preview; object data is not preserved.');
+      const ranges = source.blendingRanges;
+      if (
+        ranges &&
+        [
+          ranges.compositeGrayBlendSource,
+          ranges.compositeGraphBlendDestinationRange,
+          ...ranges.ranges.flatMap((range) => [range.sourceRange, range.destRange]),
+        ].some((range) => range.some((value, index) => value !== [0, 0, 255, 255][index]))
+      ) {
+        warn('Custom blending ranges (Blend If) are unsupported; appearance may differ.');
+      }
       if (source.fillOpacity !== undefined && source.fillOpacity !== 1) {
         warn('Fill opacity is approximated as layer opacity; appearance may differ.');
       }
@@ -115,9 +147,16 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
       if (!blendMode) warn(`Blend mode "${source.blendMode}" is unsupported; using normal.`);
       const id = uuidv4();
       layers[id] = {
-        id, name, bitmap: canvas, tmpCanvas: null, isBedrock: false,
-        visible: nextVisible, opacity: nextOpacity, locked: nextLocked,
-        blendMode: blendMode ?? 'source-over', order: Object.keys(layers).length,
+        id,
+        name,
+        bitmap: canvas,
+        tmpCanvas: null,
+        isBedrock: false,
+        visible: nextVisible,
+        opacity: nextOpacity,
+        locked: nextLocked,
+        blendMode: blendMode ?? 'source-over',
+        order: Object.keys(layers).length,
         pos: { x: source.left ?? 0, y: source.top ?? 0, width: canvas.width, height: canvas.height },
       };
     }
@@ -133,8 +172,16 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
       ctx.putImageData(data, 0, 0);
       const id = uuidv4();
       layers[id] = {
-        id, name: 'Composite', bitmap: canvas, tmpCanvas: null, isBedrock: false,
-        visible: true, opacity: 1, locked: false, blendMode: 'source-over', order: 0,
+        id,
+        name: 'Composite',
+        bitmap: canvas,
+        tmpCanvas: null,
+        isBedrock: false,
+        visible: true,
+        opacity: 1,
+        locked: false,
+        blendMode: 'source-over',
+        order: 0,
         pos: { x: 0, y: 0, ...size },
       };
       warnings.push('No leaf layers; imported the flattened composite image.');
@@ -149,35 +196,48 @@ export async function savePsd(layers: LayersRecord, size: Size): Promise<ArrayBu
   if (sorted.length > 2000) throw new Error('PSD has too many layers (maximum 2000)');
   let pixels = size.width * size.height;
   const prepared = sorted.map((layer) => {
-    validateSize(layer.pos);
-    if (![layer.pos.x, layer.pos.y].every((n) => Number.isInteger(n) && Math.abs(n) <= 0x7fffffff - 30000)) {
+    if (![layer.pos.x, layer.pos.y].every((n) => Number.isFinite(n) && Math.abs(n) <= 0x7fffffff - 30000)) {
       throw new Error(`Invalid PSD layer offset: ${layer.name}`);
     }
+    if (![layer.pos.width, layer.pos.height].every((n) => Number.isFinite(n) && n > 0)) {
+      throw new Error(`Invalid PSD layer dimensions: ${layer.name}`);
+    }
+    const left = Math.floor(layer.pos.x);
+    const top = Math.floor(layer.pos.y);
+    const width = Math.ceil(layer.pos.x + layer.pos.width) - left;
+    const height = Math.ceil(layer.pos.y + layer.pos.height) - top;
+    validateSize({ width, height });
     if (!Number.isFinite(layer.order) || !Number.isFinite(layer.opacity) || layer.opacity < 0 || layer.opacity > 1) {
       throw new Error(`Invalid PSD layer order or opacity: ${layer.name}`);
     }
     const blendMode = (Object.keys(blendModes) as BlendMode[]).find((key) => blendModes[key] === layer.blendMode);
     if (!blendMode) throw new Error(`Unsupported PSD export blend mode: ${layer.blendMode}`);
-    pixels += layer.pos.width * layer.pos.height;
+    pixels += width * height;
     if (pixels > maxPixels) throw new Error('PSD exceeds the 64 megapixel total raster budget');
-    return { layer, blendMode };
+    return { layer, blendMode, left, top, width, height };
   });
   const { writePsd } = await import('ag-psd');
   const { canvas, ctx } = canvas2d(size.width, size.height);
-  const children = prepared.map(({ layer, blendMode }): PsdLayer => {
+  const children = prepared.map(({ layer, blendMode, left, top, width, height }): PsdLayer => {
     const source = layer.tmpCanvas ?? layer.bitmap;
-    const raster = canvas2d(source ? layer.pos.width : 1, source ? layer.pos.height : 1);
-    if (source) raster.ctx.drawImage(source, 0, 0, layer.pos.width, layer.pos.height);
+    const raster = canvas2d(source ? width : 1, source ? height : 1);
+    // Rasterize fractional editor geometry inside enclosing integer PSD bounds.
+    if (source) raster.ctx.drawImage(source, layer.pos.x - left, layer.pos.y - top, layer.pos.width, layer.pos.height);
     // PSD stores opacity in one byte; composite uses the same quantized value.
     const opacity = Math.round(layer.opacity * 255) / 255;
     if (layer.visible) {
       ctx.globalAlpha = opacity;
       ctx.globalCompositeOperation = layer.blendMode;
-      ctx.drawImage(raster.canvas, layer.pos.x, layer.pos.y);
+      ctx.drawImage(raster.canvas, left, top);
     }
     return {
-      name: layer.name, left: layer.pos.x, top: layer.pos.y,
-      canvas: raster.canvas, hidden: !layer.visible, opacity, blendMode,
+      name: layer.name,
+      left,
+      top,
+      canvas: raster.canvas,
+      hidden: !layer.visible,
+      opacity,
+      blendMode,
       transparencyProtected: layer.locked,
       protected: { transparency: false, composite: layer.locked, position: layer.locked },
     };

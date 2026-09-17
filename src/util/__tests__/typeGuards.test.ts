@@ -9,8 +9,9 @@ import {
   isBlurToolArgs,
   isLevelsToolArgs,
   isRepositionToolArgs,
+  hasPendingText,
 } from '../typeGuards.ts';
-import type { ToolArgs } from '../contexts/tool-types.ts';
+import type { ToolArgs } from '../../contexts/tool-types.ts';
 
 describe('type guard predicates', () => {
   it.each([
@@ -52,5 +53,14 @@ describe('type guard predicates', () => {
     const args = { toolName: null } as unknown as ToolArgs;
     expect(isTextToolArgs(args)).toBe(false);
     expect(isDrawToolArgs(args)).toBe(false);
+  });
+
+  it.each([
+    [{ toolName: 'text', text: 'Draft', rect: { x: 0, y: 0, width: 10, height: 10 } }, true],
+    [{ toolName: 'text', text: '', rect: { x: 0, y: 0, width: 10, height: 10 } }, false],
+    [{ toolName: 'text', text: 'Draft', rect: null }, false],
+    [{ toolName: 'draw' }, false],
+  ] as const)('detects pending text content', (args, expected) => {
+    expect(hasPendingText(args as unknown as ToolArgs)).toBe(expected);
   });
 });
