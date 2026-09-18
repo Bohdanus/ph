@@ -66,11 +66,33 @@ describe('DesktopHeader', () => {
     vi.unstubAllGlobals();
   });
 
-  it('renders File and Edit menu buttons', () => {
+  it('renders File, Tools, and Edit menu buttons', () => {
     render(<DesktopHeader />);
 
     expect(screen.getByRole('button', { name: 'File' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Tools' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+  });
+
+  it('shows all available tools in the Tools menu', () => {
+    render(<DesktopHeader />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
+
+    expect(screen.getByTestId('tools-menu-color-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-blur-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-levels-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-transform-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-crop-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-draw-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-shape-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-text-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-polygonal-lasso-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-freehand-lasso-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-feather-magnetic-lasso-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-magic-wand-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-rectangular-selection-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-reposition-button')).toBeTruthy();
   });
 
   it('toggles the file menu open and closed', () => {

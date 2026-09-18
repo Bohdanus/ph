@@ -65,7 +65,7 @@ export function useMarchingPath({
     gapLengthRef.current = gapLength;
     lineWidthRef.current = lineWidth;
     speedRef.current = speed;
-  }, [dashLength, gapLength, lineWidth]);
+  }, [dashLength, gapLength, lineWidth, speed]);
 
   const clear = () => {
     const canvas = canvasRef.current;

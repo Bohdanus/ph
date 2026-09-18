@@ -8,6 +8,24 @@ import { MENU_ITEM_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { flushSync } from 'react-dom';
 import { hasPendingText } from '../../util/typeGuards.ts';
+import type { ToolName } from '../../contexts/tool-types.ts';
+
+const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
+  { toolName: 'reposition', label: 'Reposition' },
+  { toolName: 'color', label: 'Colors' },
+  { toolName: 'blur', label: 'Blur' },
+  { toolName: 'levels', label: 'Levels' },
+  { toolName: 'transform', label: 'Transform' },
+  { toolName: 'crop', label: 'Crop' },
+  { toolName: 'draw', label: 'Draw' },
+  { toolName: 'shape', label: 'Shape' },
+  { toolName: 'text', label: 'Text' },
+  { toolName: 'polygonal-lasso', label: 'Polygonal Lasso' },
+  { toolName: 'freehand-lasso', label: 'Freehand Lasso' },
+  { toolName: 'feather-magnetic-lasso', label: 'Feather Magnetic Lasso' },
+  { toolName: 'magic-wand', label: 'Magic Wand' },
+  { toolName: 'rectangular-selection', label: 'Rectangular Selection' },
+];
 
 const DesktopHeader = () => {
   const [{ canvasRef, currentArgs, fileName, hasUnsavedChanges, totalSize, hasImage }] = useStore();
@@ -20,41 +38,32 @@ const DesktopHeader = () => {
   const hasPendingToolContent = hasPendingText(currentArgs.current);
 
   const fileMenuRef = useRef<HTMLLIElement>(null);
+  const toolsMenuRef = useRef<HTMLLIElement>(null);
   const editMenuRef = useRef<HTMLLIElement>(null);
 
-  const handleColors = () => {
-    goToTool('color');
+  const handleToolSelection = (toolName: ToolName) => {
+    goToTool(toolName);
     setOpenMenu(null);
   };
 
-  const handleBlur = () => {
-    goToTool('blur');
-    setOpenMenu(null);
-  };
+  const handleColors = () => handleToolSelection('color');
 
-  const handleLevels = () => {
-    goToTool('levels');
-    setOpenMenu(null);
-  };
+  const handleBlur = () => handleToolSelection('blur');
 
-  const handleTransform = () => {
-    goToTool('transform');
-    setOpenMenu(null);
-  };
+  const handleLevels = () => handleToolSelection('levels');
 
-  const handleDraw = () => {
-    goToTool('draw');
-    setOpenMenu(null);
-  };
+  const handleTransform = () => handleToolSelection('transform');
 
-  const handleText = () => {
-    goToTool('text');
-    setOpenMenu(null);
-  };
+  const handleDraw = () => handleToolSelection('draw');
+
+  const handleText = () => handleToolSelection('text');
 
   const handleClickOutside = useCallback(
     (event: MouseEvent) => {
       if (openMenu === 'file' && fileMenuRef.current && !fileMenuRef.current.contains(event.target as Node)) {
+        setOpenMenu(null);
+      }
+      if (openMenu === 'tools' && toolsMenuRef.current && !toolsMenuRef.current.contains(event.target as Node)) {
         setOpenMenu(null);
       }
       if (openMenu === 'edit' && editMenuRef.current && !editMenuRef.current.contains(event.target as Node)) {
@@ -92,7 +101,7 @@ const DesktopHeader = () => {
                   onClick={async () => {
                     if (hasUnsavedChanges || confirm('All unsaved changes to current image will be lost. Continue?.')) {
                       const data = await openNewImageDialog();
-                      data && setBlankImage(data);
+                      if (data) setBlankImage(data);
                       setOpenMenu(null);
                     }
                   }}
@@ -112,7 +121,7 @@ const DesktopHeader = () => {
                     )
                       return;
                     const data = await openLoadImageDialog();
-                    data && setImageFromUpload(data);
+                    if (data) setImageFromUpload(data);
                     setOpenMenu(null);
                   }}
                   data-testid="header-file-open-button"
@@ -136,7 +145,7 @@ const DesktopHeader = () => {
                       layers: exportLayers,
                       size: totalSize,
                     });
-                    data && handleImageSave(data);
+                    if (data) handleImageSave(data);
                     setOpenMenu(null);
                   }}
                   data-testid="header-file-save-button"
@@ -144,6 +153,32 @@ const DesktopHeader = () => {
                   Save
                 </button>
               </li>
+            </ul>
+          )}
+        </li>
+        <li className="relative" ref={toolsMenuRef}>
+          <button
+            className="bg-transparent px-2 py-1 text-white opacity-75 hover:opacity-100"
+            type="button"
+            onClick={() => setOpenMenu(openMenu === 'tools' ? null : 'tools')}
+            data-testid="header-tools-menu-button"
+          >
+            Tools
+          </button>
+          {openMenu === 'tools' && (
+            <ul className="absolute left-0 top-full z-10 m-0 min-w-[200px] list-none rounded bg-white py-2 shadow-lg dark:bg-gray-800">
+              {TOOL_MENU_ITEMS.map(({ toolName, label }) => (
+                <li key={toolName}>
+                  <button
+                    className={MENU_ITEM_BUTTON}
+                    type="button"
+                    onClick={() => handleToolSelection(toolName)}
+                    data-testid={`tools-menu-${toolName}-button`}
+                  >
+                    {label}
+                  </button>
+                </li>
+              ))}
             </ul>
           )}
         </li>

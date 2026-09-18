@@ -9,42 +9,42 @@ import type { TextToolArgs } from '../tools/text.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
 import type { ToolArgs } from '../contexts/tool-types.ts';
 
-export function isTextToolArgs(args: ToolArgs): args is TextToolArgs & { toolName: 'text' } {
-  return args.toolName === 'text' && args !== null && typeof args === 'object';
+export function isTextToolArgs(args: ToolArgs | null | undefined): args is TextToolArgs & { toolName: 'text' } {
+  return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'text';
 }
 
-export function hasPendingText(args: ToolArgs): boolean {
+export function hasPendingText(args: ToolArgs | null | undefined): boolean {
   return isTextToolArgs(args) && Boolean(args.text && args.rect);
 }
 
-export function isDrawToolArgs(args: ToolArgs): args is DrawToolArgs & { toolName: 'draw' } {
-  return args.toolName === 'draw' && args !== null && typeof args === 'object';
+export function isDrawToolArgs(args: ToolArgs | null | undefined): args is DrawToolArgs & { toolName: 'draw' } {
+  return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'draw';
 }
 
-export function isShapeToolArgs(args: ToolArgs): args is ShapeToolArgs & { toolName: 'shape' } {
-  return args.toolName === 'shape' && args !== null && typeof args === 'object';
+export function isShapeToolArgs(args: ToolArgs | null | undefined): args is ShapeToolArgs & { toolName: 'shape' } {
+  return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'shape';
 }
 
-export function isCropToolArgs(args: ToolArgs): args is CropToolArgs & { toolName: 'crop' } {
-  return args.toolName === 'crop' && args !== null && typeof args === 'object';
+export function isCropToolArgs(args: ToolArgs | null | undefined): args is CropToolArgs & { toolName: 'crop' } {
+  return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'crop';
 }
 
-export function isTransformToolArgs(args: ToolArgs): args is TransformToolArgs & { toolName: 'transform' } {
-  return args.toolName === 'transform' && args !== null && typeof args === 'object';
+export function isTransformToolArgs(args: ToolArgs | null | undefined): args is TransformToolArgs & { toolName: 'transform' } {
+  return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'transform';
 }
 
-export function isColorsToolArgs(args: ToolArgs): args is ColorsToolArgs & { toolName: 'color' } {
-  return args.toolName === 'color' && args !== null && typeof args === 'object';
+export function isColorsToolArgs(args: ToolArgs | null | undefined): args is ColorsToolArgs & { toolName: 'color' } {
+  return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'color';
 }
 
-export function isBlurToolArgs(args: ToolArgs): args is BlurToolArgs & { toolName: 'blur' } {
-  return args.toolName === 'blur' && args !== null && typeof args === 'object';
+export function isBlurToolArgs(args: ToolArgs | null | undefined): args is BlurToolArgs & { toolName: 'blur' } {
+  return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'blur';
 }
 
-export function isLevelsToolArgs(args: ToolArgs): args is LevelsToolArgs & { toolName: 'levels' } {
-  return args.toolName === 'levels' && args !== null && typeof args === 'object';
+export function isLevelsToolArgs(args: ToolArgs | null | undefined): args is LevelsToolArgs & { toolName: 'levels' } {
+  return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'levels';
 }
 
-export function isRepositionToolArgs(args: ToolArgs): args is RepositionToolArgs & { toolName: 'reposition' } {
-  return args.toolName === 'reposition' && args !== null && typeof args === 'object';
+export function isRepositionToolArgs(args: ToolArgs | null | undefined): args is RepositionToolArgs & { toolName: 'reposition' } {
+  return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'reposition';
 }

@@ -69,7 +69,7 @@ function createLayerSource(isBedrock = true) {
 
 function createHistory(sourceIn: 'layerSource' | 'args'): HistoryItem[] {
   const source = createLayerSource();
-  const firstItemBase = {
+  const firstItemBase: HistoryItem = {
     id: 'h-1',
     layerId: 'layer-1',
     actionName: NEW_LAYER_ACTION,
@@ -181,7 +181,7 @@ describe('useHistory undo replay', () => {
   });
 
   it('does not create a negative index when the history buffer is full', async () => {
-    const history = Array.from({ length: MAX_HISTORY_IMAGE_COUNT }, (_, i) => ({
+    const history: HistoryItem[] = Array.from({ length: MAX_HISTORY_IMAGE_COUNT }, (_, i) => ({
       id: `h-${i}`,
       layerId: 'layer-1',
       actionName: RENAME_LAYER_ACTION,

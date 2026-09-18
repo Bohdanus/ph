@@ -209,7 +209,7 @@ const Main = () => {
             className={PRIMARY_BUTTON_LARGE}
             onClick={() =>
               openLoadImageDialog().then((data) => {
-                data && setImageFromUpload(data);
+                if (data) setImageFromUpload(data);
               })
             }
             data-testid="main-open-file-button"
@@ -220,7 +220,7 @@ const Main = () => {
             className={`${TEXT_LINK_BUTTON} focus:outline-none`}
             onClick={() =>
               openNewImageDialog().then((data) => {
-                data && setBlankImage(data);
+                if (data) setBlankImage(data);
               })
             }
             data-testid="main-blank-image-button"

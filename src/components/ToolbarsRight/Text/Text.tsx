@@ -41,8 +41,8 @@ const Text: React.FC<{}> = () => {
   };
 
   const handleFontSizeChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const fontSize = Number(event.target.value);
-    const newArgs = { ...toolArgs, fontSize };
+    const fontSizeValue = Number(event.target.value);
+    const newArgs = { ...toolArgs, fontSize: fontSizeValue };
     const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
   };
@@ -54,15 +54,15 @@ const Text: React.FC<{}> = () => {
     onChange({ ...newArgs, rect: newRect });
   };
 
-  const handleFontFamilyChange = (fontFamily: string) => {
-    const newArgs = { ...toolArgs, fontFamily };
+  const handleFontFamilyChange = (fontFamilyValue: string) => {
+    const newArgs = { ...toolArgs, fontFamily: fontFamilyValue };
     const newRect = calculateNewRect(newArgs, canvasRef, totalSize);
     onChange({ ...newArgs, rect: newRect });
   };
 
   const handleAlignChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const align = event.target.value as 'left' | 'center' | 'right';
-    const newArgs = { ...toolArgs, align };
+    const alignValue = event.target.value as 'left' | 'center' | 'right';
+    const newArgs = { ...toolArgs, align: alignValue };
     onChange(newArgs);
   };
 

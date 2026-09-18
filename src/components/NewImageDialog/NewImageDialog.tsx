@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { PRESETS, computePixelsFromPreset } from '../../constants/imagePresets';
 import type { BlankImageParams } from '../../contexts/tool-types.ts';
 import { PRIMARY_BUTTON, DIALOG_SECONDARY_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
@@ -24,9 +24,14 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
     onClose();
   };
 
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     return () => {
-      onClose();
+      onCloseRef.current();
     };
   }, []);
 

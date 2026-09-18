@@ -63,7 +63,7 @@ export default function PreviewTooltip({
     return () => {
       cancelled = true;
     };
-  }, [open, bitmapPromise]);
+  }, [open, bitmapPromise, maxSizePx]);
 
   if (!open) return null;
 

@@ -35,10 +35,8 @@ export function getHistoryItemTitle(item: HistoryItem) {
 }
 
 export const useHistory = () => {
-  const [
-    { canvasRef, history, historyIndex, layers: oldLayers, deletedLayers, activeLayerId, totalSize: currentSize },
-    dispatch,
-  ] = useStore();
+  const [{ canvasRef, history, historyIndex, deletedLayers, activeLayerId, totalSize: currentSize }, dispatch] =
+    useStore();
 
   const setHistoryIndex = (index: number) => {
     resetHistoryTo(index);
