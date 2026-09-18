@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { ImageSaveResponse } from '../../contexts/useFile.tsx';
 import { PRIMARY_BUTTON, DIALOG_SECONDARY_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 import { DEFAULT_JPEG_QUALITY, IMAGE_FORMATS, PSD_FORMAT } from '../../constants/imageFormats.ts';
@@ -10,14 +10,10 @@ interface SaveDialogProps {
 }
 
 const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
-  const [fileName, setFileName] = useState(proposedName);
+  const [fileName, setFileName] = useState(() => proposedName);
   const [format, setFormat] = useState('image/png');
   const [jpegQuality, setJpegQuality] = useState(DEFAULT_JPEG_QUALITY);
   const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setFileName(proposedName);
-  }, [proposedName]);
 
   const handleSave = async () => {
     setSaving(true);

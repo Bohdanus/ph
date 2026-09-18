@@ -123,7 +123,6 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       } else {
         await saveImageToDisk(canvas, fileName, format, quality);
       }
-      // Resolve the waiting promise with the save info
       saveResolverRef.current?.(quality === undefined ? { fileName, format } : { fileName, format, quality });
       saveResolverRef.current = null;
     } catch (e) {
@@ -133,6 +132,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       saveResolverRef.current = null;
     } finally {
       setShowSaveDialog(false);
+      setFileInput(null);
     }
   }
 
@@ -150,9 +150,10 @@ export const FileProvider = ({ children }: FileProviderProps) => {
   };
 
   const handleSaveClose = () => {
-    saveResolverRef.current?.(null); // todo: show success or not
+    saveResolverRef.current?.(null);
     saveResolverRef.current = null;
     setShowSaveDialog(false);
+    setFileInput(null);
   };
 
   return (

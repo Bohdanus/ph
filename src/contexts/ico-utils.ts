@@ -25,7 +25,7 @@ function decodeBmpIcon(data: Uint8Array): ReturnType<typeof decodeBmp> {
   }
 
   let auxiliarySize = 0;
-  if (compression === 3 && dibSize === 40) auxiliarySize = 12;
+  if (compression === 3 && dibSize === 40) auxiliarySize = bitsPerPixel === 32 ? 16 : 12;
   const paletteCount = bitsPerPixel <= 8 ? colorsUsed || 1 << bitsPerPixel : 0;
   const pixelDataOffset = dibSize + auxiliarySize + paletteCount * 4;
   const height = rawHeight / 2;

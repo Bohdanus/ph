@@ -1,4 +1,4 @@
-import React, { type ChangeEvent, useEffect, useRef, useState } from 'react';
+import React, { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { draw, type DrawToolArgs, type DrawToolSettings, type PenType } from '../../../tools/draw.ts';
 import { savedDrawPerPen } from '../../../tools/settings.ts';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
@@ -26,9 +26,13 @@ const Draw: React.FC<{}> = () => {
     },
   });
 
-  useEffect(() => {
+  const syncColor = useCallback(() => {
     setToolArgs({ ...args, color });
-  }, [color]);
+  }, [args, color, setToolArgs]);
+
+  useEffect(() => {
+    syncColor();
+  }, [syncColor]);
 
   const handleChange = (newArgs: DrawToolSettings) => {
     savedDrawPerPen[newArgs.penType] = {
@@ -99,7 +103,7 @@ const Draw: React.FC<{}> = () => {
 
     // Draw the toolCanvas into previewCanvas with scaling and centering
     ctx.drawImage(toolCanvas, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
-  }, [args, brushScale]);
+  }, [args, brushScale, color]);
 
   return (
     <div className="flex flex-row items-center gap-6 h-full">

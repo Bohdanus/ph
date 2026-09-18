@@ -28,7 +28,7 @@ export const setupDrawCtx = (ctx: Ctx2D, args: DrawToolArgs) => {
   ctx.lineCap = penType === 'pen' ? 'round' : 'square';
   ctx.globalAlpha = alpha;
 
-  lineDash && ctx.setLineDash(lineDash);
+  if (lineDash) ctx.setLineDash(lineDash);
 };
 
 export const draw =

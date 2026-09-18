@@ -9,35 +9,7 @@ import {
   drawSpray,
 } from '../draw.ts';
 import { hexToRgb } from '../rect.ts';
-
-function makeMockCtx() {
-  return {
-    canvas: { width: 100, height: 100 },
-    clearRect: vi.fn(),
-    beginPath: vi.fn(),
-    closePath: vi.fn(),
-    moveTo: vi.fn(),
-    lineTo: vi.fn(),
-    bezierCurveTo: vi.fn(),
-    quadraticCurveTo: vi.fn(),
-    stroke: vi.fn(),
-    fill: vi.fn(),
-    fillRect: vi.fn(),
-    strokeRect: vi.fn(),
-    arc: vi.fn(),
-    save: vi.fn(),
-    restore: vi.fn(),
-    setLineDash: vi.fn(),
-    drawImage: vi.fn(),
-    clip: vi.fn(),
-    createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
-    strokeStyle: '',
-    fillStyle: '',
-    lineWidth: 1,
-    globalAlpha: 1,
-    globalCompositeOperation: 'source-over',
-  } as unknown as CanvasRenderingContext2D;
-}
+import { makeMockCtx } from '../../__tests__/canvas-mock.ts';
 
 describe('pointsBoundingPos', () => {
   it('computes bounds with default lineWidth of 1', () => {

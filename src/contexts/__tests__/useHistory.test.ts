@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   HIDE_LAYER_ACTION,
+  MAX_HISTORY_IMAGE_COUNT,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
@@ -120,6 +121,10 @@ describe('useHistory undo replay', () => {
     );
   });
 
+  afterAll(() => {
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
@@ -173,6 +178,23 @@ describe('useHistory undo replay', () => {
       type: 'ADD_HISTORY_ITEM',
       payload: expect.objectContaining({ imagePromise: state.history[0].imagePromise }),
     });
+  });
+
+  it('does not create a negative index when the history buffer is full', async () => {
+    const history = Array.from({ length: MAX_HISTORY_IMAGE_COUNT }, (_, i) => ({
+      id: `h-${i}`,
+      layerId: 'layer-1',
+      actionName: RENAME_LAYER_ACTION,
+      args: { name: `Layer ${i}` },
+      imagePromise: Promise.resolve(null),
+    }));
+    const state = createStoreState(history);
+    state.historyIndex = history.length - 1;
+    useStoreMock.mockReturnValue([state, vi.fn()]);
+
+    useHistory().addHistoryEntry({ layerId: 'layer-1', actionName: RENAME_LAYER_ACTION, args: { name: 'Layer new' } });
+
+    await expect(history[0].imagePromise).resolves.toBeNull();
   });
 
   it('branches from the current entry and discards redo entries', () => {

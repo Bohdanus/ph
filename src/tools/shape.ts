@@ -28,7 +28,7 @@ export const setShapeCtx = (ctx: Ctx2D, args: ShapeToolArgs) => {
   }
   ctx.lineWidth = lineWidth;
   ctx.globalAlpha = alpha;
-  lineDash && ctx.setLineDash(lineDash);
+  if (lineDash) ctx.setLineDash(lineDash);
 };
 
 export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {

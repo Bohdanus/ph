@@ -243,7 +243,7 @@ export function useRect({
     if (_initialRect && edge) {
       ({ x1, y1, x2, y2 } = _initialRect);
       switch (edge) {
-        case 'inside':
+        case 'inside': {
           const dx = point.x - startPoint.x;
           const dy = point.y - startPoint.y;
           x1 += dx;
@@ -251,6 +251,7 @@ export function useRect({
           x2 += dx;
           y2 += dy;
           break;
+        }
         case 'left':
           x1 = point.x;
           ({ y1, y2 } = adjustHeightRatio({ x1, y1, x2, y2 }, _aspectRatio));

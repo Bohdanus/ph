@@ -17,20 +17,21 @@ const figureLabel = (figure: ShapeToolArgs['figure']) => {
   return 'Rectangle Tool';
 };
 
-const Shape: React.FC<{}> = () => {
+const Shape: React.FC = () => {
   const [{ containerRef, color, backgroundColor, totalSize }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
   const previewRef = useRef<HTMLCanvasElement | null>(null);
 
   const args = toolArgs as ShapeToolArgs;
   const [brushScale, setBrushScale] = useState<number>(0);
-  const savedLineDashRef = useRef(args.lineDash);
+  const savedLineDashRef = useRef<ShapeToolArgs['lineDash']>(args.lineDash);
 
   usePointerPosition({ ref: containerRef, imageSize: totalSize, onResize: ({ scale }) => setBrushScale(scale) });
 
   useEffect(() => {
+    if (args.toolName !== 'shape' || (args.color === color && args.backgroundColor === backgroundColor)) return;
     setToolArgs({ ...args, color, backgroundColor });
-  }, [color, backgroundColor]);
+  }, [args, backgroundColor, color, setToolArgs]);
 
   const handleChange = (newArgs: ShapeToolArgs) => {
     savedArgsPerFigure[newArgs.figure] = {
@@ -109,7 +110,7 @@ const Shape: React.FC<{}> = () => {
 
     // Draw the toolCanvas into previewCanvas with scaling and centering
     ctx.drawImage(toolCanvas, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
-  }, [args, brushScale]);
+  }, [args, brushScale, color, figure, lineWidth]);
 
   return (
     <div className="flex flex-row items-center gap-6 h-full">

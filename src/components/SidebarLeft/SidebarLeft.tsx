@@ -18,9 +18,8 @@ const TOOL_BUTTON_INACTIVE_CLASS =
 const slugify = (value: string) => value.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-');
 
 const LayoutIcon = ({ singleColumn }: { singleColumn: boolean }) => (
-  <span aria-hidden="true" className="flex gap-0.5">
-    <span className="h-3.5 w-1.5 rounded-[1px] border border-current" />
-    {!singleColumn && <span className="h-3.5 w-1.5 rounded-[1px] border border-current" />}
+  <span aria-hidden="true" className="flex items-center justify-center text-lg leading-none font-black tracking-tight">
+    <span>{singleColumn ? '«' : '»'}</span>
   </span>
 );
 
@@ -217,10 +216,13 @@ const SidebarLeft = () => {
 
   if (!hasImage) return;
 
+  const toolbarWidth = isSingleColumn ? '3.5rem' : '6.5rem';
+
   return (
     <aside
       className="max-md:hidden border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]"
       data-testid="left-sidebar"
+      style={{ width: toolbarWidth }}
     >
       <div className="flex h-full flex-col items-center px-3 py-4">
         <div className="mb-2 flex w-full justify-end px-1">

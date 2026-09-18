@@ -343,7 +343,7 @@ export function createMagicWandSelectionFromCanvas(
 
   try {
     return createMagicWandSelectionFromImageData(ctx.getImageData(0, 0, canvas.width, canvas.height), seed, options);
-  } catch (_error) {
+  } catch {
     return null;
   }
 }

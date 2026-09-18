@@ -102,6 +102,7 @@ describe('useResizeObserverRAF', () => {
 
     expect(onResize).toHaveBeenCalledTimes(1);
     expect(onResize).toHaveBeenCalledWith({ x: 0, y: 0, width: 70, height: 80 });
+    expect(onResize).not.toHaveBeenCalledWith({ x: 0, y: 0, width: 30, height: 40 });
   });
 
   it('does not set up an observer when the ref is null', () => {

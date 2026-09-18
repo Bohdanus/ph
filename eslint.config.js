@@ -54,7 +54,7 @@ export default defineConfig([
       'promise/no-return-wrap': 'error',
 
       // Style/noise issues - downgrade to warn
-      '@typescript-eslint/no-empty-object-type': 'warn',
+      '@typescript-eslint/no-empty-object-type': ['warn', { allowObjectTypes: 'always' }],
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-unused-vars': 'warn',
       '@typescript-eslint/no-this-alias': 'warn',

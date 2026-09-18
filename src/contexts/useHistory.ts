@@ -64,9 +64,13 @@ export const useHistory = () => {
     } else {
       dispatch({ type: 'ADD_HISTORY_ITEM', payload: newHistoryItem });
 
-      // maintain memory size
-      if (history.length > MAX_HISTORY_IMAGE_COUNT) {
-        history[historyIndex - MAX_HISTORY_IMAGE_COUNT].imagePromise = Promise.resolve(null);
+      // maintain memory size without creating negative indexes
+      if (history.length >= MAX_HISTORY_IMAGE_COUNT) {
+        const pruneIndex = history.length - MAX_HISTORY_IMAGE_COUNT;
+        const pruneEntry = history[pruneIndex];
+        if (pruneEntry) {
+          pruneEntry.imagePromise = Promise.resolve(null);
+        }
       }
     }
   };
@@ -212,7 +216,7 @@ export const useHistory = () => {
       type: 'BATCH_UPDATES',
       payload: {
         layers: newLayers,
-        deletedLayers: { ...deletedLayers, ...oldLayers },
+        deletedLayers: { ...deletedLayers },
         activeLayerId: nextActiveLayerId,
         totalSize,
         historyIndex: targetIndex,

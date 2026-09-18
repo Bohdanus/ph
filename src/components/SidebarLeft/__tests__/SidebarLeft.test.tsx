@@ -99,12 +99,14 @@ describe('SidebarLeft', () => {
 
     const toggle = screen.getByTestId('toolbar-layout-toggle');
     const toolbar = screen.getByTestId('left-toolbar-tools');
+    const sidebar = screen.getByTestId('left-sidebar');
     const firstSection = toolbar.querySelector('ul')!;
 
     expect(toggle).toHaveAttribute('aria-label', 'Use one-column toolbar');
     expect(toggle).toHaveAttribute('aria-pressed', 'false');
     expect(firstSection).toHaveClass('grid-cols-2');
     expect(toolbar).toHaveClass('w-[6.5rem]');
+    expect(sidebar).toHaveStyle({ width: '104px' });
 
     fireEvent.click(toggle);
 
@@ -112,6 +114,7 @@ describe('SidebarLeft', () => {
     expect(toggle).toHaveAttribute('aria-pressed', 'true');
     expect(firstSection).toHaveClass('grid-cols-1');
     expect(toolbar).toHaveClass('w-14');
+    expect(sidebar).toHaveStyle({ width: '56px' });
   });
 
   it('opens grouped tools on hover and closes them on mouse leave', () => {

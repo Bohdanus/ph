@@ -42,7 +42,7 @@ export async function copyRectToClipboard({
   try {
     await clipboard.write([new ClipboardItemCtor({ [blob.type]: blob })]);
     return true;
-  } catch (_error) {
+  } catch {
     return false;
   }
 }

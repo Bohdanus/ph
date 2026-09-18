@@ -5,15 +5,14 @@ import MagicWand from '../MagicWand.tsx';
 const dispatchMock = vi.hoisted(() => vi.fn());
 const patchToolArgsMock = vi.hoisted(() => vi.fn());
 
+const storeState = vi.hoisted(() => ({
+  activeSelectionId: null as string | null,
+  canvasRef: { current: document.createElement('canvas') },
+  selections: [],
+}));
+
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [
-    {
-      activeSelectionId: null,
-      canvasRef: { current: document.createElement('canvas') },
-      selections: [],
-    },
-    dispatchMock,
-  ],
+  useStore: () => [storeState, dispatchMock],
 }));
 
 vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
@@ -27,8 +26,18 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   }),
 }));
 
+function resetStoreState(overrides: Partial<typeof storeState> = {}) {
+  Object.assign(storeState, {
+    activeSelectionId: null,
+    canvasRef: { current: document.createElement('canvas') },
+    selections: [],
+    ...overrides,
+  });
+}
+
 describe('MagicWand toolbar', () => {
   beforeEach(() => {
+    resetStoreState();
     dispatchMock.mockClear();
     patchToolArgsMock.mockClear();
   });
@@ -41,5 +50,27 @@ describe('MagicWand toolbar', () => {
 
     expect(patchToolArgsMock).toHaveBeenCalledWith('magic-wand', { tolerance: 44 });
     expect(patchToolArgsMock).toHaveBeenCalledWith('magic-wand', { smoothing: 3 });
+  });
+
+  it('renders when activeSelectionId is set', () => {
+    resetStoreState({ activeSelectionId: 'selection-1' });
+    render(<MagicWand />);
+
+    expect(screen.getByLabelText(/Tolerance/)).toBeTruthy();
+    expect(screen.getByLabelText(/Smooth/)).toBeTruthy();
+  });
+
+  it('renders when selections array is empty', () => {
+    resetStoreState({ selections: [] });
+    render(<MagicWand />);
+
+    expect(screen.getByLabelText(/Tolerance/)).toBeTruthy();
+  });
+
+  it('sliders reflect current tool args values', () => {
+    render(<MagicWand />);
+
+    expect(screen.getByLabelText(/Tolerance/)).toHaveValue('28');
+    expect(screen.getByLabelText(/Smooth/)).toHaveValue('1.5');
   });
 });

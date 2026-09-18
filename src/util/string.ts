@@ -3,9 +3,7 @@ const segmenter = new Intl.Segmenter(undefined, {
 });
 
 export function charLength(str: string): number {
-  let count = 0;
-  for (const _ of segmenter.segment(str)) count++;
-  return count;
+  return [...segmenter.segment(str)].length;
 }
 
 export function deleteLastChar(str: string): [string, number] {

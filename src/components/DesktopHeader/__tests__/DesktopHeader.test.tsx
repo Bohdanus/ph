@@ -63,6 +63,7 @@ describe('DesktopHeader', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('renders File and Edit menu buttons', () => {

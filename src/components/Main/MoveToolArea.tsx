@@ -147,7 +147,8 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
         hoveredLayerId = null;
       }
 
-      hoveredLayerId ? ants.draw(layers[hoveredLayerId]) : ants.clear();
+      if (hoveredLayerId) ants.draw(layers[hoveredLayerId]);
+      else ants.clear();
       hoveredLayerIdRef.current = hoveredLayerId;
     }
   }

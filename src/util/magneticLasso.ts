@@ -115,7 +115,7 @@ export function createEdgeMapFromCanvas(canvas: HTMLCanvasElement | null): EdgeM
 
   try {
     return createEdgeMapFromImageData(ctx.getImageData(0, 0, canvas.width, canvas.height));
-  } catch (_error) {
+  } catch {
     return null;
   }
 }

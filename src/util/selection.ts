@@ -393,7 +393,7 @@ function rasterizePolygonMask(points: Point[], width: number, height: number): U
       }
 
       return mask;
-    } catch (_error) {
+    } catch {
       // Fall through to CPU rasterization for tests and reduced canvas environments.
     }
   }

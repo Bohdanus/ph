@@ -25,14 +25,14 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     containerRef,
     overlayRef: toolOverlayRef,
     aspectRatio,
-    onChangeEnd: (rect: RectXYSorted) => {
-      const newRectTrimmed = trimRect(rect, totalSize);
+    onChangeEnd: (newRect: RectXYSorted) => {
+      const newRectTrimmed = trimRect(newRect, totalSize);
 
       if (newRectTrimmed.width === 0 || newRectTrimmed.height === 0) {
         // return null if nothing selected or if selection is outside
         setToolArgs({ ...args, rect: null });
       } else {
-        setToolArgs({ ...args, rect });
+        setToolArgs({ ...args, rect: newRect });
       }
     },
   });

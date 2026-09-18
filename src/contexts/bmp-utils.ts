@@ -74,9 +74,9 @@ export function decodeBmp(buffer: ArrayBuffer): RgbaImageData {
     const targetY = rawHeight > 0 ? height - sourceY - 1 : sourceY;
     const rowOffset = pixelOffset + sourceY * rowStride;
     for (let x = 0; x < width; x++) {
-      let red = 0;
-      let green = 0;
-      let blue = 0;
+      let red: number;
+      let green: number;
+      let blue: number;
       let alpha = 255;
       if (bitsPerPixel <= 8) {
         let index: number;
