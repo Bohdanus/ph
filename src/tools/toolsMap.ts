@@ -31,8 +31,12 @@ import { rectangularSelection } from './rectangularSelection.ts';
 import { featherMagneticLasso } from './featherMagneticLasso.ts';
 import { magicWand } from './magicWand.ts';
 
-const placeholderTool = (title: string, key: keyof typeof placeholderToolGroups): ToolbarRightComponent => {
-  return () => React.createElement(PlaceholderTool, { title, options: placeholderToolGroups[key] });
+const placeholderTool = (
+  title: string,
+  key: keyof typeof placeholderToolGroups,
+  showTodoBadge = true
+): ToolbarRightComponent => {
+  return () => React.createElement(PlaceholderTool, { title, options: placeholderToolGroups[key], showTodoBadge });
 };
 
 export type ProcessorToolParams = {
@@ -105,7 +109,6 @@ export const toolsMap: ToolsMap = {
   shape: {
     creator: true,
     icon: 'shape',
-    // @ts-expect-error args
     imageProcessor: shape,
     toolboxComponent: Shape,
   },
@@ -151,17 +154,39 @@ export const toolsMap: ToolsMap = {
   },
   brush: {
     icon: 'brush',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
-    toolboxComponent: placeholderTool('Brush Tool', 'brush'),
+    imageProcessor: (params) => (args) => {
+      const [canvas] = draw({ size: params.size } as CreatorToolParams)({
+        ...(args as any),
+        toolName: 'draw',
+        penType: 'pen',
+      } as any);
+      return [canvas] as any;
+    },
+    toolboxComponent: placeholderTool('Brush Tool', 'brush', false),
   },
   pencil: {
     icon: 'pencil',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
-    toolboxComponent: placeholderTool('Pencil Tool', 'pencil'),
+    imageProcessor: (params) => (args) => {
+      const [canvas] = draw({ size: params.size } as CreatorToolParams)({
+        ...(args as any),
+        toolName: 'draw',
+        penType: 'pen',
+        lineWidth: Math.max(1, Number((args as any).lineWidth ?? 3)),
+      } as any);
+      return [canvas] as any;
+    },
+    toolboxComponent: placeholderTool('Pencil Tool', 'pencil', false),
   },
   'color-replacement': {
     icon: 'color-replacement',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    imageProcessor: (params) => (args) => {
+      const [canvas] = draw({ size: params.size } as CreatorToolParams)({
+        ...(args as any),
+        toolName: 'draw',
+        penType: 'spray',
+      } as any);
+      return [canvas] as any;
+    },
     toolboxComponent: placeholderTool('Color Replacement Tool', 'color-replacement'),
   },
   pen: {
@@ -196,13 +221,13 @@ export const toolsMap: ToolsMap = {
   },
   rectangle: {
     icon: 'rectangle',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
-    toolboxComponent: placeholderTool('Rectangle Tool', 'rectangle'),
+    imageProcessor: shape,
+    toolboxComponent: Shape,
   },
   ellipse: {
     icon: 'ellipse',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
-    toolboxComponent: placeholderTool('Ellipse Tool', 'rectangle'),
+    imageProcessor: shape,
+    toolboxComponent: Shape,
   },
   triangle: {
     icon: 'triangle',
@@ -216,8 +241,8 @@ export const toolsMap: ToolsMap = {
   },
   line: {
     icon: 'line',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
-    toolboxComponent: placeholderTool('Line Tool', 'rectangle'),
+    imageProcessor: shape,
+    toolboxComponent: Shape,
   },
   'custom-shape': {
     icon: 'custom-shape',

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import type { Selection } from '../../../contexts/general-types.ts';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { MagicWandToolArea } from '../MagicWandToolArea.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -9,7 +10,7 @@ const storeState = vi.hoisted((): { selections: Selection[] } => ({ selections: 
 
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   usePointerPosition: () => ({
-    getLocalCoords: (event: any) => ({ x: event.clientX, y: event.clientY }),
+    getLocalCoords: (event: ReactPointerEvent<HTMLElement>) => ({ x: event.clientX, y: event.clientY }),
   }),
 }));
 

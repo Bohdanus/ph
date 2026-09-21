@@ -1,10 +1,10 @@
 import type { CropToolArgs } from '../tools/crop.ts';
-import type { DrawToolArgs } from '../tools/draw.ts';
+import type { DrawToolArgs, PaintToolArgs } from '../tools/draw.ts';
+import type { FigureType, ShapeToolArgs } from '../tools/shape.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
 import type { ColorsToolArgs } from '../tools/colors.ts';
 import type { TextToolArgs } from '../tools/text.ts';
 import type { BlurToolArgs } from '../tools/blur.ts';
-import type { ShapeToolArgs } from '../tools/shape.ts';
 import type { LevelsToolArgs } from '../tools/levels.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { LassoToolArgs } from '../tools/polygonSelection.ts';
@@ -29,20 +29,23 @@ export type ToolArgsByName = {
   'feather-magnetic-lasso': FeatherMagneticLassoToolArgs;
   'magic-wand': MagicWandToolArgs;
   'rectangular-selection': RectangularSelectionToolArgs;
-  brush: { toolName: 'brush' };
-  pencil: { toolName: 'pencil' };
-  'color-replacement': { toolName: 'color-replacement' };
+  brush: PaintToolArgs;
+  pencil: PaintToolArgs;
+  'color-replacement': PaintToolArgs;
   pen: { toolName: 'pen' };
   'freeform-pen': { toolName: 'freeform-pen' };
   'curvature-pen': { toolName: 'curvature-pen' };
   'add-anchor-point': { toolName: 'add-anchor-point' };
   'delete-anchor-point': { toolName: 'delete-anchor-point' };
   'convert-point': { toolName: 'convert-point' };
-  rectangle: { toolName: 'rectangle' };
-  ellipse: { toolName: 'ellipse' };
+  rectangle: Omit<ShapeToolArgs, 'toolName' | 'figure'> & {
+    toolName: 'rectangle';
+    figure: Extract<FigureType, 'rectangle'>;
+  };
+  ellipse: Omit<ShapeToolArgs, 'toolName' | 'figure'> & { toolName: 'ellipse'; figure: Extract<FigureType, 'oval'> };
   triangle: { toolName: 'triangle' };
   polygon: { toolName: 'polygon' };
-  line: { toolName: 'line' };
+  line: Omit<ShapeToolArgs, 'toolName' | 'figure'> & { toolName: 'line'; figure: Extract<FigureType, 'line'> };
   'custom-shape': { toolName: 'custom-shape' };
 };
 

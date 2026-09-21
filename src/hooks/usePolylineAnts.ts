@@ -6,7 +6,7 @@ import type { Point } from '../contexts/general-types.ts';
 // constant to preserve negative-offset convention (0 or negative values).
 const DASH_OFFSET_CYCLE = 1000;
 
-type UseMarchingPathProps = {
+export type UseMarchingPathProps = {
   canvasRef: RefObject<HTMLCanvasElement | null>;
 
   dashLength?: number;

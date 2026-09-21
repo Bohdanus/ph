@@ -135,7 +135,7 @@ describe('SidebarLeft', () => {
     expect(sidebar).toHaveStyle({ width: '56px' });
   });
 
-  it('opens grouped tools on hover and closes them on mouse leave', () => {
+  it('opens grouped tools on long-press instead of hover, and closes on mouse leave', () => {
     vi.useFakeTimers();
     render(<SidebarLeft />);
 
@@ -144,6 +144,12 @@ describe('SidebarLeft', () => {
     expect(brushGroup).not.toBeNull();
 
     fireEvent.mouseEnter(brushGroup!);
+    expect(screen.queryByTestId('tool-flyout-3-2')).toBeNull();
+
+    fireEvent.pointerDown(brushButton, { button: 0 });
+    act(() => {
+      vi.advanceTimersByTime(350);
+    });
     expect(screen.getByTestId('tool-flyout-3-2')).toBeTruthy();
     expect(screen.getByRole('menuitemradio', { name: 'Pencil Tool' })).toBeTruthy();
 
@@ -154,11 +160,37 @@ describe('SidebarLeft', () => {
     expect(screen.queryByTestId('tool-flyout-3-2')).toBeNull();
   });
 
-  it('opens a flyout from keyboard focus and closes it with Escape', () => {
+  it('keeps the submenu open while the pointer is over submenu items', () => {
+    vi.useFakeTimers();
+    render(<SidebarLeft />);
+
+    const brushButton = screen.getByTestId('tool-button-brush');
+    const brushGroup = brushButton.closest('li');
+    fireEvent.pointerDown(brushButton, { button: 0 });
+    act(() => {
+      vi.advanceTimersByTime(350);
+    });
+
+    const flyout = screen.getByTestId('tool-flyout-3-2');
+    fireEvent.mouseLeave(brushGroup!);
+    fireEvent.mouseEnter(flyout);
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(screen.getByTestId('tool-flyout-3-2')).toBeTruthy();
+  });
+
+  it('opens a flyout from long-press and closes it with Escape', () => {
+    vi.useFakeTimers();
     render(<SidebarLeft />);
 
     const shapeButton = screen.getByTestId('tool-button-shape');
-    fireEvent.focus(shapeButton);
+    fireEvent.pointerDown(shapeButton, { button: 0 });
+    act(() => {
+      vi.advanceTimersByTime(350);
+    });
 
     expect(screen.getByTestId('tool-flyout-4-2')).toBeTruthy();
 
@@ -166,11 +198,15 @@ describe('SidebarLeft', () => {
     expect(screen.queryByTestId('tool-flyout-4-2')).toBeNull();
   });
 
-  it('selects a tool from a flyout', () => {
+  it('selects a tool from a flyout after long-press opening', () => {
+    vi.useFakeTimers();
     render(<SidebarLeft />);
 
     const brushButton = screen.getByTestId('tool-button-brush');
-    fireEvent.mouseEnter(brushButton.closest('li')!);
+    fireEvent.pointerDown(brushButton, { button: 0 });
+    act(() => {
+      vi.advanceTimersByTime(350);
+    });
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Pencil Tool' }));
 
     expect(goToTool).toHaveBeenCalledWith('pencil');
@@ -187,11 +223,15 @@ describe('SidebarLeft', () => {
   });
 
   it('brush flyout entries reflect the selected tool state', () => {
+    vi.useFakeTimers();
     Object.assign(storeStateMutable, { toolName: 'brush' });
     render(<SidebarLeft />);
 
-    const brushLi = screen.getByTestId('tool-button-brush').closest('li') as HTMLElement;
-    fireEvent.mouseEnter(brushLi);
+    const brushButton = screen.getByTestId('tool-button-brush');
+    fireEvent.pointerDown(brushButton, { button: 0 });
+    act(() => {
+      vi.advanceTimersByTime(350);
+    });
 
     const brushItem = screen.getByTestId('tool-flyout-item-brush-brush-tool');
     const pencilItem = screen.getByTestId('tool-flyout-item-pencil-pencil-tool');

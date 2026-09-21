@@ -1,6 +1,7 @@
 import { act, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TextToolArea } from '../TextToolArea.tsx';
+import type { UseRectProps } from '../../../hooks/useRect.ts';
 
 const setToolArgs = vi.fn();
 const textareaRef = { current: null as HTMLTextAreaElement | null };
@@ -10,7 +11,7 @@ const toolArgs: { toolName: 'draw' | 'text'; text?: string; rect?: null } = {
   toolName: 'draw',
 };
 
-let latestUseRectProps: { onChangeEnd?: (rect: any) => void } | null = null;
+let latestUseRectProps: UseRectProps | null = null;
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [

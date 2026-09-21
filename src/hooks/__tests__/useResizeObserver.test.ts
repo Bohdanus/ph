@@ -52,12 +52,10 @@ function makeEntry(width: number, height: number): ResizeObserverEntry {
       toJSON: () => {},
     },
     contentBoxSize: [],
-    contentRectSize: [] as any,
     borderBoxSize: [],
-    devicePixelContentBoxSize: [] as any,
-    observedFontData: [],
-    target: null as any,
-  } as unknown as ResizeObserverEntry;
+    devicePixelContentBoxSize: [],
+    target: makeElement(),
+  };
 }
 
 describe('useResizeObserverRAF', () => {
@@ -157,7 +155,7 @@ describe('useResizeObserverRAF', () => {
       clientY: 120,
       button: 0,
       currentTarget: { setPointerCapture: vi.fn(), releasePointerCapture: vi.fn() },
-    } as any;
+    } as unknown as React.PointerEvent<HTMLElement>;
 
     expect(result.current.getLocalCoords(event)).toEqual({ x: 43.333333333333336, y: 20 });
   });

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useApp } from '../useApp.ts';
 import type { PsdDocument } from '../../contexts/psd-utils.ts';
+import type { StoreData } from '../../contexts/StoreContext.tsx';
 import { OPEN_DOCUMENT_ACTION } from '../../util/constants.ts';
 
 const mocks = vi.hoisted(() => ({
@@ -168,7 +169,7 @@ describe('useApp PSD replacement', () => {
       selectionDraft: { status: 'idle' },
       selectionCleared: null,
       selectionClipboard: null,
-    } as any;
+    } as unknown as Partial<StoreData>;
     const dispatch = vi.fn();
     mocks.useStore.mockReturnValue([state, dispatch]);
 

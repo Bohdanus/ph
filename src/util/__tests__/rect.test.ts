@@ -10,6 +10,7 @@ import {
   calculateNewRect,
 } from '../rect.ts';
 import type { RectXY, RectXYSorted, Pos, Size } from '../../contexts/general-types.ts';
+import type { TextToolArgs } from '../../tools/text.ts';
 
 describe('sortRect', () => {
   it('returns the rect unchanged when already sorted', () => {
@@ -149,7 +150,7 @@ describe('calculateNewRect', () => {
         lineHeight: 1.2,
         rect: { x1: 0, y1: 0, x2: 0, y2: 0 },
         align: 'left',
-      } as any,
+      } as TextToolArgs,
       canvasRef,
       imageSize
     );
@@ -167,7 +168,7 @@ describe('calculateNewRect', () => {
         lineHeight: 1.2,
         rect: { x1: 0, y1: 0, x2: 50, y2: 0 },
         align: 'left',
-      } as any,
+      } as TextToolArgs,
       canvasRef,
       imageSize
     );
@@ -184,7 +185,7 @@ describe('calculateNewRect', () => {
         lineHeight: 1.2,
         rect: { x1: 50, y1: 0, x2: 100, y2: 0 },
         align: 'center',
-      } as any,
+      } as TextToolArgs,
       canvasRef,
       imageSize
     );
@@ -204,7 +205,7 @@ describe('calculateNewRect', () => {
         lineHeight: 1.2,
         rect: { x1: 0, y1: 0, x2: 100, y2: 0 },
         align: 'left',
-      } as any,
+      } as TextToolArgs,
       canvasRef,
       imageSize
     );
@@ -221,7 +222,7 @@ describe('calculateNewRect', () => {
         lineHeight: 1.2,
         rect: { x1: 0, y1: 0, x2: 100, y2: 0 },
         align: 'left',
-      } as any,
+      } as TextToolArgs,
       canvasRef,
       imageSize
     );

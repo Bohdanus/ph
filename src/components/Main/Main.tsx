@@ -50,9 +50,9 @@ const Main = () => {
     interactionMode = 'reposition';
   } else if (toolName === 'crop') {
     interactionMode = 'crop';
-  } else if (toolName === 'draw') {
+  } else if (toolName === 'draw' || toolName === 'brush' || toolName === 'pencil' || toolName === 'color-replacement') {
     interactionMode = 'draw';
-  } else if (toolName === 'shape') {
+  } else if (toolName === 'shape' || toolName === 'rectangle' || toolName === 'ellipse' || toolName === 'line') {
     interactionMode = 'shape';
   } else if (toolName === 'text') {
     interactionMode = 'text';

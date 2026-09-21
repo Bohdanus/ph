@@ -6,7 +6,7 @@ import { CURSOR_MAP, HANDLE_SIZE } from '../util/constants.ts';
 import { isEqual } from 'lodash-es';
 import type { Layer } from '../contexts/layer-types.ts';
 
-type UseRectProps = {
+export type UseRectProps = {
   aspectRatio?: number | null;
   imageSize: Size;
   initialRect?: RectXYSorted | null; // can be set using props

@@ -23,12 +23,13 @@ describe('exp1_1', () => {
 });
 
 describe('writeImageToCanvas', () => {
-  let mockCtx: any;
+  let mockCtx: CanvasRenderingContext2D;
 
   beforeEach(() => {
-    mockCtx = { canvas: null, drawImage: vi.fn() };
+    const ctxObj = { canvas: null as HTMLCanvasElement | null, drawImage: vi.fn() };
+    mockCtx = ctxObj as unknown as CanvasRenderingContext2D;
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (this: HTMLCanvasElement) {
-      mockCtx.canvas = this;
+      ctxObj.canvas = this;
       return mockCtx;
     });
   });

@@ -21,11 +21,10 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    // jsdom is recreated once per worker per test file. With 55 test files this
-    // dominated the run (~35s). `pool: 'vmThreads'` keeps per-file isolation
-    // while reusing the worker environment, which is the recommended trade-off.
     pool: 'vmThreads',
     maxWorkers: 4,
+    isolate: true,
+    cache: { dir: '.vitest' },
     setupFiles: ['./src/test/setup.ts'],
     globals: true,
   },

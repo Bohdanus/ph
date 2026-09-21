@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, beforeEach, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import type { Selection } from '../../../contexts/general-types.ts';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import { FeatherMagneticLassoToolArea } from '../FeatherMagneticLassoToolArea.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -9,7 +10,7 @@ const shortcutHandlers = vi.hoisted(() => new Map<string, () => void>());
 
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   usePointerPosition: () => ({
-    getLocalCoords: (event: any) => ({ x: event.clientX, y: event.clientY }),
+    getLocalCoords: (event: ReactPointerEvent<HTMLElement>) => ({ x: event.clientX, y: event.clientY }),
   }),
 }));
 

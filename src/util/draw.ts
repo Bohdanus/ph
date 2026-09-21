@@ -94,7 +94,8 @@ export const drawLine = (params: DrawStrokeParams) => {
 };
 
 export const drawPen = ({ args, ctx }: DrawStrokeParams) => {
-  const points = args.points!;
+  const points = args.points ?? [];
+  if (points.length === 0) return;
 
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);
@@ -103,7 +104,8 @@ export const drawPen = ({ args, ctx }: DrawStrokeParams) => {
 };
 
 export const drawSpray = ({ args, ctx }: DrawStrokeParams) => {
-  const points = args.points!;
+  const points = args.points ?? [];
+  if (points.length === 0) return;
 
   const alpha = args.alpha;
   const color = hexToRgb(args.color);

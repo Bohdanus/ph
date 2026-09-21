@@ -30,11 +30,13 @@ const SidebarLeft = () => {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [isSingleColumn, setIsSingleColumn] = useState(false);
   const closeFlyoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFlyoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const colorInputRef = useRef<HTMLInputElement>(null);
   const bgColorInputRef = useRef<HTMLInputElement>(null);
   const colorSquareRef = useRef<HTMLDivElement>(null);
   const bgColorSquareRef = useRef<HTMLDivElement>(null);
+  const flyoutMenuRefs = useRef<Record<string, HTMLUListElement | null>>({});
 
   const handleColorClick = (e: React.MouseEvent<HTMLDivElement>, inputRef: RefObject<HTMLInputElement | null>) => {
     if (!inputRef.current) return;
@@ -68,9 +70,24 @@ const SidebarLeft = () => {
     }
   };
 
+  const clearLongPressFlyout = () => {
+    if (longPressFlyoutTimeoutRef.current !== null) {
+      clearTimeout(longPressFlyoutTimeoutRef.current);
+      longPressFlyoutTimeoutRef.current = null;
+    }
+  };
+
   const openFlyout = (groupIndex: string) => {
     clearFlyoutClose();
+    clearLongPressFlyout();
     setOpenGroup(groupIndex);
+  };
+
+  const scheduleFlyoutOpen = (groupIndex: string) => {
+    clearLongPressFlyout();
+    longPressFlyoutTimeoutRef.current = setTimeout(() => {
+      openFlyout(groupIndex);
+    }, 300);
   };
 
   const scheduleFlyoutClose = () => {
@@ -84,6 +101,7 @@ const SidebarLeft = () => {
   useEffect(() => {
     return () => {
       if (closeFlyoutTimeoutRef.current !== null) clearTimeout(closeFlyoutTimeoutRef.current);
+      if (longPressFlyoutTimeoutRef.current !== null) clearTimeout(longPressFlyoutTimeoutRef.current);
     };
   }, []);
 
@@ -108,8 +126,8 @@ const SidebarLeft = () => {
     if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpenGroup(null);
   };
 
-  const handleGroupMouseOut = (event: React.MouseEvent<HTMLLIElement>) => {
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) scheduleFlyoutClose();
+  const handleGroupMouseEnter = () => {
+    clearFlyoutClose();
   };
 
   const getToolIcon = (tool: ToolbarTool) => {
@@ -136,15 +154,21 @@ const SidebarLeft = () => {
     const Icon = getToolIcon(activeTool);
     const isOpen = openGroup === groupIndex;
 
+    const handleGroupMouseLeave = (event: React.MouseEvent<HTMLLIElement | HTMLUListElement>) => {
+      const nextTarget = event.relatedTarget as Node | null;
+      const currentMenu = flyoutMenuRefs.current[groupIndex];
+      if (nextTarget && (event.currentTarget.contains(nextTarget) || currentMenu?.contains(nextTarget))) return;
+      if (openGroup !== null) scheduleFlyoutClose();
+    };
+
     return (
       <li
         className="group relative"
         key={`${groupIndex}-${group.map(({ label }) => slugify(label)).join('-')}`}
         onBlur={handleGroupBlur}
         onFocus={() => hasFlyout && openFlyout(groupIndex)}
-        onMouseEnter={() => hasFlyout && openFlyout(groupIndex)}
-        onMouseLeave={() => hasFlyout && scheduleFlyoutClose()}
-        onMouseOut={handleGroupMouseOut}
+        onMouseEnter={hasFlyout ? handleGroupMouseEnter : undefined}
+        onMouseLeave={hasFlyout ? handleGroupMouseLeave : undefined}
       >
         <ToolTooltip label={activeTool.label} shortcut={activeTool.shortcut}>
           <button
@@ -155,9 +179,44 @@ const SidebarLeft = () => {
             className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}`}
             disabled={!hasImage}
             onClick={() => {
+              if (hasFlyout && !isOpen) {
+                openFlyout(groupIndex);
+                return;
+              }
               selectTool(activeTool);
-              if (hasFlyout) openFlyout(groupIndex);
+              if (hasFlyout) setOpenGroup(null);
             }}
+            onContextMenu={(event) => {
+              if (!hasFlyout) return;
+              event.preventDefault();
+              openFlyout(groupIndex);
+            }}
+            onKeyDown={(event) => {
+              if (!hasFlyout) return;
+              if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                openFlyout(groupIndex);
+                requestAnimationFrame(() => {
+                  const menu = document.querySelector<HTMLUListElement>(`[data-testid="tool-flyout-${groupIndex}"]`);
+                  const items = Array.from(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? []);
+                  if (items.length === 0) return;
+                  const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+                  const nextIndex = event.key === 'ArrowUp' ? items.length - 1 : currentIndex >= 0 ? currentIndex : 0;
+                  items[nextIndex]?.focus();
+                });
+              }
+            }}
+            onMouseDown={(event) => {
+              if (!hasFlyout || event.button !== 0) return;
+              scheduleFlyoutOpen(groupIndex);
+            }}
+            onPointerDown={(event) => {
+              if (!hasFlyout || event.button !== 0) return;
+              scheduleFlyoutOpen(groupIndex);
+            }}
+            onPointerLeave={clearLongPressFlyout}
+            onPointerUp={clearLongPressFlyout}
+            onPointerCancel={clearLongPressFlyout}
             type="button"
             data-testid={`tool-button-${activeTool.name}`}
           >
@@ -175,6 +234,32 @@ const SidebarLeft = () => {
           <ul
             aria-label={group.some((tool) => tool.figure) ? 'Shape tools' : `${activeTool.label} tools`}
             className="absolute left-full top-0 z-50 ml-2 min-w-48 list-none rounded-lg border border-gray-300 bg-gray-100 p-1.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
+            ref={(element) => {
+              flyoutMenuRefs.current[groupIndex] = element;
+            }}
+            onKeyDown={(event) => {
+              const items = Array.from(
+                event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+              );
+              if (items.length === 0) return;
+
+              const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                const nextIndex =
+                  currentIndex === -1
+                    ? 0
+                    : (currentIndex + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+                items[nextIndex]?.focus();
+              }
+
+              if (event.key === 'Enter' && document.activeElement instanceof HTMLButtonElement) {
+                event.preventDefault();
+                document.activeElement.click();
+              }
+            }}
+            onMouseEnter={clearFlyoutClose}
+            onMouseLeave={hasFlyout ? handleGroupMouseLeave : undefined}
             role="menu"
             data-testid={`tool-flyout-${groupIndex}`}
           >

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import DesktopHeader from '../DesktopHeader.tsx';
 
@@ -171,8 +171,12 @@ describe('DesktopHeader', () => {
     render(<DesktopHeader />);
 
     const fileButton = screen.getByRole('button', { name: 'File' });
-    fireEvent.click(fileButton);
-    fireEvent.click(screen.getByTestId('header-file-new-button'));
+    await act(async () => {
+      fireEvent.click(fileButton);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('header-file-new-button'));
+    });
 
     expect(file.openNewImageDialog).toHaveBeenCalled();
   });
@@ -186,8 +190,12 @@ describe('DesktopHeader', () => {
     render(<DesktopHeader />);
 
     const fileButton = screen.getByRole('button', { name: 'File' });
-    fireEvent.click(fileButton);
-    fireEvent.click(screen.getByTestId('header-file-open-button'));
+    await act(async () => {
+      fireEvent.click(fileButton);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('header-file-open-button'));
+    });
 
     expect(file.openLoadImageDialog).toHaveBeenCalled();
   });

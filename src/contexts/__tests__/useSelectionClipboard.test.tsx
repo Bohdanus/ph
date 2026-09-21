@@ -115,8 +115,8 @@ describe('useSelectionClipboard', () => {
 
     expect(createLayerFromBitmapMock).toHaveBeenCalledWith({
       bitmap: expect.any(HTMLCanvasElement),
-      name: 'Selection copy',
-      pos: { x: 10, y: 20, width: 30, height: 40 },
+      name: 'Layer 1',
+      pos: { x: 35, y: 30, width: 30, height: 40 },
     });
     expect(createLayerFromBitmapMock.mock.calls[0][0].bitmap).not.toBe(clipboardBitmap);
   });

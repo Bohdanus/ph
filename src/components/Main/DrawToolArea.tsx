@@ -67,30 +67,29 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
 
     if (frameRequested.current !== null) {
       cancelAnimationFrame(frameRequested.current);
+      frameRequested.current = null;
     }
-
-    // flushDrawingFrame();
-
-    // canvasCtxRef.current!.drawImage(toolOverlayRef.current!, 0, 0);
-    // overlayCtxRef.current!.clearRect(0, 0, toolOverlayRef.current!.width, toolOverlayRef.current!.height);
 
     const coords = getLocalCoords(event);
-    pointsRef.current.push(coords);
-    const oldPoints = pointsRef.current;
-    const newPoints = []; // avoid passing the original array
-
-    const pos = pointsBoundingPos({ points: oldPoints, lineWidth: args.lineWidth });
-    for (let i = 0; i < oldPoints.length; i++) {
-      newPoints.push({ x: oldPoints[i].x - pos.x, y: oldPoints[i].y - pos.y });
+    const lastPoint = pointsRef.current[pointsRef.current.length - 1];
+    if (!lastPoint || lastPoint.x !== coords.x || lastPoint.y !== coords.y) {
+      pointsRef.current.push(coords);
     }
 
-    const finalArgs = { ...args, points: newPoints };
+    const oldPoints = pointsRef.current.slice();
+    const pos = pointsBoundingPos({ points: oldPoints, lineWidth: args.lineWidth });
+    const newPoints = oldPoints.map((point) => ({ x: point.x - pos.x, y: point.y - pos.y }));
 
+    const finalArgs = { ...args, points: newPoints };
     const fullArgs: FullArgs = {
       args: finalArgs,
       pos,
     };
+
     createLayerFromTool(fullArgs);
+
+    pointsRef.current = [];
+    overlayCtxRef.current?.clearRect(0, 0, totalSize.width, totalSize.height);
   };
 
   return (

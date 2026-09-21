@@ -67,7 +67,7 @@ describe('useMarchingPath basic behavior', () => {
   }
 
   it('draw() schedules a requestAnimationFrame', () => {
-    const apiRef: { current: any } = { current: null };
+    const apiRef: { current: ReturnType<typeof useMarchingPath> | null } = { current: null };
     const mockCtx = makeCtx();
     const mockCanvas = {
       width: 100,
@@ -94,14 +94,14 @@ describe('useMarchingPath basic behavior', () => {
     render(<TestComp />);
 
     act(() => {
-      apiRef.current.draw();
+      apiRef.current!.draw();
     });
 
     expect((testGlobal.requestAnimationFrame as unknown as Mock).mock.calls.length).toBeGreaterThan(0);
   });
 
   it('draw() actually draws on the canvas each frame', () => {
-    const apiRef: { current: any } = { current: null };
+    const apiRef: { current: ReturnType<typeof useMarchingPath> | null } = { current: null };
     const mockCtx = makeCtx();
     const mockCanvas = {
       width: 100,
@@ -128,7 +128,7 @@ describe('useMarchingPath basic behavior', () => {
     render(<TestComp />);
 
     act(() => {
-      apiRef.current.draw();
+      apiRef.current!.draw();
     });
 
     // Frame not flushed yet: nothing drawn.
@@ -145,7 +145,7 @@ describe('useMarchingPath basic behavior', () => {
   });
 
   it('clear() cancels the animation and clears the canvas', () => {
-    const apiRef: { current: any } = { current: null };
+    const apiRef: { current: ReturnType<typeof useMarchingPath> | null } = { current: null };
     const mockCtx = makeCtx();
     const mockCanvas = {
       width: 42,
@@ -172,7 +172,7 @@ describe('useMarchingPath basic behavior', () => {
     render(<TestComp />);
 
     act(() => {
-      apiRef.current.draw();
+      apiRef.current!.draw();
     });
 
     // Let one frame actually draw before cancelling.
@@ -181,7 +181,7 @@ describe('useMarchingPath basic behavior', () => {
     });
 
     act(() => {
-      apiRef.current.clear();
+      apiRef.current!.clear();
     });
 
     // cancelAnimationFrame should have been called when clear() was invoked.

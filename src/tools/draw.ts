@@ -15,6 +15,12 @@ export type DrawToolArgs = {
   toolName: 'draw';
 };
 
+export type PaintToolName = 'brush' | 'pencil' | 'color-replacement';
+
+export type PaintToolArgs = Omit<DrawToolArgs, 'toolName'> & {
+  toolName: PaintToolName;
+};
+
 export type DrawToolSettings = Omit<DrawToolArgs, 'color' | 'points'>;
 
 export const setupDrawCtx = (ctx: Ctx2D, args: DrawToolArgs) => {

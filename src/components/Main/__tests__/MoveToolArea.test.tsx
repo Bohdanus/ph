@@ -1,6 +1,7 @@
 import { act, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MoveToolArea } from '../MoveToolArea.tsx';
+import type { UseRectProps } from '../../../hooks/useRect.ts';
 
 const tempUpdateLayer = vi.fn();
 const updateLayerByTool = vi.fn();
@@ -32,7 +33,7 @@ const storeState = {
   totalSize: { width: 800, height: 600 },
 };
 
-let latestUseRectProps: any = null;
+let latestUseRectProps: UseRectProps | null = null;
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [storeState, vi.fn()],
@@ -58,9 +59,9 @@ vi.mock('../../../contexts/layer-utils.ts', () => ({
 }));
 
 vi.mock('../../../hooks/useRect.ts', () => ({
-  useRect: (props: any) => {
+  useRect: (props: UseRectProps) => {
     latestUseRectProps = props;
-    props.onRepaint?.(props.initialRect);
+    if (props.initialRect) props.onRepaint?.(props.initialRect);
 
     return {
       getLocalCoords: vi.fn(() => ({ x: 0, y: 0 })),
@@ -98,7 +99,7 @@ describe('MoveToolArea', () => {
     render(<MoveToolArea className="test" canvasCtxRef={{ current: null }} />);
 
     act(() => {
-      latestUseRectProps.onChangeEnd({ x1: 10, y1: 20, x2: 40, y2: 60 });
+      latestUseRectProps!.onChangeEnd({ x1: 10, y1: 20, x2: 40, y2: 60 });
     });
 
     expect(updateLayerByTool).not.toHaveBeenCalled();

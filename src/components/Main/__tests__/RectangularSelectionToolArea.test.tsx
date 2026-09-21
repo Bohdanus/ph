@@ -1,5 +1,6 @@
 import { act, fireEvent, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { UseRectProps } from '../../../hooks/useRect.ts';
 import type { Selection } from '../../../contexts/general-types.ts';
 import { RectangularSelectionToolArea } from '../RectangularSelectionToolArea.tsx';
 
@@ -8,7 +9,7 @@ const storeState = vi.hoisted((): { selections: Selection[]; activeSelectionId: 
   selections: [],
   activeSelectionId: null,
 }));
-const useRectProps = vi.hoisted((): { current: any } => ({ current: null }));
+const useRectProps = vi.hoisted((): { current: UseRectProps | null } => ({ current: null }));
 const useRectPointerDownMock = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
@@ -25,7 +26,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 }));
 
 vi.mock('../../../hooks/useRect.ts', () => ({
-  useRect: (props: any) => {
+  useRect: (props: UseRectProps) => {
     useRectProps.current = props;
 
     return {
@@ -52,7 +53,7 @@ describe('RectangularSelectionToolArea', () => {
 
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 20, clientY: 10 });
     act(() => {
-      useRectProps.current.onChangeEnd({ x1: 20, y1: 10, x2: 100, y2: 60 });
+      useRectProps.current!.onChangeEnd({ x1: 20, y1: 10, x2: 100, y2: 60 });
     });
 
     expect(dispatchMock).toHaveBeenNthCalledWith(1, {
@@ -100,7 +101,7 @@ describe('RectangularSelectionToolArea', () => {
 
     render(<RectangularSelectionToolArea className="test-rectangular-selection-area" />);
 
-    expect(useRectProps.current.initialRect).toEqual({ x1: 10, y1: 20, x2: 40, y2: 60 });
+    expect(useRectProps.current!.initialRect).toEqual({ x1: 10, y1: 20, x2: 40, y2: 60 });
   });
 
   it('updates an active committed rectangle instead of storing moved geometry in tool args', () => {
@@ -129,7 +130,7 @@ describe('RectangularSelectionToolArea', () => {
 
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 15, clientY: 25 });
     act(() => {
-      useRectProps.current.onChangeEnd({ x1: 20, y1: 30, x2: 50, y2: 70 });
+      useRectProps.current!.onChangeEnd({ x1: 20, y1: 30, x2: 50, y2: 70 });
     });
 
     expect(dispatchMock).not.toHaveBeenCalledWith({

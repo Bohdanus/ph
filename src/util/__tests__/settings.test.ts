@@ -39,7 +39,7 @@ describe('saveLastSettings', () => {
       lineWidth: 5,
       toolName: 'draw',
     });
-    expect((lastSavedSettings.draw as any).points).toEqual([]);
+    expect(lastSavedSettings.draw.points).toEqual([]);
   });
 
   it('stores text settings without text and rect', () => {
@@ -55,7 +55,7 @@ describe('saveLastSettings', () => {
       italic: false,
       toolName: 'text',
     });
-    const text = lastSavedSettings.text as any;
+    const text = lastSavedSettings.text;
     expect(text.text).toBeUndefined();
     expect(text.rect).toBeUndefined();
     expect(text.fontSize).toBe(32);
@@ -75,7 +75,7 @@ describe('saveLastSettings', () => {
       end: { x: 10, y: 10 },
       toolName: 'shape',
     });
-    const shape = lastSavedSettings.shape as any;
+    const shape = lastSavedSettings.shape;
     expect(shape.start).toBeUndefined();
     expect(shape.end).toBeUndefined();
     expect(shape.figure).toBe('circle');
@@ -89,7 +89,7 @@ describe('saveLastSettings', () => {
       aspectRatio: 1.5,
       toolName: 'crop',
     });
-    const crop = lastSavedSettings.crop as any;
+    const crop = lastSavedSettings.crop;
     expect(crop.rect).toBeUndefined();
     expect(crop.aspectRatio).toBe(1.5);
   });
@@ -158,7 +158,7 @@ describe('saveLastSettings', () => {
       previewFeather: true,
       toolName: 'feather-magnetic-lasso',
     });
-    const result = lastSavedSettings['feather-magnetic-lasso'] as any;
+    const result = lastSavedSettings['feather-magnetic-lasso'];
     expect(result.points).toEqual([]);
     expect(result.featherRadius).toBe(10);
     expect(result.snapStrength).toBe(0.5);
@@ -176,7 +176,7 @@ describe('saveLastSettings', () => {
   });
 
   it('does not mutate the original args when storing', () => {
-    const args: any = {
+    const args: ToolArgs = {
       alpha: 0.8,
       color: '#ff0000',
       penType: 'pen',

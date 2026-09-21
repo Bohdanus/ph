@@ -3,6 +3,7 @@ import { fireEvent, render } from '@testing-library/react';
 import type { Point, Selection } from '../../../contexts/general-types.ts';
 import { pointsBoundingPos } from '../../../util/draw.ts';
 import { PolygonClickToolArea } from '../PolygonClickToolArea.tsx';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
 const storeState = vi.hoisted((): { selections: Selection[] } => ({ selections: [] }));
@@ -11,7 +12,7 @@ const currentToolState = vi.hoisted(() => ({ toolName: 'polygonal-lasso' }));
 // Mock dependencies
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   usePointerPosition: () => ({
-    getLocalCoords: (event: any) => ({ x: event.clientX, y: event.clientY }),
+    getLocalCoords: (event: ReactPointerEvent<HTMLElement>) => ({ x: event.clientX, y: event.clientY }),
     isMouseDown: { current: true },
   }),
 }));

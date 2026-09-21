@@ -4,19 +4,23 @@ export type PlaceholderToolProps = {
   title: string;
   options: readonly string[];
   description?: string;
+  showTodoBadge?: boolean;
 };
 
 export const PlaceholderTool = ({
   title,
   options,
   description = 'TODO: tool behavior not implemented yet.',
+  showTodoBadge = true,
 }: PlaceholderToolProps) => {
   return (
     <div className="flex min-w-[260px] flex-col gap-2 rounded-md border border-dashed border-amber-400 bg-amber-50/80 px-3 py-2 text-left text-xs text-slate-700 shadow-sm dark:border-amber-500/60 dark:bg-amber-500/10 dark:text-slate-200">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-amber-700 dark:text-amber-300">
-          TODO
-        </span>
+        {showTodoBadge && (
+          <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-amber-700 dark:text-amber-300">
+            TODO
+          </span>
+        )}
         <span className="text-[10px] font-medium text-slate-500 dark:text-slate-300">{title}</span>
       </div>
       <div className="flex flex-wrap items-center gap-1.5">

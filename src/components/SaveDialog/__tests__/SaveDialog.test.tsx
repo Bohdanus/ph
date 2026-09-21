@@ -43,7 +43,7 @@ describe('SaveDialog asynchronous save', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('exposes JPEG quality and sends the selected value with the save request', () => {
+  it('exposes JPEG quality and sends the selected value with the save request', async () => {
     const onSave = vi.fn(() => Promise.resolve());
     const onClose = vi.fn();
     render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
@@ -54,11 +54,17 @@ describe('SaveDialog asynchronous save', () => {
     expect(screen.getByRole('option', { name: 'ICO' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'SVG (flattened)' })).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'image/jpeg' } });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'image/jpeg' } });
+    });
     const quality = screen.getByLabelText('JPEG quality') as HTMLInputElement;
     expect(quality.value).toBe('0.92');
-    fireEvent.change(quality, { target: { value: '0.35' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await act(async () => {
+      fireEvent.change(quality, { target: { value: '0.35' } });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    });
 
     expect(onSave).toHaveBeenCalledExactlyOnceWith({ fileName: 'design', format: 'image/jpeg', quality: 0.35 });
   });

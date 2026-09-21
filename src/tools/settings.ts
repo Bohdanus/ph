@@ -1,6 +1,6 @@
 import { cloneDeep } from 'lodash-es';
 
-import type { DrawToolSettings, DrawToolArgs, PenType } from './draw.ts';
+import type { DrawToolSettings, DrawToolArgs, PaintToolArgs, PenType } from './draw.ts';
 import type { TextToolArgs, TextToolSettings } from './text.ts';
 import type { CropToolArgs } from './crop.ts';
 import type { TransformToolArgs } from './transform.ts';
@@ -111,20 +111,59 @@ export const defaultSettings = {
     toolName: 'magic-wand',
   } satisfies MagicWandToolArgs,
   'rectangular-selection': { toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,
-  brush: { toolName: 'brush' },
-  pencil: { toolName: 'pencil' },
-  'color-replacement': { toolName: 'color-replacement' },
+  brush: {
+    alpha: 0.9,
+    color: '#000000',
+    penType: 'pen',
+    lineWidth: 10,
+    points: [],
+    toolName: 'brush',
+  } satisfies PaintToolArgs,
+  pencil: {
+    alpha: 0.9,
+    color: '#000000',
+    penType: 'pen',
+    lineWidth: 3,
+    points: [],
+    toolName: 'pencil',
+  } satisfies PaintToolArgs,
+  'color-replacement': {
+    alpha: 0.55,
+    color: '#000000',
+    penType: 'spray',
+    lineWidth: 18,
+    points: [],
+    toolName: 'color-replacement',
+  } satisfies PaintToolArgs,
   pen: { toolName: 'pen' },
   'freeform-pen': { toolName: 'freeform-pen' },
   'curvature-pen': { toolName: 'curvature-pen' },
   'add-anchor-point': { toolName: 'add-anchor-point' },
   'delete-anchor-point': { toolName: 'delete-anchor-point' },
   'convert-point': { toolName: 'convert-point' },
-  rectangle: { toolName: 'rectangle' },
-  ellipse: { toolName: 'ellipse' },
+  rectangle: {
+    ...savedArgsPerFigure['rectangle'],
+    figure: 'rectangle',
+    color: '#000000',
+    backgroundColor: null,
+    toolName: 'rectangle',
+  } satisfies ToolArgsByName['rectangle'],
+  ellipse: {
+    ...savedArgsPerFigure['oval'],
+    figure: 'oval',
+    color: '#000000',
+    backgroundColor: null,
+    toolName: 'ellipse',
+  } satisfies ToolArgsByName['ellipse'],
   triangle: { toolName: 'triangle' },
   polygon: { toolName: 'polygon' },
-  line: { toolName: 'line' },
+  line: {
+    ...savedArgsPerFigure['line'],
+    figure: 'line',
+    color: '#000000',
+    backgroundColor: null,
+    toolName: 'line',
+  } satisfies ToolArgsByName['line'],
   'custom-shape': { toolName: 'custom-shape' },
 } satisfies ToolArgsByName;
 
