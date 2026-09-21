@@ -32,6 +32,13 @@ type TestStoreShape = {
   deletedLayers: object;
   activeLayerId: string | null;
   totalSize: { width: number; height: number };
+  selections: {
+    id: string;
+    isActive: boolean;
+    points: [];
+    pos: { x: number; y: number; width: number; height: number };
+  }[];
+  activeSelectionId: string | null;
 };
 
 function createStoreState(history: HistoryItem[]): TestStoreShape {
@@ -54,6 +61,8 @@ function createStoreState(history: HistoryItem[]): TestStoreShape {
     deletedLayers: {},
     activeLayerId: null,
     totalSize: { width: 128, height: 64 },
+    selections: [],
+    activeSelectionId: null,
   };
 }
 
@@ -314,6 +323,56 @@ describe('useHistory undo replay', () => {
     useHistory().redo();
     expect(state.layers.second).toBeUndefined();
     expect(state.activeLayerId).toBe('layer-1');
+  });
+
+  it('restores a cleared selection when undoing the tool-switch history entry', () => {
+    const selection = {
+      id: 'selection-1',
+      isActive: true,
+      points: [],
+      pos: { x: 2, y: 3, width: 12, height: 8 },
+    };
+    const history: HistoryItem[] = [
+      {
+        id: 'base',
+        layerId: 'layer-1',
+        actionName: RENAME_LAYER_ACTION,
+        args: { name: 'Base' },
+        imagePromise: Promise.resolve(null),
+      },
+      {
+        id: 'selection-clear',
+        layerId: 'selection',
+        actionName: 'selection',
+        args: {
+          previousSelectionState: { selections: [selection], activeSelectionId: 'selection-1' },
+          nextSelectionState: { selections: [], activeSelectionId: null },
+        },
+        imagePromise: Promise.resolve(null),
+      },
+    ];
+    const state = createStoreState(history);
+    state.historyIndex = 1;
+    state.selections = [];
+    state.activeSelectionId = null;
+    const dispatch = vi.fn((action) => {
+      if (action.type === 'BATCH_UPDATES') Object.assign(state, action.payload);
+    });
+    useStoreMock.mockReturnValue([state, dispatch]);
+
+    useHistory().undo();
+
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'BATCH_UPDATES',
+        payload: expect.objectContaining({
+          selections: [selection],
+          activeSelectionId: 'selection-1',
+        }),
+      })
+    );
+    expect(state.selections).toEqual([selection]);
+    expect(state.activeSelectionId).toBe('selection-1');
   });
 
   it('ignores invalid history targets', () => {

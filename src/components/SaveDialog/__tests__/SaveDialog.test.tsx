@@ -48,11 +48,11 @@ describe('SaveDialog asynchronous save', () => {
     const onClose = vi.fn();
     render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
 
-    expect(screen.getByRole('option', { name: 'BMP' })).toBeTruthy();
-    expect(screen.getByRole('option', { name: 'GIF (static)' })).toBeTruthy();
-    expect(screen.getByRole('option', { name: 'AVIF' })).toBeTruthy();
-    expect(screen.getByRole('option', { name: 'ICO' })).toBeTruthy();
-    expect(screen.getByRole('option', { name: 'SVG (flattened)' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'BMP' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'GIF (static)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'AVIF' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'ICO' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'SVG (flattened)' })).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'image/jpeg' } });
     const quality = screen.getByLabelText('JPEG quality') as HTMLInputElement;

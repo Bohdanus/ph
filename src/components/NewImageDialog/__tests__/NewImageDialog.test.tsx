@@ -12,7 +12,7 @@ describe('NewImageDialog', () => {
     const onCreate = vi.fn();
     render(<NewImageDialog onClose={onClose} onCreate={onCreate} />);
 
-    expect(screen.getByTestId('new-image-dialog')).toBeTruthy();
+    expect(screen.getByTestId('new-image-dialog')).toBeInTheDocument();
     expect((screen.getByLabelText('Width (px)') as HTMLInputElement).value).toBe('800');
     expect((screen.getByLabelText('Height (px)') as HTMLInputElement).value).toBe('600');
   });

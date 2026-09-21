@@ -20,6 +20,7 @@ export const MAX_HISTORY_IMAGE_COUNT = 12;
 
 export const NEW_LAYER_ACTION = 'new layer';
 export const OPEN_DOCUMENT_ACTION = 'open document';
+export const SELECTION_ACTION = 'selection';
 export const TOOL_ACTION = 'tool';
 export const SHOW_LAYER_ACTION = 'show';
 export const HIDE_LAYER_ACTION = 'hide';
@@ -35,6 +36,7 @@ export const NO_BMP_UPDATE_ACTIONS = [RENAME_LAYER_ACTION];
 export type ActionType =
   | typeof OPEN_DOCUMENT_ACTION
   | typeof NEW_LAYER_ACTION
+  | typeof SELECTION_ACTION
   | typeof TOOL_ACTION
   | typeof SHOW_LAYER_ACTION
   | typeof HIDE_LAYER_ACTION

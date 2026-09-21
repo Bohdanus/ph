@@ -55,6 +55,21 @@ vi.mock('../toolIcons.tsx', () => {
       blur: Icon,
       levels: Icon,
       transform: Icon,
+      brush: Icon,
+      pencil: Icon,
+      'color-replacement': Icon,
+      pen: Icon,
+      'freeform-pen': Icon,
+      'curvature-pen': Icon,
+      'add-anchor-point': Icon,
+      'delete-anchor-point': Icon,
+      'convert-point': Icon,
+      rectangle: Icon,
+      ellipse: Icon,
+      triangle: Icon,
+      polygon: Icon,
+      line: Icon,
+      'custom-shape': Icon,
     },
   };
 });
@@ -88,8 +103,11 @@ describe('SidebarLeft', () => {
       'color',
       'draw',
       'blur',
+      'brush',
       'text',
+      'pen',
       'shape',
+      'custom-shape',
     ]);
     expect(screen.queryByText('Artboard Tool')).toBeNull();
   });
@@ -121,19 +139,19 @@ describe('SidebarLeft', () => {
     vi.useFakeTimers();
     render(<SidebarLeft />);
 
-    const lassoButton = screen.getByTestId('tool-button-freehand-lasso');
-    const lassoGroup = lassoButton.closest('li');
-    expect(lassoGroup).not.toBeNull();
+    const brushButton = screen.getByTestId('tool-button-brush');
+    const brushGroup = brushButton.closest('li');
+    expect(brushGroup).not.toBeNull();
 
-    fireEvent.mouseEnter(lassoGroup!);
-    expect(screen.getByTestId('tool-flyout-0-2')).toBeTruthy();
-    expect(screen.getByRole('menuitemradio', { name: 'Polygonal Lasso' })).toBeTruthy();
+    fireEvent.mouseEnter(brushGroup!);
+    expect(screen.getByTestId('tool-flyout-3-2')).toBeTruthy();
+    expect(screen.getByRole('menuitemradio', { name: 'Pencil Tool' })).toBeTruthy();
 
     act(() => {
-      fireEvent.mouseLeave(lassoGroup!);
+      fireEvent.mouseLeave(brushGroup!);
       vi.advanceTimersByTime(150);
     });
-    expect(screen.queryByTestId('tool-flyout-0-2')).toBeNull();
+    expect(screen.queryByTestId('tool-flyout-3-2')).toBeNull();
   });
 
   it('opens a flyout from keyboard focus and closes it with Escape', () => {
@@ -142,21 +160,21 @@ describe('SidebarLeft', () => {
     const shapeButton = screen.getByTestId('tool-button-shape');
     fireEvent.focus(shapeButton);
 
-    expect(screen.getByTestId('tool-flyout-4-1')).toBeTruthy();
+    expect(screen.getByTestId('tool-flyout-4-2')).toBeTruthy();
 
     fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.queryByTestId('tool-flyout-4-1')).toBeNull();
+    expect(screen.queryByTestId('tool-flyout-4-2')).toBeNull();
   });
 
   it('selects a tool from a flyout', () => {
     render(<SidebarLeft />);
 
-    const lassoButton = screen.getByTestId('tool-button-freehand-lasso');
-    fireEvent.mouseEnter(lassoButton.closest('li')!);
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Polygonal Lasso' }));
+    const brushButton = screen.getByTestId('tool-button-brush');
+    fireEvent.mouseEnter(brushButton.closest('li')!);
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Pencil Tool' }));
 
-    expect(goToTool).toHaveBeenCalledWith('polygonal-lasso');
-    expect(screen.queryByTestId('tool-flyout-0-2')).toBeNull();
+    expect(goToTool).toHaveBeenCalledWith('pencil');
+    expect(screen.queryByTestId('tool-flyout-3-2')).toBeNull();
   });
 
   it('renders color pickers and the swap control', () => {
@@ -168,24 +186,19 @@ describe('SidebarLeft', () => {
     expect(screen.getByTestId('swap-colors-button')).toBeTruthy();
   });
 
-  it('shape flyout entries reflect active figure via aria-checked', () => {
-    Object.assign(toolArgsMutable, { toolName: 'shape', figure: 'rectangle' });
-    Object.assign(storeStateMutable, { toolName: 'shape' });
+  it('brush flyout entries reflect the selected tool state', () => {
+    Object.assign(storeStateMutable, { toolName: 'brush' });
     render(<SidebarLeft />);
 
-    const shapeLi = screen.getByTestId('tool-button-shape').closest('li') as HTMLElement;
-    fireEvent.mouseEnter(shapeLi);
+    const brushLi = screen.getByTestId('tool-button-brush').closest('li') as HTMLElement;
+    fireEvent.mouseEnter(brushLi);
 
-    const rectangleItem = screen.getByTestId('tool-flyout-item-shape-rectangle-tool');
-    const ellipseItem = screen.getByTestId('tool-flyout-item-shape-ellipse-tool');
-    const squareItem = screen.getByTestId('tool-flyout-item-shape-square-tool');
-    const circleItem = screen.getByTestId('tool-flyout-item-shape-circle-tool');
-    const lineItem = screen.getByTestId('tool-flyout-item-shape-line-tool');
+    const brushItem = screen.getByTestId('tool-flyout-item-brush-brush-tool');
+    const pencilItem = screen.getByTestId('tool-flyout-item-pencil-pencil-tool');
+    const replacementItem = screen.getByTestId('tool-flyout-item-color-replacement-color-replacement-tool');
 
-    expect(rectangleItem).toHaveAttribute('aria-checked', 'true');
-    expect(ellipseItem).toHaveAttribute('aria-checked', 'false');
-    expect(squareItem).toHaveAttribute('aria-checked', 'false');
-    expect(circleItem).toHaveAttribute('aria-checked', 'false');
-    expect(lineItem).toHaveAttribute('aria-checked', 'false');
+    expect(brushItem).toHaveAttribute('aria-checked', 'true');
+    expect(pencilItem).toHaveAttribute('aria-checked', 'false');
+    expect(replacementItem).toHaveAttribute('aria-checked', 'false');
   });
 });

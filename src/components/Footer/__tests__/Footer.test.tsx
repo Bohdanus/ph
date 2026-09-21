@@ -18,7 +18,7 @@ describe('Footer', () => {
     render(<Footer />);
 
     expect(screen.queryByText(/Dimensions:/)).not.toBeNull();
-    expect(screen.getByText(/800 × 600 px/)).toBeTruthy();
+    expect(screen.getByText(/800 × 600 px/)).toBeInTheDocument();
   });
 
   it('hides dimensions when no image is loaded', () => {

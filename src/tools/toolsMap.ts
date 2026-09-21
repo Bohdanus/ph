@@ -1,3 +1,4 @@
+import React from 'react';
 import { blur } from './blur';
 import { colors } from './colors';
 import { levels } from './levels';
@@ -22,12 +23,17 @@ import type { ToolbarRightComponent } from '../components/ToolbarsRight/types.ts
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
 import { shape } from './shape.ts';
 import Reposition from '../components/ToolbarsRight/Move/Reposition.tsx';
+import { PlaceholderTool, placeholderToolGroups } from '../components/ToolbarsRight/ToolbarPlaceholder.tsx';
 import type { BitmapSource, Pos, Size } from '../contexts/general-types.ts';
 import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
 import { reposition } from './reposition.ts';
 import { rectangularSelection } from './rectangularSelection.ts';
 import { featherMagneticLasso } from './featherMagneticLasso.ts';
 import { magicWand } from './magicWand.ts';
+
+const placeholderTool = (title: string, key: keyof typeof placeholderToolGroups): ToolbarRightComponent => {
+  return () => React.createElement(PlaceholderTool, { title, options: placeholderToolGroups[key] });
+};
 
 export type ProcessorToolParams = {
   size: Size; // why size??
@@ -142,6 +148,81 @@ export const toolsMap: ToolsMap = {
     // @ts-expect-error args
     imageProcessor: rectangularSelection,
     toolboxComponent: RectangularSelection,
+  },
+  brush: {
+    icon: 'brush',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Brush Tool', 'brush'),
+  },
+  pencil: {
+    icon: 'pencil',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Pencil Tool', 'pencil'),
+  },
+  'color-replacement': {
+    icon: 'color-replacement',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Color Replacement Tool', 'color-replacement'),
+  },
+  pen: {
+    icon: 'pen',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Pen Tool', 'pen'),
+  },
+  'freeform-pen': {
+    icon: 'freeform-pen',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Freeform Pen Tool', 'freeform-pen'),
+  },
+  'curvature-pen': {
+    icon: 'curvature-pen',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Curvature Pen Tool', 'curvature-pen'),
+  },
+  'add-anchor-point': {
+    icon: 'add-anchor-point',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Add Anchor Point Tool', 'pen'),
+  },
+  'delete-anchor-point': {
+    icon: 'delete-anchor-point',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Delete Anchor Point Tool', 'pen'),
+  },
+  'convert-point': {
+    icon: 'convert-point',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Convert Point Tool', 'pen'),
+  },
+  rectangle: {
+    icon: 'rectangle',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Rectangle Tool', 'rectangle'),
+  },
+  ellipse: {
+    icon: 'ellipse',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Ellipse Tool', 'rectangle'),
+  },
+  triangle: {
+    icon: 'triangle',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Triangle Tool', 'rectangle'),
+  },
+  polygon: {
+    icon: 'polygon',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Polygon Tool', 'rectangle'),
+  },
+  line: {
+    icon: 'line',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Line Tool', 'rectangle'),
+  },
+  'custom-shape': {
+    icon: 'custom-shape',
+    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    toolboxComponent: placeholderTool('Custom Shape Tool', 'custom-shape'),
   },
   // load: {
   //   creational: true,

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import type { RefObject } from 'react';
+import { usePointerPosition } from '../usePointerPosition.ts';
 import { useResizeObserverRAF } from '../useResizeObserver.ts';
 
 let resizeObserverInstance: MockResizeObserver | null;
@@ -32,6 +33,8 @@ function makeElement(rect: Partial<DOMRect> = {}) {
       toJSON: () => {},
       ...rect,
     }),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
   } as unknown as HTMLElement;
 }
 
@@ -103,6 +106,60 @@ describe('useResizeObserverRAF', () => {
     expect(onResize).toHaveBeenCalledTimes(1);
     expect(onResize).toHaveBeenCalledWith({ x: 0, y: 0, width: 70, height: 80 });
     expect(onResize).not.toHaveBeenCalledWith({ x: 0, y: 0, width: 30, height: 40 });
+  });
+
+  it('uses the current element position instead of the initial one for resize notifications', () => {
+    const el = makeElement({ left: 10, top: 20 });
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const onResize = vi.fn();
+
+    renderHook(() => useResizeObserverRAF(ref, onResize));
+
+    el.getBoundingClientRect = () => ({
+      left: 40,
+      top: 50,
+      right: 140,
+      bottom: 150,
+      width: 100,
+      height: 100,
+      x: 40,
+      y: 50,
+      toJSON: () => {},
+    });
+
+    resizeObserverInstance!.callback([makeEntry(70, 80)], resizeObserverInstance! as unknown as ResizeObserver);
+
+    vi.advanceTimersByTime(16);
+
+    expect(onResize).toHaveBeenCalledWith({ x: 40, y: 50, width: 70, height: 80 });
+  });
+
+  it('recomputes pointer coordinates on the first gesture after a resize', () => {
+    const el = makeElement({ left: 10, top: 20, width: 200, height: 100 });
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const { result } = renderHook(() => usePointerPosition({ ref, imageSize: { width: 100, height: 50 } }));
+
+    el.getBoundingClientRect = () => ({
+      left: 50,
+      top: 60,
+      width: 300,
+      height: 150,
+      right: 350,
+      bottom: 210,
+      x: 50,
+      y: 60,
+      toJSON: () => {},
+    });
+
+    const event = {
+      pointerId: 1,
+      clientX: 180,
+      clientY: 120,
+      button: 0,
+      currentTarget: { setPointerCapture: vi.fn(), releasePointerCapture: vi.fn() },
+    } as any;
+
+    expect(result.current.getLocalCoords(event)).toEqual({ x: 43.333333333333336, y: 20 });
   });
 
   it('does not set up an observer when the ref is null', () => {

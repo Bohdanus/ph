@@ -1,4 +1,4 @@
-import { cloneDeep } from 'lodash-es';
+import { cloneDeep, omit } from 'lodash-es';
 import { lastSavedSettings } from '../tools/settings.ts';
 import type { ToolArgs } from '../contexts/tool-types.ts';
 
@@ -15,14 +15,11 @@ export function saveLastSettings(args: ToolArgs) {
   if (toolName === 'draw') {
     lastSavedSettings.draw = cloneDeep({ ...args, points: [] });
   } else if (toolName === 'text') {
-    const { text, rect, ...rest } = args as TextToolArgs;
-    lastSavedSettings.text = cloneDeep(rest);
+    lastSavedSettings.text = cloneDeep(omit(args as TextToolArgs, 'text', 'rect'));
   } else if (toolName === 'shape') {
-    const { start, end, ...rest } = args as ShapeToolArgs;
-    lastSavedSettings.shape = cloneDeep(rest);
+    lastSavedSettings.shape = cloneDeep(omit(args as ShapeToolArgs, 'start', 'end'));
   } else if (toolName === 'crop') {
-    const { rect, ...rest } = args as CropToolArgs;
-    lastSavedSettings.crop = cloneDeep(rest);
+    lastSavedSettings.crop = cloneDeep(omit(args as CropToolArgs, 'rect'));
     // deliberately not storing for those three because they have a different philosophy, unfortunately
   } else if (toolName === 'transform') {
     lastSavedSettings.transform = cloneDeep(args);
@@ -38,5 +35,23 @@ export function saveLastSettings(args: ToolArgs) {
     lastSavedSettings['magic-wand'] = cloneDeep(args);
   } else if (toolName === 'rectangular-selection') {
     lastSavedSettings['rectangular-selection'] = cloneDeep({ toolName: 'rectangular-selection' });
+  } else if (
+    toolName === 'brush' ||
+    toolName === 'pencil' ||
+    toolName === 'color-replacement' ||
+    toolName === 'pen' ||
+    toolName === 'freeform-pen' ||
+    toolName === 'curvature-pen' ||
+    toolName === 'add-anchor-point' ||
+    toolName === 'delete-anchor-point' ||
+    toolName === 'convert-point' ||
+    toolName === 'rectangle' ||
+    toolName === 'ellipse' ||
+    toolName === 'triangle' ||
+    toolName === 'polygon' ||
+    toolName === 'line' ||
+    toolName === 'custom-shape'
+  ) {
+    (lastSavedSettings as Record<string, { toolName: string }>)[toolName] = cloneDeep({ toolName });
   }
 }

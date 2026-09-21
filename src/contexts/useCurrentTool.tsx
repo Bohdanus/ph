@@ -28,20 +28,23 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
   const [{ currentArgs: currentArgsRef, toolName, isToolDirty }] = useStore();
   const [toolArgs, setToolArgs] = useState<ToolArgs>(initialArgs);
 
-  const resetToLastSavedArgs = (nextToolName: ToolName = toolName) => {
-    const args = cloneSavedToolArgs(nextToolName);
-    setToolArgs(args);
-  };
+  const resetToLastSavedArgs = useCallback(
+    (nextToolName: ToolName = toolName) => {
+      const args = cloneSavedToolArgs(nextToolName);
+      setToolArgs(args);
+    },
+    [toolName]
+  );
 
   useEffect(() => {
     // eslint-disable-next-line react-compiler/react-compiler
     currentArgsRef.current = toolArgs;
-  }, [toolArgs]);
+  }, [toolArgs, currentArgsRef]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     resetToLastSavedArgs();
-  }, [toolName]);
+  }, [toolName, resetToLastSavedArgs]);
 
   const _setToolArgs = useCallback((args: ToolArgs) => {
     saveLastSettings(args);

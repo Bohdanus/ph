@@ -1,6 +1,10 @@
-import { type RefObject, useEffect, useRef } from 'react';
+import { type RefObject, useCallback, useEffect, useRef } from 'react';
 import { DASH_LENGTH, GAP_LENGTH, LINE_WIDTH, SPEED } from './useAnts.ts';
 import type { Point } from '../contexts/general-types.ts';
+
+// Fixed cycle length for dash offset normalization. Kept as a large
+// constant to preserve negative-offset convention (0 or negative values).
+const DASH_OFFSET_CYCLE = 1000;
 
 type UseMarchingPathProps = {
   canvasRef: RefObject<HTMLCanvasElement | null>;
@@ -37,9 +41,6 @@ export function useMarchingPath({
   const dashLengthRef = useRef(dashLength);
   const gapLengthRef = useRef(gapLength);
   const lineWidthRef = useRef(lineWidth);
-  // Fixed cycle length for dash offset normalization. Kept as a large
-  // constant to preserve negative-offset convention (0 or negative values).
-  const DASH_OFFSET_CYCLE = 1000;
 
   useEffect(() => {
     // rebuild cached Path2D when points change to avoid re-traversing the points array twice per frame.
@@ -67,7 +68,7 @@ export function useMarchingPath({
     speedRef.current = speed;
   }, [dashLength, gapLength, lineWidth, speed]);
 
-  const clear = () => {
+  const clear = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -80,52 +81,52 @@ export function useMarchingPath({
       cancelAnimationFrame(animationIdRef.current);
       animationIdRef.current = null;
     }
-  };
+  }, [canvasRef]);
 
-  const animate = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+  const draw = useCallback(() => {
+    const animate = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    ctx.lineWidth = lineWidthRef.current;
-    ctx.setLineDash([dashLengthRef.current, gapLengthRef.current]);
+      ctx.lineWidth = lineWidthRef.current;
+      ctx.setLineDash([dashLengthRef.current, gapLengthRef.current]);
 
-    // black ants
-    const path = pathRef.current;
-    if (path) {
-      ctx.strokeStyle = 'black';
-      ctx.lineDashOffset = dashOffsetRef.current;
-      ctx.stroke(path);
+      // black ants
+      const path = pathRef.current;
+      if (path) {
+        ctx.strokeStyle = 'black';
+        ctx.lineDashOffset = dashOffsetRef.current;
+        ctx.stroke(path);
 
-      // white ants (half-shifted)
-      ctx.strokeStyle = 'white';
-      ctx.lineDashOffset = dashOffsetRef.current + dashLengthRef.current;
-      ctx.stroke(path);
-    }
+        // white ants (half-shifted)
+        ctx.strokeStyle = 'white';
+        ctx.lineDashOffset = dashOffsetRef.current + dashLengthRef.current;
+        ctx.stroke(path);
+      }
 
-    if (!isPausedRef.current) {
-      dashOffsetRef.current -= speedRef.current;
-      // Keep dash offset bounded to avoid unbounded growth. Use a fixed
-      // cycle length and keep the offset in the range [ -TOTAL+1 .. 0 ].
-      // This preserves the original convention where dashOffset was 0 or
-      // negative while preventing unbounded negative growth.
-      dashOffsetRef.current = -(Math.abs(dashOffsetRef.current) % DASH_OFFSET_CYCLE);
-    }
+      if (!isPausedRef.current) {
+        dashOffsetRef.current -= speedRef.current;
+        // Keep dash offset bounded to avoid unbounded growth. Use a fixed
+        // cycle length and keep the offset in the range [ -TOTAL+1 .. 0 ].
+        // This preserves the original convention where dashOffset was 0 or
+        // negative while preventing unbounded negative growth.
+        dashOffsetRef.current = -(Math.abs(dashOffsetRef.current) % DASH_OFFSET_CYCLE);
+      }
 
-    animationIdRef.current = requestAnimationFrame(animate);
-  };
+      animationIdRef.current = requestAnimationFrame(animate);
+    };
 
-  const draw = () => {
     if (animationIdRef.current) {
       cancelAnimationFrame(animationIdRef.current);
     }
 
     animationIdRef.current = requestAnimationFrame(animate);
-  };
+  }, [canvasRef]);
 
   // Start/stop animation when `isPaused` changes and clean up on unmount.
   useEffect(() => {
@@ -150,8 +151,8 @@ export function useMarchingPath({
       }
     };
     // We intentionally depend on `isPaused` here so the effect will run when
-    // pause state toggles. Other values used by the animation are read from
-    // refs so they don't need to be listed as dependencies.
+    // pause state toggles. `draw` is stable (useCallback with no reactive
+    // deps) so it does not need to be listed as a dependency.
   }, [isPaused]);
 
   // Ensure we clear the overlay and cancel animation frames on unmount only.

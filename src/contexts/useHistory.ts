@@ -15,10 +15,11 @@ import {
   REMOVE_ACTION,
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
+  SELECTION_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../util/constants.ts';
-import type { Size } from './general-types.ts';
+import type { Selection, Size } from './general-types.ts';
 
 export function getHistoryItemTitle(item: HistoryItem) {
   const { actionName, args, layerSource } = item;
@@ -79,6 +80,26 @@ export const useHistory = () => {
 
   function undo() {
     if (!canUndo()) return;
+
+    const currentItem = history[historyIndex];
+    if (currentItem?.actionName === SELECTION_ACTION) {
+      const previousSelectionState = (
+        currentItem.args as {
+          previousSelectionState?: { selections: Selection[]; activeSelectionId: string | null };
+        }
+      ).previousSelectionState ?? { selections: [], activeSelectionId: null };
+      dispatch({
+        type: 'BATCH_UPDATES',
+        payload: {
+          selections: previousSelectionState.selections,
+          activeSelectionId: previousSelectionState.activeSelectionId,
+          historyIndex: historyIndex - 1,
+          hasUnsavedChanges: true,
+        },
+      });
+      return;
+    }
+
     resetHistoryTo(historyIndex - 1);
   }
 
@@ -88,6 +109,26 @@ export const useHistory = () => {
 
   function redo() {
     if (!canRedo()) return;
+
+    const nextItem = history[historyIndex + 1];
+    if (nextItem?.actionName === SELECTION_ACTION) {
+      const nextSelectionState = (
+        nextItem.args as {
+          nextSelectionState?: { selections: Selection[]; activeSelectionId: string | null };
+        }
+      ).nextSelectionState ?? { selections: [], activeSelectionId: null };
+      dispatch({
+        type: 'BATCH_UPDATES',
+        payload: {
+          selections: nextSelectionState.selections,
+          activeSelectionId: nextSelectionState.activeSelectionId,
+          historyIndex: historyIndex + 1,
+          hasUnsavedChanges: true,
+        },
+      });
+      return;
+    }
+
     resetHistoryTo(historyIndex + 1);
   }
   //
@@ -168,7 +209,10 @@ export const useHistory = () => {
       } else if (actionName === RENAME_LAYER_ACTION) {
         if (newLayers[layerId]) newLayers[layerId].name = (args as { name: string }).name;
       } else if (actionName === REORDER_ACTION) {
-        const { layerToMoveId, afterWhichLayerId } = args as any;
+        const { layerToMoveId, afterWhichLayerId } = args as {
+          layerToMoveId: string;
+          afterWhichLayerId?: string | null;
+        };
         if (!newLayers[layerToMoveId] || (afterWhichLayerId && !newLayers[afterWhichLayerId])) continue;
         reorderLayers({ layers: newLayers, layerToMoveId, afterWhichLayerId });
       } else if (actionName === MERGE_ACTION) {

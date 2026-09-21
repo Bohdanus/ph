@@ -28,3 +28,35 @@ describe('GIF encoding', () => {
     expect(bytes.at(-1)).toBe(0x3b);
   });
 });
+
+describe('GIF encoding error paths', () => {
+  it('rejects canvases with a zero width', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = { getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(0), width: 0, height: 1 })) };
+    vi.spyOn(canvas, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+
+    await expect(encodeGif(canvas)).rejects.toThrow('GIF dimensions must be greater than zero');
+  });
+
+  it('rejects canvases with a zero height', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = { getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(0), width: 1, height: 0 })) };
+    vi.spyOn(canvas, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+
+    await expect(encodeGif(canvas)).rejects.toThrow('GIF dimensions must be greater than zero');
+  });
+
+  it('rejects canvases that exceed the 65535 pixel limit', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = { getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(0), width: 70000, height: 1 })) };
+    vi.spyOn(canvas, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+
+    await expect(encodeGif(canvas)).rejects.toThrow('GIF dimensions cannot exceed 65535 pixels');
+  });
+});

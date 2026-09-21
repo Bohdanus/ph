@@ -8,13 +8,11 @@ export function useResizeObserverRAF(ref: RefObject<HTMLElement | null>, onResiz
     const el = ref.current;
     if (!el || typeof ResizeObserver === 'undefined') return;
 
-    // expect position not change on subsequent resizes, only width and height
-    const positon = el.getBoundingClientRect();
-
     const observer = new ResizeObserver((entries) => {
+      if (entries.length === 0) return;
+
       // Throttle to 1 per frame
       if (frameRef.current !== null) {
-        // cancelling animation frame here will cause more sparse events on high load, which is by design => more debounce like !
         cancelAnimationFrame(frameRef.current);
       }
 
@@ -22,10 +20,10 @@ export function useResizeObserverRAF(ref: RefObject<HTMLElement | null>, onResiz
         frameRef.current = null;
 
         const entry = entries[0];
-        const { width, height } = entry.contentRect;
-        const rect = { x: positon.left, y: positon.top, width, height };
+        const rect = el.getBoundingClientRect();
+        const size = { x: rect.left, y: rect.top, width: entry.contentRect.width, height: entry.contentRect.height };
 
-        onResize(rect);
+        onResize(size);
       });
     });
 

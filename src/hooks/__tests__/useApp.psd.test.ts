@@ -150,4 +150,42 @@ describe('useApp PSD replacement', () => {
     expect(dispatch).toHaveBeenCalledWith({ type: 'SET_FILE_NAME', payload: 'photo.png' });
     expect(dispatch.mock.calls.every(([action]) => !action.payload?.history)).toBe(true);
   });
+
+  it('clears the active selection and records the clear in history when switching tools', () => {
+    const state = {
+      canvasRef: { current: { width: 10, height: 10 } },
+      toolOverlayRef: { current: { width: 10, height: 10 } },
+      rectOverlayRef: { current: { width: 10, height: 10 } },
+      currentArgs: { current: {} },
+      layers: {},
+      deletedLayers: {},
+      history: [],
+      historyIndex: 0,
+      selections: [{ id: 'selection-1', isActive: true, points: [], pos: { x: 0, y: 0, width: 5, height: 5 } }],
+      activeSelectionId: 'selection-1',
+      toolName: 'draw',
+      hasUnsavedChanges: false,
+      selectionDraft: { status: 'idle' },
+      selectionCleared: null,
+      selectionClipboard: null,
+    } as any;
+    const dispatch = vi.fn();
+    mocks.useStore.mockReturnValue([state, dispatch]);
+
+    useApp().goToTool('blur');
+
+    expect(dispatch).toHaveBeenCalledWith({ type: 'SET_TOOL_NAME', payload: 'blur' });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'ADD_HISTORY_ITEM',
+        payload: expect.objectContaining({
+          actionName: 'selection',
+          args: expect.objectContaining({
+            previousSelectionState: expect.objectContaining({ activeSelectionId: 'selection-1' }),
+            nextSelectionState: expect.objectContaining({ activeSelectionId: null }),
+          }),
+        }),
+      })
+    );
+  });
 });

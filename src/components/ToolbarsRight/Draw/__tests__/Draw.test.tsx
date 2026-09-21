@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import Draw from '../Draw.tsx';
 
@@ -71,17 +71,17 @@ describe('Draw toolbar', () => {
   it('renders pen type selector and size slider', () => {
     render(<Draw />);
 
-    expect(screen.getByLabelText('Pen Type')).toBeTruthy();
-    expect(screen.getByLabelText(/Size/)).toBeTruthy();
-    expect(screen.getByLabelText(/Opacity/)).toBeTruthy();
+    expect(screen.getByLabelText('Pen Type')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Size/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Opacity/)).toBeInTheDocument();
   });
 
   it('renders dash/gap controls when pen-dashed is selected', () => {
     resetToolArgs({ penType: 'pen-dashed', lineDash: [10, 5] });
     render(<Draw />);
 
-    expect(screen.getByLabelText(/Dash/)).toBeTruthy();
-    expect(screen.getByLabelText(/Gap/)).toBeTruthy();
+    expect(screen.getByLabelText(/Dash/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Gap/)).toBeInTheDocument();
   });
 
   it('does not render dash/gap controls when pen is selected', () => {
@@ -98,5 +98,13 @@ describe('Draw toolbar', () => {
 
     expect(screen.queryByLabelText(/Dash/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Gap/)).not.toBeInTheDocument();
+  });
+
+  it('dispatches pen type changes to setToolArgs', () => {
+    render(<Draw />);
+
+    fireEvent.change(screen.getByLabelText('Pen Type'), { target: { value: 'pen-dashed' } });
+
+    expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ penType: 'pen-dashed' }));
   });
 });

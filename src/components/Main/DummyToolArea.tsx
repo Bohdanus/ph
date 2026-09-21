@@ -4,9 +4,9 @@ type DummyToolAreaProps = {
   className?: string;
 
   // keep these so Main can pass the same props as for real tool areas
-  canvasCtxRef: RefObject<CanvasRenderingContext2D | null>;
-  overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
-  toolOverlayRef: RefObject<HTMLCanvasElement | null>;
+  canvasCtxRef?: RefObject<CanvasRenderingContext2D | null>;
+  overlayCtxRef?: RefObject<CanvasRenderingContext2D | null>;
+  toolOverlayRef?: RefObject<HTMLCanvasElement | null>;
 };
 
 export function DummyToolArea({ className }: DummyToolAreaProps) {

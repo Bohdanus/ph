@@ -111,6 +111,21 @@ export const defaultSettings = {
     toolName: 'magic-wand',
   } satisfies MagicWandToolArgs,
   'rectangular-selection': { toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,
+  brush: { toolName: 'brush' },
+  pencil: { toolName: 'pencil' },
+  'color-replacement': { toolName: 'color-replacement' },
+  pen: { toolName: 'pen' },
+  'freeform-pen': { toolName: 'freeform-pen' },
+  'curvature-pen': { toolName: 'curvature-pen' },
+  'add-anchor-point': { toolName: 'add-anchor-point' },
+  'delete-anchor-point': { toolName: 'delete-anchor-point' },
+  'convert-point': { toolName: 'convert-point' },
+  rectangle: { toolName: 'rectangle' },
+  ellipse: { toolName: 'ellipse' },
+  triangle: { toolName: 'triangle' },
+  polygon: { toolName: 'polygon' },
+  line: { toolName: 'line' },
+  'custom-shape': { toolName: 'custom-shape' },
 } satisfies ToolArgsByName;
 
 export type DefaultSettings = typeof defaultSettings;

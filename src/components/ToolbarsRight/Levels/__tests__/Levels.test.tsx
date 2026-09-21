@@ -58,14 +58,14 @@ describe('Levels toolbar', () => {
   it('renders brightness and contrast sliders', () => {
     render(<Levels />);
 
-    expect(screen.getByLabelText(/Brightness/)).toBeTruthy();
-    expect(screen.getByLabelText(/Contrast/)).toBeTruthy();
+    expect(screen.getByLabelText(/Brightness/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Contrast/)).toBeInTheDocument();
   });
 
   it('renders UndoButton', () => {
     render(<Levels />);
 
-    expect(screen.getByRole('button', { name: 'Reset' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reset' })).toBeInTheDocument();
   });
 
   it('does not call tempUpdateLayer when activeLayerId is null', () => {

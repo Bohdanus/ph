@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useRef } from 'react';
+import { type RefObject, useCallback, useEffect, useRef } from 'react';
 import type { Point, Pos } from '../contexts/general-types.ts';
 import type { Layer } from '../contexts/layer-types.ts';
 
@@ -22,22 +22,22 @@ export function useMarchingAnts({ overlayRef, containerRef }: AntsProps) {
   const paintedRef = useRef<{ ctx: CanvasRenderingContext2D; bounds: Pos } | null>(null);
   const cursorContainerRef = useRef<HTMLDivElement | null>(null);
 
-  const erase = () => {
+  const erase = useCallback(() => {
     const painted = paintedRef.current;
     if (!painted) return;
     const { x, y, width, height } = painted.bounds;
     painted.ctx.clearRect(x - LINE_WIDTH, y - LINE_WIDTH, width + LINE_WIDTH * 2, height + LINE_WIDTH * 2);
     paintedRef.current = null;
-  };
+  }, []);
 
-  const clear = () => {
+  const clear = useCallback(() => {
     if (animationIdRef.current !== null) cancelAnimationFrame(animationIdRef.current);
     animationIdRef.current = null;
     outlineRef.current = null;
     cursorContainerRef.current?.classList.remove('cursor-grab');
     cursorContainerRef.current = null;
     erase();
-  };
+  }, [erase]);
 
   const animate = () => {
     animationIdRef.current = null;
@@ -112,7 +112,7 @@ export function useMarchingAnts({ overlayRef, containerRef }: AntsProps) {
 
   useEffect(() => {
     return () => clear();
-  }, []);
+  }, [clear]);
 
   return { draw, drawPoints, drawPath, clear };
 }

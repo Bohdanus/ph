@@ -19,7 +19,22 @@ export type ToolIconName =
   | 'color'
   | 'blur'
   | 'levels'
-  | 'transform';
+  | 'transform'
+  | 'brush'
+  | 'pencil'
+  | 'color-replacement'
+  | 'pen'
+  | 'freeform-pen'
+  | 'curvature-pen'
+  | 'add-anchor-point'
+  | 'delete-anchor-point'
+  | 'convert-point'
+  | 'rectangle'
+  | 'ellipse'
+  | 'triangle'
+  | 'polygon'
+  | 'line'
+  | 'custom-shape';
 
 export type ToolIconProps = {
   title: string;

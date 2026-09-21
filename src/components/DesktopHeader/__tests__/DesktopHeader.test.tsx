@@ -93,6 +93,18 @@ describe('DesktopHeader', () => {
     expect(screen.getByTestId('tools-menu-magic-wand-button')).toBeTruthy();
     expect(screen.getByTestId('tools-menu-rectangular-selection-button')).toBeTruthy();
     expect(screen.getByTestId('tools-menu-reposition-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-brush-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-pencil-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-color-replacement-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-pen-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-freeform-pen-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-curvature-pen-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-rectangle-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-ellipse-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-triangle-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-polygon-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-line-button')).toBeTruthy();
+    expect(screen.getByTestId('tools-menu-custom-shape-button')).toBeTruthy();
   });
 
   it('toggles the file menu open and closed', () => {

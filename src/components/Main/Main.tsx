@@ -126,7 +126,19 @@ const Main = () => {
   };
 
   const renderContent = () => {
-    let EventHandler: any = DummyToolArea;
+    type ToolAreaComponent =
+      | typeof DummyToolArea
+      | typeof MoveToolArea
+      | typeof CropToolArea
+      | typeof DrawToolArea
+      | typeof ShapeToolArea
+      | typeof TextToolArea
+      | typeof PolygonClickToolArea
+      | typeof FeatherMagneticLassoToolArea
+      | typeof MagicWandToolArea
+      | typeof RectangularSelectionToolArea;
+
+    let EventHandler: ToolAreaComponent = DummyToolArea;
     if (hasImage) {
       if (interactionMode === 'reposition') EventHandler = MoveToolArea;
       else if (interactionMode === 'crop') EventHandler = CropToolArea;

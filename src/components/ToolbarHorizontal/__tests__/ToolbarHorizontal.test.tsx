@@ -8,7 +8,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [storeState],
 }));
 
-vi.mock('../../../tools/toolsMap.ts', () => {
+vi.mock('../../../tools/toolsMap.tsx', () => {
   const Toolbox = () => <div data-testid="toolbox">toolbar</div>;
   return {
     toolsMap: {
@@ -25,7 +25,7 @@ describe('ToolbarHorizontal', () => {
     storeState.toolName = 'draw';
     render(<ToolbarHorizontal />);
 
-    expect(screen.getByTestId('toolbox')).toBeTruthy();
+    expect(screen.getByTestId('toolbox')).toBeInTheDocument();
   });
 
   it('does not render the toolbox when there is no image', () => {

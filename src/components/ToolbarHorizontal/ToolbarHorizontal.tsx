@@ -1,4 +1,4 @@
-import { toolsMap } from '../../tools/toolsMap.ts';
+import { toolsMap } from '../../tools/toolsMap.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 
 const ToolbarHorizontal = () => {
@@ -10,7 +10,15 @@ const ToolbarHorizontal = () => {
     );
   }
 
-  const ToolComponent = toolsMap[toolName].toolboxComponent;
+  const ToolComponent = toolsMap[toolName]?.toolboxComponent;
+
+  if (!ToolComponent) {
+    return (
+      <div className="bg-gray-100 dark:bg-gray-800 border-b border-gray-300 dark:border-gray-700 h-[50px] [grid-area:toolbar] max-md:hidden flex items-center px-4 overflow-visible">
+        <span className="text-xs text-amber-700 dark:text-amber-300">TODO: unregistered tool placeholder</span>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-gray-100 dark:bg-gray-800 border-b border-gray-300 dark:border-gray-700 h-[50px] [grid-area:toolbar] max-md:hidden flex items-center px-4 overflow-visible">

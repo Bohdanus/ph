@@ -25,6 +25,18 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'feather-magnetic-lasso', label: 'Feather Magnetic Lasso' },
   { toolName: 'magic-wand', label: 'Magic Wand' },
   { toolName: 'rectangular-selection', label: 'Rectangular Selection' },
+  { toolName: 'brush', label: 'Brush Tool' },
+  { toolName: 'pencil', label: 'Pencil Tool' },
+  { toolName: 'color-replacement', label: 'Color Replacement Tool' },
+  { toolName: 'pen', label: 'Pen Tool' },
+  { toolName: 'freeform-pen', label: 'Freeform Pen Tool' },
+  { toolName: 'curvature-pen', label: 'Curvature Pen Tool' },
+  { toolName: 'rectangle', label: 'Rectangle Tool' },
+  { toolName: 'ellipse', label: 'Ellipse Tool' },
+  { toolName: 'triangle', label: 'Triangle Tool' },
+  { toolName: 'polygon', label: 'Polygon Tool' },
+  { toolName: 'line', label: 'Line Tool' },
+  { toolName: 'custom-shape', label: 'Custom Shape Tool' },
 ];
 
 const DesktopHeader = () => {

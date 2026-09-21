@@ -76,3 +76,30 @@ describe('TIFF encoding and decoding', () => {
     expect(blob.size).toBe(4);
   });
 });
+
+describe('TIFF error paths', () => {
+  it('rejects files whose first decoded page is missing', async () => {
+    decode.mockReturnValue([]);
+
+    await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+      'TIFF file contains no image pages'
+    );
+  });
+
+  it('rejects pages with invalid dimensions', async () => {
+    decode.mockReturnValue([{}]);
+
+    await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+      'TIFF image has invalid dimensions'
+    );
+  });
+
+  it('rejects encoding when the canvas has no 2d context', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    vi.spyOn(canvas, 'getContext').mockReturnValue(null);
+
+    await expect(encodeTiff(canvas)).rejects.toThrow('Unable to read canvas pixels for TIFF encoding');
+  });
+});

@@ -221,7 +221,7 @@ export const useLayers = () => {
     addHistoryEntry({
       layerId: layerToMoveId,
       actionName: REORDER_ACTION,
-      args: { layerToMoveId, afterWhichLayerId } as any as ToolArgs,
+      args: { layerToMoveId, afterWhichLayerId },
     });
   };
 
@@ -241,12 +241,12 @@ export const useLayers = () => {
 
     const { toolName: toolArgsToolName } = toolArgs;
     const bitmap = layer.bitmap;
-    if (!bitmap && !    toolsMap[toolArgsToolName].creator) {
+    if (!bitmap && !toolsMap[toolArgsToolName].creator) {
       console.error('No active layer or bitmap to update preview');
       return;
     }
 
-    const [canvas, positionPatch] =     toolsMap[toolArgsToolName].imageProcessor({ bitmap, size: layer.pos } as
+    const [canvas, positionPatch] = toolsMap[toolArgsToolName].imageProcessor({ bitmap, size: layer.pos } as
       CreatorToolParams | ProcessorToolParams)(toolArgs);
 
     if (positionPatch) {

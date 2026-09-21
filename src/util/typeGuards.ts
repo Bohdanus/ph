@@ -29,7 +29,9 @@ export function isCropToolArgs(args: ToolArgs | null | undefined): args is CropT
   return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'crop';
 }
 
-export function isTransformToolArgs(args: ToolArgs | null | undefined): args is TransformToolArgs & { toolName: 'transform' } {
+export function isTransformToolArgs(
+  args: ToolArgs | null | undefined
+): args is TransformToolArgs & { toolName: 'transform' } {
   return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'transform';
 }
 
@@ -45,6 +47,8 @@ export function isLevelsToolArgs(args: ToolArgs | null | undefined): args is Lev
   return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'levels';
 }
 
-export function isRepositionToolArgs(args: ToolArgs | null | undefined): args is RepositionToolArgs & { toolName: 'reposition' } {
+export function isRepositionToolArgs(
+  args: ToolArgs | null | undefined
+): args is RepositionToolArgs & { toolName: 'reposition' } {
   return !!args && typeof args === 'object' && 'toolName' in args && args.toolName === 'reposition';
 }

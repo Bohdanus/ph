@@ -56,15 +56,15 @@ describe('MagicWand toolbar', () => {
     resetStoreState({ activeSelectionId: 'selection-1' });
     render(<MagicWand />);
 
-    expect(screen.getByLabelText(/Tolerance/)).toBeTruthy();
-    expect(screen.getByLabelText(/Smooth/)).toBeTruthy();
+    expect(screen.getByLabelText(/Tolerance/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Smooth/)).toBeInTheDocument();
   });
 
   it('renders when selections array is empty', () => {
     resetStoreState({ selections: [] });
     render(<MagicWand />);
 
-    expect(screen.getByLabelText(/Tolerance/)).toBeTruthy();
+    expect(screen.getByLabelText(/Tolerance/)).toBeInTheDocument();
   });
 
   it('sliders reflect current tool args values', () => {

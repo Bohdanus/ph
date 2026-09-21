@@ -84,25 +84,25 @@ describe('Text toolbar', () => {
   it('renders text input and controls', () => {
     renderWithProvider(<Text />);
 
-    expect(screen.getByLabelText('Text')).toBeTruthy();
-    expect(screen.getByLabelText('Font')).toBeTruthy();
-    expect(screen.getByLabelText(/Font Size/)).toBeTruthy();
-    expect(screen.getByLabelText(/Line Height/)).toBeTruthy();
-    expect(screen.getByLabelText('Align')).toBeTruthy();
+    expect(screen.getByLabelText('Text')).toBeInTheDocument();
+    expect(screen.getByLabelText('Font')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Font Size/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Line Height/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Align')).toBeInTheDocument();
   });
 
   it('has Apply and Clear buttons', () => {
     renderWithProvider(<Text />);
 
-    expect(screen.getByRole('button', { name: 'Apply' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Clear' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clear' })).toBeInTheDocument();
   });
 
   it('has Bold and Italic toggle buttons', () => {
     renderWithProvider(<Text />);
 
-    expect(screen.getByRole('button', { name: 'B' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'I' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'B' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'I' })).toBeInTheDocument();
   });
 
   it('renders null when toolArgs is not text tool', () => {

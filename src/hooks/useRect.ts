@@ -1,4 +1,4 @@
-import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
+import { type PointerEvent, type RefObject, useEffect, useRef } from 'react';
 import type { Point, RectXY, RectXYSorted, Size } from '../contexts/general-types.ts';
 import { usePointerPosition } from './usePointerPosition.ts';
 import { getCanvasSize, posToSortedRect, sortRect, trimRect } from '../util/rect.ts';
@@ -49,52 +49,8 @@ export function useRect({
 
   const ctx = overlayRef.current!.getContext('2d')!;
 
-  const drawMask = useCallback(
-    (hasRectChanged?: boolean) => {
-      const { scale } = dimensionsRef.current;
-
-      ctx.clearRect(0, 0, imageSize.width, imageSize.height);
-
-      const rect = rectUnsortedRef.current;
-      if (!rect) return;
-
-      const { x, y, width, height } = trimRect(sortRect(rect), getCanvasSize(overlayRef));
-
-      if (!hideBlend) {
-        // Draw semi-transparent overlay
-
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-        ctx.fillRect(0, 0, imageSize.width, imageSize.height);
-
-        // Clear the selection area
-        ctx.clearRect(x, y, width, height);
-      }
-
-      ctx.strokeStyle = '#007bff';
-      ctx.lineWidth = 2 / scale;
-      ctx.setLineDash([5 / scale, 5 / scale]);
-      ctx.strokeRect(x, y, width, height);
-      ctx.setLineDash([]);
-
-      // Draw handles
-      const h1 = HANDLE_SIZE / scale;
-      const h2 = h1 / 2;
-      ctx.fillStyle = '#007bff';
-      ctx.fillRect(x - h2, y - h2, h1, h1);
-      ctx.fillRect(x + width - h2, y - h2, h1, h1);
-      ctx.fillRect(x - h2, y + height - h2, h1, h1);
-      ctx.fillRect(x + width - h2, y + height - h2, h1, h1);
-
-      // todo update status bar - add func on each update
-      const sortedRect = sortRect(rect);
-      onRepaint?.(sortedRect);
-
-      if (hasRectChanged) {
-        onChange?.(sortedRect);
-      }
-    },
-    [ctx, imageSize, hideBlend, onRepaint, onChange]
-  );
+  const drawMaskRef = useRef(drawMask);
+  drawMaskRef.current = drawMask;
 
   useEffect(() => {
     if (aspectRatio && initialRect) {
@@ -106,9 +62,9 @@ export function useRect({
 
     if (!isEqual(startRectRef.current, rectUnsortedRef.current)) {
       rectUnsortedRef.current = startRectRef.current ? { ...startRectRef.current } : null;
-      drawMask();
+      drawMaskRef.current();
     }
-  }, [aspectRatio, initialRect, drawMask]);
+  }, [aspectRatio, initialRect]);
 
   useEffect(() => {
     return () => {
@@ -181,6 +137,50 @@ export function useRect({
     const cursor = CURSOR_MAP[edge as keyof typeof CURSOR_MAP];
 
     eventTarget.style.cursor = cursor ?? '';
+  }
+
+  function drawMask(hasRectChanged?: boolean) {
+    const { scale } = dimensionsRef.current;
+
+    ctx.clearRect(0, 0, imageSize.width, imageSize.height);
+
+    const rect = rectUnsortedRef.current;
+    if (!rect) return;
+
+    const { x, y, width, height } = trimRect(sortRect(rect), getCanvasSize(overlayRef));
+
+    if (!hideBlend) {
+      // Draw semi-transparent overlay
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(0, 0, imageSize.width, imageSize.height);
+
+      // Clear the selection area
+      ctx.clearRect(x, y, width, height);
+    }
+
+    ctx.strokeStyle = '#007bff';
+    ctx.lineWidth = 2 / scale;
+    ctx.setLineDash([5 / scale, 5 / scale]);
+    ctx.strokeRect(x, y, width, height);
+    ctx.setLineDash([]);
+
+    // Draw handles
+    const h1 = HANDLE_SIZE / scale;
+    const h2 = h1 / 2;
+    ctx.fillStyle = '#007bff';
+    ctx.fillRect(x - h2, y - h2, h1, h1);
+    ctx.fillRect(x + width - h2, y - h2, h1, h1);
+    ctx.fillRect(x - h2, y + height - h2, h1, h1);
+    ctx.fillRect(x + width - h2, y + height - h2, h1, h1);
+
+    // todo update status bar - add func on each update
+    const sortedRect = sortRect(rect);
+    onRepaint?.(sortedRect);
+
+    if (hasRectChanged) {
+      onChange?.(sortedRect);
+    }
   }
 
   function adjustHeightRatio({ x1, y1, x2, y2 }: RectXY, _aspectRatio: number | null) {

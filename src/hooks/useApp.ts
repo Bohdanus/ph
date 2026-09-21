@@ -4,7 +4,7 @@ import type { BlankImageParams, NewBedrockSize, ToolName } from '../contexts/too
 import { useLayers } from '../contexts/useLayer.ts';
 import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/useFile.tsx';
 import { v4 as uuidv4 } from 'uuid';
-import { OPEN_DOCUMENT_ACTION } from '../util/constants.ts';
+import { OPEN_DOCUMENT_ACTION, SELECTION_ACTION } from '../util/constants.ts';
 
 export interface UseAppType {
   setBlankImage: (data: BlankImageParams) => void;
@@ -22,7 +22,10 @@ export interface UseAppType {
 
  */
 export const useApp = (): UseAppType => {
-  const [{ canvasRef, currentArgs: currentArgsRef, toolOverlayRef, rectOverlayRef }, dispatch] = useStore();
+  const [
+    { canvasRef, currentArgs: currentArgsRef, toolOverlayRef, rectOverlayRef, toolName, activeSelectionId, selections },
+    dispatch,
+  ] = useStore();
   const { createBlankLayer, createLayerFromBitmap, commitDirtyTool } = useLayers();
 
   function handleImageCreate(size: Size) {
@@ -114,11 +117,33 @@ export const useApp = (): UseAppType => {
     createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true });
   }
 
-  function goToTool(toolName: ToolName) {
+  function goToTool(nextToolName: ToolName) {
     // commit any dirty tool changes before switching
     commitDirtyTool();
 
-    dispatch({ type: 'SET_TOOL_NAME', payload: toolName });
+    if (nextToolName !== toolName && activeSelectionId) {
+      const previousSelectionState = {
+        selections,
+        activeSelectionId,
+      };
+
+      dispatch({ type: 'CLEAR_SELECTIONS' });
+      dispatch({
+        type: 'ADD_HISTORY_ITEM',
+        payload: {
+          id: uuidv4(),
+          actionName: SELECTION_ACTION,
+          layerId: 'selection',
+          args: {
+            previousSelectionState,
+            nextSelectionState: { selections: [], activeSelectionId: null },
+          },
+          imagePromise: Promise.resolve(null),
+        },
+      });
+    }
+
+    dispatch({ type: 'SET_TOOL_NAME', payload: nextToolName });
   }
 
   return {

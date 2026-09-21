@@ -55,27 +55,27 @@ describe('Transform toolbar', () => {
   it('renders rotate buttons and sliders', () => {
     render(<Transform />);
 
-    expect(screen.getByTitle('Rotate 90° Left')).toBeTruthy();
-    expect(screen.getByTitle('Rotate 180°')).toBeTruthy();
-    expect(screen.getByTitle('Rotate 90° Right')).toBeTruthy();
-    expect(screen.getByText('Skew X')).toBeTruthy();
-    expect(screen.getByText('Skew Y')).toBeTruthy();
-    expect(screen.getByText('Trapezoid')).toBeTruthy();
-    expect(screen.getByText('Resize X')).toBeTruthy();
-    expect(screen.getByText('Resize Y')).toBeTruthy();
+    expect(screen.getByTitle('Rotate 90° Left')).toBeInTheDocument();
+    expect(screen.getByTitle('Rotate 180°')).toBeInTheDocument();
+    expect(screen.getByTitle('Rotate 90° Right')).toBeInTheDocument();
+    expect(screen.getByText('Skew X')).toBeInTheDocument();
+    expect(screen.getByText('Skew Y')).toBeInTheDocument();
+    expect(screen.getByText('Trapezoid')).toBeInTheDocument();
+    expect(screen.getByText('Resize X')).toBeInTheDocument();
+    expect(screen.getByText('Resize Y')).toBeInTheDocument();
   });
 
   it('has mirror toggle buttons', () => {
     render(<Transform />);
 
-    expect(screen.getByTitle('Mirror Horizontal')).toBeTruthy();
-    expect(screen.getByTitle('Mirror Vertical')).toBeTruthy();
+    expect(screen.getByTitle('Mirror Horizontal')).toBeInTheDocument();
+    expect(screen.getByTitle('Mirror Vertical')).toBeInTheDocument();
   });
 
   it('has Reset All button', () => {
     render(<Transform />);
 
-    expect(screen.getByText('Reset All')).toBeTruthy();
+    expect(screen.getByText('Reset All')).toBeInTheDocument();
   });
 
   it('rotate buttons are clickable without error', () => {

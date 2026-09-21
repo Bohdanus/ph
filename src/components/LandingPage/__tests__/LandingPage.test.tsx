@@ -6,8 +6,8 @@ describe('LandingPage', () => {
   it('renders the heading and start button', () => {
     render(<LandingPage onStart={() => {}} />);
 
-    expect(screen.getByText('Hello')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Start' })).toBeTruthy();
+    expect(screen.getByText('Hello')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start' })).toBeInTheDocument();
   });
 
   it('calls onStart when the start button is clicked', () => {

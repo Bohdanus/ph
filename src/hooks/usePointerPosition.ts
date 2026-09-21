@@ -1,4 +1,4 @@
-import React, { type RefObject, useEffect, useRef } from 'react';
+import React, { type RefObject, useCallback, useEffect, useRef } from 'react';
 import { useResizeObserverRAF } from './useResizeObserver.ts';
 import type { Point, Pos, Size } from '../contexts/general-types.ts';
 
@@ -43,9 +43,22 @@ export function usePointerPosition<T extends HTMLElement>(
     scale: 1,
   });
 
-  const calculateDimensions = () => {
-    // todo reposition this fn down
-    const rect = containerRectRef.current || ref.current?.getBoundingClientRect();
+  const onResizeRef = useRef(onResize);
+  useEffect(() => {
+    onResizeRef.current = onResize;
+  }, [onResize]);
+
+  const readContainerRect = useCallback((): Pos | null => {
+    const rect = ref.current?.getBoundingClientRect();
+    if (!rect) return containerRectRef.current;
+
+    const nextRect: Pos = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+    containerRectRef.current = nextRect;
+    return nextRect;
+  }, [ref]);
+
+  const calculateDimensions = useCallback(() => {
+    const rect = readContainerRect() ?? containerRectRef.current;
     if (!rect) return;
 
     const { width: outerWidth, height: outerHeight } = rect;
@@ -71,12 +84,12 @@ export function usePointerPosition<T extends HTMLElement>(
       scale,
     };
 
-    onResize?.(dimensionsRef.current);
-  };
+    onResizeRef.current?.(dimensionsRef.current);
+  }, [imageSize, readContainerRect]);
 
   useEffect(() => {
     calculateDimensions();
-  }, [imageSize]);
+  }, [calculateDimensions]);
 
   useResizeObserverRAF(ref, (rect: Pos) => {
     containerRectRef.current = rect;
@@ -126,29 +139,30 @@ export function usePointerPosition<T extends HTMLElement>(
   };
 
   // in theory its managed internally by this hook, so not exposed outside
-  const onPointerCancel = (e: PointerEvent) => {
+  const onPointerCancel = useCallback((e: PointerEvent) => {
     if (activePointerId.current === e.pointerId) {
       activePointerId.current = null;
       isMouseDown.current = false;
     }
-  };
+  }, []);
 
   useEffect(() => {
-    ref.current?.addEventListener('pointercancel', onPointerCancel);
+    const node = ref.current;
+    node?.addEventListener('pointercancel', onPointerCancel);
 
     return () => {
-      ref.current?.removeEventListener('pointercancel', onPointerCancel);
+      node?.removeEventListener('pointercancel', onPointerCancel);
     };
-  }, [ref]);
+  }, [ref, onPointerCancel]);
 
   const getLocalCoords = (e: React.PointerEvent<T>): Point => {
-    const rect = containerRectRef.current;
-    // prevent calculation before ResizeObserver first run
+    calculateDimensions();
+
+    const rect = readContainerRect() ?? containerRectRef.current;
     if (!rect) return { x: 0, y: 0 };
 
     const { offsetX, offsetY, scale } = dimensionsRef.current;
 
-    // Element-relative CSS pixels
     const xCss = (e.clientX - offsetX - rect.x) / scale;
     const yCss = (e.clientY - offsetY - rect.y) / scale;
 
