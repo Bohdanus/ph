@@ -1,4 +1,5 @@
 import { useCallback, useRef } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 import { useStore } from './StoreContext.tsx';
 import type {
   BlankLayerSource,
@@ -10,8 +11,7 @@ import type {
 } from './layer-types.ts';
 import { createLayerSource, getSortedLayersArray, reorderLayers, saveLayerCanvas } from './layer-utils.ts';
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs } from './tool-types.ts';
-import { type CreatorToolParams, type ProcessorToolParams, toolsMap } from '../tools/toolsMap.ts';
-import { useHistory } from './useHistory.ts';
+import { type CreatorToolParams, type ProcessorToolParams, toolProcessors } from '../tools/toolProcessors.ts';
 import { reduceRect, sortedRectToPos } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
 import {
@@ -26,6 +26,7 @@ import {
 } from '../util/constants.ts';
 import type { TextToolArgs } from '../tools/text.ts';
 import type { NewHistoryItem } from './history-types.ts';
+import { createHistoryItem } from './history-utils.ts';
 
 export type LayerEditParams = {
   id?: LayerId | null;
@@ -46,7 +47,6 @@ export const useLayers = () => {
     },
     dispatch,
   ] = useStore();
-  const { addHistoryEntry } = useHistory();
   const previewLayersRef = useRef<LayersRecord>({});
 
   function clearOverlay() {
@@ -55,40 +55,87 @@ export const useLayers = () => {
     overlayCtx.clearRect(0, 0, totalSize.width, totalSize.height);
   }
 
-  const _addLayer = (layer: Layer, historyItem: NewHistoryItem) => {
-    const newLayers = { ...layers, [layer.id]: layer } as LayersRecord;
-    dispatch({ type: 'ADD_LAYER', payload: { layers: newLayers, activeLayerId: layer.id } });
+  const _addLayer = (
+    layer: Layer,
+    historyItem: NewHistoryItem,
+    newDocument?: { size: { width: number; height: number }; hasUnsavedChanges: boolean }
+  ) => {
+    const entry = createHistoryItem(historyItem);
+    if (newDocument) {
+      previewLayersRef.current = {};
+      dispatch({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: uuidv4(),
+          history: [entry],
+          updates: {
+            layers: { [layer.id]: layer },
+            activeLayerId: layer.id,
+            deletedLayers: {},
+            totalSize: { ...newDocument.size },
+            hasImage: true,
+            hasUnsavedChanges: newDocument.hasUnsavedChanges,
+            isToolDirty: false,
+            selections: [],
+            activeSelectionId: null,
+            selectionDraft: { status: 'idle' },
+            selectionCleared: null,
+            selectionClipboard: null,
+          },
+        },
+      });
+      return;
+    }
 
-    addHistoryEntry(historyItem);
-  };
-
-  const createBlankLayer = (params: BlankImageParams) => {
-    commitDirtyTool();
-
-    const source: BlankLayerSource = { kind: 'blank', ...params };
-    const newLayer = createLayerSource({ layers, source });
-
-    _addLayer(newLayer, {
-      layerId: newLayer.id,
-      actionName: NEW_LAYER_ACTION,
-      layerSource: source,
+    dispatch({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        updates: { layers: { ...layers, [layer.id]: layer }, activeLayerId: layer.id },
+        historyItem: entry,
+      },
     });
   };
 
-  const createLayerFromBitmap = (params: FileImageParams) => {
-    commitDirtyTool();
+  const createBlankLayer = (params: BlankImageParams, replaceDocument = false) => {
+    if (!replaceDocument) commitDirtyTool();
+
+    const source: BlankLayerSource = { kind: 'blank', ...params };
+    const newLayer = createLayerSource({ layers: replaceDocument ? {} : layers, source });
+
+    _addLayer(
+      newLayer,
+      {
+        layerId: newLayer.id,
+        actionName: NEW_LAYER_ACTION,
+        layerSource: source,
+      },
+      replaceDocument ? { size: params.size, hasUnsavedChanges: true } : undefined
+    );
+  };
+
+  const createLayerFromBitmap = (params: FileImageParams, replaceDocument = false) => {
+    if (!replaceDocument) commitDirtyTool();
 
     const source: ImageLayerSource = {
       kind: 'image',
       ...params,
     };
-    const newLayer = createLayerSource({ layers, source });
+    const newLayer = createLayerSource({ layers: replaceDocument ? {} : layers, source });
 
-    _addLayer(newLayer, {
-      layerId: newLayer.id,
-      actionName: NEW_LAYER_ACTION,
-      layerSource: source,
-    });
+    _addLayer(
+      newLayer,
+      {
+        layerId: newLayer.id,
+        actionName: NEW_LAYER_ACTION,
+        layerSource: source,
+      },
+      replaceDocument
+        ? {
+            size: params.isBedrock ? params.size : { width: params.pos.width, height: params.pos.height },
+            hasUnsavedChanges: false,
+          }
+        : undefined
+    );
   };
 
   const createLayerFromTool = (sourceArgs: Optional<FullArgs, 'pos'>) => {
@@ -126,24 +173,29 @@ export const useLayers = () => {
     const toolArgsToolName = (toolArgs as ToolArgs).toolName;
 
     // Check if tool requires flattening layers
-    if (toolsMap[toolArgsToolName].flattenRequired) {
+    if (toolProcessors[toolArgsToolName].flattenRequired) {
       await mergeAllLayers();
     }
 
     // should mark layer dirty
     tempUpdateLayer({ id, toolArgs });
     // should pick that dirty later and do all hardening
-    commitDirtyTool();
-
-    addHistoryEntry({
-      layerId: id!,
-      actionName: TOOL_ACTION,
-      args: toolArgs,
+    const committedLayers = commitDirtyTool(true);
+    dispatch({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        updates: { layers: committedLayers },
+        historyItem: createHistoryItem({
+          layerId: id!,
+          actionName: TOOL_ACTION,
+          args: toolArgs,
+        }),
+      },
     });
   };
 
   // honestly, the only dirty tool that needs saving is text and maybe crop
-  const commitDirtyTool = () => {
+  const commitDirtyTool = (deferDispatch = false) => {
     // can be run safely if no dirty layer
 
     // special case
@@ -180,7 +232,7 @@ export const useLayers = () => {
       }
     }
 
-    if (hasPreviewLayers) {
+    if (hasPreviewLayers && !deferDispatch) {
       dispatch({ type: 'UPDATE_LAYERS', payload: committedLayers });
     }
     return committedLayers;
@@ -195,25 +247,24 @@ export const useLayers = () => {
     delete previewLayersRef.current[id];
     const newDeletedLayers = { ...deletedLayers, [id]: deletedLayer };
 
+    const sorted = getSortedLayersArray(remainingLayers);
+    const nextActiveLayerId =
+      activeLayerId === id ? (sorted.length > 0 ? sorted[sorted.length - 1].id : null) : activeLayerId;
+
     dispatch({
-      type: 'BATCH_UPDATES',
+      type: 'COMMIT_DOCUMENT_EDIT',
       payload: {
-        layers: remainingLayers,
-        deletedLayers: newDeletedLayers,
-        hasUnsavedChanges: true,
+        updates: {
+          layers: remainingLayers,
+          deletedLayers: newDeletedLayers,
+          activeLayerId: nextActiveLayerId,
+        },
+        historyItem: createHistoryItem({
+          layerId: id,
+          actionName: REMOVE_ACTION,
+          args: {},
+        }),
       },
-    });
-
-    if (activeLayerId === id) {
-      const sorted = getSortedLayersArray(remainingLayers);
-      const newActive = sorted.length > 0 ? sorted[sorted.length - 1].id : null;
-      dispatch({ type: 'SET_ACTIVE_LAYER', payload: newActive });
-    }
-
-    addHistoryEntry({
-      layerId: id!,
-      actionName: REMOVE_ACTION,
-      args: {},
     });
 
     const ctx = toolOverlayRef.current!.getContext('2d')!;
@@ -224,14 +275,18 @@ export const useLayers = () => {
     const layer = layers[id];
     if (!layer) return;
     const newLayers = { ...layers, [id]: { ...layer, ...patch } } as LayersRecord;
-    dispatch({ type: 'UPDATE_LAYERS', payload: newLayers });
-    drawAllLayers();
-
-    addHistoryEntry({
-      layerId: id!,
-      actionName,
-      args: patch,
+    dispatch({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        updates: { layers: newLayers },
+        historyItem: createHistoryItem({
+          layerId: id,
+          actionName,
+          args: patch,
+        }),
+      },
     });
+    drawAllLayers();
   };
 
   const moveLayerAfter = (layerToMoveId: LayerId, afterWhichLayerId?: LayerId | null) => {
@@ -240,14 +295,18 @@ export const useLayers = () => {
     ) as LayersRecord;
     reorderLayers({ layers: reorderedLayers, layerToMoveId, afterWhichLayerId });
 
-    dispatch({ type: 'UPDATE_LAYERS', payload: reorderedLayers });
-    drawAllLayers();
-
-    addHistoryEntry({
-      layerId: layerToMoveId,
-      actionName: REORDER_ACTION,
-      args: { layerToMoveId, afterWhichLayerId },
+    dispatch({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        updates: { layers: reorderedLayers },
+        historyItem: createHistoryItem({
+          layerId: layerToMoveId,
+          actionName: REORDER_ACTION,
+          args: { layerToMoveId, afterWhichLayerId },
+        }),
+      },
     });
+    drawAllLayers();
   };
 
   const setActiveLayer = (id?: LayerId | null) => dispatch({ type: 'SET_ACTIVE_LAYER', payload: id ?? null });
@@ -266,12 +325,12 @@ export const useLayers = () => {
 
     const { toolName: toolArgsToolName } = toolArgs;
     const bitmap = layer.bitmap;
-    if (!bitmap && !toolsMap[toolArgsToolName].creator) {
+    if (!bitmap && !toolProcessors[toolArgsToolName].creator) {
       console.error('No active layer or bitmap to update preview');
       return;
     }
 
-    const [canvas, positionPatch] = toolsMap[toolArgsToolName].imageProcessor({ bitmap, size: layer.pos } as
+    const [canvas, positionPatch] = toolProcessors[toolArgsToolName].imageProcessor({ bitmap, size: layer.pos } as
       CreatorToolParams | ProcessorToolParams)(toolArgs);
 
     const previewLayer = {
@@ -334,13 +393,16 @@ export const useLayers = () => {
     });
 
     const newLayers = { [layer.id]: layer } as LayersRecord;
-    dispatch({ type: 'UPDATE_LAYERS', payload: newLayers });
-    dispatch({ type: 'SET_ACTIVE_LAYER', payload: layer.id });
-
-    addHistoryEntry({
-      layerId: layer.id,
-      actionName: MERGE_ACTION,
-      args: source,
+    dispatch({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        updates: { layers: newLayers, activeLayerId: layer.id },
+        historyItem: createHistoryItem({
+          layerId: layer.id,
+          actionName: MERGE_ACTION,
+          args: source,
+        }),
+      },
     });
   }
 

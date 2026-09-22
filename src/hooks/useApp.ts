@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { OPEN_DOCUMENT_ACTION, SELECTION_ACTION } from '../util/constants.ts';
 import { resizeCanvas } from '../util/canvas.ts';
 import { setRefValue } from '../util/ref.ts';
+import { createHistoryItem } from '../contexts/history-utils.ts';
 
 export interface UseAppType {
   setBlankImage: (data: BlankImageParams) => void;
@@ -25,20 +26,21 @@ export interface UseAppType {
  */
 export const useApp = (): UseAppType => {
   const [
-    { canvasRef, currentArgs: currentArgsRef, toolOverlayRef, rectOverlayRef, toolName, activeSelectionId, selections },
+    {
+      canvasRef,
+      currentArgs: currentArgsRef,
+      toolOverlayRef,
+      rectOverlayRef,
+      toolName,
+      activeSelectionId,
+      selections,
+      selectionCleared,
+    },
     dispatch,
   ] = useStore();
   const { createBlankLayer, createLayerFromBitmap, commitDirtyTool } = useLayers();
 
   function handleImageCreate(size: Size) {
-    dispatch({
-      type: 'BATCH_UPDATES',
-      payload: {
-        hasImage: true,
-        hasUnsavedChanges: false,
-        totalSize: size,
-      },
-    });
     if (canvasRef.current) {
       resizeCanvas(canvasRef.current, size.width, size.height);
     }
@@ -60,7 +62,7 @@ export const useApp = (): UseAppType => {
 
   function setBlankImage(params: BlankImageParams) {
     handleImageCreate(params.size);
-    createBlankLayer({ ...params });
+    createBlankLayer({ ...params }, true);
   }
 
   function setImageFromUpload(data: ImageUploadResponse) {
@@ -80,32 +82,32 @@ export const useApp = (): UseAppType => {
         }
       }
       dispatch({
-        type: 'BATCH_UPDATES',
+        type: 'REPLACE_DOCUMENT',
         payload: {
-          fileName,
-          totalSize: size,
-          layers,
-          activeLayerId,
-          deletedLayers: {},
-          hasImage: true,
-          hasUnsavedChanges: false,
-          isToolDirty: false,
-          toolName: 'reposition',
-          selections: [],
-          activeSelectionId: null,
-          selectionDraft: { status: 'idle' },
-          selectionCleared: null,
-          selectionClipboard: null,
-          historyIndex: 0,
+          documentId: uuidv4(),
           history: [
-            {
-              id: uuidv4(),
+            createHistoryItem({
               actionName: OPEN_DOCUMENT_ACTION,
               layerId: activeLayerId ?? '',
               documentSource: { layers: baseline, size: { ...size } },
-              imagePromise: Promise.resolve(null),
-            },
+            }),
           ],
+          updates: {
+            fileName,
+            totalSize: size,
+            layers,
+            activeLayerId,
+            deletedLayers: {},
+            hasImage: true,
+            hasUnsavedChanges: false,
+            isToolDirty: false,
+            toolName: 'reposition',
+            selections: [],
+            activeSelectionId: null,
+            selectionDraft: { status: 'idle' },
+            selectionCleared: null,
+            selectionClipboard: null,
+          },
         },
       });
       return;
@@ -114,7 +116,7 @@ export const useApp = (): UseAppType => {
     _setFileName(fileName);
     const size = { width: image.width, height: image.height };
     handleImageCreate(size);
-    createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true });
+    createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true);
   }
 
   function goToTool(nextToolName: ToolName) {
@@ -127,18 +129,23 @@ export const useApp = (): UseAppType => {
         activeSelectionId,
       };
 
-      dispatch({ type: 'CLEAR_SELECTIONS' });
       dispatch({
-        type: 'ADD_HISTORY_ITEM',
+        type: 'COMMIT_DOCUMENT_EDIT',
         payload: {
-          id: uuidv4(),
-          actionName: SELECTION_ACTION,
-          layerId: 'selection',
-          args: {
-            previousSelectionState,
-            nextSelectionState: { selections: [], activeSelectionId: null },
+          updates: {
+            selections: [],
+            activeSelectionId: null,
+            selectionDraft: { status: 'idle' },
+            selectionCleared: { status: 'cleared', version: (selectionCleared?.version ?? 0) + 1 },
           },
-          imagePromise: Promise.resolve(null),
+          historyItem: createHistoryItem({
+            actionName: SELECTION_ACTION,
+            layerId: 'selection',
+            args: {
+              previousSelectionState,
+              nextSelectionState: { selections: [], activeSelectionId: null },
+            },
+          }),
         },
       });
     }

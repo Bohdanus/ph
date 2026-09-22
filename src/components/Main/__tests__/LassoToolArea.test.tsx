@@ -498,7 +498,7 @@ describe('PolygonClickToolArea', () => {
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
 
       dispatchMock.mockClear();
-      mockCtx.clearRect.mockClear();
+      vi.mocked(mockCtx.clearRect).mockClear();
 
       shortcutHandlers.get('Backspace')?.();
 
@@ -613,7 +613,7 @@ describe('PolygonClickToolArea', () => {
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
 
       dispatchMock.mockClear();
-      mockCtx.clearRect.mockClear();
+      vi.mocked(mockCtx.clearRect).mockClear();
 
       shortcutHandlers.get('Delete')?.();
 

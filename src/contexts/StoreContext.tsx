@@ -13,6 +13,7 @@ import type {
 } from './general-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
+import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
 
 export type StoreData = {
   // refs
@@ -50,6 +51,9 @@ export type StoreData = {
   // history
   history: HistoryItem[];
   historyIndex: number;
+  documentId: string;
+  documentRevision: number;
+  branchRevision: number;
 
   // colors
   color: string;
@@ -59,6 +63,10 @@ export type StoreData = {
   // zoomDataRef: React.MutableRefObject<ZoomData>;
   // setZoomData: (d: ZoomData) => void;
 };
+
+type StoreUpdates = Partial<
+  Omit<StoreData, 'history' | 'historyIndex' | 'documentId' | 'documentRevision' | 'branchRevision'>
+>;
 
 type Action =
   | { type: 'SET_HAS_IMAGE'; payload: boolean }
@@ -72,12 +80,13 @@ type Action =
   | { type: 'SET_ACTIVE_LAYER'; payload: LayerId | null }
   | { type: 'ADD_LAYER'; payload: { layers: LayersRecord; activeLayerId: LayerId } }
   | { type: 'UPDATE_LAYERS'; payload: LayersRecord }
-  | { type: 'BATCH_UPDATES'; payload: Partial<StoreData> }
-  | { type: 'ADD_HISTORY_ITEM'; payload: HistoryItem }
-  | { type: 'REPLACE_HISTORY'; payload: HistoryItem[] }
-  | { type: 'UNDO' }
-  | { type: 'REDO' }
-  | { type: 'SET_HISTORY_INDEX'; payload: number }
+  | { type: 'BATCH_UPDATES'; payload: StoreUpdates }
+  | { type: 'COMMIT_DOCUMENT_EDIT'; payload: { updates?: StoreUpdates; historyItem: HistoryItem } }
+  | { type: 'APPLY_HISTORY_REPLAY'; payload: { updates: StoreUpdates; timeline: HistoryTimeline } }
+  | {
+      type: 'REPLACE_DOCUMENT';
+      payload: { documentId: string; updates: StoreUpdates; history: HistoryItem[]; historyIndex?: number };
+    }
   | { type: 'SET_COLOR'; payload: string }
   | { type: 'SET_BACKGROUND_COLOR'; payload: string }
   | { type: 'SET_SELECTIONS'; payload: Selection[] }
@@ -125,6 +134,9 @@ const initialState: StoreData = {
 
   history: [],
   historyIndex: 0,
+  documentId: 'uninitialized',
+  documentRevision: 0,
+  branchRevision: 0,
 
   color: '#000000',
   backgroundColor: '#ffffff',
@@ -211,37 +223,38 @@ function reducer(state: StoreData, action: Action): StoreData {
         ...state,
         ...action.payload,
       };
-    case 'ADD_HISTORY_ITEM':
+    case 'COMMIT_DOCUMENT_EDIT': {
+      const timeline = updateHistoryTimeline(
+        { entries: state.history, cursor: state.historyIndex, branchRevision: state.branchRevision },
+        { type: 'append', entry: action.payload.historyItem }
+      );
       return {
         ...state,
-        history: [...state.history, action.payload],
-        historyIndex: state.history.length,
+        ...action.payload.updates,
+        history: [...timeline.entries],
+        historyIndex: timeline.cursor,
+        branchRevision: timeline.branchRevision,
         hasUnsavedChanges: true,
       };
-    case 'REPLACE_HISTORY':
+    }
+    case 'APPLY_HISTORY_REPLAY':
       return {
         ...state,
-        history: action.payload,
-        historyIndex: action.payload.length - 1,
+        ...action.payload.updates,
+        history: [...action.payload.timeline.entries],
+        historyIndex: action.payload.timeline.cursor,
+        branchRevision: action.payload.timeline.branchRevision,
         hasUnsavedChanges: true,
       };
-    case 'UNDO':
+    case 'REPLACE_DOCUMENT':
       return {
         ...state,
-        historyIndex: state.historyIndex - 1,
-        hasUnsavedChanges: true,
-      };
-    case 'REDO':
-      return {
-        ...state,
-        historyIndex: state.historyIndex + 1,
-        hasUnsavedChanges: true,
-      };
-    case 'SET_HISTORY_INDEX':
-      return {
-        ...state,
-        historyIndex: action.payload,
-        hasUnsavedChanges: true,
+        ...action.payload.updates,
+        documentId: action.payload.documentId,
+        documentRevision: state.documentRevision + 1,
+        branchRevision: 0,
+        history: action.payload.history,
+        historyIndex: action.payload.historyIndex ?? action.payload.history.length - 1,
       };
     case 'SET_COLOR':
       return { ...state, color: action.payload };

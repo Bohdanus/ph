@@ -1,29 +1,16 @@
-import { useState } from 'react';
-
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { getHistoryItemTitle, useHistory } from '../../contexts/useHistory.ts';
 import { ICON_TOGGLE_BUTTON_VISIBLE, ICON_TOGGLE_BUTTON_HIDDEN } from '../ToolbarsRight/buttonStyles.ts';
-import PreviewTooltip from '../PreviewTooltip/BmpPreviewTooltip.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 
 export default function HistoryTab() {
   const [{ history, historyIndex }] = useStore();
   const { resetHistoryTo, toggleDisabled } = useHistory();
 
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
-  const [hoveredElement, setHoveredElement] = useState<HTMLElement | null>(null);
-
   const sortedHistory = [...history].reverse();
 
   return (
     <div className="flex flex-col gap-2 h-full">
-      <PreviewTooltip
-        open={hoveredIndex !== null}
-        hoveredElement={hoveredElement}
-        bitmapPromise={hoveredIndex !== null ? history[hoveredIndex].imagePromise : Promise.resolve(null)}
-        placement="left"
-      />
-
       {history.length === 0 ? (
         <div className="text-sm text-gray-500 dark:text-gray-400">No history yet.</div>
       ) : (
@@ -38,14 +25,6 @@ export default function HistoryTab() {
               <li
                 key={item.id}
                 onClick={() => resetHistoryTo(originalIndex)}
-                onMouseEnter={(event) => {
-                  setHoveredIndex(originalIndex);
-                  setHoveredElement(event.currentTarget);
-                }}
-                onMouseLeave={() => {
-                  setHoveredIndex(null);
-                  setHoveredElement(null);
-                }}
                 className={[
                   'flex items-center gap-2 rounded px-2 py-0 select-none cursor-pointer',
                   'border border-transparent cursor-pointer',

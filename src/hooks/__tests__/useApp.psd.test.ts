@@ -64,32 +64,33 @@ describe('useApp PSD replacement', () => {
     expect(dispatch).toHaveBeenCalledTimes(1);
     const action = dispatch.mock.calls[0][0];
     expect(action).toEqual({
-      type: 'BATCH_UPDATES',
+      type: 'REPLACE_DOCUMENT',
       payload: {
-        fileName: 'design.psd',
-        totalSize: document.size,
-        layers: document.layers,
-        activeLayerId: 'top',
-        deletedLayers: {},
-        hasImage: true,
-        hasUnsavedChanges: false,
-        isToolDirty: false,
-        toolName: 'reposition',
-        selections: [],
-        activeSelectionId: null,
-        selectionDraft: { status: 'idle' },
-        selectionCleared: null,
-        selectionClipboard: null,
-        historyIndex: 0,
+        documentId: expect.any(String),
         history: [
           {
             id: expect.any(String),
             actionName: OPEN_DOCUMENT_ACTION,
             layerId: 'top',
             documentSource: { layers: document.layers, size: document.size },
-            imagePromise: expect.any(Promise),
           },
         ],
+        updates: {
+          fileName: 'design.psd',
+          totalSize: document.size,
+          layers: document.layers,
+          activeLayerId: 'top',
+          deletedLayers: {},
+          hasImage: true,
+          hasUnsavedChanges: false,
+          isToolDirty: false,
+          toolName: 'reposition',
+          selections: [],
+          activeSelectionId: null,
+          selectionDraft: { status: 'idle' },
+          selectionCleared: null,
+          selectionClipboard: null,
+        },
       },
     });
     expect(state.currentArgs.current).toEqual({});
@@ -109,7 +110,6 @@ describe('useApp PSD replacement', () => {
     document.size.width = 999;
     expect(baseline.layers.top).toMatchObject({ name: 'Imported top', pos: { x: -3 } });
     expect(baseline.size.width).toBe(320);
-    await expect(action.payload.history[0].imagePromise).resolves.toBeNull();
     expect(mocks.createBlankLayer).not.toHaveBeenCalled();
     expect(mocks.createLayerFromBitmap).not.toHaveBeenCalled();
     expect(mocks.commitDirtyTool).not.toHaveBeenCalled();
@@ -135,19 +135,22 @@ describe('useApp PSD replacement', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     useApp().setImageFromUpload({ fileName: 'design.psd', document });
     expect(dispatch).toHaveBeenCalledTimes(1);
-    expect(dispatch.mock.calls[0][0].payload.layers).toBe(document.layers);
+    expect(dispatch.mock.calls[0][0].payload.updates.layers).toBe(document.layers);
   });
 
   it('retains the raster upload path rather than creating a PSD baseline', () => {
     const { dispatch } = setup();
     const image = { width: 80, height: 40 } as HTMLImageElement;
     useApp().setImageFromUpload({ fileName: 'photo.png', image });
-    expect(mocks.createLayerFromBitmap).toHaveBeenCalledExactlyOnceWith({
-      bitmap: image,
-      name: 'photo.png',
-      size: { width: 80, height: 40 },
-      isBedrock: true,
-    });
+    expect(mocks.createLayerFromBitmap).toHaveBeenCalledExactlyOnceWith(
+      {
+        bitmap: image,
+        name: 'photo.png',
+        size: { width: 80, height: 40 },
+        isBedrock: true,
+      },
+      true
+    );
     expect(dispatch).toHaveBeenCalledWith({ type: 'SET_FILE_NAME', payload: 'photo.png' });
     expect(dispatch.mock.calls.every(([action]) => !action.payload?.history)).toBe(true);
   });
@@ -178,12 +181,14 @@ describe('useApp PSD replacement', () => {
     expect(dispatch).toHaveBeenCalledWith({ type: 'SET_TOOL_NAME', payload: 'blur' });
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'ADD_HISTORY_ITEM',
+        type: 'COMMIT_DOCUMENT_EDIT',
         payload: expect.objectContaining({
-          actionName: 'selection',
-          args: expect.objectContaining({
-            previousSelectionState: expect.objectContaining({ activeSelectionId: 'selection-1' }),
-            nextSelectionState: expect.objectContaining({ activeSelectionId: null }),
+          historyItem: expect.objectContaining({
+            actionName: 'selection',
+            args: expect.objectContaining({
+              previousSelectionState: expect.objectContaining({ activeSelectionId: 'selection-1' }),
+              nextSelectionState: expect.objectContaining({ activeSelectionId: null }),
+            }),
           }),
         }),
       })

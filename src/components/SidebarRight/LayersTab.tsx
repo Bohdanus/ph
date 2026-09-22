@@ -7,7 +7,6 @@ import type { LayerId } from '../../contexts/layer-types.ts';
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { DragHandleIcon } from '../Icons/DragHandleIcon.tsx';
-import PreviewTooltip, { type MaybeBitmap } from '../PreviewTooltip/BmpPreviewTooltip.tsx';
 import {
   ICON_TOGGLE_BUTTON_VISIBLE,
   ICON_TOGGLE_BUTTON_HIDDEN,
@@ -29,8 +28,6 @@ export default function LayersTab() {
   const [isShrinking, setIsShrinking] = useState(false);
   const [isExpanding, setIsExpanding] = useState(false);
 
-  const [hoveredId, setHoveredId] = useState<LayerId | null>(null);
-  const [hoveredElement, setHoveredElement] = useState<HTMLElement | null>(null);
   const listItemRefs = useRef<Record<LayerId, HTMLLIElement | null>>({});
   const dragImageRef = useRef<HTMLDivElement>(null);
   const dragImageNameRef = useRef<HTMLSpanElement>(null);
@@ -51,10 +48,6 @@ export default function LayersTab() {
   /////
 
   const sortedLayers = useMemo(() => getSortedLayersArray(layers).reverse(), [layers]);
-
-  const hoveredLayer = hoveredId ? layers[hoveredId] : null;
-  const hoveredBitmap = (hoveredLayer?.tmpCanvas ?? hoveredLayer?.bitmap) as MaybeBitmap;
-  const bitmapPromise = useMemo(() => Promise.resolve(hoveredBitmap), [hoveredBitmap]);
 
   function animateMove(layerToMoveId: LayerId, layerToPlaceAfterId?: LayerId) {
     // Start shrinking layerToMove
@@ -90,13 +83,6 @@ export default function LayersTab() {
 
   return (
     <div className={`flex flex-col gap-2 h-full ${draggedLayerId ? 'is-dragging' : ''}`}>
-      <PreviewTooltip
-        open={hoveredId !== null && !!hoveredLayer}
-        hoveredElement={hoveredElement}
-        bitmapPromise={bitmapPromise}
-        placement="left"
-      />
-
       {sortedLayers.length === 0 ? (
         <div className="text-sm text-gray-500 dark:text-gray-400">No layers yet.</div>
       ) : (
@@ -171,14 +157,6 @@ export default function LayersTab() {
                     animateMove(draggedLayerId, layer.id);
                   }}
                   onClick={() => setActiveLayer(layer.id)}
-                  onMouseEnter={(e) => {
-                    setHoveredId(layer.id);
-                    setHoveredElement(e.currentTarget);
-                  }}
-                  onMouseLeave={() => {
-                    setHoveredId(null);
-                    setHoveredElement(null);
-                  }}
                   className={[
                     'flex items-center gap-2 rounded px-2 py-1 select-none',
                     'border border-transparent',

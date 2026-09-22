@@ -32,6 +32,45 @@ const StoreProbe = () => {
   );
 };
 
+const HistoryProbe = () => {
+  const [{ fileName, history, historyIndex, branchRevision, documentId, documentRevision }, dispatch] = useStore();
+
+  return (
+    <div>
+      <div data-testid="history-state">
+        {`${fileName}:${history.length}:${historyIndex}:${branchRevision}:${documentId}:${documentRevision}`}
+      </div>
+      <button
+        onClick={() =>
+          dispatch({
+            type: 'COMMIT_DOCUMENT_EDIT',
+            payload: {
+              updates: { fileName: 'edited.psd' },
+              historyItem: { id: 'edit-1', actionName: 'rename', layerId: 'layer-1', args: { name: 'Edited' } },
+            },
+          })
+        }
+      >
+        Commit edit
+      </button>
+      <button
+        onClick={() =>
+          dispatch({
+            type: 'REPLACE_DOCUMENT',
+            payload: {
+              documentId: 'document-2',
+              history: [{ id: 'baseline', actionName: 'rename', layerId: 'layer-2', args: { name: 'Base' } }],
+              updates: { fileName: 'replacement.psd' },
+            },
+          })
+        }
+      >
+        Replace document
+      </button>
+    </div>
+  );
+};
+
 function renderStoreProbe() {
   render(
     <StoreProvider>
@@ -60,5 +99,32 @@ describe('StoreContext selection lifecycle', () => {
 
     expect(screen.getByTestId('tool-name').textContent).toBe('draw');
     expect(screen.getByTestId('selection-state').textContent).toBe('1:selection-1');
+  });
+});
+
+describe('StoreContext history lifecycle', () => {
+  it('commits document changes and history in one revisioned reducer action', () => {
+    render(
+      <StoreProvider>
+        <HistoryProbe />
+      </StoreProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit edit' }));
+
+    expect(screen.getByTestId('history-state').textContent).toBe('edited.psd:1:0:1:uninitialized:0');
+  });
+
+  it('replaces document identity and resets its branch revision atomically', () => {
+    render(
+      <StoreProvider>
+        <HistoryProbe />
+      </StoreProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit edit' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Replace document' }));
+
+    expect(screen.getByTestId('history-state').textContent).toBe('replacement.psd:1:0:0:document-2:1');
   });
 });

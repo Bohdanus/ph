@@ -18,7 +18,6 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "@floating-ui/react": "^0.27.17",
     "@jsquash/avif": "^2.1.1",
     "ag-psd": "^31.0.2",
     "classnames": "^2.5.1",

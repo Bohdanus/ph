@@ -16,8 +16,6 @@ export const CURSOR_MAP = {
 
 export const DEFAULT_TOOL = 'draw';
 
-export const MAX_HISTORY_IMAGE_COUNT = 12;
-
 export const NEW_LAYER_ACTION = 'new layer';
 export const OPEN_DOCUMENT_ACTION = 'open document';
 export const SELECTION_ACTION = 'selection';
@@ -30,8 +28,6 @@ export const LAYER_TRANSPARENCY_ACTION = 'layer transparency'; // todo this is n
 export const REORDER_ACTION = 'reorder layers';
 export const MERGE_ACTION = 'merge layers';
 export const REMOVE_ACTION = 'remove layer';
-
-export const NO_BMP_UPDATE_ACTIONS = [RENAME_LAYER_ACTION];
 
 export type ActionType =
   | typeof OPEN_DOCUMENT_ACTION

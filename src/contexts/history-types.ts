@@ -16,5 +16,4 @@ export type HistoryItem = NewHistoryItem & {
   id: string; // uuid
 
   disabled?: boolean;
-  imagePromise: Promise<ImageBitmap | null>;
 };

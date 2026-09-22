@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 
 import type { Layer, LayerId, LayerSource, LayersRecord } from './layer-types.ts';
-import { type CreatorToolParams, toolsMap } from '../tools/toolsMap.ts';
+import { type CreatorToolParams, toolProcessors } from '../tools/toolProcessors.ts';
 import type { Point, Pos } from './general-types.ts';
 import { ellipsify } from '../util/string.ts';
 
@@ -193,7 +193,7 @@ export function createLayerSource({
     if (!deferSave) saveLayerCanvas(layer);
   } else if (kind === 'tool') {
     // and this is a creator tool
-    const [canvas, patch] = toolsMap[source.args.toolName].imageProcessor({ size: pos } as CreatorToolParams)(
+    const [canvas, patch] = toolProcessors[source.args.toolName].imageProcessor({ size: pos } as CreatorToolParams)(
       source.args
     );
     if (patch) {

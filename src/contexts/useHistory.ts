@@ -1,5 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
-
 import { useStore } from './StoreContext.tsx';
 import type { LayerSource, LayersRecord } from './layer-types.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
@@ -9,10 +7,8 @@ import { createLayerSource, getSortedLayersArray, reorderLayers, saveLayerCanvas
 import { resizeCanvas } from '../util/canvas.ts';
 import {
   HIDE_LAYER_ACTION,
-  MAX_HISTORY_IMAGE_COUNT,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
-  NO_BMP_UPDATE_ACTIONS,
   REMOVE_ACTION,
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
@@ -21,6 +17,8 @@ import {
   TOOL_ACTION,
 } from '../util/constants.ts';
 import type { Selection, Size } from './general-types.ts';
+import { createHistoryItem } from './history-utils.ts';
+import { updateHistoryTimeline } from './history-timeline.ts';
 
 export function getHistoryItemTitle(item: HistoryItem) {
   const { actionName, args, layerSource } = item;
@@ -37,46 +35,17 @@ export function getHistoryItemTitle(item: HistoryItem) {
 }
 
 export const useHistory = () => {
-  const [{ canvasRef, history, historyIndex, deletedLayers, activeLayerId, totalSize: currentSize }, dispatch] =
-    useStore();
+  const [
+    { canvasRef, history, historyIndex, deletedLayers, activeLayerId, totalSize: currentSize, branchRevision = 0 },
+    dispatch,
+  ] = useStore();
 
   const setHistoryIndex = (index: number) => {
     resetHistoryTo(index);
   };
 
   const addHistoryEntry = (inputItem: NewHistoryItem) => {
-    const historyItemId = uuidv4();
-    const imagePromise =
-      NO_BMP_UPDATE_ACTIONS.includes(inputItem.actionName) && history[historyIndex]
-        ? history[historyIndex].imagePromise
-        : new Promise<ImageBitmap>((resolve) => {
-            setTimeout(() => {
-              resolve(createImageBitmap(canvasRef.current!));
-            });
-          });
-
-    const newHistoryItem: HistoryItem = { ...inputItem, id: historyItemId, imagePromise };
-
-    if (historyIndex < history.length - 1) {
-      const trimmedHistory = history.slice(0, historyIndex + 1);
-      trimmedHistory.push(newHistoryItem);
-      dispatch({ type: 'REPLACE_HISTORY', payload: trimmedHistory });
-    } else {
-      const nextHistory = [...history, newHistoryItem];
-
-      // Maintain memory size without mutating an existing history entry.
-      if (history.length >= MAX_HISTORY_IMAGE_COUNT) {
-        const pruneIndex = history.length - MAX_HISTORY_IMAGE_COUNT;
-        const pruneEntry = nextHistory[pruneIndex];
-        if (pruneEntry) {
-          nextHistory[pruneIndex] = { ...pruneEntry, imagePromise: Promise.resolve(null) };
-        }
-
-        dispatch({ type: 'REPLACE_HISTORY', payload: nextHistory });
-      } else {
-        dispatch({ type: 'ADD_HISTORY_ITEM', payload: newHistoryItem });
-      }
-    }
+    dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { historyItem: createHistoryItem(inputItem) } });
   };
 
   function canUndo() {
@@ -94,12 +63,16 @@ export const useHistory = () => {
         }
       ).previousSelectionState ?? { selections: [], activeSelectionId: null };
       dispatch({
-        type: 'BATCH_UPDATES',
+        type: 'APPLY_HISTORY_REPLAY',
         payload: {
-          selections: previousSelectionState.selections,
-          activeSelectionId: previousSelectionState.activeSelectionId,
-          historyIndex: historyIndex - 1,
-          hasUnsavedChanges: true,
+          updates: {
+            selections: previousSelectionState.selections,
+            activeSelectionId: previousSelectionState.activeSelectionId,
+          },
+          timeline: updateHistoryTimeline(
+            { entries: history, cursor: historyIndex, branchRevision },
+            { type: 'set-cursor', cursor: historyIndex - 1 }
+          ),
         },
       });
       return;
@@ -123,12 +96,16 @@ export const useHistory = () => {
         }
       ).nextSelectionState ?? { selections: [], activeSelectionId: null };
       dispatch({
-        type: 'BATCH_UPDATES',
+        type: 'APPLY_HISTORY_REPLAY',
         payload: {
-          selections: nextSelectionState.selections,
-          activeSelectionId: nextSelectionState.activeSelectionId,
-          historyIndex: historyIndex + 1,
-          hasUnsavedChanges: true,
+          updates: {
+            selections: nextSelectionState.selections,
+            activeSelectionId: nextSelectionState.activeSelectionId,
+          },
+          timeline: updateHistoryTimeline(
+            { entries: history, cursor: historyIndex, branchRevision },
+            { type: 'set-cursor', cursor: historyIndex + 1 }
+          ),
         },
       });
       return;
@@ -169,7 +146,7 @@ export const useHistory = () => {
     }
   }
 
-  function resetHistoryTo(targetIndex: number, _history: HistoryItem[] = history) {
+  function resetHistoryTo(targetIndex: number, _history: HistoryItem[] = history, _branchRevision = branchRevision) {
     if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= _history.length) return;
     // async commitDirtyTool(); todo
     let newLayers: LayersRecord = {};
@@ -254,15 +231,15 @@ export const useHistory = () => {
       activeLayerId && newLayers[activeLayerId] ? activeLayerId : (sortedLayers[sortedLayers.length - 1]?.id ?? null);
 
     dispatch({
-      type: 'BATCH_UPDATES',
+      type: 'APPLY_HISTORY_REPLAY',
       payload: {
-        layers: newLayers,
-        deletedLayers: { ...deletedLayers },
-        activeLayerId: nextActiveLayerId,
-        totalSize,
-        historyIndex: targetIndex,
-        hasUnsavedChanges: true,
-        ...(_history !== history ? { history: _history } : {}),
+        updates: {
+          layers: newLayers,
+          deletedLayers: { ...deletedLayers },
+          activeLayerId: nextActiveLayerId,
+          totalSize,
+        },
+        timeline: { entries: _history, cursor: targetIndex, branchRevision: _branchRevision },
       },
     });
 
@@ -271,14 +248,14 @@ export const useHistory = () => {
 
   function toggleDisabled(historyId: string) {
     // todo commit dirty tool
-    const itemIndex = history.findIndex((item) => item.id === historyId);
-    if (itemIndex === -1) return;
-
-    const newHistory = [...history];
-    newHistory[itemIndex] = { ...newHistory[itemIndex], disabled: !newHistory[itemIndex].disabled };
+    const timeline = updateHistoryTimeline(
+      { entries: history, cursor: historyIndex, branchRevision },
+      { type: 'toggle-disabled', entryId: historyId }
+    );
+    if (timeline.entries === history) return;
 
     // recalculate current state
-    resetHistoryTo(historyIndex, newHistory);
+    resetHistoryTo(historyIndex, [...timeline.entries], timeline.branchRevision);
   }
 
   return {

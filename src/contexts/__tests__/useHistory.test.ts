@@ -2,7 +2,6 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   HIDE_LAYER_ACTION,
-  MAX_HISTORY_IMAGE_COUNT,
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
@@ -17,6 +16,7 @@ import type { HistoryItem } from '../history-types.ts';
 import type { LayersRecord, ToolLayerSource } from '../layer-types.ts';
 import { toolsMap } from '../../tools/toolsMap.ts';
 import { saveLayerCanvas } from '../layer-utils.ts';
+import { updateHistoryTimeline } from '../history-timeline.ts';
 
 const useStoreMock = vi.fn();
 
@@ -39,6 +39,8 @@ type TestStoreShape = {
     pos: { x: number; y: number; width: number; height: number };
   }[];
   activeSelectionId: string | null;
+  branchRevision: number;
+  hasUnsavedChanges: boolean;
 };
 
 function createStoreState(history: HistoryItem[]): TestStoreShape {
@@ -63,7 +65,33 @@ function createStoreState(history: HistoryItem[]): TestStoreShape {
     totalSize: { width: 128, height: 64 },
     selections: [],
     activeSelectionId: null,
+    branchRevision: 0,
+    hasUnsavedChanges: false,
   };
+}
+
+function createDispatch(state: TestStoreShape) {
+  return vi.fn((action) => {
+    if (action.type === 'APPLY_HISTORY_REPLAY') {
+      Object.assign(state, action.payload.updates, {
+        history: [...action.payload.timeline.entries],
+        historyIndex: action.payload.timeline.cursor,
+        branchRevision: action.payload.timeline.branchRevision,
+        hasUnsavedChanges: true,
+      });
+    } else if (action.type === 'COMMIT_DOCUMENT_EDIT') {
+      const timeline = updateHistoryTimeline(
+        { entries: state.history, cursor: state.historyIndex, branchRevision: state.branchRevision },
+        { type: 'append', entry: action.payload.historyItem }
+      );
+      Object.assign(state, action.payload.updates, {
+        history: [...timeline.entries],
+        historyIndex: timeline.cursor,
+        branchRevision: timeline.branchRevision,
+        hasUnsavedChanges: true,
+      });
+    }
+  });
 }
 
 function createLayerSource(isBedrock = true) {
@@ -82,7 +110,6 @@ function createHistory(sourceIn: 'layerSource' | 'args'): HistoryItem[] {
     id: 'h-1',
     layerId: 'layer-1',
     actionName: NEW_LAYER_ACTION,
-    imagePromise: Promise.resolve(null),
   };
 
   const firstItem =
@@ -95,7 +122,6 @@ function createHistory(sourceIn: 'layerSource' | 'args'): HistoryItem[] {
       layerId: 'layer-1',
       actionName: RENAME_LAYER_ACTION,
       args: { name: 'Layer 1' },
-      imagePromise: Promise.resolve(null),
     },
   ] as HistoryItem[];
 }
@@ -141,8 +167,8 @@ describe('useHistory undo replay', () => {
   });
 
   it('undoes history when NEW_LAYER source is stored in layerSource', () => {
-    const dispatch = vi.fn();
     const storeState = createStoreState(createHistory('layerSource'));
+    const dispatch = createDispatch(storeState);
     useStoreMock.mockReturnValue([storeState, dispatch]);
 
     const { undo } = useHistory();
@@ -150,14 +176,14 @@ describe('useHistory undo replay', () => {
     expect(() => undo()).not.toThrow();
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'BATCH_UPDATES',
+        type: 'APPLY_HISTORY_REPLAY',
       })
     );
   });
 
   it('keeps compatibility with history where NEW_LAYER source is stored in args', () => {
-    const dispatch = vi.fn();
     const storeState = createStoreState(createHistory('args'));
+    const dispatch = createDispatch(storeState);
 
     useStoreMock.mockReturnValue([storeState, dispatch]);
 
@@ -166,44 +192,33 @@ describe('useHistory undo replay', () => {
     expect(() => undo()).not.toThrow();
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'BATCH_UPDATES',
+        type: 'APPLY_HISTORY_REPLAY',
       })
     );
   });
 
   function setup(history = createHistory('layerSource')) {
     const state = createStoreState(history);
-    const dispatch = vi.fn((action) => {
-      if (action.type === 'BATCH_UPDATES') Object.assign(state, action.payload);
-    });
+    const dispatch = createDispatch(state);
     useStoreMock.mockReturnValue([state, dispatch]);
     return { state, dispatch };
   }
 
-  it('reuses the current preview when renaming the initial layer', () => {
-    const { state, dispatch } = setup(createHistory('layerSource').slice(0, 1));
+  it('adds history entries without capturing a canvas preview', () => {
+    const { dispatch } = setup(createHistory('layerSource').slice(0, 1));
     useHistory().addHistoryEntry({ layerId: 'layer-1', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' } });
     expect(dispatch).toHaveBeenCalledWith({
-      type: 'ADD_HISTORY_ITEM',
-      payload: expect.objectContaining({ imagePromise: state.history[0].imagePromise }),
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        historyItem: expect.objectContaining({
+          id: expect.any(String),
+          layerId: 'layer-1',
+          actionName: RENAME_LAYER_ACTION,
+          args: { name: 'Renamed' },
+        }),
+      },
     });
-  });
-
-  it('does not create a negative index when the history buffer is full', async () => {
-    const history: HistoryItem[] = Array.from({ length: MAX_HISTORY_IMAGE_COUNT }, (_, i) => ({
-      id: `h-${i}`,
-      layerId: 'layer-1',
-      actionName: RENAME_LAYER_ACTION,
-      args: { name: `Layer ${i}` },
-      imagePromise: Promise.resolve(null),
-    }));
-    const state = createStoreState(history);
-    state.historyIndex = history.length - 1;
-    useStoreMock.mockReturnValue([state, vi.fn()]);
-
-    useHistory().addHistoryEntry({ layerId: 'layer-1', actionName: RENAME_LAYER_ACTION, args: { name: 'Layer new' } });
-
-    await expect(history[0].imagePromise).resolves.toBeNull();
+    expect(createImageBitmap).not.toHaveBeenCalled();
   });
 
   it('branches from the current entry and discards redo entries', () => {
@@ -211,11 +226,12 @@ describe('useHistory undo replay', () => {
     state.historyIndex = 0;
     useHistory().addHistoryEntry({ layerId: 'layer-1', actionName: RENAME_LAYER_ACTION, args: { name: 'Branch' } });
     const action = dispatch.mock.calls[0][0];
-    expect(action.type).toBe('REPLACE_HISTORY');
-    expect(action.payload).toHaveLength(2);
-    expect(action.payload[0]).toBe(state.history[0]);
-    expect(action.payload[1].id).not.toBe(state.history[1].id);
-    expect(action.payload[1].imagePromise).toBe(state.history[0].imagePromise);
+    expect(action.type).toBe('COMMIT_DOCUMENT_EDIT');
+    expect(state.history).toHaveLength(2);
+    expect(state.history[0].id).toBe('h-1');
+    expect(state.history[1].id).not.toBe('h-2');
+    expect(state.history[1]).not.toHaveProperty('imagePromise');
+    expect(state.branchRevision).toBe(1);
   });
 
   it.each([NEW_LAYER_ACTION, TOOL_ACTION] as const)('restores tool-created layers recorded as %s', (actionName) => {
@@ -228,7 +244,7 @@ describe('useHistory undo replay', () => {
     } as ToolLayerSource & { pos: { x: number; y: number; width: number; height: number } };
     const { state } = setup([
       createHistory('layerSource')[0],
-      { id: 'tool', layerId: 'shape', actionName, layerSource: source, imagePromise: Promise.resolve(null) },
+      { id: 'tool', layerId: 'shape', actionName, layerSource: source },
     ]);
     state.activeLayerId = 'shape';
     useHistory().undo();
@@ -251,7 +267,6 @@ describe('useHistory undo replay', () => {
           layerId: 'image',
           actionName,
           layerSource: { kind: 'image', bitmap, isBedrock: true, size: { width: 40, height: 20 } },
-          imagePromise: Promise.resolve(null),
         },
       ]);
       useHistory().resetHistoryTo(1);
@@ -274,14 +289,12 @@ describe('useHistory undo replay', () => {
         layerId: 'image',
         actionName: NEW_LAYER_ACTION,
         layerSource: { kind: 'image', bitmap, isBedrock: true, size: { width: 40, height: 20 } },
-        imagePromise: Promise.resolve(null),
       },
       {
         id: 'edit',
         layerId: 'image',
         actionName: TOOL_ACTION,
         args: { toolName: 'shape' },
-        imagePromise: Promise.resolve(null),
       },
     ]);
     useHistory().resetHistoryTo(1);
@@ -300,7 +313,6 @@ describe('useHistory undo replay', () => {
         layerId: 'layer-1',
         actionName,
         args: { layerToMoveId: 'layer-1' },
-        imagePromise: Promise.resolve(null),
       }))
     );
     const { state, dispatch } = setup(history);
@@ -316,7 +328,7 @@ describe('useHistory undo replay', () => {
   it('selects a surviving layer when redoing deletion', () => {
     const history = createHistory('layerSource');
     history.push({ ...history[0], id: 'second', layerId: 'second' });
-    history.push({ id: 'delete', layerId: 'second', actionName: REMOVE_ACTION, imagePromise: Promise.resolve(null) });
+    history.push({ id: 'delete', layerId: 'second', actionName: REMOVE_ACTION });
     const { state } = setup(history);
     useHistory().resetHistoryTo(2);
     state.activeLayerId = 'second';
@@ -338,7 +350,6 @@ describe('useHistory undo replay', () => {
         layerId: 'layer-1',
         actionName: RENAME_LAYER_ACTION,
         args: { name: 'Base' },
-        imagePromise: Promise.resolve(null),
       },
       {
         id: 'selection-clear',
@@ -348,26 +359,25 @@ describe('useHistory undo replay', () => {
           previousSelectionState: { selections: [selection], activeSelectionId: 'selection-1' },
           nextSelectionState: { selections: [], activeSelectionId: null },
         },
-        imagePromise: Promise.resolve(null),
       },
     ];
     const state = createStoreState(history);
     state.historyIndex = 1;
     state.selections = [];
     state.activeSelectionId = null;
-    const dispatch = vi.fn((action) => {
-      if (action.type === 'BATCH_UPDATES') Object.assign(state, action.payload);
-    });
+    const dispatch = createDispatch(state);
     useStoreMock.mockReturnValue([state, dispatch]);
 
     useHistory().undo();
 
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'BATCH_UPDATES',
+        type: 'APPLY_HISTORY_REPLAY',
         payload: expect.objectContaining({
-          selections: [selection],
-          activeSelectionId: 'selection-1',
+          updates: expect.objectContaining({
+            selections: [selection],
+            activeSelectionId: 'selection-1',
+          }),
         }),
       })
     );
@@ -383,11 +393,11 @@ describe('useHistory undo replay', () => {
   });
 
   it('marks navigation dirty without mutating the old deleted-layer record', () => {
-    const { state, dispatch } = setup();
+    const { state } = setup();
     const deletedLayers = state.deletedLayers;
     useHistory().undo();
     expect(deletedLayers).toEqual({});
-    expect(dispatch.mock.calls[0][0].payload.hasUnsavedChanges).toBe(true);
+    expect(state.hasUnsavedChanges).toBe(true);
   });
 
   it('does not let an obsolete bitmap save erase a newer preview', async () => {
@@ -449,16 +459,14 @@ describe('useHistory undo replay', () => {
         layerId: 'top',
         actionName: OPEN_DOCUMENT_ACTION,
         documentSource: { layers, size },
-        imagePromise: Promise.resolve(null),
       },
       {
         id: 'edit',
         layerId: 'top',
         actionName: TOOL_ACTION,
         args: { toolName: 'shape' },
-        imagePromise: Promise.resolve(null),
       },
-      { id: 'remove', layerId: 'top', actionName: REMOVE_ACTION, imagePromise: Promise.resolve(null) },
+      { id: 'remove', layerId: 'top', actionName: REMOVE_ACTION },
     ]);
     useHistory().resetHistoryTo(0);
     expect(state.layers).toEqual(original);
