@@ -1,4 +1,4 @@
-import { type PointerEvent, type RefObject, useRef } from 'react';
+import { type PointerEvent, type RefObject, useEffect, useRef } from 'react';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { drawShape, setShapeCtx, type ShapeToolArgs } from '../../tools/shape.ts';
 import { useLayers } from '../../contexts/useLayer.ts';
@@ -21,6 +21,39 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
   const startRef = useRef<Point | null>(null);
   const endRef = useRef<Point | null>(null);
   const frameRequested = useRef<number | null>(null);
+  const spacePressedRef = useRef(false);
+  const lastPointRef = useRef<Point | null>(null);
+  const originalShapeRef = useRef<{ start: Point; end: Point } | null>(null);
+  const anchorRef = useRef<Point | null>(null);
+  const fromCenterRef = useRef(false);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === 'Space') spacePressedRef.current = true;
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code === 'Space') spacePressedRef.current = false;
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, []);
+
+  const normalize = (anchor: Point, end: Point, constrain: boolean, fromCenter = false) => {
+    const start = fromCenter ? { x: anchor.x * 2 - end.x, y: anchor.y * 2 - end.y } : anchor;
+    let nextEnd = { ...end };
+    if (constrain && args.figure !== 'line') {
+      const side = Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
+      nextEnd = {
+        x: start.x + Math.sign(end.x - start.x || 1) * side,
+        y: start.y + Math.sign(end.y - start.y || 1) * side,
+      };
+    }
+    return { start, end: nextEnd };
+  };
 
   const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown } = usePointerPosition({
     ref: containerRef,
@@ -33,7 +66,8 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     const ctx = overlayCtxRef.current!;
     ctx.clearRect(0, 0, toolOverlayRef.current!.width, toolOverlayRef.current!.height); // todo you can clear smaller shape
 
-    const newArgs = { ...args, start: startRef.current!, end: endRef.current! };
+    const shape = { start: startRef.current!, end: endRef.current! };
+    const newArgs = { ...args, ...shape };
     drawShape(ctx, newArgs);
   };
 
@@ -43,13 +77,31 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     const ctx = overlayCtxRef.current!;
     setShapeCtx(ctx, args);
 
-    startRef.current = getLocalCoords(event);
+    const point = getLocalCoords(event);
+    startRef.current = point;
+    endRef.current = point;
+    anchorRef.current = point;
+    fromCenterRef.current = event.altKey;
+    lastPointRef.current = point;
+    originalShapeRef.current = null;
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     if (!isMouseDown.current || !isPointerMoveValid(event)) return;
 
-    endRef.current = getLocalCoords(event);
+    const point = getLocalCoords(event);
+    if (spacePressedRef.current && lastPointRef.current && originalShapeRef.current) {
+      const dx = point.x - lastPointRef.current.x;
+      const dy = point.y - lastPointRef.current.y;
+      startRef.current = { x: startRef.current!.x + dx, y: startRef.current!.y + dy };
+      endRef.current = { x: endRef.current!.x + dx, y: endRef.current!.y + dy };
+    } else {
+      const shape = normalize(anchorRef.current!, point, event.shiftKey, fromCenterRef.current);
+      startRef.current = shape.start;
+      endRef.current = shape.end;
+      originalShapeRef.current = shape;
+    }
+    lastPointRef.current = point;
 
     if (frameRequested.current !== null) return;
 
@@ -59,7 +111,15 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
     if (!isPointerUpValid(event)) return;
 
-    endRef.current = getLocalCoords(event);
+    const point = getLocalCoords(event);
+    const movedBySpace =
+      originalShapeRef.current &&
+      (startRef.current!.x !== anchorRef.current!.x || startRef.current!.y !== anchorRef.current!.y);
+    if (!movedBySpace) {
+      const shape = normalize(anchorRef.current!, point, event.shiftKey, fromCenterRef.current);
+      startRef.current = shape.start;
+      endRef.current = shape.end;
+    }
 
     if (frameRequested.current !== null) {
       cancelAnimationFrame(frameRequested.current);
@@ -68,8 +128,14 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
 
     const start = { ...startRef.current! };
     const end = { ...endRef.current! };
-    // ignore just clicks
-    if (start.x === end.x && start.y === end.y) return;
+    // A click creates a precise shape, matching Photoshop's single-click workflow.
+    if (start.x === end.x && start.y === end.y) {
+      const width = Number(window.prompt('Width (px)', '100'));
+      const height = Number(window.prompt('Height (px)', '100'));
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+      end.x += width;
+      end.y += height;
+    }
 
     const halfLineWidth = args.lineWidth / 2;
     const pos = {
@@ -79,7 +145,7 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
       height: Math.abs(start.y - end.y) + args.lineWidth + 2,
     };
 
-    // For circles, ovals and squares, recalculate the bounding box
+    // For circles and squares, recalculate the bounding box
     if (args.figure === 'circle' || args.figure === 'oval' || args.figure === 'square') {
       if (args.figure === 'square') {
         let w = end.x - start.x;

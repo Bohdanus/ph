@@ -3,6 +3,9 @@ import type { Ctx2D, Point } from '../contexts/general-types.ts';
 
 export type FigureType = 'line' | 'circle' | 'rectangle' | 'square' | 'oval';
 
+export type ShapeToolMode = 'shape' | 'path' | 'pixels';
+export type ShapeLineCap = CanvasLineCap;
+
 export type ShapeToolArgs = {
   alpha: number;
   color: string;
@@ -11,6 +14,9 @@ export type ShapeToolArgs = {
   figure: FigureType;
   lineWidth: number;
   lineDash?: null | number[];
+  lineCap?: ShapeLineCap;
+  cornerRadius?: number;
+  toolMode?: ShapeToolMode;
   start?: Point;
   end?: Point;
 
@@ -20,19 +26,38 @@ export type ShapeToolArgs = {
 export type ShapeToolSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end'>;
 
 export const setShapeCtx = (ctx: Ctx2D, args: ShapeToolArgs) => {
-  const { alpha, color, backgroundColor, hasFill, lineWidth, lineDash } = args;
+  const { alpha, color, backgroundColor, hasFill, lineWidth, lineDash, lineCap } = args;
 
   ctx.strokeStyle = color;
   if (hasFill && backgroundColor) {
     ctx.fillStyle = backgroundColor;
   }
   ctx.lineWidth = lineWidth;
+  ctx.lineCap = lineCap ?? 'butt';
   ctx.globalAlpha = alpha;
-  if (lineDash) ctx.setLineDash(lineDash);
+  ctx.setLineDash(lineDash ?? []);
+};
+
+const roundedRectPath = (ctx: Ctx2D, x: number, y: number, width: number, height: number, radius: number) => {
+  const r = Math.min(Math.abs(width) / 2, Math.abs(height) / 2, Math.max(0, radius));
+  const right = x + width;
+  const bottom = y + height;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(right - r, y);
+  ctx.quadraticCurveTo(right, y, right, y + r);
+  ctx.lineTo(right, bottom - r);
+  ctx.quadraticCurveTo(right, bottom, right - r, bottom);
+  ctx.lineTo(x + r, bottom);
+  ctx.quadraticCurveTo(x, bottom, x, bottom - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
 };
 
 export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
-  const { figure, hasFill, start, end } = args;
+  const { figure, start, end } = args;
+  const hasFill = args.toolMode !== 'path' && args.hasFill;
 
   if (!start || !end) return;
 
@@ -49,10 +74,15 @@ export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
       w = Math.sign(w) * side;
       h = Math.sign(h) * side;
     }
-    if (hasFill) {
-      ctx.fillRect(start.x, start.y, w, h);
+    const radius = args.cornerRadius ?? 0;
+    if (radius > 0) {
+      roundedRectPath(ctx, start.x, start.y, w, h, radius);
+      if (hasFill) ctx.fill();
+      ctx.stroke();
+    } else {
+      if (hasFill) ctx.fillRect(start.x, start.y, w, h);
+      ctx.strokeRect(start.x, start.y, w, h);
     }
-    ctx.strokeRect(start.x, start.y, w, h);
   } else if (figure === 'circle' || figure === 'oval') {
     let rx = Math.abs(end.x - start.x) / 2;
     let ry = Math.abs(end.y - start.y) / 2;

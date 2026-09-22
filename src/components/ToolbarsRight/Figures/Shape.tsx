@@ -1,7 +1,7 @@
 import React, { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { savedArgsPerFigure } from '../../../tools/settings.ts';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
-import { shape, type ShapeToolArgs } from '../../../tools/shape.ts';
+import { shape, type ShapeLineCap, type ShapeToolArgs, type ShapeToolMode } from '../../../tools/shape.ts';
 import { isLightColor } from '../../../util/color.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
@@ -38,6 +38,9 @@ const Shape: React.FC = () => {
       alpha: newArgs.alpha,
       lineWidth: newArgs.lineWidth,
       lineDash: newArgs.lineDash,
+      lineCap: newArgs.lineCap,
+      cornerRadius: newArgs.cornerRadius,
+      toolMode: newArgs.toolMode,
     };
     setToolArgs(newArgs);
   };
@@ -80,7 +83,19 @@ const Shape: React.FC = () => {
     handleChange({ ...args, alpha });
   };
 
-  const { alpha, hasFill, lineWidth, figure, lineDash } = args;
+  const handleModeChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    handleChange({ ...args, toolMode: event.target.value as ShapeToolMode });
+  };
+
+  const handleRadiusChange = (event: ChangeEvent<HTMLInputElement>) => {
+    handleChange({ ...args, cornerRadius: Number(event.target.value) });
+  };
+
+  const handleCapChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    handleChange({ ...args, lineCap: event.target.value as ShapeLineCap });
+  };
+
+  const { alpha, hasFill, lineWidth, figure, lineDash, cornerRadius = 0, lineCap = 'butt', toolMode = 'shape' } = args;
 
   useEffect(() => {
     if (!previewRef.current || !brushScale) return;
@@ -113,7 +128,20 @@ const Shape: React.FC = () => {
   }, [args, brushScale, color, figure, lineWidth]);
 
   return (
-    <div className="flex flex-row items-center gap-6 h-full">
+    <div className="flex flex-row flex-wrap items-center gap-4 h-full">
+      <label className="flex flex-col gap-1 text-[10px] font-medium text-gray-700 dark:text-gray-300">
+        Tool mode
+        <select
+          aria-label="Tool mode"
+          value={toolMode}
+          onChange={handleModeChange}
+          className="h-7 rounded border border-gray-300 bg-white px-2 text-xs dark:border-gray-600 dark:bg-gray-800"
+        >
+          <option value="shape">Shape</option>
+          <option value="path">Path</option>
+          <option value="pixels">Pixels</option>
+        </select>
+      </label>
       <div className="flex items-center gap-2" aria-label="Current shape">
         <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{figureLabel(figure)}</span>
         <span className="text-[10px] text-gray-500 dark:text-gray-400">Choose a shape from the left toolbar</span>
@@ -138,6 +166,43 @@ const Shape: React.FC = () => {
           className="h-1.5 w-38 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
       </div>
+
+      {figure === 'rectangle' && (
+        <div className="flex flex-col">
+          <label
+            htmlFor="corner-radius-slider"
+            className="flex justify-between mb-1 text-[10px] font-medium text-gray-700 dark:text-gray-300"
+          >
+            Radius <span className="font-bold text-gray-900 dark:text-gray-200">{cornerRadius}px</span>
+          </label>
+          <input
+            id="corner-radius-slider"
+            aria-label="Radius"
+            type="range"
+            min="0"
+            max="250"
+            value={cornerRadius}
+            onChange={handleRadiusChange}
+            className="h-1.5 w-28 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
+          />
+        </div>
+      )}
+
+      {figure === 'line' && (
+        <label className="flex flex-col gap-1 text-[10px] font-medium text-gray-700 dark:text-gray-300">
+          Cap
+          <select
+            aria-label="Line cap"
+            value={lineCap}
+            onChange={handleCapChange}
+            className="h-7 rounded border border-gray-300 bg-white px-2 text-xs dark:border-gray-600 dark:bg-gray-800"
+          >
+            <option value="butt">Butt</option>
+            <option value="round">Round</option>
+            <option value="square">Square</option>
+          </select>
+        </label>
+      )}
 
       <div className="flex flex-col">
         <div className="flex items-center gap-2">

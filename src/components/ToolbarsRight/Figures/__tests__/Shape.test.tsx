@@ -66,11 +66,21 @@ describe('Shape toolbar', () => {
     cleanup();
   });
 
-  it('does not render a Figure select', () => {
+  it('renders Photoshop-style tool mode choices', () => {
     render(<Shape />);
 
-    const selects = screen.queryByRole('combobox');
-    expect(selects).not.toBeInTheDocument();
+    const mode = screen.getByRole('combobox', { name: 'Tool mode' }) as HTMLSelectElement;
+    expect(mode).toHaveValue('shape');
+    expect(screen.getByRole('option', { name: 'Path' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Pixels' })).toBeInTheDocument();
+  });
+
+  it('changes the tool mode', () => {
+    render(<Shape />);
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Tool mode' }), { target: { value: 'path' } });
+
+    expect(lastCallArgs(setToolArgsMock)).toMatchObject({ toolMode: 'path' });
   });
 
   it('renders shape figure label', () => {
@@ -125,6 +135,15 @@ describe('Shape toolbar', () => {
     const checkedFill = screen.getByRole('checkbox', { name: /Filled/ }) as HTMLInputElement;
     expect(checkedFill).toBeChecked();
     expect(lastCallArgs(setToolArgsMock)).toMatchObject({ hasFill: true });
+  });
+
+  it('exposes rectangle corner radius', () => {
+    render(<Shape />);
+
+    const radius = screen.getByRole('slider', { name: 'Radius' }) as HTMLInputElement;
+    fireEvent.change(radius, { target: { value: '24' } });
+
+    expect(lastCallArgs(setToolArgsMock)).toMatchObject({ cornerRadius: 24 });
   });
 
   it('shows dash and gap sliders when dashed is enabled', () => {

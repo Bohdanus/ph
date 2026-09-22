@@ -28,14 +28,16 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
   });
 
   const flushDrawingFrame = () => {
+    if (!overlayCtxRef.current) return;
+
     frameRequested.current = null;
 
-    overlayCtxRef.current!.clearRect(0, 0, totalSize.width, totalSize.height);
+    overlayCtxRef.current.clearRect(0, 0, totalSize.width, totalSize.height);
 
     const drawArgs = { ...args, points: pointsRef.current };
     drawLine({
       args: drawArgs,
-      ctx: overlayCtxRef.current!,
+      ctx: overlayCtxRef.current,
     });
   };
 
@@ -59,7 +61,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
 
     if (frameRequested.current !== null) return;
 
-    frameRequested.current = requestAnimationFrame(flushDrawingFrame);
+    flushDrawingFrame();
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
