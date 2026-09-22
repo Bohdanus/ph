@@ -1,3 +1,4 @@
+import { useCallback, useRef } from 'react';
 import { useStore } from './StoreContext.tsx';
 import type {
   BlankLayerSource,
@@ -46,6 +47,7 @@ export const useLayers = () => {
     dispatch,
   ] = useStore();
   const { addHistoryEntry } = useHistory();
+  const previewLayersRef = useRef<LayersRecord>({});
 
   function clearOverlay() {
     const overlayCtx = toolOverlayRef.current?.getContext('2d');
@@ -154,14 +156,34 @@ export const useLayers = () => {
       return { ...layers, [layer.id]: layer };
     }
 
-    // Find dirty layer and save it
-    for (const layer of Object.values(layers)) {
+    const committedLayers = { ...layers } as LayersRecord;
+    let hasPreviewLayers = false;
+
+    for (const [id, previewLayer] of Object.entries(previewLayersRef.current)) {
+      const layer = { ...previewLayer, pos: { ...previewLayer.pos } };
+      committedLayers[id] = layer;
+      hasPreviewLayers = true;
       if (layer.tmpCanvas) {
         saveLayerCanvas(layer);
+      }
+    }
+    previewLayersRef.current = {};
+
+    // Find any remaining dirty layer and save a detached copy.
+    for (const layer of Object.values(committedLayers)) {
+      if (layer.tmpCanvas) {
+        const detachedLayer = { ...layer, pos: { ...layer.pos } };
+        saveLayerCanvas(detachedLayer);
+        committedLayers[layer.id] = detachedLayer;
+        hasPreviewLayers = true;
         break;
       }
     }
-    return layers;
+
+    if (hasPreviewLayers) {
+      dispatch({ type: 'UPDATE_LAYERS', payload: committedLayers });
+    }
+    return committedLayers;
   };
 
   const removeLayer = (id: LayerId) => {
@@ -169,9 +191,9 @@ export const useLayers = () => {
     if (!layer) return;
 
     const { [id]: removedLayer, ...remainingLayers } = layers;
-    removedLayer.bitmap = null; // clean memory
-    removedLayer.tmpCanvas = null;
-    const newDeletedLayers = { ...deletedLayers, [id]: removedLayer };
+    const deletedLayer = { ...removedLayer, bitmap: null, tmpCanvas: null };
+    delete previewLayersRef.current[id];
+    const newDeletedLayers = { ...deletedLayers, [id]: deletedLayer };
 
     dispatch({
       type: 'BATCH_UPDATES',
@@ -213,9 +235,12 @@ export const useLayers = () => {
   };
 
   const moveLayerAfter = (layerToMoveId: LayerId, afterWhichLayerId?: LayerId | null) => {
-    reorderLayers({ layers, layerToMoveId, afterWhichLayerId });
+    const reorderedLayers = Object.fromEntries(
+      Object.entries(layers).map(([id, layer]) => [id, { ...layer, pos: { ...layer.pos } }])
+    ) as LayersRecord;
+    reorderLayers({ layers: reorderedLayers, layerToMoveId, afterWhichLayerId });
 
-    dispatch({ type: 'UPDATE_LAYERS', payload: { ...layers } });
+    dispatch({ type: 'UPDATE_LAYERS', payload: reorderedLayers });
     drawAllLayers();
 
     addHistoryEntry({
@@ -249,23 +274,26 @@ export const useLayers = () => {
     const [canvas, positionPatch] = toolsMap[toolArgsToolName].imageProcessor({ bitmap, size: layer.pos } as
       CreatorToolParams | ProcessorToolParams)(toolArgs);
 
-    if (positionPatch) {
-      layer.pos = { ...layer.pos, ...positionPatch };
-    }
-
-    // attention, this is skipping react render, but it's intentional for performance reasons, since this is only a temporary preview!
-    layer.tmpCanvas = canvas;
+    const previewLayer = {
+      ...layer,
+      pos: positionPatch ? { ...layer.pos, ...positionPatch } : { ...layer.pos },
+      tmpCanvas: canvas,
+    };
+    previewLayersRef.current[id] = previewLayer;
 
     drawAllLayers();
   }
 
-  function drawAllLayers() {
+  const drawAllLayers = useCallback(() => {
     if (!canvasRef.current) return;
     const ctx = canvasRef.current.getContext('2d')!;
 
     ctx.clearRect(0, 0, totalSize.width, totalSize.height);
 
-    const sorted = getSortedLayersArray(layers);
+    const renderLayers = Object.keys(previewLayersRef.current).length
+      ? ({ ...layers, ...previewLayersRef.current } as LayersRecord)
+      : layers;
+    const sorted = getSortedLayersArray(renderLayers);
 
     for (const layer of sorted) {
       if (!layer.visible) continue;
@@ -285,7 +313,7 @@ export const useLayers = () => {
       const { x, y, width, height } = pos;
       ctx.drawImage(bmp, x, y, width, height);
     }
-  }
+  }, [canvasRef, layers, totalSize]);
 
   async function mergeAllLayers() {
     commitDirtyTool();

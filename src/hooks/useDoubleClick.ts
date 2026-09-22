@@ -1,4 +1,4 @@
-import { type RefObject, useRef } from 'react';
+import { type RefObject, useCallback, useRef } from 'react';
 import type { Point } from '../contexts/general-types.ts';
 
 const DEFAULT_DISTANCE_THRESHOLD = 10;
@@ -47,10 +47,10 @@ export const useDoubleClick = (onDoubleClick: () => void, options: UseDoubleClic
     return false;
   };
 
-  const reset = () => {
+  const reset = useCallback(() => {
     lastClickTimeRef.current = 0;
     lastClickPosRef.current = null;
-  };
+  }, []);
 
   return { handleClick, reset };
 };

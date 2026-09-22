@@ -1,4 +1,4 @@
-import { type PointerEvent, type RefObject, useEffect, useRef } from 'react';
+import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -37,6 +37,110 @@ type SelectionDragState =
       selection: Selection;
     };
 
+function drawPolygonOverlay({
+  ctx,
+  selections,
+  points,
+  preview,
+  isFreehand,
+  closePath,
+}: {
+  ctx: CanvasRenderingContext2D;
+  selections: Selection[];
+  points: Point[];
+  preview: Point | null;
+  isFreehand: boolean;
+  closePath: boolean;
+}) {
+  const canvas = ctx.canvas;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  selections.forEach((selection) => drawSelectionOutline(ctx, selection));
+
+  if (points.length === 0) return;
+
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i].x, points[i].y);
+  }
+
+  if (closePath && points.length >= MIN_POINTS_FOR_SELECTION) {
+    ctx.lineTo(points[0].x, points[0].y);
+  }
+
+  ctx.strokeStyle = 'rgba(0,123,255,0.9)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([]);
+  ctx.stroke();
+
+  if (isFreehand && points.length >= MIN_POINTS_FOR_SELECTION) {
+    const last = points[points.length - 1];
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(0,123,255,0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.moveTo(last.x, last.y);
+    ctx.lineTo(points[0].x, points[0].y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Draw anchors for polygonal lasso only. Freehand paths can have hundreds of sampled points.
+  if (isFreehand) {
+    const start = points[0];
+    const end = points[points.length - 1];
+    [start, end].forEach((point, index) => {
+      ctx.beginPath();
+      ctx.fillStyle = index === 0 ? 'white' : 'rgba(0,123,255,0.9)';
+      ctx.strokeStyle = index === 0 ? 'rgba(0,123,255,1)' : 'rgba(255,255,255,0.95)';
+      ctx.lineWidth = 2;
+      ctx.arc(point.x, point.y, index === 0 ? 5 : 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
+  } else {
+    for (let i = 0; i < points.length; i++) {
+      ctx.beginPath();
+      ctx.fillStyle = 'white';
+      ctx.strokeStyle = i === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = 2;
+      ctx.arc(points[i].x, points[i].y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  if (!preview) return;
+
+  const last = points[points.length - 1];
+  const canCloseAtStart =
+    points.length >= MIN_POINTS_FOR_SELECTION && distanceBetweenPoints(preview, points[0]) < CLOSE_START_THRESHOLD;
+  if (canCloseAtStart) {
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(0,200,0,0.9)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.moveTo(last.x, last.y);
+    ctx.lineTo(points[0].x, points[0].y);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.fillStyle = 'rgba(0,200,0,0.9)';
+    ctx.arc(points[0].x, points[0].y, 7, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.moveTo(last.x, last.y);
+    ctx.lineTo(preview.x, preview.y);
+    ctx.stroke();
+  }
+
+  ctx.setLineDash([]);
+}
+
 export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickToolProps) => {
   const [{ containerRef, selections, totalSize }, dispatch] = useStore();
   const { toolArgs } = useCurrentTool();
@@ -49,11 +153,29 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   const selectionDragRef = useRef<SelectionDragState | null>(null);
   const freehandDrawingRef = useRef(false);
   const freehandPointerIdRef = useRef<number | null>(null);
+  const doubleClickResetRef = useRef<() => void>(() => {});
 
   const { getLocalCoords } = usePointerPosition({
     ref: containerRef,
     imageSize: totalSize,
   });
+
+  function clearOverlay() {
+    const ctx = overlayCtxRef.current;
+    if (!ctx) return;
+    const canvas = ctx.canvas;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  function resetInteractionState() {
+    pointsRef.current = [];
+    previewRef.current = null;
+    freehandPointerIdRef.current = null;
+    freehandDrawingRef.current = false;
+    selectionDragRef.current = null;
+    doubleClickResetRef.current();
+    clearOverlay();
+  }
 
   const finishSelection = ({ cancelIncomplete = false }: { cancelIncomplete?: boolean } = {}) => {
     const oldPoints = pointsRef.current;
@@ -85,13 +207,11 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     distanceThreshold: DOUBLE_CLICK_DISTANCE_THRESHOLD,
     minPointsForDetection: MIN_POINTS_FOR_SELECTION - 1,
   });
+  const { handleClick: handleDoubleClick, reset: resetDoubleClick } = doubleClick;
 
-  function clearOverlay() {
-    const ctx = overlayCtxRef.current;
-    if (!ctx) return;
-    const canvas = ctx.canvas;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  }
+  useEffect(() => {
+    doubleClickResetRef.current = resetDoubleClick;
+  }, [resetDoubleClick]);
 
   function getPointerId(event: PointerEvent<HTMLDivElement>): number | null {
     return typeof event.pointerId === 'number' ? event.pointerId : null;
@@ -165,21 +285,6 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     );
   }
 
-  function redrawCommittedSelections() {
-    const ctx = overlayCtxRef.current;
-    if (!ctx) return;
-
-    selections.forEach((selection) => drawSelectionOutline(ctx, selection));
-  }
-
-  function resetInteractionState() {
-    pointsRef.current = [];
-    previewRef.current = null;
-    releaseFreehandPointer();
-    doubleClick.reset();
-    clearOverlay();
-  }
-
   function appendFreehandPoint(point: Point, { force = false }: { force?: boolean } = {}): boolean {
     const points = pointsRef.current;
     const lastPoint = points[points.length - 1];
@@ -226,106 +331,21 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     }
   }
 
-  function redrawOverlay({ closePath = false }: { closePath?: boolean } = {}) {
-    const ctx = overlayCtxRef.current;
-    if (!ctx) return;
-    const canvas = ctx.canvas;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    redrawCommittedSelections();
-
-    const pts = pointsRef.current;
-    if (!pts || pts.length === 0) return;
-
-    // Draw completed edges
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) {
-      ctx.lineTo(pts[i].x, pts[i].y);
-    }
-
-    if (closePath && pts.length >= MIN_POINTS_FOR_SELECTION) {
-      ctx.lineTo(pts[0].x, pts[0].y);
-    }
-
-    ctx.strokeStyle = 'rgba(0,123,255,0.9)';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([]);
-    ctx.stroke();
-
-    if (isFreehand && pts.length >= MIN_POINTS_FOR_SELECTION) {
-      const last = pts[pts.length - 1];
-      ctx.beginPath();
-      ctx.strokeStyle = 'rgba(0,123,255,0.45)';
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 4]);
-      ctx.moveTo(last.x, last.y);
-      ctx.lineTo(pts[0].x, pts[0].y);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-
-    // Draw anchors for polygonal lasso only. Freehand paths can have hundreds of sampled points.
-    if (isFreehand) {
-      const start = pts[0];
-      const end = pts[pts.length - 1];
-      [start, end].forEach((point, index) => {
-        ctx.beginPath();
-        ctx.fillStyle = index === 0 ? 'white' : 'rgba(0,123,255,0.9)';
-        ctx.strokeStyle = index === 0 ? 'rgba(0,123,255,1)' : 'rgba(255,255,255,0.95)';
-        ctx.lineWidth = 2;
-        ctx.arc(point.x, point.y, index === 0 ? 5 : 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
+  const redrawOverlay = useCallback(
+    ({ closePath = false }: { closePath?: boolean } = {}) => {
+      const ctx = overlayCtxRef.current;
+      if (!ctx) return;
+      drawPolygonOverlay({
+        closePath,
+        ctx,
+        isFreehand,
+        points: pointsRef.current,
+        preview: previewRef.current,
+        selections,
       });
-    } else {
-      for (let i = 0; i < pts.length; i++) {
-        ctx.beginPath();
-        ctx.fillStyle = i === 0 ? 'white' : 'white';
-        ctx.strokeStyle = i === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.6)';
-        ctx.lineWidth = 2;
-        const r = 5;
-        ctx.arc(pts[i].x, pts[i].y, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-      }
-    }
-
-    // Draw preview edge
-    const preview = previewRef.current;
-    if (preview) {
-      const last = pts[pts.length - 1];
-
-      // If preview is near the first point, highlight it
-      const canCloseAtStart =
-        pts.length >= MIN_POINTS_FOR_SELECTION && distanceBetweenPoints(preview, pts[0]) < CLOSE_START_THRESHOLD;
-      if (canCloseAtStart) {
-        // indicate closable
-        ctx.beginPath();
-        ctx.strokeStyle = 'rgba(0,200,0,0.9)';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([6, 4]);
-        ctx.moveTo(last.x, last.y);
-        ctx.lineTo(pts[0].x, pts[0].y);
-        ctx.stroke();
-
-        // highlight start anchor
-        ctx.beginPath();
-        ctx.fillStyle = 'rgba(0,200,0,0.9)';
-        ctx.arc(pts[0].x, pts[0].y, 7, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        ctx.beginPath();
-        ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([6, 4]);
-        ctx.moveTo(last.x, last.y);
-        ctx.lineTo(preview.x, preview.y);
-        ctx.stroke();
-      }
-
-      ctx.setLineDash([]);
-    }
-  }
+    },
+    [isFreehand, overlayCtxRef, selections]
+  );
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -361,7 +381,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
       return;
     }
 
-    if (doubleClick.handleClick(coords, pointsRef)) {
+    if (handleDoubleClick(coords, pointsRef)) {
       return;
     }
 
@@ -476,22 +496,25 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   };
 
   useEffect(() => {
-    const ctx = overlayCtxRef.current;
-    if (!ctx) return;
-
-    const canvas = ctx.canvas;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    redrawCommittedSelections();
     redrawOverlay();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selections]);
+  }, [redrawOverlay]);
 
   useEffect(() => {
+    const ctx = overlayCtxRef.current;
+
     return () => {
-      resetInteractionState();
+      pointsRef.current = [];
+      previewRef.current = null;
+      freehandPointerIdRef.current = null;
+      freehandDrawingRef.current = false;
+      selectionDragRef.current = null;
+      resetDoubleClick();
+
+      if (ctx) {
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [overlayCtxRef, resetDoubleClick]);
 
   return (
     <div

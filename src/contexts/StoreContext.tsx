@@ -60,10 +60,6 @@ export type StoreData = {
   // setZoomData: (d: ZoomData) => void;
 };
 
-type StoreDispatch = Dispatch<Action>;
-
-const StoreContext = createContext<[StoreData, StoreDispatch] | undefined>(undefined);
-
 type Action =
   | { type: 'SET_HAS_IMAGE'; payload: boolean }
   | { type: 'SET_HAS_UNSAVED_CHANGES'; payload: boolean }
@@ -95,6 +91,10 @@ type Action =
   | { type: 'SET_SELECTION_CLIPBOARD'; payload: SelectionClipboard | null }
   | { type: 'MARK_SELECTION_COPIED'; payload: { id: string } }
   | { type: 'CLEAR_SELECTIONS' };
+
+type StoreDispatch = Dispatch<Action>;
+
+const StoreContext = createContext<[StoreData, StoreDispatch] | undefined>(undefined);
 
 const initialState: StoreData = {
   canvasRef: { current: null },
@@ -320,18 +320,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const currentArgsRef = useRef<ToolArgs>({} as ToolArgs);
 
-  // reducer-managed state (file/tool/layers)
-  const [store, dispatch] = useReducer(reducer, {
-    ...initialState,
+  // Keep live DOM refs out of the reducer initializer; expose them after state updates.
+  const [storeState, dispatch] = useReducer(reducer, initialState);
+  const store = {
+    ...storeState,
     canvasRef,
     toolOverlayRef,
     rectOverlayRef,
     containerRef,
     textareaRef,
     canvasCtxRef,
-
     currentArgs: currentArgsRef,
-  });
+  };
   //
   // function setSizeMemo(width: number, height: number) {
   //   const { totalSize } = store;

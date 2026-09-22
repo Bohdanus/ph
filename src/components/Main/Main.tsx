@@ -19,6 +19,7 @@ import { loadDocumentFile } from '../../contexts/image-load-save-utils.ts';
 import { MoveToolArea } from './MoveToolArea.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { hasPendingText } from '../../util/typeGuards.ts';
+import { resizeCanvas } from '../../util/canvas.ts';
 
 const Main = () => {
   const [
@@ -75,14 +76,12 @@ const Main = () => {
 
   useEffect(() => {
     drawAllLayers();
-  }, [layers]);
+  }, [drawAllLayers, layers]);
 
   useLayoutEffect(() => {
     const { width, height } = totalSize;
     if (toolOverlayRef.current) {
-      // eslint-disable-next-line react-compiler/react-compiler
-      toolOverlayRef.current.width = width;
-      toolOverlayRef.current.height = height;
+      resizeCanvas(toolOverlayRef.current, width, height);
 
       toolCtxRef.current = toolOverlayRef.current.getContext('2d')!;
       toolCtxRef.current.imageSmoothingEnabled = true;
@@ -90,8 +89,7 @@ const Main = () => {
     }
 
     if (rectOverlayRef.current) {
-      rectOverlayRef.current.width = width;
-      rectOverlayRef.current.height = height;
+      resizeCanvas(rectOverlayRef.current, width, height);
       const rectCtx = rectOverlayRef.current.getContext('2d')!;
       rectCtx.imageSmoothingEnabled = false;
     }
@@ -100,7 +98,7 @@ const Main = () => {
       canvasCtxRef.current.imageSmoothingEnabled = true;
       canvasCtxRef.current.imageSmoothingQuality = 'low';
     }
-  }); // UPDATE ON EVERY RENDER
+  }, [rectOverlayRef, toolOverlayRef, totalSize]);
 
   const handleDragOver = (event: React.DragEvent) => {
     if (event.dataTransfer.types.includes('Files')) {

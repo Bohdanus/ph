@@ -150,15 +150,12 @@ export function useMarchingPath({
         animationIdRef.current = null;
       }
     };
-    // We intentionally depend on `isPaused` here so the effect will run when
-    // pause state toggles. `draw` is stable (useCallback with no reactive
-    // deps) so it does not need to be listed as a dependency.
-  }, [isPaused]);
+  }, [draw, isPaused]);
 
   // Ensure we clear the overlay and cancel animation frames on unmount only.
   useEffect(() => {
     return () => clear();
-  }, []);
+  }, [clear]);
 
   return {
     draw,

@@ -8,12 +8,12 @@ import FontSelect from './FontSelect.tsx';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON, TOGGLE_BUTTON_ACTIVE, TOGGLE_BUTTON_INACTIVE } from '../buttonStyles.ts';
 
 const Text: React.FC<{}> = () => {
-  const [{ canvasRef, color, currentArgs: currentArgsRef, textareaRef, totalSize }] = useStore();
+  const [{ canvasRef, color, textareaRef, totalSize }] = useStore();
   const { createLayerFromTool } = useLayers();
   const { toolArgs, setToolArgs: onChange } = useCurrentTool();
 
   useEffect(() => {
-    if (isTextToolArgs(toolArgs)) {
+    if (isTextToolArgs(toolArgs) && toolArgs.color !== color) {
       onChange({ ...toolArgs, color });
     }
   }, [color, toolArgs, onChange]);
@@ -81,9 +81,6 @@ const Text: React.FC<{}> = () => {
   const applyText = () => {
     if (text && rect) {
       createLayerFromTool({ args: toolArgs });
-      // This ref is intentionally mutated as part of the tool lifecycle, not during render.
-      // eslint-disable-next-line react-compiler/react-compiler
-      currentArgsRef.current = { ...toolArgs, text: '', rect: null };
       onChange({ ...toolArgs, text: '', rect: null });
     }
   };

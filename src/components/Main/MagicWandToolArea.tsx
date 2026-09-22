@@ -23,13 +23,6 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     imageSize: totalSize,
   });
 
-  function clearOverlay() {
-    const ctx = overlayCtxRef.current;
-    if (!ctx) return;
-
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  }
-
   function redrawOverlay(extraSelection?: Selection) {
     const ctx = overlayCtxRef.current;
     if (!ctx) return;
@@ -93,16 +86,22 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
   };
 
   useEffect(() => {
-    redrawOverlay();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selections]);
+    const ctx = overlayCtxRef.current;
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    selections.forEach((selection) => drawSelectionOutline(ctx, selection));
+  }, [overlayCtxRef, selections]);
 
   useEffect(() => {
+    const ctx = overlayCtxRef.current;
+
     return () => {
-      clearOverlay();
+      if (ctx) {
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [overlayCtxRef]);
 
   return (
     <div className={`${className} cursor-crosshair`} onPointerDown={handlePointerDown} style={{ userSelect: 'none' }} />

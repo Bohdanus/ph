@@ -1,5 +1,6 @@
 import type { CreatorToolParams, ToolResult } from './toolsMap.ts';
 import type { Ctx2D, Point } from '../contexts/general-types.ts';
+import type { ToolArgs } from '../contexts/tool-types.ts';
 
 export type FigureType = 'line' | 'circle' | 'rectangle' | 'square' | 'oval' | 'triangle' | 'polygon';
 
@@ -122,11 +123,15 @@ export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
 };
 
 export const shape =
-  ({ size }: CreatorToolParams): ((args: ShapeToolArgs | any) => ToolResult) =>
+  ({ size }: CreatorToolParams): ((args: ToolArgs) => ToolResult) =>
   (args) => {
-    const shapeArgs = args as ShapeToolArgs;
+    if (!('figure' in args)) {
+      throw new Error(`Tool "${args.toolName}" does not provide shape arguments`);
+    }
+
     const canvas = new OffscreenCanvas(size.width, size.height);
     const ctx = canvas.getContext('2d')!;
+    const shapeArgs = { ...args, toolName: 'shape' } as ShapeToolArgs;
 
     setShapeCtx(ctx, shapeArgs);
 

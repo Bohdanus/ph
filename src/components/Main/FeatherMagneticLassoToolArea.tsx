@@ -1,8 +1,8 @@
-import { type PointerEvent, type RefObject, useEffect, useRef } from 'react';
+import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
-import type { Point } from '../../contexts/general-types.ts';
+import type { Point, Selection } from '../../contexts/general-types.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import type { FeatherMagneticLassoToolArgs } from '../../tools/featherMagneticLasso.ts';
@@ -37,6 +37,95 @@ type PendingPointerMove = {
   coords: Point;
   magneticEnabled: boolean;
 };
+
+function drawFeatherMagneticOverlay({
+  ctx,
+  selections,
+  anchors,
+  points,
+  preview,
+  args,
+}: {
+  ctx: CanvasRenderingContext2D;
+  selections: Selection[];
+  anchors: Point[];
+  points: Point[];
+  preview: MagneticSegmentResult | null;
+  args: FeatherMagneticLassoToolArgs;
+}) {
+  const drawPath = (path: Point[]) => {
+    if (path.length < 2) return;
+
+    ctx.beginPath();
+    ctx.moveTo(path[0].x, path[0].y);
+    for (let i = 1; i < path.length; i++) {
+      ctx.lineTo(path[i].x, path[i].y);
+    }
+    ctx.stroke();
+  };
+
+  const draftPoints = [...points];
+  const previewPath = preview?.path;
+  if (previewPath && previewPath.length > 1) {
+    draftPoints.push(...previewPath.slice(1));
+  }
+
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  selections.forEach((selection) => drawSelectionOutline(ctx, selection));
+  if (draftPoints.length === 0) return;
+
+  ctx.save();
+  if (args.previewFeather && args.featherRadius > 0 && draftPoints.length >= MIN_POINTS_FOR_SELECTION) {
+    ctx.strokeStyle = 'rgba(0,123,255,0.14)';
+    ctx.lineWidth = Math.max(1, args.featherRadius * 2);
+    ctx.setLineDash([]);
+    drawPath(draftPoints);
+  }
+
+  if (points.length >= 2) {
+    ctx.strokeStyle = 'rgba(0,123,255,0.95)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+    drawPath(points);
+  }
+
+  if (preview?.path && preview.path.length >= 2) {
+    ctx.strokeStyle = preview.snap.usedMagnetic ? 'rgba(0,170,90,0.95)' : 'rgba(230,130,0,0.95)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    drawPath(preview.path);
+    ctx.setLineDash([]);
+
+    ctx.beginPath();
+    ctx.fillStyle = preview.snap.usedMagnetic ? 'rgba(0,170,90,0.95)' : 'rgba(230,130,0,0.95)';
+    ctx.arc(preview.snappedPoint.x, preview.snappedPoint.y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (anchors.length >= MIN_POINTS_FOR_SELECTION && preview?.snappedPoint) {
+    const start = anchors[0];
+    const canClose = distanceBetweenPoints(preview.snappedPoint, start) <= CLOSE_START_THRESHOLD;
+    if (canClose) {
+      ctx.beginPath();
+      ctx.fillStyle = 'rgba(0,200,0,0.85)';
+      ctx.arc(start.x, start.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  for (let i = 0; i < anchors.length; i++) {
+    const anchor = anchors[i];
+    ctx.beginPath();
+    ctx.fillStyle = i === 0 ? 'white' : 'rgba(255,255,255,0.95)';
+    ctx.strokeStyle = i === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.65)';
+    ctx.lineWidth = 2;
+    ctx.arc(anchor.x, anchor.y, i === 0 ? 6 : 4.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
 
 export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: FeatherMagneticLassoToolAreaProps) => {
   const [{ canvasRef, containerRef, selections, totalSize }, dispatch] = useStore();
@@ -81,106 +170,18 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   }
 
-  function redrawCommittedSelections() {
+  const redrawOverlay = useCallback(() => {
     const ctx = overlayCtxRef.current;
     if (!ctx) return;
-
-    selections.forEach((selection) => drawSelectionOutline(ctx, selection));
-  }
-
-  function getDraftPointsWithPreview(): Point[] {
-    const points = [...pointsRef.current];
-    const preview = previewRef.current?.path;
-
-    if (preview && preview.length > 1) {
-      points.push(...preview.slice(1));
-    }
-
-    return points;
-  }
-
-  function drawPath(ctx: CanvasRenderingContext2D, points: Point[], closePath: boolean) {
-    if (points.length < 2) return;
-
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) {
-      ctx.lineTo(points[i].x, points[i].y);
-    }
-    if (closePath) ctx.closePath();
-    ctx.stroke();
-  }
-
-  function drawAnchors(ctx: CanvasRenderingContext2D) {
-    const anchors = anchorsRef.current;
-
-    for (let i = 0; i < anchors.length; i++) {
-      const anchor = anchors[i];
-      ctx.beginPath();
-      ctx.fillStyle = i === 0 ? 'white' : 'rgba(255,255,255,0.95)';
-      ctx.strokeStyle = i === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.65)';
-      ctx.lineWidth = 2;
-      ctx.arc(anchor.x, anchor.y, i === 0 ? 6 : 4.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    }
-  }
-
-  function redrawOverlay() {
-    const ctx = overlayCtxRef.current;
-    if (!ctx) return;
-
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    redrawCommittedSelections();
-
-    const draftPoints = getDraftPointsWithPreview();
-    if (draftPoints.length === 0) return;
-
-    const preview = previewRef.current;
-    const fixedPoints = pointsRef.current;
-
-    ctx.save();
-    if (args.previewFeather && args.featherRadius > 0 && draftPoints.length >= MIN_POINTS_FOR_SELECTION) {
-      ctx.strokeStyle = 'rgba(0,123,255,0.14)';
-      ctx.lineWidth = Math.max(1, args.featherRadius * 2);
-      ctx.setLineDash([]);
-      drawPath(ctx, draftPoints, false);
-    }
-
-    if (fixedPoints.length >= 2) {
-      ctx.strokeStyle = 'rgba(0,123,255,0.95)';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([]);
-      drawPath(ctx, fixedPoints, false);
-    }
-
-    if (preview?.path && preview.path.length >= 2) {
-      ctx.strokeStyle = preview.snap.usedMagnetic ? 'rgba(0,170,90,0.95)' : 'rgba(230,130,0,0.95)';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 4]);
-      drawPath(ctx, preview.path, false);
-      ctx.setLineDash([]);
-
-      ctx.beginPath();
-      ctx.fillStyle = preview.snap.usedMagnetic ? 'rgba(0,170,90,0.95)' : 'rgba(230,130,0,0.95)';
-      ctx.arc(preview.snappedPoint.x, preview.snappedPoint.y, 3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    if (anchorsRef.current.length >= MIN_POINTS_FOR_SELECTION && preview?.snappedPoint) {
-      const start = anchorsRef.current[0];
-      const canClose = distanceBetweenPoints(preview.snappedPoint, start) <= CLOSE_START_THRESHOLD;
-      if (canClose) {
-        ctx.beginPath();
-        ctx.fillStyle = 'rgba(0,200,0,0.85)';
-        ctx.arc(start.x, start.y, 8, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    drawAnchors(ctx);
-    ctx.restore();
-  }
+    drawFeatherMagneticOverlay({
+      anchors: anchorsRef.current,
+      args,
+      ctx,
+      points: pointsRef.current,
+      preview: previewRef.current,
+      selections,
+    });
+  }, [args, overlayCtxRef, selections]);
 
   function rebuildPointsFromSegments() {
     const anchors = anchorsRef.current;
@@ -495,21 +496,31 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   });
 
   useEffect(() => {
-    const ctx = overlayCtxRef.current;
-    if (!ctx) return;
-
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    redrawCommittedSelections();
     redrawOverlay();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selections]);
+  }, [redrawOverlay]);
 
   useEffect(() => {
+    const ctx = overlayCtxRef.current;
+
     return () => {
-      resetInteractionState();
+      if (pointerMoveFrameRef.current !== null) {
+        cancelAnimationFrame(pointerMoveFrameRef.current);
+        pointerMoveFrameRef.current = null;
+      }
+      pendingPointerMoveRef.current = null;
+      anchorsRef.current = [];
+      segmentsRef.current = [];
+      pointsRef.current = [];
+      previewRef.current = null;
+      edgeMapRef.current = null;
+      lastClickRef.current = null;
+      lastAutoAnchorTimeRef.current = 0;
+
+      if (ctx) {
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [overlayCtxRef]);
 
   return (
     <div

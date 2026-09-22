@@ -6,6 +6,7 @@ import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { toolsMap } from '../tools/toolsMap.ts';
 import { createLayerSource, getSortedLayersArray, reorderLayers, saveLayerCanvas } from './layer-utils.ts';
+import { resizeCanvas } from '../util/canvas.ts';
 import {
   HIDE_LAYER_ACTION,
   MAX_HISTORY_IMAGE_COUNT,
@@ -61,15 +62,19 @@ export const useHistory = () => {
       trimmedHistory.push(newHistoryItem);
       dispatch({ type: 'REPLACE_HISTORY', payload: trimmedHistory });
     } else {
-      dispatch({ type: 'ADD_HISTORY_ITEM', payload: newHistoryItem });
+      const nextHistory = [...history, newHistoryItem];
 
-      // maintain memory size without creating negative indexes
+      // Maintain memory size without mutating an existing history entry.
       if (history.length >= MAX_HISTORY_IMAGE_COUNT) {
         const pruneIndex = history.length - MAX_HISTORY_IMAGE_COUNT;
-        const pruneEntry = history[pruneIndex];
+        const pruneEntry = nextHistory[pruneIndex];
         if (pruneEntry) {
-          pruneEntry.imagePromise = Promise.resolve(null);
+          nextHistory[pruneIndex] = { ...pruneEntry, imagePromise: Promise.resolve(null) };
         }
+
+        dispatch({ type: 'REPLACE_HISTORY', payload: nextHistory });
+      } else {
+        dispatch({ type: 'ADD_HISTORY_ITEM', payload: newHistoryItem });
       }
     }
   };
@@ -139,13 +144,7 @@ export const useHistory = () => {
   function _drawAllLayers(layers: LayersRecord, totalSize: Size) {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    if (canvas.width !== totalSize.width) {
-      // eslint-disable-next-line react-compiler/react-compiler
-      canvas.width = totalSize.width;
-    }
-    if (canvas.height !== totalSize.height) {
-      canvas.height = totalSize.height;
-    }
+    resizeCanvas(canvas, totalSize.width, totalSize.height);
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, totalSize.width, totalSize.height);

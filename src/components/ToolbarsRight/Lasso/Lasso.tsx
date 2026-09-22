@@ -14,8 +14,9 @@ const Lasso: React.FC<{}> = () => {
   const args = toolArgs as LassoToolArgs;
 
   useEffect(() => {
+    if (args.color === color) return;
     setToolArgs({ ...args, color } as LassoToolArgs);
-  }, [color]);
+  }, [args, color, setToolArgs]);
 
   const handleChange = (newArgs: PolygonSelectionToolSettings) => {
     setToolArgs({ ...newArgs, toolName: 'polygonal-lasso' } as LassoToolArgs);

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import Menu from './components/Menu/Menu';
 import Footer from './components/Footer/Footer';
 import SidebarLeft from './components/SidebarLeft/SidebarLeft';
@@ -23,11 +23,13 @@ const DEFAULT_BLANK_IMAGE = {
 function BlankImageStarter() {
   const [{ hasImage }] = useStore();
   const { setBlankImage } = useApp();
+  const startedRef = useRef(false);
 
   useEffect(() => {
-    if (!hasImage) {
-      setBlankImage(DEFAULT_BLANK_IMAGE);
-    }
+    if (hasImage || startedRef.current) return;
+
+    startedRef.current = true;
+    setBlankImage(DEFAULT_BLANK_IMAGE);
   }, [hasImage, setBlankImage]);
 
   return null;

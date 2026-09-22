@@ -63,7 +63,15 @@ export default defineConfig([
       'no-case-declarations': 'warn',
 
       // Fast refresh - style only, not a runtime bug
-      'react-refresh/only-export-components': 'warn',
+      'react-refresh/only-export-components': [
+        'warn',
+        {
+          // Providers intentionally share modules with their hooks; these names are
+          // safe Fast Refresh boundaries and are kept together for the public API.
+          allowConstantExport: true,
+          allowExportNames: ['useCurrentTool', 'useFile', 'useKeyDownShortcut', 'useStore', 'useTheme'],
+        },
+      ],
 
       // Keep as error - these are real bugs
       // react-hooks/refs - accessing refs during render
@@ -92,19 +100,15 @@ export default defineConfig([
     },
   },
   {
-    // Floating UI arrow middleware legitimately receives a ref object that is
-    // only read during layout effects, not during render.
-    files: ['src/components/PreviewTooltip/BmpPreviewTooltip.tsx'],
+    files: [
+      'src/contexts/__tests__/image-load-save-utils.test.ts',
+      'src/contexts/__tests__/psd-utils.test.ts',
+      'src/contexts/__tests__/tiff-utils.test.ts',
+      'src/hooks/__tests__/useResizeObserver.test.ts',
+    ],
     rules: {
-      'react-hooks/refs': 'warn',
-    },
-  },
-  {
-    // Refs are intentionally stored as reducer-managed context state; the
-    // initializer never reads ref.current, so this is a static false positive.
-    files: ['src/contexts/StoreContext.tsx'],
-    rules: {
-      'react-hooks/refs': 'warn',
+      // Browser API test doubles need constructor identity to expose the instance.
+      '@typescript-eslint/no-this-alias': 'off',
     },
   },
 ]);

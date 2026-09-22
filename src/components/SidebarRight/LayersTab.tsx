@@ -53,8 +53,8 @@ export default function LayersTab() {
   const sortedLayers = useMemo(() => getSortedLayersArray(layers).reverse(), [layers]);
 
   const hoveredLayer = hoveredId ? layers[hoveredId] : null;
-
-  const bitmapPromise = Promise.resolve((hoveredLayer?.tmpCanvas ?? hoveredLayer?.bitmap) as MaybeBitmap);
+  const hoveredBitmap = (hoveredLayer?.tmpCanvas ?? hoveredLayer?.bitmap) as MaybeBitmap;
+  const bitmapPromise = useMemo(() => Promise.resolve(hoveredBitmap), [hoveredBitmap]);
 
   function animateMove(layerToMoveId: LayerId, layerToPlaceAfterId?: LayerId) {
     // Start shrinking layerToMove

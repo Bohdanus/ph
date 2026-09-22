@@ -196,11 +196,17 @@ describe('PSD codec binary roundtrip', () => {
     display.height = imported.document.size.height;
     const displayContext = display.getContext('2d')!;
     const drawImage = vi.spyOn(displayContext, 'drawImage');
-    for (const layer of layers) {
-      if (!layer.visible || !layer.bitmap) continue;
-      displayContext.globalAlpha = layer.opacity;
-      displayContext.globalCompositeOperation = layer.blendMode;
-      displayContext.drawImage(layer.bitmap, layer.pos.x, layer.pos.y, layer.pos.width, layer.pos.height);
+    for (const currentLayer of layers) {
+      if (!currentLayer.visible || !currentLayer.bitmap) continue;
+      displayContext.globalAlpha = currentLayer.opacity;
+      displayContext.globalCompositeOperation = currentLayer.blendMode;
+      displayContext.drawImage(
+        currentLayer.bitmap,
+        currentLayer.pos.x,
+        currentLayer.pos.y,
+        currentLayer.pos.width,
+        currentLayer.pos.height
+      );
     }
     expect(drawImage).toHaveBeenCalledTimes(2);
     expect(drawImage).toHaveBeenNthCalledWith(1, background, 0, 0, 2, 2);

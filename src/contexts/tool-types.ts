@@ -84,7 +84,7 @@ export type NewLayerData = NewBedrockSize | NewLayerPos;
 export type BlankImageParams = {
   color: string;
   opacity: number;
-} & NewLayerData;
+} & NewBedrockSize;
 
 export type FileImageParams = {
   bitmap: BitmapSource;

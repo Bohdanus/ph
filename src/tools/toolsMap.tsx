@@ -1,5 +1,6 @@
 import { blur } from './blur';
 import { colors } from './colors';
+import type { DrawToolArgs } from './draw';
 import { levels } from './levels';
 import { transform } from './transform';
 import { crop } from './crop';
@@ -22,7 +23,8 @@ import type { ToolbarRightComponent } from '../components/ToolbarsRight/types.ts
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
 import { shape } from './shape.ts';
 import Reposition from '../components/ToolbarsRight/Move/Reposition.tsx';
-import { PlaceholderTool, placeholderToolGroups } from '../components/ToolbarsRight/ToolbarPlaceholder.tsx';
+import { PlaceholderTool } from '../components/ToolbarsRight/ToolbarPlaceholder.tsx';
+import { placeholderToolGroups } from '../components/ToolbarsRight/toolbarPlaceholderConfig.ts';
 import type { BitmapSource, Pos, Size } from '../contexts/general-types.ts';
 import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
 import { reposition } from './reposition.ts';
@@ -34,6 +36,14 @@ const placeholderTool =
   (title: string, key: keyof typeof placeholderToolGroups, showTodoBadge = true): ToolbarRightComponent =>
   () => <PlaceholderTool title={title} options={placeholderToolGroups[key]} showTodoBadge={showTodoBadge} />;
 
+const buildDrawArgs = (args: ToolArgs, penType: 'pen' | 'spray', lineWidth?: number): DrawToolArgs =>
+  ({
+    ...(args as Partial<DrawToolArgs>),
+    toolName: 'draw',
+    penType,
+    ...(lineWidth !== undefined ? { lineWidth } : {}),
+  }) as DrawToolArgs;
+
 export type ProcessorToolParams = {
   size: Size; // why size??
   bitmap: BitmapSource; // source bitmap that should be processed
@@ -43,7 +53,7 @@ export type CreatorToolParams = {
   size: Size;
 };
 
-export type ToolResult = [BitmapSource, Pos | Size | never];
+export type ToolResult = [BitmapSource, Pos | Size | undefined];
 
 type ToolsMap = Record<
   ToolName,
@@ -150,37 +160,26 @@ export const toolsMap: ToolsMap = {
   brush: {
     icon: 'brush',
     imageProcessor: (params) => (args) => {
-      const [canvas] = draw({ size: params.size } as CreatorToolParams)({
-        ...(args as any),
-        toolName: 'draw',
-        penType: 'pen',
-      } as any);
-      return [canvas, { x: 0, y: 0 } as never];
+      const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'pen'));
+      return [canvas, undefined];
     },
     toolboxComponent: Draw,
   },
   pencil: {
     icon: 'pencil',
     imageProcessor: (params) => (args) => {
-      const [canvas] = draw({ size: params.size } as CreatorToolParams)({
-        ...(args as any),
-        toolName: 'draw',
-        penType: 'pen',
-        lineWidth: Math.max(1, Number((args as any).lineWidth ?? 3)),
-      } as any);
-      return [canvas, { x: 0, y: 0 } as never];
+      const [canvas] = draw({ size: params.size } as CreatorToolParams)(
+        buildDrawArgs(args, 'pen', Math.max(1, Number((args as Partial<DrawToolArgs>).lineWidth ?? 3)))
+      );
+      return [canvas, undefined];
     },
     toolboxComponent: Draw,
   },
   'color-replacement': {
     icon: 'color-replacement',
     imageProcessor: (params) => (args) => {
-      const [canvas] = draw({ size: params.size } as CreatorToolParams)({
-        ...(args as any),
-        toolName: 'draw',
-        penType: 'spray',
-      } as any);
-      return [canvas, { x: 0, y: 0 } as never];
+      const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'spray'));
+      return [canvas, undefined];
     },
     toolboxComponent: Draw,
   },

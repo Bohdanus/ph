@@ -1,9 +1,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { cloneDeep } from 'lodash-es';
-import { defaultSettings, lastSavedSettings } from '../tools/settings.ts';
+import { lastSavedSettings } from '../tools/settings.ts';
 import type { ToolName, ToolArgs, ToolArgsFor, ToolPatch } from './tool-types.ts';
 import { saveLastSettings } from '../util/settings.ts';
 import { useStore } from './StoreContext.tsx';
+import { setRefValue } from '../util/ref.ts';
 
 export interface CurrentToolContextState {
   toolArgs: ToolArgs;
@@ -11,11 +12,8 @@ export interface CurrentToolContextState {
   setToolArgs: (args: ToolArgs) => void;
   getToolArgs: <TName extends ToolName>(toolName: TName) => ToolArgsFor<TName> | null;
   patchToolArgs: <TName extends ToolName>(toolName: TName, patch: ToolPatch<TName>) => void;
-
   resetToLastSavedArgs: (toolName?: ToolName) => void;
 }
-
-const initialArgs = cloneDeep(defaultSettings.draw) as ToolArgs;
 
 const CurrentToolContext = createContext<CurrentToolContextState | undefined>(undefined);
 
@@ -23,32 +21,37 @@ function cloneSavedToolArgs<TName extends ToolName>(toolName: TName): ToolArgsFo
   return cloneDeep(lastSavedSettings[toolName]) as ToolArgsFor<TName>;
 }
 
+type ToolState = {
+  toolName: ToolName;
+  args: ToolArgs;
+};
+
 /* this provider is meant for fast updates. keep it away from Main component */
 export const CurrentToolProvider = ({ children }: { children: React.ReactNode }) => {
   const [{ currentArgs: currentArgsRef, toolName, isToolDirty }] = useStore();
-  const [toolArgs, setToolArgs] = useState<ToolArgs>(initialArgs);
+  const [toolState, setToolState] = useState<ToolState>(() => ({
+    toolName,
+    args: cloneSavedToolArgs(toolName),
+  }));
+
+  const savedArgsForTool = useMemo(() => cloneSavedToolArgs(toolName), [toolName]);
+  const toolArgs = toolState.toolName === toolName ? toolState.args : savedArgsForTool;
 
   const resetToLastSavedArgs = useCallback(
     (nextToolName: ToolName = toolName) => {
       const args = cloneSavedToolArgs(nextToolName);
-      setToolArgs(args);
+      setToolState({ toolName: nextToolName, args });
     },
     [toolName]
   );
 
   useEffect(() => {
-    // eslint-disable-next-line react-compiler/react-compiler
-    currentArgsRef.current = toolArgs;
+    setRefValue(currentArgsRef, toolArgs);
   }, [toolArgs, currentArgsRef]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    resetToLastSavedArgs();
-  }, [toolName, resetToLastSavedArgs]);
 
   const _setToolArgs = useCallback((args: ToolArgs) => {
     saveLastSettings(args);
-    setToolArgs(args);
+    setToolState({ toolName: args.toolName, args });
   }, []);
 
   const getToolArgs = useCallback(

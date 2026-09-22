@@ -18,10 +18,6 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } else {
       initialTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     }
-    // Apply theme class immediately on initialization
-    const root = window.document.documentElement;
-    root.classList.remove('light', 'dark');
-    root.classList.add(initialTheme);
     return initialTheme;
   });
 
@@ -46,12 +42,3 @@ export const useTheme = () => {
   }
   return context;
 };
-
-// window
-//   .matchMedia('(prefers-color-scheme: dark)')
-//   .addEventListener('change', e => {
-//     const theme = localStorage.getItem('theme')
-//     if (theme === 'system') {
-//       document.documentElement.classList.toggle('dark', e.matches)
-//     }
-//   })

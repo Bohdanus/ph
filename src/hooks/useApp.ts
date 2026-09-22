@@ -1,10 +1,12 @@
 import type { Size } from '../contexts/general-types.ts';
 import { useStore } from '../contexts/StoreContext.tsx';
-import type { BlankImageParams, NewBedrockSize, ToolName } from '../contexts/tool-types.ts';
+import type { BlankImageParams, ToolName } from '../contexts/tool-types.ts';
 import { useLayers } from '../contexts/useLayer.ts';
 import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/useFile.tsx';
 import { v4 as uuidv4 } from 'uuid';
 import { OPEN_DOCUMENT_ACTION, SELECTION_ACTION } from '../util/constants.ts';
+import { resizeCanvas } from '../util/canvas.ts';
+import { setRefValue } from '../util/ref.ts';
 
 export interface UseAppType {
   setBlankImage: (data: BlankImageParams) => void;
@@ -37,9 +39,9 @@ export const useApp = (): UseAppType => {
         totalSize: size,
       },
     });
-    // eslint-disable-next-line react-compiler/react-compiler
-    canvasRef.current!.width = size.width;
-    canvasRef.current!.height = size.height;
+    if (canvasRef.current) {
+      resizeCanvas(canvasRef.current, size.width, size.height);
+    }
   }
 
   function handleImageSave({ fileName }: ImageSaveResponse) {
@@ -57,9 +59,8 @@ export const useApp = (): UseAppType => {
   }
 
   function setBlankImage(params: BlankImageParams) {
-    handleImageCreate((params as NewBedrockSize).size);
-    params.isBedrock = true;
-    createBlankLayer(params);
+    handleImageCreate(params.size);
+    createBlankLayer({ ...params });
   }
 
   function setImageFromUpload(data: ImageUploadResponse) {
@@ -72,11 +73,10 @@ export const useApp = (): UseAppType => {
       const baseline = Object.fromEntries(
         Object.values(layers).map((layer) => [layer.id, { ...layer, pos: { ...layer.pos } }])
       );
-      currentArgsRef.current = {} as typeof currentArgsRef.current;
+      setRefValue(currentArgsRef, {} as typeof currentArgsRef.current);
       for (const ref of [canvasRef, toolOverlayRef, rectOverlayRef]) {
         if (ref.current) {
-          ref.current.width = size.width;
-          ref.current.height = size.height;
+          resizeCanvas(ref.current, size.width, size.height);
         }
       }
       dispatch({

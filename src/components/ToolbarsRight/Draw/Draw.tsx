@@ -1,4 +1,4 @@
-import React, { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
+import React, { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { draw, type DrawToolArgs, type DrawToolSettings, type PenType } from '../../../tools/draw.ts';
 import { savedDrawPerPen } from '../../../tools/settings.ts';
 import { usePointerPosition } from '../../../hooks/usePointerPosition.ts';
@@ -16,7 +16,7 @@ const Draw: React.FC<{}> = () => {
   const [brushScale, setBrushScale] = useState<number>(0);
   const previewRef = useRef<HTMLCanvasElement | null>(null);
 
-  const args = toolArgs as DrawToolSettings;
+  const args = toolArgs as DrawToolArgs;
 
   usePointerPosition({
     ref: containerRef,
@@ -26,13 +26,11 @@ const Draw: React.FC<{}> = () => {
     },
   });
 
-  const syncColor = useCallback(() => {
-    setToolArgs({ ...args, color });
-  }, [args, color, setToolArgs]);
-
   useEffect(() => {
-    syncColor();
-  }, [syncColor]);
+    if (args.color !== color) {
+      setToolArgs({ ...args, color });
+    }
+  }, [args, color, setToolArgs]);
 
   const handleChange = (newArgs: DrawToolSettings) => {
     savedDrawPerPen[newArgs.penType] = {

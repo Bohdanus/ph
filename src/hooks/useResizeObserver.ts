@@ -3,6 +3,11 @@ import type { Pos } from '../contexts/general-types.ts';
 
 export function useResizeObserverRAF(ref: RefObject<HTMLElement | null>, onResize: (size: Pos) => void) {
   const frameRef = useRef<number | null>(null);
+  const onResizeRef = useRef(onResize);
+
+  useLayoutEffect(() => {
+    onResizeRef.current = onResize;
+  }, [onResize]);
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -23,7 +28,7 @@ export function useResizeObserverRAF(ref: RefObject<HTMLElement | null>, onResiz
         const rect = el.getBoundingClientRect();
         const size = { x: rect.left, y: rect.top, width: entry.contentRect.width, height: entry.contentRect.height };
 
-        onResize(size);
+        onResizeRef.current(size);
       });
     });
 
@@ -36,5 +41,5 @@ export function useResizeObserverRAF(ref: RefObject<HTMLElement | null>, onResiz
         frameRef.current = null;
       }
     };
-  }, [ref, onResize]);
+  }, [ref]);
 }

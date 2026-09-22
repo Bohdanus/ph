@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { arrow, flip, offset, shift, useFloating, type Placement } from '@floating-ui/react';
 import type { BitmapSource } from '../../contexts/general-types.ts';
 
@@ -20,19 +20,27 @@ export default function PreviewTooltip({
   maxSizePx = 200,
 }: PreviewTooltipProps) {
   const tooltipCanvasRef = useRef<HTMLCanvasElement>(null);
-  const arrowRef = useRef<HTMLDivElement>(null);
+  const [arrowElement, setArrowElement] = useState<HTMLDivElement | null>(null);
 
-  const { floatingStyles, refs, middlewareData } = useFloating({
+  const middleware = useMemo(
+    () => [offset(10), arrow({ element: arrowElement }), flip(), shift({ padding: 8 })],
+    [arrowElement]
+  );
+  const {
+    floatingStyles,
+    refs: { setFloating, setReference },
+    middlewareData,
+  } = useFloating({
     placement,
-    middleware: [offset(10), arrow({ element: arrowRef }), flip(), shift({ padding: 8 })],
+    middleware,
   });
 
   // Keep Floating UI anchored to the currently hovered element
   useEffect(() => {
     if (!open) return;
     if (!hoveredElement) return;
-    refs.setReference(hoveredElement);
-  }, [open, hoveredElement, refs]);
+    setReference(hoveredElement);
+  }, [open, hoveredElement, setReference]);
 
   // Render bitmap to canvas when opened / when source changes
   useEffect(() => {
@@ -69,12 +77,12 @@ export default function PreviewTooltip({
 
   return (
     <div
-      ref={refs.setFloating}
+      ref={setFloating}
       className="fixed bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded shadow-lg p-2 z-50"
       style={floatingStyles}
     >
       <div
-        ref={arrowRef}
+        ref={setArrowElement}
         className="absolute bg-white dark:bg-gray-900 border-gray-300 dark:border-gray-600"
         style={{
           width: 12,

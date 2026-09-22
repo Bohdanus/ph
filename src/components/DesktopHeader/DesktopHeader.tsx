@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useTheme } from '../../contexts/ThemeContext';
+import { useTheme } from '../../contexts/ThemeContext.tsx';
 import HistoryControls from '../HistoryControls/HistoryControls';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useApp } from '../../hooks/useApp.ts';
@@ -47,8 +47,6 @@ const DesktopHeader = () => {
 
   const { theme, toggleTheme } = useTheme();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
-  const hasPendingToolContent = hasPendingText(currentArgs.current);
-
   const fileMenuRef = useRef<HTMLLIElement>(null);
   const toolsMenuRef = useRef<HTMLLIElement>(null);
   const editMenuRef = useRef<HTMLLIElement>(null);
@@ -128,7 +126,7 @@ const DesktopHeader = () => {
                   type="button"
                   onClick={async () => {
                     if (
-                      (hasUnsavedChanges || hasPendingToolContent) &&
+                      (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
                       !confirm('Discard unsaved changes and open another file?')
                     )
                       return;

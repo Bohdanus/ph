@@ -47,10 +47,11 @@ export function useRect({
   const pendingPoint = useRef<Point | null>(null);
   const frameRequested = useRef<number | null>(null);
 
-  const ctx = overlayRef.current!.getContext('2d')!;
+  const drawMaskRef = useRef<((hasRectChanged?: boolean) => void) | null>(null);
 
-  const drawMaskRef = useRef(drawMask);
-  drawMaskRef.current = drawMask;
+  useEffect(() => {
+    drawMaskRef.current = drawMask;
+  });
 
   useEffect(() => {
     if (aspectRatio && initialRect) {
@@ -62,7 +63,7 @@ export function useRect({
 
     if (!isEqual(startRectRef.current, rectUnsortedRef.current)) {
       rectUnsortedRef.current = startRectRef.current ? { ...startRectRef.current } : null;
-      drawMaskRef.current();
+      drawMaskRef.current?.();
     }
   }, [aspectRatio, initialRect]);
 
@@ -141,6 +142,8 @@ export function useRect({
 
   function drawMask(hasRectChanged?: boolean) {
     const { scale } = dimensionsRef.current;
+    const ctx = overlayRef.current?.getContext('2d');
+    if (!ctx) return;
 
     ctx.clearRect(0, 0, imageSize.width, imageSize.height);
 

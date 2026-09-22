@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 
 export type KeyboardShortcut = {
   key: string;
@@ -71,13 +71,13 @@ function matchesShortcut(event: KeyboardEvent, shortcut: KeyboardShortcut) {
 export const KeyboardEventsProvider = ({ children }: { children: React.ReactNode }) => {
   const keyDownShortcutsRef = useRef<KeyboardShortcutGetter[]>([]);
 
-  const registerKeyDownShortcut = (shortcutGetter: KeyboardShortcutGetter) => {
+  const registerKeyDownShortcut = useCallback((shortcutGetter: KeyboardShortcutGetter) => {
     keyDownShortcutsRef.current.push(shortcutGetter);
 
     return () => {
       keyDownShortcutsRef.current = keyDownShortcutsRef.current.filter((item) => item !== shortcutGetter);
     };
-  };
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -115,7 +115,7 @@ export const KeyboardEventsProvider = ({ children }: { children: React.ReactNode
     () => ({
       registerKeyDownShortcut,
     }),
-    []
+    [registerKeyDownShortcut]
   );
 
   return <KeyboardEventsContext.Provider value={value}>{children}</KeyboardEventsContext.Provider>;
