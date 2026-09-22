@@ -13,6 +13,8 @@ const figureLabel = (figure: ShapeToolArgs['figure']) => {
   if (figure === 'oval') return 'Ellipse Tool';
   if (figure === 'circle') return 'Circle Tool';
   if (figure === 'square') return 'Square Tool';
+  if (figure === 'triangle') return 'Triangle Tool';
+  if (figure === 'polygon') return 'Polygon Tool';
   if (figure === 'line') return 'Line Tool';
   return 'Rectangle Tool';
 };

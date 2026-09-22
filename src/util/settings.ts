@@ -35,6 +35,10 @@ export function saveLastSettings(args: ToolArgs) {
     lastSavedSettings['magic-wand'] = cloneDeep(args);
   } else if (toolName === 'rectangular-selection') {
     lastSavedSettings['rectangular-selection'] = cloneDeep({ toolName: 'rectangular-selection' });
+  } else if (toolName === 'triangle' || toolName === 'polygon') {
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(
+      omit(args as unknown as ShapeToolArgs, 'start', 'end')
+    ) as ToolArgs;
   } else if (
     toolName === 'brush' ||
     toolName === 'pencil' ||
@@ -45,8 +49,6 @@ export function saveLastSettings(args: ToolArgs) {
     toolName === 'add-anchor-point' ||
     toolName === 'delete-anchor-point' ||
     toolName === 'convert-point' ||
-    toolName === 'triangle' ||
-    toolName === 'polygon' ||
     toolName === 'custom-shape'
   ) {
     (lastSavedSettings as Record<string, { toolName: string }>)[toolName] = cloneDeep({ toolName });

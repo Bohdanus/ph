@@ -15,6 +15,8 @@ export type ToolIconName =
   | 'shape-square'
   | 'shape-circle'
   | 'shape-line'
+  | 'shape-triangle'
+  | 'shape-polygon'
   | 'text'
   | 'color'
   | 'blur'

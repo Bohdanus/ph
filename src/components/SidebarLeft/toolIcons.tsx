@@ -38,6 +38,8 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
   'shape-square': SquareShapeIcon,
   'shape-circle': CircleShapeIcon,
   'shape-line': LineShapeIcon,
+  'shape-triangle': ShapeIcon,
+  'shape-polygon': ShapeIcon,
   text: TextIcon,
   'freehand-lasso': FreehandLassoIcon,
   'polygonal-lasso': PolygonalLassoIcon,

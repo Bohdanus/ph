@@ -1,7 +1,7 @@
 import type { CreatorToolParams, ToolResult } from './toolsMap.ts';
 import type { Ctx2D, Point } from '../contexts/general-types.ts';
 
-export type FigureType = 'line' | 'circle' | 'rectangle' | 'square' | 'oval';
+export type FigureType = 'line' | 'circle' | 'rectangle' | 'square' | 'oval' | 'triangle' | 'polygon';
 
 export type ShapeToolMode = 'shape' | 'path' | 'pixels';
 export type ShapeLineCap = CanvasLineCap;
@@ -65,6 +65,26 @@ export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
     ctx.beginPath();
     ctx.moveTo(start.x, start.y);
     ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+  } else if (figure === 'triangle' || figure === 'polygon') {
+    const centerX = (start.x + end.x) / 2;
+    const centerY = (start.y + end.y) / 2;
+    const radiusX = Math.abs(end.x - start.x) / 2;
+    const radiusY = Math.abs(end.y - start.y) / 2;
+    const sides = figure === 'triangle' ? 3 : 5;
+
+    ctx.beginPath();
+    for (let index = 0; index < sides; index += 1) {
+      const angle = -Math.PI / 2 + (index * Math.PI * 2) / sides;
+      const point = {
+        x: centerX + Math.cos(angle) * radiusX,
+        y: centerY + Math.sin(angle) * radiusY,
+      };
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    }
+    ctx.closePath();
+    if (hasFill) ctx.fill();
     ctx.stroke();
   } else if (figure === 'rectangle' || figure === 'square') {
     let w = end.x - start.x;

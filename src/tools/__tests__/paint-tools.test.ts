@@ -70,8 +70,8 @@ describe('paint tools', () => {
     }
   });
 
-  it('uses the existing geometry tool pipeline for rectangle, ellipse, and line variants', () => {
-    const variantToolNames = ['rectangle', 'ellipse', 'line'] as const;
+  it('uses the geometry tool pipeline for rectangle, ellipse, line, triangle, and polygon variants', () => {
+    const variantToolNames = ['rectangle', 'ellipse', 'line', 'triangle', 'polygon'] as const;
 
     for (const toolName of variantToolNames) {
       const args = defaultSettings[toolName];

@@ -11,23 +11,24 @@ export type ToolbarTool = {
 export type ToolbarToolGroup = readonly ToolbarTool[];
 
 /**
- * Sparse Photoshop-inspired toolbar map.
+ * Photoshop-inspired toolbar map in the canonical one-column order.
  *
  * Each nested array is one flyout menu. Unsupported Photoshop tools are
  * intentionally omitted rather than represented by placeholder values.
+ * The two-column layout is derived from this order by SidebarLeft.
  */
 export const toolbarMap = [
   [
-    [{ label: 'Select & Move', name: 'reposition', shortcut: 'V' }],
-    [{ label: 'Rectangular Selection', name: 'rectangular-selection', shortcut: 'M' }],
+    [{ label: 'Move Tool', name: 'reposition', shortcut: 'V' }],
+    [{ label: 'Rectangular Marquee Tool', name: 'rectangular-selection', shortcut: 'M' }],
     [
-      { label: 'Freehand Lasso', name: 'freehand-lasso', shortcut: 'L' },
-      { label: 'Polygonal Lasso', name: 'polygonal-lasso' },
-      { label: 'Magnetic Lasso', name: 'feather-magnetic-lasso', shortcut: 'Shift+L' },
+      { label: 'Lasso Tool', name: 'freehand-lasso', shortcut: 'L' },
+      { label: 'Polygonal Lasso Tool', name: 'polygonal-lasso' },
+      { label: 'Magnetic Lasso Tool', name: 'feather-magnetic-lasso', shortcut: 'Shift+L' },
     ],
-    [{ label: 'Magic Wand', name: 'magic-wand', shortcut: 'W' }],
+    [{ label: 'Magic Wand Tool', name: 'magic-wand', shortcut: 'W' }],
   ],
-  [[{ label: 'Crop', name: 'crop', shortcut: 'C' }]],
+  [[{ label: 'Crop Tool', name: 'crop', shortcut: 'C' }]],
   [
     [
       { label: 'Colors', name: 'color' },
@@ -36,16 +37,15 @@ export const toolbarMap = [
     ],
   ],
   [
-    [{ label: 'Draw', name: 'draw', shortcut: 'B' }],
-    [{ label: 'Blur', name: 'blur' }],
     [
       { label: 'Brush Tool', name: 'brush', shortcut: 'B' },
       { label: 'Pencil Tool', name: 'pencil' },
       { label: 'Color Replacement Tool', name: 'color-replacement' },
     ],
+    [{ label: 'Blur Tool', name: 'blur' }],
+    [{ label: 'Draw Tool', name: 'draw', shortcut: 'B' }],
   ],
   [
-    [{ label: 'Text', name: 'text', shortcut: 'T' }],
     [
       { label: 'Pen Tool', name: 'pen', shortcut: 'P' },
       { label: 'Freeform Pen Tool', name: 'freeform-pen' },
@@ -54,14 +54,17 @@ export const toolbarMap = [
       { label: 'Delete Anchor Point Tool', name: 'delete-anchor-point' },
       { label: 'Convert Point Tool', name: 'convert-point' },
     ],
+    [{ label: 'Horizontal Type Tool', name: 'text', shortcut: 'T' }],
     [
       { label: 'Rectangle Tool', name: 'shape', shortcut: 'U', figure: 'rectangle' },
       { label: 'Ellipse Tool', name: 'shape', figure: 'oval' },
       { label: 'Square Tool', name: 'shape', figure: 'square' },
       { label: 'Circle Tool', name: 'shape', figure: 'circle' },
+      { label: 'Triangle Tool', name: 'shape', figure: 'triangle' },
+      { label: 'Polygon Tool', name: 'shape', figure: 'polygon' },
       { label: 'Line Tool', name: 'shape', figure: 'line' },
+      { label: 'Custom Shape Tool', name: 'custom-shape' },
     ],
-    [{ label: 'Custom Shape Tool', name: 'custom-shape' }],
   ],
 ] as const satisfies readonly (readonly ToolbarToolGroup[])[];
 

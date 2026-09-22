@@ -226,13 +226,15 @@ export const toolsMap: ToolsMap = {
   },
   triangle: {
     icon: 'triangle',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
-    toolboxComponent: placeholderTool('Triangle Tool', 'rectangle'),
+    creator: true,
+    imageProcessor: shape,
+    toolboxComponent: Shape,
   },
   polygon: {
     icon: 'polygon',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
-    toolboxComponent: placeholderTool('Polygon Tool', 'rectangle'),
+    creator: true,
+    imageProcessor: shape,
+    toolboxComponent: Shape,
   },
   line: {
     icon: 'line',

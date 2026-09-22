@@ -43,8 +43,14 @@ export type ToolArgsByName = {
     figure: Extract<FigureType, 'rectangle'>;
   };
   ellipse: Omit<ShapeToolArgs, 'toolName' | 'figure'> & { toolName: 'ellipse'; figure: Extract<FigureType, 'oval'> };
-  triangle: { toolName: 'triangle' };
-  polygon: { toolName: 'polygon' };
+  triangle: Omit<ShapeToolArgs, 'toolName' | 'figure'> & {
+    toolName: 'triangle';
+    figure: Extract<FigureType, 'triangle'>;
+  };
+  polygon: Omit<ShapeToolArgs, 'toolName' | 'figure'> & {
+    toolName: 'polygon';
+    figure: Extract<FigureType, 'polygon'>;
+  };
   line: Omit<ShapeToolArgs, 'toolName' | 'figure'> & { toolName: 'line'; figure: Extract<FigureType, 'line'> };
   'custom-shape': { toolName: 'custom-shape' };
 };

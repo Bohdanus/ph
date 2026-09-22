@@ -52,7 +52,14 @@ const Main = () => {
     interactionMode = 'crop';
   } else if (toolName === 'draw' || toolName === 'brush' || toolName === 'pencil' || toolName === 'color-replacement') {
     interactionMode = 'draw';
-  } else if (toolName === 'shape' || toolName === 'rectangle' || toolName === 'ellipse' || toolName === 'line') {
+  } else if (
+    toolName === 'shape' ||
+    toolName === 'rectangle' ||
+    toolName === 'ellipse' ||
+    toolName === 'triangle' ||
+    toolName === 'polygon' ||
+    toolName === 'line'
+  ) {
     interactionMode = 'shape';
   } else if (toolName === 'text') {
     interactionMode = 'text';

@@ -123,13 +123,12 @@ describe('SidebarLeft', () => {
         'magic-wand',
         'crop',
         'color',
-        'draw',
-        'blur',
         'brush',
-        'text',
+        'blur',
+        'draw',
         'pen',
+        'text',
         'shape',
-        'custom-shape',
       ]);
       expect(screen.queryByText('Artboard Tool')).toBeNull();
     });
@@ -158,20 +157,27 @@ describe('SidebarLeft', () => {
       const toolbar = screen.getByTestId('left-toolbar-tools');
       const sidebar = screen.getByTestId('left-sidebar');
       const firstSection = toolbar.querySelector('ul')!;
-
-      expect(toggle).toHaveAttribute('aria-label', 'Use one-column toolbar');
-      expect(toggle).toHaveAttribute('aria-pressed', 'false');
-      expect(firstSection).toHaveClass('grid-cols-2');
-      expect(toolbar).toHaveClass('w-[6.5rem]');
-      expect(sidebar).toHaveStyle({ width: '104px' });
-
-      fireEvent.click(toggle);
+      const getPrimaryNames = () =>
+        [...toolbar.querySelectorAll<HTMLButtonElement>(':scope > ul > li > button')].map((button) =>
+          button.dataset.testid?.replace('tool-button-', '')
+        );
+      const oneColumnOrder = getPrimaryNames();
 
       expect(toggle).toHaveAttribute('aria-label', 'Use two-column toolbar');
       expect(toggle).toHaveAttribute('aria-pressed', 'true');
       expect(firstSection).toHaveClass('grid-cols-1');
       expect(toolbar).toHaveClass('w-14');
       expect(sidebar).toHaveStyle({ width: '56px' });
+
+      fireEvent.click(toggle);
+
+      expect(toggle).toHaveAttribute('aria-label', 'Use one-column toolbar');
+      expect(toggle).toHaveAttribute('aria-pressed', 'false');
+      expect(toolbar.querySelector('ul')).toHaveClass('grid-cols-2');
+      expect(toolbar).toHaveClass('w-[6.75rem]');
+      expect(sidebar).toHaveStyle({ width: '108px' });
+      expect(toolbar.querySelectorAll(':scope > ul')).toHaveLength(1);
+      expect(getPrimaryNames()).toEqual(oneColumnOrder);
     });
 
     it('closes any open flyout when toggling layout', () => {
@@ -188,7 +194,7 @@ describe('SidebarLeft', () => {
 
   describe('primary tool selection', () => {
     const groupedToolCases = [
-      { title: 'Freehand Lasso', name: 'freehand-lasso', item: 'Freehand Lasso' },
+      { title: 'Lasso Tool', name: 'freehand-lasso', item: 'Lasso Tool' },
       { title: 'Colors', name: 'color', item: 'Colors' },
       { title: 'Brush', name: 'brush', item: 'Brush Tool' },
       { title: 'Pen', name: 'pen', item: 'Pen Tool' },
@@ -331,6 +337,27 @@ describe('SidebarLeft', () => {
       fireEvent.click(rootButton);
       expect(goToTool).toHaveBeenCalledWith('shape');
       expect(patchToolArgsMock).toHaveBeenLastCalledWith('shape', { figure: 'oval' });
+    });
+
+    it('keeps all supported shape variants in the shape flyout', () => {
+      vi.useFakeTimers();
+      render(<SidebarLeft />);
+
+      longPress(toolbarButtonByName('shape'));
+
+      const menu = screen.getByRole('menu', { name: 'Shape tools' });
+      for (const label of [
+        'Rectangle Tool',
+        'Ellipse Tool',
+        'Square Tool',
+        'Circle Tool',
+        'Triangle Tool',
+        'Polygon Tool',
+        'Line Tool',
+        'Custom Shape Tool',
+      ]) {
+        expect(within(menu).getByRole('menuitemradio', { name: label })).toBeInTheDocument();
+      }
     });
 
     const nonPrimaryCases: ReadonlyArray<[string, string, string]> = [

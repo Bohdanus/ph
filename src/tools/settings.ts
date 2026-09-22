@@ -30,6 +30,8 @@ export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
   rectangle: { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' },
   square: { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' },
   oval: { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' },
+  triangle: { alpha: 1, lineWidth: 5, toolMode: 'shape' },
+  polygon: { alpha: 1, lineWidth: 5, toolMode: 'shape' },
 };
 
 export const defaultSettings = {
@@ -155,8 +157,20 @@ export const defaultSettings = {
     backgroundColor: null,
     toolName: 'ellipse',
   } satisfies ToolArgsByName['ellipse'],
-  triangle: { toolName: 'triangle' },
-  polygon: { toolName: 'polygon' },
+  triangle: {
+    ...savedArgsPerFigure['triangle'],
+    figure: 'triangle',
+    color: '#000000',
+    backgroundColor: null,
+    toolName: 'triangle',
+  } satisfies ToolArgsByName['triangle'],
+  polygon: {
+    ...savedArgsPerFigure['polygon'],
+    figure: 'polygon',
+    color: '#000000',
+    backgroundColor: null,
+    toolName: 'polygon',
+  } satisfies ToolArgsByName['polygon'],
   line: {
     ...savedArgsPerFigure['line'],
     figure: 'line',

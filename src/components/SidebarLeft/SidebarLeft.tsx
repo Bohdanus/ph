@@ -23,13 +23,15 @@ const LayoutIcon = ({ singleColumn }: { singleColumn: boolean }) => (
   </span>
 );
 
+const toolbarGroups = toolbarMap.flat();
+
 const SidebarLeft = () => {
   const [{ hasImage, toolName, color, backgroundColor }, dispatch] = useStore();
   const { goToTool } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
-  const [isSingleColumn, setIsSingleColumn] = useState(false);
+  const [isSingleColumn, setIsSingleColumn] = useState(true);
   const longPressFlyoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressLongPressRef = useRef(false);
   const longPressOpenedRef = useRef(false);
@@ -123,7 +125,16 @@ const SidebarLeft = () => {
   const getToolIcon = (tool: ToolbarTool) => {
     if (tool.figure) {
       const shapeIcon =
-        toolIcons[`shape-${tool.figure}` as `shape-${'rectangle' | 'oval' | 'square' | 'circle' | 'line'}`];
+        toolIcons[
+          `shape-${tool.figure}` as
+            | 'shape-rectangle'
+            | 'shape-oval'
+            | 'shape-square'
+            | 'shape-circle'
+            | 'shape-line'
+            | 'shape-triangle'
+            | 'shape-polygon'
+        ];
       if (shapeIcon) return shapeIcon;
     }
     return toolIcons[tool.name];
@@ -313,7 +324,7 @@ const SidebarLeft = () => {
 
   if (!hasImage) return;
 
-  const toolbarWidth = isSingleColumn ? '3.5rem' : '6.5rem';
+  const toolbarWidth = isSingleColumn ? '3.5rem' : '6.75rem';
 
   return (
     <aside
@@ -340,18 +351,24 @@ const SidebarLeft = () => {
         </div>
         <div
           className={`rounded-lg border border-gray-300 bg-gray-200/70 p-1.5 shadow-inner dark:border-gray-700 dark:bg-gray-950/35 ${
-            isSingleColumn ? 'w-14' : 'w-[6.5rem]'
+            isSingleColumn ? 'w-14' : 'w-[6.75rem]'
           }`}
           data-testid="left-toolbar-tools"
         >
-          {toolbarMap.map((section, sectionIndex) => (
-            <ul
-              className={`grid list-none ${isSingleColumn ? 'grid-cols-1' : 'grid-cols-2'} gap-1.5 ${sectionIndex > 0 ? 'mt-1.5 border-t border-gray-300 pt-1.5 dark:border-gray-700' : ''}`}
-              key={`toolbar-section-${sectionIndex}`}
-            >
-              {section.map((group, groupIndex) => renderToolGroup(group, `${sectionIndex}-${groupIndex}`))}
+          {isSingleColumn ? (
+            toolbarMap.map((section, sectionIndex) => (
+              <ul
+                className={`grid list-none grid-cols-1 gap-1.5 ${sectionIndex > 0 ? 'mt-1.5 border-t border-gray-300 pt-1.5 dark:border-gray-700' : ''}`}
+                key={`toolbar-section-${sectionIndex}`}
+              >
+                {section.map((group, groupIndex) => renderToolGroup(group, `${sectionIndex}-${groupIndex}`))}
+              </ul>
+            ))
+          ) : (
+            <ul className="grid list-none grid-cols-2 gap-1.5">
+              {toolbarGroups.map((group, groupIndex) => renderToolGroup(group, `two-column-${groupIndex}`))}
             </ul>
-          ))}
+          )}
         </div>
         <hr className="my-3 border-gray-300 dark:border-gray-700" />
 
