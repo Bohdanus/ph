@@ -8,7 +8,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [storeState],
 }));
 
-vi.mock('../../../tools/toolsMap.tsx', () => {
+vi.mock('../../../tools/toolsMap.ts', () => {
   const Toolbox = () => <div data-testid="toolbox">toolbar</div>;
   return {
     toolsMap: {

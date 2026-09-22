@@ -1,4 +1,4 @@
-import type { CreatorToolParams } from './toolsMap.ts';
+import type { CreatorToolParams } from './toolProcessors.ts';
 import { drawLine } from '../util/draw.ts';
 import type { Ctx2D, Point } from '../contexts/general-types.ts';
 

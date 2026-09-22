@@ -1,5 +1,5 @@
 import type { Point } from '../contexts/general-types.ts';
-import type { ProcessorToolParams } from './toolsMap.ts';
+import type { ProcessorToolParams } from './toolProcessors.ts';
 
 export type FeatherMagneticLassoToolArgs = {
   points?: Point[];

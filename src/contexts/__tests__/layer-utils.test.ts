@@ -20,6 +20,7 @@ function makeLayer(overrides: Partial<Layer> & { id: string; order: number }): L
     locked: false,
     blendMode: 'source-over',
     pos: { x: 0, y: 0, width: 100, height: 100 },
+    operations: [],
     ...overrides,
   };
 }

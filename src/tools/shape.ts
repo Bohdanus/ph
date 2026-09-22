@@ -1,4 +1,4 @@
-import type { CreatorToolParams, ToolResult } from './toolsMap.ts';
+import type { CreatorToolParams, ToolResult } from './toolProcessors.ts';
 import type { Ctx2D, Point } from '../contexts/general-types.ts';
 import type { ToolArgs } from '../contexts/tool-types.ts';
 

@@ -26,6 +26,7 @@ function setup(warnings: string[] = []) {
     blendMode: 'multiply' as const,
     order: 9,
     pos: { x: -3, y: 7, width: 20, height: 30 },
+    operations: [],
   };
   const document: PsdDocument = {
     size: { width: 320, height: 180 },

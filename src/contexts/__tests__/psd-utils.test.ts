@@ -23,10 +23,22 @@ beforeEach(() => {
     if (context) return context;
     const canvas = this;
     const bytes = new Uint8ClampedArray(canvas.width * canvas.height * 4);
+    const stateStack: Array<{ alpha: number; mode: GlobalCompositeOperation; filter: string }> = [];
     context = {
       canvas,
       globalAlpha: 1,
       globalCompositeOperation: 'source-over',
+      filter: 'none',
+      save(this: CanvasRenderingContext2D) {
+        stateStack.push({ alpha: this.globalAlpha, mode: this.globalCompositeOperation, filter: this.filter });
+      },
+      restore(this: CanvasRenderingContext2D) {
+        const state = stateStack.pop();
+        if (!state) return;
+        this.globalAlpha = state.alpha;
+        this.globalCompositeOperation = state.mode;
+        this.filter = state.filter;
+      },
       createImageData: (width: number, height: number) => ({
         width,
         height,
@@ -101,6 +113,7 @@ function layer(patch: Partial<Layer> = {}): Layer {
     blendMode: 'source-over',
     order: 0,
     pos: { x: 0, y: 0, width: 1, height: 1 },
+    operations: [],
     ...patch,
   };
 }

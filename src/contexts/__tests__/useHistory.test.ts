@@ -14,7 +14,7 @@ import {
 import { useHistory } from '../useHistory.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { LayersRecord, ToolLayerSource } from '../layer-types.ts';
-import { toolsMap } from '../../tools/toolsMap.ts';
+import { toolProcessors } from '../../tools/toolProcessors.ts';
 import { saveLayerCanvas } from '../layer-utils.ts';
 import { updateHistoryTimeline } from '../history-timeline.ts';
 
@@ -47,8 +47,11 @@ function createStoreState(history: HistoryItem[]): TestStoreShape {
   const drawCtx = {
     clearRect: vi.fn(),
     drawImage: vi.fn(),
+    save: vi.fn(),
+    restore: vi.fn(),
     globalAlpha: 1,
     globalCompositeOperation: 'source-over',
+    filter: 'none',
   };
 
   return {
@@ -236,7 +239,7 @@ describe('useHistory undo replay', () => {
 
   it.each([NEW_LAYER_ACTION, TOOL_ACTION] as const)('restores tool-created layers recorded as %s', (actionName) => {
     const canvas = new OffscreenCanvas(20, 30);
-    vi.spyOn(toolsMap.shape, 'imageProcessor').mockReturnValue(() => [canvas, { width: 20, height: 30 }]);
+    vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [canvas, { width: 20, height: 30 }]);
     const source = {
       kind: 'tool',
       args: { toolName: 'shape' },
@@ -277,11 +280,11 @@ describe('useHistory undo replay', () => {
     }
   );
 
-  it('passes imported bitmaps to tool edits and saves only the final replay canvas', async () => {
+  it('passes imported bitmaps to raster tool replay without persisting a cache', async () => {
     const bitmap = { width: 40, height: 20 } as ImageBitmap;
     const canvas = new OffscreenCanvas(40, 20);
     const processor = vi
-      .spyOn(toolsMap.shape, 'imageProcessor')
+      .spyOn(toolProcessors.shape, 'imageProcessor')
       .mockReturnValue(() => [canvas, { x: 12, y: 0, width: 40, height: 20 }]);
     const { state } = setup([
       {
@@ -299,9 +302,8 @@ describe('useHistory undo replay', () => {
     ]);
     useHistory().resetHistoryTo(1);
     expect(processor).toHaveBeenCalledWith({ bitmap, size: expect.objectContaining({ width: 40 }) });
-    expect(createImageBitmap).toHaveBeenCalledExactlyOnceWith(canvas);
-    await Promise.resolve();
-    expect(state.layers.image.tmpCanvas).toBeNull();
+    expect(createImageBitmap).not.toHaveBeenCalled();
+    expect(state.layers.image.tmpCanvas).toBe(canvas);
     expect(state.layers.image.pos.x).toBe(12);
   });
 
@@ -430,6 +432,7 @@ describe('useHistory undo replay', () => {
         blendMode: 'multiply',
         order: 7,
         pos: { x: -8, y: 13, width: 40, height: 20 },
+        operations: [],
       },
       bottom: {
         id: 'bottom',
@@ -443,6 +446,7 @@ describe('useHistory undo replay', () => {
         blendMode: 'screen',
         order: 2,
         pos: { x: 4, y: -2, width: 40, height: 20 },
+        operations: [],
       },
     };
     const size = { width: 300, height: 200 };
@@ -451,7 +455,7 @@ describe('useHistory undo replay', () => {
     );
     const canvas = new OffscreenCanvas(40, 20);
     const processor = vi
-      .spyOn(toolsMap.shape, 'imageProcessor')
+      .spyOn(toolProcessors.shape, 'imageProcessor')
       .mockReturnValue(() => [canvas, { x: 22, y: 31, width: 40, height: 20 }]);
     const { state } = setup([
       {
@@ -484,15 +488,13 @@ describe('useHistory undo replay', () => {
       tmpCanvas: canvas,
       pos: { ...original.top.pos, x: 22, y: 31 },
     });
-    await Promise.resolve();
-    expect(state.layers.top.tmpCanvas).toBeNull();
+    expect(state.layers.top.tmpCanvas).toBe(canvas);
     expect(state.layers.bottom).toEqual(original.bottom);
     useHistory().undo();
     expect(state.layers).toEqual(original);
     expect(state.layers.top.bitmap).toBe(bitmap);
 
     useHistory().redo();
-    await Promise.resolve();
     useHistory().redo();
     expect(state.layers.top).toBeUndefined();
     expect(state.activeLayerId).toBe('bottom');

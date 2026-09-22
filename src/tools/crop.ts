@@ -1,5 +1,5 @@
 import { trimRect } from '../util/rect.ts';
-import type { ProcessorToolParams } from './toolsMap.ts';
+import type { ProcessorToolParams } from './toolProcessors.ts';
 import type { RectXYSorted } from '../contexts/general-types.ts';
 
 export type CropToolArgs = {

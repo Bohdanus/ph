@@ -1,5 +1,5 @@
 import { exp1_1 } from './functions.ts';
-import type { ProcessorToolParams } from './toolsMap.ts';
+import type { ProcessorToolParams } from './toolProcessors.ts';
 
 export type ColorsToolArgs = { grayscale: number; sepia: number; saturation: number; toolName: 'color' };
 

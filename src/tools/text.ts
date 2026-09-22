@@ -1,5 +1,5 @@
 import { TEXT_PADDING } from '../util/constants.ts';
-import type { CreatorToolParams } from './toolsMap.ts';
+import type { CreatorToolParams } from './toolProcessors.ts';
 import type { Ctx2D, RectXYSorted } from '../contexts/general-types.ts';
 
 export type TextToolArgs = {

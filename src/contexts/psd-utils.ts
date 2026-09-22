@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import type { Size } from './general-types.ts';
 import type { LayersRecord } from './layer-types.ts';
+import { drawLayerSource } from './layer-renderer.ts';
 
 export interface PsdDocument {
   size: Size;
@@ -158,6 +159,13 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
         blendMode: blendMode ?? 'source-over',
         order: Object.keys(layers).length,
         pos: { x: source.left ?? 0, y: source.top ?? 0, width: canvas.width, height: canvas.height },
+        source: {
+          kind: 'image',
+          bitmap: canvas,
+          name,
+          pos: { x: source.left ?? 0, y: source.top ?? 0, width: canvas.width, height: canvas.height },
+        },
+        operations: [],
       };
     }
   }
@@ -183,6 +191,8 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
         blendMode: 'source-over',
         order: 0,
         pos: { x: 0, y: 0, ...size },
+        source: { kind: 'image', bitmap: canvas, name: 'Composite', isBedrock: true, size: { ...size } },
+        operations: [],
       };
       warnings.push('No leaf layers; imported the flattened composite image.');
     }
@@ -222,7 +232,14 @@ export async function savePsd(layers: LayersRecord, size: Size): Promise<ArrayBu
     const source = layer.tmpCanvas ?? layer.bitmap;
     const raster = canvas2d(source ? width : 1, source ? height : 1);
     // Rasterize fractional editor geometry inside enclosing integer PSD bounds.
-    if (source) raster.ctx.drawImage(source, layer.pos.x - left, layer.pos.y - top, layer.pos.width, layer.pos.height);
+    if (source) {
+      drawLayerSource(raster.ctx, layer, {
+        x: layer.pos.x - left,
+        y: layer.pos.y - top,
+        width: layer.pos.width,
+        height: layer.pos.height,
+      });
+    }
     // PSD stores opacity in one byte; composite uses the same quantized value.
     const opacity = Math.round(layer.opacity * 255) / 255;
     if (layer.visible) {

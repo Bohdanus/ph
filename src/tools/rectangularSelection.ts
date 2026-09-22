@@ -1,5 +1,5 @@
 import type { RectXYSorted } from '../contexts/general-types.ts';
-import type { ProcessorToolParams } from './toolsMap.ts';
+import type { ProcessorToolParams } from './toolProcessors.ts';
 
 export type RectangularSelectionToolArgs = {
   rect?: RectXYSorted | null;

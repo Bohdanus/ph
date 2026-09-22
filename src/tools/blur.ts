@@ -1,4 +1,4 @@
-import type { ProcessorToolParams } from './toolsMap.ts';
+import type { ProcessorToolParams } from './toolProcessors.ts';
 
 export type BlurToolArgs = { radius: number; toolName: 'blur' };
 

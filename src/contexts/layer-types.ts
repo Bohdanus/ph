@@ -24,6 +24,15 @@ export type ToolLayerSource = {
 
 export type LayerSource = BlankLayerSource | ImageLayerSource | ToolLayerSource;
 
+export type LayerOperationArgs = Extract<ToolArgs, { toolName: 'blur' | 'color' | 'levels' }>;
+
+// Operations are the canonical editable form; rendered bitmaps are disposable materializations.
+export type LayerOperation = Readonly<{
+  id: string;
+  args: LayerOperationArgs;
+  enabled: boolean;
+}>;
+
 export type Layer = {
   id: string;
   name: string;
@@ -40,6 +49,9 @@ export type Layer = {
   order: number;
 
   pos: Pos;
+
+  source?: LayerSource;
+  operations: readonly LayerOperation[];
 
   lastHistoryId?: string;
 };

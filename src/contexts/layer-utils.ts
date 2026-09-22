@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 
-import type { Layer, LayerId, LayerSource, LayersRecord } from './layer-types.ts';
+import type { Layer, LayerId, LayerOperation, LayerOperationArgs, LayerSource, LayersRecord } from './layer-types.ts';
 import { type CreatorToolParams, toolProcessors } from '../tools/toolProcessors.ts';
 import type { Point, Pos } from './general-types.ts';
 import { ellipsify } from '../util/string.ts';
@@ -117,6 +117,10 @@ export function saveLayerCanvas(layer: Layer) {
   });
 }
 
+export function createLayerOperation(args: LayerOperationArgs, id = uuidv4()): LayerOperation {
+  return Object.freeze({ id, args: Object.freeze({ ...args }), enabled: true });
+}
+
 type LayerSourceParams = {
   layerId?: LayerId;
   layers: LayersRecord;
@@ -166,6 +170,8 @@ export function createLayerSource({
     opacity: 1,
     order: maxOrder,
     pos,
+    source,
+    operations: [],
     visible: true,
     isBedrock: isBedrock ?? false,
 

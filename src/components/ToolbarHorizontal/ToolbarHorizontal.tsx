@@ -1,4 +1,4 @@
-import { toolsMap } from '../../tools/toolsMap.tsx';
+import { toolsMap } from '../../tools/toolsMap.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 
 const ToolbarHorizontal = () => {

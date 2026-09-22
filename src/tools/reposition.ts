@@ -1,4 +1,4 @@
-import type { ProcessorToolParams } from './toolsMap.ts';
+import type { ProcessorToolParams } from './toolProcessors.ts';
 import type { Point, Pos } from '../contexts/general-types.ts';
 
 // should be either move or resize, not both, and not none

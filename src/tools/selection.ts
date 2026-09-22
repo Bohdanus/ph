@@ -1,4 +1,4 @@
-import type { ProcessorToolParams } from './toolsMap.ts';
+import type { ProcessorToolParams } from './toolProcessors.ts';
 import { copyPolygonToCanvas } from '../util/selection.ts';
 import type { Point } from '../contexts/general-types.ts';
 
