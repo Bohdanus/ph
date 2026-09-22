@@ -8,6 +8,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 const dispatchMock = vi.hoisted(() => vi.fn());
 const storeState = vi.hoisted((): { selections: Selection[] } => ({ selections: [] }));
 const currentToolState = vi.hoisted(() => ({ toolName: 'polygonal-lasso' }));
+const shortcutHandlers = vi.hoisted(() => new Map<string, () => void>());
 
 // Mock dependencies
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
@@ -22,6 +23,12 @@ vi.mock('../../../hooks/usePolylineAnts.ts', () => ({
     draw: vi.fn(),
     clear: vi.fn(),
   }),
+}));
+
+vi.mock('../../../hooks/useKeyboardEvents.tsx', () => ({
+  useKeyDownShortcut: (shortcut: { key: string; onKeyDown: () => void }) => {
+    shortcutHandlers.set(shortcut.key, shortcut.onKeyDown);
+  },
 }));
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
@@ -47,6 +54,7 @@ describe('PolygonClickToolArea', () => {
     dispatchMock.mockClear();
     storeState.selections = [];
     currentToolState.toolName = 'polygonal-lasso';
+    shortcutHandlers.clear();
   });
 
   const createMockContext = () =>
@@ -443,5 +451,174 @@ describe('PolygonClickToolArea', () => {
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 351, clientY: 351 });
 
     expect(dispatchMock).not.toHaveBeenCalled();
+  });
+
+  describe('keyboard shortcuts', () => {
+    it('cancels a polygonal lasso draft with Escape', () => {
+      const mockCtx = createMockContext();
+      const { container } = render(
+        <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
+
+      expect(dispatchMock).toHaveBeenCalledWith({
+        type: 'START_SELECTION_DRAFT',
+        payload: { sourceTool: 'polygonal-lasso' },
+      });
+
+      dispatchMock.mockClear();
+      shortcutHandlers.get('Escape')?.();
+
+      expect(dispatchMock).toHaveBeenCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+    });
+
+    it('does nothing with Escape when no draft is in progress', () => {
+      const mockCtx = createMockContext();
+      render(<PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />);
+
+      dispatchMock.mockClear();
+      shortcutHandlers.get('Escape')?.();
+
+      expect(dispatchMock).not.toHaveBeenCalled();
+    });
+
+    it('removes the last anchor with Backspace in polygonal mode', () => {
+      const mockCtx = createMockContext();
+      const { container } = render(
+        <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
+
+      dispatchMock.mockClear();
+      mockCtx.clearRect.mockClear();
+
+      shortcutHandlers.get('Backspace')?.();
+
+      expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'COMMIT_SELECTION' }));
+      expect(mockCtx.clearRect).toHaveBeenCalled();
+    });
+
+    it('does not remove anchors with Backspace in freehand mode', () => {
+      currentToolState.toolName = 'freehand-lasso';
+      const mockCtx = createMockContext();
+      const { container } = render(
+        <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { clientX: 30, clientY: 20 });
+
+      dispatchMock.mockClear();
+      shortcutHandlers.get('Backspace')?.();
+
+      expect(dispatchMock).not.toHaveBeenCalled();
+    });
+
+    it('clears selections with Backspace when no draft in progress', () => {
+      const mockCtx = createMockContext();
+      render(<PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />);
+
+      dispatchMock.mockClear();
+      shortcutHandlers.get('Backspace')?.();
+
+      expect(dispatchMock).toHaveBeenCalledWith({ type: 'CLEAR_SELECTIONS' });
+    });
+
+    it('completes a polygonal selection with Enter', () => {
+      const mockCtx = createMockContext();
+      const { container } = render(
+        <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
+
+      dispatchMock.mockClear();
+      shortcutHandlers.get('Enter')?.();
+
+      expect(dispatchMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'COMMIT_SELECTION',
+          payload: expect.objectContaining({
+            geometry: 'polygon',
+            sourceTool: 'polygonal-lasso',
+          }),
+        })
+      );
+    });
+
+    it('completes a freehand selection with Enter', () => {
+      currentToolState.toolName = 'freehand-lasso';
+      const mockCtx = createMockContext();
+      const { container } = render(
+        <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { clientX: 30, clientY: 20 });
+      fireEvent.pointerMove(toolArea, { clientX: 40, clientY: 50 });
+
+      dispatchMock.mockClear();
+      shortcutHandlers.get('Enter')?.();
+
+      expect(dispatchMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'COMMIT_SELECTION',
+          payload: expect.objectContaining({
+            geometry: 'polygon',
+            sourceTool: 'freehand-lasso',
+          }),
+        })
+      );
+    });
+
+    it('cancels a freehand draft with Escape', () => {
+      currentToolState.toolName = 'freehand-lasso';
+      const mockCtx = createMockContext();
+      const { container } = render(
+        <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { clientX: 30, clientY: 20 });
+
+      dispatchMock.mockClear();
+      shortcutHandlers.get('Escape')?.();
+
+      expect(dispatchMock).toHaveBeenCalledWith({ type: 'CANCEL_SELECTION_DRAFT', payload: undefined });
+    });
+
+    it('Delete works the same as Backspace', () => {
+      const mockCtx = createMockContext();
+      const { container } = render(
+        <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
+
+      dispatchMock.mockClear();
+      mockCtx.clearRect.mockClear();
+
+      shortcutHandlers.get('Delete')?.();
+
+      expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'COMMIT_SELECTION' }));
+      expect(mockCtx.clearRect).toHaveBeenCalled();
+    });
   });
 });

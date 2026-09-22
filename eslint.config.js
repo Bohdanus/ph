@@ -7,7 +7,10 @@ import tseslint from 'typescript-eslint';
 import prettier from 'eslint-plugin-prettier';
 import eslintConfigPrettier from 'eslint-config-prettier';
 import promise from 'eslint-plugin-promise';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'eslint/config';
+
+const tsconfigRootDir = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig([
   {
@@ -19,6 +22,7 @@ export default defineConfig([
       '*.tsbuildinfo',
       '.DS_Store',
       '.husky',
+      '.kilo',
       'coverage',
       '.vite',
     ],
@@ -85,6 +89,9 @@ export default defineConfig([
     languageOptions: {
       ecmaVersion: 2024,
       globals: globals.browser,
+      parserOptions: {
+        tsconfigRootDir,
+      },
     },
   },
   {

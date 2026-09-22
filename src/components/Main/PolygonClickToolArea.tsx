@@ -5,6 +5,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import type { Point, Selection } from '../../contexts/general-types.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useDoubleClick } from '../../hooks/useDoubleClick.ts';
+import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import {
   createCommittedPolygonSelection,
   distanceBetweenPoints,
@@ -494,6 +495,61 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     event.preventDefault();
     finishSelection();
   };
+
+  function cancelSelectionDraft() {
+    if (pointsRef.current.length === 0 && !selectionDragRef.current) return;
+
+    resetInteractionState();
+    dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
+  }
+
+  function removeLastAnchor() {
+    if (isFreehand || selectionDragRef.current) return;
+
+    if (pointsRef.current.length === 0) {
+      dispatch({ type: 'CLEAR_SELECTIONS' });
+      return;
+    }
+
+    pointsRef.current.pop();
+    previewRef.current = null;
+
+    if (pointsRef.current.length === 0) {
+      resetInteractionState();
+      dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
+      return;
+    }
+
+    redrawOverlay();
+  }
+
+  useKeyDownShortcut({
+    key: 'Escape',
+    preventDefault: true,
+    allowInInput: true,
+    onKeyDown: cancelSelectionDraft,
+  });
+
+  useKeyDownShortcut({
+    key: 'Enter',
+    preventDefault: true,
+    allowInInput: true,
+    onKeyDown: () => finishSelection(),
+  });
+
+  useKeyDownShortcut({
+    key: 'Backspace',
+    preventDefault: true,
+    allowInInput: true,
+    onKeyDown: removeLastAnchor,
+  });
+
+  useKeyDownShortcut({
+    key: 'Delete',
+    preventDefault: true,
+    allowInInput: true,
+    onKeyDown: removeLastAnchor,
+  });
 
   useEffect(() => {
     redrawOverlay();

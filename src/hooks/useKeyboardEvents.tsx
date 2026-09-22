@@ -6,7 +6,7 @@ export type KeyboardShortcut = {
   enabled?: boolean;
   preventDefault?: boolean;
   stopPropagation?: boolean;
-  allowInInput?: boolean;
+  allowInInput?: boolean; // Default: false. Set to true for shortcuts that should work in input fields (tool commands, not text editing)
   ctrl?: boolean;
   shift?: boolean;
   alt?: boolean;
@@ -29,15 +29,28 @@ function normalizeKey(key: string) {
 function isEditableTarget(target: EventTarget | null) {
   if (!(target instanceof Element)) return false;
 
-  if (
-    target instanceof HTMLInputElement ||
-    target instanceof HTMLTextAreaElement ||
-    target instanceof HTMLSelectElement
-  ) {
+  // Textarea is always editable
+  if (target instanceof HTMLTextAreaElement) {
     return true;
   }
 
-  return (target instanceof HTMLElement && target.isContentEditable) || !!target.closest('[contenteditable="true"]');
+  // Contenteditable elements are editable
+  if ((target instanceof HTMLElement && target.isContentEditable) || !!target.closest('[contenteditable="true"]')) {
+    return true;
+  }
+
+  // For inputs, only text-like inputs are editable (not controls like range, checkbox, etc.)
+  if (target instanceof HTMLInputElement) {
+    const textLikeTypes = ['text', 'password', 'search', 'email', 'url', 'tel', 'number'];
+    return textLikeTypes.includes(target.type);
+  }
+
+  // Select elements are editable
+  if (target instanceof HTMLSelectElement) {
+    return true;
+  }
+
+  return false;
 }
 
 function matchesShortcut(event: KeyboardEvent, shortcut: KeyboardShortcut) {

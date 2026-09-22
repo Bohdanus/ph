@@ -470,28 +470,28 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   useKeyDownShortcut({
     key: 'Escape',
     preventDefault: true,
-    enabled: true,
+    allowInInput: true,
     onKeyDown: cancelSelectionDraft,
   });
 
   useKeyDownShortcut({
     key: 'Enter',
     preventDefault: true,
-    enabled: true,
+    allowInInput: true,
     onKeyDown: finishSelection,
   });
 
   useKeyDownShortcut({
     key: 'Backspace',
     preventDefault: true,
-    enabled: true,
+    allowInInput: true,
     onKeyDown: removeLastAnchor,
   });
 
   useKeyDownShortcut({
     key: 'Delete',
     preventDefault: true,
-    enabled: true,
+    allowInInput: true,
     onKeyDown: removeLastAnchor,
   });
 

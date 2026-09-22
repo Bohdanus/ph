@@ -147,6 +147,7 @@ const Lasso: React.FC<{}> = () => {
       <div className="text-[10px] text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded border border-blue-200 dark:border-blue-800 max-w-xs">
         <div>Click points • Right-click to finish</div>
         <div className="text-[9px] mt-1 opacity-75">Double-click first point to close • Shift+drag for freehand</div>
+        <div className="text-[9px] mt-1 opacity-75">Backspace removes anchor • Enter finishes • Esc cancels</div>
       </div>
     </div>
   );
