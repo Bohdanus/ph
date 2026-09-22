@@ -22,6 +22,8 @@ class MockOffscreenCanvas {
       createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
       setLineDash: vi.fn(),
       fillRect: vi.fn(),
+      strokeRect: vi.fn(),
+      ellipse: vi.fn(),
       drawImage: vi.fn(),
       save: vi.fn(),
       restore: vi.fn(),
@@ -86,24 +88,49 @@ describe('paint tools', () => {
     }
   });
 
-  it('preserves the computed brush bounds instead of snapping the finished layer to 0,0', () => {
+  it('preserves computed draw-like bounds instead of snapping the finished layer to 0,0', () => {
     const pos = { x: 42, y: 18, width: 66, height: 32 };
-    const layer = createLayerSource({
-      layers: {},
-      source: {
-        kind: 'tool',
-        args: {
-          ...defaultSettings.brush,
-          points: [
-            { x: 60, y: 20 },
-            { x: 90, y: 40 },
-            { x: 100, y: 45 },
-          ],
+    for (const toolName of ['brush', 'pencil', 'color-replacement'] as const) {
+      const layer = createLayerSource({
+        layers: {},
+        source: {
+          kind: 'tool',
+          args: {
+            ...defaultSettings[toolName],
+            points: [
+              { x: 60, y: 20 },
+              { x: 90, y: 40 },
+              { x: 100, y: 45 },
+            ],
+          },
+          pos,
         },
-        pos,
-      },
-    });
+      });
 
-    expect(layer.pos).toEqual(pos);
+      expect(layer.pos).toEqual(pos);
+    }
+  });
+
+  it('preserves non-origin bounds for every shape figure', () => {
+    const pos = { x: 42, y: 18, width: 66, height: 32 };
+    const figures = ['rectangle', 'square', 'oval', 'circle', 'line', 'triangle', 'polygon'] as const;
+
+    for (const figure of figures) {
+      const layer = createLayerSource({
+        layers: {},
+        source: {
+          kind: 'tool',
+          args: {
+            ...defaultSettings.shape,
+            figure,
+            start: { x: 10, y: 8 },
+            end: { x: 50, y: 24 },
+          },
+          pos,
+        },
+      });
+
+      expect(layer.pos).toEqual(pos);
+    }
   });
 });

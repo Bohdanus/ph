@@ -137,5 +137,5 @@ export const shape =
 
     drawShape(ctx, shapeArgs);
 
-    return [canvas, { x: 0, y: 0 } as never] as ToolResult;
+    return [canvas];
   };

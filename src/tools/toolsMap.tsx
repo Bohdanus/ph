@@ -53,7 +53,7 @@ export type CreatorToolParams = {
   size: Size;
 };
 
-export type ToolResult = [BitmapSource, Pos | Size | undefined];
+export type ToolResult = [BitmapSource, Partial<Pos>?];
 
 type ToolsMap = Record<
   ToolName,
@@ -161,7 +161,7 @@ export const toolsMap: ToolsMap = {
     icon: 'brush',
     imageProcessor: (params) => (args) => {
       const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'pen'));
-      return [canvas, undefined];
+      return [canvas];
     },
     toolboxComponent: Draw,
   },
@@ -171,7 +171,7 @@ export const toolsMap: ToolsMap = {
       const [canvas] = draw({ size: params.size } as CreatorToolParams)(
         buildDrawArgs(args, 'pen', Math.max(1, Number((args as Partial<DrawToolArgs>).lineWidth ?? 3)))
       );
-      return [canvas, undefined];
+      return [canvas];
     },
     toolboxComponent: Draw,
   },
@@ -179,38 +179,38 @@ export const toolsMap: ToolsMap = {
     icon: 'color-replacement',
     imageProcessor: (params) => (args) => {
       const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'spray'));
-      return [canvas, undefined];
+      return [canvas];
     },
     toolboxComponent: Draw,
   },
   pen: {
     icon: 'pen',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    imageProcessor: () => () => [null as never],
     toolboxComponent: placeholderTool('Pen Tool', 'pen'),
   },
   'freeform-pen': {
     icon: 'freeform-pen',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    imageProcessor: () => () => [null as never],
     toolboxComponent: placeholderTool('Freeform Pen Tool', 'freeform-pen'),
   },
   'curvature-pen': {
     icon: 'curvature-pen',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    imageProcessor: () => () => [null as never],
     toolboxComponent: placeholderTool('Curvature Pen Tool', 'curvature-pen'),
   },
   'add-anchor-point': {
     icon: 'add-anchor-point',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    imageProcessor: () => () => [null as never],
     toolboxComponent: placeholderTool('Add Anchor Point Tool', 'pen'),
   },
   'delete-anchor-point': {
     icon: 'delete-anchor-point',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    imageProcessor: () => () => [null as never],
     toolboxComponent: placeholderTool('Delete Anchor Point Tool', 'pen'),
   },
   'convert-point': {
     icon: 'convert-point',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    imageProcessor: () => () => [null as never],
     toolboxComponent: placeholderTool('Convert Point Tool', 'pen'),
   },
   rectangle: {
@@ -242,7 +242,7 @@ export const toolsMap: ToolsMap = {
   },
   'custom-shape': {
     icon: 'custom-shape',
-    imageProcessor: () => () => [null as never, { x: 0, y: 0 } as never],
+    imageProcessor: () => () => [null as never],
     toolboxComponent: placeholderTool('Custom Shape Tool', 'custom-shape'),
   },
   // load: {
