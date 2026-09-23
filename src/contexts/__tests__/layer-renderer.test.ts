@@ -56,4 +56,32 @@ describe('drawLayerSource', () => {
     );
     expect(ctx.drawImage).toHaveBeenCalledWith(sourceCanvas, 4, 6, 200, 100);
   });
+
+  it('maps world layer positions into a non-zero document frame', () => {
+    const bitmap = { width: 20, height: 10 } as ImageBitmap;
+    const ctx = {
+      save: vi.fn(),
+      restore: vi.fn(),
+      drawImage: vi.fn(),
+      filter: 'none',
+    } as unknown as CanvasRenderingContext2D;
+    const layer = {
+      id: 'image',
+      name: 'Image',
+      isBedrock: false,
+      bitmap,
+      tmpCanvas: null,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over' as const,
+      order: 0,
+      pos: { x: 45, y: 38, width: 20, height: 10 },
+      operations: [],
+      source: { kind: 'image' as const, bitmap, name: 'Image', pos: { x: 45, y: 38, width: 20, height: 10 } },
+    } satisfies Layer;
+
+    expect(drawLayerSource(ctx, layer, layer.pos, { x: 40, y: 30, width: 80, height: 60 })).toBe(true);
+    expect(ctx.drawImage).toHaveBeenCalledWith(bitmap, 5, 8, 20, 10);
+  });
 });

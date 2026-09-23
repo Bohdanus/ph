@@ -10,6 +10,8 @@ import type {
 } from '../contexts/general-types.ts';
 import { pointsBoundingPos } from './draw.ts';
 import { posToSortedRect, sortRect, trimRect } from './rect.ts';
+import type { DocumentFrame } from '../contexts/document-frame.ts';
+import { documentToCanvasPoint } from '../contexts/document-frame.ts';
 
 export const SELECTION_ANCHOR_RADIUS = 5;
 export const SELECTION_ANCHOR_HIT_RADIUS = 8;
@@ -136,10 +138,12 @@ export function drawClosedSelectionPath(ctx: CanvasRenderingContext2D, points: P
   ctx.stroke();
 }
 
-export function drawSelectionOutline(ctx: CanvasRenderingContext2D, selection: Selection): void {
+export function drawSelectionOutline(ctx: CanvasRenderingContext2D, selection: Selection, frame?: DocumentFrame): void {
   if (!selection.isActive) return;
 
-  const points = getSelectionAbsolutePoints(selection);
+  const points = getSelectionAbsolutePoints(selection).map((point) =>
+    frame ? documentToCanvasPoint(point, frame) : point
+  );
   if (points.length < 3) return;
 
   ctx.save();

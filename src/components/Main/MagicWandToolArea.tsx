@@ -7,6 +7,7 @@ import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import type { MagicWandToolArgs } from '../../tools/magicWand.ts';
 import { createMagicWandSelectionFromCanvas } from '../../util/magicWand.ts';
 import { createCommittedPolygonSelection, drawSelectionOutline } from '../../util/selection.ts';
+import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 
 type MagicWandToolAreaProps = {
   className?: string;
@@ -14,7 +15,8 @@ type MagicWandToolAreaProps = {
 };
 
 export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAreaProps) => {
-  const [{ canvasRef, containerRef, selections, totalSize }, dispatch] = useStore();
+  const [{ canvasRef, containerRef, selections, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
+  const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { toolArgs } = useCurrentTool();
   const args = toolArgs as MagicWandToolArgs;
 
@@ -28,9 +30,9 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     if (!ctx) return;
 
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    selections.forEach((selection) => drawSelectionOutline(ctx, selection));
+    selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
     if (extraSelection) {
-      drawSelectionOutline(ctx, extraSelection);
+      drawSelectionOutline(ctx, extraSelection, documentFrame);
     }
   }
 
@@ -65,13 +67,13 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
         magicWand: {
           boundaryPointCount: result.points.length,
           sampleColor: result.sampleColor,
-          seed: { x: Math.floor(seed.x), y: Math.floor(seed.y) },
+          seed: { x: Math.floor(seed.x + documentFrame.x), y: Math.floor(seed.y + documentFrame.y) },
           selectedPixelCount: result.selectedPixelCount,
           smoothing: args.smoothing,
           tolerance: args.tolerance,
         },
       },
-      points: result.points,
+      points: result.points.map((point) => canvasToDocumentPoint(point, documentFrame)),
       sourceTool: 'magic-wand',
     });
 
@@ -90,8 +92,8 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
     if (!ctx) return;
 
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    selections.forEach((selection) => drawSelectionOutline(ctx, selection));
-  }, [overlayCtxRef, selections]);
+    selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
+  }, [documentFrame, overlayCtxRef, selections]);
 
   useEffect(() => {
     const ctx = overlayCtxRef.current;

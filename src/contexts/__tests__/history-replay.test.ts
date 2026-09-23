@@ -4,7 +4,7 @@ import { replayHistory, type HistoryReplayDependencies } from '../history-replay
 import type { Selection } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerSource } from '../layer-types.ts';
-import { NEW_LAYER_ACTION, SELECTION_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import { NEW_LAYER_ACTION, SELECTION_ACTION, SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 
 const layerId = 'layer-1';
 const initialSize = { width: 400, height: 300 };
@@ -120,5 +120,55 @@ describe('replayHistory', () => {
       activeSelectionId: previousSelection.id,
     });
     expect(atSelection).toMatchObject({ selections: [nextSelection], activeSelectionId: nextSelection.id });
+  });
+
+  it('replays document-frame crops without changing layer world geometry or sources', () => {
+    const dependencies = createDependencies();
+    const baselineLayer = createTestLayer(layerId);
+    const baselineFrame = { x: 0, y: 0, width: 400, height: 300 } as const;
+    const croppedFrame = { x: 40, y: 25, width: 200, height: 120 } as const;
+    const history: HistoryItem[] = [
+      {
+        id: 'baseline',
+        actionName: 'open document',
+        layerId,
+        documentSource: { layers: { [layerId]: baselineLayer }, size: initialSize, frame: baselineFrame },
+      },
+      {
+        id: 'crop',
+        actionName: SET_DOCUMENT_FRAME_ACTION,
+        layerId: 'document',
+        args: { previousFrame: baselineFrame, nextFrame: croppedFrame },
+      },
+    ];
+
+    const result = replayHistory(history, 1, initialSize, dependencies);
+
+    expect(result.documentFrame).toEqual(croppedFrame);
+    expect(result.totalSize).toEqual({ width: 200, height: 120 });
+    expect(result.layers[layerId].pos).toEqual(baselineLayer.pos);
+    expect(result.layers[layerId].source).toBe(baselineLayer.source);
+  });
+
+  it('ignores disabled document-frame actions', () => {
+    const dependencies = createDependencies();
+    const baselineFrame = { x: 0, y: 0, width: 400, height: 300 } as const;
+    const history: HistoryItem[] = [
+      {
+        id: 'baseline',
+        actionName: 'open document',
+        layerId,
+        documentSource: { layers: { [layerId]: createTestLayer(layerId) }, size: initialSize, frame: baselineFrame },
+      },
+      {
+        id: 'crop',
+        actionName: SET_DOCUMENT_FRAME_ACTION,
+        layerId: 'document',
+        disabled: true,
+        args: { nextFrame: { x: 2, y: 3, width: 10, height: 12 } },
+      },
+    ];
+
+    expect(replayHistory(history, 1, initialSize, dependencies).documentFrame).toEqual(baselineFrame);
   });
 });

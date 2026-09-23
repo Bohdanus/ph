@@ -14,6 +14,7 @@ import type {
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
+import { cloneDocumentFrame, documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
 
 export type StoreData = {
   // refs
@@ -31,6 +32,7 @@ export type StoreData = {
   hasUnsavedChanges: boolean;
   fileName: string;
   totalSize: Size;
+  documentFrame: DocumentFrame;
 
   // tool state (that changes not so frequently)
   toolName: ToolName;
@@ -119,6 +121,7 @@ const initialState: StoreData = {
   hasUnsavedChanges: false,
   fileName: '',
   totalSize: { width: 0, height: 0 },
+  documentFrame: { x: 0, y: 0, width: 0, height: 0 },
 
   toolName: (DEFAULT_TOOL as ToolName) ?? 'reposition',
 
@@ -190,7 +193,11 @@ function reducer(state: StoreData, action: Action): StoreData {
       if (state.totalSize.width === action.payload.width && state.totalSize.height === action.payload.height) {
         return state;
       }
-      return { ...state, totalSize: action.payload };
+      return {
+        ...state,
+        totalSize: action.payload,
+        documentFrame: { ...state.documentFrame, ...action.payload },
+      };
     case 'SET_TOOL_NAME':
       return { ...state, isToolDirty: false, toolName: action.payload };
     case 'SET_TOOL_DIRTY':
@@ -228,34 +235,49 @@ function reducer(state: StoreData, action: Action): StoreData {
         { entries: state.history, cursor: state.historyIndex, branchRevision: state.branchRevision },
         { type: 'append', entry: action.payload.historyItem }
       );
+      const updates = action.payload.updates ?? {};
+      const nextFrame = updates.documentFrame;
       return {
         ...state,
-        ...action.payload.updates,
+        ...updates,
+        ...(nextFrame ? { documentFrame: cloneDocumentFrame(nextFrame), totalSize: documentFrameSize(nextFrame) } : {}),
         history: [...timeline.entries],
         historyIndex: timeline.cursor,
         branchRevision: timeline.branchRevision,
         hasUnsavedChanges: true,
       };
     }
-    case 'APPLY_HISTORY_REPLAY':
+    case 'APPLY_HISTORY_REPLAY': {
+      const replayUpdates = action.payload.updates;
+      const replayFrame = replayUpdates.documentFrame;
       return {
         ...state,
-        ...action.payload.updates,
+        ...replayUpdates,
+        ...(replayFrame
+          ? { documentFrame: cloneDocumentFrame(replayFrame), totalSize: documentFrameSize(replayFrame) }
+          : {}),
         history: [...action.payload.timeline.entries],
         historyIndex: action.payload.timeline.cursor,
         branchRevision: action.payload.timeline.branchRevision,
         hasUnsavedChanges: true,
       };
-    case 'REPLACE_DOCUMENT':
+    }
+    case 'REPLACE_DOCUMENT': {
+      const updates = action.payload.updates;
+      const nextFrame =
+        updates.documentFrame ?? (updates.totalSize ? documentFrameFromSize(updates.totalSize) : state.documentFrame);
       return {
         ...state,
-        ...action.payload.updates,
+        ...updates,
+        documentFrame: cloneDocumentFrame(nextFrame),
+        totalSize: documentFrameSize(nextFrame),
         documentId: action.payload.documentId,
         documentRevision: state.documentRevision + 1,
         branchRevision: 0,
         history: action.payload.history,
         historyIndex: action.payload.historyIndex ?? action.payload.history.length - 1,
       };
+    }
     case 'SET_COLOR':
       return { ...state, color: action.payload };
     case 'SET_BACKGROUND_COLOR':

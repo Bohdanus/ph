@@ -1,5 +1,12 @@
 import type { Selection, Size } from './general-types.ts';
-import type { HistoryItem } from './history-types.ts';
+import type { DocumentFrameHistoryArgs, HistoryItem } from './history-types.ts';
+import {
+  cloneDocumentFrame,
+  documentFrameFromSize,
+  documentFrameSize,
+  isValidDocumentFrame,
+  type DocumentFrame,
+} from './document-frame.ts';
 import { createLayerOperation, reorderLayers } from './layer-utils.ts';
 import type { Layer, LayerId, LayerOperationArgs, LayerSource, LayersRecord } from './layer-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
@@ -13,6 +20,7 @@ import {
   RENAME_LAYER_ACTION,
   REORDER_ACTION,
   SELECTION_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../util/constants.ts';
@@ -20,6 +28,7 @@ import {
 export type HistoryReplayResult = {
   layers: LayersRecord;
   totalSize: Size;
+  documentFrame: DocumentFrame;
   selections: Selection[];
   activeSelectionId: string | null;
 };
@@ -50,10 +59,11 @@ export function replayHistory(
   history: readonly HistoryItem[],
   targetIndex: number,
   initialSize: Size,
-  dependencies: HistoryReplayDependencies
+  dependencies: HistoryReplayDependencies,
+  initialFrame: DocumentFrame = documentFrameFromSize(initialSize)
 ): HistoryReplayResult {
   let layers: LayersRecord = {};
-  let totalSize = { ...initialSize };
+  let documentFrame = cloneDocumentFrame(initialFrame);
   const firstSelection = history.find((item) => item.actionName === SELECTION_ACTION && !item.disabled);
   const selectionBaseline = (firstSelection?.args as SelectionHistoryArgs | undefined)?.previousSelectionState;
   let selections: Selection[] = selectionBaseline?.selections.map((selection) => ({ ...selection })) ?? [];
@@ -67,13 +77,23 @@ export function replayHistory(
     const source = layerSource ?? (args as LayerSource | undefined);
     if (documentSource) {
       layers = cloneLayers(documentSource.layers);
-      totalSize = { ...documentSource.size };
+      documentFrame = documentSource.frame
+        ? cloneDocumentFrame(documentSource.frame)
+        : documentFrameFromSize(documentSource.size);
       continue;
     }
     if (source?.isBedrock) {
-      totalSize = { ...source.size };
+      documentFrame = documentFrameFromSize(source.size);
     } else if ((args as NewBedrockSize | undefined)?.isBedrock) {
-      totalSize = { ...(args as NewBedrockSize).size };
+      documentFrame = documentFrameFromSize((args as NewBedrockSize).size);
+    }
+
+    if (actionName === SET_DOCUMENT_FRAME_ACTION) {
+      const nextFrame = (args as DocumentFrameHistoryArgs | undefined)?.nextFrame;
+      if (isValidDocumentFrame(nextFrame)) {
+        documentFrame = cloneDocumentFrame(nextFrame);
+      }
+      continue;
     }
 
     if (actionName === SELECTION_ACTION) {
@@ -142,13 +162,15 @@ export function replayHistory(
       if (patch) layers = { ...layers, [layerId]: { ...layer, pos: { ...layer.pos, ...patch } } };
       continue;
     }
+    if (processor.commit === 'document-operation') continue;
     layers = { ...layers, [layerId]: dependencies.applyRasterTool(layer, toolArgs) };
   }
 
   const activeSelection = activeSelectionId && selections.some((selection) => selection.id === activeSelectionId);
   return {
     layers,
-    totalSize,
+    totalSize: documentFrameSize(documentFrame),
+    documentFrame,
     selections,
     activeSelectionId: activeSelection ? activeSelectionId : null,
   };

@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import type { Layer, LayerSource, LayersRecord } from './layer-types.ts';
+import type { DocumentFrame } from './document-frame.ts';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== 'object') return false;
@@ -79,7 +80,11 @@ function freezePlainData(value: unknown, skipped: ReadonlySet<object>): void {
 export function createHistoryItem(input: NewHistoryItem, id = uuidv4()): HistoryItem {
   const layerSource = input.layerSource ? cloneLayerSource(input.layerSource) : undefined;
   const documentSource = input.documentSource
-    ? { layers: cloneLayers(input.documentSource.layers), size: { ...input.documentSource.size } }
+    ? {
+        layers: cloneLayers(input.documentSource.layers),
+        size: { ...input.documentSource.size },
+        ...(input.documentSource.frame ? { frame: { ...input.documentSource.frame } satisfies DocumentFrame } : {}),
+      }
     : undefined;
   const item: HistoryItem = {
     id,

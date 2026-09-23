@@ -8,6 +8,12 @@ import type { LayerId } from '../../contexts/layer-types.ts';
 import { useRect } from '../../hooks/useRect.ts';
 import { posToSortedRect, sortedRectToPos } from '../../util/rect.ts';
 import type { RepositionToolArgs } from '../../tools/reposition.ts';
+import {
+  canvasToDocumentPoint,
+  canvasToDocumentPos,
+  documentFrameFromSize,
+  documentToCanvasPos,
+} from '../../contexts/document-frame.ts';
 
 type moveToolAreaProps = {
   className?: string;
@@ -15,14 +21,20 @@ type moveToolAreaProps = {
 };
 
 export const MoveToolArea = ({ className }: moveToolAreaProps) => {
-  const [{ containerRef, toolOverlayRef, rectOverlayRef, activeLayerId, layers, totalSize }] = useStore();
+  const [
+    { containerRef, toolOverlayRef, rectOverlayRef, activeLayerId, layers, totalSize, documentFrame: currentFrame },
+  ] = useStore();
+  const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { tempUpdateLayer, setActiveLayer, updateLayerByTool } = useLayers();
   const ants = useMarchingAnts({ overlayRef: toolOverlayRef, containerRef });
 
   const activeLayer = activeLayerId ? layers[activeLayerId] : null;
   const activeLayerRect = useMemo(
-    () => (activeLayer && !activeLayer.isBedrock ? posToSortedRect(activeLayer.pos) : null),
-    [activeLayer]
+    () =>
+      activeLayer && !activeLayer.isBedrock
+        ? posToSortedRect(documentToCanvasPos(activeLayer.pos, documentFrame))
+        : null,
+    [activeLayer, documentFrame]
   );
 
   const hoveredLayerIdRef = useRef<LayerId | null>(null);
@@ -32,7 +44,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   const isInteractionActiveRef = useRef(false);
 
   function getArgs(sortedRect: RectXYSorted, layerId: LayerId): RepositionToolArgs {
-    const newPos = sortedRectToPos(sortedRect);
+    const newPos = canvasToDocumentPos(sortedRectToPos(sortedRect), documentFrame);
     return wasLayerResized(layerId, newPos)
       ? { resize: newPos, toolName: 'reposition' }
       : { move: newPos, toolName: 'reposition' };
@@ -67,7 +79,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       const startPos = interactionStartPosRef.current;
       if (!layerId || !startPos) return;
 
-      const newPos = sortedRectToPos(sortedRect);
+      const newPos = canvasToDocumentPos(sortedRectToPos(sortedRect), documentFrame);
       const didPosChange =
         startPos.x !== newPos.x ||
         startPos.y !== newPos.y ||
@@ -96,11 +108,14 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
 
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
     // secondly, if we are still here, handle the layer selection
-    const point = getLocalCoords(event);
+    const point = canvasToDocumentPoint(getLocalCoords(event), documentFrame);
     const layerUnderPointerId = getLayerIdByPoint(layers, point);
     const layer = layers[layerUnderPointerId!] ?? null;
 
-    const dragHandleClicked = handlePointerDown_useRect(event, layer);
+    const dragHandleClicked = handlePointerDown_useRect(
+      event,
+      layer ? { ...layer, pos: documentToCanvasPos(layer.pos, documentFrame) } : layer
+    );
     if (dragHandleClicked) {
       const layerId = selectedLayerIdRef.current;
       interactionLayerIdRef.current = layerId;
@@ -140,15 +155,17 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     // secondly, if we are still here, handle the layer hovering
     if (!isMouseDown.current) {
       // if mouse is down then dont bother here
-      const point = getLocalCoords(event);
+      const point = canvasToDocumentPoint(getLocalCoords(event), documentFrame);
 
       let hoveredLayerId = getLayerIdByPoint(layers, point);
       if (hoveredLayerId && layers[hoveredLayerId].isBedrock) {
         hoveredLayerId = null;
       }
 
-      if (hoveredLayerId) ants.draw(layers[hoveredLayerId]);
-      else ants.clear();
+      if (hoveredLayerId) {
+        const layer = layers[hoveredLayerId];
+        ants.draw({ ...layer, pos: documentToCanvasPos(layer.pos, documentFrame) });
+      } else ants.clear();
       hoveredLayerIdRef.current = hoveredLayerId;
     }
   }

@@ -28,6 +28,7 @@ export const LAYER_TRANSPARENCY_ACTION = 'layer transparency'; // todo this is n
 export const REORDER_ACTION = 'reorder layers';
 export const MERGE_ACTION = 'merge layers';
 export const REMOVE_ACTION = 'remove layer';
+export const SET_DOCUMENT_FRAME_ACTION = 'set document frame';
 
 export type ActionType =
   | typeof OPEN_DOCUMENT_ACTION
@@ -41,4 +42,5 @@ export type ActionType =
   // | typeof UPDATE_LAYER_ACTION
   | typeof REORDER_ACTION
   | typeof MERGE_ACTION
-  | typeof REMOVE_ACTION;
+  | typeof REMOVE_ACTION
+  | typeof SET_DOCUMENT_FRAME_ACTION;

@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Size } from './general-types.ts';
 import type { LayersRecord } from './layer-types.ts';
 import { drawLayerSource } from './layer-renderer.ts';
+import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 
 export interface PsdDocument {
   size: Size;
@@ -200,7 +201,11 @@ export async function loadPsd(buffer: ArrayBuffer): Promise<PsdDocument> {
   return { size, layers, warnings };
 }
 
-export async function savePsd(layers: LayersRecord, size: Size): Promise<ArrayBuffer> {
+export async function savePsd(
+  layers: LayersRecord,
+  size: Size,
+  documentFrame: DocumentFrame = documentFrameFromSize(size)
+): Promise<ArrayBuffer> {
   validateSize(size);
   const sorted = Object.values(layers).sort((a, b) => a.order - b.order);
   if (sorted.length > 2000) throw new Error('PSD has too many layers (maximum 2000)');
@@ -212,10 +217,12 @@ export async function savePsd(layers: LayersRecord, size: Size): Promise<ArrayBu
     if (![layer.pos.width, layer.pos.height].every((n) => Number.isFinite(n) && n > 0)) {
       throw new Error(`Invalid PSD layer dimensions: ${layer.name}`);
     }
-    const left = Math.floor(layer.pos.x);
-    const top = Math.floor(layer.pos.y);
-    const width = Math.ceil(layer.pos.x + layer.pos.width) - left;
-    const height = Math.ceil(layer.pos.y + layer.pos.height) - top;
+    const localX = layer.pos.x - documentFrame.x;
+    const localY = layer.pos.y - documentFrame.y;
+    const left = Math.floor(localX);
+    const top = Math.floor(localY);
+    const width = Math.ceil(localX + layer.pos.width) - left;
+    const height = Math.ceil(localY + layer.pos.height) - top;
     validateSize({ width, height });
     if (!Number.isFinite(layer.order) || !Number.isFinite(layer.opacity) || layer.opacity < 0 || layer.opacity > 1) {
       throw new Error(`Invalid PSD layer order or opacity: ${layer.name}`);
@@ -234,8 +241,8 @@ export async function savePsd(layers: LayersRecord, size: Size): Promise<ArrayBu
     // Rasterize fractional editor geometry inside enclosing integer PSD bounds.
     if (source) {
       drawLayerSource(raster.ctx, layer, {
-        x: layer.pos.x - left,
-        y: layer.pos.y - top,
+        x: layer.pos.x - documentFrame.x - left,
+        y: layer.pos.y - documentFrame.y - top,
         width: layer.pos.width,
         height: layer.pos.height,
       });

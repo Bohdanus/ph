@@ -34,6 +34,7 @@ const Main = () => {
       layers,
       toolName,
       totalSize,
+      documentFrame,
     },
   ] = useStore();
   const { theme } = useTheme();
@@ -76,7 +77,7 @@ const Main = () => {
 
   useEffect(() => {
     drawAllLayers();
-  }, [drawAllLayers, layers]);
+  }, [documentFrame, drawAllLayers, layers]);
 
   useLayoutEffect(() => {
     const { width, height } = totalSize;

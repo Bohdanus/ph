@@ -15,6 +15,7 @@ import {
   moveSelectionAnchor,
   moveSelectionByDelta,
 } from '../../util/selection.ts';
+import { canvasToDocumentPoint, documentFrameFromSize, type DocumentFrame } from '../../contexts/document-frame.ts';
 
 const MIN_POINTS_FOR_SELECTION = 3;
 const CLOSE_START_THRESHOLD = 10; // px in image coordinate space
@@ -45,6 +46,7 @@ function drawPolygonOverlay({
   preview,
   isFreehand,
   closePath,
+  documentFrame,
 }: {
   ctx: CanvasRenderingContext2D;
   selections: Selection[];
@@ -52,10 +54,11 @@ function drawPolygonOverlay({
   preview: Point | null;
   isFreehand: boolean;
   closePath: boolean;
+  documentFrame: DocumentFrame;
 }) {
   const canvas = ctx.canvas;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  selections.forEach((selection) => drawSelectionOutline(ctx, selection));
+  selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
 
   if (points.length === 0) return;
 
@@ -143,7 +146,8 @@ function drawPolygonOverlay({
 }
 
 export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickToolProps) => {
-  const [{ containerRef, selections, totalSize }, dispatch] = useStore();
+  const [{ containerRef, selections, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
+  const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { toolArgs } = useCurrentTool();
 
   const isFreehand = (toolArgs?.toolName ?? '') === 'freehand-lasso';
@@ -191,7 +195,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
 
     const selection = createCommittedPolygonSelection({
       id: uuidv4(),
-      points: oldPoints,
+      points: oldPoints.map((point) => canvasToDocumentPoint(point, documentFrame)),
       sourceTool: selectionSourceTool,
     });
     if (!selection) return;
@@ -343,9 +347,10 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
         points: pointsRef.current,
         preview: previewRef.current,
         selections,
+        documentFrame,
       });
     },
-    [isFreehand, overlayCtxRef, selections]
+    [documentFrame, isFreehand, overlayCtxRef, selections]
   );
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -354,12 +359,13 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     event.preventDefault();
 
     const coords = getLocalCoords(event);
+    const documentCoords = canvasToDocumentPoint(coords, documentFrame);
 
-    const activeSelection = getSelectionAtPoint(selections, coords);
-    const activeAnchorSelection = getAnchorSelectionAtPoint(coords);
+    const activeSelection = getSelectionAtPoint(selections, documentCoords);
+    const activeAnchorSelection = getAnchorSelectionAtPoint(documentCoords);
 
     if (activeAnchorSelection) {
-      const anchorIndex = findSelectionAnchorAtPoint(activeAnchorSelection, coords);
+      const anchorIndex = findSelectionAnchorAtPoint(activeAnchorSelection, documentCoords);
       if (anchorIndex !== null) {
         selectionDragRef.current = { type: 'anchor', anchorIndex, selection: activeAnchorSelection };
         return;
@@ -367,7 +373,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     }
 
     if (activeSelection) {
-      selectionDragRef.current = { type: 'selection', origin: coords, selection: activeSelection };
+      selectionDragRef.current = { type: 'selection', origin: documentCoords, selection: activeSelection };
       return;
     }
 
@@ -431,19 +437,20 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     const coords = getLocalCoords(event);
+    const documentCoords = canvasToDocumentPoint(coords, documentFrame);
 
     const selectionDrag = selectionDragRef.current;
     if (selectionDrag) {
       if (selectionDrag.type === 'anchor') {
-        const nextSelection = moveSelectionAnchor(selectionDrag.selection, selectionDrag.anchorIndex, coords);
+        const nextSelection = moveSelectionAnchor(selectionDrag.selection, selectionDrag.anchorIndex, documentCoords);
         selectionDragRef.current = { ...selectionDrag, selection: nextSelection };
         updateSelection(nextSelection);
         return;
       }
 
-      const delta = { x: coords.x - selectionDrag.origin.x, y: coords.y - selectionDrag.origin.y };
+      const delta = { x: documentCoords.x - selectionDrag.origin.x, y: documentCoords.y - selectionDrag.origin.y };
       const nextSelection = moveSelectionByDelta(selectionDrag.selection, delta);
-      selectionDragRef.current = { ...selectionDrag, origin: coords, selection: nextSelection };
+      selectionDragRef.current = { ...selectionDrag, origin: documentCoords, selection: nextSelection };
       updateSelection(nextSelection);
       return;
     }
@@ -451,9 +458,9 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     // In freehand-lasso mode collect points continuously after the initial click
     if (isFreehand) {
       if (!freehandDrawingRef.current || !isActiveFreehandPointer(event)) {
-        if (getAnchorSelectionAtPoint(coords)) {
+        if (getAnchorSelectionAtPoint(documentCoords)) {
           setCursor(event, 'grab');
-        } else if (getSelectionAtPoint(selections, coords)) {
+        } else if (getSelectionAtPoint(selections, documentCoords)) {
           setCursor(event, 'move');
         } else {
           setCursor(event, 'crosshair');
@@ -470,9 +477,9 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
 
     // Polygonal mode: only preview line
     if (pointsRef.current.length === 0) {
-      if (getAnchorSelectionAtPoint(coords)) {
+      if (getAnchorSelectionAtPoint(documentCoords)) {
         setCursor(event, 'grab');
-      } else if (getSelectionAtPoint(selections, coords)) {
+      } else if (getSelectionAtPoint(selections, documentCoords)) {
         setCursor(event, 'move');
       } else {
         setCursor(event, 'crosshair');

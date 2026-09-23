@@ -3,6 +3,7 @@ import { downloadBlob, loadDocumentFile, saveImageToDisk } from './image-load-sa
 import type { PsdDocument } from './psd-utils.ts';
 import type { LayersRecord } from './layer-types.ts';
 import type { Size } from './general-types.ts';
+import type { DocumentFrame } from './document-frame.ts';
 import SaveDialog from '../components/SaveDialog/SaveDialog.tsx';
 import NewImageDialog from '../components/NewImageDialog/NewImageDialog.tsx';
 import type { BlankImageParams } from './tool-types.ts';
@@ -21,6 +22,7 @@ export type ImageSaveInput = {
   format?: string;
   layers: LayersRecord;
   size: Size;
+  documentFrame?: DocumentFrame;
 };
 
 export type ImageSaveResponse = {
@@ -115,10 +117,10 @@ export const FileProvider = ({ children }: FileProviderProps) => {
 
   async function handleImageSave({ fileName, format, quality }: ImageSaveResponse) {
     try {
-      const { canvas, layers, size } = fileInput!;
+      const { canvas, layers, size, documentFrame } = fileInput!;
       if (format === 'psd') {
         const { savePsd } = await import('./psd-utils.ts');
-        const buffer = await savePsd(layers, size);
+        const buffer = documentFrame ? await savePsd(layers, size, documentFrame) : await savePsd(layers, size);
         downloadBlob(new Blob([buffer], { type: 'image/vnd.adobe.photoshop' }), fileName, 'psd');
       } else {
         await saveImageToDisk(canvas, fileName, format, quality);

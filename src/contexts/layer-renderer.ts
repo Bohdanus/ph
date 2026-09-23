@@ -3,6 +3,7 @@ import type { Layer, LayerOperation, ToolLayerSource } from './layer-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import { exp1_1 } from '../tools/functions.ts';
 import { toolProcessors, type CreatorToolParams } from '../tools/toolProcessors.ts';
+import type { DocumentFrame } from './document-frame.ts';
 
 function filterForOperation(operation: LayerOperation): string {
   const { args } = operation;
@@ -49,26 +50,37 @@ function getLayerBitmap(layer: Layer, position: Pos) {
   return canvas;
 }
 
-export function drawLayerSource(ctx: CanvasRenderingContext2D, layer: Layer, position: Pos = layer.pos): boolean {
+export function drawLayerSource(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  position: Pos = layer.pos,
+  documentFrame?: DocumentFrame
+): boolean {
   const bitmap = getLayerBitmap(layer, position);
   if (!bitmap || bitmap.width === 0 || bitmap.height === 0) return false;
 
   ctx.save();
   try {
     ctx.filter = getLayerFilter(layer.operations);
-    ctx.drawImage(bitmap, position.x, position.y, position.width, position.height);
+    ctx.drawImage(
+      bitmap,
+      position.x - (documentFrame?.x ?? 0),
+      position.y - (documentFrame?.y ?? 0),
+      position.width,
+      position.height
+    );
   } finally {
     ctx.restore();
   }
   return true;
 }
 
-export function drawLayer(ctx: CanvasRenderingContext2D, layer: Layer): boolean {
+export function drawLayer(ctx: CanvasRenderingContext2D, layer: Layer, documentFrame?: DocumentFrame): boolean {
   ctx.save();
   try {
     ctx.globalAlpha = layer.opacity;
     ctx.globalCompositeOperation = layer.blendMode;
-    return drawLayerSource(ctx, layer);
+    return drawLayerSource(ctx, layer, layer.pos, documentFrame);
   } finally {
     ctx.restore();
   }

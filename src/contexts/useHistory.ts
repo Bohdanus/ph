@@ -7,10 +7,10 @@ import { createLayerSource, getSortedLayersArray } from './layer-utils.ts';
 import { drawLayer } from './layer-renderer.ts';
 import { replayHistory } from './history-replay.ts';
 import { resizeCanvas } from '../util/canvas.ts';
-import { TOOL_ACTION } from '../util/constants.ts';
-import type { Size } from './general-types.ts';
+import { SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION } from '../util/constants.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { updateHistoryTimeline } from './history-timeline.ts';
+import { documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
 
 export function getHistoryItemTitle(item: HistoryItem) {
   const { actionName, args, layerSource } = item;
@@ -23,12 +23,23 @@ export function getHistoryItemTitle(item: HistoryItem) {
     return (args as ToolArgs).toolName;
   }
 
+  if (actionName === SET_DOCUMENT_FRAME_ACTION) return 'crop';
+
   return actionName;
 }
 
 export const useHistory = () => {
   const [
-    { canvasRef, history, historyIndex, deletedLayers, activeLayerId, totalSize: currentSize, branchRevision = 0 },
+    {
+      canvasRef,
+      history,
+      historyIndex,
+      deletedLayers,
+      activeLayerId,
+      totalSize: currentSize,
+      documentFrame: currentDocumentFrame,
+      branchRevision = 0,
+    },
     dispatch,
   ] = useStore();
 
@@ -62,9 +73,10 @@ export const useHistory = () => {
   //   return history.filter((item) => item.layerId === layerId);
   // }
 
-  function _drawAllLayers(layers: LayersRecord, totalSize: Size) {
+  function _drawAllLayers(layers: LayersRecord, frame: DocumentFrame) {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const totalSize = documentFrameSize(frame);
     resizeCanvas(canvas, totalSize.width, totalSize.height);
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -75,7 +87,7 @@ export const useHistory = () => {
     for (const layer of sorted) {
       if (!layer.visible) continue;
 
-      if (!drawLayer(ctx, layer)) {
+      if (!drawLayer(ctx, layer, frame)) {
         console.error('skipped layer without bitmap', layer.id);
       } // todo should not happen, but just in case
     }
@@ -83,20 +95,27 @@ export const useHistory = () => {
 
   function resetHistoryTo(targetIndex: number, _history: HistoryItem[] = history, _branchRevision = branchRevision) {
     if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= _history.length) return;
-    const replay = replayHistory(_history, targetIndex, currentSize, {
-      createLayer: ({ layerId, layers, source }) => createLayerSource({ layerId, layers, source, deferSave: true }),
-      applyRasterTool: (layer, args) => {
-        const bitmap = layer.tmpCanvas ?? layer.bitmap;
-        if (!bitmap) return layer;
-        const [canvas, patch] = toolProcessors[args.toolName].imageProcessor({ bitmap, size: layer.pos })(args);
-        return {
-          ...layer,
-          pos: patch ? { ...layer.pos, ...patch } : layer.pos,
-          source: undefined,
-          tmpCanvas: canvas,
-        };
+    const initialFrame = currentDocumentFrame ?? documentFrameFromSize(currentSize);
+    const replay = replayHistory(
+      _history,
+      targetIndex,
+      currentSize,
+      {
+        createLayer: ({ layerId, layers, source }) => createLayerSource({ layerId, layers, source, deferSave: true }),
+        applyRasterTool: (layer, args) => {
+          const bitmap = layer.tmpCanvas ?? layer.bitmap;
+          if (!bitmap) return layer;
+          const [canvas, patch] = toolProcessors[args.toolName].imageProcessor({ bitmap, size: layer.pos })(args);
+          return {
+            ...layer,
+            pos: patch ? { ...layer.pos, ...patch } : layer.pos,
+            source: undefined,
+            tmpCanvas: canvas,
+          };
+        },
       },
-    });
+      initialFrame
+    );
 
     const sortedLayers = getSortedLayersArray(replay.layers);
     const nextActiveLayerId =
@@ -112,6 +131,7 @@ export const useHistory = () => {
           deletedLayers: { ...deletedLayers },
           activeLayerId: nextActiveLayerId,
           totalSize: replay.totalSize,
+          documentFrame: replay.documentFrame,
           selections: replay.selections,
           activeSelectionId: replay.activeSelectionId,
         },
@@ -119,7 +139,7 @@ export const useHistory = () => {
       },
     });
 
-    _drawAllLayers(replay.layers, replay.totalSize);
+    _drawAllLayers(replay.layers, replay.documentFrame);
   }
 
   function toggleDisabled(historyId: string) {

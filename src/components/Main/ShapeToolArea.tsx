@@ -6,6 +6,7 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import type { Point } from '../../contexts/general-types.ts';
 import type { FullArgs } from '../../contexts/tool-types.ts';
+import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 
 type ShapeHandlerProps = {
   className?: string;
@@ -13,7 +14,8 @@ type ShapeHandlerProps = {
 };
 
 export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) => {
-  const [{ containerRef, toolOverlayRef, totalSize }] = useStore();
+  const [{ containerRef, toolOverlayRef, totalSize, documentFrame: currentFrame }] = useStore();
+  const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { createLayerFromTool } = useLayers();
   const { toolArgs } = useCurrentTool();
 
@@ -126,8 +128,8 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     }
     // flushDrawingFrame();
 
-    const start = { ...startRef.current! };
-    const end = { ...endRef.current! };
+    const start = canvasToDocumentPoint({ ...startRef.current! }, documentFrame);
+    const end = canvasToDocumentPoint({ ...endRef.current! }, documentFrame);
     // A click creates a precise shape, matching Photoshop's single-click workflow.
     if (start.x === end.x && start.y === end.y) {
       const width = Number(window.prompt('Width (px)', '100'));

@@ -73,11 +73,12 @@ describe('useApp PSD replacement', () => {
             id: expect.any(String),
             actionName: OPEN_DOCUMENT_ACTION,
             layerId: 'top',
-            documentSource: { layers: document.layers, size: document.size },
+            documentSource: { layers: document.layers, size: document.size, frame: { x: 0, y: 0, ...document.size } },
           },
         ],
         updates: {
           fileName: 'design.psd',
+          documentFrame: { x: 0, y: 0, ...document.size },
           totalSize: document.size,
           layers: document.layers,
           activeLayerId: 'top',

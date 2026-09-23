@@ -18,9 +18,10 @@ import {
   saveLayerCanvas,
 } from './layer-utils.ts';
 import { drawLayer } from './layer-renderer.ts';
+import { resizeCanvas } from '../util/canvas.ts';
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs } from './tool-types.ts';
 import { type CreatorToolParams, type ProcessorToolParams, toolProcessors } from '../tools/toolProcessors.ts';
-import { reduceRect, sortedRectToPos } from '../util/rect.ts';
+import { reduceRect, sortRect, sortedRectToPos, trimRect } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
 import {
   type ActionType,
@@ -29,6 +30,7 @@ import {
   NEW_LAYER_ACTION,
   REMOVE_ACTION,
   REORDER_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
 } from '../util/constants.ts';
@@ -36,6 +38,14 @@ import type { TextToolArgs } from '../tools/text.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
+import {
+  canvasRectToDocumentFrame,
+  canvasToDocumentPos,
+  documentFrameEquals,
+  documentFrameFromSize,
+  documentFrameSize,
+  isValidDocumentFrame,
+} from './document-frame.ts';
 
 export type LayerEditParams = {
   id?: LayerId | null;
@@ -56,11 +66,13 @@ export const useLayers = () => {
       deletedLayers,
       activeLayerId,
       totalSize,
+      documentFrame: currentDocumentFrame,
       toolName,
       currentArgs: currentArgsRef,
     },
     dispatch,
   ] = useStore();
+  const documentFrame = currentDocumentFrame ?? documentFrameFromSize(totalSize);
   const previewLayersRef = useRef<Record<LayerId, PreviewLayer>>({});
 
   function clearOverlay() {
@@ -88,6 +100,7 @@ export const useLayers = () => {
             activeLayerId: layer.id,
             deletedLayers: {},
             totalSize: { ...newDocument.size },
+            documentFrame: documentFrameFromSize(newDocument.size),
             hasImage: true,
             hasUnsavedChanges: newDocument.hasUnsavedChanges,
             isToolDirty: false,
@@ -166,12 +179,24 @@ export const useLayers = () => {
       if (!('rect' in args) || !args.rect) {
         throw new Error('Missing rect in args');
       }
-      const newPos = sortedRectToPos(args.rect);
-      const newRect = reduceRect(args.rect, newPos);
+      const localPos = sortedRectToPos(args.rect);
+      const newPos = canvasToDocumentPos(localPos, documentFrame);
+      const worldRect = {
+        x1: args.rect.x1 + documentFrame.x,
+        y1: args.rect.y1 + documentFrame.y,
+        x2: args.rect.x2 + documentFrame.x,
+        y2: args.rect.y2 + documentFrame.y,
+      };
+      const newRect = reduceRect(worldRect, newPos);
 
       source = { kind: 'tool', ...sourceArgs, args: { ...args, rect: newRect }, pos: newPos };
     } else {
-      source = { kind: 'tool', ...sourceArgs, args: { ...args } } as ToolLayerSource; // clone args anyway
+      source = {
+        kind: 'tool',
+        ...sourceArgs,
+        args: { ...args },
+        pos: canvasToDocumentPos(pos, documentFrame),
+      } as ToolLayerSource; // clone args anyway
     }
 
     const newLayer = createLayerSource({ layers, source });
@@ -190,6 +215,7 @@ export const useLayers = () => {
     const toolArgsToolName = (toolArgs as ToolArgs).toolName;
     const processor = toolProcessors[toolArgsToolName];
     if (!id || !layers[id]) return;
+    if (processor.commit === 'document-operation') return;
 
     // Check if tool requires flattening layers
     if (processor.flattenRequired) {
@@ -424,6 +450,7 @@ export const useLayers = () => {
 
   const drawAllLayers = useCallback(() => {
     if (!canvasRef.current) return;
+    resizeCanvas(canvasRef.current, totalSize.width, totalSize.height);
     const ctx = canvasRef.current.getContext('2d')!;
 
     ctx.clearRect(0, 0, totalSize.width, totalSize.height);
@@ -439,11 +466,32 @@ export const useLayers = () => {
     for (const layer of sorted) {
       if (!layer.visible) continue;
 
-      if (!drawLayer(ctx, layer)) {
+      if (!drawLayer(ctx, layer, documentFrame)) {
         console.error('skipped layer without bitmap', layer.id);
       } // todo should not happen, but just in case
     }
-  }, [canvasRef, layers, totalSize]);
+  }, [canvasRef, documentFrame, layers, totalSize]);
+
+  const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }): boolean => {
+    const { x, y, width, height } = trimRect(sortRect(rect), totalSize);
+    if (width <= 0 || height <= 0) return false;
+
+    const nextFrame = canvasRectToDocumentFrame({ x, y, width, height }, documentFrame);
+    if (!isValidDocumentFrame(nextFrame) || documentFrameEquals(documentFrame, nextFrame)) return false;
+
+    dispatch({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        updates: { documentFrame: nextFrame, totalSize: documentFrameSize(nextFrame) },
+        historyItem: createHistoryItem({
+          layerId: 'document',
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          args: { previousFrame: documentFrame, nextFrame },
+        }),
+      },
+    });
+    return true;
+  };
 
   async function mergeAllLayers(): Promise<Layer | null> {
     const currentLayers = commitDirtyTool();
@@ -455,8 +503,8 @@ export const useLayers = () => {
       kind: 'image',
       bitmap: canvasBitmap,
       name: 'Merged Layer',
-      size: { ...totalSize },
-      isBedrock: true,
+      pos: { x: documentFrame.x, y: documentFrame.y, ...totalSize },
+      isBedrock: false,
     } satisfies ImageLayerSource;
 
     const layer = createLayerSource({
@@ -497,5 +545,6 @@ export const useLayers = () => {
 
     drawAllLayers,
     mergeAllLayers,
+    applyDocumentCrop,
   };
 };

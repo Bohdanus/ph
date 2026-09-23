@@ -8,6 +8,7 @@ import { OPEN_DOCUMENT_ACTION, SELECTION_ACTION } from '../util/constants.ts';
 import { resizeCanvas } from '../util/canvas.ts';
 import { setRefValue } from '../util/ref.ts';
 import { createHistoryItem } from '../contexts/history-utils.ts';
+import { documentFrameFromSize } from '../contexts/document-frame.ts';
 
 export interface UseAppType {
   setBlankImage: (data: BlankImageParams) => void;
@@ -89,12 +90,13 @@ export const useApp = (): UseAppType => {
             createHistoryItem({
               actionName: OPEN_DOCUMENT_ACTION,
               layerId: activeLayerId ?? '',
-              documentSource: { layers: baseline, size: { ...size } },
+              documentSource: { layers: baseline, size: { ...size }, frame: documentFrameFromSize(size) },
             }),
           ],
           updates: {
             fileName,
             totalSize: size,
+            documentFrame: documentFrameFromSize(size),
             layers,
             activeLayerId,
             deletedLayers: {},

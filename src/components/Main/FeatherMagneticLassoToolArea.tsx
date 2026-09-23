@@ -16,6 +16,7 @@ import {
   type MagneticPathOptions,
   type MagneticSegmentResult,
 } from '../../util/magneticLasso.ts';
+import { canvasToDocumentPoint, documentFrameFromSize, type DocumentFrame } from '../../contexts/document-frame.ts';
 
 const MIN_POINTS_FOR_SELECTION = 3;
 const CLOSE_START_THRESHOLD = 10;
@@ -45,6 +46,7 @@ function drawFeatherMagneticOverlay({
   points,
   preview,
   args,
+  documentFrame,
 }: {
   ctx: CanvasRenderingContext2D;
   selections: Selection[];
@@ -52,6 +54,7 @@ function drawFeatherMagneticOverlay({
   points: Point[];
   preview: MagneticSegmentResult | null;
   args: FeatherMagneticLassoToolArgs;
+  documentFrame: DocumentFrame;
 }) {
   const drawPath = (path: Point[]) => {
     if (path.length < 2) return;
@@ -71,7 +74,7 @@ function drawFeatherMagneticOverlay({
   }
 
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  selections.forEach((selection) => drawSelectionOutline(ctx, selection));
+  selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
   if (draftPoints.length === 0) return;
 
   ctx.save();
@@ -128,7 +131,8 @@ function drawFeatherMagneticOverlay({
 }
 
 export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: FeatherMagneticLassoToolAreaProps) => {
-  const [{ canvasRef, containerRef, selections, totalSize }, dispatch] = useStore();
+  const [{ canvasRef, containerRef, selections, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
+  const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { toolArgs } = useCurrentTool();
   const args = toolArgs as FeatherMagneticLassoToolArgs;
 
@@ -180,8 +184,9 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
       points: pointsRef.current,
       preview: previewRef.current,
       selections,
+      documentFrame,
     });
-  }, [args, overlayCtxRef, selections]);
+  }, [args, documentFrame, overlayCtxRef, selections]);
 
   function rebuildPointsFromSegments() {
     const anchors = anchorsRef.current;
@@ -359,7 +364,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
           width: args.magneticWidth,
         },
       },
-      points: finalPoints,
+      points: finalPoints.map((point) => canvasToDocumentPoint(point, documentFrame)),
       sourceTool: 'feather-magnetic-lasso',
     });
 

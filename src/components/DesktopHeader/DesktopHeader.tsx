@@ -40,7 +40,7 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
 ];
 
 const DesktopHeader = () => {
-  const [{ canvasRef, currentArgs, fileName, hasUnsavedChanges, totalSize, hasImage }] = useStore();
+  const [{ canvasRef, currentArgs, fileName, hasUnsavedChanges, totalSize, documentFrame, hasImage }] = useStore();
   const { commitDirtyTool } = useLayers();
   const { goToTool, setBlankImage, setImageFromUpload, handleImageSave } = useApp();
   const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
@@ -154,6 +154,7 @@ const DesktopHeader = () => {
                       fileName,
                       layers: exportLayers,
                       size: totalSize,
+                      documentFrame,
                     });
                     if (data) handleImageSave(data);
                     setOpenMenu(null);

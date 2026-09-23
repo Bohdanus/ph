@@ -26,7 +26,7 @@ export type CreatorToolParams = {
 export type ToolResult = [BitmapSource, Partial<Pos>?];
 
 export type ToolReplayKind =
-  'source' | 'layer-operation' | 'geometry' | 'raster-processor' | 'selection' | 'unimplemented';
+  'source' | 'layer-operation' | 'geometry' | 'raster-processor' | 'document-operation' | 'selection' | 'unimplemented';
 
 export type ToolCommitKind =
   'source' | 'layer-operation' | 'geometry' | 'raster' | 'document-operation' | 'selection' | 'unimplemented';
@@ -89,9 +89,8 @@ export const toolProcessors: Record<ToolName, ToolProcessorDefinition> = {
     imageProcessor: transform,
   },
   crop: {
-    commit: 'raster',
-    flattenRequired: true,
-    replay: replay('raster-processor', true),
+    commit: 'document-operation',
+    replay: replay('document-operation', false),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: crop,
   },

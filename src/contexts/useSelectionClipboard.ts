@@ -2,6 +2,7 @@ import type { Selection } from './general-types.ts';
 import { useStore } from './StoreContext.tsx';
 import { useLayers } from './useLayer.ts';
 import { cloneBitmapToCanvas, copySelectionToCanvas, getActiveSelection } from '../util/selection.ts';
+import { canvasToDocumentPos, documentFrameFromSize, documentToCanvasPos } from './document-frame.ts';
 
 const SELECTION_LAYER_NAME = 'Selection copy';
 
@@ -20,8 +21,19 @@ const getNextLayerName = (layers: Array<{ name: string }> | undefined) => {
 };
 
 export const useSelectionClipboard = () => {
-  const [{ activeSelectionId, canvasRef, layers = [], selectionClipboard, selections, totalSize }, dispatch] =
-    useStore();
+  const [
+    {
+      activeSelectionId,
+      canvasRef,
+      layers = [],
+      selectionClipboard,
+      selections,
+      totalSize,
+      documentFrame: currentFrame,
+    },
+    dispatch,
+  ] = useStore();
+  const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { createLayerFromBitmap } = useLayers();
 
   const activeSelection = getActiveSelection(selections, activeSelectionId);
@@ -29,7 +41,8 @@ export const useSelectionClipboard = () => {
   function copySelection(selection: Selection | null | undefined = activeSelection): boolean {
     if (!selection) return false;
 
-    const snapshot = copySelectionToCanvas(canvasRef.current, selection, totalSize);
+    const canvasSelection = { ...selection, pos: documentToCanvasPos(selection.pos, documentFrame) };
+    const snapshot = copySelectionToCanvas(canvasRef.current, canvasSelection, totalSize);
     if (!snapshot) return false;
 
     dispatch({
@@ -38,7 +51,7 @@ export const useSelectionClipboard = () => {
         bitmap: snapshot.bitmap,
         copiedAt: Date.now(),
         name: SELECTION_LAYER_NAME,
-        pos: snapshot.pos,
+        pos: canvasToDocumentPos(snapshot.pos, documentFrame),
         sourceSelectionId: selection.id,
         sourceTool: selection.sourceTool,
       },
@@ -54,8 +67,8 @@ export const useSelectionClipboard = () => {
     const width = selectionClipboard.pos.width || selectionClipboard.bitmap.width;
     const height = selectionClipboard.pos.height || selectionClipboard.bitmap.height;
     const centerPos = {
-      x: Math.max(0, Math.round((totalSize.width - width) / 2)),
-      y: Math.max(0, Math.round((totalSize.height - height) / 2)),
+      x: documentFrame.x + Math.max(0, Math.round((totalSize.width - width) / 2)),
+      y: documentFrame.y + Math.max(0, Math.round((totalSize.height - height) / 2)),
       width,
       height,
     };
@@ -72,13 +85,14 @@ export const useSelectionClipboard = () => {
   function layerViaCopy(): boolean {
     if (!activeSelection) return false;
 
-    const snapshot = copySelectionToCanvas(canvasRef.current, activeSelection, totalSize);
+    const canvasSelection = { ...activeSelection, pos: documentToCanvasPos(activeSelection.pos, documentFrame) };
+    const snapshot = copySelectionToCanvas(canvasRef.current, canvasSelection, totalSize);
     if (!snapshot) return false;
 
     createLayerFromBitmap({
       bitmap: cloneBitmapToCanvas(snapshot.bitmap),
       name: getNextLayerName(Object.values(layers)),
-      pos: { ...snapshot.pos },
+      pos: canvasToDocumentPos(snapshot.pos, documentFrame),
     });
 
     return true;

@@ -8,6 +8,7 @@ import {
   getActiveRectangularSelection,
   getSelectionRect,
 } from '../../util/selection.ts';
+import { documentFrameFromSize, documentToCanvasPos } from '../../contexts/document-frame.ts';
 
 type rectangularSelectionToolAreaProps = {
   className?: string;
@@ -16,13 +17,23 @@ type rectangularSelectionToolAreaProps = {
 };
 
 export const RectangularSelectionToolArea = ({ className }: rectangularSelectionToolAreaProps) => {
-  const [{ containerRef, toolOverlayRef, totalSize, selections, activeSelectionId }, dispatch] = useStore();
+  const [
+    { containerRef, toolOverlayRef, totalSize, documentFrame: currentFrame, selections, activeSelectionId },
+    dispatch,
+  ] = useStore();
+  const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const isEditingCommittedSelectionRef = useRef(false);
 
   const activeRectangleSelection = getActiveRectangularSelection(selections, activeSelectionId);
   const activeRectangleRect = useMemo(
-    () => (activeRectangleSelection ? getSelectionRect(activeRectangleSelection) : null),
-    [activeRectangleSelection]
+    () =>
+      activeRectangleSelection
+        ? getSelectionRect({
+            ...activeRectangleSelection,
+            pos: documentToCanvasPos(activeRectangleSelection.pos, documentFrame),
+          })
+        : null,
+    [activeRectangleSelection, documentFrame]
   );
 
   const pointerEvents = useRect({
@@ -38,7 +49,7 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
             movedAtVersion: (existingSelection.metadata?.movedAtVersion ?? 0) + 1,
           }
         : undefined;
-      const selection = createCommittedRectangleSelection({
+      const localSelection = createCommittedRectangleSelection({
         id: existingSelection?.id ?? uuidv4(),
         rect,
         imageSize: totalSize,
@@ -47,11 +58,19 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
 
       isEditingCommittedSelectionRef.current = false;
 
-      if (!selection) {
+      if (!localSelection) {
         dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
         return;
       }
 
+      const selection = {
+        ...localSelection,
+        pos: {
+          ...localSelection.pos,
+          x: localSelection.pos.x + documentFrame.x,
+          y: localSelection.pos.y + documentFrame.y,
+        },
+      };
       dispatch({ type: existingSelection ? 'MOVE_SELECTION' : 'COMMIT_SELECTION', payload: selection });
     },
   });

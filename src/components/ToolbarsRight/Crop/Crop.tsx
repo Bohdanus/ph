@@ -14,7 +14,7 @@ const aspectRatios = [
 ];
 
 const Crop: React.FC<{}> = () => {
-  const { updateLayerByTool } = useLayers();
+  const { applyDocumentCrop } = useLayers();
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as CropToolArgs;
@@ -53,9 +53,8 @@ const Crop: React.FC<{}> = () => {
         <button
           className={PRIMARY_BUTTON}
           disabled={!rect}
-          onClick={async () => {
-            await updateLayerByTool({ toolArgs: args });
-            onChange({ ...args, rect: null });
+          onClick={() => {
+            if (rect && applyDocumentCrop(rect)) onChange({ ...args, rect: null });
           }}
         >
           Apply

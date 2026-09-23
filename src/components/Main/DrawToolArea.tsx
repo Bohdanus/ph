@@ -7,6 +7,7 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { drawLine, pointsBoundingPos } from '../../util/draw.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import type { FullArgs } from '../../contexts/tool-types.ts';
+import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 
 type DrawHandlerProps = {
   className?: string;
@@ -14,7 +15,8 @@ type DrawHandlerProps = {
 };
 
 export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => {
-  const [{ containerRef, totalSize }] = useStore();
+  const [{ containerRef, totalSize, documentFrame: currentFrame }] = useStore();
+  const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { createLayerFromTool } = useLayers();
   const { toolArgs } = useCurrentTool();
 
@@ -78,7 +80,7 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
       pointsRef.current.push(coords);
     }
 
-    const oldPoints = pointsRef.current.slice();
+    const oldPoints = pointsRef.current.map((point) => canvasToDocumentPoint(point, documentFrame));
     const pos = pointsBoundingPos({ points: oldPoints, lineWidth: args.lineWidth });
     const newPoints = oldPoints.map((point) => ({ x: point.x - pos.x, y: point.y - pos.y }));
 
