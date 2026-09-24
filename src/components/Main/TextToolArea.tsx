@@ -1,4 +1,4 @@
-import { type RefObject, useEffect } from 'react';
+import { type RefObject, useEffect, useRef } from 'react';
 import { renderText, type TextToolArgs } from '../../tools/text.ts';
 import { useRect } from '../../hooks/useRect.ts';
 import { calculateNewRect } from '../../util/rect.ts';
@@ -17,22 +17,20 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as TextToolArgs;
+  const argsRef = useRef(args);
+  useEffect(() => {
+    argsRef.current = args;
+  }, [args]);
 
-  // // because dragging should happen outside react state management
-  // const textRef = useRef<string[]>(['']);
-  // const posInTextRef = useRef<Point>({ x: 0, y: 0 });
-  //
-  // const isComposingRef = useRef<boolean>(false);
-  // // const composingTextRef = useRef<string>('');
-
-  const pointerEvents = useRect({
+  const { redraw, ...pointerEvents } = useRect({
     imageSize: totalSize,
     initialRect: args.rect,
     containerRef,
     overlayRef: toolOverlayRef,
     onRepaint: redrawText,
     onChangeEnd: (rect: RectXYSorted) => {
-      const newRect = calculateNewRect({ ...args, rect }, toolOverlayRef, totalSize)!;
+      const newRect = calculateNewRect({ ...args, rect }, toolOverlayRef, totalSize);
+      if (!newRect) return;
 
       const newArgs = { ...args, color, rect: newRect };
       setToolArgs(newArgs);
@@ -45,13 +43,20 @@ export const TextToolArea = ({ className, overlayCtxRef }: TextToolAreaProps) =>
     textareaRef.current?.focus();
   }, [textareaRef, toolArgs.toolName]);
 
-  // this redraws avoiding react re-renders, to achieve high FPS
+  useEffect(() => {
+    if (args.text) {
+      redraw?.();
+    }
+  }, [args.text, redraw]);
+
   function redrawText(rect: RectXY) {
-    if (!args.text) return;
+    const currentArgs = argsRef.current;
+    if (!currentArgs.text) return;
 
-    const ctx = overlayCtxRef.current!;
+    const ctx = overlayCtxRef.current;
+    if (!ctx) return;
 
-    const _args = { ...args, color, rect };
+    const _args = { ...currentArgs, color, rect };
 
     renderText(ctx, _args);
   }

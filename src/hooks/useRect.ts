@@ -407,6 +407,7 @@ export function useRect({
     onPointerDown: handlePointerDown,
     onPointerMove: handlePointerMove,
     onPointerUp: handlePointerUp,
+    redraw: () => drawMask(),
     clearSelection: () => {
       startRectRef.current = null;
       rectUnsortedRef.current = null;

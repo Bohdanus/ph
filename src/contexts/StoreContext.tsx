@@ -145,7 +145,7 @@ type Action =
   | { type: 'MARK_SELECTION_COPIED'; payload: { id: string } }
   | { type: 'CLEAR_SELECTIONS' };
 
-type StoreDispatch = Dispatch<Action>;
+export type StoreDispatch = Dispatch<Action>;
 
 const StoreContext = createContext<[StoreData, StoreDispatch] | undefined>(undefined);
 

@@ -41,6 +41,20 @@ if (!testGlobal.Path2D) {
   }) as unknown as typeof Path2D;
 }
 
+if (!testGlobal.OffscreenCanvas) {
+  testGlobal.OffscreenCanvas = class MockOffscreenCanvas {
+    width = 0;
+    height = 0;
+    constructor(width: number, height: number) {
+      this.width = Math.max(1, Math.ceil(width));
+      this.height = Math.max(1, Math.ceil(height));
+    }
+    getContext() {
+      return { ...canvasContext, canvas: this } as unknown as OffscreenCanvasRenderingContext2D;
+    }
+  } as unknown as typeof OffscreenCanvas;
+}
+
 const canvasContext = {
   canvas: { width: 0, height: 0 },
   clearRect: vi.fn(),
@@ -61,6 +75,9 @@ const canvasContext = {
   drawImage: vi.fn(),
   clip: vi.fn(),
   createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+  translate: vi.fn(),
+  transform: vi.fn(),
+  setTransform: vi.fn(),
   strokeStyle: '',
   fillStyle: '',
   lineWidth: 1,

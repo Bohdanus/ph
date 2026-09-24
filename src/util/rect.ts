@@ -121,22 +121,25 @@ export const calculateNewRect = (
 
   let newRect = rect;
 
-  const currentWidth = rect.x2 - rect.x1;
-  const requiredWidth = getTextWidth(canvasRef.current!.getContext('2d')!, newArgs) + TEXT_PADDING * 2;
-  if (requiredWidth > currentWidth) {
-    switch (align) {
-      case 'left':
-        newRect = { ...rect, x2: rect.x1 + requiredWidth };
-        break;
-      case 'center':
-        newRect = {
-          ...rect,
-          x1: rect.x1 + (currentWidth - requiredWidth) / 2,
-          x2: rect.x1 + (currentWidth + requiredWidth) / 2,
-        };
-        break;
-      case 'right':
-        newRect = { ...rect, x1: rect.x2 - requiredWidth };
+  const ctx2d = canvasRef.current?.getContext('2d');
+  if (ctx2d) {
+    const currentWidth = rect.x2 - rect.x1;
+    const requiredWidth = getTextWidth(ctx2d, newArgs) + TEXT_PADDING * 2;
+    if (requiredWidth > currentWidth) {
+      switch (align) {
+        case 'left':
+          newRect = { ...rect, x2: rect.x1 + requiredWidth };
+          break;
+        case 'center':
+          newRect = {
+            ...rect,
+            x1: rect.x1 + (currentWidth - requiredWidth) / 2,
+            x2: rect.x1 + (currentWidth + requiredWidth) / 2,
+          };
+          break;
+        case 'right':
+          newRect = { ...rect, x1: rect.x2 - requiredWidth };
+      }
     }
   }
 
