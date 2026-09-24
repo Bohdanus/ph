@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from './StoreContext.tsx';
 import type {
@@ -12,6 +12,7 @@ import type {
 } from './layer-types.ts';
 import {
   createLayerOperation,
+  createAffineLayerOperation,
   createLayerSource,
   getSortedLayersArray,
   reorderLayers,
@@ -36,6 +37,7 @@ import {
 } from '../util/constants.ts';
 import type { TextToolArgs } from '../tools/text.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
+import type { TransformToolArgs } from '../tools/transform.ts';
 import type { NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
 import {
@@ -46,16 +48,28 @@ import {
   documentFrameSize,
   isValidDocumentFrame,
 } from './document-frame.ts';
+import {
+  isIdentityAffineTransform,
+  isTrapezoidOnlyTransform,
+  normalizeTransformHistoryArgs,
+  transformToolArgsToAffine,
+} from './affine-transform.ts';
 
 export type LayerEditParams = {
   id?: LayerId | null;
   toolArgs: ToolArgs;
 };
 
-type PreviewLayer = {
-  layer: Layer;
-  toolArgs?: ToolArgs;
-};
+function isTransformArgs(args: ToolArgs): args is TransformToolArgs {
+  return args.toolName === 'transform';
+}
+
+function normalizeCommittedToolArgs(layer: Layer, args: ToolArgs): ToolArgs | object | null {
+  if (!isTransformArgs(args)) return args;
+  const retained = normalizeTransformHistoryArgs(args, layer.pos);
+  if (retained && isIdentityAffineTransform(retained.transform)) return null;
+  return retained ?? args;
+}
 
 export const useLayers = () => {
   const [
@@ -69,11 +83,11 @@ export const useLayers = () => {
       documentFrame: currentDocumentFrame,
       toolName,
       currentArgs: currentArgsRef,
+      previewLayers: previewLayersRef,
     },
     dispatch,
   ] = useStore();
   const documentFrame = currentDocumentFrame ?? documentFrameFromSize(totalSize);
-  const previewLayersRef = useRef<Record<LayerId, PreviewLayer>>({});
 
   function clearOverlay() {
     const overlayCtx = toolOverlayRef.current?.getContext('2d');
@@ -244,6 +258,8 @@ export const useLayers = () => {
     tempUpdateLayer({ id, toolArgs });
     // should pick that dirty later and do all hardening
     const committedLayers = commitDirtyTool(true);
+    const committedArgs = normalizeCommittedToolArgs(committedLayers[id] ?? layers[id], toolArgs);
+    if (!committedArgs) return;
     dispatch({
       type: 'COMMIT_DOCUMENT_EDIT',
       payload: {
@@ -251,7 +267,7 @@ export const useLayers = () => {
         historyItem: createHistoryItem({
           layerId: id!,
           actionName: TOOL_ACTION,
-          args: toolArgs,
+          args: committedArgs,
         }),
       },
     });
@@ -274,12 +290,15 @@ export const useLayers = () => {
     const committedLayers = { ...layers } as LayersRecord;
     let hasPreviewLayers = false;
 
-    const pendingToolEdits: Array<{ layerId: LayerId; toolArgs: ToolArgs }> = [];
+    const pendingToolEdits: Array<{ layerId: LayerId; args: ToolArgs | object }> = [];
     for (const [id, preview] of Object.entries(previewLayersRef.current)) {
       const layer = { ...preview.layer, pos: { ...preview.layer.pos }, operations: [...preview.layer.operations] };
       committedLayers[id] = layer;
       hasPreviewLayers = true;
-      if (preview.toolArgs) pendingToolEdits.push({ layerId: id, toolArgs: preview.toolArgs });
+      if (preview.toolArgs) {
+        const committedArgs = normalizeCommittedToolArgs(layer, preview.toolArgs);
+        if (committedArgs) pendingToolEdits.push({ layerId: id, args: committedArgs });
+      }
       if (layer.tmpCanvas) {
         saveLayerCanvas(layer);
       }
@@ -309,7 +328,7 @@ export const useLayers = () => {
               historyItem: createHistoryItem({
                 layerId: pendingEdit.layerId,
                 actionName: TOOL_ACTION,
-                args: pendingEdit.toolArgs,
+                args: pendingEdit.args,
               }),
             },
           });
@@ -407,6 +426,33 @@ export const useLayers = () => {
     const { toolName: toolArgsToolName } = toolArgs;
     const processor = toolProcessors[toolArgsToolName];
 
+    if (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0) {
+      try {
+        if (!isTrapezoidOnlyTransform(toolArgs)) return;
+      } catch (error) {
+        console.error(error);
+        return;
+      }
+    }
+
+    if (isTransformArgs(toolArgs) && toolArgs.trapezoid === 0) {
+      try {
+        const transform = transformToolArgsToAffine(toolArgs, layer.pos);
+        if (!transform) return;
+        const previewLayer = {
+          ...layer,
+          operations: [...layer.operations, createAffineLayerOperation(transform)],
+          tmpCanvas: null,
+        };
+        previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
+        drawAllLayers();
+        return;
+      } catch (error) {
+        console.error(error);
+        return;
+      }
+    }
+
     if (processor.commit === 'layer-operation') {
       const previewLayer = {
         ...layer,
@@ -440,11 +486,18 @@ export const useLayers = () => {
     const previewLayer = {
       ...layer,
       pos: positionPatch ? { ...layer.pos, ...positionPatch } : { ...layer.pos },
-      ...(processor.commit === 'raster' ? { source: undefined } : {}),
+      ...(processor.commit === 'raster' || (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0)
+        ? { source: undefined }
+        : {}),
       tmpCanvas: canvas,
     };
     previewLayersRef.current[id] = { layer: previewLayer, toolArgs };
 
+    drawAllLayers();
+  }
+
+  function cancelLayerPreview(id = activeLayerId) {
+    if (id) delete previewLayersRef.current[id];
     drawAllLayers();
   }
 
@@ -470,7 +523,7 @@ export const useLayers = () => {
         console.error('skipped layer without bitmap', layer.id);
       } // todo should not happen, but just in case
     }
-  }, [canvasRef, documentFrame, layers, totalSize]);
+  }, [canvasRef, documentFrame, layers, previewLayersRef, totalSize]);
 
   const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }): boolean => {
     const { x, y, width, height } = trimRect(sortRect(rect), totalSize);
@@ -535,6 +588,7 @@ export const useLayers = () => {
     tempUpdateLayer,
     updateLayerByTool,
     commitDirtyTool,
+    cancelLayerPreview,
 
     removeLayer,
 

@@ -39,10 +39,11 @@ function cloneLayer(layer: Layer): Layer {
     ...layer,
     pos: { ...layer.pos },
     ...(layer.source ? { source: cloneLayerSource(layer.source) } : {}),
-    operations: layer.operations.map((operation) => ({
-      ...operation,
-      args: clonePlainData(operation.args),
-    })),
+    operations: layer.operations.map((operation) =>
+      operation.kind === 'affine-transform'
+        ? { ...operation, transform: { ...operation.transform } }
+        : { ...operation, args: clonePlainData(operation.args) }
+    ),
     bitmap: layer.bitmap,
     tmpCanvas: layer.tmpCanvas,
   };

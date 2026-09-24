@@ -28,6 +28,22 @@ export const transform =
     const initialWidth = size.width;
     const initialHeight = size.height;
 
+    if (
+      ![initialWidth, initialHeight, rotate, mirrorH, mirrorV, skewX, skewY, trapezoid, resizeX, resizeY].every(
+        (value) => typeof value === 'boolean' || Number.isFinite(value)
+      ) ||
+      initialWidth < 1 ||
+      initialHeight < 1
+    ) {
+      throw new Error('Invalid raster transform dimensions or values');
+    }
+    if (
+      trapezoid !== 0 &&
+      (rotate !== 0 || mirrorH || mirrorV || skewX !== 0 || skewY !== 0 || resizeX !== 100 || resizeY !== 100)
+    ) {
+      throw new Error('Trapezoid cannot be combined with retained affine transforms');
+    }
+
     const angle = (rotate * Math.PI) / 180;
     const sX = (skewX * Math.PI) / 180;
     const sY = (skewY * Math.PI) / 180;
@@ -82,6 +98,18 @@ export const transform =
 
     const newWidth = Math.round(maxX - minX);
     const newHeight = Math.round(maxY - minY);
+
+    if (
+      !Number.isInteger(newWidth) ||
+      !Number.isInteger(newHeight) ||
+      newWidth < 1 ||
+      newHeight < 1 ||
+      newWidth > 1000000 ||
+      newHeight > 1000000 ||
+      newWidth * newHeight > 64 * 1024 * 1024
+    ) {
+      throw new Error('Raster transform exceeds supported bounds');
+    }
 
     const canvas = new OffscreenCanvas(newWidth, newHeight);
     const ctx = canvas.getContext('2d')!;

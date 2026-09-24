@@ -39,6 +39,7 @@ export const useHistory = () => {
       totalSize: currentSize,
       documentFrame: currentDocumentFrame,
       branchRevision = 0,
+      clearPreviewLayers,
     },
     dispatch,
   ] = useStore();
@@ -95,6 +96,9 @@ export const useHistory = () => {
 
   function resetHistoryTo(targetIndex: number, _history: HistoryItem[] = history, _branchRevision = branchRevision) {
     if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= _history.length) return;
+    // History navigation cancels transient previews; the target is rebuilt
+    // entirely from retained history below.
+    clearPreviewLayers?.();
     const initialFrame = currentDocumentFrame ?? documentFrameFromSize(currentSize);
     const replay = replayHistory(
       _history,

@@ -1,6 +1,11 @@
 import { type RefObject, useCallback, useEffect, useRef } from 'react';
 import type { Point, Pos } from '../contexts/general-types.ts';
 import type { Layer } from '../contexts/layer-types.ts';
+import {
+  getLayerAffineTransform,
+  getLayerPresentationCorners,
+  isIdentityAffineTransform,
+} from '../contexts/affine-transform.ts';
 
 export const DASH_LENGTH = 6;
 export const GAP_LENGTH = 6;
@@ -78,7 +83,31 @@ export function useMarchingAnts({ overlayRef, containerRef }: AntsProps) {
   };
 
   const draw = (layer: Layer, posPatch?: Partial<Pos>) => {
-    schedule({ bounds: { ...layer.pos, ...posPatch } }, true);
+    const position = { ...layer.pos, ...posPatch };
+    if (isIdentityAffineTransform(getLayerAffineTransform(layer))) {
+      schedule({ bounds: position }, true);
+      return;
+    }
+
+    const corners = getLayerPresentationCorners(layer, position);
+    const path = new Path2D();
+    path.moveTo(corners[0].x, corners[0].y);
+    for (const corner of corners.slice(1)) path.lineTo(corner.x, corner.y);
+    path.closePath();
+    const xs = corners.map(({ x }) => x);
+    const ys = corners.map(({ y }) => y);
+    schedule(
+      {
+        path,
+        bounds: {
+          x: Math.min(...xs),
+          y: Math.min(...ys),
+          width: Math.max(...xs) - Math.min(...xs),
+          height: Math.max(...ys) - Math.min(...ys),
+        },
+      },
+      true
+    );
   };
 
   // Path and bounds use overlay coordinates. Bounds must enclose all subpaths/curves.

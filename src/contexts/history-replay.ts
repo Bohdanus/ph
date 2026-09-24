@@ -7,11 +7,12 @@ import {
   isValidDocumentFrame,
   type DocumentFrame,
 } from './document-frame.ts';
-import { createLayerOperation, reorderLayers } from './layer-utils.ts';
+import { createAffineLayerOperation, createLayerOperation, reorderLayers } from './layer-utils.ts';
 import type { Layer, LayerId, LayerOperationArgs, LayerSource, LayersRecord } from './layer-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { toolProcessors } from '../tools/toolProcessors.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
+import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform } from './affine-transform.ts';
 import {
   HIDE_LAYER_ACTION,
   MERGE_ACTION,
@@ -47,7 +48,11 @@ function cloneLayer(layer: Layer): Layer {
   return {
     ...layer,
     pos: { ...layer.pos },
-    operations: layer.operations.map((operation) => ({ ...operation, args: { ...operation.args } })),
+    operations: layer.operations.map((operation) =>
+      operation.kind === 'affine-transform'
+        ? { ...operation, transform: { ...operation.transform } }
+        : { ...operation, ...(operation.kind ? { kind: operation.kind } : {}), args: { ...operation.args } }
+    ),
   };
 }
 
@@ -154,6 +159,33 @@ export function replayHistory(
           operations: [...layer.operations, createLayerOperation(toolArgs as LayerOperationArgs, item.id)],
         },
       };
+      continue;
+    }
+    if (processor.commit === 'affine-operation') {
+      const trapezoid = toolArgs.toolName === 'transform' ? (toolArgs.trapezoid ?? 0) : 0;
+      if (toolArgs.toolName === 'transform' && trapezoid !== 0) {
+        try {
+          if (!isTrapezoidOnlyTransform(toolArgs)) continue;
+        } catch {
+          continue;
+        }
+        layers = { ...layers, [layerId]: dependencies.applyRasterTool(layer, toolArgs) };
+        continue;
+      }
+      try {
+        const transform = getTransformFromHistoryArgs(toolArgs, layer.pos);
+        if (!transform) continue;
+        layers = {
+          ...layers,
+          [layerId]: {
+            ...layer,
+            operations: [...layer.operations, createAffineLayerOperation(transform, item.id)],
+          },
+        };
+      } catch {
+        // Invalid historical transforms are ignored rather than producing a
+        // corrupt replay state.
+      }
       continue;
     }
     if (processor.commit === 'geometry') {

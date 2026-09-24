@@ -2,7 +2,7 @@ import React, { createContext, useContext, useRef, useReducer, type Dispatch } f
 import { DEFAULT_TOOL } from '../util/constants.ts';
 
 import type { ReactNode, RefObject } from 'react';
-import type { LayerId, LayersRecord } from './layer-types.ts';
+import type { Layer, LayerId, LayersRecord } from './layer-types.ts';
 import type {
   ClearedSelectionState,
   Selection,
@@ -26,6 +26,10 @@ export type StoreData = {
   canvasCtxRef: React.RefObject<CanvasRenderingContext2D | null | undefined>;
 
   currentArgs: React.RefObject<ToolArgs>;
+  clearPreviewLayers: () => void;
+  // Transient previews are document-scoped, not hook-instance-scoped. This
+  // lets toolbars, export, and tool switching share one draft transaction.
+  previewLayers: React.MutableRefObject<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>;
 
   // file / image state
   hasImage: boolean;
@@ -116,6 +120,8 @@ const initialState: StoreData = {
   canvasCtxRef: { current: null },
 
   currentArgs: { current: {} as ToolArgs },
+  clearPreviewLayers: () => undefined,
+  previewLayers: { current: {} },
 
   hasImage: false,
   hasUnsavedChanges: false,
@@ -354,6 +360,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
   const currentArgsRef = useRef<ToolArgs>({} as ToolArgs);
+  const previewLayersRef = useRef<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>({});
+  const clearPreviewLayers = () => {
+    previewLayersRef.current = {};
+  };
 
   // Keep live DOM refs out of the reducer initializer; expose them after state updates.
   const [storeState, dispatch] = useReducer(reducer, initialState);
@@ -366,6 +376,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     textareaRef,
     canvasCtxRef,
     currentArgs: currentArgsRef,
+    clearPreviewLayers,
+    previewLayers: previewLayersRef,
   };
   //
   // function setSizeMemo(width: number, height: number) {

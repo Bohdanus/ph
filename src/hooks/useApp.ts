@@ -36,6 +36,7 @@ export const useApp = (): UseAppType => {
       activeSelectionId,
       selections,
       selectionCleared,
+      clearPreviewLayers,
     },
     dispatch,
   ] = useStore();
@@ -77,6 +78,7 @@ export const useApp = (): UseAppType => {
         Object.values(layers).map((layer) => [layer.id, { ...layer, pos: { ...layer.pos } }])
       );
       setRefValue(currentArgsRef, {} as typeof currentArgsRef.current);
+      clearPreviewLayers?.();
       for (const ref of [canvasRef, toolOverlayRef, rectOverlayRef]) {
         if (ref.current) {
           resizeCanvas(ref.current, size.width, size.height);

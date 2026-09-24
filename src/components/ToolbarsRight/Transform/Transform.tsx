@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useEffect } from 'react';
 import type { TransformToolArgs } from '../../../tools/transform.ts';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
@@ -10,26 +10,43 @@ import {
 } from '../buttonStyles.ts';
 
 const Transform: React.FC<{}> = () => {
-  const { tempUpdateLayer } = useLayers();
+  const { tempUpdateLayer, cancelLayerPreview, commitDirtyTool } = useLayers();
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as TransformToolArgs;
-  const pendingUpdateRef = useRef<TransformToolArgs | null>(null);
-  const rafIdRef = useRef<number | null>(null);
 
+  const resetArgs: TransformToolArgs = {
+    rotate: 0,
+    mirrorH: false,
+    mirrorV: false,
+    skewX: 0,
+    skewY: 0,
+    trapezoid: 0,
+    resizeX: 100,
+    resizeY: 100,
+    toolName: 'transform',
+  };
+
+  const cancel = () => {
+    cancelLayerPreview?.();
+    setToolArgs(resetArgs);
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      cancel();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
   const throttledOnChange = (newArgs: TransformToolArgs) => {
-    pendingUpdateRef.current = newArgs;
-
-    if (rafIdRef.current === null) {
-      rafIdRef.current = requestAnimationFrame(() => {
-        if (pendingUpdateRef.current !== null) {
-          tempUpdateLayer({ toolArgs: pendingUpdateRef.current });
-          setToolArgs(pendingUpdateRef.current);
-          pendingUpdateRef.current = null;
-        }
-        rafIdRef.current = null;
-      });
-    }
+    // This is a transient preview. History is created only when the dirty
+    // layer is committed, so applying the latest value synchronously cannot
+    // create one history entry per slider frame.
+    tempUpdateLayer({ toolArgs: newArgs });
+    setToolArgs(newArgs);
   };
 
   const { rotate = 0, mirrorH, mirrorV, skewX = 0, skewY = 0, trapezoid = 0, resizeX = 100, resizeY = 100 } = args;
@@ -78,61 +95,61 @@ const Transform: React.FC<{}> = () => {
   const handleRotateLeft = () => {
     let newRotate = rotate - 90;
     if (newRotate < 0) newRotate += 360;
-    throttledOnChange({ ...args, rotate: newRotate });
+    throttledOnChange({ ...args, rotate: newRotate, trapezoid: 0 });
   };
 
   const handleRotateRight = () => {
     let newRotate = rotate + 90;
     if (newRotate >= 360) newRotate -= 360;
-    throttledOnChange({ ...args, rotate: newRotate });
+    throttledOnChange({ ...args, rotate: newRotate, trapezoid: 0 });
   };
 
   const handleRotateSliderChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const newRotate = Number(event.target.value);
-    throttledOnChange({ ...args, rotate: newRotate });
+    throttledOnChange({ ...args, rotate: newRotate, trapezoid: 0 });
   };
 
   const toggleMirrorH = () => {
-    throttledOnChange({ ...args, mirrorH: !mirrorH });
+    throttledOnChange({ ...args, mirrorH: !mirrorH, trapezoid: 0 });
   };
 
   const toggleMirrorV = () => {
-    throttledOnChange({ ...args, mirrorV: !mirrorV });
+    throttledOnChange({ ...args, mirrorV: !mirrorV, trapezoid: 0 });
   };
 
   const handleSkewXChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    throttledOnChange({ ...args, skewX: Number(event.target.value) });
+    throttledOnChange({ ...args, skewX: Number(event.target.value), trapezoid: 0 });
   };
 
   const handleSkewYChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    throttledOnChange({ ...args, skewY: Number(event.target.value) });
+    throttledOnChange({ ...args, skewY: Number(event.target.value), trapezoid: 0 });
   };
 
   const handleTrapezoidChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    throttledOnChange({ ...args, trapezoid: Number(event.target.value) });
-  };
-
-  const handleResizeXChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    throttledOnChange({ ...args, resizeX: Number(event.target.value) });
-  };
-
-  const handleResizeYChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    throttledOnChange({ ...args, resizeY: Number(event.target.value) });
-  };
-
-  const resetAll = () => {
+    const value = Number(event.target.value);
     throttledOnChange({
+      ...args,
       rotate: 0,
       mirrorH: false,
       mirrorV: false,
       skewX: 0,
       skewY: 0,
-      trapezoid: 0,
       resizeX: 100,
       resizeY: 100,
-
-      toolName: 'transform',
+      trapezoid: value,
     });
+  };
+
+  const handleResizeXChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    throttledOnChange({ ...args, resizeX: Number(event.target.value), trapezoid: 0 });
+  };
+
+  const handleResizeYChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    throttledOnChange({ ...args, resizeY: Number(event.target.value), trapezoid: 0 });
+  };
+
+  const resetAll = () => {
+    cancel();
   };
 
   return (
@@ -148,7 +165,7 @@ const Transform: React.FC<{}> = () => {
           </button>
           <button
             className={`flex h-6 w-10 items-center justify-center rounded border transition-colors focus:outline-none ${ICON_BUTTON}`}
-            onClick={() => throttledOnChange({ ...args, rotate: (rotate + 180) % 360 })}
+            onClick={() => throttledOnChange({ ...args, rotate: (rotate + 180) % 360, trapezoid: 0 })}
             title="Rotate 180°"
           >
             180°
@@ -282,6 +299,12 @@ const Transform: React.FC<{}> = () => {
         </div>
         <button className={`text-[10px] ${TEXT_LINK_BUTTON} mt-1`} onClick={resetAll}>
           Reset All
+        </button>
+        <button className={`text-[10px] ${TEXT_LINK_BUTTON}`} onClick={() => commitDirtyTool?.()}>
+          Apply
+        </button>
+        <button className={`text-[10px] ${TEXT_LINK_BUTTON}`} onClick={cancel}>
+          Cancel
         </button>
       </div>
     </div>

@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Size } from './general-types.ts';
 import type { LayersRecord } from './layer-types.ts';
 import { drawLayerSource } from './layer-renderer.ts';
+import { getLayerPresentationBounds } from './affine-transform.ts';
 import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 
 export interface PsdDocument {
@@ -217,12 +218,13 @@ export async function savePsd(
     if (![layer.pos.width, layer.pos.height].every((n) => Number.isFinite(n) && n > 0)) {
       throw new Error(`Invalid PSD layer dimensions: ${layer.name}`);
     }
-    const localX = layer.pos.x - documentFrame.x;
-    const localY = layer.pos.y - documentFrame.y;
+    const presentation = getLayerPresentationBounds(layer);
+    const localX = presentation.x - documentFrame.x;
+    const localY = presentation.y - documentFrame.y;
     const left = Math.floor(localX);
     const top = Math.floor(localY);
-    const width = Math.ceil(localX + layer.pos.width) - left;
-    const height = Math.ceil(localY + layer.pos.height) - top;
+    const width = Math.ceil(localX + presentation.width) - left;
+    const height = Math.ceil(localY + presentation.height) - top;
     validateSize({ width, height });
     if (!Number.isFinite(layer.order) || !Number.isFinite(layer.opacity) || layer.opacity < 0 || layer.opacity > 1) {
       throw new Error(`Invalid PSD layer order or opacity: ${layer.name}`);

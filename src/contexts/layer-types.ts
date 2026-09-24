@@ -1,5 +1,6 @@
 import type { BitmapSource, Pos } from './general-types.ts';
 import type { NewLayerData, ToolArgs } from './tool-types.ts';
+import type { AffineTransform } from './affine-transform.ts';
 
 export type LayerId = string;
 
@@ -27,11 +28,22 @@ export type LayerSource = BlankLayerSource | ImageLayerSource | ToolLayerSource;
 export type LayerOperationArgs = Extract<ToolArgs, { toolName: 'blur' | 'color' | 'levels' }>;
 
 // Operations are the canonical editable form; rendered bitmaps are disposable materializations.
-export type LayerOperation = Readonly<{
+export type FilterLayerOperation = Readonly<{
   id: string;
   args: LayerOperationArgs;
   enabled: boolean;
+  // Optional for compatibility with documents written before operations were discriminated.
+  kind?: 'filter';
 }>;
+
+export type AffineLayerOperation = Readonly<{
+  id: string;
+  kind: 'affine-transform';
+  transform: AffineTransform;
+  enabled: boolean;
+}>;
+
+export type LayerOperation = FilterLayerOperation | AffineLayerOperation;
 
 export type Layer = {
   id: string;

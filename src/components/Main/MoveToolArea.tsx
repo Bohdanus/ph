@@ -14,6 +14,7 @@ import {
   documentFrameFromSize,
   documentToCanvasPos,
 } from '../../contexts/document-frame.ts';
+import { getLayerPresentationBounds } from '../../contexts/affine-transform.ts';
 
 type moveToolAreaProps = {
   className?: string;
@@ -32,7 +33,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   const activeLayerRect = useMemo(
     () =>
       activeLayer && !activeLayer.isBedrock
-        ? posToSortedRect(documentToCanvasPos(activeLayer.pos, documentFrame))
+        ? posToSortedRect(documentToCanvasPos(getLayerPresentationBounds(activeLayer), documentFrame))
         : null,
     [activeLayer, documentFrame]
   );
@@ -41,13 +42,30 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   const selectedLayerIdRef = useRef<LayerId | null>(null);
   const interactionLayerIdRef = useRef<LayerId | null>(null);
   const interactionStartPosRef = useRef<Pos | null>(null);
+  const interactionStartBoundsRef = useRef<Pos | null>(null);
   const isInteractionActiveRef = useRef(false);
 
   function getArgs(sortedRect: RectXYSorted, layerId: LayerId): RepositionToolArgs {
     const newPos = canvasToDocumentPos(sortedRectToPos(sortedRect), documentFrame);
-    return wasLayerResized(layerId, newPos)
-      ? { resize: newPos, toolName: 'reposition' }
-      : { move: newPos, toolName: 'reposition' };
+    const layer = layers[layerId];
+    if (!layer) return { move: { x: newPos.x, y: newPos.y }, toolName: 'reposition' };
+    const presentation = getLayerPresentationBounds(layer);
+    if (!wasLayerResized(layerId, newPos)) {
+      return {
+        move: { x: layer.pos.x + newPos.x - presentation.x, y: layer.pos.y + newPos.y - presentation.y },
+        toolName: 'reposition',
+      };
+    }
+
+    return {
+      resize: {
+        x: layer.pos.x + newPos.x - presentation.x,
+        y: layer.pos.y + newPos.y - presentation.y,
+        width: layer.pos.width * (newPos.width / presentation.width),
+        height: layer.pos.height * (newPos.height / presentation.height),
+      },
+      toolName: 'reposition',
+    };
   }
 
   const {
@@ -80,11 +98,12 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       if (!layerId || !startPos) return;
 
       const newPos = canvasToDocumentPos(sortedRectToPos(sortedRect), documentFrame);
+      const startBounds = interactionStartBoundsRef.current ?? startPos;
       const didPosChange =
-        startPos.x !== newPos.x ||
-        startPos.y !== newPos.y ||
-        startPos.width !== newPos.width ||
-        startPos.height !== newPos.height;
+        startBounds.x !== newPos.x ||
+        startBounds.y !== newPos.y ||
+        startBounds.width !== newPos.width ||
+        startBounds.height !== newPos.height;
 
       if (!didPosChange) return;
 
@@ -98,7 +117,8 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   }, [activeLayer]);
 
   function wasLayerResized(layerId: LayerId, newPos: Pos) {
-    const oldPos = interactionStartPosRef.current ?? layers[layerId]?.pos;
+    const oldPos =
+      interactionStartBoundsRef.current ?? (layers[layerId] && getLayerPresentationBounds(layers[layerId]));
     if (!oldPos) return false;
 
     return oldPos.width !== newPos.width || oldPos.height !== newPos.height;
@@ -114,12 +134,13 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
 
     const dragHandleClicked = handlePointerDown_useRect(
       event,
-      layer ? { ...layer, pos: documentToCanvasPos(layer.pos, documentFrame) } : layer
+      layer ? { ...layer, pos: documentToCanvasPos(getLayerPresentationBounds(layer), documentFrame) } : layer
     );
     if (dragHandleClicked) {
       const layerId = selectedLayerIdRef.current;
       interactionLayerIdRef.current = layerId;
       interactionStartPosRef.current = layerId ? { ...layers[layerId].pos } : null;
+      interactionStartBoundsRef.current = layerId ? getLayerPresentationBounds(layers[layerId]) : null;
       isInteractionActiveRef.current = !!layerId;
       return;
     }
@@ -129,12 +150,16 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
       selectedLayerIdRef.current = null;
       interactionLayerIdRef.current = null;
       interactionStartPosRef.current = null;
+      interactionStartBoundsRef.current = null;
       isInteractionActiveRef.current = false;
       // indicate somehow bedrock is selected
     } else {
       selectedLayerIdRef.current = layerUnderPointerId;
       interactionLayerIdRef.current = layerUnderPointerId;
       interactionStartPosRef.current = layerUnderPointerId ? { ...layers[layerUnderPointerId].pos } : null;
+      interactionStartBoundsRef.current = layerUnderPointerId
+        ? getLayerPresentationBounds(layers[layerUnderPointerId])
+        : null;
       isInteractionActiveRef.current = !!layerUnderPointerId;
       containerRef.current!.classList.add('cursor-grabbing');
     }
@@ -176,6 +201,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     isInteractionActiveRef.current = false;
     interactionLayerIdRef.current = null;
     interactionStartPosRef.current = null;
+    interactionStartBoundsRef.current = null;
 
     containerRef.current!.classList.remove('cursor-grabbing');
   }
@@ -186,6 +212,7 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     isInteractionActiveRef.current = false;
     interactionLayerIdRef.current = null;
     interactionStartPosRef.current = null;
+    interactionStartBoundsRef.current = null;
 
     hoveredLayerIdRef.current = null;
     ants.clear();

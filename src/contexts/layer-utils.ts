@@ -4,6 +4,8 @@ import type { Layer, LayerId, LayerOperation, LayerOperationArgs, LayerSource, L
 import { type CreatorToolParams, toolProcessors } from '../tools/toolProcessors.ts';
 import type { Point, Pos } from './general-types.ts';
 import { ellipsify } from '../util/string.ts';
+import type { AffineTransform } from './affine-transform.ts';
+import { isPointInLayer } from './affine-transform.ts';
 
 /**
  * Converts a Record of layers into a sorted array ordered by layer order (ascending).
@@ -118,7 +120,18 @@ export function saveLayerCanvas(layer: Layer) {
 }
 
 export function createLayerOperation(args: LayerOperationArgs, id = uuidv4()): LayerOperation {
+  // Keep the legacy filter shape readable; the optional `kind: 'filter'`
+  // remains accepted when loading newer serialized documents.
   return Object.freeze({ id, args: Object.freeze({ ...args }), enabled: true });
+}
+
+export function createAffineLayerOperation(transform: AffineTransform, id = uuidv4()) {
+  return Object.freeze({
+    id,
+    kind: 'affine-transform' as const,
+    transform: Object.freeze({ ...transform }),
+    enabled: true as const,
+  });
 }
 
 type LayerSourceParams = {
@@ -219,9 +232,10 @@ export function getLayerIdByPoint(layers: LayersRecord, { x, y }: Point): LayerI
   for (const layer of sortedLayers) {
     if (!layer.visible) continue;
 
-    const { pos } = layer;
-    if (x >= pos.x && x <= pos.x + pos.width && y >= pos.y && y <= pos.y + pos.height) {
-      return layer.id;
+    try {
+      if (isPointInLayer(layer, { x, y })) return layer.id;
+    } catch {
+      // Invalid historical geometry must not make pointer hit testing fail.
     }
   }
 

@@ -26,10 +26,24 @@ export type CreatorToolParams = {
 export type ToolResult = [BitmapSource, Partial<Pos>?];
 
 export type ToolReplayKind =
-  'source' | 'layer-operation' | 'geometry' | 'raster-processor' | 'document-operation' | 'selection' | 'unimplemented';
+  | 'source'
+  | 'layer-operation'
+  | 'affine-operation'
+  | 'geometry'
+  | 'raster-processor'
+  | 'document-operation'
+  | 'selection'
+  | 'unimplemented';
 
 export type ToolCommitKind =
-  'source' | 'layer-operation' | 'geometry' | 'raster' | 'document-operation' | 'selection' | 'unimplemented';
+  | 'source'
+  | 'layer-operation'
+  | 'affine-operation'
+  | 'geometry'
+  | 'raster'
+  | 'document-operation'
+  | 'selection'
+  | 'unimplemented';
 
 export type ToolProcessorDefinition = {
   creator?: boolean;
@@ -83,8 +97,11 @@ export const toolProcessors: Record<ToolName, ToolProcessorDefinition> = {
     imageProcessor: levels,
   },
   transform: {
-    commit: 'raster',
-    replay: replay('raster-processor', true),
+    // Non-trapezoid transforms are retained as affine operations. The
+    // trapezoid value is explicitly handled as a raster boundary by the
+    // layer preview/commit and replay paths.
+    commit: 'affine-operation',
+    replay: replay('affine-operation', false),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: transform,
   },
