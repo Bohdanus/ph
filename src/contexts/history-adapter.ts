@@ -1,0 +1,564 @@
+import { v4 as uuidv4 } from 'uuid';
+
+import type { DocumentFrame } from './document-frame.ts';
+import { documentFrameFromSize } from './document-frame.ts';
+import { AssetRegistry, getAssetRegistry } from './asset-registry.ts';
+import {
+  DURABLE_SCHEMA_VERSION,
+  type DurableDocument,
+  type DurableFilter,
+  type DurableHistoryEntry,
+  type DurableLayerSnapshot,
+  type DurableLayerSource,
+  type DurableOperation,
+  type PlainObject,
+  type SelectionSnapshot,
+  type AssetId,
+  cloneDurableDocument,
+  cloneLayerSnapshot,
+  freezeDurableDocument,
+  toLayerSnapshot,
+} from './history-model.ts';
+import type { HistoryItem } from './history-types.ts';
+import type { Layer, LayerId, LayerSource, LayersRecord } from './layer-types.ts';
+import type { BitmapSource, Selection, Size } from './general-types.ts';
+import type { ToolArgs } from './tool-types.ts';
+import {
+  HIDE_LAYER_ACTION,
+  MERGE_ACTION,
+  NEW_LAYER_ACTION,
+  OPEN_DOCUMENT_ACTION,
+  REMOVE_ACTION,
+  RENAME_LAYER_ACTION,
+  REORDER_ACTION,
+  SELECTION_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
+  SHOW_LAYER_ACTION,
+  TOOL_ACTION,
+} from '../util/constants.ts';
+import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform, validateAffineTransform } from './affine-transform.ts';
+import { toolProcessors } from '../tools/toolProcessors.ts';
+
+export class UnsupportedHistoryFeatureError extends Error {
+  readonly code = 'unsupported-history-feature';
+  readonly historyId?: string;
+
+  constructor(message: string, historyId?: string) {
+    super(message);
+    this.historyId = historyId;
+    this.name = 'UnsupportedHistoryFeatureError';
+  }
+}
+
+export type MigrationDiagnostic = Readonly<{
+  historyId?: string;
+  severity: 'warning' | 'error';
+  message: string;
+}>;
+
+export type LegacyConversionResult = Readonly<{
+  document: DurableDocument;
+  diagnostics: readonly MigrationDiagnostic[];
+}>;
+
+export type LegacyConversionOptions = Readonly<{
+  documentId?: string;
+  documentRevision?: number;
+  branchRevision?: number;
+  durableRevision?: number;
+  initialSize?: Size;
+  initialFrame?: DocumentFrame;
+  registry?: AssetRegistry;
+}>;
+
+function plainValue(value: unknown, path: string): PlainObject[keyof PlainObject] {
+  if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    if (typeof value === 'number' && !Number.isFinite(value)) throw new Error(`Non-finite value at ${path}`);
+    return value;
+  }
+  if (Array.isArray(value))
+    return Object.freeze(
+      value.map(
+        (item, index) => plainValue(item, `${path}[${index}]`) as Exclude<PlainObject[keyof PlainObject], undefined>
+      )
+    );
+  if (!value || Object.getPrototypeOf(value) !== Object.prototype) throw new Error(`Non-plain value at ${path}`);
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(value)
+        .filter(([, item]) => item !== undefined)
+        .map(([key, item]) => [key, plainValue(item, `${path}.${key}`)])
+    )
+  ) as PlainObject;
+}
+
+function plainObject(value: unknown, path: string): PlainObject {
+  const result = plainValue(value, path);
+  if (!result || Array.isArray(result) || typeof result !== 'object') throw new Error(`Expected object at ${path}`);
+  return result as PlainObject;
+}
+
+function cloneSelection(selection: Selection): Selection {
+  return {
+    ...selection,
+    points: selection.points.map((point) => ({ ...point })),
+    pos: { ...selection.pos },
+    ...(selection.metadata ? { metadata: JSON.parse(JSON.stringify(selection.metadata)) } : {}),
+  };
+}
+
+function selectionSnapshot(
+  selections: readonly Selection[] = [],
+  activeSelectionId: string | null = null
+): SelectionSnapshot {
+  return Object.freeze({
+    selections: Object.freeze(selections.map(cloneSelection)),
+    activeSelectionId,
+  });
+}
+
+function sourceSize(source: LayerSource): Size {
+  return source.isBedrock ? { ...source.size } : { width: source.pos.width, height: source.pos.height };
+}
+
+function asLegacyLayerSource(value: unknown): LayerSource | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const kind = (value as { kind?: unknown }).kind;
+  return kind === 'blank' || kind === 'image' || kind === 'tool' ? (value as LayerSource) : undefined;
+}
+
+function registerRaster(registry: AssetRegistry, documentId: string, bitmap: BitmapSource): AssetId {
+  // The adapter is synchronous because it is also used by reducer-facing
+  // compatibility code. DOM sources are explicitly borrowed until an import
+  // boundary can await registerBaselineAsync and replace the descriptor.
+  const ownership = typeof (bitmap as { close?: unknown }).close === 'function' ? 'adopt' : 'borrow';
+  return registry.registerBaseline(documentId, bitmap, { ownership });
+}
+
+function convertSource(
+  source: LayerSource,
+  layer: Layer,
+  documentId: string,
+  registry: AssetRegistry
+): DurableLayerSource {
+  const size = sourceSize(source);
+  const isBedrock = !!source.isBedrock;
+  switch (source.kind) {
+    case 'blank':
+      return Object.freeze({ kind: 'blank', color: source.color, opacity: source.opacity, size, isBedrock });
+    case 'image':
+      return Object.freeze({
+        kind: 'raster',
+        assetId: registerRaster(registry, documentId, source.bitmap),
+        width: source.bitmap.width,
+        height: source.bitmap.height,
+        ...(source.name ? { name: source.name } : {}),
+        isBedrock,
+      });
+    case 'tool': {
+      const args = plainObject(source.args, `layer:${layer.id}.source.args`);
+      const kind =
+        source.args.toolName === 'text'
+          ? 'text'
+          : ['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'].includes(source.args.toolName)
+            ? 'vector'
+            : 'legacy-tool';
+      if (kind === 'legacy-tool') {
+        return Object.freeze({ kind, toolName: source.args.toolName, args, size, isBedrock });
+      }
+      return Object.freeze({
+        kind,
+        toolName: source.args.toolName,
+        args,
+        size,
+        sourcePos: Object.freeze({ ...layer.pos }),
+        isBedrock,
+      });
+    }
+  }
+}
+
+function convertLayer(layer: Layer, documentId: string, registry: AssetRegistry): DurableLayerSnapshot {
+  if (!layer.source) {
+    if (!layer.bitmap)
+      throw new UnsupportedHistoryFeatureError(`Layer ${layer.id} has no durable source or raster materialization`);
+    const assetId = registerRaster(registry, documentId, layer.bitmap);
+    return toLayerSnapshot(
+      {
+        id: layer.id,
+        name: layer.name,
+        isBedrock: layer.isBedrock,
+        visible: layer.visible,
+        opacity: layer.opacity,
+        locked: layer.locked,
+        blendMode: layer.blendMode,
+        order: layer.order,
+        pos: { ...layer.pos },
+      },
+      { kind: 'raster', assetId, width: layer.bitmap.width, height: layer.bitmap.height, isBedrock: layer.isBedrock }
+    );
+  }
+  return toLayerSnapshot(
+    {
+      id: layer.id,
+      name: layer.name,
+      isBedrock: layer.isBedrock,
+      visible: layer.visible,
+      opacity: layer.opacity,
+      locked: layer.locked,
+      blendMode: layer.blendMode,
+      order: layer.order,
+      pos: { ...layer.pos },
+    },
+    convertSource(layer.source, layer, documentId, registry)
+  );
+}
+
+function snapshotLayers(layers: LayersRecord, documentId: string, registry: AssetRegistry): DurableLayerSnapshot[] {
+  return Object.values(layers)
+    .sort((left, right) => left.order - right.order)
+    .map((layer) => convertLayer(layer, documentId, registry));
+}
+
+function frameFromLegacy(
+  item: HistoryItem | undefined,
+  initialSize: Size,
+  initialFrame?: DocumentFrame
+): DocumentFrame {
+  return item?.documentSource?.frame
+    ? { ...item.documentSource.frame }
+    : item?.documentSource?.size
+      ? documentFrameFromSize(item.documentSource.size)
+      : initialFrame
+        ? { ...initialFrame }
+        : documentFrameFromSize(initialSize);
+}
+
+function entry(id: string, operation: DurableOperation, enabled = true): DurableHistoryEntry {
+  return Object.freeze({ id, schemaVersion: DURABLE_SCHEMA_VERSION, enabled, operation });
+}
+
+function isEntryEnabled(item: HistoryItem): boolean {
+  const nested = item.args as { enabled?: unknown } | undefined;
+  return !item.disabled && nested?.enabled !== false;
+}
+
+function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot): DurableOperation | null {
+  const candidate = item.args as { args?: unknown } | undefined;
+  const args = (candidate && candidate.args && typeof candidate.args === 'object' ? candidate.args : item.args) as
+    ToolArgs | undefined;
+  if (!args || typeof args !== 'object' || typeof args.toolName !== 'string') return null;
+  const processor = toolProcessors[args.toolName];
+  if (!processor) throw new UnsupportedHistoryFeatureError(`Unknown processor ${args.toolName}`, item.id);
+
+  if (args.toolName === 'transform') {
+    const transformCandidate = args as ToolArgs & { transform?: unknown; trapezoid?: number };
+    if (transformCandidate.trapezoid && transformCandidate.transform) {
+      throw new UnsupportedHistoryFeatureError('A transform cannot combine trapezoid and affine values', item.id);
+    }
+    if (transformCandidate.trapezoid) {
+      if (!isTrapezoidOnlyTransform(args as never)) {
+        throw new UnsupportedHistoryFeatureError('Mixed trapezoid and affine transform is unsupported', item.id);
+      }
+      return Object.freeze({
+        kind: 'apply-raster-processor',
+        layerId: item.layerId,
+        processorId: 'transform',
+        version: processor.replay.version,
+        args: plainObject(args, `history:${item.id}.args`),
+      });
+    }
+    let transform;
+    try {
+      transform = getTransformFromHistoryArgs(args, layer.pos);
+    } catch (error) {
+      throw new UnsupportedHistoryFeatureError(
+        error instanceof Error ? error.message : 'Invalid retained transform',
+        item.id
+      );
+    }
+    if (!transform) return null;
+    return Object.freeze({
+      kind: 'apply-affine-transform',
+      layerId: item.layerId,
+      transform: validateAffineTransform(transform, layer.pos),
+    });
+  }
+
+  if (processor.commit === 'layer-operation') {
+    const filterArgs = plainObject(args, `history:${item.id}.args`);
+    if (!['blur', 'color', 'levels'].includes(args.toolName)) {
+      throw new UnsupportedHistoryFeatureError(`Unsupported filter ${args.toolName}`, item.id);
+    }
+    const filter: DurableFilter = Object.freeze({
+      toolName: args.toolName as DurableFilter['toolName'],
+      version: processor.replay.version,
+      args: filterArgs,
+    });
+    return Object.freeze({ kind: 'apply-filter', layerId: item.layerId, filter });
+  }
+  if (processor.commit === 'geometry') {
+    const geometry = args as ToolArgs & {
+      move?: { x: number; y: number };
+      resize?: { x: number; y: number; width: number; height: number };
+    };
+    if (!geometry.move && !geometry.resize) return null;
+    return Object.freeze({
+      kind: 'reposition-layer',
+      layerId: item.layerId,
+      ...(geometry.move ? { move: Object.freeze({ ...geometry.move }) } : {}),
+      ...(geometry.resize ? { resize: Object.freeze({ ...geometry.resize }) } : {}),
+    });
+  }
+  if (processor.commit === 'raster') {
+    return Object.freeze({
+      kind: 'apply-raster-processor',
+      layerId: item.layerId,
+      processorId: args.toolName,
+      version: processor.replay.version,
+      args: plainObject(args, `history:${item.id}.args`),
+    });
+  }
+  if (processor.commit === 'document-operation' || processor.commit === 'selection') return null;
+  throw new UnsupportedHistoryFeatureError(`Tool ${args.toolName} cannot be replayed durably`, item.id);
+}
+
+function snapshotFromDocumentSource(item: HistoryItem, documentId: string, registry: AssetRegistry) {
+  const documentSource = item.documentSource;
+  if (!documentSource) return null;
+  const layers = snapshotLayers(documentSource.layers, documentId, registry);
+  const activeLayerId =
+    item.layerId && layers.some((layer) => layer.id === item.layerId)
+      ? item.layerId
+      : (layers[layers.length - 1]?.id ?? null);
+  return {
+    frame: frameFromLegacy(item, documentSource.size),
+    layers,
+    selections: selectionSnapshot(),
+    activeLayerId,
+  };
+}
+
+export function legacyHistoryToDurable(
+  history: readonly HistoryItem[] | DurableDocument,
+  options: LegacyConversionOptions = {}
+): LegacyConversionResult {
+  if (!Array.isArray(history)) {
+    return { document: cloneDurableDocument(history as DurableDocument), diagnostics: [] };
+  }
+  const legacyHistory = history as readonly HistoryItem[];
+  const documentId = options.documentId ?? uuidv4();
+  const registry = options.registry ?? getAssetRegistry();
+  const first = legacyHistory[0];
+  const initialSize = options.initialSize ?? first?.documentSource?.size ?? { width: 1, height: 1 };
+  const initial = snapshotFromDocumentSource(first, documentId, registry) ?? {
+    frame: options.initialFrame ?? documentFrameFromSize(initialSize),
+    layers: [],
+    selections: selectionSnapshot(),
+    activeLayerId: null,
+  };
+  const diagnostics: MigrationDiagnostic[] = [];
+  let currentLayers = new Map(initial.layers.map((layer) => [layer.id, layer]));
+  const entries: DurableHistoryEntry[] = [];
+  const baseline = initial;
+
+  for (const item of legacyHistory) {
+    if (item.documentSource && (item.actionName === OPEN_DOCUMENT_ACTION || entries.length === 0)) {
+      // The first open-document source is the baseline, not a replay operation.
+      if (entries.length === 0) continue;
+      const document = snapshotFromDocumentSource(item, documentId, registry);
+      if (document)
+        entries.push(
+          entry(
+            item.id,
+            {
+              kind: 'replace-document',
+              document: freezeDurableDocument({
+                documentId,
+                documentRevision: 0,
+                branchRevision: 0,
+                durableRevision: 0,
+                baseline: document,
+                history: [],
+                cursor: -1,
+              }),
+            },
+            isEntryEnabled(item)
+          )
+        );
+      continue;
+    }
+    let operation: DurableOperation | null = null;
+    const enabled = isEntryEnabled(item);
+    try {
+      const source = item.layerSource ?? asLegacyLayerSource(item.args);
+      if ((item.actionName === NEW_LAYER_ACTION || (item.actionName === TOOL_ACTION && source)) && source) {
+        const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, currentLayers);
+        const layer = convertLayer(runtimeLayer, documentId, registry);
+        if (enabled) currentLayers.set(layer.id, layer);
+        operation = Object.freeze({ kind: 'create-layer', layer });
+      } else if (item.actionName === SHOW_LAYER_ACTION || item.actionName === HIDE_LAYER_ACTION) {
+        operation = Object.freeze({
+          kind: 'set-layer-properties',
+          layerId: item.layerId,
+          patch: { visible: item.actionName === SHOW_LAYER_ACTION },
+        });
+        const layer = currentLayers.get(item.layerId);
+        if (enabled && layer)
+          currentLayers.set(
+            item.layerId,
+            cloneLayerSnapshot({ ...layer, visible: item.actionName === SHOW_LAYER_ACTION })
+          );
+      } else if (item.actionName === RENAME_LAYER_ACTION) {
+        const name = (item.args as { name?: unknown } | undefined)?.name;
+        if (typeof name === 'string') {
+          operation = Object.freeze({ kind: 'set-layer-properties', layerId: item.layerId, patch: { name } });
+          const layer = currentLayers.get(item.layerId);
+          if (enabled && layer) currentLayers.set(item.layerId, cloneLayerSnapshot({ ...layer, name }));
+        }
+      } else if (item.actionName === REORDER_ACTION) {
+        const args = item.args as { layerToMoveId?: LayerId; afterWhichLayerId?: LayerId | null } | undefined;
+        if (args?.layerToMoveId && currentLayers.has(args.layerToMoveId)) {
+          const order = Object.fromEntries(
+            [...currentLayers.values()]
+              .sort((left, right) => left.order - right.order)
+              .map((layer, index) => [layer.id, index])
+          );
+          const moving = order[args.layerToMoveId];
+          const remaining = Object.keys(order).filter((id) => id !== args.layerToMoveId);
+          const targetIndex = args.afterWhichLayerId ? remaining.indexOf(args.afterWhichLayerId) + 1 : 0;
+          remaining.splice(Math.max(0, targetIndex), 0, args.layerToMoveId);
+          const orderByLayerId = Object.fromEntries(remaining.map((id, index) => [id, index]));
+          if (moving !== undefined) {
+            operation = Object.freeze({ kind: 'reorder-layers', orderByLayerId });
+            if (enabled) {
+              for (const [id, nextOrder] of Object.entries(orderByLayerId)) {
+                const layer = currentLayers.get(id);
+                if (layer) currentLayers.set(id, cloneLayerSnapshot({ ...layer, order: nextOrder }));
+              }
+            }
+          }
+        }
+      } else if (item.actionName === REMOVE_ACTION) {
+        if (enabled) currentLayers.delete(item.layerId);
+        operation = Object.freeze({ kind: 'remove-layer', layerId: item.layerId });
+      } else if (item.actionName === SET_DOCUMENT_FRAME_ACTION) {
+        const args = item.args as { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame } | undefined;
+        if (args?.nextFrame)
+          operation = Object.freeze({
+            kind: 'set-document-frame',
+            previous: args.previousFrame ?? baseline.frame,
+            next: { ...args.nextFrame },
+          });
+      } else if (item.actionName === SELECTION_ACTION) {
+        const args = item.args as
+          { previousSelectionState?: SelectionSnapshot; nextSelectionState?: SelectionSnapshot } | undefined;
+        operation = Object.freeze({
+          kind: 'set-selection',
+          before: args?.previousSelectionState ?? baseline.selections,
+          after: args?.nextSelectionState ?? selectionSnapshot(),
+        });
+      } else if (item.actionName === MERGE_ACTION && source) {
+        const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, currentLayers);
+        const layer = convertLayer(runtimeLayer, documentId, registry);
+        const removedLayerIds = [...currentLayers.keys()].filter((id) => id !== layer.id);
+        if (enabled) currentLayers = new Map([[layer.id, layer]]);
+        operation = Object.freeze({ kind: 'merge-document', result: layer, removedLayerIds });
+      } else if (item.actionName === TOOL_ACTION) {
+        const layer = currentLayers.get(item.layerId);
+        if (!layer) throw new UnsupportedHistoryFeatureError(`Layer ${item.layerId} is unavailable`, item.id);
+        operation = operationForTool(item, layer);
+        if (operation?.kind === 'reposition-layer') {
+          const pos = {
+            ...layer.pos,
+            ...(operation.move ? { x: operation.move.x, y: operation.move.y } : {}),
+            ...(operation.resize ? { ...operation.resize } : {}),
+          };
+          if (enabled) currentLayers.set(item.layerId, cloneLayerSnapshot({ ...layer, pos }));
+        }
+      } else {
+        throw new UnsupportedHistoryFeatureError(`Unsupported legacy action ${item.actionName}`, item.id);
+      }
+    } catch (error) {
+      if (error instanceof UnsupportedHistoryFeatureError) throw error;
+      diagnostics.push({
+        historyId: item.id,
+        severity: 'error',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (!operation) continue;
+    entries.push(entry(item.id, operation, enabled));
+  }
+
+  const document = freezeDurableDocument({
+    documentId,
+    documentRevision: options.documentRevision ?? 0,
+    branchRevision: options.branchRevision ?? 0,
+    durableRevision: options.durableRevision ?? entries.length,
+    baseline,
+    history: entries,
+    cursor: entries.length - 1,
+  });
+  return { document, diagnostics };
+}
+
+/** Named alias used at the compatibility boundary by importers and callers. */
+export const convertLegacyHistory = legacyHistoryToDurable;
+
+function sourceToRuntimeLayer(id: LayerId, source: LayerSource, layers: Map<LayerId, DurableLayerSnapshot>): Layer {
+  const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
+  const pos = source.isBedrock ? { x: 0, y: 0, ...size } : { ...source.pos };
+  return {
+    id,
+    name: source.kind === 'image' ? (source.name ?? 'Image') : source.kind === 'tool' ? source.args.toolName : 'Blank',
+    isBedrock: !!source.isBedrock,
+    visible: true,
+    opacity: source.kind === 'blank' ? source.opacity : 1,
+    locked: false,
+    blendMode: 'source-over',
+    order: Math.max(-1, ...[...layers.values()].map((layer) => layer.order)) + 1,
+    pos,
+    source,
+    operations: [],
+    bitmap: source.kind === 'image' ? source.bitmap : null,
+    tmpCanvas: null,
+  };
+}
+
+export function createDurableDocument(
+  input: Omit<DurableDocument, 'durableRevision'> & { durableRevision?: number }
+): DurableDocument {
+  return freezeDurableDocument({ ...input, durableRevision: input.durableRevision ?? 0 });
+}
+
+export function appendDurableEntry(document: DurableDocument, next: DurableHistoryEntry): DurableDocument {
+  const history = [...document.history.slice(0, document.cursor + 1), next];
+  return freezeDurableDocument({
+    ...cloneDurableDocument(document),
+    history,
+    cursor: history.length - 1,
+    branchRevision: document.branchRevision + 1,
+    durableRevision: document.durableRevision + 1,
+  });
+}
+
+export function toggleDurableEntry(document: DurableDocument, entryId: string): DurableDocument {
+  const index = document.history.findIndex((historyEntry) => historyEntry.id === entryId);
+  if (index < 0) return document;
+  const history = [...document.history];
+  history[index] = Object.freeze({ ...history[index], enabled: !history[index].enabled });
+  return freezeDurableDocument({
+    ...document,
+    history,
+    branchRevision: document.branchRevision + 1,
+    durableRevision: document.durableRevision + 1,
+  });
+}
+
+export function setDurableCursor(document: DurableDocument, cursor: number): DurableDocument {
+  if (!Number.isInteger(cursor) || cursor < -1 || cursor >= document.history.length) return document;
+  return cursor === document.cursor
+    ? document
+    : freezeDurableDocument({ ...document, cursor, durableRevision: document.durableRevision + 1 });
+}

@@ -1,6 +1,9 @@
+import type { DocumentFrame } from './document-frame.ts';
 import type { Selection, Size } from './general-types.ts';
+import type { AffineTransform } from './affine-transform.ts';
 import type { LayerId } from './layer-types.ts';
 
+/** An id is only meaningful through the runtime asset registry. */
 export type AssetId = string & { readonly __assetId: unique symbol };
 
 export type PlainPrimitive = string | number | boolean | null;
@@ -13,21 +16,41 @@ export type DurableLayerSource =
       color: string;
       opacity: number;
       size: Size;
+      isBedrock?: boolean;
     }>
   | Readonly<{
       kind: 'raster';
       assetId: AssetId;
       width: number;
       height: number;
+      name?: string;
+      isBedrock?: boolean;
     }>
+  | Readonly<{
+      kind: 'vector';
+      toolName: string;
+      args: PlainObject;
+      size: Size;
+      sourcePos: Readonly<{ x: number; y: number; width: number; height: number }>;
+      isBedrock?: boolean;
+    }>
+  | Readonly<{
+      kind: 'text';
+      args: PlainObject;
+      size: Size;
+      sourcePos: Readonly<{ x: number; y: number; width: number; height: number }>;
+      isBedrock?: boolean;
+    }>
+  /** Bounded compatibility input. New writers must use a typed source. */
   | Readonly<{
       kind: 'legacy-tool';
       toolName: string;
       args: PlainObject;
       size: Size;
+      isBedrock?: boolean;
     }>;
 
-export type LayerSnapshot = Readonly<{
+export type DurableLayerSnapshot = Readonly<{
   id: LayerId;
   name: string;
   isBedrock: boolean;
@@ -40,44 +63,85 @@ export type LayerSnapshot = Readonly<{
   source: DurableLayerSource;
 }>;
 
+/** Kept as a source-compatible alias for the first scaffolding users. */
+export type LayerSnapshot = DurableLayerSnapshot;
+
 export type SelectionSnapshot = Readonly<{
   selections: readonly Selection[];
   activeSelectionId: string | null;
 }>;
 
-export type DocumentSnapshot = Readonly<{
-  layers: readonly LayerSnapshot[];
-  size: Size;
-  selections: SelectionSnapshot;
-  activeLayerId: LayerId | null;
+export type DurableFilter = Readonly<{
+  toolName: 'blur' | 'color' | 'levels';
+  version: number;
+  args: PlainObject;
 }>;
 
-export type LayerPropertyPatch = Readonly<
-  Partial<Pick<LayerSnapshot, 'name' | 'visible' | 'opacity' | 'locked' | 'blendMode' | 'pos'>>
+export type DurableLayerPropertyPatch = Readonly<
+  Partial<Pick<DurableLayerSnapshot, 'name' | 'visible' | 'opacity' | 'locked' | 'blendMode' | 'pos'>>
 >;
 
-export type HistoryOperation =
-  | Readonly<{ kind: 'create-layer'; layer: LayerSnapshot }>
+/** Compatibility alias used by callers of the provisional model. */
+export type LayerPropertyPatch = DurableLayerPropertyPatch;
+
+export type DurableOperation =
+  | Readonly<{ kind: 'create-layer'; layer: DurableLayerSnapshot }>
   | Readonly<{ kind: 'remove-layer'; layerId: LayerId }>
-  | Readonly<{ kind: 'set-layer-properties'; layerId: LayerId; patch: LayerPropertyPatch }>
+  | Readonly<{ kind: 'set-layer-properties'; layerId: LayerId; patch: DurableLayerPropertyPatch }>
+  | Readonly<{
+      kind: 'reposition-layer';
+      layerId: LayerId;
+      move?: Readonly<{ x: number; y: number }>;
+      resize?: Readonly<{ x: number; y: number; width: number; height: number }>;
+    }>
   | Readonly<{ kind: 'reorder-layers'; orderByLayerId: Readonly<Record<LayerId, number>> }>
+  | Readonly<{ kind: 'apply-filter'; layerId: LayerId; filter: DurableFilter }>
+  | Readonly<{ kind: 'apply-affine-transform'; layerId: LayerId; transform: AffineTransform }>
   | Readonly<{
       kind: 'apply-raster-processor';
       layerId: LayerId;
       processorId: string;
-      processorVersion: number;
+      version: number;
       args: PlainObject;
     }>
-  | Readonly<{ kind: 'rasterize-layer'; layerId: LayerId; result: LayerSnapshot }>
-  | Readonly<{ kind: 'merge-document'; result: LayerSnapshot; removedLayerIds: readonly LayerId[] }>
-  | Readonly<{ kind: 'replace-document'; document: DocumentSnapshot }>
+  | Readonly<{ kind: 'rasterize-layer'; layerId: LayerId; result: DurableLayerSnapshot }>
+  | Readonly<{ kind: 'set-document-frame'; previous: DocumentFrame; next: DocumentFrame }>
+  | Readonly<{ kind: 'merge-document'; result: DurableLayerSnapshot; removedLayerIds: readonly LayerId[] }>
+  | Readonly<{ kind: 'replace-document'; document: DurableDocument }>
   | Readonly<{ kind: 'set-selection'; before: SelectionSnapshot; after: SelectionSnapshot }>;
 
-export type HistoryEntry = Readonly<{
+/** Compatibility alias used by the initial history-model scaffolding. */
+export type HistoryOperation = DurableOperation;
+
+export type DurableHistoryEntry = Readonly<{
   id: string;
-  operation: HistoryOperation;
-  disabled: boolean;
+  schemaVersion: number;
+  enabled: boolean;
+  operation: DurableOperation;
 }>;
+
+export type HistoryEntry = DurableHistoryEntry;
+
+export type DurableBaseline = Readonly<{
+  frame: DocumentFrame;
+  layers: readonly DurableLayerSnapshot[];
+  selections: SelectionSnapshot;
+  activeLayerId: LayerId | null;
+}>;
+
+export type DocumentSnapshot = DurableBaseline;
+
+export type DurableDocument = Readonly<{
+  documentId: string;
+  documentRevision: number;
+  branchRevision: number;
+  durableRevision: number;
+  baseline: DurableBaseline;
+  history: readonly DurableHistoryEntry[];
+  cursor: number;
+}>;
+
+export const DURABLE_SCHEMA_VERSION = 1;
 
 function clonePlainValue(value: PlainValue | undefined): PlainValue | undefined {
   if (Array.isArray(value)) return Object.freeze(value.map((item) => clonePlainValue(item) as PlainValue));
@@ -87,25 +151,157 @@ function clonePlainValue(value: PlainValue | undefined): PlainValue | undefined 
   );
 }
 
+function cloneSelectionSnapshot(snapshot: SelectionSnapshot): SelectionSnapshot {
+  return Object.freeze({
+    selections: Object.freeze(
+      snapshot.selections.map((selection) =>
+        Object.freeze({
+          ...selection,
+          points: Object.freeze(selection.points.map((point) => Object.freeze({ ...point }))),
+          pos: Object.freeze({ ...selection.pos }),
+          ...(selection.metadata ? { metadata: clonePlainValue(selection.metadata) } : {}),
+        })
+      )
+    ),
+    activeSelectionId: snapshot.activeSelectionId,
+  }) as unknown as SelectionSnapshot;
+}
+
 function cloneLayerSource(source: DurableLayerSource): DurableLayerSource {
   switch (source.kind) {
     case 'blank':
       return Object.freeze({ ...source, size: Object.freeze({ ...source.size }) });
     case 'raster':
       return Object.freeze({ ...source });
+    case 'vector':
+    case 'text':
     case 'legacy-tool':
       return Object.freeze({
         ...source,
         args: clonePlainValue(source.args) as PlainObject,
         size: Object.freeze({ ...source.size }),
+        ...('sourcePos' in source ? { sourcePos: Object.freeze({ ...source.sourcePos }) } : {}),
       });
   }
 }
 
-export function toLayerSnapshot(layer: Omit<LayerSnapshot, 'source'>, source: DurableLayerSource): LayerSnapshot {
+export function toLayerSnapshot(
+  layer: Omit<DurableLayerSnapshot, 'source'>,
+  source: DurableLayerSource
+): DurableLayerSnapshot {
   return Object.freeze({
     ...layer,
     pos: Object.freeze({ ...layer.pos }),
     source: cloneLayerSource(source),
+  });
+}
+
+export function cloneLayerSnapshot(layer: DurableLayerSnapshot): DurableLayerSnapshot {
+  return toLayerSnapshot(
+    {
+      id: layer.id,
+      name: layer.name,
+      isBedrock: layer.isBedrock,
+      visible: layer.visible,
+      opacity: layer.opacity,
+      locked: layer.locked,
+      blendMode: layer.blendMode,
+      order: layer.order,
+      pos: layer.pos,
+    },
+    layer.source
+  );
+}
+
+function cloneOperation(operation: DurableOperation): DurableOperation {
+  switch (operation.kind) {
+    case 'create-layer':
+    case 'rasterize-layer':
+      return Object.freeze({
+        ...operation,
+        ...(operation.kind === 'create-layer'
+          ? { layer: cloneLayerSnapshot(operation.layer) }
+          : { result: cloneLayerSnapshot(operation.result) }),
+      });
+    case 'apply-affine-transform':
+      return Object.freeze({ ...operation, transform: Object.freeze({ ...operation.transform }) });
+    case 'apply-filter':
+      return Object.freeze({
+        ...operation,
+        filter: Object.freeze({ ...operation.filter, args: clonePlainValue(operation.filter.args) as PlainObject }),
+      });
+    case 'apply-raster-processor':
+      return Object.freeze({ ...operation, args: clonePlainValue(operation.args) as PlainObject });
+    case 'set-layer-properties':
+      return Object.freeze({
+        ...operation,
+        patch: Object.freeze({
+          ...operation.patch,
+          ...(operation.patch.pos ? { pos: Object.freeze({ ...operation.patch.pos }) } : {}),
+        }),
+      });
+    case 'reposition-layer':
+      return Object.freeze({
+        ...operation,
+        ...(operation.move ? { move: Object.freeze({ ...operation.move }) } : {}),
+        ...(operation.resize ? { resize: Object.freeze({ ...operation.resize }) } : {}),
+      });
+    case 'set-document-frame':
+      return Object.freeze({
+        ...operation,
+        previous: Object.freeze({ ...operation.previous }),
+        next: Object.freeze({ ...operation.next }),
+      });
+    case 'merge-document':
+      return Object.freeze({
+        ...operation,
+        result: cloneLayerSnapshot(operation.result),
+        removedLayerIds: Object.freeze([...operation.removedLayerIds]),
+      });
+    case 'set-selection':
+      return Object.freeze({
+        ...operation,
+        before: cloneSelectionSnapshot(operation.before),
+        after: cloneSelectionSnapshot(operation.after),
+      });
+    case 'reorder-layers':
+      return Object.freeze({ ...operation, orderByLayerId: Object.freeze({ ...operation.orderByLayerId }) });
+    case 'remove-layer':
+      return Object.freeze({ ...operation });
+    case 'replace-document':
+      return Object.freeze({ ...operation, document: cloneDurableDocument(operation.document) });
+  }
+}
+
+export function freezeDurableDocument(document: DurableDocument): DurableDocument {
+  const baseline: DurableBaseline = Object.freeze({
+    frame: Object.freeze({ ...document.baseline.frame }),
+    layers: Object.freeze(document.baseline.layers.map(cloneLayerSnapshot)),
+    selections: cloneSelectionSnapshot(document.baseline.selections),
+    activeLayerId: document.baseline.activeLayerId,
+  });
+  const history = Object.freeze(
+    document.history.map((entry) =>
+      Object.freeze({
+        id: entry.id,
+        schemaVersion: entry.schemaVersion,
+        enabled: entry.enabled,
+        operation: cloneOperation(entry.operation),
+      })
+    )
+  );
+  return Object.freeze({
+    ...document,
+    baseline,
+    history,
+    cursor: Math.max(-1, Math.min(document.cursor, history.length - 1)),
+  });
+}
+
+export function cloneDurableDocument(document: DurableDocument): DurableDocument {
+  return freezeDurableDocument({
+    ...document,
+    baseline: document.baseline,
+    history: document.history,
   });
 }
