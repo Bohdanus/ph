@@ -102,10 +102,33 @@ function operationAffine(operations: readonly DurableOperation[]): AffineTransfo
   return transform;
 }
 
-function sourceSize(source: DurableLayerSource, layerSize: Size): Size {
-  if (source.kind === 'blank' || source.kind === 'vector' || source.kind === 'text' || source.kind === 'legacy-tool')
-    return source.size;
-  return { width: source.width || layerSize.width, height: source.height || layerSize.height };
+function layerSize(layer: DurableReplayLayer): Size {
+  return {
+    width: layer.snapshot.pos.width,
+    height: layer.snapshot.pos.height,
+  };
+}
+
+function vectorArgsForSize(source: Extract<DurableLayerSource, { kind: 'vector' }>, size: Size): ToolArgs {
+  const sourceWidth = source.sourcePos.width;
+  const sourceHeight = source.sourcePos.height;
+  if (!(sourceWidth > 0) || !(sourceHeight > 0)) return source.args as ToolArgs;
+
+  const scaleX = size.width / sourceWidth;
+  const scaleY = size.height / sourceHeight;
+  const args = source.args as ToolArgs & {
+    start?: { x: number; y: number };
+    end?: { x: number; y: number };
+    lineWidth?: number;
+  };
+  if (!args.start || !args.end) return args;
+
+  return {
+    ...args,
+    start: { x: args.start.x * scaleX, y: args.start.y * scaleY },
+    end: { x: args.end.x * scaleX, y: args.end.y * scaleY },
+    ...(typeof args.lineWidth === 'number' ? { lineWidth: args.lineWidth * Math.sqrt(Math.abs(scaleX * scaleY)) } : {}),
+  } as ToolArgs;
 }
 
 async function sourceBitmap(
@@ -115,25 +138,27 @@ async function sourceBitmap(
   const { source } = layer.snapshot;
   if (source.kind === 'raster') {
     const lease = await request.assetRegistry.resolve(source.assetId, request.signal);
-    return { bitmap: lease.bitmap, release: lease.release, size: { width: source.width, height: source.height } };
+    return { bitmap: lease.bitmap, release: lease.release, size: layerSize(layer) };
   }
-  const size = sourceSize(source, layer.snapshot.pos);
   if (source.kind === 'legacy-tool') throw new Error(`Legacy source ${source.toolName} requires an explicit adapter`);
-  const canvas = createCanvas(size.width, size.height);
-  const ctx = context2d(canvas);
+  const renderSize = layerSize(layer);
   if (source.kind === 'blank') {
+    const canvas = createCanvas(renderSize.width, renderSize.height);
+    const ctx = context2d(canvas);
     ctx.fillStyle = source.color;
     ctx.globalAlpha = source.opacity;
-    ctx.fillRect(0, 0, size.width, size.height);
+    ctx.fillRect(0, 0, renderSize.width, renderSize.height);
+    return { bitmap: canvas, release: () => undefined, size: renderSize };
   } else {
     const toolName = 'toolName' in source ? source.toolName : 'text';
     const processor = toolProcessors[toolName as keyof typeof toolProcessors];
     if (!processor?.creator) throw new Error(`Source tool ${toolName} is not a deterministic creator`);
-    const [created] = processor.imageProcessor({ size })(source.args as ToolArgs);
+    const sourceRenderSize = source.kind === 'vector' ? renderSize : source.size;
+    const args = source.kind === 'vector' ? vectorArgsForSize(source, renderSize) : (source.args as ToolArgs);
+    const [created] = processor.imageProcessor({ size: sourceRenderSize })(args);
     if (!created) throw new Error(`Source tool ${toolName} produced no raster`);
     return { bitmap: created, release: () => undefined, size: { width: created.width, height: created.height } };
   }
-  return { bitmap: canvas, release: () => undefined, size };
 }
 
 async function toOwnedBitmap(canvas: OffscreenCanvas | HTMLCanvasElement): Promise<BitmapSource> {
@@ -174,7 +199,11 @@ export async function materializeLayer(
     producer: async () => {
       const source = await sourceBitmap(layer, request);
       let bitmap = source.bitmap;
-      let size = source.size;
+      // Layer.pos is the current logical presentation size. The source size
+      // remains intrinsic, while processors and final placement use the
+      // current geometry, matching the runtime layer renderer.
+      let size = layerSize(layer);
+      let presentation: BitmapSource | undefined;
       try {
         for (const operation of layer.operations) {
           if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
@@ -198,10 +227,13 @@ export async function materializeLayer(
           ctx.drawImage(bitmap, 0, 0, size.width, size.height);
         } finally {
           ctx.restore();
-          source.release();
         }
-        const presentation = await toOwnedBitmap(output);
-        if (!request.frame) return presentation;
+        presentation = await toOwnedBitmap(output);
+        if (!request.frame) {
+          const result = presentation;
+          presentation = undefined;
+          return result;
+        }
 
         const frameSurface = createCanvas(request.frame.width, request.frame.height);
         const frameContext = context2d(frameSurface);
@@ -213,15 +245,16 @@ export async function materializeLayer(
           bounds.height
         );
         closeOwnedBitmap(presentation);
+        presentation = undefined;
         return toOwnedBitmap(frameSurface);
-      } catch (error) {
+      } finally {
         source.release();
-        throw error;
+        if (presentation) closeOwnedBitmap(presentation);
       }
     },
   });
   const affine = operationAffine(layer.operations);
-  const sourceBounds = getAffineBounds(affine, sourceSize(layer.snapshot.source, layer.snapshot.pos));
+  const sourceBounds = getAffineBounds(affine, layerSize(layer));
   const bounds = request.frame
     ? { x: request.frame.x, y: request.frame.y, width: request.frame.width, height: request.frame.height }
     : {

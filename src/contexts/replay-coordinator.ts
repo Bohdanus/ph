@@ -94,6 +94,7 @@ export class ReplayCoordinator<T> {
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     input.signal?.addEventListener('abort', onAbort, { once: true });
+    if (input.signal?.aborted) controller.abort();
     this.current = { requestId, token: { ...input.token }, controller };
     const state = (next: ReplayCoordinatorState) => input.onStateChange?.(next, requestId);
     state('requested');
@@ -101,6 +102,10 @@ export class ReplayCoordinator<T> {
     let materialized = false;
     let published = false;
     try {
+      if (controller.signal.aborted) {
+        state('cancelled');
+        return { requestId, state: 'cancelled' };
+      }
       state('materializing');
       result = await input.materialize({ signal: controller.signal, requestId, yieldToHost });
       materialized = true;

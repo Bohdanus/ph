@@ -471,14 +471,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         },
         { type: 'append', entry: action.payload.historyItem }
       );
+      const updates = action.payload.updates ?? {};
+      const nextFrame = updates.documentFrame;
       const converted = buildDurableDocument(
-        currentState,
+        nextFrame
+          ? {
+              ...currentState,
+              documentFrame: cloneDocumentFrame(nextFrame),
+              totalSize: documentFrameSize(nextFrame),
+            }
+          : currentState,
         [...timeline.entries],
         timeline.cursor,
         timeline.branchRevision
       );
-      const updates = action.payload.updates ?? {};
-      const nextFrame = updates.documentFrame;
       latestStateRef.current = {
         ...currentState,
         ...updates,
@@ -500,19 +506,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (action.type === 'APPLY_HISTORY_REPLAY') {
+      const replayUpdates = action.payload.updates;
+      const replayFrame = replayUpdates.documentFrame;
       const converted = buildDurableDocument(
-        currentState,
+        replayFrame
+          ? {
+              ...currentState,
+              documentFrame: cloneDocumentFrame(replayFrame),
+              totalSize: documentFrameSize(replayFrame),
+            }
+          : currentState,
         [...action.payload.timeline.entries],
         action.payload.timeline.cursor,
         action.payload.timeline.branchRevision
       );
       latestStateRef.current = {
         ...currentState,
-        ...action.payload.updates,
-        ...(action.payload.updates.documentFrame
+        ...replayUpdates,
+        ...(replayFrame
           ? {
-              documentFrame: cloneDocumentFrame(action.payload.updates.documentFrame),
-              totalSize: documentFrameSize(action.payload.updates.documentFrame),
+              documentFrame: cloneDocumentFrame(replayFrame),
+              totalSize: documentFrameSize(replayFrame),
             }
           : {}),
         history: [...action.payload.timeline.entries],
