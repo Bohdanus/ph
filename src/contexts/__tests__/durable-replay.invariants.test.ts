@@ -6,6 +6,7 @@ import { freezeDurableDocument, cloneDurableDocument, type DurableDocument } fro
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer } from '../layer-types.ts';
 import { OPEN_DOCUMENT_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import type { TransformToolArgs } from '../../tools/transform.ts';
 
 const layerId = 'layer-1';
 const initialSize = { width: 400, height: 300 };
@@ -35,7 +36,10 @@ function createBaselineLayer(): Layer {
   };
 }
 
-function convert(...items: HistoryItem[]): { document: DurableDocument; diagnostics: unknown[] } {
+function convert(...items: HistoryItem[]): {
+  document: DurableDocument;
+  diagnostics: readonly { historyId?: string; severity: 'warning' | 'error'; message: string }[];
+} {
   const result = legacyHistoryToDurable(
     [
       {
@@ -214,7 +218,7 @@ describe('durable document immutability boundary (P1.9)', () => {
 
     expect(() => {
       'use strict';
-      firstLayer.pos.x = 999;
+      (firstLayer.pos as { x: number }).x = 999;
     }).toThrow(TypeError);
   });
 
