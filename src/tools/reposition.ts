@@ -11,19 +11,13 @@ export type RepositionToolArgs = {
 
 export const reposition =
   ({ bitmap }: ProcessorToolParams) =>
-  ({ move, resize }: RepositionToolArgs) => {
+  ({ move }: RepositionToolArgs) => {
     if (move) {
       // do nothing to do with the canvas and bitmap, just move the position
       return [bitmap, move];
     }
-
-    if (resize) {
-      // draw the resized image to canvas
-      const canvas = new OffscreenCanvas(resize.width, resize.height);
-      const ctx = canvas.getContext('2d')!;
-
-      ctx.drawImage(bitmap, 0, 0, resize.width, resize.height);
-
-      return [canvas, resize];
-    }
+    // Reposition commits as `commit: 'geometry'` and is handled structurally
+    // (pos patch only) in useLayer.ts / history-replay.ts, which rematerializes
+    // vector sources rather than stretching a bitmap. This image processor is
+    // never invoked for reposition, and resize must not rasterize here.
   };

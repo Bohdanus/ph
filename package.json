@@ -15,8 +15,14 @@
     "format": "prettier --write .",
     "preview": "vite preview",
     "test": "vitest --run",
-    "test:integration": "vitest --run --config vitest.integration.config.ts",
+    "test:integration": "vitest --run src/contexts/__tests__/psd-utils.test.ts src/hooks/__tests__/useApp.psd.test.ts",
     "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ]
   },
   "dependencies": {
     "@jsquash/avif": "^2.1.1",
@@ -51,6 +57,7 @@
     "globals": "^17.7.0",
     "husky": "^9.1.7",
     "jsdom": "^30.1.0",
+    "lint-staged": "^17.5.1",
     "postcss": "^8.5.16",
     "prettier": "^3.9.7",
     "sass-embedded": "^1.97.2",

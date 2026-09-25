@@ -24,7 +24,6 @@ export default defineConfig({
     pool: 'vmThreads',
     maxWorkers: 4,
     isolate: true,
-    cache: { dir: '.vitest' },
     exclude: [...configDefaults.exclude, '**/.kilo/**'],
     setupFiles: ['./src/test/setup.ts'],
     globals: true,

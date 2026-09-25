@@ -114,7 +114,7 @@ describe('useSelectionClipboard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Paste' }));
 
     expect(createLayerFromBitmapMock).toHaveBeenCalledWith({
-      bitmap: expect.any(HTMLCanvasElement),
+      bitmap: expect.any(OffscreenCanvas),
       name: 'Layer 1',
       pos: { x: 35, y: 30, width: 30, height: 40 },
     });
