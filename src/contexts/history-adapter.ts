@@ -143,11 +143,9 @@ function asLegacyLayerSource(value: unknown): LayerSource | undefined {
 }
 
 function registerRaster(registry: AssetRegistry, documentId: string, bitmap: BitmapSource): AssetId {
-  // The adapter is synchronous because it is also used by reducer-facing
-  // compatibility code. DOM sources are explicitly borrowed until an import
-  // boundary can await registerBaselineAsync and replace the descriptor.
-  const ownership = typeof (bitmap as { close?: unknown }).close === 'function' ? 'adopt' : 'borrow';
-  return registry.registerBaseline(documentId, bitmap, { ownership });
+  // Legacy history/runtime layers retain ownership until the durable model is
+  // authoritative. The diagnostic sidecar must never close their bitmaps.
+  return registry.registerBaseline(documentId, bitmap, { ownership: 'borrow' });
 }
 
 function convertSource(

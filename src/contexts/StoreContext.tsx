@@ -16,7 +16,11 @@ import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
 import { cloneDocumentFrame, documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
 import { freezeDurableDocument, type DurableDocument } from './history-model.ts';
-import { convertLegacyHistorySafely, type DurableConversionStatus } from './history-adapter.ts';
+import {
+  convertLegacyHistorySafely,
+  type DurableConversionStatus,
+  type MigrationDiagnostic,
+} from './history-adapter.ts';
 import { getAssetRegistry } from './asset-registry.ts';
 import type { MaterializedDocument } from './materialization.ts';
 import { ReplayCoordinator, type ReplayRevisionToken } from './replay-coordinator.ts';
@@ -69,7 +73,7 @@ export type StoreData = {
   documentId: string;
   documentRevision: number;
   branchRevision: number;
-  /** Canonical replay state. Runtime layers remain a presentation projection during cutover. */
+  /** Diagnostic shadow only; legacy history/runtime layers remain authoritative during cutover. */
   durableDocument: DurableDocument | null;
   /** A non-current sidecar must never be used as a replay or export input. */
   durableStatus: DurableConversionStatus | 'stale';
@@ -245,6 +249,7 @@ function commitSelection(state: StoreData, selection: Selection): StoreData {
     activeSelectionId: committedSelection.id,
     selectionDraft: { status: 'idle' },
     selectionCleared: null,
+    durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
   };
 }
 
@@ -262,6 +267,7 @@ function updateCommittedSelection(state: StoreData, selection: Selection): Store
     ),
     activeSelectionId: committedSelection.isActive ? committedSelection.id : state.activeSelectionId,
     selectionDraft: { status: 'idle' },
+    durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
   };
 }
 
@@ -299,7 +305,11 @@ function reducer(state: StoreData, action: Action): StoreData {
       if (state.activeLayerId === action.payload) {
         return state;
       }
-      return { ...state, activeLayerId: action.payload };
+      return {
+        ...state,
+        activeLayerId: action.payload,
+        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+      };
     case 'ADD_LAYER':
       return {
         ...state,
@@ -417,6 +427,7 @@ function reducer(state: StoreData, action: Action): StoreData {
         ...state,
         selections: action.payload,
         activeSelectionId: action.payload.find((selection) => selection.isActive)?.id ?? null,
+        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
       };
     case 'ADD_SELECTION':
     case 'COMMIT_SELECTION':
@@ -429,6 +440,7 @@ function reducer(state: StoreData, action: Action): StoreData {
         ...state,
         activeSelectionId: action.payload,
         selections: state.selections.map((selection) => ({ ...selection, isActive: selection.id === action.payload })),
+        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
       };
     case 'START_SELECTION_DRAFT':
       return {
@@ -460,6 +472,7 @@ function reducer(state: StoreData, action: Action): StoreData {
               }
             : selection
         ),
+        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
       };
     case 'CLEAR_SELECTIONS':
       return {
@@ -468,10 +481,23 @@ function reducer(state: StoreData, action: Action): StoreData {
         activeSelectionId: null,
         selectionDraft: { status: 'idle' },
         selectionCleared: { status: 'cleared', version: (state.selectionCleared?.version ?? 0) + 1 },
+        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
       };
     default:
       return state;
   }
+}
+
+function formatDurableDiagnostics(
+  diagnostics: readonly MigrationDiagnostic[],
+  history: readonly HistoryItem[]
+): readonly string[] {
+  const historyById = new Map(history.map((item) => [item.id, item]));
+  return diagnostics.map((diagnostic) => {
+    if (!diagnostic.historyId) return `${diagnostic.severity}: ${diagnostic.message}`;
+    const actionName = historyById.get(diagnostic.historyId)?.actionName ?? 'unknown';
+    return `${diagnostic.severity}: history ${diagnostic.historyId} (${actionName}): ${diagnostic.message}`;
+  });
 }
 
 function buildDurableDocument(
@@ -495,7 +521,7 @@ function buildDurableDocument(
   return {
     status: converted.status,
     document: converted.document ? freezeDurableDocument({ ...converted.document, cursor }) : null,
-    diagnostics: converted.diagnostics.map((diagnostic) => `${diagnostic.severity}: ${diagnostic.message}`),
+    diagnostics: formatDurableDiagnostics(converted.diagnostics, history),
   };
 }
 
@@ -711,6 +737,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (previous !== storeState.documentId) getAssetRegistry().disposeDocument(previous);
     previousDocumentId.current = storeState.documentId;
   }, [storeState.documentId]);
+  useEffect(
+    () => () => {
+      replayCoordinatorRef.current.cancel();
+      presentationMaterializationRef.current?.release();
+      presentationMaterializationRef.current = null;
+      getAssetRegistry().disposeDocument(latestStateRef.current.documentId);
+    },
+    []
+  );
   const store = {
     ...storeState,
     canvasRef,

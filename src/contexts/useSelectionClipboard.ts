@@ -61,7 +61,7 @@ export const useSelectionClipboard = () => {
     return true;
   }
 
-  function pasteSelectionClipboard(): boolean {
+  async function pasteSelectionClipboard(): Promise<boolean> {
     if (!selectionClipboard) return false;
 
     const width = selectionClipboard.pos.width || selectionClipboard.bitmap.width;
@@ -73,27 +73,37 @@ export const useSelectionClipboard = () => {
       height,
     };
 
-    createLayerFromBitmap({
-      bitmap: cloneBitmapToCanvas(selectionClipboard.bitmap),
-      name: getNextLayerName(Object.values(layers)),
-      pos: centerPos,
-    });
+    try {
+      await createLayerFromBitmap({
+        bitmap: cloneBitmapToCanvas(selectionClipboard.bitmap),
+        name: getNextLayerName(Object.values(layers)),
+        pos: centerPos,
+      });
+    } catch (error) {
+      console.error('Unable to paste selection clipboard', error);
+      return false;
+    }
 
     return true;
   }
 
-  function layerViaCopy(): boolean {
+  async function layerViaCopy(): Promise<boolean> {
     if (!activeSelection) return false;
 
     const canvasSelection = { ...activeSelection, pos: documentToCanvasPos(activeSelection.pos, documentFrame) };
     const snapshot = copySelectionToCanvas(canvasRef.current, canvasSelection, totalSize);
     if (!snapshot) return false;
 
-    createLayerFromBitmap({
-      bitmap: cloneBitmapToCanvas(snapshot.bitmap),
-      name: getNextLayerName(Object.values(layers)),
-      pos: canvasToDocumentPos(snapshot.pos, documentFrame),
-    });
+    try {
+      await createLayerFromBitmap({
+        bitmap: cloneBitmapToCanvas(snapshot.bitmap),
+        name: getNextLayerName(Object.values(layers)),
+        pos: canvasToDocumentPos(snapshot.pos, documentFrame),
+      });
+    } catch (error) {
+      console.error('Unable to create a layer from the active selection', error);
+      return false;
+    }
 
     return true;
   }

@@ -79,8 +79,9 @@ export class ReplayCoordinator<T> {
     if (!current || current.requestId !== requestId) return false;
     // A request token is an immutable start snapshot. Only a fresh token
     // supplied by the StoreContext-backed callback can prove it is current.
-    // When no callback is supplied, a matching live requestId is sufficient.
-    return isStillValid ? !!isStillValid(current.token) : true;
+    // A request ID only establishes ordering, not document freshness. Future
+    // production callers must provide a live StoreContext-backed validator.
+    return isStillValid ? !!isStillValid(current.token) : false;
   }
 
   async request(input: ReplayRequest<T>): Promise<ReplayRequestOutcome<T>> {
