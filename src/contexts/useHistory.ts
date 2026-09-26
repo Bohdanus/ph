@@ -60,8 +60,8 @@ export const useHistory = () => {
   }
 
   function undo() {
-    if (!canUndo()) return;
-    resetHistoryTo(historyIndex - 1);
+    if (!canUndo()) return Promise.resolve();
+    return resetHistoryTo(historyIndex - 1);
   }
 
   function canRedo() {
@@ -69,8 +69,8 @@ export const useHistory = () => {
   }
 
   function redo() {
-    if (!canRedo()) return;
-    resetHistoryTo(historyIndex + 1);
+    if (!canRedo()) return Promise.resolve();
+    return resetHistoryTo(historyIndex + 1);
   }
   //
   // function getLayerHistory(layerId: LayerId) {
@@ -105,7 +105,7 @@ export const useHistory = () => {
   }
 
   function resetHistoryTo(targetIndex: number, _history: HistoryItem[] = history, _branchRevision = branchRevision) {
-    if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= _history.length) return;
+    if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= _history.length) return Promise.resolve();
     // Navigation cancels transient previews before creating the immutable
     // durable snapshot that will be the sole materialization input.
     clearPreviewLayers?.();
@@ -123,7 +123,7 @@ export const useHistory = () => {
       // replay that omitted an unsupported history entry.
       console.error('Durable history replay is unavailable', diagnostics);
       dispatch({ type: 'SET_DURABLE_STATUS', payload: { status: 'unavailable', diagnostics } });
-      return;
+      return Promise.resolve();
     }
 
     const durableCursor = converted.legacyCursorToDurableCursor[targetIndex] ?? -1;
@@ -131,7 +131,7 @@ export const useHistory = () => {
     const replay = replayDurableDocument(document);
     const token = getReplayRevisionToken();
 
-    void replayCoordinator.current
+    return replayCoordinator.current
       .request({
         token,
         isStillValid: (snapshot) => replayTokensEqual(snapshot, getReplayRevisionToken()),
@@ -179,10 +179,10 @@ export const useHistory = () => {
       { entries: history, cursor: historyIndex, branchRevision },
       { type: 'toggle-disabled', entryId: historyId }
     );
-    if (timeline.entries === history) return;
+    if (timeline.entries === history) return Promise.resolve();
 
     // recalculate current state
-    resetHistoryTo(historyIndex, [...timeline.entries], timeline.branchRevision);
+    return resetHistoryTo(historyIndex, [...timeline.entries], timeline.branchRevision);
   }
 
   return {

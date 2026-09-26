@@ -1,11 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
 import { legacyHistoryToDurable, appendDurableEntry } from '../history-adapter.ts';
-import { replayDurableDocument } from '../durable-replay.ts';
+import { replayDurableDocument, replayDurableAtCursor } from '../durable-replay.ts';
 import { freezeDurableDocument, cloneDurableDocument, type DurableDocument } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer } from '../layer-types.ts';
-import { OPEN_DOCUMENT_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import {
+  OPEN_DOCUMENT_ACTION,
+  TOOL_ACTION,
+  REMOVE_ACTION,
+  REORDER_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
+  SELECTION_ACTION,
+  MERGE_ACTION,
+  NEW_LAYER_ACTION,
+  SHOW_LAYER_ACTION,
+} from '../../util/constants.ts';
 import type { TransformToolArgs } from '../../tools/transform.ts';
 
 const layerId = 'layer-1';
@@ -292,5 +302,519 @@ describe('durable document immutability boundary (P1.9)', () => {
     // New document has one more history entry.
     expect(appended.history).toHaveLength(2);
     expect(appended.cursor).toBe(1);
+  });
+});
+
+describe('replayDurableDocument switch arm and edge-case coverage', () => {
+  const layer2Id = 'layer-2';
+  const layer3Id = 'layer-3';
+
+  function createLayer(id: string, order: number): Layer {
+    return {
+      id,
+      name: id,
+      isBedrock: false,
+      tmpCanvas: null,
+      bitmap: null,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      order,
+      pos: { x: 20, y: 30, width: 120, height: 80 },
+      source: {
+        kind: 'blank' as const,
+        color: '#ffffff',
+        opacity: 1,
+        isBedrock: false,
+        pos: { x: 20, y: 30, width: 120, height: 80 },
+      },
+      operations: [],
+    };
+  }
+
+  function buildDocument(layers: Layer[], history: HistoryItem[]): DurableDocument {
+    const result = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId: layers[0]?.id ?? 'layer-1',
+          documentSource: {
+            layers: Object.fromEntries(layers.map((l) => [l.id, l])),
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        ...history,
+      ],
+      { documentId: 'edge-case-test' }
+    );
+    return result.document;
+  }
+
+  it('remove-layer on active layer selects next highest-order layer', () => {
+    const layer1 = createLayer(layerId, 0);
+    const layer2 = createLayer(layer2Id, 1);
+
+    // Create layer3 via NEW_LAYER_ACTION so it becomes activeLayerId in replay,
+    // then remove it to trigger the activeLayerId === operation.layerId branch.
+    const document = buildDocument(
+      [layer1, layer2],
+      [
+        {
+          id: 'create-layer3',
+          actionName: NEW_LAYER_ACTION,
+          layerId: layer3Id,
+          layerSource: {
+            kind: 'blank' as const,
+            color: '#ffffff',
+            opacity: 1,
+            isBedrock: false,
+            pos: { x: 20, y: 30, width: 120, height: 80 },
+          },
+        },
+        { id: 'remove-active', actionName: REMOVE_ACTION, layerId: layer3Id },
+      ]
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layer3Id]).toBeUndefined();
+    expect(replay.activeLayerId).toBe(layer2Id);
+  });
+
+  it('remove-layer on active layer with single layer results in null activeLayerId', () => {
+    const document = buildDocument(
+      [createLayer(layerId, 0)],
+      [{ id: 'remove-only', actionName: REMOVE_ACTION, layerId }]
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layerId]).toBeUndefined();
+    expect(replay.activeLayerId).toBeNull();
+  });
+
+  it('activeLayerId fallback when tracked id not in final layerRecord', () => {
+    const layer1 = createLayer(layerId, 0);
+    const layer2 = createLayer(layer2Id, 1);
+
+    const document = buildDocument(
+      [layer1, layer2],
+      [
+        { id: 'remove-layer-1', actionName: REMOVE_ACTION, layerId: layerId },
+        { id: 'remove-layer-2', actionName: REMOVE_ACTION, layerId: layer2Id },
+      ]
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layerId]).toBeUndefined();
+    expect(replay.layers[layer2Id]).toBeUndefined();
+    expect(replay.activeLayerId).toBeNull();
+  });
+
+  it('set-layer-properties on non-existent layer is a no-op', () => {
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createLayer(layerId, 0) },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'set-props-missing',
+          actionName: SHOW_LAYER_ACTION,
+          layerId: 'non-existent',
+        },
+      ],
+      { documentId: 'edge-case-test' }
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layerId]?.snapshot.visible).toBe(true);
+    expect(replay.layers[layerId]?.snapshot.name).toBe(layerId);
+  });
+
+  it('reposition-layer on non-existent layer is a no-op', () => {
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createLayer(layerId, 0) },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'repos-missing',
+          actionName: TOOL_ACTION,
+          layerId: 'non-existent',
+          args: { toolName: 'reposition', move: { x: 100, y: 100 }, resize: { width: 500, height: 500 } },
+        },
+      ],
+      { documentId: 'edge-case-test' }
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layerId]?.snapshot.pos).toEqual({ x: 20, y: 30, width: 120, height: 80 });
+  });
+
+  it('reorder-layers skips non-existent layer ids', () => {
+    const layer1 = createLayer(layerId, 0);
+    const layer2 = createLayer(layer2Id, 1);
+
+    const document = buildDocument(
+      [layer1, layer2],
+      [
+        {
+          id: 'reorder-with-missing',
+          actionName: REORDER_ACTION,
+          layerId: layerId,
+          args: { layerToMoveId: layerId, afterWhichLayerId: layer2Id },
+        },
+      ]
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layerId]?.snapshot.order).toBe(1);
+    expect(replay.layers[layer2Id]?.snapshot.order).toBe(0);
+  });
+
+  it('apply-filter on non-existent layer is a no-op', () => {
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createLayer(layerId, 0) },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'filter-missing',
+          actionName: TOOL_ACTION,
+          layerId: 'non-existent',
+          args: { toolName: 'blur', radius: 5 },
+        },
+      ],
+      { documentId: 'edge-case-test' }
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layerId]?.operations).toHaveLength(0);
+  });
+
+  it('apply-affine-transform on non-existent layer is a no-op', () => {
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createLayer(layerId, 0) },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'affine-missing',
+          actionName: TOOL_ACTION,
+          layerId: 'non-existent',
+          args: {
+            toolName: 'transform',
+            rotate: 45,
+            mirrorH: false,
+            mirrorV: false,
+            skewX: 0,
+            skewY: 0,
+            trapezoid: 0,
+            resizeX: 100,
+            resizeY: 100,
+          },
+        },
+      ],
+      { documentId: 'edge-case-test' }
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layerId]?.operations).toHaveLength(0);
+  });
+
+  it('apply-raster-processor on non-existent layer is a no-op', () => {
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createLayer(layerId, 0) },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'raster-missing',
+          actionName: TOOL_ACTION,
+          layerId: 'non-existent',
+          args: { toolName: 'color', grayscale: 0.5 },
+        },
+      ],
+      { documentId: 'edge-case-test' }
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layerId]?.operations).toHaveLength(0);
+  });
+
+  it('create-layer then remove-layer at same cursor leaves layer absent', () => {
+    const document = buildDocument(
+      [createLayer(layerId, 0)],
+      [
+        {
+          id: 'create-new',
+          actionName: NEW_LAYER_ACTION,
+          layerId: layer2Id,
+          layerSource: {
+            kind: 'blank' as const,
+            color: '#ffffff',
+            opacity: 1,
+            isBedrock: false,
+            pos: { x: 20, y: 30, width: 120, height: 80 },
+          },
+        },
+        { id: 'remove-new', actionName: REMOVE_ACTION, layerId: layer2Id },
+      ]
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layer2Id]).toBeUndefined();
+    expect(replay.activeLayerId).toBe(layerId);
+  });
+
+  it('merge-document with non-existent removedLayerIds does not crash', () => {
+    const layer1 = createLayer(layerId, 0);
+    const layer2 = createLayer(layer2Id, 1);
+
+    const document = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: layer1, [layer2Id]: layer2 },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'merge-op',
+          actionName: MERGE_ACTION,
+          layerId: layerId,
+          layerSource: {
+            kind: 'blank' as const,
+            color: '#ffffff',
+            opacity: 1,
+            isBedrock: false,
+            pos: { x: 20, y: 30, width: 120, height: 80 },
+          },
+        },
+      ],
+      { documentId: 'merge-test' }
+    ).document;
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layer2Id]).toBeUndefined();
+    expect(replay.layers[layerId]).toBeDefined();
+    expect(replay.activeLayerId).toBe(layerId);
+  });
+
+  it('rasterize-layer on non-existent layer is a no-op', () => {
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createLayer(layerId, 0) },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'rasterize-missing',
+          actionName: TOOL_ACTION,
+          layerId: 'non-existent',
+          args: { toolName: 'rasterize' },
+        },
+      ],
+      { documentId: 'edge-case-test' }
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.layers[layerId]).toBeDefined();
+    expect(replay.layers['rasterized']).toBeUndefined();
+  });
+
+  it('set-document-frame updates frame without affecting layers', () => {
+    const nextFrame = { x: 50, y: 60, width: 300, height: 200 };
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createLayer(layerId, 0) },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'crop',
+          actionName: SET_DOCUMENT_FRAME_ACTION,
+          layerId: 'document',
+          args: { previousFrame: baselineFrame, nextFrame },
+        },
+      ],
+      { documentId: 'frame-test' }
+    );
+
+    const replay = replayDurableDocument(document);
+    expect(replay.frame).toEqual(nextFrame);
+    expect(replay.layers[layerId]?.snapshot.pos).toEqual({ x: 20, y: 30, width: 120, height: 80 });
+  });
+
+  it('set-selection replaces selections entirely', () => {
+    const selection1 = {
+      id: 'sel-1',
+      points: [{ x: 1, y: 2 }],
+      isActive: true,
+      pos: { x: 1, y: 2, width: 10, height: 12 },
+    };
+    const selection2 = {
+      id: 'sel-2',
+      points: [{ x: 5, y: 6 }],
+      isActive: true,
+      pos: { x: 5, y: 6, width: 20, height: 30 },
+    };
+
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createLayer(layerId, 0) },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'sel-1',
+          actionName: SELECTION_ACTION,
+          layerId,
+          args: {
+            previousSelectionState: { selections: [], activeSelectionId: null },
+            nextSelectionState: { selections: [selection1], activeSelectionId: 'sel-1' },
+          },
+        },
+        {
+          id: 'sel-2',
+          actionName: SELECTION_ACTION,
+          layerId,
+          args: {
+            previousSelectionState: { selections: [selection1], activeSelectionId: 'sel-1' },
+            nextSelectionState: { selections: [selection2], activeSelectionId: 'sel-2' },
+          },
+        },
+      ],
+      { documentId: 'selection-test' }
+    );
+
+    const atFirst = replayDurableDocument(document, 0);
+    expect(atFirst.selections.selections).toHaveLength(1);
+    expect(atFirst.selections.activeSelectionId).toBe('sel-1');
+
+    const atSecond = replayDurableDocument(document, 1);
+    expect(atSecond.selections.selections).toHaveLength(1);
+    expect(atSecond.selections.activeSelectionId).toBe('sel-2');
+    expect(atSecond.selections.selections[0].id).toBe('sel-2');
+  });
+
+  it('replayDurableAtCursor produces independent result from replayDurableDocument', () => {
+    const { document } = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createLayer(layerId, 0) },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        { id: 'op1', actionName: TOOL_ACTION, layerId, args: { toolName: 'blur', radius: 2 } },
+      ],
+      { documentId: 'cursor-test' }
+    );
+
+    const replay1 = replayDurableDocument(document, 0);
+    const replay2 = replayDurableAtCursor(document, 0);
+
+    expect(replay1).toEqual(replay2);
+    expect(replay1).not.toBe(replay2);
+  });
+
+  it('activeLayerId fallback with truthy but non-existent id covers final ternary false branch', () => {
+    // Build a baseline with a known layer, then construct a document with
+    // baseline.activeLayerId set to a non-existent id. This forces the final
+    // ternary's false branch (line 164) with a truthy activeLayerId.
+    const baselineLayer = createLayer(layerId, 0);
+    const frozenLayer = Object.freeze({
+      ...baselineLayer,
+      pos: Object.freeze({ ...baselineLayer.pos }),
+      source: Object.freeze({
+        kind: 'blank' as const,
+        color: '#ffffff',
+        opacity: 1,
+        size: { width: baselineLayer.pos.width, height: baselineLayer.pos.height },
+        isBedrock: false,
+      }),
+    });
+    const baseline = Object.freeze({
+      frame: Object.freeze({ ...baselineFrame }),
+      layers: Object.freeze([frozenLayer]),
+      selections: Object.freeze({ selections: Object.freeze([]), activeSelectionId: null }),
+      activeLayerId: 'non-existent-layer',
+    });
+
+    const document: DurableDocument = Object.freeze({
+      documentId: 'fallback-test',
+      documentRevision: 0,
+      branchRevision: 0,
+      durableRevision: 0,
+      baseline,
+      history: Object.freeze([]),
+      cursor: -1,
+    });
+
+    const replay = replayDurableDocument(document);
+    expect(replay.activeLayerId).toBe(layerId); // Falls back to highest-order layer
   });
 });

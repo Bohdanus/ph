@@ -2,39 +2,54 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Layer } from '../../contexts/layer-types.ts';
 import { useMarchingAnts } from '../useAnts.ts';
+import { createMockCanvasContext } from '../../test/setup.ts';
 
-describe('useMarchingAnts', () => {
-  let frames: Map<number, FrameRequestCallback>;
-  let nextId: number;
+function createRafMocks() {
+  const frames: Map<number, FrameRequestCallback> = new Map();
+  let nextId = 0;
 
-  beforeEach(() => {
-    frames = new Map();
-    nextId = 0;
-    vi.stubGlobal(
-      'requestAnimationFrame',
-      vi.fn((callback: FrameRequestCallback) => {
-        const id = nextId++;
-        frames.set(id, callback);
-        return id;
-      })
-    );
-    vi.stubGlobal(
-      'cancelAnimationFrame',
-      vi.fn((id: number) => frames.delete(id))
-    );
+  const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+    const id = nextId++;
+    frames.set(id, callback);
+    return id;
   });
 
-  afterEach(() => vi.unstubAllGlobals());
+  const cancelAnimationFrame = vi.fn((id: number) => {
+    frames.delete(id);
+  });
+
+  return { requestAnimationFrame, cancelAnimationFrame, frames };
+}
+
+describe('useMarchingAnts', () => {
+  let rafMocks: ReturnType<typeof createRafMocks>;
+  let origRaf: typeof requestAnimationFrame;
+  let origCancel: typeof cancelAnimationFrame;
+
+  beforeEach(() => {
+    origRaf = globalThis.requestAnimationFrame;
+    origCancel = globalThis.cancelAnimationFrame;
+
+    rafMocks = createRafMocks();
+    globalThis.requestAnimationFrame = rafMocks.requestAnimationFrame;
+    globalThis.cancelAnimationFrame = rafMocks.cancelAnimationFrame;
+  });
+
+  afterEach(() => {
+    globalThis.requestAnimationFrame = origRaf;
+    globalThis.cancelAnimationFrame = origCancel;
+    vi.restoreAllMocks();
+  });
 
   function frame() {
-    const pending = [...frames.values()];
-    frames.clear();
+    const pending = [...rafMocks.frames.values()];
+    rafMocks.frames.clear();
     act(() => pending.forEach((callback) => callback(0)));
   }
 
   function setup() {
     const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d')!;
+    const ctx = createMockCanvasContext(canvas);
     vi.spyOn(canvas, 'getContext').mockReturnValue(ctx);
     const overlayRef = { current: canvas as HTMLCanvasElement | null };
     const containerRef = { current: document.createElement('div') };
@@ -85,13 +100,13 @@ describe('useMarchingAnts', () => {
     expect(draft.closePath).not.toHaveBeenCalled();
     const custom = new Path2D();
     act(() => result.current.drawPath(custom, { x: 100, y: 100, width: 30, height: 40 }));
-    expect(frames.size).toBe(1);
+    expect(rafMocks.frames.size).toBe(1);
     frame();
     expect(ctx.clearRect).toHaveBeenCalledWith(-1, -1, 12, 22);
     expect(ctx.stroke).toHaveBeenLastCalledWith(custom);
     act(() => result.current.clear());
     expect(ctx.clearRect).toHaveBeenLastCalledWith(99, 99, 32, 42);
-    expect(frames.size).toBe(0);
+    expect(rafMocks.frames.size).toBe(0);
   });
 
   it('preserves layer rectangles and cancels even before the first frame', () => {
@@ -100,13 +115,13 @@ describe('useMarchingAnts', () => {
     act(() => result.current.draw(layer));
     expect(containerRef.current.classList.contains('cursor-grab')).toBe(true);
     act(() => result.current.clear());
-    expect(frames.size).toBe(0);
+    expect(rafMocks.frames.size).toBe(0);
     expect(containerRef.current.classList.contains('cursor-grab')).toBe(false);
     act(() => result.current.draw(layer, { x: 20 }));
     frame();
     expect(ctx.strokeRect).toHaveBeenLastCalledWith(20, 2, 30, 40);
     act(() => result.current.drawPoints([]));
-    expect(frames.size).toBe(0);
+    expect(rafMocks.frames.size).toBe(0);
     expect(ctx.clearRect).toHaveBeenLastCalledWith(19, 1, 32, 42);
   });
 
@@ -121,7 +136,7 @@ describe('useMarchingAnts', () => {
     frame();
     overlayRef.current = null;
     unmount();
-    expect(frames.size).toBe(0);
+    expect(rafMocks.frames.size).toBe(0);
     expect(ctx.clearRect).toHaveBeenLastCalledWith(-1, -1, 12, 12);
   });
 
@@ -134,7 +149,7 @@ describe('useMarchingAnts', () => {
       ])
     );
     frame();
-    expect(frames.size).toBe(0);
+    expect(rafMocks.frames.size).toBe(0);
     unmount();
   });
 });

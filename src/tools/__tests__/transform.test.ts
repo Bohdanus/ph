@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { transform, type TransformToolArgs } from '../transform.ts';
 import type { ProcessorToolParams } from '../toolProcessors.ts';
@@ -17,7 +17,12 @@ class MockOffscreenCanvas {
   }
 }
 
-const canvasContext: Record<string, unknown> = {};
+const drawImageSpy = vi.fn();
+const translateSpy = vi.fn();
+const rotateSpy = vi.fn();
+const scaleSpy = vi.fn();
+const transformSpy = vi.fn();
+const setTransformSpy = vi.fn();
 
 function mockContext(canvas: MockOffscreenCanvas): CanvasRenderingContext2D {
   return {
@@ -37,13 +42,13 @@ function mockContext(canvas: MockOffscreenCanvas): CanvasRenderingContext2D {
     save: vi.fn(),
     restore: vi.fn(),
     setLineDash: vi.fn(),
-    drawImage: vi.fn(),
+    drawImage: drawImageSpy,
     clip: vi.fn(),
-    translate: vi.fn(),
-    transform: vi.fn(),
-    setTransform: vi.fn(),
-    scale: vi.fn(),
-    rotate: vi.fn(),
+    translate: translateSpy,
+    transform: transformSpy,
+    setTransform: setTransformSpy,
+    scale: scaleSpy,
+    rotate: rotateSpy,
     createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
     strokeStyle: '',
     fillStyle: '',
@@ -55,28 +60,28 @@ function mockContext(canvas: MockOffscreenCanvas): CanvasRenderingContext2D {
   } as unknown as CanvasRenderingContext2D;
 }
 
-const drawImageSpy = vi.fn();
-const translateSpy = vi.fn();
-const rotateSpy = vi.fn();
-const scaleSpy = vi.fn();
-const transformSpy = vi.fn();
-const setTransformSpy = vi.fn();
+const originalOffscreenCanvas = globalThis.OffscreenCanvas;
 
-function setupCanvasMock() {
+beforeEach(() => {
+  Object.defineProperty(globalThis, 'OffscreenCanvas', {
+    value: MockOffscreenCanvas,
+    writable: true,
+    configurable: true,
+  });
+});
+
+afterEach(() => {
   drawImageSpy.mockClear();
   translateSpy.mockClear();
   rotateSpy.mockClear();
   scaleSpy.mockClear();
   transformSpy.mockClear();
   setTransformSpy.mockClear();
-}
-
-vi.stubGlobal('OffscreenCanvas', MockOffscreenCanvas);
-
-Object.defineProperty(canvasContext, 'canvas', {
-  get() {
-    return mockContext(this as unknown as MockOffscreenCanvas);
-  },
+  Object.defineProperty(globalThis, 'OffscreenCanvas', {
+    value: originalOffscreenCanvas,
+    writable: true,
+    configurable: true,
+  });
 });
 
 function makeBitmap(width: number, height: number): ImageBitmap {
@@ -104,10 +109,6 @@ function withArgs(overrides: Partial<TransformToolArgs> = {}): TransformToolArgs
 }
 
 describe('transform tool', () => {
-  beforeEach(() => {
-    setupCanvasMock();
-  });
-
   describe('input validation', () => {
     it('throws when width is less than 1', () => {
       const params = makeParams(makeBitmap(0, 0), { width: 0, height: 10 });
@@ -194,7 +195,7 @@ describe('transform tool', () => {
     it('allows trapezoid alone with no other transforms', () => {
       const params = makeParams(makeBitmap(100, 100), { width: 100, height: 100 });
       const [canvas] = transform(params)(withArgs({ trapezoid: 25 }));
-      expect(canvas).toBeInstanceOf(MockOffscreenCanvas);
+      expect(canvas).toBeInstanceOf(globalThis.OffscreenCanvas);
       expect(canvas.width).toBeGreaterThan(0);
     });
   });
@@ -238,7 +239,7 @@ describe('transform tool', () => {
 
       expect(result).toHaveLength(1);
       const [canvas] = result;
-      expect(canvas).toBeInstanceOf(MockOffscreenCanvas);
+      expect(canvas).toBeInstanceOf(globalThis.OffscreenCanvas);
       expect(canvas.width).toBe(100);
       expect(canvas.height).toBe(100);
     });
@@ -250,7 +251,7 @@ describe('transform tool', () => {
 
       expect(result).toHaveLength(2);
       const [canvas, patch] = result;
-      expect(canvas).toBeInstanceOf(MockOffscreenCanvas);
+      expect(canvas).toBeInstanceOf(globalThis.OffscreenCanvas);
       expect(patch).toEqual({ width: expect.any(Number), height: expect.any(Number) });
       // A 45° rotation of a 100×100 square should produce a larger canvas.
       expect(patch!.width).toBeGreaterThan(100);
@@ -264,7 +265,7 @@ describe('transform tool', () => {
 
       // Mirror doesn't change the bounding box, so no position patch is returned.
       expect(result).toHaveLength(1);
-      expect(result[0]).toBeInstanceOf(MockOffscreenCanvas);
+      expect(result[0]).toBeInstanceOf(globalThis.OffscreenCanvas);
     });
 
     it('applies vertical mirror via negative scaleY', () => {
@@ -273,7 +274,7 @@ describe('transform tool', () => {
       const result = transform(params)(withArgs({ mirrorV: true }));
 
       expect(result).toHaveLength(1);
-      expect(result[0]).toBeInstanceOf(MockOffscreenCanvas);
+      expect(result[0]).toBeInstanceOf(globalThis.OffscreenCanvas);
     });
 
     it('applies skewX and skewY', () => {
@@ -281,7 +282,7 @@ describe('transform tool', () => {
       const params = makeParams(bitmap, { width: 100, height: 100 });
       const [canvas, patch] = transform(params)(withArgs({ skewX: 10, skewY: 5 }));
 
-      expect(canvas).toBeInstanceOf(MockOffscreenCanvas);
+      expect(canvas).toBeInstanceOf(globalThis.OffscreenCanvas);
       expect(patch).toBeDefined();
     });
 
@@ -290,7 +291,7 @@ describe('transform tool', () => {
       const params = makeParams(bitmap, { width: 100, height: 100 });
       const [canvas, patch] = transform(params)(withArgs({ resizeX: 150, resizeY: 85 }));
 
-      expect(canvas).toBeInstanceOf(MockOffscreenCanvas);
+      expect(canvas).toBeInstanceOf(globalThis.OffscreenCanvas);
       expect(patch).toEqual({ width: 150, height: 85 });
     });
 
@@ -301,7 +302,7 @@ describe('transform tool', () => {
         withArgs({ rotate: 30, skewX: 5, skewY: 3, mirrorH: true, resizeX: 120, resizeY: 90 })
       );
 
-      expect(canvas).toBeInstanceOf(MockOffscreenCanvas);
+      expect(canvas).toBeInstanceOf(globalThis.OffscreenCanvas);
       expect(patch).toBeDefined();
       expect(patch!.width).toBeGreaterThan(0);
       expect(patch!.height).toBeGreaterThan(0);
@@ -315,7 +316,7 @@ describe('transform tool', () => {
       const result = transform(params)(withArgs({ trapezoid: 50 }));
 
       expect(result).toHaveLength(1);
-      expect(result[0]).toBeInstanceOf(MockOffscreenCanvas);
+      expect(result[0]).toBeInstanceOf(globalThis.OffscreenCanvas);
       // The top edge is full width so the bounding box width is unchanged.
       expect(result[0].width).toBe(100);
       expect(result[0].height).toBe(50);
@@ -327,7 +328,7 @@ describe('transform tool', () => {
       const result = transform(params)(withArgs({ trapezoid: -30 }));
 
       const [canvas] = result;
-      expect(canvas).toBeInstanceOf(MockOffscreenCanvas);
+      expect(canvas).toBeInstanceOf(globalThis.OffscreenCanvas);
       expect(canvas.width).toBe(100);
       expect(canvas.height).toBe(50);
     });

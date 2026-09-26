@@ -1,0 +1,31 @@
+# Dependency Review Configuration
+# See: https://github.com/actions/dependency-review-action#configuration-options
+
+# Allow specific vulnerabilities that are false positives or accepted risks
+allow-ghsas: []
+
+# Deny specific licenses
+deny-licenses:
+  - GPL-3.0-only
+  - AGPL-3.0-only
+
+# Allow specific licenses
+allow-licenses:
+  - MIT
+  - Apache-2.0
+  - BSD-2-Clause
+  - BSD-3-Clause
+  - ISC
+  - CC0-1.0
+  - Unlicense
+  - WTFPL
+  - Zlib
+  - MPL-2.0
+  - CC-BY-4.0
+  - CC-BY-SA-4.0
+
+# Block on high severity vulnerabilities
+fail-on-severity: high
+
+# Block on specific vulnerability types
+# fail-on-cvss-score: 7.0

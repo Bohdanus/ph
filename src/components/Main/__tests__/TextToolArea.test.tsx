@@ -3,22 +3,32 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TextToolArea } from '../TextToolArea.tsx';
 import type { UseRectProps } from '../../../hooks/useRect.ts';
 
-const setToolArgs = vi.fn();
-const textareaRef = { current: null as HTMLTextAreaElement | null };
-const toolOverlayRef = { current: document.createElement('canvas') };
-const containerRef = { current: document.createElement('div') };
-const toolArgs: { toolName: 'draw' | 'text'; text?: string; rect?: null } = {
-  toolName: 'draw',
-};
+const createSetToolArgs = vi.hoisted(() => vi.fn);
+const createTextareaRef = vi.hoisted(() => () => ({ current: null as HTMLTextAreaElement | null }));
+const createToolOverlayRef = vi.hoisted(() => () => ({ current: document.createElement('canvas') }));
+const createContainerRef = vi.hoisted(() => () => ({ current: document.createElement('div') }));
+const createToolArgs = vi.hoisted(() => () => ({ toolName: 'draw' as 'draw' | 'text', text: undefined, rect: null }));
+const createLatestUseRectProps = vi.hoisted(() => () => null as UseRectProps | null);
 
-let latestUseRectProps: UseRectProps | null = null;
+let setToolArgs: ReturnType<typeof createSetToolArgs>;
+let textareaRef: ReturnType<typeof createTextareaRef>;
+let toolOverlayRef: ReturnType<typeof createToolOverlayRef>;
+let containerRef: ReturnType<typeof createContainerRef>;
+let toolArgs: ReturnType<typeof createToolArgs>;
+let latestUseRectProps: ReturnType<typeof createLatestUseRectProps>;
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
     {
-      containerRef,
-      textareaRef,
-      toolOverlayRef,
+      get containerRef() {
+        return containerRef;
+      },
+      get textareaRef() {
+        return textareaRef;
+      },
+      get toolOverlayRef() {
+        return toolOverlayRef;
+      },
       color: '#000000',
       totalSize: { width: 100, height: 100 },
     },
@@ -27,7 +37,14 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 }));
 
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
-  useCurrentTool: () => ({ toolArgs, setToolArgs }),
+  useCurrentTool: () => ({
+    get toolArgs() {
+      return toolArgs;
+    },
+    get setToolArgs() {
+      return setToolArgs;
+    },
+  }),
 }));
 
 vi.mock('../../../hooks/useRect.ts', () => ({
@@ -43,10 +60,12 @@ vi.mock('../../../util/rect.ts', () => ({
 
 describe('TextToolArea', () => {
   beforeEach(() => {
-    toolArgs.toolName = 'draw';
-    textareaRef.current = null;
-    latestUseRectProps = null;
-    setToolArgs.mockReset();
+    setToolArgs = createSetToolArgs();
+    textareaRef = createTextareaRef();
+    toolOverlayRef = createToolOverlayRef();
+    containerRef = createContainerRef();
+    toolArgs = createToolArgs();
+    latestUseRectProps = createLatestUseRectProps();
   });
 
   it('does not crash when the textarea ref is not attached yet', () => {

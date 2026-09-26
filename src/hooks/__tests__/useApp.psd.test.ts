@@ -59,7 +59,7 @@ describe('useApp PSD replacement', () => {
   it('replaces the document atomically with an independent, metadata-preserving history baseline', async () => {
     const { document, state, dispatch } = setup();
     const confirm = vi.spyOn(window, 'confirm');
-    useApp().setImageFromUpload({ fileName: 'design.psd', document });
+    await useApp().setImageFromUpload({ fileName: 'design.psd', document });
 
     expect(confirm).not.toHaveBeenCalled();
     expect(dispatch).toHaveBeenCalledTimes(1);
@@ -132,12 +132,12 @@ describe('useApp PSD replacement', () => {
     expect(mocks.createLayerFromBitmap).not.toHaveBeenCalled();
   });
 
-  it('opens the PSD after its warnings are accepted', () => {
+  it('opens the PSD after its warnings are accepted', async () => {
     const { document, dispatch } = setup(['Text is rasterized']);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
-    useApp().setImageFromUpload({ fileName: 'design.psd', document });
+    await useApp().setImageFromUpload({ fileName: 'design.psd', document });
     expect(dispatch).toHaveBeenCalledTimes(1);
-    expect(dispatch.mock.calls[0][0].payload.updates.layers).toBe(document.layers);
+    expect(dispatch.mock.calls[0][0].payload.updates.layers).toEqual(document.layers);
   });
 
   it('retains the raster upload path rather than creating a PSD baseline', () => {

@@ -50,7 +50,7 @@ if (!testGlobal.OffscreenCanvas) {
       this.height = Math.max(1, Math.ceil(height));
     }
     getContext() {
-      return { ...canvasContext, canvas: this } as unknown as OffscreenCanvasRenderingContext2D;
+      return createMockCanvasContext(this) as unknown as OffscreenCanvasRenderingContext2D;
     }
     transferToImageBitmap() {
       return {
@@ -62,36 +62,66 @@ if (!testGlobal.OffscreenCanvas) {
   } as unknown as typeof OffscreenCanvas;
 }
 
-const canvasContext = {
-  canvas: { width: 0, height: 0 },
-  clearRect: vi.fn(),
-  beginPath: vi.fn(),
-  closePath: vi.fn(),
-  moveTo: vi.fn(),
-  lineTo: vi.fn(),
-  bezierCurveTo: vi.fn(),
-  quadraticCurveTo: vi.fn(),
-  stroke: vi.fn(),
-  fill: vi.fn(),
-  fillRect: vi.fn(),
-  strokeRect: vi.fn(),
-  arc: vi.fn(),
-  save: vi.fn(),
-  restore: vi.fn(),
-  setLineDash: vi.fn(),
-  drawImage: vi.fn(),
-  clip: vi.fn(),
-  createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
-  translate: vi.fn(),
-  transform: vi.fn(),
-  setTransform: vi.fn(),
-  strokeStyle: '',
-  fillStyle: '',
-  lineWidth: 1,
-  globalAlpha: 1,
-  globalCompositeOperation: 'source-over',
-};
+if (!testGlobal.createImageBitmap) {
+  testGlobal.createImageBitmap = vi.fn(async (source: CanvasImageSource) => {
+    if (source instanceof OffscreenCanvas) {
+      return {
+        width: source.width,
+        height: source.height,
+        close: vi.fn(),
+      } as unknown as ImageBitmap;
+    }
+    if (source instanceof HTMLCanvasElement) {
+      return {
+        width: source.width,
+        height: source.height,
+        close: vi.fn(),
+      } as unknown as ImageBitmap;
+    }
+    return {
+      width: 100,
+      height: 100,
+      close: vi.fn(),
+    } as unknown as ImageBitmap;
+  }) as typeof createImageBitmap;
+}
+
+export function createMockCanvasContext(canvas?: { width: number; height: number }): CanvasRenderingContext2D {
+  return {
+    canvas: canvas ?? { width: 0, height: 0 },
+    clearRect: vi.fn(),
+    beginPath: vi.fn(),
+    closePath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    bezierCurveTo: vi.fn(),
+    quadraticCurveTo: vi.fn(),
+    stroke: vi.fn(),
+    fill: vi.fn(),
+    fillRect: vi.fn(),
+    strokeRect: vi.fn(),
+    arc: vi.fn(),
+    save: vi.fn(),
+    restore: vi.fn(),
+    setLineDash: vi.fn(),
+    drawImage: vi.fn(),
+    clip: vi.fn(),
+    createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+    translate: vi.fn(),
+    transform: vi.fn(),
+    setTransform: vi.fn(),
+    strokeStyle: '',
+    fillStyle: '',
+    lineWidth: 1,
+    globalAlpha: 1,
+    globalCompositeOperation: 'source-over',
+    get filter() {
+      return '';
+    },
+    set filter(_v: string) {},
+  } as unknown as CanvasRenderingContext2D;
+}
 
 vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function getContext(this: HTMLCanvasElement) {
-  return { ...canvasContext, canvas: this } as unknown as CanvasRenderingContext2D;
+  return createMockCanvasContext(this) as unknown as CanvasRenderingContext2D;
 });

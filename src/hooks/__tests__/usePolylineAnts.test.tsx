@@ -4,34 +4,43 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import type { Mock } from 'vitest';
 import { useMarchingPath } from '../usePolylineAnts';
 
-const testGlobal = globalThis as typeof globalThis & { Path2D?: typeof Path2D };
+function createRafMocks() {
+  const frames: Map<number, FrameRequestCallback> = new Map();
+  let nextId = 0;
+
+  const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+    const id = nextId++;
+    frames.set(id, callback);
+    // Use setTimeout to work with fake timers
+    setTimeout(callback, 16);
+    return id;
+  });
+
+  const cancelAnimationFrame = vi.fn((id: number) => {
+    frames.delete(id);
+  });
+
+  return { requestAnimationFrame, cancelAnimationFrame, frames, getNextId: () => nextId };
+}
 
 describe('useMarchingPath basic behavior', () => {
   let origRaf: typeof requestAnimationFrame;
   let origCancel: typeof cancelAnimationFrame;
   let origPath2D: typeof Path2D | undefined;
+  let rafMocks: ReturnType<typeof createRafMocks>;
 
   beforeEach(() => {
-    // Capture the real globals before faking timers. The hook's animate loop
-    // reschedules itself via setTimeout(cb, 16) (our rAF shim), so with fake
-    // timers every frame is fully controlled by the test. vi.useRealTimers()
-    // in afterEach discards any pending frames instead of letting a late
-    // callback fire against a restored (undefined) requestAnimationFrame.
-    origRaf = testGlobal.requestAnimationFrame;
-    origCancel = testGlobal.cancelAnimationFrame;
-    origPath2D = testGlobal.Path2D;
+    origRaf = globalThis.requestAnimationFrame;
+    origCancel = globalThis.cancelAnimationFrame;
+    origPath2D = globalThis.Path2D;
 
     vi.useFakeTimers();
 
-    testGlobal.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => {
-      return setTimeout(cb as TimerHandler, 16) as unknown as number;
-    });
+    rafMocks = createRafMocks();
+    globalThis.requestAnimationFrame = rafMocks.requestAnimationFrame;
+    globalThis.cancelAnimationFrame = rafMocks.cancelAnimationFrame;
 
-    testGlobal.cancelAnimationFrame = vi.fn((id: number) => {
-      clearTimeout(id as unknown as number);
-    });
-
-    testGlobal.Path2D = vi.fn().mockImplementation(function MockPath2D() {
+    globalThis.Path2D = vi.fn().mockImplementation(function MockPath2D() {
       return {
         moveTo: vi.fn(),
         lineTo: vi.fn(),
@@ -41,16 +50,14 @@ describe('useMarchingPath basic behavior', () => {
   });
 
   afterEach(() => {
-    // Restoring real timers also clears pending fake timers, which is what
-    // prevents the unhandled "requestAnimationFrame is not defined" error.
     vi.useRealTimers();
 
-    testGlobal.requestAnimationFrame = origRaf;
-    testGlobal.cancelAnimationFrame = origCancel;
+    globalThis.requestAnimationFrame = origRaf;
+    globalThis.cancelAnimationFrame = origCancel;
     if (origPath2D) {
-      testGlobal.Path2D = origPath2D;
+      globalThis.Path2D = origPath2D;
     } else {
-      delete (testGlobal as { Path2D?: typeof Path2D }).Path2D;
+      delete (globalThis as { Path2D?: typeof Path2D }).Path2D;
     }
     vi.restoreAllMocks();
   });
@@ -97,7 +104,7 @@ describe('useMarchingPath basic behavior', () => {
       apiRef.current!.draw();
     });
 
-    expect((testGlobal.requestAnimationFrame as unknown as Mock).mock.calls.length).toBeGreaterThan(0);
+    expect(rafMocks.requestAnimationFrame.mock.calls.length).toBeGreaterThan(0);
   });
 
   it('draw() actually draws on the canvas each frame', () => {
@@ -185,7 +192,7 @@ describe('useMarchingPath basic behavior', () => {
     });
 
     // cancelAnimationFrame should have been called when clear() was invoked.
-    expect((testGlobal.cancelAnimationFrame as unknown as Mock).mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(rafMocks.cancelAnimationFrame.mock.calls.length).toBeGreaterThanOrEqual(1);
     // The canvas should have been cleared (both by animate and by clear()).
     expect((mockCtx.clearRect as unknown as Mock).mock.calls.length).toBeGreaterThanOrEqual(1);
     const lastClearRect = (mockCtx.clearRect as unknown as Mock).mock.calls.slice(-1)[0];

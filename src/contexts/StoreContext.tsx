@@ -384,6 +384,7 @@ function reducer(state: StoreData, action: Action): StoreData {
         durableDocument: action.payload.durableDocument,
         durableStatus: action.payload.durableStatus,
         durableDiagnostics: action.payload.durableDiagnostics,
+        hasUnsavedChanges: true,
       };
     }
     case 'REPLACE_DOCUMENT': {

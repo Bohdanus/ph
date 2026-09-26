@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from './StoreContext.tsx';
 import type {
@@ -97,6 +97,9 @@ export const useLayers = () => {
   ] = useStore();
   const documentFrame = currentDocumentFrame ?? documentFrameFromSize(totalSize);
 
+  // Track last committed args for text tool to prevent double-commit
+  const lastCommittedTextArgsRef = useRef<ToolArgs | null>(null);
+
   function clearOverlay() {
     const overlayCtx = toolOverlayRef.current?.getContext('2d');
     if (!overlayCtx) return;
@@ -190,12 +193,23 @@ export const useLayers = () => {
       currentLayers
     );
   };
-
   const createLayerFromTool = (sourceArgs: Optional<FullArgs, 'pos'>) => {
     // commented out because causes infinite recursion
     // commitDirtyTool();
 
     const { args, pos } = sourceArgs;
+
+    // Idempotency guard for text tool: skip if these exact args were already committed
+    if (toolName === 'text' && lastCommittedTextArgsRef.current === args) {
+      // Find and return the layer that was already created for these args
+      for (const layer of Object.values(layers)) {
+        if (layer.source?.kind === 'tool' && layer.source.args === args) {
+          return layer;
+        }
+      }
+      return null;
+    }
+
     let source: ToolLayerSource;
 
     if (!pos) {
@@ -229,6 +243,11 @@ export const useLayers = () => {
       actionName: NEW_LAYER_ACTION,
       layerSource: source,
     });
+
+    // Track committed args for text tool idempotency
+    if (toolName === 'text') {
+      lastCommittedTextArgsRef.current = args;
+    }
 
     clearOverlay();
     return newLayer;
@@ -283,7 +302,7 @@ export const useLayers = () => {
   };
 
   // honestly, the only dirty tool that needs saving is text and maybe crop
-  const commitDirtyTool = (deferDispatch = false) => {
+  const commitDirtyTool = (deferDispatch = false): LayersRecord => {
     // can be run safely if no dirty layer
 
     // special case
@@ -291,8 +310,13 @@ export const useLayers = () => {
       const args = currentArgsRef.current as TextToolArgs & ToolArgs;
       if (!args.text || !args.rect) return layers;
 
+      // Idempotency guard: skip if these exact args were already committed
+      if (lastCommittedTextArgsRef.current === args) return layers;
+
       const layer = createLayerFromTool({ args });
+      if (!layer) return layers;
       currentArgsRef.current = { ...args, text: '' };
+      lastCommittedTextArgsRef.current = args;
       return { ...layers, [layer.id]: layer };
     }
 

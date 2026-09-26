@@ -5,8 +5,8 @@ import { useDrag } from '../useDrag.ts';
 
 const pointerState = vi.hoisted(() => ({ isMouseDown: { current: false }, moveValid: true }));
 
-vi.mock('../usePointerPosition.ts', () => ({
-  usePointerPosition: () => ({
+function createMockUsePointerPosition() {
+  return {
     pointerIdRef: { current: null },
     isPointerDownValid: vi.fn((event: PointerEvent) => {
       if (event.button !== 0) return false;
@@ -21,7 +21,11 @@ vi.mock('../usePointerPosition.ts', () => ({
     }),
     getLocalCoords: vi.fn(() => ({ x: 10, y: 20 })),
     isMouseDown: pointerState.isMouseDown,
-  }),
+  };
+}
+
+vi.mock('../usePointerPosition.ts', () => ({
+  usePointerPosition: createMockUsePointerPosition,
 }));
 
 function makeEvent(overrides: Record<string, unknown> = {}): PointerEvent<HTMLDivElement> {

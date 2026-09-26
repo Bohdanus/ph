@@ -7,42 +7,50 @@ const createLayerFromToolMock = vi.hoisted(() => vi.fn());
 const drawShapeMock = vi.hoisted(() => vi.fn());
 const setShapeCtxMock = vi.hoisted(() => vi.fn());
 
-const pointerState = vi.hoisted(() => ({ isMouseDown: { current: false }, moveValid: true }));
-
-const toolArgsState = vi.hoisted(
-  (): {
-    toolArgs: {
-      toolName: 'shape';
-      figure: 'line' | 'circle' | 'rectangle' | 'square' | 'oval' | 'triangle' | 'polygon';
-      color: string;
-      backgroundColor: string | null;
-      alpha: number;
-      lineWidth: number;
-      cornerRadius: number;
-    };
-  } => ({
-    toolArgs: {
-      toolName: 'shape',
-      figure: 'rectangle',
-      color: '#000000',
-      backgroundColor: null,
-      alpha: 1,
-      lineWidth: 2,
-      cornerRadius: 0,
-    },
-  })
-);
-
-const storeMocks = vi.hoisted(() => {
+const createPointerState = vi.hoisted(() => () => ({ isMouseDown: { current: false }, moveValid: true }));
+const createToolArgsState = vi.hoisted(() => () => ({
+  toolArgs: {
+    toolName: 'shape',
+    figure: 'rectangle',
+    color: '#000000',
+    backgroundColor: null,
+    alpha: 1,
+    lineWidth: 2,
+    cornerRadius: 0,
+  },
+}));
+const createStoreMocks = vi.hoisted(() => () => {
   const canvas = document.createElement('canvas');
   canvas.width = 800;
   canvas.height = 600;
-  const ctx = canvas.getContext('2d');
+  const ctx = {
+    clearRect: vi.fn(),
+    fillRect: vi.fn(),
+    strokeRect: vi.fn(),
+    beginPath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    arc: vi.fn(),
+    closePath: vi.fn(),
+    fill: vi.fn(),
+    stroke: vi.fn(),
+    save: vi.fn(),
+    restore: vi.fn(),
+    translate: vi.fn(),
+    scale: vi.fn(),
+    rotate: vi.fn(),
+    setTransform: vi.fn(),
+    drawImage: vi.fn(),
+    getImageData: vi.fn(),
+    putImageData: vi.fn(),
+  } as unknown as CanvasRenderingContext2D;
   const container = document.createElement('div');
   const cr = { left: 0, top: 0, width: 800, height: 600, right: 800, bottom: 600, x: 0, y: 0, toJSON: () => {} };
   container.getBoundingClientRect = vi.fn(() => cr);
   return { canvas, ctx, container, cr };
 });
+
+const promptMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
@@ -90,27 +98,26 @@ vi.mock('../../../tools/shape.ts', () => ({
   setShapeCtx: setShapeCtxMock,
 }));
 
+let pointerState: ReturnType<typeof createPointerState>;
+let toolArgsState: ReturnType<typeof createToolArgsState>;
+let storeMocks: ReturnType<typeof createStoreMocks>;
+
 describe('ShapeToolArea', () => {
   beforeEach(() => {
+    pointerState = createPointerState();
+    toolArgsState = createToolArgsState();
+    storeMocks = createStoreMocks();
     createLayerFromToolMock.mockClear();
     drawShapeMock.mockClear();
     setShapeCtxMock.mockClear();
-    pointerState.isMouseDown.current = false;
-    pointerState.moveValid = true;
-    toolArgsState.toolArgs.figure = 'rectangle';
-    toolArgsState.toolArgs.lineWidth = 2;
-    toolArgsState.toolArgs.color = '#000000';
-    toolArgsState.toolArgs.backgroundColor = null;
-    vi.stubGlobal(
-      'prompt',
-      vi.fn().mockImplementation(() => null)
-    );
+    promptMock.mockReset();
+    vi.spyOn(globalThis, 'prompt').mockImplementation(promptMock);
+    promptMock.mockReturnValue(null);
   });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
-    vi.unstubAllGlobals();
   });
 
   describe('rendering', () => {
@@ -148,9 +155,15 @@ describe('ShapeToolArea', () => {
       const toolArea = container.firstElementChild as HTMLDivElement;
 
       // Normal shape (no Space)
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
 
       expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
       const firstCall = createLayerFromToolMock.mock.calls[0][0];
@@ -162,10 +175,18 @@ describe('ShapeToolArea', () => {
         window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space' }));
       });
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 120, clientY: 110 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 150, clientY: 140 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 150, clientY: 140 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 120, clientY: 110 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 150, clientY: 140 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 150, clientY: 140 });
+      });
 
       const secondCall = createLayerFromToolMock.mock.calls[1][0];
       // Pan: delta from second move = (150-120, 140-110) = (30, 30)
@@ -182,9 +203,15 @@ describe('ShapeToolArea', () => {
         window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Space' }));
       });
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 200, clientY: 200 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 240, clientY: 230 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 240, clientY: 230 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 200, clientY: 200 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 240, clientY: 230 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 240, clientY: 230 });
+      });
 
       const thirdCall = createLayerFromToolMock.mock.calls[2][0];
       // Normal mode: start = (200, 200), pos = {198, 198, 44, 34}
@@ -202,9 +229,15 @@ describe('ShapeToolArea', () => {
       });
 
       // Normal shape — start should match the pointer-down point (not panned)
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
 
       const callArgs = createLayerFromToolMock.mock.calls[0][0];
       expect(callArgs.args.start).toEqual({ x: 2, y: 2 });
@@ -217,7 +250,9 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 1, clientX: 10, clientY: 20 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 1, clientX: 10, clientY: 20 });
+      });
 
       expect(setShapeCtxMock).not.toHaveBeenCalled();
     });
@@ -226,7 +261,9 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
 
       expect(setShapeCtxMock).toHaveBeenCalledTimes(1);
       expect(setShapeCtxMock).toHaveBeenCalledWith(storeMocks.ctx, expect.objectContaining({ toolName: 'shape' }));
@@ -236,9 +273,15 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 50, clientY: 50, altKey: true });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 100, clientY: 100 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 100, clientY: 100 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 50, clientY: 50, altKey: true });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 100, clientY: 100 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 100, clientY: 100 });
+      });
 
       const callArgs = createLayerFromToolMock.mock.calls[0][0];
       // fromCenter: start = anchor * 2 - end = {0, 0}, then adjusted by pos
@@ -253,7 +296,9 @@ describe('ShapeToolArea', () => {
       const toolArea = container.firstElementChild as HTMLDivElement;
 
       // No pointer down — isMouseDown.current is false
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
 
       expect(drawShapeMock).not.toHaveBeenCalled();
     });
@@ -262,10 +307,14 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
       pointerState.moveValid = false;
 
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
 
       expect(drawShapeMock).not.toHaveBeenCalled();
     });
@@ -275,8 +324,12 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
 
       // drawShape not called yet (RAF pending)
       expect(drawShapeMock).not.toHaveBeenCalled();
@@ -297,9 +350,15 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 80, clientY: 90 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 80, clientY: 90 });
+      });
 
       act(() => {
         vi.advanceTimersByTime(20);
@@ -317,8 +376,12 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 80, shiftKey: true });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 80, shiftKey: true });
+      });
 
       act(() => {
         vi.advanceTimersByTime(20);
@@ -339,8 +402,12 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerUp(toolArea, { button: 1, clientX: 50, clientY: 60 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 1, clientX: 50, clientY: 60 });
+      });
 
       expect(createLayerFromToolMock).not.toHaveBeenCalled();
     });
@@ -349,9 +416,15 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
 
       expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
@@ -367,9 +440,15 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
 
       expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
@@ -382,9 +461,15 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 80 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 80 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 80 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 80 });
+      });
 
       expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
@@ -400,9 +485,15 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 80 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 80 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 80 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 80 });
+      });
 
       expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
@@ -418,9 +509,15 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 80 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 80 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 80 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 80 });
+      });
 
       expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
@@ -431,14 +528,17 @@ describe('ShapeToolArea', () => {
     });
 
     it('prompts for dimensions on a click with no movement and expands the shape', () => {
-      const promptMock = vi.fn().mockImplementation(() => '100');
-      vi.stubGlobal('prompt', promptMock);
+      promptMock.mockReturnValue('100');
 
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
 
       expect(promptMock).toHaveBeenCalledTimes(2);
       expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
@@ -451,47 +551,48 @@ describe('ShapeToolArea', () => {
     });
 
     it('does not create a layer when the prompt returns null', () => {
+      promptMock.mockReturnValue(null);
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
 
       expect(createLayerFromToolMock).not.toHaveBeenCalled();
     });
 
     it('does not create a layer when prompt values are zero or negative', () => {
-      vi.stubGlobal(
-        'prompt',
-        vi
-          .fn()
-          .mockImplementationOnce(() => '0')
-          .mockImplementationOnce(() => '100')
-      );
+      promptMock.mockReturnValueOnce('0').mockReturnValueOnce('100');
 
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
 
       expect(createLayerFromToolMock).not.toHaveBeenCalled();
     });
 
     it('does not create a layer when prompt values are non-numeric', () => {
-      vi.stubGlobal(
-        'prompt',
-        vi
-          .fn()
-          .mockImplementationOnce(() => 'abc')
-          .mockImplementationOnce(() => '100')
-      );
+      promptMock.mockReturnValueOnce('abc').mockReturnValueOnce('100');
 
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
 
       expect(createLayerFromToolMock).not.toHaveBeenCalled();
     });
@@ -502,10 +603,16 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
 
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
 
       expect(cancelSpy).toHaveBeenCalled();
     });
@@ -514,9 +621,15 @@ describe('ShapeToolArea', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
 
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
       // With documentFrame x=0, y=0 (from documentFrameFromSize), canvas coords == document coords

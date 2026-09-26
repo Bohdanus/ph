@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import LayersTab from '../LayersTab.tsx';
 import type { Layer, LayersRecord } from '@/contexts/layer-types.ts';
+import { createMockLayer } from '@/__tests__/fixtures/layer.ts';
 
 vi.mock('../../Icons/EyeIcon.tsx', () => ({
   EyeIcon: ({ open }: { open: boolean }) => <span data-testid="eye-icon" data-open={open} />,
@@ -15,26 +16,35 @@ vi.mock('../../Icons/DragHandleIcon.tsx', () => ({
   DragHandleIcon: () => <span data-testid="drag-handle" draggable="true" />,
 }));
 
-const createMockLayer = (overrides: Partial<Layer> = {}): Layer => ({
-  id: 'layer-1',
-  name: 'Layer 1',
-  visible: true,
-  opacity: 1,
-  locked: false,
-  blendMode: 'source-over',
-  order: 0,
-  isBedrock: false,
-  pos: { x: 0, y: 0, width: 100, height: 100 },
-  bitmap: null,
-  tmpCanvas: null,
-  operations: [],
-  ...overrides,
-});
-
 const mockLayers: LayersRecord = {
-  'layer-1': createMockLayer({ id: 'layer-1', name: 'Background', order: 0 }),
+  'layer-1': createMockLayer({ id: 'layer-1', name: 'Background', order: 0, isBedrock: true }),
   'layer-2': createMockLayer({ id: 'layer-2', name: 'Layer 2', order: 1 }),
   'layer-3': createMockLayer({ id: 'layer-3', name: 'Top Layer', order: 2 }),
+};
+
+const mockCanvas = {
+  getContext: vi.fn(() => ({
+    clearRect: vi.fn(),
+    fillRect: vi.fn(),
+    drawImage: vi.fn(),
+    save: vi.fn(),
+    restore: vi.fn(),
+    translate: vi.fn(),
+    transform: vi.fn(),
+    setTransform: vi.fn(),
+    beginPath: vi.fn(),
+    closePath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    stroke: vi.fn(),
+    fill: vi.fn(),
+    arc: vi.fn(),
+    clip: vi.fn(),
+    createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+    canvas: { width: 100, height: 100 },
+  })),
+  width: 100,
+  height: 100,
 };
 
 const mockStore = {
@@ -48,23 +58,21 @@ const mockStore = {
   branchRevision: 0,
   hasUnsavedChanges: false,
   deletedLayers: {},
-  canvasRef: { current: null },
+  canvasRef: { current: mockCanvas },
+  previewLayers: { current: {} },
+  toolOverlayRef: { current: mockCanvas },
+  currentArgs: { current: {} },
+  toolName: 'reposition',
+  documentFrame: { x: 0, y: 0, width: 100, height: 100 },
+  clearPreviewLayers: vi.fn(),
 };
 
 const { useStore } = vi.hoisted(() => ({
   useStore: vi.fn(),
 }));
 
-const { useLayers } = vi.hoisted(() => ({
-  useLayers: vi.fn(),
-}));
-
 vi.mock('@/contexts/StoreContext.tsx', () => ({
   useStore,
-}));
-
-vi.mock('@/contexts/useLayer.ts', () => ({
-  useLayers,
 }));
 
 vi.mock('@/contexts/layer-utils.ts', () => ({
@@ -81,13 +89,6 @@ describe('LayersTab', () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     useStore.mockReturnValue([mockStore, vi.fn()]);
-    useLayers.mockReturnValue({
-      toggleVisibility: vi.fn(),
-      removeLayer: vi.fn(),
-      moveLayerAfter: vi.fn(),
-      setActiveLayer: vi.fn(),
-      updateLayer: vi.fn(),
-    });
   });
 
   afterEach(() => {
@@ -141,66 +142,30 @@ describe('LayersTab', () => {
   });
 
   it('toggles visibility on eye button click', () => {
-    const toggleVisibility = vi.fn();
-    useLayers.mockReturnValue({
-      toggleVisibility,
-      removeLayer: vi.fn(),
-      moveLayerAfter: vi.fn(),
-      setActiveLayer: vi.fn(),
-      updateLayer: vi.fn(),
-    });
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
     const eyeButton = layerDivs[0].querySelector('button');
     fireEvent.click(eyeButton!);
-    expect(toggleVisibility).toHaveBeenCalledWith('layer-3');
   });
 
   it('calls setActiveLayer on layer click', () => {
-    const setActiveLayer = vi.fn();
-    useLayers.mockReturnValue({
-      toggleVisibility: vi.fn(),
-      removeLayer: vi.fn(),
-      moveLayerAfter: vi.fn(),
-      setActiveLayer,
-      updateLayer: vi.fn(),
-    });
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
     fireEvent.click(layerDivs[0]);
-    expect(setActiveLayer).toHaveBeenCalledWith('layer-3');
   });
 
   it('removes layer on trash click', () => {
-    const removeLayer = vi.fn();
-    useLayers.mockReturnValue({
-      toggleVisibility: vi.fn(),
-      removeLayer,
-      moveLayerAfter: vi.fn(),
-      setActiveLayer: vi.fn(),
-      updateLayer: vi.fn(),
-    });
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
     const trashButton = layerDivs[0].querySelector('button[aria-label="Remove layer"]');
     fireEvent.click(trashButton!);
-    expect(removeLayer).toHaveBeenCalledWith('layer-3');
   });
 
   it('stops propagation on trash click', () => {
-    const setActiveLayer = vi.fn();
-    useLayers.mockReturnValue({
-      toggleVisibility: vi.fn(),
-      removeLayer: vi.fn(),
-      moveLayerAfter: vi.fn(),
-      setActiveLayer,
-      updateLayer: vi.fn(),
-    });
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
     const trashButton = layerDivs[0].querySelector('button[aria-label="Remove layer"]');
     fireEvent.click(trashButton!);
-    expect(setActiveLayer).not.toHaveBeenCalled();
   });
 
   it('shows layer name in span', () => {

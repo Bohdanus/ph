@@ -4,21 +4,32 @@ import type { RefObject } from 'react';
 import { usePointerPosition } from '../usePointerPosition.ts';
 import { useResizeObserverRAF } from '../useResizeObserver.ts';
 
-let resizeObserverInstance: MockResizeObserver | null;
-
-class MockResizeObserver {
+type MockResizeObserverInstance = {
   callback: ResizeObserverCallback;
   observe: ReturnType<typeof vi.fn>;
   unobserve: ReturnType<typeof vi.fn>;
   disconnect: ReturnType<typeof vi.fn>;
+};
 
-  constructor(callback: ResizeObserverCallback) {
-    this.callback = callback;
-    this.observe = vi.fn();
-    this.unobserve = vi.fn();
-    this.disconnect = vi.fn();
-    resizeObserverInstance = this;
+function createMockResizeObserver() {
+  let instance: MockResizeObserverInstance | null = null;
+
+  class MockResizeObserver implements MockResizeObserverInstance {
+    callback: ResizeObserverCallback;
+    observe: ReturnType<typeof vi.fn>;
+    unobserve: ReturnType<typeof vi.fn>;
+    disconnect: ReturnType<typeof vi.fn>;
+
+    constructor(callback: ResizeObserverCallback) {
+      this.callback = callback;
+      this.observe = vi.fn();
+      this.unobserve = vi.fn();
+      this.disconnect = vi.fn();
+      instance = this;
+    }
   }
+
+  return { MockResizeObserver, getInstance: () => instance };
 }
 
 function makeElement(rect: Partial<DOMRect> = {}) {
@@ -59,9 +70,12 @@ function makeEntry(width: number, height: number): ResizeObserverEntry {
 }
 
 describe('useResizeObserverRAF', () => {
+  let getInstance: () => MockResizeObserverInstance | null;
+
   beforeEach(() => {
-    resizeObserverInstance = null;
     vi.useFakeTimers();
+    const { MockResizeObserver, getInstance: getInst } = createMockResizeObserver();
+    getInstance = getInst;
     vi.stubGlobal('ResizeObserver', MockResizeObserver);
   });
 
@@ -77,10 +91,11 @@ describe('useResizeObserverRAF', () => {
 
     renderHook(() => useResizeObserverRAF(ref, onResize));
 
-    expect(resizeObserverInstance).not.toBeNull();
-    expect(resizeObserverInstance!.observe).toHaveBeenCalled();
+    const instance = getInstance();
+    expect(instance).not.toBeNull();
+    expect(instance!.observe).toHaveBeenCalled();
 
-    resizeObserverInstance!.callback([makeEntry(50, 60)], resizeObserverInstance! as unknown as ResizeObserver);
+    instance!.callback([makeEntry(50, 60)], instance! as unknown as ResizeObserver);
 
     expect(onResize).not.toHaveBeenCalled();
 
@@ -96,8 +111,9 @@ describe('useResizeObserverRAF', () => {
 
     renderHook(() => useResizeObserverRAF(ref, onResize));
 
-    resizeObserverInstance!.callback([makeEntry(30, 40)], resizeObserverInstance! as unknown as ResizeObserver);
-    resizeObserverInstance!.callback([makeEntry(70, 80)], resizeObserverInstance! as unknown as ResizeObserver);
+    const instance = getInstance();
+    instance!.callback([makeEntry(30, 40)], instance! as unknown as ResizeObserver);
+    instance!.callback([makeEntry(70, 80)], instance! as unknown as ResizeObserver);
 
     vi.advanceTimersByTime(16);
 
@@ -125,7 +141,8 @@ describe('useResizeObserverRAF', () => {
       toJSON: () => {},
     });
 
-    resizeObserverInstance!.callback([makeEntry(70, 80)], resizeObserverInstance! as unknown as ResizeObserver);
+    const instance = getInstance();
+    instance!.callback([makeEntry(70, 80)], instance! as unknown as ResizeObserver);
 
     vi.advanceTimersByTime(16);
 
@@ -166,7 +183,7 @@ describe('useResizeObserverRAF', () => {
 
     renderHook(() => useResizeObserverRAF(ref, onResize));
 
-    expect(resizeObserverInstance).toBeNull();
+    expect(getInstance()).toBeNull();
     expect(onResize).not.toHaveBeenCalled();
   });
 
@@ -178,7 +195,7 @@ describe('useResizeObserverRAF', () => {
 
     renderHook(() => useResizeObserverRAF(ref, onResize));
 
-    expect(resizeObserverInstance).toBeNull();
+    expect(getInstance()).toBeNull();
   });
 
   it('disconnects the observer on unmount', () => {
@@ -189,7 +206,7 @@ describe('useResizeObserverRAF', () => {
     const { unmount } = renderHook(() => useResizeObserverRAF(ref, onResize));
     unmount();
 
-    expect(resizeObserverInstance!.disconnect).toHaveBeenCalled();
+    expect(getInstance()!.disconnect).toHaveBeenCalled();
   });
 
   it('cancels a pending animation frame on unmount', () => {
@@ -199,7 +216,8 @@ describe('useResizeObserverRAF', () => {
 
     const { unmount } = renderHook(() => useResizeObserverRAF(ref, onResize));
 
-    resizeObserverInstance!.callback([makeEntry(20, 20)], resizeObserverInstance! as unknown as ResizeObserver);
+    const instance = getInstance();
+    instance!.callback([makeEntry(20, 20)], instance! as unknown as ResizeObserver);
 
     unmount();
 

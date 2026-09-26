@@ -25,6 +25,7 @@ export default defineConfig([
       '.kilo',
       'coverage',
       '.vite',
+      'index.html',
     ],
   },
   {

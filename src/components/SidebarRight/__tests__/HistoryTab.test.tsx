@@ -3,19 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 import HistoryTab from '../HistoryTab.tsx';
 import type { HistoryItem } from '@/contexts/history-types.ts';
 import { NEW_LAYER_ACTION, RENAME_LAYER_ACTION, TOOL_ACTION, HIDE_LAYER_ACTION } from '@/util/constants.ts';
+import { createMockHistoryItem } from '@/__tests__/fixtures/history.ts';
 
 vi.mock('../../Icons/EyeIcon.tsx', () => ({
   EyeIcon: ({ open }: { open: boolean }) => <span data-testid="eye-icon" data-open={open} />,
 }));
-
-const createMockHistoryItem = (overrides: Partial<HistoryItem> = {}): HistoryItem => ({
-  id: 'hist-1',
-  layerId: 'layer-1',
-  actionName: NEW_LAYER_ACTION,
-  args: { name: 'Layer 1' },
-  disabled: false,
-  ...overrides,
-});
 
 const mockHistory: HistoryItem[] = [
   createMockHistoryItem({ id: 'hist-1', actionName: RENAME_LAYER_ACTION, args: { name: 'Layer 1' } }),
