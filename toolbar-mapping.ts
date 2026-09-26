@@ -58,11 +58,9 @@ export const toolbarMap = [
     [
       { label: 'Rectangle Tool', name: 'shape', shortcut: 'U', figure: 'rectangle' },
       { label: 'Ellipse Tool', name: 'shape', figure: 'oval' },
-      { label: 'Square Tool', name: 'shape', figure: 'square' },
-      { label: 'Circle Tool', name: 'shape', figure: 'circle' },
+      { label: 'Line Tool', name: 'shape', figure: 'line' },
       { label: 'Triangle Tool', name: 'shape', figure: 'triangle' },
       { label: 'Polygon Tool', name: 'shape', figure: 'polygon' },
-      { label: 'Line Tool', name: 'shape', figure: 'line' },
       { label: 'Custom Shape Tool', name: 'custom-shape' },
     ],
   ],

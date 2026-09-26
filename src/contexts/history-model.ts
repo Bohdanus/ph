@@ -142,6 +142,38 @@ export type DurableDocument = Readonly<{
 
 export const DURABLE_SCHEMA_VERSION = 1;
 
+function collectLayerSourceAsset(source: DurableLayerSource, assetIds: Set<AssetId>) {
+  if (source.kind === 'raster') assetIds.add(source.assetId);
+}
+
+function collectLayerAsset(layer: DurableLayerSnapshot, assetIds: Set<AssetId>) {
+  collectLayerSourceAsset(layer.source, assetIds);
+}
+
+/**
+ * Every asset referenced by a baseline or any replayable entry remains
+ * reachable. Cursor position is intentionally ignored: undo must retain the
+ * assets needed to redo without reconstructing a new baseline.
+ */
+export function collectDurableAssetIds(document: DurableDocument): ReadonlySet<AssetId> {
+  const assetIds = new Set<AssetId>();
+  for (const layer of document.baseline.layers) collectLayerAsset(layer, assetIds);
+  for (const entry of document.history) {
+    switch (entry.operation.kind) {
+      case 'create-layer':
+        collectLayerAsset(entry.operation.layer, assetIds);
+        break;
+      case 'rasterize-layer':
+        collectLayerAsset(entry.operation.result, assetIds);
+        break;
+      case 'merge-document':
+        collectLayerAsset(entry.operation.result, assetIds);
+        break;
+    }
+  }
+  return assetIds;
+}
+
 function clonePlainValue(value: PlainValue | undefined): PlainValue | undefined {
   if (Array.isArray(value)) return Object.freeze(value.map((item) => clonePlainValue(item) as PlainValue));
   if (!value || typeof value !== 'object') return value;

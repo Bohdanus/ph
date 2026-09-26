@@ -70,7 +70,7 @@ describe('saveLastSettings', () => {
       alpha: 0.5,
       color: '#00ff00',
       backgroundColor: '#ffffff',
-      figure: 'circle',
+      figure: 'oval',
       lineWidth: 3,
       start: { x: 0, y: 0 },
       end: { x: 10, y: 10 },
@@ -79,9 +79,55 @@ describe('saveLastSettings', () => {
     const shape = lastSavedSettings.shape;
     expect(shape.start).toBeUndefined();
     expect(shape.end).toBeUndefined();
-    expect(shape.figure).toBe('circle');
+    expect(shape.figure).toBe('oval');
     expect(shape.backgroundColor).toBe('#ffffff');
     expect(shape.alpha).toBe(0.5);
+  });
+
+  it('normalizes legacy circle and square figures without discarding the saved style', () => {
+    saveLastSettings({
+      alpha: 0.25,
+      color: '#123456',
+      backgroundColor: null,
+      figure: 'circle' as unknown as typeof defaultSettings.shape.figure,
+      lineWidth: 9,
+      cornerRadius: 4,
+      start: { x: 0, y: 0 },
+      end: { x: 10, y: 10 },
+      toolName: 'shape',
+    });
+    expect(lastSavedSettings.shape.figure).toBe('oval');
+    expect(lastSavedSettings.shape.lineWidth).toBe(9);
+    expect(lastSavedSettings.shape.cornerRadius).toBe(4);
+
+    saveLastSettings({
+      alpha: 1,
+      color: '#654321',
+      backgroundColor: null,
+      figure: 'square' as unknown as typeof defaultSettings.shape.figure,
+      lineWidth: 7,
+      cornerRadius: 2,
+      start: { x: 0, y: 0 },
+      end: { x: 10, y: 10 },
+      toolName: 'shape',
+    });
+    expect(lastSavedSettings.shape.figure).toBe('rectangle');
+    expect(lastSavedSettings.shape.lineWidth).toBe(7);
+    expect(lastSavedSettings.shape.cornerRadius).toBe(2);
+  });
+
+  it('falls back to rectangle for an unknown figure', () => {
+    saveLastSettings({
+      alpha: 1,
+      color: '#000000',
+      backgroundColor: null,
+      figure: 'blob' as unknown as typeof defaultSettings.shape.figure,
+      lineWidth: 2,
+      start: { x: 0, y: 0 },
+      end: { x: 10, y: 10 },
+      toolName: 'shape',
+    });
+    expect(lastSavedSettings.shape.figure).toBe('rectangle');
   });
 
   it('stores crop settings without rect', () => {
@@ -204,9 +250,13 @@ describe('defaultSettings and lastSavedSettings', () => {
   });
 
   it('savedArgsPerFigure has entries for all figure types', () => {
-    for (const figure of ['line', 'circle', 'rectangle', 'square', 'oval'] as const) {
+    for (const figure of ['line', 'rectangle', 'oval', 'triangle', 'polygon'] as const) {
       expect(savedArgsPerFigure[figure]).toMatchObject({ alpha: 1, lineWidth: 5 });
     }
+  });
+
+  it('savedArgsPerFigure has no legacy circle or square entries', () => {
+    expect(Object.keys(savedArgsPerFigure).sort()).toEqual(['line', 'oval', 'polygon', 'rectangle', 'triangle']);
   });
 
   it('defaultSettings has the expected structure for each tool', () => {

@@ -107,16 +107,23 @@ export function saveLayerCanvas(layer: Layer) {
   const canvas = layer.tmpCanvas;
   if (!canvas) return;
 
-  return createImageBitmap(canvas).then((bitmap) => {
-    // A newer preview or deletion may have replaced this canvas while saving.
-    if (layer.tmpCanvas !== canvas) {
-      bitmap.close();
-      return;
-    }
-    layer.bitmap = bitmap;
-    layer.tmpCanvas = null;
-    return bitmap;
-  });
+  return createImageBitmap(canvas)
+    .then((bitmap) => {
+      // A newer preview or deletion may have replaced this canvas while saving.
+      if (layer.tmpCanvas !== canvas) {
+        bitmap.close();
+        return;
+      }
+      layer.bitmap = bitmap;
+      layer.tmpCanvas = null;
+      return bitmap;
+    })
+    .catch((error) => {
+      // This is a disposable presentation cache. Keep the source/tmp canvas
+      // available when materialization fails rather than leaking a rejection.
+      console.error('Unable to materialize layer presentation cache', error);
+      return undefined;
+    });
 }
 
 export function createLayerOperation(args: LayerOperationArgs, id = uuidv4()): LayerOperation {

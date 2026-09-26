@@ -283,7 +283,7 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
 
     expect(result.status).toBe('unavailable');
     expect(result.document).toBeNull();
-    expect(close).toHaveBeenCalledTimes(1);
+    expect(close).not.toHaveBeenCalled();
   });
 
   it('a later valid edit recovers durable conversion after a prior failure', () => {

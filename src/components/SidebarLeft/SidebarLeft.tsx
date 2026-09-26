@@ -126,14 +126,7 @@ const SidebarLeft = () => {
     if (tool.figure) {
       const shapeIcon =
         toolIcons[
-          `shape-${tool.figure}` as
-            | 'shape-rectangle'
-            | 'shape-oval'
-            | 'shape-square'
-            | 'shape-circle'
-            | 'shape-line'
-            | 'shape-triangle'
-            | 'shape-polygon'
+          `shape-${tool.figure}` as 'shape-rectangle' | 'shape-oval' | 'shape-line' | 'shape-triangle' | 'shape-polygon'
         ];
       if (shapeIcon) return shapeIcon;
     }

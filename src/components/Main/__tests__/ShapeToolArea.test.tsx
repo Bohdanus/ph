@@ -93,7 +93,8 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   }),
 }));
 
-vi.mock('../../../tools/shape.ts', () => ({
+vi.mock('../../../tools/shape.ts', async () => ({
+  ...(await vi.importActual<typeof import('../../../tools/shape.ts')>('../../../tools/shape.ts')),
   drawShape: drawShapeMock,
   setShapeCtx: setShapeCtxMock,
 }));
@@ -456,8 +457,7 @@ describe('ShapeToolArea', () => {
       expect(fullArgs.args.figure).toBe('line');
     });
 
-    it('recalculates bounding box to a square for a circle figure', () => {
-      toolArgsState.toolArgs.figure = 'circle';
+    it('commits a square when shift is held, matching the preview geometry', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
@@ -465,46 +465,167 @@ describe('ShapeToolArea', () => {
         fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
       });
       act(() => {
-        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 80 });
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 80, shiftKey: true });
       });
       act(() => {
-        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 80 });
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 80, shiftKey: true });
       });
 
       expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
 
-      // cx=30, cy=50, rx=20, ry=30 → r=max(20,30)=30
-      expect(fullArgs.pos).toEqual({ x: -2, y: 18, width: 64, height: 64 });
-      expect(fullArgs.pos.width).toBe(fullArgs.pos.height);
-      expect(fullArgs.args.figure).toBe('circle');
-    });
-
-    it('recalculates bounding box to a square for a square figure', () => {
-      toolArgsState.toolArgs.figure = 'square';
-      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
-      const toolArea = container.firstElementChild as HTMLDivElement;
-
-      act(() => {
-        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-      });
-      act(() => {
-        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 80 });
-      });
-      act(() => {
-        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 80 });
-      });
-
-      expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
-      const fullArgs = createLayerFromToolMock.mock.calls[0][0];
-
-      // w=40, h=60, side=60, newEnd={70,80}
+      // Normalized: side = max(|50-10|, |80-20|) = 60 → end = (70, 80)
+      // pos = { 10 - 2, 20 - 2, 60 + 4, 60 + 4 } = { 8, 18, 64, 64 }
       expect(fullArgs.pos).toEqual({ x: 8, y: 18, width: 64, height: 64 });
-      expect(fullArgs.pos.width).toBe(fullArgs.pos.height);
-      expect(fullArgs.args.figure).toBe('square');
+      expect(fullArgs.args.start).toEqual({ x: 2, y: 2 });
+      expect(fullArgs.args.end).toEqual({ x: 62, y: 62 });
+      expect(fullArgs.args.figure).toBe('rectangle');
     });
 
-    it('recalculates bounding box for an oval figure (no circle clamping)', () => {
+    it('commits a circle for the oval figure when shift is held', () => {
+      toolArgsState.toolArgs.figure = 'oval';
+      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 80, shiftKey: true });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 80, shiftKey: true });
+      });
+
+      const fullArgs = createLayerFromToolMock.mock.calls[0][0];
+      expect(fullArgs.pos).toEqual({ x: 8, y: 18, width: 64, height: 64 });
+      expect(fullArgs.args.figure).toBe('oval');
+    });
+
+    it('commits a centered square when shift and alt are held', () => {
+      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 50, clientY: 50, altKey: true });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 100, clientY: 80, shiftKey: true });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 100, clientY: 80, shiftKey: true });
+      });
+
+      const fullArgs = createLayerFromToolMock.mock.calls[0][0];
+
+      // Anchor (50, 50) is the fixed center: half = max(50, 30) = 50
+      // → start = (0, 0), end = (100, 100)
+      // pos = { 0 - 2, 0 - 2, 100 + 4, 100 + 4 } = { -2, -2, 104, 104 }
+      expect(fullArgs.pos).toEqual({ x: -2, y: -2, width: 104, height: 104 });
+      expect(fullArgs.args.start).toEqual({ x: 2, y: 2 });
+      expect(fullArgs.args.end).toEqual({ x: 102, y: 102 });
+      // The anchor stays the exact center of the committed shape.
+      const centerX = fullArgs.pos.x + (fullArgs.args.start.x + fullArgs.args.end.x) / 2;
+      const centerY = fullArgs.pos.y + (fullArgs.args.start.y + fullArgs.args.end.y) / 2;
+      expect(centerX).toBe(50);
+      expect(centerY).toBe(50);
+    });
+
+    it('preserves the drag quadrant when shift is held in all four directions', () => {
+      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      // Anchor (100, 50) with a 100x60 drag: shift expands the short axis to 100
+      // while keeping the drag direction.
+      const quadrants = [
+        { name: 'south-east', pointer: { x: 200, y: 110 }, end: { x: 200, y: 150 } },
+        { name: 'south-west', pointer: { x: 0, y: 110 }, end: { x: 0, y: 150 } },
+        { name: 'north-east', pointer: { x: 200, y: -10 }, end: { x: 200, y: -50 } },
+        { name: 'north-west', pointer: { x: 0, y: -10 }, end: { x: 0, y: -50 } },
+      ];
+
+      quadrants.forEach(({ name, pointer, end }) => {
+        createLayerFromToolMock.mockClear();
+        act(() => {
+          fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 50 });
+        });
+        act(() => {
+          fireEvent.pointerUp(toolArea, { button: 0, clientX: pointer.x, clientY: pointer.y, shiftKey: true });
+        });
+
+        const fullArgs = createLayerFromToolMock.mock.calls[0][0];
+        expect(fullArgs.pos.width, `${name} pos width`).toBe(104);
+        expect(fullArgs.pos.height, `${name} pos height`).toBe(104);
+
+        const localWidth = fullArgs.args.end.x - fullArgs.args.start.x;
+        const localHeight = fullArgs.args.end.y - fullArgs.args.start.y;
+        expect(Math.abs(localWidth), `${name} local width`).toBe(100);
+        expect(Math.abs(localHeight), `${name} local height`).toBe(100);
+
+        // The committed end point sits on the same side of the anchor as the pointer.
+        expect(Math.sign(end.x - 100), `${name} x direction`).toBe(Math.sign(pointer.x - 100));
+        expect(Math.sign(end.y - 50), `${name} y direction`).toBe(Math.sign(pointer.y - 50));
+        expect(Math.sign(localWidth), `${name} committed x direction`).toBe(Math.sign(pointer.x - 100));
+        expect(Math.sign(localHeight), `${name} committed y direction`).toBe(Math.sign(pointer.y - 50));
+      });
+    });
+
+    it('ignores the shift square constraint for the line figure at commit time', () => {
+      toolArgsState.toolArgs.figure = 'line';
+      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 80, shiftKey: true });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 80, shiftKey: true });
+      });
+
+      const fullArgs = createLayerFromToolMock.mock.calls[0][0];
+
+      // Free angle preserved: no square clamping, no ellipse recomputation.
+      expect(fullArgs.pos).toEqual({ x: 8, y: 18, width: 44, height: 64 });
+      expect(fullArgs.args.figure).toBe('line');
+    });
+
+    it('computes the committed bounds from the same geometry the preview draws', () => {
+      vi.useFakeTimers();
+      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 30, clientY: 40 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 90, clientY: 70, shiftKey: true });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 90, clientY: 70, shiftKey: true });
+      });
+
+      const preview = drawShapeMock.mock.calls[0][1] as {
+        start: { x: number; y: number };
+        end: { x: number; y: number };
+      };
+      const fullArgs = createLayerFromToolMock.mock.calls[0][0];
+
+      // The preview is in canvas space; the commit rebases it into layer space.
+      // side = max(|90-30|, |70-40|) = 60 → end = (90, 100)
+      expect(preview.start).toEqual({ x: 30, y: 40 });
+      expect(preview.end).toEqual({ x: 90, y: 100 });
+      expect(fullArgs.pos).toEqual({ x: 28, y: 38, width: 64, height: 64 });
+      expect(fullArgs.args.start).toEqual({ x: preview.start.x - fullArgs.pos.x, y: preview.start.y - fullArgs.pos.y });
+      expect(fullArgs.args.end).toEqual({ x: preview.end.x - fullArgs.pos.x, y: preview.end.y - fullArgs.pos.y });
+    });
+
+    it('computes bounds for an oval figure without clamping (no circle branch)', () => {
       toolArgsState.toolArgs.figure = 'oval';
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Shape from '../Shape.tsx';
@@ -11,18 +11,21 @@ const storeState = {
   totalSize: { width: 800, height: 600 },
 };
 
+type Figure = 'rectangle' | 'oval' | 'triangle' | 'polygon' | 'line';
+
 const baseToolArgs = {
   toolName: 'shape' as const,
-  figure: 'rectangle' as 'rectangle' | 'oval' | 'circle' | 'square' | 'line',
+  figure: 'rectangle' as Figure,
   alpha: 1,
   color: '#000000',
   backgroundColor: '#ffffff',
   hasFill: false,
   lineWidth: 5,
-  lineDash: null,
+  lineDash: null as null | number[],
 };
 
 const setToolArgsMock = vi.fn();
+const shapeCreatorMock = vi.fn();
 
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [storeState],
@@ -42,14 +45,38 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   },
 }));
 
+vi.mock('../../../../tools/shape.ts', async () => {
+  const actual = await vi.importActual<typeof import('../../../../tools/shape.ts')>('../../../../tools/shape.ts');
+  return {
+    ...actual,
+    shape: (...args: Parameters<typeof actual.shape>) => {
+      const creator = actual.shape(...args);
+      return (previewArgs: Parameters<typeof creator>[0]) => {
+        shapeCreatorMock(previewArgs);
+        return creator(previewArgs);
+      };
+    },
+  };
+});
+
 vi.mock('../../../../hooks/usePointerPosition.ts', () => ({
-  usePointerPosition: () => ({
-    isPointerDownValid: vi.fn(() => false),
-    isPointerMoveValid: vi.fn(() => false),
-    isPointerUpValid: vi.fn(() => false),
-    getLocalCoords: vi.fn(() => ({ x: 0, y: 0 })),
-    isMouseDown: { current: false },
-  }),
+  // `onResize` is invoked once per mount so `brushScale` is non-zero and the
+  // preview effect actually runs.
+  usePointerPosition: ({ onResize }: { onResize?: (arg: { scale: number }) => void }) => {
+    const notified = useRef(false);
+    useEffect(() => {
+      if (notified.current) return;
+      notified.current = true;
+      onResize?.({ scale: 1 });
+    });
+    return {
+      isPointerDownValid: vi.fn(() => false),
+      isPointerMoveValid: vi.fn(() => false),
+      isPointerUpValid: vi.fn(() => false),
+      getLocalCoords: vi.fn(() => ({ x: 0, y: 0 })),
+      isMouseDown: { current: false },
+    };
+  },
 }));
 
 function lastCallArgs(mock: ReturnType<typeof vi.fn>) {
@@ -60,10 +87,15 @@ function lastCallArgs(mock: ReturnType<typeof vi.fn>) {
 describe('Shape toolbar', () => {
   beforeEach(() => {
     setToolArgsMock.mockClear();
+    shapeCreatorMock.mockClear();
+    baseToolArgs.figure = 'rectangle';
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    // `vi.restoreAllMocks()` is intentionally not used here: it would also undo
+    // the global HTMLCanvasElement.prototype.getContext spy installed by
+    // src/test/setup.ts, which the shape preview needs in order to draw.
+    baseToolArgs.figure = 'rectangle';
   });
 
   it('renders Photoshop-style tool mode choices', () => {
@@ -90,20 +122,56 @@ describe('Shape toolbar', () => {
   });
 
   it('shows correct label for each figure type', () => {
-    const figureLabels: Record<string, string> = {
+    const figureLabels: Record<Figure, string> = {
       rectangle: 'Rectangle Tool',
       oval: 'Ellipse Tool',
-      circle: 'Circle Tool',
-      square: 'Square Tool',
       line: 'Line Tool',
+      triangle: 'Triangle Tool',
+      polygon: 'Polygon Tool',
     };
 
-    for (const [figure, label] of Object.entries(figureLabels)) {
-      baseToolArgs.figure = figure as 'rectangle' | 'oval' | 'circle' | 'square' | 'line';
-      render(<Shape />);
+    for (const [figure, label] of Object.entries(figureLabels) as [Figure, string][]) {
+      baseToolArgs.figure = figure;
+      const view = render(<Shape />);
       expect(screen.getByText(label)).toBeInTheDocument();
+      view.unmount();
     }
-    baseToolArgs.figure = 'rectangle';
+  });
+
+  it('never labels a figure as a dedicated Circle or Square tool', () => {
+    for (const figure of ['rectangle', 'oval', 'line', 'triangle', 'polygon'] as Figure[]) {
+      baseToolArgs.figure = figure;
+      const view = render(<Shape />);
+      expect(screen.queryByText('Circle Tool'), figure).toBeNull();
+      expect(screen.queryByText('Square Tool'), figure).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it('previews the unconstrained base shape for Rectangle and Ellipse', () => {
+    const geometries: Partial<Record<Figure, { width: number; height: number }>> = {};
+
+    for (const figure of ['rectangle', 'oval'] as Figure[]) {
+      baseToolArgs.figure = figure;
+      shapeCreatorMock.mockClear();
+      const view = render(<Shape />);
+
+      const previewArgs = lastCallArgs(shapeCreatorMock) as unknown as {
+        start: { x: number; y: number };
+        end: { x: number; y: number };
+      };
+      geometries[figure] = {
+        width: previewArgs.end.x - previewArgs.start.x,
+        height: previewArgs.end.y - previewArgs.start.y,
+      };
+      view.unmount();
+    }
+
+    // The 96x48 preview box is wider than tall, so neither figure may be
+    // square-clamped: that would imply a dedicated Circle or Square tool.
+    expect(geometries.rectangle!.width).toBeGreaterThan(geometries.rectangle!.height);
+    expect(geometries.oval!.width).toBe(geometries.rectangle!.width);
+    expect(geometries.oval!.height).toBe(geometries.rectangle!.height);
   });
 
   it('adjusts line width via thickness slider', () => {

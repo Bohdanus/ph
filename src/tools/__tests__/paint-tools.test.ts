@@ -1,67 +1,29 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest';
-
-class MockOffscreenCanvas {
-  width: number;
-  height: number;
-
-  constructor(width: number, height: number) {
-    this.width = width;
-    this.height = height;
-  }
-
-  getContext() {
-    return {
-      clearRect: vi.fn(),
-      beginPath: vi.fn(),
-      moveTo: vi.fn(),
-      bezierCurveTo: vi.fn(),
-      lineTo: vi.fn(),
-      stroke: vi.fn(),
-      fill: vi.fn(),
-      arc: vi.fn(),
-      createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
-      setLineDash: vi.fn(),
-      fillRect: vi.fn(),
-      strokeRect: vi.fn(),
-      ellipse: vi.fn(),
-      drawImage: vi.fn(),
-      save: vi.fn(),
-      restore: vi.fn(),
-      clip: vi.fn(),
-      closePath: vi.fn(),
-      quadraticCurveTo: vi.fn(),
-      strokeStyle: '',
-      fillStyle: '',
-      lineWidth: 1,
-      lineCap: 'round',
-      lineJoin: 'round',
-      globalAlpha: 1,
-      imageSmoothingEnabled: true,
-      imageSmoothingQuality: 'low',
-    };
-  }
-}
-
-vi.stubGlobal('OffscreenCanvas', MockOffscreenCanvas);
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { defaultSettings } from '../settings.ts';
 import { toolsMap } from '../toolsMap.ts';
 import { createLayerSource } from '../../contexts/layer-utils.ts';
-import type { PaintToolArgs } from '../draw.ts';
+import type { PaintToolArgs, PaintToolName } from '../draw.ts';
+import type { Point } from '../../contexts/general-types.ts';
+
+const paintToolNames: readonly PaintToolName[] = ['brush', 'pencil', 'color-replacement'];
+
+const paintToolArgs = (toolName: PaintToolName): PaintToolArgs => ({ ...defaultSettings[toolName], toolName });
+
+const paintToolArgsWithPoints = (toolName: PaintToolName, points: Point[]): PaintToolArgs => ({
+  ...defaultSettings[toolName],
+  toolName,
+  points,
+});
 
 describe('paint tools', () => {
   beforeAll(() => {
-    vi.stubGlobal(
-      'createImageBitmap',
-      vi.fn(async () => ({ close: vi.fn() }))
-    );
+    // createImageBitmap is already mocked in setup.ts
   });
 
   it('exposes real draw-like behavior for brush, pencil, and color replacement tools', () => {
-    const drawToolNames: Array<'brush' | 'pencil' | 'color-replacement'> = ['brush', 'pencil', 'color-replacement'];
-
-    for (const toolName of drawToolNames) {
-      const args = defaultSettings[toolName] as PaintToolArgs;
+    for (const toolName of paintToolNames) {
+      const args = paintToolArgs(toolName);
 
       expect(args).toMatchObject({
         toolName,
@@ -94,19 +56,16 @@ describe('paint tools', () => {
 
   it('preserves computed draw-like bounds instead of snapping the finished layer to 0,0', () => {
     const pos = { x: 42, y: 18, width: 66, height: 32 };
-    for (const toolName of ['brush', 'pencil', 'color-replacement'] as const) {
+    for (const toolName of paintToolNames) {
       const layer = createLayerSource({
         layers: {},
         source: {
           kind: 'tool',
-          args: {
-            ...defaultSettings[toolName],
-            points: [
-              { x: 60, y: 20 },
-              { x: 90, y: 40 },
-              { x: 100, y: 45 },
-            ],
-          },
+          args: paintToolArgsWithPoints(toolName, [
+            { x: 60, y: 20 },
+            { x: 90, y: 40 },
+            { x: 100, y: 45 },
+          ]),
           pos,
         },
       });
@@ -117,7 +76,7 @@ describe('paint tools', () => {
 
   it('preserves non-origin bounds for every shape figure', () => {
     const pos = { x: 42, y: 18, width: 66, height: 32 };
-    const figures = ['rectangle', 'square', 'oval', 'circle', 'line', 'triangle', 'polygon'] as const;
+    const figures = ['rectangle', 'oval', 'line', 'triangle', 'polygon'] as const;
 
     for (const figure of figures) {
       const layer = createLayerSource({

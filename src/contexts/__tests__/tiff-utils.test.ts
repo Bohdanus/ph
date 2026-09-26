@@ -10,26 +10,26 @@ const { decode, decodeImage, encodeImage, toRGBA8 } = vi.hoisted(() => ({
 
 vi.mock('utif', () => ({ default: { decode, decodeImage, encodeImage, toRGBA8 } }));
 
-class MockImage {
-  onload = () => {};
-  onerror = () => {};
-  src = '';
-}
+let imageInstance: { onload: () => void; onerror: () => void; src: string } | null = null;
 
 describe('TIFF encoding and decoding', () => {
-  let imageInstance: MockImage | null;
-
   beforeEach(() => {
     decode.mockReset();
     decodeImage.mockReset();
     encodeImage.mockReset();
     toRGBA8.mockReset();
     imageInstance = null;
+    vi.spyOn(globalThis, 'Image').mockImplementation(function (this: any) {
+      this.onload = () => {};
+      this.onerror = () => {};
+      this.src = '';
+      imageInstance = this;
+      return this;
+    } as any);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    vi.unstubAllGlobals();
   });
 
   it('decodes the first TIFF page into a browser image', async () => {
@@ -40,17 +40,6 @@ describe('TIFF encoding and decoding', () => {
       createImageData: vi.fn(() => imageData),
       putImageData: vi.fn(),
     };
-
-    vi.stubGlobal(
-      'Image',
-      class extends MockImage {
-        static instance: MockImage | null = null;
-        constructor() {
-          super();
-          imageInstance = this;
-        }
-      }
-    );
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
     vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,decoded');
     decode.mockReturnValue([page]);

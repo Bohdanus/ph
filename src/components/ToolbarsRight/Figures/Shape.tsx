@@ -11,8 +11,6 @@ const PREVIEW_HEIGHT = 48;
 
 const figureLabel = (figure: ShapeToolArgs['figure']) => {
   if (figure === 'oval') return 'Ellipse Tool';
-  if (figure === 'circle') return 'Circle Tool';
-  if (figure === 'square') return 'Square Tool';
   if (figure === 'triangle') return 'Triangle Tool';
   if (figure === 'polygon') return 'Polygon Tool';
   if (figure === 'line') return 'Line Tool';
@@ -111,16 +109,11 @@ const Shape: React.FC = () => {
     const scaledWidth = PREVIEW_WIDTH / brushScale;
     const scaledHeight = PREVIEW_HEIGHT / brushScale;
 
-    const margin = ((figure === 'circle' ? 24 : 2.5) + Math.sqrt(lineWidth)) / brushScale;
-
-    let start, end;
-    if (figure === 'square') {
-      start = { x: scaledWidth / 4 + margin, y: margin };
-      end = { x: (scaledWidth * 3) / 4 - margin, y: scaledHeight - margin };
-    } else {
-      start = { x: margin, y: margin };
-      end = { x: scaledWidth - margin, y: scaledHeight - margin };
-    }
+    // Always the unconstrained base shape: Circle and Square are Shift-drag
+    // outcomes, not separate tools, so the preview must not imply otherwise.
+    const margin = (2.5 + Math.sqrt(lineWidth)) / brushScale;
+    const start = { x: margin, y: margin };
+    const end = { x: scaledWidth - margin, y: scaledHeight - margin };
     const previewArgs = { ...args, color, start, end };
 
     const [toolCanvas] = shape({ size: { width: scaledWidth, height: scaledHeight } })(previewArgs);

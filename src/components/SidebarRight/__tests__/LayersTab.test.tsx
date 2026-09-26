@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import LayersTab from '../LayersTab.tsx';
 import type { Layer, LayersRecord } from '@/contexts/layer-types.ts';
 import { createMockLayer } from '@/__tests__/fixtures/layer.ts';
@@ -22,57 +22,28 @@ const mockLayers: LayersRecord = {
   'layer-3': createMockLayer({ id: 'layer-3', name: 'Top Layer', order: 2 }),
 };
 
-const mockCanvas = {
-  getContext: vi.fn(() => ({
-    clearRect: vi.fn(),
-    fillRect: vi.fn(),
-    drawImage: vi.fn(),
-    save: vi.fn(),
-    restore: vi.fn(),
-    translate: vi.fn(),
-    transform: vi.fn(),
-    setTransform: vi.fn(),
-    beginPath: vi.fn(),
-    closePath: vi.fn(),
-    moveTo: vi.fn(),
-    lineTo: vi.fn(),
-    stroke: vi.fn(),
-    fill: vi.fn(),
-    arc: vi.fn(),
-    clip: vi.fn(),
-    createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
-    canvas: { width: 100, height: 100 },
-  })),
-  width: 100,
-  height: 100,
-};
-
 const mockStore = {
   layers: mockLayers,
   activeLayerId: 'layer-2',
-  history: [],
-  historyIndex: -1,
-  totalSize: { width: 100, height: 100 },
-  selections: [],
-  activeSelectionId: null,
-  branchRevision: 0,
-  hasUnsavedChanges: false,
-  deletedLayers: {},
-  canvasRef: { current: mockCanvas },
-  previewLayers: { current: {} },
-  toolOverlayRef: { current: mockCanvas },
-  currentArgs: { current: {} },
-  toolName: 'reposition',
-  documentFrame: { x: 0, y: 0, width: 100, height: 100 },
-  clearPreviewLayers: vi.fn(),
 };
 
-const { useStore } = vi.hoisted(() => ({
-  useStore: vi.fn(),
-}));
+const { useStore, useLayers, layerMocks } = vi.hoisted(() => {
+  const mocks = {
+    toggleVisibility: vi.fn(),
+    removeLayer: vi.fn(),
+    moveLayerAfter: vi.fn(),
+    setActiveLayer: vi.fn(),
+    updateLayer: vi.fn(),
+  };
+  return { useStore: vi.fn(), useLayers: vi.fn(() => mocks), layerMocks: mocks };
+});
 
 vi.mock('@/contexts/StoreContext.tsx', () => ({
   useStore,
+}));
+
+vi.mock('@/contexts/useLayer.ts', () => ({
+  useLayers,
 }));
 
 vi.mock('@/contexts/layer-utils.ts', () => ({
@@ -145,27 +116,54 @@ describe('LayersTab', () => {
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
     const eyeButton = layerDivs[0].querySelector('button');
-    fireEvent.click(eyeButton!);
+    act(() => {
+      fireEvent.click(eyeButton!);
+    });
+    expect(layerMocks.toggleVisibility).toHaveBeenCalledTimes(1);
+    expect(layerMocks.toggleVisibility).toHaveBeenCalledWith('layer-3');
   });
 
   it('calls setActiveLayer on layer click', () => {
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
-    fireEvent.click(layerDivs[0]);
+    act(() => {
+      fireEvent.click(layerDivs[0]);
+    });
+    expect(layerMocks.setActiveLayer).toHaveBeenCalledTimes(1);
+    expect(layerMocks.setActiveLayer).toHaveBeenCalledWith('layer-3');
   });
 
   it('removes layer on trash click', () => {
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
     const trashButton = layerDivs[0].querySelector('button[aria-label="Remove layer"]');
-    fireEvent.click(trashButton!);
+    act(() => {
+      fireEvent.click(trashButton!);
+    });
+    expect(layerMocks.removeLayer).toHaveBeenCalledTimes(1);
+    expect(layerMocks.removeLayer).toHaveBeenCalledWith('layer-3');
   });
 
   it('stops propagation on trash click', () => {
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
     const trashButton = layerDivs[0].querySelector('button[aria-label="Remove layer"]');
-    fireEvent.click(trashButton!);
+    act(() => {
+      fireEvent.click(trashButton!);
+    });
+    expect(layerMocks.removeLayer).toHaveBeenCalledWith('layer-3');
+    expect(layerMocks.setActiveLayer).not.toHaveBeenCalled();
+  });
+
+  it('stops propagation on eye button click', () => {
+    render(<LayersTab />);
+    const layerDivs = getLayerDivs();
+    const eyeButton = layerDivs[0].querySelector('button');
+    act(() => {
+      fireEvent.click(eyeButton!);
+    });
+    expect(layerMocks.toggleVisibility).toHaveBeenCalledWith('layer-3');
+    expect(layerMocks.setActiveLayer).not.toHaveBeenCalled();
   });
 
   it('shows layer name in span', () => {
@@ -186,16 +184,15 @@ describe('LayersTab', () => {
     expect(container.classList.contains('h-full')).toBe(true);
   });
 
-  it('handles bedrock layer', () => {
-    const bedrockLayers = {
-      ...mockLayers,
-      'layer-1': createMockLayer({ id: 'layer-1', name: 'Background', isBedrock: true, order: 0 }),
-    };
-    useStore.mockReturnValue([{ ...mockStore, layers: bedrockLayers, activeLayerId: 'layer-1' }, vi.fn()]);
+  it('keeps remove control available for a bedrock layer', () => {
+    useStore.mockReturnValue([
+      { ...mockStore, layers: { bedrock: createMockLayer({ id: 'bedrock', name: 'Background', isBedrock: true }) } },
+      vi.fn(),
+    ]);
     render(<LayersTab />);
-    const layerDivs = getLayerDivs();
-    const backgroundItem = layerDivs[2];
-    expect(backgroundItem.querySelector('button[aria-label="Remove layer"]')).toBeInTheDocument();
+    const [bedrockRow] = getLayerDivs();
+    expect(bedrockRow).toHaveTextContent('Background');
+    expect(bedrockRow.querySelector('button[aria-label="Remove layer"]')).toBeInTheDocument();
   });
 
   it('shows drag handle icon', () => {

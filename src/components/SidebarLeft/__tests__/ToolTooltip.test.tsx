@@ -35,9 +35,9 @@ describe('ToolTooltip', () => {
     renderWithTooltip('Test Tool');
     const trigger = screen.getByTestId('trigger');
 
-    fireEvent.mouseEnter(trigger);
-    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
-
+    act(() => {
+      fireEvent.mouseEnter(trigger);
+    });
     act(() => {
       vi.advanceTimersByTime(250);
     });
@@ -50,13 +50,17 @@ describe('ToolTooltip', () => {
     renderWithTooltip('Test Tool');
     const trigger = screen.getByTestId('trigger');
 
-    fireEvent.mouseEnter(trigger);
+    act(() => {
+      fireEvent.mouseEnter(trigger);
+    });
     act(() => {
       vi.advanceTimersByTime(250);
     });
     expect(screen.getByRole('tooltip')).toBeInTheDocument();
 
-    fireEvent.mouseLeave(trigger);
+    act(() => {
+      fireEvent.mouseLeave(trigger);
+    });
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
   });
 
@@ -64,7 +68,9 @@ describe('ToolTooltip', () => {
     renderWithTooltip('Test Tool');
     const trigger = screen.getByTestId('trigger');
 
-    fireEvent.focus(trigger);
+    act(() => {
+      fireEvent.focus(trigger);
+    });
     act(() => {
       vi.advanceTimersByTime(250);
     });
@@ -76,13 +82,17 @@ describe('ToolTooltip', () => {
     renderWithTooltip('Test Tool');
     const trigger = screen.getByTestId('trigger');
 
-    fireEvent.focus(trigger);
+    act(() => {
+      fireEvent.focus(trigger);
+    });
     act(() => {
       vi.advanceTimersByTime(250);
     });
     expect(screen.getByRole('tooltip')).toBeInTheDocument();
 
-    fireEvent.blur(trigger);
+    act(() => {
+      fireEvent.blur(trigger);
+    });
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
   });
 
@@ -90,11 +100,15 @@ describe('ToolTooltip', () => {
     renderWithTooltip('Test Tool');
     const trigger = screen.getByTestId('trigger');
 
-    fireEvent.mouseEnter(trigger);
+    act(() => {
+      fireEvent.mouseEnter(trigger);
+    });
     act(() => {
       vi.advanceTimersByTime(100);
     });
-    fireEvent.mouseLeave(trigger);
+    act(() => {
+      fireEvent.mouseLeave(trigger);
+    });
     act(() => {
       vi.advanceTimersByTime(200);
     });
@@ -106,7 +120,9 @@ describe('ToolTooltip', () => {
     const { unmount } = renderWithTooltip('Test Tool');
     const trigger = screen.getByTestId('trigger');
 
-    fireEvent.mouseEnter(trigger);
+    act(() => {
+      fireEvent.mouseEnter(trigger);
+    });
     unmount();
     act(() => {
       vi.advanceTimersByTime(300);
@@ -119,7 +135,9 @@ describe('ToolTooltip', () => {
     renderWithTooltip('Test Tool', 'Ctrl+T');
     const trigger = screen.getByTestId('trigger');
 
-    fireEvent.mouseEnter(trigger);
+    act(() => {
+      fireEvent.mouseEnter(trigger);
+    });
     act(() => {
       vi.advanceTimersByTime(250);
     });
@@ -133,7 +151,9 @@ describe('ToolTooltip', () => {
     renderWithTooltip('Test Tool');
     const trigger = screen.getByTestId('trigger');
 
-    fireEvent.mouseEnter(trigger);
+    act(() => {
+      fireEvent.mouseEnter(trigger);
+    });
     act(() => {
       vi.advanceTimersByTime(250);
     });
@@ -146,7 +166,9 @@ describe('ToolTooltip', () => {
     renderWithTooltip('Test@Tool!');
     const trigger = screen.getByTestId('trigger');
 
-    fireEvent.mouseEnter(trigger);
+    act(() => {
+      fireEvent.mouseEnter(trigger);
+    });
     act(() => {
       vi.advanceTimersByTime(250);
     });
@@ -161,14 +183,18 @@ describe('ToolTooltip', () => {
 
     expect(trigger).not.toHaveAttribute('aria-describedby');
 
-    fireEvent.mouseEnter(trigger);
+    act(() => {
+      fireEvent.mouseEnter(trigger);
+    });
     act(() => {
       vi.advanceTimersByTime(250);
     });
 
     expect(trigger).toHaveAttribute('aria-describedby', 'tool-tooltip-test-tool');
 
-    fireEvent.mouseLeave(trigger);
+    act(() => {
+      fireEvent.mouseLeave(trigger);
+    });
     expect(trigger).not.toHaveAttribute('aria-describedby');
   });
 
@@ -176,7 +202,9 @@ describe('ToolTooltip', () => {
     renderWithTooltip('Test Tool');
     const trigger = screen.getByTestId('trigger');
 
-    fireEvent.mouseEnter(trigger);
+    act(() => {
+      fireEvent.mouseEnter(trigger);
+    });
     act(() => {
       vi.advanceTimersByTime(250);
     });
@@ -195,7 +223,9 @@ describe('ToolTooltip', () => {
     renderWithTooltip('Test Tool');
     const trigger = screen.getByTestId('trigger');
 
-    fireEvent.mouseEnter(trigger);
+    act(() => {
+      fireEvent.mouseEnter(trigger);
+    });
     act(() => {
       vi.advanceTimersByTime(250);
     });

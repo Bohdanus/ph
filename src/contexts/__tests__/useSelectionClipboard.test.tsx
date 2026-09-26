@@ -1,11 +1,11 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createMockCanvas, createMockImageBitmap } from '@/__tests__/fixtures/canvas.ts';
 import type { Selection, SelectionClipboard } from '../general-types.ts';
 import { useSelectionClipboard } from '../useSelectionClipboard.ts';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
 const createLayerFromBitmapMock = vi.hoisted(() => vi.fn());
-const sourceCanvas = vi.hoisted(() => document.createElement('canvas'));
 const storeState = vi.hoisted(
   (): {
     activeSelectionId: string | null;
@@ -19,6 +19,8 @@ const storeState = vi.hoisted(
     totalSize: { width: 100, height: 100 },
   })
 );
+
+const sourceCanvas = createMockCanvas({ width: 100, height: 100 });
 
 vi.mock('../StoreContext.tsx', () => ({
   useStore: () => [
@@ -38,10 +40,6 @@ vi.mock('../useLayer.ts', () => ({
     createLayerFromBitmap: createLayerFromBitmapMock,
   }),
 }));
-
-function createMockImageBitmap(width: number, height: number): ImageBitmap {
-  return { width, height, close: vi.fn() } as unknown as ImageBitmap;
-}
 
 const ClipboardProbe = () => {
   const { copyActiveSelection, pasteSelectionClipboard } = useSelectionClipboard();
@@ -75,8 +73,6 @@ describe('useSelectionClipboard', () => {
   beforeEach(() => {
     dispatchMock.mockClear();
     createLayerFromBitmapMock.mockClear();
-    sourceCanvas.width = 100;
-    sourceCanvas.height = 100;
     storeState.activeSelectionId = 'selection-1';
     storeState.selectionClipboard = null;
     storeState.selections = [createLassoSelection()];

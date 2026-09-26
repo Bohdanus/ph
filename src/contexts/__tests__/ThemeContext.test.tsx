@@ -1,43 +1,61 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider, useTheme } from '../ThemeContext.tsx';
 
-describe('ThemeContext', () => {
-  let localStorageMock: Storage;
-  let matchMediaMock: ReturnType<typeof vi.fn>;
+const { localStorageMock, matchMediaMock, buildMediaQueryList } = vi.hoisted(() => {
+  const createMediaQueryList = (query: string, matches = false) => ({
+    matches,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  });
 
+  const storageMock = {
+    getItem: vi.fn((): string | null => null),
+    setItem: vi.fn(),
+    removeItem: vi.fn(),
+    clear: vi.fn(),
+    length: 0,
+    key: vi.fn(),
+  };
+
+  const mediaQueryMock = vi.fn((query: string) => createMediaQueryList(query));
+
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: storageMock,
+    writable: true,
+    configurable: true,
+  });
+
+  Object.defineProperty(globalThis, 'matchMedia', {
+    value: mediaQueryMock,
+    writable: true,
+    configurable: true,
+  });
+
+  return { localStorageMock: storageMock, matchMediaMock: mediaQueryMock, buildMediaQueryList: createMediaQueryList };
+});
+
+describe('ThemeContext', () => {
   beforeEach(() => {
     vi.useFakeTimers();
 
-    localStorageMock = {
-      getItem: vi.fn(),
-      setItem: vi.fn(),
-      removeItem: vi.fn(),
-      clear: vi.fn(),
-      length: 0,
-      key: vi.fn(),
-    } as unknown as Storage;
+    localStorageMock.getItem.mockReset().mockReturnValue(null);
+    localStorageMock.setItem.mockReset();
+    localStorageMock.removeItem.mockReset();
+    localStorageMock.clear.mockReset();
+    localStorageMock.key.mockReset();
 
-    vi.stubGlobal('localStorage', localStorageMock);
-
-    matchMediaMock = vi.fn().mockImplementation((query) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    }));
-    vi.stubGlobal('matchMedia', matchMediaMock);
-
-    vi.resetModules();
+    matchMediaMock.mockReset();
+    matchMediaMock.mockImplementation((query: string) => buildMediaQueryList(query));
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -79,12 +97,14 @@ describe('ThemeContext', () => {
     renderWithProvider(<TestComponent />);
 
     expect(screen.getByTestId('theme')).toHaveTextContent('light');
-    fireEvent.click(screen.getByTestId('toggle'));
+    act(() => {
+      fireEvent.click(screen.getByTestId('toggle'));
+    });
     expect(screen.getByTestId('theme')).toHaveTextContent('dark');
   });
 
   it('toggles theme from dark to light', () => {
-    (localStorageMock.getItem as ReturnType<typeof vi.fn>).mockReturnValue('dark');
+    localStorageMock.getItem.mockReturnValue('dark');
 
     const TestComponent = () => {
       const { theme, toggleTheme } = useTheme();
@@ -101,7 +121,9 @@ describe('ThemeContext', () => {
     renderWithProvider(<TestComponent />);
 
     expect(screen.getByTestId('theme')).toHaveTextContent('dark');
-    fireEvent.click(screen.getByTestId('toggle'));
+    act(() => {
+      fireEvent.click(screen.getByTestId('toggle'));
+    });
     expect(screen.getByTestId('theme')).toHaveTextContent('light');
   });
 
@@ -132,7 +154,9 @@ describe('ThemeContext', () => {
 
     renderWithProvider(<TestComponent />);
 
-    fireEvent.click(screen.getByTestId('toggle'));
+    act(() => {
+      fireEvent.click(screen.getByTestId('toggle'));
+    });
     expect(document.documentElement.classList.contains('dark')).toBe(true);
     expect(document.documentElement.classList.contains('light')).toBe(false);
   });
@@ -152,12 +176,14 @@ describe('ThemeContext', () => {
 
     renderWithProvider(<TestComponent />);
 
-    fireEvent.click(screen.getByTestId('toggle'));
+    act(() => {
+      fireEvent.click(screen.getByTestId('toggle'));
+    });
     expect(localStorageMock.setItem).toHaveBeenCalledWith('theme', 'dark');
   });
 
   it('reads initial theme from localStorage', () => {
-    (localStorageMock.getItem as ReturnType<typeof vi.fn>).mockReturnValue('dark');
+    localStorageMock.getItem.mockReturnValue('dark');
 
     const TestComponent = () => {
       const { theme } = useTheme();
@@ -171,16 +197,9 @@ describe('ThemeContext', () => {
   });
 
   it('falls back to prefers-color-scheme when no localStorage', () => {
-    matchMediaMock.mockImplementation((query) => ({
-      matches: query === '(prefers-color-scheme: dark)',
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    }));
+    matchMediaMock.mockImplementation((query: string) =>
+      buildMediaQueryList(query, query === '(prefers-color-scheme: dark)')
+    );
 
     const TestComponent = () => {
       const { theme } = useTheme();
@@ -193,16 +212,7 @@ describe('ThemeContext', () => {
   });
 
   it('falls back to light when no localStorage and no dark preference', () => {
-    matchMediaMock.mockImplementation(() => ({
-      matches: false,
-      media: '(prefers-color-scheme: dark)',
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    }));
+    matchMediaMock.mockImplementation((query: string) => buildMediaQueryList(query, false));
 
     const TestComponent = () => {
       const { theme } = useTheme();
@@ -242,11 +252,17 @@ describe('ThemeContext', () => {
 
     renderWithProvider(<TestComponent />);
 
-    fireEvent.click(screen.getByTestId('toggle'));
+    act(() => {
+      fireEvent.click(screen.getByTestId('toggle'));
+    });
     expect(screen.getByTestId('theme')).toHaveTextContent('dark');
-    fireEvent.click(screen.getByTestId('toggle'));
+    act(() => {
+      fireEvent.click(screen.getByTestId('toggle'));
+    });
     expect(screen.getByTestId('theme')).toHaveTextContent('light');
-    fireEvent.click(screen.getByTestId('toggle'));
+    act(() => {
+      fireEvent.click(screen.getByTestId('toggle'));
+    });
     expect(screen.getByTestId('theme')).toHaveTextContent('dark');
   });
 });

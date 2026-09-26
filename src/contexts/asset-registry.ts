@@ -117,6 +117,7 @@ export class AssetRegistry {
   private readonly assets = new Map<AssetId, AssetEntry>();
   private readonly externalIds = new WeakMap<object, AssetId>();
   private readonly documentGenerations = new Map<string, number>();
+  private readonly disposedDocuments = new Set<string>();
   private readonly cache = new Map<string, CacheEntry>();
   private readonly pendingMaterializations = new Map<string, Promise<CacheEntry>>();
   private cacheBytes = 0;
@@ -170,6 +171,7 @@ export class AssetRegistry {
     bitmap: BitmapSource,
     options: Readonly<{ ownership?: AssetOwnership }> = {}
   ): AssetId {
+    this.disposedDocuments.delete(documentId);
     const originalSourceType = sourceType(bitmap);
     const requestedOwnership = options.ownership ?? (originalSourceType === 'image-bitmap' ? 'adopt' : 'borrow');
     const external = bitmap as unknown as object;
@@ -364,6 +366,8 @@ export class AssetRegistry {
   }
 
   disposeDocument(documentId: string): void {
+    if (this.disposedDocuments.has(documentId)) return;
+    this.disposedDocuments.add(documentId);
     for (const entry of this.assets.values()) {
       if (!entry.baselineDocuments.delete(documentId)) continue;
       this.release(entry.record.id);
@@ -377,6 +381,22 @@ export class AssetRegistry {
       }
     }
     this.nextGeneration(documentId);
+  }
+
+  /**
+   * Releases baselines omitted by a successfully published durable conversion.
+   * The caller must include every source reachable from the baseline and the
+   * complete replayable history, not just the active cursor projection.
+   */
+  reconcileDocumentAssets(documentId: string, reachableAssetIds: ReadonlySet<AssetId>): void {
+    let changed = false;
+    for (const entry of this.assets.values()) {
+      if (!entry.baselineDocuments.has(documentId) || reachableAssetIds.has(entry.record.id)) continue;
+      entry.baselineDocuments.delete(documentId);
+      this.release(entry.record.id);
+      changed = true;
+    }
+    if (changed) this.nextGeneration(documentId);
   }
 
   /** Releases every document baseline while respecting active leases. */

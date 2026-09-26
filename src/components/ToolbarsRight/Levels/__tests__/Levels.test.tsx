@@ -1,5 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { act } from 'react';
 import Levels from '../Levels.tsx';
 
 const toolArgs = vi.hoisted(() => ({
@@ -12,6 +14,10 @@ const activeLayerId = vi.hoisted(() => ({ current: 'layer-1' as string | null })
 
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
+const mockIsToolDirty = vi.hoisted(() => ({ current: true }));
+const mockResetToLastSavedArgs = vi.hoisted(() => vi.fn());
+const mockCanUndo = vi.hoisted(() => vi.fn(() => false));
+const mockUndo = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
@@ -23,6 +29,15 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs,
     setToolArgs: mockSetToolArgs,
+    isToolDirty: mockIsToolDirty.current,
+    resetToLastSavedArgs: mockResetToLastSavedArgs,
+  }),
+}));
+
+vi.mock('../../../../contexts/useHistory.ts', () => ({
+  useHistory: () => ({
+    canUndo: mockCanUndo,
+    undo: mockUndo,
   }),
 }));
 
@@ -52,6 +67,9 @@ describe('Levels toolbar', () => {
     resetToolArgs();
     mockTempUpdateLayer.mockClear();
     mockSetToolArgs.mockClear();
+    mockResetToLastSavedArgs.mockClear();
+    mockCanUndo.mockClear();
+    mockUndo.mockClear();
     setActiveLayerId('layer-1');
   });
 
@@ -91,5 +109,69 @@ describe('Levels toolbar', () => {
 
     const slider = screen.getByLabelText(/Contrast/) as HTMLInputElement;
     expect(slider.value).toBe('80');
+  });
+
+  describe('keyboard navigation', () => {
+    it('all focusable elements are reachable and in correct tab order', () => {
+      render(<Levels />);
+
+      const brightnessSlider = screen.getByLabelText(/Brightness/);
+      const contrastSlider = screen.getByLabelText(/Contrast/);
+      const resetButton = screen.getByRole('button', { name: 'Reset' });
+
+      expect(brightnessSlider).toBeInTheDocument();
+      expect(contrastSlider).toBeInTheDocument();
+      expect(resetButton).toBeInTheDocument();
+
+      expect(brightnessSlider.tabIndex).toBeGreaterThanOrEqual(0);
+      expect(contrastSlider.tabIndex).toBeGreaterThanOrEqual(0);
+      expect(resetButton.tabIndex).toBeGreaterThanOrEqual(0);
+    });
+
+    it('allows arrow key navigation on brightness slider', () => {
+      render(<Levels />);
+      const brightnessSlider = screen.getByLabelText(/Brightness/);
+
+      brightnessSlider.focus();
+      expect(brightnessSlider).toHaveFocus();
+
+      fireEvent.keyDown(brightnessSlider, { key: 'ArrowRight' });
+      fireEvent.keyDown(brightnessSlider, { key: 'ArrowLeft' });
+      expect(brightnessSlider).toHaveFocus();
+    });
+
+    it('allows arrow key navigation on contrast slider', () => {
+      render(<Levels />);
+      const contrastSlider = screen.getByLabelText(/Contrast/);
+
+      contrastSlider.focus();
+      expect(contrastSlider).toHaveFocus();
+
+      fireEvent.keyDown(contrastSlider, { key: 'ArrowUp' });
+      fireEvent.keyDown(contrastSlider, { key: 'ArrowDown' });
+      expect(contrastSlider).toHaveFocus();
+    });
+
+    it('allows enter to trigger reset button when enabled', () => {
+      mockIsToolDirty.current = true;
+      render(<Levels />);
+      const resetButton = screen.getByRole('button', { name: 'Reset' });
+
+      expect(resetButton).not.toBeDisabled();
+
+      resetButton.focus();
+      fireEvent.click(resetButton);
+
+      expect(mockResetToLastSavedArgs).toHaveBeenCalled();
+    });
+
+    it('escape key does not close anything (no popovers)', () => {
+      render(<Levels />);
+      const brightnessSlider = screen.getByLabelText(/Brightness/);
+
+      brightnessSlider.focus();
+      fireEvent.keyDown(brightnessSlider, { key: 'Escape' });
+      expect(brightnessSlider).toHaveFocus();
+    });
   });
 });

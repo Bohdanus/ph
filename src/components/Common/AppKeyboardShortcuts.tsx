@@ -52,17 +52,19 @@ export const AppKeyboardShortcuts = () => {
 
   const selectShapeTool = (shiftKey = false) => {
     if (shiftKey) {
+      // The cycle must be expressed in real FigureType values. Matching the
+      // display name 'ellipse' against the stored figure 'oval' made
+      // indexOf() return -1, so Shift+U from Ellipse wrapped back to Rectangle
+      // instead of advancing to Line.
       const currentFigure = toolArgs.toolName === 'shape' ? toolArgs.figure : 'rectangle';
-      const orderedFigures = ['rectangle', 'ellipse', 'line', 'custom-shape'] as const;
+      const orderedFigures = ['rectangle', 'oval', 'line', 'custom-shape'] as const;
       const currentIndex = orderedFigures.indexOf(currentFigure as (typeof orderedFigures)[number]);
       const nextFigure = orderedFigures[(currentIndex + 1) % orderedFigures.length];
 
       if (nextFigure === 'custom-shape') {
         goToTool('custom-shape');
       } else {
-        patchToolArgs('shape', {
-          figure: nextFigure === 'rectangle' ? 'rectangle' : nextFigure === 'ellipse' ? 'oval' : 'line',
-        });
+        patchToolArgs('shape', { figure: nextFigure });
         goToTool('shape');
       }
       return;

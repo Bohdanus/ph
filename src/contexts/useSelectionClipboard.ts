@@ -25,7 +25,7 @@ export const useSelectionClipboard = () => {
     {
       activeSelectionId,
       canvasRef,
-      layers = [],
+      layers = {},
       selectionClipboard,
       selections,
       totalSize,
@@ -64,16 +64,15 @@ export const useSelectionClipboard = () => {
   async function pasteSelectionClipboard(): Promise<boolean> {
     if (!selectionClipboard) return false;
 
-    const width = selectionClipboard.pos.width || selectionClipboard.bitmap.width;
-    const height = selectionClipboard.pos.height || selectionClipboard.bitmap.height;
-    const centerPos = {
-      x: documentFrame.x + Math.max(0, Math.round((totalSize.width - width) / 2)),
-      y: documentFrame.y + Math.max(0, Math.round((totalSize.height - height) / 2)),
-      width,
-      height,
-    };
-
     try {
+      const width = selectionClipboard.pos.width || selectionClipboard.bitmap.width;
+      const height = selectionClipboard.pos.height || selectionClipboard.bitmap.height;
+      const centerPos = {
+        x: documentFrame.x + Math.max(0, Math.round((totalSize.width - width) / 2)),
+        y: documentFrame.y + Math.max(0, Math.round((totalSize.height - height) / 2)),
+        width,
+        height,
+      };
       await createLayerFromBitmap({
         bitmap: cloneBitmapToCanvas(selectionClipboard.bitmap),
         name: getNextLayerName(Object.values(layers)),

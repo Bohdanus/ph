@@ -143,10 +143,10 @@ export const useApp = (): UseAppType => {
       return;
     }
     const { image } = data;
-    _setFileName(fileName);
     const size = { width: image.width, height: image.height };
     handleImageCreate(size);
     await createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true);
+    _setFileName(fileName);
   }
 
   function goToTool(nextToolName: ToolName) {

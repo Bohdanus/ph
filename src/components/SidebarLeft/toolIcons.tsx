@@ -2,7 +2,6 @@ import type { SvgIconFactory, ToolIconName } from './types';
 
 import { BlurIcon } from './icons/BlurIcon';
 import { BrushToolIcon } from './icons/BrushToolIcon';
-import { CircleShapeIcon } from './icons/CircleShapeIcon';
 import { ColorIcon } from './icons/ColorIcon';
 import { ColorReplacementIcon } from './icons/ColorReplacementIcon';
 import { CropIcon } from './icons/CropIcon';
@@ -20,7 +19,6 @@ import { PolygonalLassoIcon } from './icons/PolygonalLassoIcon';
 import { RectangularSelectionIcon } from './icons/RectangularSelectionIcon';
 import { RectangleShapeIcon } from './icons/RectangleShapeIcon';
 import { ShapeIcon } from './icons/ShapeIcon';
-import { SquareShapeIcon } from './icons/SquareShapeIcon';
 import { TextIcon } from './icons/TextIcon';
 import { TransformIcon } from './icons/TransformIcon';
 
@@ -35,8 +33,6 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
   shape: ShapeIcon,
   'shape-rectangle': RectangleShapeIcon,
   'shape-oval': EllipseShapeIcon,
-  'shape-square': SquareShapeIcon,
-  'shape-circle': CircleShapeIcon,
   'shape-line': LineShapeIcon,
   'shape-triangle': ShapeIcon,
   'shape-polygon': ShapeIcon,

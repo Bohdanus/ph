@@ -22,8 +22,13 @@ import {
   type MigrationDiagnostic,
 } from './history-adapter.ts';
 import { getAssetRegistry } from './asset-registry.ts';
-import type { MaterializedDocument } from './materialization.ts';
-import { ReplayCoordinator, type ReplayRevisionToken } from './replay-coordinator.ts';
+
+/**
+ * `current` describes an exact, transactionally converted shadow; `stale`
+ * means runtime state changed outside that conversion; `unavailable` means
+ * conversion failed and no durable shadow may be consumed.
+ */
+export type DurableDocumentStatus = DurableConversionStatus | 'stale';
 
 export type StoreData = {
   // refs
@@ -39,10 +44,6 @@ export type StoreData = {
   // Transient previews are document-scoped, not hook-instance-scoped. This
   // lets toolbars, export, and tool switching share one draft transaction.
   previewLayers: React.MutableRefObject<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>;
-  /** Runtime-only publication state. Neither ref is part of durable history. */
-  replayCoordinator: React.MutableRefObject<ReplayCoordinator<MaterializedDocument>>;
-  presentationMaterialization: React.MutableRefObject<MaterializedDocument | null>;
-  getReplayRevisionToken: () => ReplayRevisionToken;
 
   // file / image state
   hasImage: boolean;
@@ -76,8 +77,8 @@ export type StoreData = {
   /** Diagnostic shadow only; legacy history/runtime layers remain authoritative during cutover. */
   durableDocument: DurableDocument | null;
   /** A non-current sidecar must never be used as a replay or export input. */
-  durableStatus: DurableConversionStatus | 'stale';
-  durableDiagnostics: readonly string[];
+  durableStatus: DurableDocumentStatus;
+  durableDiagnostics: readonly MigrationDiagnostic[];
 
   // colors
   color: string;
@@ -121,8 +122,8 @@ type Action =
         updates?: StoreUpdates;
         historyItem: HistoryItem;
         durableDocument?: DurableDocument | null;
-        durableStatus?: DurableConversionStatus | 'stale';
-        durableDiagnostics?: readonly string[];
+        durableStatus?: DurableDocumentStatus;
+        durableDiagnostics?: readonly MigrationDiagnostic[];
       };
     }
   | {
@@ -131,18 +132,8 @@ type Action =
         updates: StoreUpdates;
         timeline: HistoryTimeline;
         durableDocument?: DurableDocument | null;
-        durableStatus?: DurableConversionStatus | 'stale';
-        durableDiagnostics?: readonly string[];
-      };
-    }
-  | {
-      type: 'PUBLISH_DURABLE_REPLAY';
-      payload: {
-        updates: StoreUpdates;
-        timeline: HistoryTimeline;
-        durableDocument: DurableDocument;
-        durableStatus: DurableConversionStatus;
-        durableDiagnostics: readonly string[];
+        durableStatus?: DurableDocumentStatus;
+        durableDiagnostics?: readonly MigrationDiagnostic[];
       };
     }
   | {
@@ -153,13 +144,13 @@ type Action =
         history: HistoryItem[];
         historyIndex?: number;
         durableDocument?: DurableDocument | null;
-        durableStatus?: DurableConversionStatus | 'stale';
-        durableDiagnostics?: readonly string[];
+        durableStatus?: DurableDocumentStatus;
+        durableDiagnostics?: readonly MigrationDiagnostic[];
       };
     }
   | {
       type: 'SET_DURABLE_STATUS';
-      payload: { status: DurableConversionStatus | 'stale'; diagnostics: readonly string[] };
+      payload: { status: DurableDocumentStatus; diagnostics: readonly MigrationDiagnostic[] };
     }
   | { type: 'SET_COLOR'; payload: string }
   | { type: 'SET_BACKGROUND_COLOR'; payload: string }
@@ -190,17 +181,6 @@ const initialState: StoreData = {
   currentArgs: { current: {} as ToolArgs },
   clearPreviewLayers: () => undefined,
   previewLayers: { current: {} },
-  replayCoordinator: { current: new ReplayCoordinator<MaterializedDocument>() },
-  presentationMaterialization: { current: null },
-  getReplayRevisionToken: () => ({
-    documentId: 'uninitialized',
-    documentRevision: 0,
-    durableRevision: 0,
-    branchRevision: 0,
-    cursor: 0,
-    baselineAssetGeneration: 0,
-    operationSetRevision: 0,
-  }),
 
   hasImage: false,
   hasUnsavedChanges: false,
@@ -379,24 +359,6 @@ function reducer(state: StoreData, action: Action): StoreData {
         hasUnsavedChanges: true,
       };
     }
-    case 'PUBLISH_DURABLE_REPLAY': {
-      const replayUpdates = action.payload.updates;
-      const replayFrame = replayUpdates.documentFrame;
-      return {
-        ...state,
-        ...replayUpdates,
-        ...(replayFrame
-          ? { documentFrame: cloneDocumentFrame(replayFrame), totalSize: documentFrameSize(replayFrame) }
-          : {}),
-        history: [...action.payload.timeline.entries],
-        historyIndex: action.payload.timeline.cursor,
-        branchRevision: action.payload.timeline.branchRevision,
-        durableDocument: action.payload.durableDocument,
-        durableStatus: action.payload.durableStatus,
-        durableDiagnostics: action.payload.durableDiagnostics,
-        hasUnsavedChanges: true,
-      };
-    }
     case 'REPLACE_DOCUMENT': {
       const updates = action.payload.updates;
       const nextFrame =
@@ -488,41 +450,43 @@ function reducer(state: StoreData, action: Action): StoreData {
   }
 }
 
-function formatDurableDiagnostics(
-  diagnostics: readonly MigrationDiagnostic[],
-  history: readonly HistoryItem[]
-): readonly string[] {
-  const historyById = new Map(history.map((item) => [item.id, item]));
-  return diagnostics.map((diagnostic) => {
-    if (!diagnostic.historyId) return `${diagnostic.severity}: ${diagnostic.message}`;
-    const actionName = historyById.get(diagnostic.historyId)?.actionName ?? 'unknown';
-    return `${diagnostic.severity}: history ${diagnostic.historyId} (${actionName}): ${diagnostic.message}`;
-  });
-}
-
 function buildDurableDocument(
   state: StoreData,
   history: readonly HistoryItem[],
   historyCursor: number,
   branchRevision: number
 ) {
-  const converted = convertLegacyHistorySafely(history, {
-    documentId: state.documentId,
-    documentRevision: state.documentRevision,
-    branchRevision,
-    durableRevision: (state.durableDocument?.durableRevision ?? 0) + 1,
-    initialSize: state.totalSize,
-    initialFrame: state.documentFrame,
-  });
-  const cursor =
-    Number.isInteger(historyCursor) && historyCursor >= 0
-      ? (converted.legacyCursorToDurableCursor[historyCursor] ?? -1)
-      : -1;
-  return {
-    status: converted.status,
-    document: converted.document ? freezeDurableDocument({ ...converted.document, cursor }) : null,
-    diagnostics: formatDurableDiagnostics(converted.diagnostics, history),
-  };
+  try {
+    const converted = convertLegacyHistorySafely(history, {
+      documentId: state.documentId,
+      documentRevision: state.documentRevision,
+      branchRevision,
+      durableRevision: (state.durableDocument?.durableRevision ?? 0) + 1,
+      initialSize: state.totalSize,
+      initialFrame: state.documentFrame,
+    });
+    const cursor =
+      Number.isInteger(historyCursor) && historyCursor >= 0
+        ? (converted.legacyCursorToDurableCursor[historyCursor] ?? -1)
+        : -1;
+    return {
+      status: converted.status,
+      document: converted.document ? freezeDurableDocument({ ...converted.document, cursor }) : null,
+      diagnostics: converted.diagnostics,
+    };
+  } catch (error) {
+    return {
+      status: 'unavailable' as const,
+      document: null,
+      diagnostics: [
+        {
+          severity: 'error' as const,
+          code: 'conversion-failed' as const,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      ],
+    };
+  }
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -536,8 +500,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const currentArgsRef = useRef<ToolArgs>({} as ToolArgs);
   const previewLayersRef = useRef<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>({});
-  const replayCoordinatorRef = useRef(new ReplayCoordinator<MaterializedDocument>());
-  const presentationMaterializationRef = useRef<MaterializedDocument | null>(null);
   const clearPreviewLayers = () => {
     previewLayersRef.current = {};
   };
@@ -548,38 +510,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     latestStateRef.current = storeState;
   }, [storeState]);
-  const getReplayRevisionToken = (): ReplayRevisionToken => {
-    const current = latestStateRef.current;
-    const durableDocument = current.durableStatus === 'current' ? current.durableDocument : null;
-    return {
-      documentId: current.documentId,
-      documentRevision: current.documentRevision,
-      durableRevision: durableDocument?.durableRevision ?? -1,
-      branchRevision: current.branchRevision,
-      cursor: current.historyIndex,
-      baselineAssetGeneration: getAssetRegistry().getDocumentGeneration(current.documentId),
-      operationSetRevision: durableDocument?.durableRevision ?? -1,
-    };
-  };
   const dispatch: StoreDispatch = (action) => {
     // Legacy writers still submit HistoryItem; conversion and registry ownership
     // happen here so the reducer remains a pure atomic state transition.
     const currentState = latestStateRef.current;
-    if (
-      action.type === 'COMMIT_DOCUMENT_EDIT' ||
-      action.type === 'APPLY_HISTORY_REPLAY' ||
-      action.type === 'REPLACE_DOCUMENT' ||
-      action.type === 'SET_LAYERS' ||
-      action.type === 'ADD_LAYER' ||
-      action.type === 'UPDATE_LAYERS' ||
-      action.type === 'BATCH_UPDATES' ||
-      action.type === 'SET_SIZE' ||
-      action.type === 'SET_TOOL_NAME'
-    ) {
-      replayCoordinatorRef.current.cancel();
-      presentationMaterializationRef.current?.release();
-      presentationMaterializationRef.current = null;
-    }
     if (action.type === 'COMMIT_DOCUMENT_EDIT') {
       const timeline = updateHistoryTimeline(
         {
@@ -685,6 +619,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         action.payload.historyIndex ?? action.payload.history.length - 1,
         0
       );
+      if (currentState.documentId !== action.payload.documentId) {
+        getAssetRegistry().disposeDocument(currentState.documentId);
+      }
       latestStateRef.current = {
         ...currentState,
         ...action.payload.updates,
@@ -710,41 +647,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       return;
     }
-    if (action.type === 'PUBLISH_DURABLE_REPLAY') {
-      const replayFrame = action.payload.updates.documentFrame;
-      latestStateRef.current = {
-        ...currentState,
-        ...action.payload.updates,
-        ...(replayFrame
-          ? { documentFrame: cloneDocumentFrame(replayFrame), totalSize: documentFrameSize(replayFrame) }
-          : {}),
-        history: [...action.payload.timeline.entries],
-        historyIndex: action.payload.timeline.cursor,
-        branchRevision: action.payload.timeline.branchRevision,
-        durableDocument: action.payload.durableDocument,
-        durableStatus: action.payload.durableStatus,
-        durableDiagnostics: action.payload.durableDiagnostics,
-      };
-      rawDispatch(action);
-      return;
-    }
     latestStateRef.current = reducer(currentState, action);
     rawDispatch(action);
   };
-  const previousDocumentId = useRef(storeState.documentId);
-  useEffect(() => {
-    const previous = previousDocumentId.current;
-    if (previous !== storeState.documentId) getAssetRegistry().disposeDocument(previous);
-    previousDocumentId.current = storeState.documentId;
-  }, [storeState.documentId]);
   useEffect(
     () => () => {
-      replayCoordinatorRef.current.cancel();
-      presentationMaterializationRef.current?.release();
-      presentationMaterializationRef.current = null;
-      getAssetRegistry().disposeDocument(latestStateRef.current.documentId);
+      // The registry tombstones disposed document IDs, so this cleanup safely
+      // backs up synchronous dispatch disposal and React development probes.
+      getAssetRegistry().disposeDocument(storeState.documentId);
     },
-    []
+    [storeState.documentId]
   );
   const store = {
     ...storeState,
@@ -757,9 +669,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     currentArgs: currentArgsRef,
     clearPreviewLayers,
     previewLayers: previewLayersRef,
-    replayCoordinator: replayCoordinatorRef,
-    presentationMaterialization: presentationMaterializationRef,
-    getReplayRevisionToken,
   };
   //
   // function setSizeMemo(width: number, height: number) {

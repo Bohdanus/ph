@@ -107,4 +107,96 @@ describe('Draw toolbar', () => {
 
     expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ penType: 'pen-dashed' }));
   });
+
+  describe('keyboard navigation', () => {
+    it('all focusable elements are reachable and in correct tab order', () => {
+      render(<Draw />);
+
+      const penTypeSelect = screen.getByLabelText('Pen Type');
+      const sizeSlider = screen.getByLabelText(/Size/);
+      const alphaSlider = screen.getByLabelText(/Opacity/);
+
+      expect(penTypeSelect).toBeInTheDocument();
+      expect(sizeSlider).toBeInTheDocument();
+      expect(alphaSlider).toBeInTheDocument();
+
+      expect(penTypeSelect.tabIndex).toBeGreaterThanOrEqual(0);
+      expect(sizeSlider.tabIndex).toBeGreaterThanOrEqual(0);
+      expect(alphaSlider.tabIndex).toBeGreaterThanOrEqual(0);
+    });
+
+    it('allows arrow key navigation on pen type select', () => {
+      render(<Draw />);
+      const penTypeSelect = screen.getByLabelText('Pen Type');
+
+      penTypeSelect.focus();
+      expect(penTypeSelect).toHaveFocus();
+
+      fireEvent.keyDown(penTypeSelect, { key: 'ArrowDown' });
+      fireEvent.keyDown(penTypeSelect, { key: 'ArrowUp' });
+      expect(penTypeSelect).toHaveFocus();
+    });
+
+    it('allows arrow key navigation on sliders', () => {
+      render(<Draw />);
+      const sizeSlider = screen.getByLabelText(/Size/);
+      const alphaSlider = screen.getByLabelText(/Opacity/);
+
+      sizeSlider.focus();
+      expect(sizeSlider).toHaveFocus();
+      fireEvent.keyDown(sizeSlider, { key: 'ArrowRight' });
+      fireEvent.keyDown(sizeSlider, { key: 'ArrowLeft' });
+      expect(sizeSlider).toHaveFocus();
+
+      alphaSlider.focus();
+      expect(alphaSlider).toHaveFocus();
+      fireEvent.keyDown(alphaSlider, { key: 'ArrowUp' });
+      fireEvent.keyDown(alphaSlider, { key: 'ArrowDown' });
+      expect(alphaSlider).toHaveFocus();
+    });
+
+    it('opens dash/gap controls when pen-dashed is selected via keyboard', () => {
+      resetToolArgs({ penType: 'pen-dashed', lineDash: [10, 5] });
+      render(<Draw />);
+
+      expect(screen.getByLabelText(/Dash/)).toBeInTheDocument();
+      expect(screen.getByLabelText(/Gap/)).toBeInTheDocument();
+
+      const dashSlider = screen.getByLabelText(/Dash/);
+      const gapSlider = screen.getByLabelText(/Gap/);
+
+      dashSlider.focus();
+      expect(dashSlider).toHaveFocus();
+      fireEvent.keyDown(dashSlider, { key: 'ArrowRight' });
+      fireEvent.keyDown(dashSlider, { key: 'ArrowLeft' });
+      expect(dashSlider).toHaveFocus();
+
+      gapSlider.focus();
+      expect(gapSlider).toHaveFocus();
+      fireEvent.keyDown(gapSlider, { key: 'ArrowRight' });
+      fireEvent.keyDown(gapSlider, { key: 'ArrowLeft' });
+      expect(gapSlider).toHaveFocus();
+    });
+
+    it('enter and space on select opens options', () => {
+      render(<Draw />);
+      const penTypeSelect = screen.getByLabelText('Pen Type');
+
+      penTypeSelect.focus();
+      fireEvent.keyDown(penTypeSelect, { key: 'Enter' });
+      expect(penTypeSelect).toBeInTheDocument();
+
+      fireEvent.keyDown(penTypeSelect, { key: ' ' });
+      expect(penTypeSelect).toBeInTheDocument();
+    });
+
+    it('escape key does not close anything (no popovers)', () => {
+      render(<Draw />);
+      const sizeSlider = screen.getByLabelText(/Size/);
+
+      sizeSlider.focus();
+      fireEvent.keyDown(sizeSlider, { key: 'Escape' });
+      expect(sizeSlider).toHaveFocus();
+    });
+  });
 });

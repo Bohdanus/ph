@@ -1,281 +1,314 @@
 import { act, renderHook } from '@testing-library/react';
-import React from 'react';
+import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
+import type { ToolArgs } from '../tool-types.ts';
 import { CurrentToolProvider, useCurrentTool } from '../useCurrentTool.tsx';
-import type { ToolArgs, ToolName } from '../tool-types.ts';
-import { lastSavedSettings } from '../../tools/settings.ts';
+import { StoreProvider, useStore } from '../StoreContext.tsx';
 
-const storeState = vi.hoisted(
-  (): {
-    toolName: ToolName;
-    isToolDirty: boolean;
-    currentArgs: React.RefObject<ToolArgs>;
-  } => ({
-    toolName: 'draw',
-    isToolDirty: false,
-    currentArgs: {
-      current: {
-        toolName: 'draw',
-        alpha: 0.9,
-        lineWidth: 10,
-        color: '#000000',
-        points: [],
-        penType: 'pen',
-      } as ToolArgs,
+const { lastSavedSettings } = vi.hoisted(() => ({
+  lastSavedSettings: {
+    draw: {
+      toolName: 'draw',
+      penType: 'pen',
+      lineWidth: 5,
+      alpha: 1,
+      color: '#000000',
+      lineDash: null,
     },
-  })
-);
-
-vi.mock('../StoreContext.tsx', () => ({
-  useStore: () => [
-    {
-      toolName: storeState.toolName,
-      isToolDirty: storeState.isToolDirty,
-      currentArgs: storeState.currentArgs,
+    shape: {
+      toolName: 'shape',
+      figure: 'rectangle',
+      alpha: 1,
+      color: '#000000',
+      backgroundColor: '#ffffff',
+      hasFill: false,
+      lineWidth: 5,
+      lineDash: null,
     },
-    vi.fn(),
-  ],
+    text: {
+      toolName: 'text',
+      text: 'Hello',
+      fontSize: 64,
+      lineHeight: 1.1,
+      rect: null,
+      bold: false,
+      italic: false,
+      fontFamily: 'Arial',
+      align: 'left',
+    },
+  },
 }));
 
-function renderCurrentTool() {
-  return renderHook(() => useCurrentTool(), {
-    wrapper: ({ children }) => <CurrentToolProvider>{children}</CurrentToolProvider>,
+const { saveLastSettingsMock } = vi.hoisted(() => ({ saveLastSettingsMock: vi.fn() }));
+
+vi.mock('../../tools/settings.ts', () => ({ lastSavedSettings }));
+
+vi.mock('../../util/settings.ts', () => ({
+  saveLastSettings: saveLastSettingsMock,
+}));
+
+const shapeArgs = {
+  toolName: 'shape',
+  alpha: 1,
+  color: '#000000',
+  backgroundColor: '#ffffff',
+  hasFill: false,
+  lineWidth: 5,
+  lineDash: null,
+} as const;
+
+function wrapper({ children }: { children: ReactNode }) {
+  return (
+    <StoreProvider>
+      <CurrentToolProvider>{children}</CurrentToolProvider>
+    </StoreProvider>
+  );
+}
+
+function renderWithProviders() {
+  return renderHook(() => useCurrentTool(), { wrapper });
+}
+
+function renderWithStore() {
+  return renderHook(() => ({ tool: useCurrentTool(), store: useStore() }), { wrapper });
+}
+
+/**
+ * `CurrentToolProvider` only exposes args for the tool the store currently has
+ * selected, so shape assertions must select `shape` in the store first.
+ */
+function renderForShape() {
+  const rendered = renderWithStore();
+  act(() => {
+    rendered.result.current.store[1]({ type: 'SET_TOOL_NAME', payload: 'shape' });
   });
+  return rendered;
 }
 
 describe('useCurrentTool', () => {
   beforeEach(() => {
-    storeState.toolName = 'draw';
-    storeState.isToolDirty = false;
-    storeState.currentArgs = {
-      current: {
-        toolName: 'draw',
-        alpha: 0.9,
-        lineWidth: 10,
-        color: '#000000',
-        points: [],
-        penType: 'pen',
-      } as ToolArgs,
-    };
-
-    // Reset saved settings to defaults to avoid cross-test pollution.
-    lastSavedSettings.draw = {
-      alpha: 0.9,
-      lineWidth: 10,
-      color: '#000000',
-      points: [],
-      penType: 'pen',
-      toolName: 'draw',
-    };
-    lastSavedSettings.blur = { radius: 0, toolName: 'blur' };
-    lastSavedSettings.levels = { brightness: 0, contrast: 0, toolName: 'levels' };
-    lastSavedSettings.rectangle = {
-      alpha: 1,
-      lineWidth: 5,
-      cornerRadius: 0,
-      toolMode: 'shape',
-      figure: 'rectangle',
-      color: '#000000',
-      backgroundColor: null,
-      toolName: 'rectangle',
-    };
+    vi.clearAllMocks();
   });
 
-  describe('error boundary', () => {
-    it('throws when used outside a CurrentToolProvider', () => {
-      const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      expect(() => renderHook(() => useCurrentTool())).toThrow(
-        'useCurrentTool must be used within a CurrentToolProvider'
-      );
-      spy.mockRestore();
-    });
+  it('throws when used outside CurrentToolProvider', () => {
+    expect(() => renderHook(() => useCurrentTool())).toThrow(
+      'useCurrentTool must be used within a CurrentToolProvider'
+    );
   });
 
-  describe('initialization', () => {
-    it('initializes toolArgs from saved settings for the current tool', () => {
-      const { result } = renderCurrentTool();
-      expect(result.current.toolArgs.toolName).toBe('draw');
-      expect(result.current.toolArgs).toMatchObject(lastSavedSettings.draw);
-    });
-
-    it('exposes isToolDirty from the store', () => {
-      storeState.isToolDirty = true;
-      const { result } = renderCurrentTool();
-      expect(result.current.isToolDirty).toBe(true);
-    });
+  it('returns initial toolArgs from lastSavedSettings', () => {
+    const { result } = renderWithProviders();
+    expect(result.current.toolArgs.toolName).toBe('draw');
+    expect(result.current.getToolArgs('draw')).toMatchObject({ penType: 'pen', lineWidth: 5 });
   });
 
-  describe('tool switching', () => {
-    it('returns saved args for a different tool when the internal state lags', () => {
-      storeState.toolName = 'blur';
-      const { result } = renderCurrentTool();
-      expect(result.current.toolArgs.toolName).toBe('blur');
-      expect(result.current.toolArgs).toMatchObject(lastSavedSettings.blur);
-    });
-
-    it('returns internal args once they are set for the active tool', () => {
-      storeState.toolName = 'blur';
-      const { result } = renderCurrentTool();
-
-      act(() => {
-        result.current.setToolArgs({ toolName: 'blur', radius: 99 });
-      });
-
-      expect(result.current.toolArgs).toMatchObject({ toolName: 'blur', radius: 99 });
-    });
+  it('returns isToolDirty from store', () => {
+    const { result } = renderWithProviders();
+    expect(result.current.isToolDirty).toBe(false);
   });
 
   describe('setToolArgs', () => {
-    it('persists settings via saveLastSettings and updates state', () => {
-      const { result } = renderCurrentTool();
-      const originalDraw = lastSavedSettings.draw;
+    it('updates toolArgs and marks tool as dirty', () => {
+      const { result } = renderWithProviders();
+      const newArgs: ToolArgs = {
+        toolName: 'draw',
+        penType: 'spray',
+        lineWidth: 10,
+        alpha: 0.5,
+        color: '#ff0000',
+        lineDash: null,
+      };
 
       act(() => {
-        result.current.setToolArgs({
-          toolName: 'draw',
-          color: '#ff0000',
-          alpha: 0.5,
-          lineWidth: 42,
-          penType: 'pen',
-          points: [],
-        });
+        result.current.setToolArgs(newArgs);
       });
 
-      // Internal state was updated.
-      expect(result.current.toolArgs).toMatchObject({
+      expect(result.current.toolArgs).toEqual(newArgs);
+    });
+
+    it('calls saveLastSettings with new args', () => {
+      const { result } = renderWithProviders();
+      const newArgs: ToolArgs = {
         toolName: 'draw',
-        color: '#ff0000',
+        penType: 'spray',
+        lineWidth: 10,
         alpha: 0.5,
+        color: '#ff0000',
+        lineDash: null,
+      };
+
+      act(() => {
+        result.current.setToolArgs(newArgs);
       });
 
-      // saveLastSettings normalizes draw args (strips points to []).
-      expect(lastSavedSettings.draw).toMatchObject({ color: '#ff0000', points: [] });
-      expect(lastSavedSettings.draw).not.toBe(originalDraw);
+      expect(saveLastSettingsMock).toHaveBeenCalledWith(newArgs);
+    });
+
+    it('updates currentArgs ref in store', () => {
+      const { result } = renderWithStore();
+      const newArgs: ToolArgs = {
+        toolName: 'draw',
+        penType: 'spray',
+        lineWidth: 10,
+        alpha: 0.5,
+        color: '#ff0000',
+        lineDash: null,
+      };
+
+      act(() => {
+        result.current.tool.setToolArgs(newArgs);
+      });
+
+      expect(result.current.store[0].currentArgs.current).toEqual(newArgs);
     });
   });
 
   describe('getToolArgs', () => {
-    it('returns the typed args when the tool name matches', () => {
-      storeState.toolName = 'blur';
-      const { result } = renderCurrentTool();
+    it('returns toolArgs when toolName matches', () => {
+      const { result } = renderForShape();
 
-      const args = result.current.getToolArgs('blur');
+      const args = result.current.tool.getToolArgs('shape');
       expect(args).not.toBeNull();
-      expect(args?.toolName).toBe('blur');
+      expect(args?.toolName).toBe('shape');
     });
 
-    it('returns null when the tool name does not match', () => {
-      storeState.toolName = 'draw';
-      const { result } = renderCurrentTool();
+    it('returns null when toolName does not match', () => {
+      const { result } = renderWithProviders();
+      const args = result.current.getToolArgs('shape');
+      expect(args).toBeNull();
+    });
 
-      expect(result.current.getToolArgs('blur')).toBeNull();
+    it('returns typed args for the requested tool', () => {
+      const { result } = renderForShape();
+
+      act(() => {
+        result.current.tool.setToolArgs({ ...shapeArgs, figure: 'oval' });
+      });
+
+      const shapeToolArgs = result.current.tool.getToolArgs('shape');
+      expect(shapeToolArgs).not.toBeNull();
+      expect(shapeToolArgs?.figure).toBe('oval');
     });
   });
 
   describe('patchToolArgs', () => {
-    it('patches the existing args when the tool name matches', () => {
-      storeState.toolName = 'blur';
-      const { result } = renderCurrentTool();
-
+    it('patches existing tool args when tool matches', () => {
+      const { result } = renderForShape();
       act(() => {
-        result.current.patchToolArgs('blur', { radius: 77 });
+        result.current.tool.setToolArgs({ ...shapeArgs, figure: 'rectangle' });
       });
 
-      expect(result.current.toolArgs).toMatchObject({ toolName: 'blur', radius: 77 });
+      act(() => {
+        result.current.tool.patchToolArgs('shape', { figure: 'oval', lineWidth: 10 });
+      });
+
+      expect(result.current.tool.getToolArgs('shape')).toMatchObject({
+        figure: 'oval',
+        lineWidth: 10,
+        color: '#000000',
+      });
     });
 
-    it('falls back to saved args when the tool name does not match', () => {
-      storeState.toolName = 'blur';
-      const { result, rerender } = renderCurrentTool();
-
-      // Patch a different tool — should load its saved args then apply the patch.
+    it('creates new args from saved settings when tool does not match', () => {
+      const { result } = renderWithProviders();
       act(() => {
-        result.current.patchToolArgs('rectangle', { lineWidth: 77 });
+        result.current.patchToolArgs('shape', { figure: 'oval' });
       });
 
-      // The patch is persisted to saved settings via saveLastSettings (rectangle is handled).
-      expect(lastSavedSettings.rectangle).toMatchObject({ lineWidth: 77 });
-
-      // When the store switches to the patched tool, the internal state surfaces.
-      storeState.toolName = 'rectangle';
-      rerender();
-      expect(result.current.toolArgs).toMatchObject({ toolName: 'rectangle', lineWidth: 77 });
+      // The store still has `draw` selected, so the shape patch is staged but
+      // not yet the active args.
+      expect(result.current.getToolArgs('shape')).toBeNull();
+      expect(result.current.toolArgs.toolName).toBe('draw');
+      expect(result.current.getToolArgs('draw')?.lineWidth).toBe(5);
     });
 
-    it('persists the patched args through saveLastSettings', () => {
-      storeState.toolName = 'rectangle';
-      const { result, rerender } = renderCurrentTool();
+    it('normalizes a legacy circle figure to oval instead of leaving it in state', () => {
+      const { result } = renderForShape();
 
       act(() => {
-        result.current.patchToolArgs('rectangle', { lineWidth: 33 });
+        result.current.tool.patchToolArgs('shape', { figure: 'circle' as unknown as 'oval' });
       });
 
-      expect(lastSavedSettings.rectangle).toMatchObject({ lineWidth: 33 });
-      // After re-render, the active tool should reflect the patch.
-      rerender();
-      expect(result.current.toolArgs).toMatchObject({ lineWidth: 33 });
+      expect(result.current.tool.getToolArgs('shape')?.figure).toBe('oval');
+    });
+
+    it('normalizes a legacy square figure to rectangle instead of leaving it in state', () => {
+      const { result } = renderForShape();
+
+      act(() => {
+        result.current.tool.patchToolArgs('shape', { figure: 'square' as unknown as 'rectangle' });
+      });
+
+      expect(result.current.tool.getToolArgs('shape')?.figure).toBe('rectangle');
+    });
+
+    it('normalizes a legacy figure coming from already-corrupted saved settings', () => {
+      lastSavedSettings.shape = { ...lastSavedSettings.shape, figure: 'circle' } as typeof lastSavedSettings.shape;
+
+      try {
+        const { result } = renderForShape();
+        act(() => {
+          result.current.tool.patchToolArgs('shape', { lineWidth: 3 });
+        });
+
+        expect(result.current.tool.getToolArgs('shape')).toMatchObject({ figure: 'oval', lineWidth: 3 });
+      } finally {
+        lastSavedSettings.shape = { ...lastSavedSettings.shape, figure: 'rectangle' };
+      }
     });
   });
 
   describe('resetToLastSavedArgs', () => {
-    it('resets the internal state to saved args for the current tool', () => {
-      storeState.toolName = 'blur';
-      const { result } = renderCurrentTool();
-
+    it('resets current tool to last saved settings', () => {
+      const { result } = renderWithProviders();
       act(() => {
-        result.current.setToolArgs({ toolName: 'blur', radius: 999 });
+        result.current.setToolArgs({
+          toolName: 'draw',
+          penType: 'spray',
+          lineWidth: 20,
+          alpha: 1,
+          color: '#000000',
+          lineDash: null,
+        });
       });
-      expect(result.current.toolArgs).toMatchObject({ radius: 999 });
 
       act(() => {
         result.current.resetToLastSavedArgs();
       });
 
-      expect(result.current.toolArgs).toMatchObject(lastSavedSettings.blur);
+      expect(result.current.getToolArgs('draw')).toMatchObject({ penType: 'pen', lineWidth: 5 });
     });
 
-    it('can reset to a different tool explicitly', () => {
-      storeState.toolName = 'blur';
-      const { result, rerender } = renderCurrentTool();
-
+    it('resets specified tool to last saved settings', () => {
+      const { result } = renderForShape();
       act(() => {
-        result.current.resetToLastSavedArgs('levels');
+        result.current.tool.setToolArgs({ ...shapeArgs, figure: 'oval', hasFill: true, lineWidth: 10 });
       });
 
-      // The internal state now tracks 'levels'; switch the store to surface it.
-      storeState.toolName = 'levels';
-      rerender();
-      expect(result.current.toolArgs).toMatchObject(lastSavedSettings.levels);
+      act(() => {
+        result.current.tool.resetToLastSavedArgs('shape');
+      });
+
+      expect(result.current.tool.getToolArgs('shape')).toMatchObject({
+        figure: 'rectangle',
+        hasFill: false,
+        lineWidth: 5,
+      });
     });
   });
 
-  describe('currentArgsRef sync', () => {
-    it('syncs the store currentArgs ref with the latest toolArgs', () => {
-      const { result } = renderCurrentTool();
+  describe('tool switching', () => {
+    it('loads saved settings when tool changes via store', () => {
+      const { result } = renderWithStore();
+
+      expect(result.current.tool.toolArgs.toolName).toBe('draw');
 
       act(() => {
-        result.current.setToolArgs({
-          toolName: 'draw',
-          color: '#abcdef',
-          alpha: 1,
-          lineWidth: 2,
-          penType: 'pen',
-          points: [],
-        });
+        result.current.store[1]({ type: 'SET_TOOL_NAME', payload: 'shape' });
       });
 
-      expect(storeState.currentArgs.current).toEqual(result.current.toolArgs);
-    });
-
-    it('keeps currentArgs ref in sync after a tool switch', () => {
-      storeState.toolName = 'draw';
-      const { rerender } = renderCurrentTool();
-
-      storeState.toolName = 'blur';
-      rerender();
-
-      expect(storeState.currentArgs.current.toolName).toBe('blur');
+      expect(result.current.store[0].toolName).toBe('shape');
+      expect(result.current.tool.getToolArgs('shape')).toMatchObject({ figure: 'rectangle' });
     });
   });
 });

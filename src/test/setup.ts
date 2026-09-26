@@ -86,6 +86,94 @@ if (!testGlobal.createImageBitmap) {
   }) as typeof createImageBitmap;
 }
 
+if (!testGlobal.localStorage) {
+  const createStorageMock = () => ({
+    getItem: vi.fn(),
+    setItem: vi.fn(),
+    removeItem: vi.fn(),
+    clear: vi.fn(),
+    length: 0,
+    key: vi.fn(),
+  });
+  Object.defineProperty(testGlobal, 'localStorage', {
+    value: createStorageMock(),
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(testGlobal, 'sessionStorage', {
+    value: createStorageMock(),
+    writable: true,
+    configurable: true,
+  });
+}
+
+if (!testGlobal.matchMedia) {
+  Object.defineProperty(testGlobal, 'matchMedia', {
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+    writable: true,
+    configurable: true,
+  });
+}
+
+if (!testGlobal.Image) {
+  testGlobal.Image = class MockImage {
+    onload = (_event: Event) => {};
+    onerror = (_event: ErrorEvent) => {};
+    src = '';
+    width = 0;
+    height = 0;
+    constructor() {
+      setTimeout(() => {
+        if (this.onload) this.onload({} as Event);
+      }, 0);
+    }
+  } as unknown as typeof Image;
+}
+
+if (!testGlobal.FileReader) {
+  testGlobal.FileReader = class MockFileReader {
+    onload: ((event: { target: { result: string } }) => void) | null = null;
+    onerror: ((event: ErrorEvent) => void) | null = null;
+    result: string | ArrayBuffer | null = null;
+    readyState = 0;
+    EMPTY = 0;
+    LOADING = 1;
+    DONE = 2;
+    readAsDataURL = vi.fn((blob: Blob) => {
+      this.result = `data:${blob.type || 'application/octet-stream'};base64,mock`;
+      this.readyState = 2;
+      if (this.onload) this.onload({ target: { result: this.result } } as any);
+    });
+    readAsArrayBuffer = vi.fn();
+    readAsText = vi.fn();
+    abort = vi.fn();
+    addEventListener = vi.fn();
+    removeEventListener = vi.fn();
+    dispatchEvent = vi.fn();
+  } as unknown as typeof FileReader;
+}
+
+if (!testGlobal.URL.createObjectURL) {
+  const originalURL = globalThis.URL;
+  testGlobal.URL = Object.assign(class extends originalURL {}, {
+    createObjectURL: vi.fn((_obj: Blob | MediaSource) => 'blob:mock-url'),
+    revokeObjectURL: vi.fn((_url: string) => {}),
+  }) as typeof URL;
+}
+
+if (!testGlobal.confirm) {
+  testGlobal.confirm = vi.fn(() => true);
+}
+
 export function createMockCanvasContext(canvas?: { width: number; height: number }): CanvasRenderingContext2D {
   return {
     canvas: canvas ?? { width: 0, height: 0 },
@@ -101,6 +189,7 @@ export function createMockCanvasContext(canvas?: { width: number; height: number
     fillRect: vi.fn(),
     strokeRect: vi.fn(),
     arc: vi.fn(),
+    ellipse: vi.fn(),
     save: vi.fn(),
     restore: vi.fn(),
     setLineDash: vi.fn(),

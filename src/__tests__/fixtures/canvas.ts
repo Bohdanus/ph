@@ -41,17 +41,20 @@ export const createMockCanvas = (overrides: Record<string, unknown> = {}) => {
   } as unknown as HTMLCanvasElement;
 };
 
+export const createMockImageBitmap = (width: number = 128, height: number = 64) =>
+  ({
+    width,
+    height,
+    close: vi.fn(),
+  }) as unknown as ImageBitmap;
+
 export const createMockOffscreenCanvas = (width: number = 128, height: number = 64) => {
   const context = createMockCanvasContext({ canvas: { width, height } });
   return {
     width,
     height,
     getContext: vi.fn(() => context),
-    transferToImageBitmap: vi.fn(() => ({
-      width,
-      height,
-      close: vi.fn(),
-    })),
+    transferToImageBitmap: vi.fn(() => createMockImageBitmap(width, height)),
   } as unknown as OffscreenCanvas;
 };
 
@@ -66,11 +69,7 @@ export const mockCanvasGlobals = () => {
   );
   vi.stubGlobal(
     'createImageBitmap',
-    vi.fn(async (source: { width: number; height: number }) => ({
-      width: source.width,
-      height: source.height,
-      close: vi.fn(),
-    }))
+    vi.fn(async (source: { width: number; height: number }) => createMockImageBitmap(source.width, source.height))
   );
 
   return { mockContext, mockCanvas, mockOffscreenCanvas };

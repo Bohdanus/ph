@@ -30,22 +30,12 @@ class MockOffscreenCanvas {
   }
 }
 
-const originalOffscreenCanvas = globalThis.OffscreenCanvas;
-
 beforeEach(() => {
-  Object.defineProperty(globalThis, 'OffscreenCanvas', {
-    value: MockOffscreenCanvas,
-    writable: true,
-    configurable: true,
-  });
+  vi.stubGlobal('OffscreenCanvas', MockOffscreenCanvas);
 });
 
 afterEach(() => {
-  Object.defineProperty(globalThis, 'OffscreenCanvas', {
-    value: originalOffscreenCanvas,
-    writable: true,
-    configurable: true,
-  });
+  vi.unstubAllGlobals();
 });
 
 function makeBitmap(width: number, height: number): ImageBitmap {

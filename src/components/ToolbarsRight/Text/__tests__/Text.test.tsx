@@ -1,5 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { KeyboardEventsProvider } from '../../../../hooks/useKeyboardEvents.tsx';
 import Text from '../Text.tsx';
 
@@ -151,5 +152,141 @@ describe('Text toolbar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
 
     expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+  });
+
+  describe('keyboard navigation', () => {
+    it('allows tab navigation through all focusable elements', () => {
+      renderWithProvider(<Text />);
+      const user = userEvent.setup();
+
+      const textInput = screen.getByLabelText('Text');
+      const fontSelect = screen.getByLabelText('Font');
+      const fontSizeSlider = screen.getByLabelText(/Font Size/);
+      const lineHeightSlider = screen.getByLabelText(/Line Height/);
+      const alignSelect = screen.getByLabelText('Align');
+      const boldButton = screen.getByRole('button', { name: 'B' });
+      const italicButton = screen.getByRole('button', { name: 'I' });
+      const applyButton = screen.getByRole('button', { name: 'Apply' });
+      const clearButton = screen.getByRole('button', { name: 'Clear' });
+
+      textInput.focus();
+      expect(textInput).toHaveFocus();
+
+      userEvent.tab();
+      expect(fontSelect).toHaveFocus();
+
+      userEvent.tab();
+      expect(fontSizeSlider).toHaveFocus();
+
+      userEvent.tab();
+      expect(lineHeightSlider).toHaveFocus();
+
+      userEvent.tab();
+      expect(alignSelect).toHaveFocus();
+
+      userEvent.tab();
+      expect(boldButton).toHaveFocus();
+
+      userEvent.tab();
+      expect(italicButton).toHaveFocus();
+
+      userEvent.tab();
+      expect(applyButton).toHaveFocus();
+
+      userEvent.tab();
+      expect(clearButton).toHaveFocus();
+
+      userEvent.tab({ shift: true });
+      expect(applyButton).toHaveFocus();
+    });
+
+    it('allows arrow key navigation on font size slider', () => {
+      renderWithProvider(<Text />);
+      const fontSizeSlider = screen.getByLabelText(/Font Size/);
+
+      fontSizeSlider.focus();
+      const initialSize = Number(fontSizeSlider.value);
+      fireEvent.keyDown(fontSizeSlider, { key: 'ArrowRight' });
+      expect(Number(fontSizeSlider.value)).toBeGreaterThan(initialSize);
+
+      fireEvent.keyDown(fontSizeSlider, { key: 'ArrowLeft' });
+      expect(Number(fontSizeSlider.value)).toBe(initialSize);
+    });
+
+    it('allows arrow key navigation on line height slider', () => {
+      renderWithProvider(<Text />);
+      const lineHeightSlider = screen.getByLabelText(/Line Height/);
+
+      lineHeightSlider.focus();
+      const initialHeight = Number(lineHeightSlider.value);
+      fireEvent.keyDown(lineHeightSlider, { key: 'ArrowUp' });
+      expect(Number(lineHeightSlider.value)).toBeGreaterThan(initialHeight);
+
+      fireEvent.keyDown(lineHeightSlider, { key: 'ArrowDown' });
+      expect(Number(lineHeightSlider.value)).toBe(initialHeight);
+    });
+
+    it('allows arrow key navigation on align select', () => {
+      renderWithProvider(<Text />);
+      const alignSelect = screen.getByLabelText('Align');
+
+      alignSelect.focus();
+      fireEvent.keyDown(alignSelect, { key: 'ArrowDown' });
+      expect(alignSelect).toHaveValue('center');
+
+      fireEvent.keyDown(alignSelect, { key: 'ArrowDown' });
+      expect(alignSelect).toHaveValue('right');
+
+      fireEvent.keyDown(alignSelect, { key: 'ArrowUp' });
+      expect(alignSelect).toHaveValue('center');
+    });
+
+    it('allows enter/space to toggle bold and italic buttons', () => {
+      renderWithProvider(<Text />);
+      const boldButton = screen.getByRole('button', { name: 'B' });
+      const italicButton = screen.getByRole('button', { name: 'I' });
+
+      boldButton.focus();
+      fireEvent.keyDown(boldButton, { key: 'Enter' });
+      expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ bold: true }));
+
+      italicButton.focus();
+      fireEvent.keyDown(italicButton, { key: ' ' });
+      expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ italic: true }));
+    });
+
+    it('allows enter/space to trigger apply and clear buttons', () => {
+      renderWithProvider(<Text />);
+      const applyButton = screen.getByRole('button', { name: 'Apply' });
+      const clearButton = screen.getByRole('button', { name: 'Clear' });
+
+      applyButton.focus();
+      fireEvent.keyDown(applyButton, { key: 'Enter' });
+      expect(mockCreateLayerFromTool).toHaveBeenCalled();
+
+      mockCreateLayerFromTool.mockClear();
+
+      clearButton.focus();
+      fireEvent.keyDown(clearButton, { key: ' ' });
+      expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+    });
+
+    it('allows typing in text input', () => {
+      renderWithProvider(<Text />);
+      const textInput = screen.getByLabelText('Text');
+
+      textInput.focus();
+      fireEvent.change(textInput, { target: { value: 'New Text' } });
+      expect(textInput).toHaveValue('New Text');
+    });
+
+    it('escape key does not close anything (no popovers)', () => {
+      renderWithProvider(<Text />);
+      const fontSizeSlider = screen.getByLabelText(/Font Size/);
+
+      fontSizeSlider.focus();
+      fireEvent.keyDown(fontSizeSlider, { key: 'Escape' });
+      expect(fontSizeSlider).toHaveFocus();
+    });
   });
 });

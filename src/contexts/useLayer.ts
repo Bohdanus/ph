@@ -18,8 +18,7 @@ import {
   reorderLayers,
   saveLayerCanvas,
 } from './layer-utils.ts';
-import { drawLayer } from './layer-renderer.ts';
-import { resizeCanvas } from '../util/canvas.ts';
+import { drawLayersToCanvas } from './layer-renderer.ts';
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs } from './tool-types.ts';
 import { type CreatorToolParams, type ProcessorToolParams, toolProcessors } from '../tools/toolProcessors.ts';
 import { reduceRect, sortRect, sortedRectToPos, trimRect } from '../util/rect.ts';
@@ -512,10 +511,6 @@ export const useLayers = () => {
 
   const drawAllLayers = useCallback(() => {
     if (!canvasRef.current) return;
-    resizeCanvas(canvasRef.current, totalSize.width, totalSize.height);
-    const ctx = canvasRef.current.getContext('2d')!;
-
-    ctx.clearRect(0, 0, totalSize.width, totalSize.height);
 
     const renderLayers = Object.keys(previewLayersRef.current).length
       ? ({
@@ -524,15 +519,8 @@ export const useLayers = () => {
         } as LayersRecord)
       : layers;
     const sorted = getSortedLayersArray(renderLayers);
-
-    for (const layer of sorted) {
-      if (!layer.visible) continue;
-
-      if (!drawLayer(ctx, layer, documentFrame)) {
-        console.error('skipped layer without bitmap', layer.id);
-      } // todo should not happen, but just in case
-    }
-  }, [canvasRef, documentFrame, layers, previewLayersRef, totalSize]);
+    drawLayersToCanvas(canvasRef.current, sorted, documentFrame);
+  }, [canvasRef, documentFrame, layers, previewLayersRef]);
 
   const applyDocumentCrop = (rect: { x1: number; y1: number; x2: number; y2: number }): boolean => {
     const { x, y, width, height } = trimRect(sortRect(rect), totalSize);

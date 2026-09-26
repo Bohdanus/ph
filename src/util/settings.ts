@@ -3,8 +3,16 @@ import { lastSavedSettings } from '../tools/settings.ts';
 import type { ToolArgs } from '../contexts/tool-types.ts';
 
 import type { TextToolArgs } from '../tools/text.ts';
-import type { ShapeToolArgs } from '../tools/shape.ts';
+import { normalizeFigure, type ShapeToolArgs } from '../tools/shape.ts';
 import type { CropToolArgs } from '../tools/crop.ts';
+
+/**
+ * Tool args may arrive from an older build that still had dedicated Circle and
+ * Square tools. Map those figures onto their Photoshop base tool so a saved
+ * shape style is never dropped on the floor.
+ */
+const withNormalizedFigure = <T extends ShapeToolArgs>(args: ShapeToolArgs): T =>
+  ({ ...args, figure: normalizeFigure(args.figure) }) as T;
 
 export function saveLastSettings(args: ToolArgs) {
   const { toolName } = args;
@@ -17,7 +25,7 @@ export function saveLastSettings(args: ToolArgs) {
   } else if (toolName === 'text') {
     lastSavedSettings.text = cloneDeep(omit(args as TextToolArgs, 'text', 'rect'));
   } else if (toolName === 'shape') {
-    lastSavedSettings.shape = cloneDeep(omit(args as ShapeToolArgs, 'start', 'end'));
+    lastSavedSettings.shape = cloneDeep(withNormalizedFigure(omit(args as ShapeToolArgs, 'start', 'end')));
   } else if (toolName === 'crop') {
     lastSavedSettings.crop = cloneDeep(omit(args as CropToolArgs, 'rect'));
     // deliberately not storing for those three because they have a different philosophy, unfortunately
@@ -37,7 +45,7 @@ export function saveLastSettings(args: ToolArgs) {
     lastSavedSettings['rectangular-selection'] = cloneDeep({ toolName: 'rectangular-selection' });
   } else if (toolName === 'triangle' || toolName === 'polygon') {
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(
-      omit(args as unknown as ShapeToolArgs, 'start', 'end')
+      withNormalizedFigure(omit(args as unknown as ShapeToolArgs, 'start', 'end'))
     ) as ToolArgs;
   } else if (
     toolName === 'brush' ||

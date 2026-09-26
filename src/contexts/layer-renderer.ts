@@ -3,8 +3,9 @@ import type { Layer, LayerOperation, ToolLayerSource } from './layer-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
 import { exp1_1 } from '../tools/functions.ts';
 import { toolProcessors, type CreatorToolParams } from '../tools/toolProcessors.ts';
-import type { DocumentFrame } from './document-frame.ts';
+import { documentFrameSize, type DocumentFrame } from './document-frame.ts';
 import { getLayerAffineTransform, isIdentityAffineTransform } from './affine-transform.ts';
+import { resizeCanvas } from '../util/canvas.ts';
 
 function filterForOperation(operation: Extract<LayerOperation, { args: unknown }>): string {
   const { args } = operation;
@@ -96,5 +97,45 @@ export function drawLayer(ctx: CanvasRenderingContext2D, layer: Layer, documentF
     return drawLayerSource(ctx, layer, layer.pos, documentFrame);
   } finally {
     ctx.restore();
+  }
+}
+
+/**
+ * Keeps the last visible canvas intact when a source or processor fails while
+ * composing a new runtime presentation. The target changes only after every
+ * layer has drawn successfully to an isolated staging canvas.
+ */
+export function drawLayersToCanvas(
+  canvas: HTMLCanvasElement,
+  layers: readonly Layer[],
+  documentFrame: DocumentFrame
+): boolean {
+  if (typeof document === 'undefined') return true;
+  const size = documentFrameSize(documentFrame);
+  const stagingCanvas = document.createElement('canvas');
+  resizeCanvas(stagingCanvas, size.width, size.height);
+  const stagingContext = stagingCanvas.getContext('2d');
+  if (!stagingContext) return false;
+
+  try {
+    for (const layer of layers) {
+      if (!layer.visible) continue;
+      if (!drawLayer(stagingContext, layer, documentFrame)) console.error('skipped layer without bitmap', layer.id);
+    }
+  } catch (error) {
+    console.error('Unable to compose runtime layer presentation', error);
+    return false;
+  }
+
+  try {
+    resizeCanvas(canvas, size.width, size.height);
+    const context = canvas.getContext('2d');
+    if (!context) return false;
+    context.clearRect(0, 0, size.width, size.height);
+    context.drawImage(stagingCanvas, 0, 0);
+    return true;
+  } catch (error) {
+    console.error('Unable to publish runtime layer presentation', error);
+    return false;
   }
 }

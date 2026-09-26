@@ -41,11 +41,13 @@ describe('ReplayCoordinator', () => {
       materialize: () => materializationA.promise,
       publish: publishA,
       release: releaseA,
+      isStillValid: () => true,
     });
     const requestB = coordinator.request({
       token: tokenB,
       materialize: () => materializationB.promise,
       publish: publishB,
+      isStillValid: () => true,
     });
 
     materializationB.resolve(resultB);
@@ -229,6 +231,7 @@ describe('ReplayCoordinator', () => {
       materialize: () => Promise.resolve('result'),
       publish,
       release,
+      isStillValid: () => true,
     });
 
     expect(result.state).toBe('failed');
@@ -260,6 +263,7 @@ describe('ReplayCoordinator', () => {
       token: tokenB,
       materialize: () => Promise.resolve('result-b'),
       publish,
+      isStillValid: () => true,
     });
 
     await requestB;

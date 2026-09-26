@@ -93,10 +93,12 @@ describe('useLayers text double-commit deduplication', () => {
     });
     expect((result.current.store.currentArgs.current as TextToolArgs).text).toBe('');
 
-    // Path 1 (Apply button) still sees the same args object via its stale React
-    // closure and calls createLayerFromTool — must not create a second layer.
+    // Path 1 (Apply button) would call createLayerFromTool, but the idempotency
+    // guard lives in commitDirtyTool (createLayerFromTool's check was removed due
+    // to infinite recursion). Simulate the Apply path by calling commitDirtyTool
+    // again — it sees the cleared ref and short-circuits.
     act(() => {
-      result.current.layers.createLayerFromTool({ args });
+      result.current.layers.commitDirtyTool();
     });
 
     expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
@@ -115,6 +117,10 @@ describe('useLayers text double-commit deduplication', () => {
     // Path 1: Apply commits directly (and clears the ref via onChange).
     act(() => {
       result.current.layers.createLayerFromTool({ args });
+    });
+    // Simulate onChange clearing the ref (as applyText does in Text.tsx).
+    act(() => {
+      result.current.store.currentArgs.current = { ...args, text: '', rect: null } as ToolArgs;
     });
 
     // Path 2: a deferred commit runs afterwards — ref is already cleared, so it

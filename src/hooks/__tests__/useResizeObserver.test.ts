@@ -76,12 +76,12 @@ describe('useResizeObserverRAF', () => {
     vi.useFakeTimers();
     const { MockResizeObserver, getInstance: getInst } = createMockResizeObserver();
     getInstance = getInst;
-    vi.stubGlobal('ResizeObserver', MockResizeObserver);
+    vi.spyOn(globalThis, 'ResizeObserver').mockImplementation(MockResizeObserver as any);
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it('calls onResize with the element position and the new content rect dimensions', () => {
@@ -188,7 +188,7 @@ describe('useResizeObserverRAF', () => {
   });
 
   it('does not set up an observer when ResizeObserver is undefined', () => {
-    vi.stubGlobal('ResizeObserver', undefined);
+    vi.spyOn(globalThis, 'ResizeObserver').mockImplementation(undefined as any);
     const el = makeElement();
     const ref = { current: el } as RefObject<HTMLElement | null>;
     const onResize = vi.fn();

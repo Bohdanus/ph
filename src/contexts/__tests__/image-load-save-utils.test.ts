@@ -49,7 +49,7 @@ describe('document file routing', () => {
     loadTiffFile.mockReset();
   });
   afterEach(() => {
-    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it.each([
@@ -60,11 +60,21 @@ describe('document file routing', () => {
     const file = new File([content], name, { type });
     const document = { size: { width: 10, height: 20 }, layers: {}, warnings: [] };
     loadPsd.mockResolvedValue(document);
-    const reader = vi.fn();
-    vi.stubGlobal('FileReader', reader);
+    const readAsArrayBuffer = vi.fn();
+    vi.spyOn(globalThis, 'FileReader').mockImplementation(
+      class {
+        onload: ((event: { target: { result: ArrayBuffer } }) => void) | null = null;
+        onerror: ((event: ErrorEvent) => void) | null = null;
+        result: ArrayBuffer | null = null;
+        readAsArrayBuffer = readAsArrayBuffer;
+        constructor() {
+          this.result = new ArrayBuffer(0);
+        }
+      } as any
+    );
     await expect(loadDocumentFile(file)).resolves.toEqual({ fileName: name, document });
     expect(loadPsd).toHaveBeenCalledExactlyOnceWith(await file.arrayBuffer());
-    expect(reader).not.toHaveBeenCalled();
+    expect(readAsArrayBuffer).not.toHaveBeenCalled();
   });
 
   it('routes a raster through FileReader and waits for image decoding', async () => {
@@ -72,26 +82,21 @@ describe('document file routing', () => {
     const readAsDataURL = vi.fn();
     let reader!: { onload: (event: { target: { result: string } }) => void };
     let image!: { onload: () => void; src: string };
-    vi.stubGlobal(
-      'FileReader',
+    vi.spyOn(globalThis, 'FileReader').mockImplementation(
       class {
         onload = () => {};
         readAsDataURL = readAsDataURL;
         constructor() {
           reader = this;
         }
-      }
+      } as any
     );
-    vi.stubGlobal(
-      'Image',
-      class {
-        onload = () => {};
-        src = '';
-        constructor() {
-          image = this;
-        }
-      }
-    );
+    vi.spyOn(globalThis, 'Image').mockImplementation(function (this: any) {
+      this.onload = () => {};
+      this.src = '';
+      image = this;
+      return this;
+    } as any);
     const loaded = vi.fn();
     const promise = loadDocumentFile(file).then((value) => {
       loaded(value);
@@ -114,8 +119,7 @@ describe('document file routing', () => {
     let reader!: { onload: (event: { target: { result: string } }) => void; readAsDataURL: (value: Blob) => void };
     let readerInput!: Blob;
     let image!: { onload: () => void; src: string };
-    vi.stubGlobal(
-      'FileReader',
+    vi.spyOn(globalThis, 'FileReader').mockImplementation(
       class {
         onload = () => {};
         readAsDataURL(value: Blob) {
@@ -124,18 +128,14 @@ describe('document file routing', () => {
         constructor() {
           reader = this;
         }
-      }
+      } as any
     );
-    vi.stubGlobal(
-      'Image',
-      class {
-        onload = () => {};
-        src = '';
-        constructor() {
-          image = this;
-        }
-      }
-    );
+    vi.spyOn(globalThis, 'Image').mockImplementation(function (this: any) {
+      this.onload = () => {};
+      this.src = '';
+      image = this;
+      return this;
+    } as any);
 
     const promise = loadDocumentFile(file);
     await vi.waitFor(() => expect(readerInput).toBeInstanceOf(Blob));
@@ -187,7 +187,8 @@ describe('document downloads', () => {
     downloads = [];
     createObjectURL.mockClear();
     revokeObjectURL.mockClear();
-    vi.stubGlobal('URL', Object.assign(class extends URL {}, { createObjectURL, revokeObjectURL }));
+    vi.spyOn(globalThis.URL, 'createObjectURL').mockImplementation(createObjectURL);
+    vi.spyOn(globalThis.URL, 'revokeObjectURL').mockImplementation(revokeObjectURL);
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
       downloads.push({ name: this.download, href: this.href, attached: this.isConnected });
     });
@@ -196,7 +197,6 @@ describe('document downloads', () => {
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
-    vi.unstubAllGlobals();
   });
 
   it.each(['image/png', 'image/jpeg', 'image/webp', 'png'])(

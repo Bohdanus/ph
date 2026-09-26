@@ -1,6 +1,12 @@
 import { type PointerEvent, type RefObject, useEffect, useRef } from 'react';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
-import { drawShape, setShapeCtx, type ShapeToolArgs } from '../../tools/shape.ts';
+import {
+  drawShape,
+  normalizeShapeGeometry,
+  setShapeCtx,
+  shapeGeometryBounds,
+  type ShapeToolArgs,
+} from '../../tools/shape.ts';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -44,19 +50,6 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     };
   }, []);
 
-  const normalize = (anchor: Point, end: Point, constrain: boolean, fromCenter = false) => {
-    const start = fromCenter ? { x: anchor.x * 2 - end.x, y: anchor.y * 2 - end.y } : anchor;
-    let nextEnd = { ...end };
-    if (constrain && args.figure !== 'line') {
-      const side = Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
-      nextEnd = {
-        x: start.x + Math.sign(end.x - start.x || 1) * side,
-        y: start.y + Math.sign(end.y - start.y || 1) * side,
-      };
-    }
-    return { start, end: nextEnd };
-  };
-
   const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown } = usePointerPosition({
     ref: containerRef,
     imageSize: totalSize,
@@ -98,7 +91,10 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
       startRef.current = { x: startRef.current!.x + dx, y: startRef.current!.y + dy };
       endRef.current = { x: endRef.current!.x + dx, y: endRef.current!.y + dy };
     } else {
-      const shape = normalize(anchorRef.current!, point, event.shiftKey, fromCenterRef.current);
+      const shape = normalizeShapeGeometry(anchorRef.current!, point, args.figure, {
+        shiftKey: event.shiftKey,
+        altKey: fromCenterRef.current,
+      });
       startRef.current = shape.start;
       endRef.current = shape.end;
       originalShapeRef.current = shape;
@@ -118,7 +114,10 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
       originalShapeRef.current &&
       (startRef.current!.x !== anchorRef.current!.x || startRef.current!.y !== anchorRef.current!.y);
     if (!movedBySpace) {
-      const shape = normalize(anchorRef.current!, point, event.shiftKey, fromCenterRef.current);
+      const shape = normalizeShapeGeometry(anchorRef.current!, point, args.figure, {
+        shiftKey: event.shiftKey,
+        altKey: fromCenterRef.current,
+      });
       startRef.current = shape.start;
       endRef.current = shape.end;
     }
@@ -139,46 +138,7 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
       end.y += height;
     }
 
-    const halfLineWidth = args.lineWidth / 2;
-    const pos = {
-      x: Math.min(start.x, end.x) - halfLineWidth - 1,
-      y: Math.min(start.y, end.y) - halfLineWidth - 1,
-      width: Math.abs(start.x - end.x) + args.lineWidth + 2,
-      height: Math.abs(start.y - end.y) + args.lineWidth + 2,
-    };
-
-    // For circles and squares, recalculate the bounding box
-    if (args.figure === 'circle' || args.figure === 'oval' || args.figure === 'square') {
-      if (args.figure === 'square') {
-        let w = end.x - start.x;
-        let h = end.y - start.y;
-        const side = Math.max(Math.abs(w), Math.abs(h));
-        w = Math.sign(w) * side;
-        h = Math.sign(h) * side;
-        const newEnd = { x: start.x + w, y: start.y + h };
-
-        pos.x = Math.min(start.x, newEnd.x) - halfLineWidth - 1;
-        pos.y = Math.min(start.y, newEnd.y) - halfLineWidth - 1;
-        pos.width = Math.abs(start.x - newEnd.x) + args.lineWidth + 2;
-        pos.height = Math.abs(start.y - newEnd.y) + args.lineWidth + 2;
-      } else {
-        const cx = (start.x + end.x) / 2;
-        const cy = (start.y + end.y) / 2;
-        let rx = Math.abs(end.x - start.x) / 2;
-        let ry = Math.abs(end.y - start.y) / 2;
-
-        if (args.figure === 'circle') {
-          const r = Math.max(rx, ry);
-          rx = ry = r;
-        }
-
-        // Bounding box for circle/oval including line width
-        pos.x = Math.floor(cx - rx - args.lineWidth / 2 - 1);
-        pos.y = Math.floor(cy - ry - args.lineWidth / 2 - 1);
-        pos.width = Math.ceil(2 * rx + args.lineWidth + 2);
-        pos.height = Math.ceil(2 * ry + args.lineWidth + 2);
-      }
-    }
+    const pos = shapeGeometryBounds({ start, end }, args.lineWidth);
 
     start.x -= pos.x;
     start.y -= pos.y;

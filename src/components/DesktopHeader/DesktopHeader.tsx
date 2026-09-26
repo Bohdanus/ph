@@ -109,10 +109,20 @@ const DesktopHeader = () => {
                   className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
                   type="button"
                   onClick={async () => {
-                    if (hasUnsavedChanges || confirm('All unsaved changes to current image will be lost. Continue?.')) {
-                      const data = await openNewImageDialog();
-                      if (data) setBlankImage(data);
+                    try {
+                      if (
+                        hasUnsavedChanges ||
+                        confirm('All unsaved changes to current image will be lost. Continue?.')
+                      ) {
+                        const data = await openNewImageDialog();
+                        if (data) setBlankImage(data);
+                      }
                       setOpenMenu(null);
+                    } catch (error) {
+                      console.error('Unable to create document', error);
+                      window.alert(
+                        `Failed to create document: ${error instanceof Error ? error.message : String(error)}`
+                      );
                     }
                   }}
                   data-testid="header-file-new-button"
@@ -125,14 +135,21 @@ const DesktopHeader = () => {
                   className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
                   type="button"
                   onClick={async () => {
-                    if (
-                      (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
-                      !confirm('Discard unsaved changes and open another file?')
-                    )
-                      return;
-                    const data = await openLoadImageDialog();
-                    if (data) await setImageFromUpload(data);
-                    setOpenMenu(null);
+                    try {
+                      if (
+                        (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
+                        !confirm('Discard unsaved changes and open another file?')
+                      )
+                        return;
+                      const data = await openLoadImageDialog();
+                      if (data) await setImageFromUpload(data);
+                      setOpenMenu(null);
+                    } catch (error) {
+                      console.error('Unable to open document', error);
+                      window.alert(
+                        `Failed to open document: ${error instanceof Error ? error.message : String(error)}`
+                      );
+                    }
                   }}
                   data-testid="header-file-open-button"
                 >
@@ -144,20 +161,27 @@ const DesktopHeader = () => {
                   className="w-full bg-transparent px-4 py-1 text-left text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
                   type="button"
                   onClick={async () => {
-                    if (!hasImage || !canvasRef.current) return;
-                    let exportLayers!: ReturnType<typeof commitDirtyTool>;
-                    flushSync(() => {
-                      exportLayers = commitDirtyTool();
-                    });
-                    const data = await openSaveImageDialog({
-                      canvas: canvasRef.current,
-                      fileName,
-                      layers: exportLayers,
-                      size: totalSize,
-                      documentFrame,
-                    });
-                    if (data) handleImageSave(data);
-                    setOpenMenu(null);
+                    try {
+                      if (!hasImage || !canvasRef.current) return;
+                      let exportLayers!: ReturnType<typeof commitDirtyTool>;
+                      flushSync(() => {
+                        exportLayers = commitDirtyTool();
+                      });
+                      const data = await openSaveImageDialog({
+                        canvas: canvasRef.current,
+                        fileName,
+                        layers: exportLayers,
+                        size: totalSize,
+                        documentFrame,
+                      });
+                      if (data) handleImageSave(data);
+                      setOpenMenu(null);
+                    } catch (error) {
+                      console.error('Unable to prepare document export', error);
+                      window.alert(
+                        `Failed to prepare export: ${error instanceof Error ? error.message : String(error)}`
+                      );
+                    }
                   }}
                   data-testid="header-file-save-button"
                 >

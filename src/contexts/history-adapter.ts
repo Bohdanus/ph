@@ -16,6 +16,7 @@ import {
   type AssetId,
   cloneDurableDocument,
   cloneLayerSnapshot,
+  collectDurableAssetIds,
   freezeDurableDocument,
   toLayerSnapshot,
 } from './history-model.ts';
@@ -23,6 +24,7 @@ import type { HistoryItem } from './history-types.ts';
 import type { Layer, LayerId, LayerSource, LayersRecord } from './layer-types.ts';
 import type { BitmapSource, Selection, Size } from './general-types.ts';
 import type { ToolArgs } from './tool-types.ts';
+import type { ActionType } from '../util/constants.ts';
 import {
   HIDE_LAYER_ACTION,
   MERGE_ACTION,
@@ -52,7 +54,9 @@ export class UnsupportedHistoryFeatureError extends Error {
 
 export type MigrationDiagnostic = Readonly<{
   historyId?: string;
+  actionName?: ActionType;
   severity: 'warning' | 'error';
+  code: 'unsupported-history-feature' | 'document-replacement' | 'invalid-history-entry' | 'conversion-failed';
   message: string;
 }>;
 
@@ -251,6 +255,20 @@ function entry(id: string, operation: DurableOperation, enabled = true): Durable
   return Object.freeze({ id, schemaVersion: DURABLE_SCHEMA_VERSION, enabled, operation });
 }
 
+function diagnosticFromError(error: unknown, item?: HistoryItem): MigrationDiagnostic {
+  return {
+    ...(item ? { historyId: item.id, actionName: item.actionName } : {}),
+    severity: 'error',
+    code:
+      error instanceof UnsupportedHistoryFeatureError
+        ? 'unsupported-history-feature'
+        : item
+          ? 'invalid-history-entry'
+          : 'conversion-failed',
+    message: error instanceof Error ? error.message : String(error),
+  };
+}
+
 function isEntryEnabled(item: HistoryItem): boolean {
   const nested = item.args as { enabled?: unknown } | undefined;
   return !item.disabled && nested?.enabled !== false;
@@ -391,7 +409,9 @@ export function legacyHistoryToDurable(
       }
       diagnostics.push({
         historyId: item.id,
+        actionName: item.actionName,
         severity: 'error',
+        code: 'document-replacement',
         message: 'Document replacement must create a new durable document and cannot appear inside a document history.',
       });
       legacyCursorToDurableCursor.push(entries.length - 1);
@@ -492,11 +512,7 @@ export function legacyHistoryToDurable(
         throw new UnsupportedHistoryFeatureError(`Unsupported legacy action ${item.actionName}`, item.id);
       }
     } catch (error) {
-      diagnostics.push({
-        historyId: item.id,
-        severity: 'error',
-        message: error instanceof Error ? error.message : String(error),
-      });
+      diagnostics.push(diagnosticFromError(error, item));
     }
     if (operation) entries.push(entry(item.id, operation, enabled));
     legacyCursorToDurableCursor.push(entries.length - 1);
@@ -541,18 +557,14 @@ export function convertLegacyHistorySafely(
       };
     }
     transaction?.commit();
+    registry.reconcileDocumentAssets(converted.document.documentId, collectDurableAssetIds(converted.document));
     return { status: 'current', ...converted };
   } catch (error) {
     transaction?.rollback();
     return {
       status: 'unavailable',
       document: null,
-      diagnostics: [
-        {
-          severity: 'error',
-          message: error instanceof Error ? error.message : String(error),
-        },
-      ],
+      diagnostics: [diagnosticFromError(error)],
       legacyCursorToDurableCursor: [],
     };
   }
@@ -601,8 +613,9 @@ export function appendDurableEntry(document: DurableDocument, next: DurableHisto
 export function toggleDurableEntry(document: DurableDocument, entryId: string): DurableDocument {
   const index = document.history.findIndex((historyEntry) => historyEntry.id === entryId);
   if (index < 0) return document;
-  const history = [...document.history];
-  history[index] = Object.freeze({ ...history[index], enabled: !history[index].enabled });
+  const history = document.history.map((historyEntry, historyIndex) =>
+    historyIndex === index ? Object.freeze({ ...historyEntry, enabled: !historyEntry.enabled }) : historyEntry
+  );
   return freezeDurableDocument({
     ...document,
     history,

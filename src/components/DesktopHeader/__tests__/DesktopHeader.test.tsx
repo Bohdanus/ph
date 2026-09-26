@@ -63,7 +63,6 @@ describe('DesktopHeader', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    vi.unstubAllGlobals();
   });
 
   it('renders File, Tools, and Edit menu buttons', () => {
@@ -163,10 +162,7 @@ describe('DesktopHeader', () => {
   });
 
   it('opens the new file dialog when File > New is clicked', async () => {
-    vi.stubGlobal(
-      'confirm',
-      vi.fn(() => true)
-    );
+    globalThis.confirm = vi.fn(() => true);
     file.openNewImageDialog.mockResolvedValue(undefined);
     render(<DesktopHeader />);
 
@@ -182,10 +178,7 @@ describe('DesktopHeader', () => {
   });
 
   it('opens the load file dialog when File > Open is clicked', async () => {
-    vi.stubGlobal(
-      'confirm',
-      vi.fn(() => true)
-    );
+    globalThis.confirm = vi.fn(() => true);
     file.openLoadImageDialog.mockResolvedValue(undefined);
     render(<DesktopHeader />);
 
@@ -202,10 +195,7 @@ describe('DesktopHeader', () => {
 
   it('shows Confirm dialog when opening file with unsaved changes', async () => {
     storeState.hasUnsavedChanges = true;
-    vi.stubGlobal(
-      'confirm',
-      vi.fn(() => false)
-    );
+    globalThis.confirm = vi.fn(() => false);
     file.openLoadImageDialog.mockResolvedValue(undefined);
 
     render(<DesktopHeader />);
@@ -214,7 +204,7 @@ describe('DesktopHeader', () => {
     fireEvent.click(fileButton);
     fireEvent.click(screen.getByTestId('header-file-open-button'));
 
-    expect(window.confirm).toHaveBeenCalled();
+    expect(globalThis.confirm).toHaveBeenCalled();
     expect(file.openLoadImageDialog).not.toHaveBeenCalled();
   });
 });

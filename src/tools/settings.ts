@@ -26,9 +26,7 @@ export const savedDrawPerPen: Record<PenType, PenSettings> = {
 
 export const savedArgsPerFigure: Record<FigureType, FigureSettings> = {
   line: { alpha: 1, lineWidth: 5, lineCap: 'butt', toolMode: 'shape' },
-  circle: { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' },
   rectangle: { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' },
-  square: { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' },
   oval: { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' },
   triangle: { alpha: 1, lineWidth: 5, toolMode: 'shape' },
   polygon: { alpha: 1, lineWidth: 5, toolMode: 'shape' },

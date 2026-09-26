@@ -226,8 +226,12 @@ const Main = () => {
           <button
             className={PRIMARY_BUTTON_LARGE}
             onClick={async () => {
-              const data = await openLoadImageDialog();
-              if (data) await setImageFromUpload(data);
+              try {
+                const data = await openLoadImageDialog();
+                if (data) await setImageFromUpload(data);
+              } catch (error) {
+                window.alert(`Failed to open file: ${error instanceof Error ? error.message : String(error)}`);
+              }
             }}
             data-testid="main-open-file-button"
           >
@@ -235,11 +239,14 @@ const Main = () => {
           </button>
           <button
             className={`${TEXT_LINK_BUTTON} focus:outline-none`}
-            onClick={() =>
-              openNewImageDialog().then((data) => {
+            onClick={async () => {
+              try {
+                const data = await openNewImageDialog();
                 if (data) setBlankImage(data);
-              })
-            }
+              } catch (error) {
+                window.alert(`Failed to create document: ${error instanceof Error ? error.message : String(error)}`);
+              }
+            }}
             data-testid="main-blank-image-button"
           >
             blank image

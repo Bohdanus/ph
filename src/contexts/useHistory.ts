@@ -4,13 +4,13 @@ import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import type { ToolArgs } from './tool-types.ts';
 import { toolProcessors } from '../tools/toolProcessors.ts';
 import { createLayerSource, getSortedLayersArray } from './layer-utils.ts';
-import { drawLayer } from './layer-renderer.ts';
+import { drawLayersToCanvas } from './layer-renderer.ts';
 import { replayHistory } from './history-replay.ts';
-import { resizeCanvas } from '../util/canvas.ts';
 import { SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION } from '../util/constants.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { updateHistoryTimeline } from './history-timeline.ts';
-import { documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
+import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
+import type { MigrationDiagnostic } from './history-adapter.ts';
 
 export function getHistoryItemTitle(item: HistoryItem) {
   const { actionName, args, layerSource } = item;
@@ -76,17 +76,7 @@ export const useHistory = () => {
 
   function drawReplay(layers: LayersRecord, frame: DocumentFrame) {
     const canvas = canvasRef.current;
-    if (!canvas) return;
-    const totalSize = documentFrameSize(frame);
-    resizeCanvas(canvas, totalSize.width, totalSize.height);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, totalSize.width, totalSize.height);
-
-    for (const layer of getSortedLayersArray(layers)) {
-      if (!layer.visible) continue;
-      if (!drawLayer(ctx, layer, frame)) console.error('skipped layer without bitmap', layer.id);
-    }
+    return !canvas || drawLayersToCanvas(canvas, getSortedLayersArray(layers), frame);
   }
 
   function resetHistoryTo(targetIndex: number, _history: HistoryItem[] = history, _branchRevision = branchRevision) {
@@ -122,6 +112,9 @@ export const useHistory = () => {
         activeLayerId && replay.layers[activeLayerId]
           ? activeLayerId
           : (sortedLayers[sortedLayers.length - 1]?.id ?? null);
+      if (!drawReplay(replay.layers, replay.documentFrame)) {
+        throw new Error('Unable to publish replayed history presentation');
+      }
 
       dispatch({
         type: 'APPLY_HISTORY_REPLAY',
@@ -138,11 +131,16 @@ export const useHistory = () => {
           timeline: { entries: _history, cursor: targetIndex, branchRevision: _branchRevision },
         },
       });
-      drawReplay(replay.layers, replay.documentFrame);
     } catch (error) {
       const item = _history[targetIndex];
       const reason = error instanceof Error ? error.message : String(error);
-      const diagnostic = `error: history ${item?.id ?? targetIndex} (${item?.actionName ?? 'unknown'}): ${reason}`;
+      const diagnostic: MigrationDiagnostic = {
+        historyId: item?.id,
+        actionName: item?.actionName,
+        severity: 'error',
+        code: 'conversion-failed',
+        message: reason,
+      };
       console.error('History replay is unavailable', error);
       dispatch({ type: 'SET_DURABLE_STATUS', payload: { status: 'unavailable', diagnostics: [diagnostic] } });
     }
