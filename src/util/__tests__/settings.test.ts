@@ -17,7 +17,8 @@ describe('saveLastSettings', () => {
   });
 
   it('throws when toolName is missing', () => {
-    expect(() => saveLastSettings({} as ToolArgs)).toThrow('Tool name required');
+    const invalidArgs = {} as Record<string, unknown>;
+    expect(() => saveLastSettings(invalidArgs as ToolArgs)).toThrow('Tool name required');
   });
 
   it('stores draw settings without points', () => {

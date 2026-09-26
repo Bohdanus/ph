@@ -1,4 +1,5 @@
-import { cleanup, render, screen, fireEvent } from '@testing-library/react';
+import { useState } from 'react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Shape from '../Shape.tsx';
 
@@ -11,7 +12,7 @@ const storeState = {
 };
 
 const baseToolArgs = {
-  toolName: 'shape',
+  toolName: 'shape' as const,
   figure: 'rectangle' as 'rectangle' | 'oval' | 'circle' | 'square' | 'line',
   alpha: 1,
   color: '#000000',
@@ -21,7 +22,6 @@ const baseToolArgs = {
   lineDash: null,
 };
 
-const toolArgsMutable: typeof baseToolArgs = { ...baseToolArgs };
 const setToolArgsMock = vi.fn();
 
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
@@ -29,16 +29,17 @@ vi.mock('../../../../contexts/StoreContext.tsx', () => ({
 }));
 
 vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
-  useCurrentTool: () => ({
-    toolArgs: toolArgsMutable,
-    setToolArgs: (...args: unknown[]) => {
-      const newArgs = args[0] as typeof baseToolArgs;
-      if (newArgs) {
-        Object.assign(toolArgsMutable, newArgs);
-      }
-      return setToolArgsMock(...args);
-    },
-  }),
+  useCurrentTool: () => {
+    const [toolArgs, setToolArgs] = useState<typeof baseToolArgs>({ ...baseToolArgs });
+    return {
+      toolArgs,
+      setToolArgs: (...args: unknown[]) => {
+        const newArgs = args[0] as Partial<typeof baseToolArgs>;
+        setToolArgs({ ...toolArgs, ...newArgs });
+        return setToolArgsMock(...args);
+      },
+    };
+  },
 }));
 
 vi.mock('../../../../hooks/usePointerPosition.ts', () => ({
@@ -58,12 +59,11 @@ function lastCallArgs(mock: ReturnType<typeof vi.fn>) {
 
 describe('Shape toolbar', () => {
   beforeEach(() => {
-    Object.assign(toolArgsMutable, baseToolArgs);
     setToolArgsMock.mockClear();
   });
 
   afterEach(() => {
-    cleanup();
+    vi.restoreAllMocks();
   });
 
   it('renders Photoshop-style tool mode choices', () => {
@@ -99,10 +99,11 @@ describe('Shape toolbar', () => {
     };
 
     for (const [figure, label] of Object.entries(figureLabels)) {
-      toolArgsMutable.figure = figure as 'rectangle' | 'oval' | 'circle' | 'square' | 'line';
+      baseToolArgs.figure = figure as 'rectangle' | 'oval' | 'circle' | 'square' | 'line';
       render(<Shape />);
       expect(screen.getByText(label)).toBeInTheDocument();
     }
+    baseToolArgs.figure = 'rectangle';
   });
 
   it('adjusts line width via thickness slider', () => {
@@ -113,12 +114,9 @@ describe('Shape toolbar', () => {
     expect(screen.getByText('5px')).toBeInTheDocument();
 
     fireEvent.change(thicknessSlider, { target: { value: '25' } });
-    cleanup();
-    render(<Shape />);
 
     expect(lastCallArgs(setToolArgsMock)).toMatchObject({ lineWidth: 25 });
-    const updatedSlider = screen.getByRole('slider', { name: /Thickness/ }) as HTMLInputElement;
-    expect(updatedSlider).toHaveValue('25');
+    expect(thicknessSlider).toHaveValue('25');
     expect(screen.getByText('25px')).toBeInTheDocument();
   });
 
@@ -129,8 +127,6 @@ describe('Shape toolbar', () => {
     expect(fillCheckbox).not.toBeChecked();
 
     fireEvent.click(fillCheckbox);
-    cleanup();
-    render(<Shape />);
 
     const checkedFill = screen.getByRole('checkbox', { name: /Filled/ }) as HTMLInputElement;
     expect(checkedFill).toBeChecked();
@@ -154,8 +150,6 @@ describe('Shape toolbar', () => {
 
     const dashedCheckbox = screen.getByRole('checkbox', { name: /Dashed/ }) as HTMLInputElement;
     fireEvent.click(dashedCheckbox);
-    cleanup();
-    render(<Shape />);
 
     expect(document.getElementById('dash-slider')).not.toBeNull();
     expect(document.getElementById('gap-slider')).not.toBeNull();
@@ -167,14 +161,10 @@ describe('Shape toolbar', () => {
 
     const dashedCheckbox = screen.getByRole('checkbox', { name: /Dashed/ }) as HTMLInputElement;
     fireEvent.click(dashedCheckbox);
-    cleanup();
-    render(<Shape />);
     expect(document.getElementById('dash-slider')).not.toBeNull();
 
     const dashedCheckboxAgain = screen.getByRole('checkbox', { name: /Dashed/ }) as HTMLInputElement;
     fireEvent.click(dashedCheckboxAgain);
-    cleanup();
-    render(<Shape />);
     expect(document.getElementById('dash-slider')).toBeNull();
     expect(document.getElementById('gap-slider')).toBeNull();
   });
@@ -184,19 +174,14 @@ describe('Shape toolbar', () => {
 
     const dashedCheckbox = screen.getByRole('checkbox', { name: /Dashed/ }) as HTMLInputElement;
     fireEvent.click(dashedCheckbox);
-    cleanup();
-    render(<Shape />);
 
     const dashSlider = screen.getByRole('slider', { name: /Dash/ }) as HTMLInputElement;
     expect(dashSlider).toHaveValue('10');
 
     fireEvent.change(dashSlider, { target: { value: '20' } });
-    cleanup();
-    render(<Shape />);
 
     expect(lastCallArgs(setToolArgsMock)).toMatchObject({ lineDash: [20, 10] });
-    const updatedDash = screen.getByRole('slider', { name: /Dash/ }) as HTMLInputElement;
-    expect(updatedDash).toHaveValue('20');
+    expect(dashSlider).toHaveValue('20');
     expect(screen.getByText('20px')).toBeInTheDocument();
   });
 
@@ -205,19 +190,14 @@ describe('Shape toolbar', () => {
 
     const dashedCheckbox = screen.getByRole('checkbox', { name: /Dashed/ }) as HTMLInputElement;
     fireEvent.click(dashedCheckbox);
-    cleanup();
-    render(<Shape />);
 
     const gapSlider = screen.getByRole('slider', { name: /Gap/ }) as HTMLInputElement;
     expect(gapSlider).toHaveValue('10');
 
     fireEvent.change(gapSlider, { target: { value: '15' } });
-    cleanup();
-    render(<Shape />);
 
     expect(lastCallArgs(setToolArgsMock)).toMatchObject({ lineDash: [10, 15] });
-    const updatedGap = screen.getByRole('slider', { name: /Gap/ }) as HTMLInputElement;
-    expect(updatedGap).toHaveValue('15');
+    expect(gapSlider).toHaveValue('15');
     expect(screen.getByText('15px')).toBeInTheDocument();
   });
 
@@ -229,12 +209,9 @@ describe('Shape toolbar', () => {
     expect(screen.getByText('100%')).toBeInTheDocument();
 
     fireEvent.change(alphaSlider, { target: { value: '0.5' } });
-    cleanup();
-    render(<Shape />);
 
     expect(lastCallArgs(setToolArgsMock)).toMatchObject({ alpha: 0.5 });
-    const updatedAlpha = screen.getByRole('slider', { name: /Opacity/ }) as HTMLInputElement;
-    expect(updatedAlpha).toHaveValue('0.5');
+    expect(alphaSlider).toHaveValue('0.5');
     expect(screen.getByText('50%')).toBeInTheDocument();
   });
 

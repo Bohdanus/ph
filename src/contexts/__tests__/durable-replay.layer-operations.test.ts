@@ -540,17 +540,14 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
     const { bitmap, close } = createOwnedBitmap(100, 100);
     const assetId = registry.registerBaseline('document-a', bitmap, { ownership: 'adopt' });
 
-    // Mock a raster processor that throws.
-    const originalProcessors = { ...toolProcessors };
-    Object.defineProperty(toolProcessors, 'blur', {
-      value: {
-        commit: 'layer-operation',
-        replay: { kind: 'layer-operation', version: 1, deterministic: true },
-        imageProcessor: () => {
-          throw new Error('processor crash');
-        },
+    // Mock a raster processor that throws using spyOn with mockRestore for clean isolation.
+    const originalProcessor = toolProcessors.blur;
+    const blurSpy = vi.spyOn(toolProcessors, 'blur', 'get').mockReturnValue({
+      commit: 'layer-operation',
+      replay: { kind: 'layer-operation', version: 1, deterministic: true, requiresRaster: false },
+      imageProcessor: () => {
+        throw new Error('processor crash');
       },
-      configurable: true,
     });
 
     const layer: DurableReplayLayer = Object.freeze({
@@ -597,7 +594,8 @@ describe('materialization raster processor failure handling (P0.3 continuation)'
       // but the baseline document is still alive.
       expect(close).not.toHaveBeenCalled();
     } finally {
-      Object.defineProperty(toolProcessors, 'blur', { value: originalProcessors['blur'], configurable: true });
+      blurSpy.mockRestore();
+      void originalProcessor;
     }
 
     registry.shutdown();

@@ -1,8 +1,46 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useApp } from '../useApp.ts';
 import type { PsdDocument } from '../../contexts/psd-utils.ts';
+import type { ToolArgs } from '../../contexts/tool-types.ts';
 import type { StoreData } from '../../contexts/StoreContext.tsx';
 import { OPEN_DOCUMENT_ACTION } from '../../util/constants.ts';
+
+function createMockStoreData(): StoreData {
+  return {
+    canvasRef: { current: null },
+    toolOverlayRef: { current: null },
+    rectOverlayRef: { current: null },
+    containerRef: { current: null },
+    textareaRef: { current: null },
+    canvasCtxRef: { current: null },
+    currentArgs: {
+      current: { toolName: 'draw', alpha: 0.9, lineWidth: 10, color: '#000000', points: [], penType: 'pen' },
+    } as { current: ToolArgs },
+    clearPreviewLayers: vi.fn(),
+    previewLayers: { current: {} },
+    replayCoordinator: { current: null },
+    presentationMaterialization: { current: null },
+    getReplayRevisionToken: vi.fn(),
+    hasImage: true,
+    hasUnsavedChanges: false,
+    fileName: '',
+    totalSize: { width: 100, height: 100 },
+    documentFrame: { x: 0, y: 0, width: 100, height: 100 },
+    toolName: 'draw',
+    isToolDirty: false,
+    layers: {},
+    deletedLayers: {},
+    history: [],
+    historyIndex: 0,
+    branchRevision: 0,
+    activeLayerId: null,
+    selections: [],
+    activeSelectionId: null,
+    selectionDraft: { status: 'idle' },
+    selectionCleared: null,
+    selectionClipboard: null,
+  } as unknown as StoreData;
+}
 
 const mocks = vi.hoisted(() => ({
   useStore: vi.fn(),
@@ -19,7 +57,7 @@ function setup(warnings: string[] = []) {
     name: 'Imported top',
     isBedrock: false,
     tmpCanvas: null,
-    bitmap: { width: 20, height: 30 } as ImageBitmap,
+    bitmap: { width: 20, height: 30, close: vi.fn() } as ImageBitmap,
     visible: false,
     opacity: 0.4,
     locked: true,
@@ -34,10 +72,11 @@ function setup(warnings: string[] = []) {
     layers: { top: layer, bottom: { ...layer, id: 'bottom', order: 2, pos: { ...layer.pos } } },
   };
   const state = {
+    ...createMockStoreData(),
     canvasRef: { current: { width: 10, height: 10 } },
     toolOverlayRef: { current: { width: 10, height: 10 } },
     rectOverlayRef: { current: { width: 10, height: 10 } },
-    currentArgs: { current: { toolName: 'text', text: 'Uncommitted' } },
+    currentArgs: { current: { toolName: 'text', text: 'Uncommitted' } } as { current: ToolArgs },
     layers: { old: layer },
     deletedLayers: { deleted: layer },
     history: [{ id: 'old' }],
@@ -142,7 +181,14 @@ describe('useApp PSD replacement', () => {
 
   it('retains the raster upload path rather than creating a PSD baseline', () => {
     const { dispatch } = setup();
-    const image = { width: 80, height: 40 } as HTMLImageElement;
+    const image = {
+      width: 80,
+      height: 40,
+      src: '',
+      complete: true,
+      naturalWidth: 80,
+      naturalHeight: 40,
+    } as HTMLImageElement;
     useApp().setImageFromUpload({ fileName: 'photo.png', image });
     expect(mocks.createLayerFromBitmap).toHaveBeenCalledExactlyOnceWith(
       {
@@ -159,10 +205,10 @@ describe('useApp PSD replacement', () => {
 
   it('clears the active selection and records the clear in history when switching tools', () => {
     const state = {
-      canvasRef: { current: { width: 10, height: 10 } },
-      toolOverlayRef: { current: { width: 10, height: 10 } },
-      rectOverlayRef: { current: { width: 10, height: 10 } },
-      currentArgs: { current: {} },
+      ...createMockStoreData(),
+      currentArgs: {
+        current: { toolName: 'draw', alpha: 0.9, lineWidth: 10, color: '#000000', points: [], penType: 'pen' },
+      },
       layers: {},
       deletedLayers: {},
       history: [],
@@ -171,10 +217,10 @@ describe('useApp PSD replacement', () => {
       activeSelectionId: 'selection-1',
       toolName: 'draw',
       hasUnsavedChanges: false,
-      selectionDraft: { status: 'idle' },
+      selectionDraft: { status: 'idle' as const },
       selectionCleared: null,
       selectionClipboard: null,
-    } as unknown as Partial<StoreData>;
+    };
     const dispatch = vi.fn();
     mocks.useStore.mockReturnValue([state, dispatch]);
 

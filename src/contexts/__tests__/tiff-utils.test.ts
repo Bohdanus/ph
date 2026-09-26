@@ -10,12 +10,21 @@ const { decode, decodeImage, encodeImage, toRGBA8 } = vi.hoisted(() => ({
 
 vi.mock('utif', () => ({ default: { decode, decodeImage, encodeImage, toRGBA8 } }));
 
+class MockImage {
+  onload = () => {};
+  onerror = () => {};
+  src = '';
+}
+
 describe('TIFF encoding and decoding', () => {
+  let imageInstance: MockImage | null;
+
   beforeEach(() => {
     decode.mockReset();
     decodeImage.mockReset();
     encodeImage.mockReset();
     toRGBA8.mockReset();
+    imageInstance = null;
   });
 
   afterEach(() => {
@@ -31,27 +40,27 @@ describe('TIFF encoding and decoding', () => {
       createImageData: vi.fn(() => imageData),
       putImageData: vi.fn(),
     };
-    let image!: InstanceType<typeof ImageMock>;
-    class ImageMock {
-      onload = () => {};
-      onerror = () => {};
-      src = '';
 
-      constructor() {
-        image = this;
+    vi.stubGlobal(
+      'Image',
+      class extends MockImage {
+        static instance: MockImage | null = null;
+        constructor() {
+          super();
+          imageInstance = this;
+        }
       }
-    }
-    vi.stubGlobal('Image', ImageMock);
+    );
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
     vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,decoded');
     decode.mockReturnValue([page]);
     toRGBA8.mockReturnValue(rgba);
 
     const promise = loadTiffFile(new Blob(['tiff']));
-    await vi.waitFor(() => expect(image).toBeDefined());
-    image.onload();
+    await vi.waitFor(() => expect(imageInstance).toBeDefined());
+    imageInstance!.onload();
 
-    await expect(promise).resolves.toBe(image);
+    await expect(promise).resolves.toBe(imageInstance);
     expect(decode).toHaveBeenCalledExactlyOnceWith(expect.any(ArrayBuffer));
     expect(decodeImage).toHaveBeenCalledExactlyOnceWith(expect.any(ArrayBuffer), page);
     expect(context.createImageData).toHaveBeenCalledWith(2, 1);

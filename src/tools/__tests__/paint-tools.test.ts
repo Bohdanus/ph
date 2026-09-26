@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 class MockOffscreenCanvas {
   width: number;
@@ -47,6 +47,7 @@ vi.stubGlobal('OffscreenCanvas', MockOffscreenCanvas);
 import { defaultSettings } from '../settings.ts';
 import { toolsMap } from '../toolsMap.ts';
 import { createLayerSource } from '../../contexts/layer-utils.ts';
+import type { PaintToolArgs } from '../draw.ts';
 
 describe('paint tools', () => {
   beforeAll(() => {
@@ -57,8 +58,10 @@ describe('paint tools', () => {
   });
 
   it('exposes real draw-like behavior for brush, pencil, and color replacement tools', () => {
-    for (const toolName of ['brush', 'pencil', 'color-replacement'] as const) {
-      const args = defaultSettings[toolName];
+    const drawToolNames: Array<'brush' | 'pencil' | 'color-replacement'> = ['brush', 'pencil', 'color-replacement'];
+
+    for (const toolName of drawToolNames) {
+      const args = defaultSettings[toolName] as PaintToolArgs;
 
       expect(args).toMatchObject({
         toolName,
@@ -67,7 +70,7 @@ describe('paint tools', () => {
         lineWidth: expect.any(Number),
       });
 
-      const [canvas] = toolsMap[toolName].imageProcessor({ size: { width: 20, height: 20 } })(args as never);
+      const [canvas] = toolsMap[toolName].imageProcessor({ size: { width: 20, height: 20 } })(args);
       expect(canvas).toBeTruthy();
     }
   });
@@ -77,13 +80,14 @@ describe('paint tools', () => {
 
     for (const toolName of variantToolNames) {
       const args = defaultSettings[toolName];
+
       expect(args).toMatchObject({
         toolName,
         color: expect.any(String),
         figure: expect.any(String),
       });
 
-      const [canvas] = toolsMap[toolName].imageProcessor({ size: { width: 20, height: 20 } })(args as never);
+      const [canvas] = toolsMap[toolName].imageProcessor({ size: { width: 20, height: 20 } })(args);
       expect(canvas).toBeTruthy();
     }
   });

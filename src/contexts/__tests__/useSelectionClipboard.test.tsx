@@ -39,6 +39,10 @@ vi.mock('../useLayer.ts', () => ({
   }),
 }));
 
+function createMockImageBitmap(width: number, height: number): ImageBitmap {
+  return { width, height, close: vi.fn() } as unknown as ImageBitmap;
+}
+
 const ClipboardProbe = () => {
   const { copyActiveSelection, pasteSelectionClipboard } = useSelectionClipboard();
 
@@ -97,9 +101,7 @@ describe('useSelectionClipboard', () => {
   });
 
   it('pastes the in-app clipboard bitmap as an independent new layer at the copied selection position', () => {
-    const clipboardBitmap = document.createElement('canvas');
-    clipboardBitmap.width = 30;
-    clipboardBitmap.height = 40;
+    const clipboardBitmap = createMockImageBitmap(30, 40);
     storeState.selectionClipboard = {
       bitmap: clipboardBitmap,
       copiedAt: 123,

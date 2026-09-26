@@ -3,26 +3,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SidebarLeft from '../SidebarLeft.tsx';
 
 const goToTool = vi.fn();
-
-const toolArgsMutable: { toolName: string; figure?: string } = { toolName: 'draw' };
 const patchToolArgsMock = vi.fn();
 
-const storeStateMutable: {
-  hasImage: boolean;
-  toolName: string;
-  color: string;
-  backgroundColor: string;
-  dispatch: ReturnType<typeof vi.fn>;
-} = {
-  hasImage: true,
+const storeStateRef = vi.hoisted(() => ({
   toolName: 'draw',
   color: '#000000',
   backgroundColor: '#ffffff',
+  hasImage: true,
   dispatch: vi.fn(),
-};
+}));
+
+const toolArgsRef = vi.hoisted(() => ({
+  toolName: 'draw' as string,
+  figure: undefined as string | undefined,
+}));
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [storeStateMutable, storeStateMutable.dispatch],
+  useStore: () => [storeStateRef, storeStateRef.dispatch],
 }));
 
 vi.mock('../../../hooks/useApp.ts', () => ({
@@ -31,7 +28,7 @@ vi.mock('../../../hooks/useApp.ts', () => ({
 
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
-    toolArgs: toolArgsMutable,
+    toolArgs: toolArgsRef,
     patchToolArgs: patchToolArgsMock,
   }),
 }));
@@ -91,14 +88,14 @@ const toolbarButtonByName = (name: string) => screen.getByTestId(`tool-button-${
 describe('SidebarLeft', () => {
   beforeEach(() => {
     goToTool.mockReset();
-    Object.assign(toolArgsMutable, { toolName: 'draw', figure: undefined });
-    Object.assign(storeStateMutable, {
+    Object.assign(toolArgsRef, { toolName: 'draw', figure: undefined });
+    Object.assign(storeStateRef, {
       hasImage: true,
       toolName: 'draw',
       color: '#000000',
       backgroundColor: '#ffffff',
     });
-    storeStateMutable.dispatch.mockClear();
+    storeStateRef.dispatch.mockClear();
     patchToolArgsMock.mockClear();
   });
 
@@ -134,7 +131,7 @@ describe('SidebarLeft', () => {
     });
 
     it('does not render anything when there is no image', () => {
-      Object.assign(storeStateMutable, { hasImage: false });
+      Object.assign(storeStateRef, { hasImage: false });
       const { container } = render(<SidebarLeft />);
       expect(container.firstChild).toBeNull();
     });
@@ -371,8 +368,8 @@ describe('SidebarLeft', () => {
     it.each(nonPrimaryCases)(
       'defaults to the first item (%s) as primary even when another group member is active',
       (activeTool, name, expectedPrimary) => {
-        Object.assign(storeStateMutable, { toolName: activeTool });
-        Object.assign(toolArgsMutable, { toolName: activeTool, figure: undefined });
+        Object.assign(storeStateRef, { toolName: activeTool });
+        Object.assign(toolArgsRef, { toolName: activeTool, figure: undefined });
         render(<SidebarLeft />);
 
         const rootButton = toolbarButtonByName(name);
@@ -545,7 +542,7 @@ describe('SidebarLeft', () => {
 
   describe('icon and selection state', () => {
     it('marks the grouped button as pressed when a tool in the group is active', () => {
-      Object.assign(storeStateMutable, { toolName: 'brush' });
+      Object.assign(storeStateRef, { toolName: 'brush' });
       render(<SidebarLeft />);
 
       const brushButton = toolbarButtonByName('brush');
@@ -566,7 +563,7 @@ describe('SidebarLeft', () => {
       const input = screen.getByTestId('foreground-color-input');
       fireEvent.change(input, { target: { value: '#ff0000' } });
 
-      expect(storeStateMutable.dispatch).toHaveBeenCalledWith({ type: 'SET_COLOR', payload: '#ff0000' });
+      expect(storeStateRef.dispatch).toHaveBeenCalledWith({ type: 'SET_COLOR', payload: '#ff0000' });
     });
 
     it('dispatches SET_BACKGROUND_COLOR when background color input changes', () => {
@@ -575,7 +572,7 @@ describe('SidebarLeft', () => {
       const input = screen.getByTestId('background-color-input');
       fireEvent.change(input, { target: { value: '#00ff00' } });
 
-      expect(storeStateMutable.dispatch).toHaveBeenCalledWith({
+      expect(storeStateRef.dispatch).toHaveBeenCalledWith({
         type: 'SET_BACKGROUND_COLOR',
         payload: '#00ff00',
       });
@@ -586,8 +583,8 @@ describe('SidebarLeft', () => {
 
       fireEvent.click(screen.getByTestId('swap-colors-button'));
 
-      expect(storeStateMutable.dispatch).toHaveBeenCalledWith({ type: 'SET_COLOR', payload: '#ffffff' });
-      expect(storeStateMutable.dispatch).toHaveBeenCalledWith({
+      expect(storeStateRef.dispatch).toHaveBeenCalledWith({ type: 'SET_COLOR', payload: '#ffffff' });
+      expect(storeStateRef.dispatch).toHaveBeenCalledWith({
         type: 'SET_BACKGROUND_COLOR',
         payload: '#000000',
       });

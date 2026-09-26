@@ -33,6 +33,8 @@ describe('ReplayCoordinator', () => {
     const publishB = vi.fn();
     const tokenA = createToken(1);
     const tokenB = createToken(2);
+    const resultA = 'result-a';
+    const resultB = 'result-b';
 
     const requestA = coordinator.request({
       token: tokenA,
@@ -46,16 +48,17 @@ describe('ReplayCoordinator', () => {
       publish: publishB,
     });
 
-    materializationB.resolve('result-b');
-    await expect(requestB).resolves.toMatchObject({ state: 'published', result: 'result-b' });
+    materializationB.resolve(resultB);
+    await expect(requestB).resolves.toMatchObject({ state: 'published', result: resultB });
     expect(publishB).toHaveBeenCalledOnce();
-    expect(publishB).toHaveBeenCalledWith('result-b', tokenB);
+    expect(publishB).toHaveBeenCalledWith(resultB, tokenB);
 
-    materializationA.resolve('result-a');
+    materializationA.resolve(resultA);
     await expect(requestA).resolves.toMatchObject({ state: 'cancelled' });
+
     expect(publishA).not.toHaveBeenCalled();
     expect(releaseA).toHaveBeenCalledOnce();
-    expect(releaseA).toHaveBeenCalledWith('result-a');
+    expect(releaseA).toHaveBeenCalledWith(resultA);
   });
 
   it('cancels immediately when the input signal is already aborted before materialization starts', async () => {

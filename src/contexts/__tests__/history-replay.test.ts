@@ -65,9 +65,11 @@ describe('replayHistory', () => {
 
     const result = replayHistory(history, history.length - 1, initialSize, dependencies);
 
-    expect(result.layers[layerId].operations).toEqual(
-      toolArgs.map((args) => ({ id: `${args.toolName}-action`, args, enabled: true }))
-    );
+    expect(result.layers[layerId].operations).toEqual([
+      { id: 'blur-action', args: { toolName: 'blur', radius: 3 }, enabled: true },
+      { id: 'color-action', args: { toolName: 'color', grayscale: 0.2, sepia: 0.1, saturation: 0.3 }, enabled: true },
+      { id: 'levels-action', args: { toolName: 'levels', brightness: 10, contrast: -5 }, enabled: true },
+    ]);
     expect(dependencies.applyRasterTool).not.toHaveBeenCalled();
   });
 

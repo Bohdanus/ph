@@ -1,3 +1,4 @@
+import type { RefObject } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
   sortRect,
@@ -136,8 +137,8 @@ describe('calculateNewRect', () => {
   function makeCanvasRef(measureWidth: number) {
     const ctx = {
       measureText: vi.fn(() => ({ width: measureWidth })),
-    } as unknown as CanvasRenderingContext2D;
-    return { current: { getContext: vi.fn(() => ctx) } as unknown as HTMLCanvasElement };
+    };
+    return { current: { getContext: vi.fn(() => ctx) } } as unknown as RefObject<HTMLCanvasElement | null>;
   }
 
   it('returns an expanded rect when text is empty', () => {

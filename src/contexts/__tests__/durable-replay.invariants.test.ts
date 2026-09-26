@@ -95,9 +95,7 @@ describe('replayDurableDocument invariants (P1.7)', () => {
     replayDurableDocument(document, -1);
 
     expect(JSON.stringify(document.baseline)).toBe(baselineBefore);
-    expect(JSON.stringify(document.history[0]?.operation)).toBe(
-      JSON.stringify(freezeDurableDocument(document).history[0]?.operation)
-    );
+    expect(document.history[0]?.operation).toEqual(freezeDurableDocument(document).history[0]?.operation);
   });
 
   it('produces an empty operation set at cursor -1', () => {
@@ -228,7 +226,7 @@ describe('durable document immutability boundary (P1.9)', () => {
 
     expect(() => {
       'use strict';
-      (firstLayer.pos as { x: number }).x = 999;
+      Object.defineProperty(firstLayer.pos, 'x', { value: 999 });
     }).toThrow(TypeError);
   });
 

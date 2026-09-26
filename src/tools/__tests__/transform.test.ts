@@ -3,61 +3,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { transform, type TransformToolArgs } from '../transform.ts';
 import type { ProcessorToolParams } from '../toolProcessors.ts';
 
+function createMockContext() {
+  return {
+    drawImage: vi.fn(),
+    translate: vi.fn(),
+    rotate: vi.fn(),
+    scale: vi.fn(),
+    transform: vi.fn(),
+    setTransform: vi.fn(),
+  };
+}
+
 class MockOffscreenCanvas {
   width: number;
   height: number;
+  private ctx: ReturnType<typeof createMockContext>;
 
   constructor(width: number, height: number) {
     this.width = Math.max(1, Math.ceil(width));
     this.height = Math.max(1, Math.ceil(height));
+    this.ctx = createMockContext();
   }
 
   getContext() {
-    return mockContext(this);
+    return this.ctx;
   }
-}
-
-const drawImageSpy = vi.fn();
-const translateSpy = vi.fn();
-const rotateSpy = vi.fn();
-const scaleSpy = vi.fn();
-const transformSpy = vi.fn();
-const setTransformSpy = vi.fn();
-
-function mockContext(canvas: MockOffscreenCanvas): CanvasRenderingContext2D {
-  return {
-    canvas: canvas as unknown as HTMLCanvasElement,
-    clearRect: vi.fn(),
-    beginPath: vi.fn(),
-    closePath: vi.fn(),
-    moveTo: vi.fn(),
-    lineTo: vi.fn(),
-    bezierCurveTo: vi.fn(),
-    quadraticCurveTo: vi.fn(),
-    stroke: vi.fn(),
-    fill: vi.fn(),
-    fillRect: vi.fn(),
-    strokeRect: vi.fn(),
-    arc: vi.fn(),
-    save: vi.fn(),
-    restore: vi.fn(),
-    setLineDash: vi.fn(),
-    drawImage: drawImageSpy,
-    clip: vi.fn(),
-    translate: translateSpy,
-    transform: transformSpy,
-    setTransform: setTransformSpy,
-    scale: scaleSpy,
-    rotate: rotateSpy,
-    createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
-    strokeStyle: '',
-    fillStyle: '',
-    lineWidth: 1,
-    globalAlpha: 1,
-    globalCompositeOperation: 'source-over',
-    imageSmoothingEnabled: true,
-    imageSmoothingQuality: 'low',
-  } as unknown as CanvasRenderingContext2D;
 }
 
 const originalOffscreenCanvas = globalThis.OffscreenCanvas;
@@ -71,12 +41,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  drawImageSpy.mockClear();
-  translateSpy.mockClear();
-  rotateSpy.mockClear();
-  scaleSpy.mockClear();
-  transformSpy.mockClear();
-  setTransformSpy.mockClear();
   Object.defineProperty(globalThis, 'OffscreenCanvas', {
     value: originalOffscreenCanvas,
     writable: true,

@@ -1,5 +1,6 @@
 import { configDefaults, defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import path from 'path';
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -17,6 +18,11 @@ export default defineConfig({
       scss: {
         silenceDeprecations: ['import', 'if-function', 'color-functions', 'global-builtin'],
       },
+    },
+  },
+  resolve: {
+    alias: {
+      '@': path.resolve(import.meta.dirname, './src'),
     },
   },
   test: {

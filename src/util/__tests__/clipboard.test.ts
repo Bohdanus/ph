@@ -130,9 +130,7 @@ describe('copyRectToClipboard', () => {
     });
 
     const writeMock = vi.fn().mockResolvedValue(undefined);
-    const ClipboardItemCtor: typeof ClipboardItem = vi.fn().mockImplementation(function () {
-      return {};
-    }) as unknown as typeof ClipboardItem;
+    const ClipboardItemCtor = vi.fn() as unknown as typeof ClipboardItem;
 
     const result = await copyRectToClipboard({
       sourceCanvas: canvas,

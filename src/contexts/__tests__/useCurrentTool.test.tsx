@@ -14,7 +14,16 @@ const storeState = vi.hoisted(
   } => ({
     toolName: 'draw',
     isToolDirty: false,
-    currentArgs: { current: {} as ToolArgs },
+    currentArgs: {
+      current: {
+        toolName: 'draw',
+        alpha: 0.9,
+        lineWidth: 10,
+        color: '#000000',
+        points: [],
+        penType: 'pen',
+      } as ToolArgs,
+    },
   })
 );
 
@@ -39,7 +48,16 @@ describe('useCurrentTool', () => {
   beforeEach(() => {
     storeState.toolName = 'draw';
     storeState.isToolDirty = false;
-    storeState.currentArgs = { current: {} as ToolArgs };
+    storeState.currentArgs = {
+      current: {
+        toolName: 'draw',
+        alpha: 0.9,
+        lineWidth: 10,
+        color: '#000000',
+        points: [],
+        penType: 'pen',
+      } as ToolArgs,
+    };
 
     // Reset saved settings to defaults to avoid cross-test pollution.
     lastSavedSettings.draw = {
