@@ -1,8 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { drawLayerSource } from '../layer-renderer.ts';
+import { drawLayerSource, drawLayersToCanvas } from '../layer-renderer.ts';
+import type { Pos } from '../general-types.ts';
 import type { Layer } from '../layer-types.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
+import { createMockCanvas } from '../../__tests__/fixtures/canvas.ts';
 
 describe('drawLayerSource', () => {
   it('rematerializes vector shape sources at the current logical bounds', () => {
@@ -83,5 +85,102 @@ describe('drawLayerSource', () => {
 
     expect(drawLayerSource(ctx, layer, layer.pos, { x: 40, y: 30, width: 80, height: 60 })).toBe(true);
     expect(ctx.drawImage).toHaveBeenCalledWith(bitmap, 5, 8, 20, 10);
+  });
+});
+
+describe('drawLayersToCanvas vector staging', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function createShapeLayer(pos: Pos): Layer {
+    return {
+      id: 'shape',
+      name: 'Shape',
+      isBedrock: false,
+      bitmap: null,
+      tmpCanvas: null,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      order: 0,
+      pos,
+      operations: [],
+      source: {
+        kind: 'tool',
+        pos: { ...pos },
+        args: {
+          toolName: 'shape',
+          figure: 'rectangle',
+          alpha: 1,
+          color: '#000000',
+          backgroundColor: null,
+          lineWidth: 2,
+          start: { x: 0, y: 0 },
+          end: { x: pos.width, y: pos.height },
+        },
+      },
+    };
+  }
+
+  it('rematerializes a vector layer at the layer logical bounds while staging', () => {
+    const sourceCanvas = { width: 100, height: 50 } as OffscreenCanvas;
+    const apply = vi.fn((): [OffscreenCanvas] => [sourceCanvas]);
+    const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(apply);
+    const staging = createMockCanvas();
+    const target = createMockCanvas();
+    vi.spyOn(document, 'createElement').mockReturnValue(staging);
+    const layer = createShapeLayer({ x: 4, y: 6, width: 100, height: 50 });
+
+    expect(drawLayersToCanvas(target, [layer], { x: 0, y: 0, width: 300, height: 150 })).toBe(true);
+
+    expect(processor).toHaveBeenCalledWith({ size: layer.pos });
+    const stagingContext = staging.getContext('2d')!;
+    expect(stagingContext.drawImage).toHaveBeenCalledWith(sourceCanvas, 4, 6, 100, 50);
+    expect(stagingContext.drawImage).not.toHaveBeenCalledWith(sourceCanvas, 0, 0, 300, 150);
+    const targetContext = target.getContext('2d')!;
+    expect(targetContext.clearRect).toHaveBeenCalledWith(0, 0, 300, 150);
+    expect(targetContext.drawImage).toHaveBeenCalledWith(staging, 0, 0);
+  });
+
+  it('skips a vector layer whose rematerialized canvas has no pixels and still publishes', () => {
+    const emptyCanvas = { width: 0, height: 0 } as OffscreenCanvas;
+    const apply = vi.fn((): [OffscreenCanvas] => [emptyCanvas]);
+    vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(apply);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const staging = createMockCanvas();
+    const target = createMockCanvas();
+    vi.spyOn(document, 'createElement').mockReturnValue(staging);
+    const bitmap = { width: 20, height: 10, close: vi.fn() } as unknown as ImageBitmap;
+    const image: Layer = {
+      id: 'image',
+      name: 'Image',
+      isBedrock: false,
+      bitmap,
+      tmpCanvas: null,
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      order: 1,
+      pos: { x: 8, y: 10, width: 20, height: 10 },
+      operations: [],
+    };
+
+    expect(
+      drawLayersToCanvas(target, [createShapeLayer({ x: 4, y: 6, width: 100, height: 50 }), image], {
+        x: 0,
+        y: 0,
+        width: 300,
+        height: 150,
+      })
+    ).toBe(true);
+
+    expect(consoleError).toHaveBeenCalledWith('skipped layer without bitmap', 'shape');
+    const stagingContext = staging.getContext('2d')!;
+    expect(stagingContext.drawImage).toHaveBeenCalledTimes(1);
+    expect(stagingContext.drawImage).toHaveBeenCalledWith(bitmap, 8, 10, 20, 10);
+    expect(target.getContext('2d')!.drawImage).toHaveBeenCalledWith(staging, 0, 0);
   });
 });

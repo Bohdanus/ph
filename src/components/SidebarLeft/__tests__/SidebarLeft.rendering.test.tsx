@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import SidebarLeft from '../SidebarLeft.tsx';
 
@@ -71,34 +71,7 @@ vi.mock('../toolIcons.tsx', () => {
   };
 });
 
-const LONG_PRESS_DELAY = 300;
-
-const longPress = (button: HTMLElement) => {
-  fireEvent.pointerDown(button, { button: 0 });
-  act(() => {
-    vi.advanceTimersByTime(LONG_PRESS_DELAY);
-  });
-  fireEvent.pointerUp(button, { button: 0 });
-  fireEvent.click(button);
-};
-
 const toolbarButtonByName = (name: string) => screen.getByTestId(`tool-button-${name}`);
-
-const groupedToolCases = [
-  { title: 'Lasso Tool', name: 'freehand-lasso', item: 'Lasso Tool' },
-  { title: 'Colors', name: 'color', item: 'Colors' },
-  { title: 'Brush', name: 'brush', item: 'Brush Tool' },
-  { title: 'Pen', name: 'pen', item: 'Pen Tool' },
-  { title: 'Rectangle Tool', name: 'shape', item: 'Rectangle Tool' },
-] as const;
-
-const nonPrimaryCases: ReadonlyArray<[string, string, string]> = [
-  ['pencil', 'brush', 'brush'],
-  ['color-replacement', 'brush', 'brush'],
-  ['freeform-pen', 'pen', 'pen'],
-  ['curvature-pen', 'pen', 'pen'],
-  ['ellipse', 'shape', 'shape'],
-];
 
 const resetMocks = () => {
   goToTool.mockReset();
@@ -131,9 +104,9 @@ describe('SidebarLeft rendering', () => {
     render(<SidebarLeft />);
 
     const toolbar = screen.getByTestId('left-toolbar-tools');
-    const buttonNames = [
-      ...toolbar.querySelectorAll<HTMLButtonElement>('button[data-testid^="tool-button-"]'),
-    ].map((button) => button.dataset.testid?.replace('tool-button-', ''));
+    const buttonNames = [...toolbar.querySelectorAll<HTMLButtonElement>('button[data-testid^="tool-button-"]')].map(
+      (button) => button.dataset.testid?.replace('tool-button-', '')
+    );
 
     expect(buttonNames).toEqual([
       'reposition',
@@ -165,5 +138,41 @@ describe('SidebarLeft rendering', () => {
     expect(screen.getByTestId('foreground-color-swatch')).toBeInTheDocument();
     expect(screen.getByTestId('background-color-swatch')).toBeInTheDocument();
     expect(screen.getByTestId('swap-colors-button')).toBeInTheDocument();
+  });
+
+  it('names every tool tile after its primary tool', () => {
+    render(<SidebarLeft />);
+
+    expect(toolbarButtonByName('reposition')).toHaveAccessibleName('Move Tool');
+    expect(toolbarButtonByName('rectangular-selection')).toHaveAccessibleName('Rectangular Marquee Tool');
+    expect(toolbarButtonByName('freehand-lasso')).toHaveAccessibleName('Lasso Tool');
+    expect(toolbarButtonByName('magic-wand')).toHaveAccessibleName('Magic Wand Tool');
+    expect(toolbarButtonByName('crop')).toHaveAccessibleName('Crop Tool');
+    expect(toolbarButtonByName('color')).toHaveAccessibleName('Colors');
+    expect(toolbarButtonByName('brush')).toHaveAccessibleName('Brush Tool');
+    expect(toolbarButtonByName('blur')).toHaveAccessibleName('Blur Tool');
+    expect(toolbarButtonByName('draw')).toHaveAccessibleName('Draw Tool');
+    expect(toolbarButtonByName('pen')).toHaveAccessibleName('Pen Tool');
+    expect(toolbarButtonByName('text')).toHaveAccessibleName('Horizontal Type Tool');
+    expect(toolbarButtonByName('shape')).toHaveAccessibleName('Rectangle Tool');
+  });
+
+  it('marks flyout groups with a corner indicator and leaves single-tool tiles plain', () => {
+    render(<SidebarLeft />);
+
+    const hasFlyoutIndicator = (name: string) =>
+      toolbarButtonByName(name).querySelector('span[aria-hidden="true"]') !== null;
+
+    expect(hasFlyoutIndicator('freehand-lasso')).toBe(true);
+    expect(hasFlyoutIndicator('color')).toBe(true);
+    expect(hasFlyoutIndicator('brush')).toBe(true);
+    expect(hasFlyoutIndicator('pen')).toBe(true);
+    expect(hasFlyoutIndicator('shape')).toBe(true);
+
+    expect(hasFlyoutIndicator('reposition')).toBe(false);
+    expect(hasFlyoutIndicator('crop')).toBe(false);
+    expect(hasFlyoutIndicator('blur')).toBe(false);
+    expect(hasFlyoutIndicator('draw')).toBe(false);
+    expect(hasFlyoutIndicator('text')).toBe(false);
   });
 });

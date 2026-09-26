@@ -219,6 +219,38 @@ describe('shapeGeometryBounds', () => {
     const bounds = shapeGeometryBounds({ start: { x: 0, y: 0 }, end: { x: 10, y: 10 } }, 10);
     expect(bounds).toEqual({ x: -6, y: -6, width: 22, height: 22 });
   });
+
+  it('keeps a fractional drag inside a fractional box', () => {
+    // Zoomed drags produce fractional coordinates. The box is the raw padded
+    // extent, so it stays fractional too, and the layer canvas it is paired
+    // with is allocated with new OffscreenCanvas(width, height), which truncates.
+    const bounds = shapeGeometryBounds({ start: { x: 10.4, y: 20.6 }, end: { x: 50.2, y: 80.9 } }, 2);
+
+    // x = 10.4 - 1 - 1, y = 20.6 - 1 - 1, width = 39.8 + 2 + 2, height = 60.3 + 2 + 2
+    expect(bounds.x).toBeCloseTo(8.4, 10);
+    expect(bounds.y).toBeCloseTo(18.6, 10);
+    expect(bounds.width).toBeCloseTo(43.8, 10);
+    expect(bounds.height).toBeCloseTo(64.3, 10);
+    expect(Number.isInteger(bounds.x)).toBe(false);
+    expect(Number.isInteger(bounds.y)).toBe(false);
+    expect(Number.isInteger(bounds.width)).toBe(false);
+    expect(Number.isInteger(bounds.height)).toBe(false);
+  });
+
+  it.each([
+    ['positive', { start: { x: 10.4, y: 20.6 }, end: { x: 50.2, y: 80.9 } }],
+    ['negative', { start: { x: 50.2, y: 80.9 }, end: { x: 10.4, y: 20.6 } }],
+  ])('contains the geometry for a %s fractional drag', (_name, geometry) => {
+    const bounds = shapeGeometryBounds(geometry, 3);
+    const pad = 3 / 2;
+
+    for (const point of [geometry.start, geometry.end]) {
+      expect(point.x - pad).toBeGreaterThanOrEqual(bounds.x);
+      expect(point.y - pad).toBeGreaterThanOrEqual(bounds.y);
+      expect(point.x + pad).toBeLessThanOrEqual(bounds.x + bounds.width);
+      expect(point.y + pad).toBeLessThanOrEqual(bounds.y + bounds.height);
+    }
+  });
 });
 
 describe('drawShape', () => {

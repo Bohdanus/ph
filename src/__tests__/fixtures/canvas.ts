@@ -48,28 +48,44 @@ export const createMockImageBitmap = (width: number = 128, height: number = 64) 
     close: vi.fn(),
   }) as unknown as ImageBitmap;
 
-export const createMockOffscreenCanvas = (width: number = 128, height: number = 64) => {
-  const context = createMockCanvasContext({ canvas: { width, height } });
-  return {
-    width,
-    height,
-    getContext: vi.fn(() => context),
-    transferToImageBitmap: vi.fn(() => createMockImageBitmap(width, height)),
-  } as unknown as OffscreenCanvas;
-};
+export const createMockOffscreenCanvas = (width: number = 128, height: number = 64) =>
+  new MockOffscreenCanvas(width, height) as unknown as OffscreenCanvas;
+
+/**
+ * `OffscreenCanvas` is called with `new` in production, so the global stub has to
+ * be a real class: a `vi.fn()` implementation is not constructible.
+ */
+class MockOffscreenCanvas {
+  width: number;
+  height: number;
+  private readonly context: ReturnType<typeof createMockCanvasContext>;
+
+  constructor(width: number, height: number) {
+    this.width = Math.max(1, Math.ceil(width));
+    this.height = Math.max(1, Math.ceil(height));
+    this.context = createMockCanvasContext({ canvas: this });
+  }
+
+  getContext() {
+    return this.context;
+  }
+
+  transferToImageBitmap() {
+    return createMockImageBitmap(this.width, this.height);
+  }
+}
 
 export const mockCanvasGlobals = () => {
   const mockContext = createMockCanvasContext();
   const mockCanvas = createMockCanvas();
   const mockOffscreenCanvas = createMockOffscreenCanvas();
 
-  vi.stubGlobal(
-    'OffscreenCanvas',
-    vi.fn().mockImplementation((w: number, h: number) => createMockOffscreenCanvas(w, h))
-  );
+  vi.stubGlobal('OffscreenCanvas', MockOffscreenCanvas as unknown as typeof OffscreenCanvas);
   vi.stubGlobal(
     'createImageBitmap',
-    vi.fn(async (source: { width: number; height: number }) => createMockImageBitmap(source.width, source.height))
+    vi.fn(async (source: { width?: number; height?: number }) =>
+      createMockImageBitmap(source.width ?? 128, source.height ?? 64)
+    )
   );
 
   return { mockContext, mockCanvas, mockOffscreenCanvas };

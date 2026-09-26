@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Footer from '../Footer.tsx';
 
 const store = vi.hoisted(() => ({
@@ -9,11 +9,17 @@ const store = vi.hoisted(() => ({
   },
 }));
 
+const defaultState = { hasImage: true, totalSize: { width: 800, height: 600 } };
+
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [store.state],
 }));
 
 describe('Footer', () => {
+  beforeEach(() => {
+    store.state = { ...defaultState, totalSize: { ...defaultState.totalSize } };
+  });
+
   it('renders dimensions when an image is loaded', () => {
     render(<Footer />);
 

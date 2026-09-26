@@ -206,5 +206,51 @@ describe('SidebarLeft keyboard activation', () => {
       expect(goToTool).toHaveBeenCalledWith('pencil');
       expect(screen.queryByRole('menu')).toBeNull();
     });
+
+    it('keeps focus on the tile after a long press and focuses the first item on ArrowDown', () => {
+      vi.useFakeTimers();
+      render(<SidebarLeft />);
+
+      const brushButton = toolbarButtonByName('brush');
+      brushButton.focus();
+      longPress(brushButton);
+
+      const menu = screen.getByRole('menu');
+      expect(brushButton).toHaveFocus();
+
+      act(() => {
+        fireEvent.keyDown(menu, { key: 'ArrowDown' });
+      });
+
+      expect(screen.getAllByRole('menuitemradio')[0]).toHaveFocus();
+    });
+
+    it('focuses the first flyout item on the next frame when the tile is opened from the keyboard', () => {
+      const frames: FrameRequestCallback[] = [];
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+
+      try {
+        render(<SidebarLeft />);
+
+        const brushButton = toolbarButtonByName('brush');
+        act(() => {
+          fireEvent.keyDown(brushButton, { key: 'ArrowDown' });
+        });
+
+        expect(frames).toHaveLength(1);
+        expect(screen.getAllByRole('menuitemradio')[0]).not.toHaveFocus();
+
+        act(() => {
+          frames.forEach((frame) => frame(0));
+        });
+
+        expect(screen.getAllByRole('menuitemradio')[0]).toHaveFocus();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 });

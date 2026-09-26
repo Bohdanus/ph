@@ -1,10 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { availableTools, extraTools, toolbarMap } from '../../../../toolbar-mapping.ts';
 import type { ToolbarTool } from '../../../../toolbar-mapping.ts';
-import type { FigureType } from '../../../tools/shape.ts';
+import { isFigureType, type FigureType } from '../../../tools/shape.ts';
 
 const allGroups: readonly (readonly ToolbarTool[])[] = toolbarMap.flat() as readonly (readonly ToolbarTool[])[];
 const shapeFlyout = allGroups.find((group) => group.some((tool) => tool.name === 'shape'))!;
+const allTools: readonly ToolbarTool[] = allGroups.flat();
+
+/**
+ * Hard-coded copy of the narrowed `FigureType` union plus the expected shape flyout.
+ * The imported type cannot be enumerated at runtime, so the contract is spelled out.
+ */
+const figureTypes = ['line', 'rectangle', 'oval', 'triangle', 'polygon'] as const;
+const expectedShapeFlyout = [
+  { label: 'Rectangle Tool', name: 'shape', shortcut: 'U', figure: 'rectangle' },
+  { label: 'Ellipse Tool', name: 'shape', figure: 'oval' },
+  { label: 'Line Tool', name: 'shape', figure: 'line' },
+  { label: 'Triangle Tool', name: 'shape', figure: 'triangle' },
+  { label: 'Polygon Tool', name: 'shape', figure: 'polygon' },
+  { label: 'Custom Shape Tool', name: 'custom-shape' },
+] as const;
 
 describe('toolbar mapping shape contract', () => {
   it('exposes the shape flyout', () => {
@@ -79,5 +94,67 @@ describe('toolbar mapping shape contract', () => {
 
   it('keeps extraTools disjoint from the shape tool', () => {
     expect(extraTools).not.toContain('shape');
+  });
+});
+
+describe('toolbar mapping shape group contract', () => {
+  it('lists the shape flyout in the exact expected order and shape', () => {
+    expect([...shapeFlyout]).toEqual(expectedShapeFlyout);
+  });
+
+  it('declares a shortcut only for the Rectangle entry', () => {
+    const withShortcut = shapeFlyout.filter((tool) => Object.hasOwn(tool, 'shortcut'));
+
+    expect(withShortcut.map((tool) => tool.label)).toEqual(['Rectangle Tool']);
+    expect(shapeFlyout.filter((tool) => tool.shortcut !== undefined).map((tool) => tool.shortcut)).toEqual(['U']);
+  });
+
+  it('mentions circle or square nowhere in the whole mapping', () => {
+    const legacyPattern = /circle|square/i;
+    const offenders = allTools.filter(
+      (tool) => legacyPattern.test(tool.label) || legacyPattern.test(tool.name) || legacyPattern.test(tool.figure ?? '')
+    );
+
+    expect(offenders).toEqual([]);
+    for (const group of allGroups) {
+      for (const tool of group) {
+        expect(JSON.stringify(tool)).not.toMatch(legacyPattern);
+      }
+    }
+  });
+
+  it('gives the whole mapping exactly one U shortcut, on the Rectangle figure', () => {
+    const uEntries = allTools.filter((tool) => tool.shortcut === 'U');
+
+    expect(uEntries).toHaveLength(1);
+    expect(uEntries[0]).toEqual({ label: 'Rectangle Tool', name: 'shape', shortcut: 'U', figure: 'rectangle' });
+  });
+
+  it('keeps every shape figure inside the narrowed union and leaves custom shape without one', () => {
+    for (const tool of shapeFlyout) {
+      if (tool.name === 'custom-shape') {
+        expect(Object.hasOwn(tool, 'figure')).toBe(false);
+        continue;
+      }
+
+      expect(tool.name).toBe('shape');
+      expect(figureTypes).toContain(tool.figure);
+      expect(isFigureType(tool.figure)).toBe(true);
+    }
+  });
+
+  it('uses unique labels and unique figures inside the shape group', () => {
+    const labels = shapeFlyout.map((tool) => tool.label);
+    const figures = shapeFlyout.map((tool) => tool.figure).filter((figure): figure is FigureType => Boolean(figure));
+
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(new Set(figures).size).toBe(figures.length);
+    expect(figures.sort()).toEqual([...figureTypes].sort());
+  });
+
+  it('exposes every figure of the narrowed union exactly once in the shape group', () => {
+    const figures = shapeFlyout.flatMap((tool) => (tool.figure ? [tool.figure] : []));
+
+    expect([...figures].sort()).toEqual([...figureTypes].sort());
   });
 });

@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Shape from '../Shape.tsx';
+import { isFigureType, type FigureType } from '../../../../tools/shape.ts';
+import { savedArgsPerFigure } from '../../../../tools/settings.ts';
 
 const containerRef = { current: null as HTMLDivElement | null };
 const storeState = {
@@ -11,7 +13,15 @@ const storeState = {
   totalSize: { width: 800, height: 600 },
 };
 
+const FIGURE_TYPE_VALUES = Object.keys(savedArgsPerFigure) as FigureType[];
+
 type Figure = 'rectangle' | 'oval' | 'triangle' | 'polygon' | 'line';
+
+const PREVIEW_WIDTH = 96;
+const PREVIEW_HEIGHT = 48;
+
+/** The margin inset the component must reserve around the previewed shape. */
+const expectedMargin = (lineWidth: number, brushScale: number) => (2.5 + Math.sqrt(lineWidth)) / brushScale;
 
 const baseToolArgs = {
   toolName: 'shape' as const,
@@ -26,6 +36,8 @@ const baseToolArgs = {
 
 const setToolArgsMock = vi.fn();
 const shapeCreatorMock = vi.fn();
+const shapeSizeMock = vi.fn();
+const pointerScale = vi.hoisted(() => ({ value: 1 }));
 
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [storeState],
@@ -50,6 +62,7 @@ vi.mock('../../../../tools/shape.ts', async () => {
   return {
     ...actual,
     shape: (...args: Parameters<typeof actual.shape>) => {
+      shapeSizeMock(args[0]);
       const creator = actual.shape(...args);
       return (previewArgs: Parameters<typeof creator>[0]) => {
         shapeCreatorMock(previewArgs);
@@ -60,14 +73,15 @@ vi.mock('../../../../tools/shape.ts', async () => {
 });
 
 vi.mock('../../../../hooks/usePointerPosition.ts', () => ({
-  // `onResize` is invoked once per mount so `brushScale` is non-zero and the
-  // preview effect actually runs.
+  // `onResize` is invoked once per scale so `brushScale` is non-zero and the
+  // preview effect actually runs; changing `pointerScale.value` and forcing a
+  // re-render notifies the component about the new zoom level.
   usePointerPosition: ({ onResize }: { onResize?: (arg: { scale: number }) => void }) => {
-    const notified = useRef(false);
+    const notifiedScale = useRef<number | null>(null);
     useEffect(() => {
-      if (notified.current) return;
-      notified.current = true;
-      onResize?.({ scale: 1 });
+      if (notifiedScale.current === pointerScale.value) return;
+      notifiedScale.current = pointerScale.value;
+      onResize?.({ scale: pointerScale.value });
     });
     return {
       isPointerDownValid: vi.fn(() => false),
@@ -84,11 +98,27 @@ function lastCallArgs(mock: ReturnType<typeof vi.fn>) {
   return calls[calls.length - 1]?.[0] as Record<string, unknown> | undefined;
 }
 
+function lastPreviewGeometry() {
+  const previewArgs = lastCallArgs(shapeCreatorMock) as unknown as {
+    figure: Figure;
+    start: { x: number; y: number };
+    end: { x: number; y: number };
+  };
+  return { figure: previewArgs.figure, start: previewArgs.start, end: previewArgs.end };
+}
+
+function lastPreviewSize() {
+  return lastCallArgs(shapeSizeMock) as unknown as { size: { width: number; height: number } };
+}
+
 describe('Shape toolbar', () => {
   beforeEach(() => {
     setToolArgsMock.mockClear();
     shapeCreatorMock.mockClear();
+    shapeSizeMock.mockClear();
+    pointerScale.value = 1;
     baseToolArgs.figure = 'rectangle';
+    baseToolArgs.lineWidth = 5;
   });
 
   afterEach(() => {
@@ -96,6 +126,8 @@ describe('Shape toolbar', () => {
     // the global HTMLCanvasElement.prototype.getContext spy installed by
     // src/test/setup.ts, which the shape preview needs in order to draw.
     baseToolArgs.figure = 'rectangle';
+    baseToolArgs.lineWidth = 5;
+    pointerScale.value = 1;
   });
 
   it('renders Photoshop-style tool mode choices', () => {
@@ -290,5 +322,145 @@ describe('Shape toolbar', () => {
     expect(canvas).not.toBeNull();
     expect(canvas?.width).toBe(96);
     expect(canvas?.height).toBe(48);
+  });
+
+  describe('preview geometry', () => {
+    it('derives the runtime figure set from the narrowed FigureType union', () => {
+      expect([...FIGURE_TYPE_VALUES].sort()).toEqual(['line', 'oval', 'polygon', 'rectangle', 'triangle']);
+      for (const figure of FIGURE_TYPE_VALUES) expect(isFigureType(figure)).toBe(true);
+    });
+
+    it('feeds the shape processor the same full-box start and end for every figure', () => {
+      const geometries: string[] = [];
+
+      for (const figure of FIGURE_TYPE_VALUES) {
+        baseToolArgs.figure = figure;
+        const view = render(<Shape />);
+
+        const margin = expectedMargin(baseToolArgs.lineWidth, pointerScale.value);
+        const { start, end, figure: previewed } = lastPreviewGeometry();
+
+        expect(previewed, figure).toBe(figure);
+        expect(start, figure).toEqual({ x: margin, y: margin });
+        expect(end, figure).toEqual({
+          x: PREVIEW_WIDTH / pointerScale.value - margin,
+          y: PREVIEW_HEIGHT / pointerScale.value - margin,
+        });
+        geometries.push(`${start.x},${start.y},${end.x},${end.y}`);
+        view.unmount();
+      }
+
+      // The preview no longer varies by figure: no square/circle clamping.
+      expect(new Set(geometries).size).toBe(1);
+    });
+
+    it('never produces a square preview box for any figure', () => {
+      for (const figure of FIGURE_TYPE_VALUES) {
+        baseToolArgs.figure = figure;
+        const view = render(<Shape />);
+
+        const { start, end } = lastPreviewGeometry();
+        expect(end.x - start.x, figure).toBeGreaterThan(end.y - start.y);
+        view.unmount();
+      }
+    });
+
+    it('passes the scaled preview size to the shape processor', () => {
+      baseToolArgs.figure = 'oval';
+      render(<Shape />);
+
+      expect(lastPreviewSize()).toEqual({
+        size: { width: PREVIEW_WIDTH / pointerScale.value, height: PREVIEW_HEIGHT / pointerScale.value },
+      });
+    });
+
+    it('re-renders the preview with the new margin when lineWidth changes', () => {
+      render(<Shape />);
+      const initial = lastPreviewGeometry();
+      const initialCalls = shapeCreatorMock.mock.calls.length;
+
+      expect(initial.start.x).toBeCloseTo(expectedMargin(5, 1), 10);
+
+      fireEvent.change(screen.getByRole('slider', { name: /Thickness/ }), { target: { value: '25' } });
+
+      expect(shapeCreatorMock.mock.calls.length).toBeGreaterThan(initialCalls);
+      const updated = lastPreviewGeometry();
+      const margin = expectedMargin(25, 1);
+      expect(updated.start).toEqual({ x: margin, y: margin });
+      expect(updated.end).toEqual({ x: PREVIEW_WIDTH - margin, y: PREVIEW_HEIGHT - margin });
+      expect(updated.start.x).toBeGreaterThan(initial.start.x);
+      expect(updated.start.x).not.toBeCloseTo(initial.start.x, 10);
+    });
+
+    it('re-renders the preview with a rescaled box when brushScale changes', () => {
+      render(<Shape />);
+      const initial = lastPreviewGeometry();
+      expect(lastPreviewSize().size).toEqual({ width: PREVIEW_WIDTH, height: PREVIEW_HEIGHT });
+
+      pointerScale.value = 2;
+      fireEvent.change(screen.getByRole('slider', { name: /Thickness/ }), { target: { value: '25' } });
+
+      const margin = expectedMargin(25, 2);
+      expect(lastPreviewSize().size).toEqual({ width: PREVIEW_WIDTH / 2, height: PREVIEW_HEIGHT / 2 });
+
+      const rescaled = lastPreviewGeometry();
+      expect(rescaled.start).toEqual({ x: margin, y: margin });
+      expect(rescaled.end).toEqual({ x: PREVIEW_WIDTH / 2 - margin, y: PREVIEW_HEIGHT / 2 - margin });
+      expect(rescaled.start.x).not.toBeCloseTo(initial.start.x, 10);
+      // The stroke inset still scales with the zoom level.
+      expect(rescaled.start.x).toBeCloseTo(3.75, 10);
+    });
+
+    it('keeps the preview geometry stable while nothing changes', () => {
+      baseToolArgs.figure = 'polygon';
+      const view = render(<Shape />);
+      const callsAfterMount = shapeCreatorMock.mock.calls.length;
+
+      view.rerender(<Shape />);
+
+      expect(shapeCreatorMock).toHaveBeenCalledTimes(callsAfterMount);
+      expect(lastPreviewGeometry().start).toEqual({ x: expectedMargin(5, 1), y: expectedMargin(5, 1) });
+      view.unmount();
+    });
+  });
+
+  describe('figure labels', () => {
+    const labels: Record<Figure, string> = {
+      rectangle: 'Rectangle Tool',
+      oval: 'Ellipse Tool',
+      triangle: 'Triangle Tool',
+      polygon: 'Polygon Tool',
+      line: 'Line Tool',
+    };
+
+    it('labels every figure of the narrowed union with its own display name', () => {
+      const rendered: string[] = [];
+
+      for (const figure of FIGURE_TYPE_VALUES) {
+        baseToolArgs.figure = figure;
+        const view = render(<Shape />);
+
+        const label = screen.getByText(labels[figure]);
+        expect(label.textContent, figure).toBe(labels[figure]);
+        expect(label, figure).toBeInTheDocument();
+        expect(screen.queryByText('Circle Tool'), figure).toBeNull();
+        expect(screen.queryByText('Square Tool'), figure).toBeNull();
+        rendered.push(label.textContent as string);
+        view.unmount();
+      }
+
+      expect(new Set(rendered)).toEqual(new Set(Object.values(labels)));
+      expect(rendered).not.toContain('Circle Tool');
+      expect(rendered).not.toContain('Square Tool');
+    });
+
+    it('falls back to the rectangle label for an unrecognized figure', () => {
+      baseToolArgs.figure = 'circle' as Figure;
+      const view = render(<Shape />);
+
+      expect(screen.getByText('Rectangle Tool')).toBeInTheDocument();
+      expect(screen.queryByText('Circle Tool')).toBeNull();
+      view.unmount();
+    });
   });
 });

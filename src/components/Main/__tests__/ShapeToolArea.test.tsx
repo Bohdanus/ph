@@ -2,6 +2,7 @@ import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PointerEvent } from 'react';
 import { ShapeToolArea } from '../ShapeToolArea.tsx';
+import { normalizeShapeGeometry, shapeGeometryBounds, type FigureType } from '../../../tools/shape.ts';
 
 const createLayerFromToolMock = vi.hoisted(() => vi.fn());
 const drawShapeMock = vi.hoisted(() => vi.fn());
@@ -102,6 +103,55 @@ vi.mock('../../../tools/shape.ts', async () => ({
 let pointerState: ReturnType<typeof createPointerState>;
 let toolArgsState: ReturnType<typeof createToolArgsState>;
 let storeMocks: ReturnType<typeof createStoreMocks>;
+
+type Point = { x: number; y: number };
+type DragModifiers = { shiftKey?: boolean; altKey?: boolean };
+type CommittedLayer = {
+  args: { start: Point; end: Point };
+  pos: { x: number; y: number; width: number; height: number };
+};
+
+const renderToolArea = () => {
+  const view = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+  return { view, toolArea: view.container.firstElementChild as HTMLDivElement };
+};
+
+/**
+ * Presses, drags and releases once. `altKey` is only read on pointer down
+ * (it latches `fromCenterRef`), but it is forwarded on every event the way a
+ * real pointer would.
+ */
+const dragOnce = (
+  toolArea: HTMLElement,
+  from: Point,
+  to: Point,
+  { shiftKey = false, altKey = false }: DragModifiers = {}
+) => {
+  act(() => {
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: from.x, clientY: from.y, altKey });
+  });
+  act(() => {
+    fireEvent.pointerMove(toolArea, { button: 0, clientX: to.x, clientY: to.y, shiftKey, altKey });
+  });
+  act(() => {
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: to.x, clientY: to.y, shiftKey, altKey });
+  });
+  return createLayerFromToolMock.mock.calls[0][0] as {
+    args: { start: Point; end: Point; figure: FigureType };
+    pos: { x: number; y: number; width: number; height: number };
+  };
+};
+
+/** Recovers the canvas-space geometry from the rebased layer args and their origin. */
+const committedGeometry = ({ args, pos }: CommittedLayer) => ({
+  start: { x: args.start.x + pos.x, y: args.start.y + pos.y },
+  end: { x: args.end.x + pos.x, y: args.end.y + pos.y },
+});
+
+const midPoint = ({ start, end }: { start: Point; end: Point }): Point => ({
+  x: (start.x + end.x) / 2,
+  y: (start.y + end.y) / 2,
+});
 
 describe('ShapeToolArea', () => {
   beforeEach(() => {
@@ -550,6 +600,9 @@ describe('ShapeToolArea', () => {
           fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 50 });
         });
         act(() => {
+          fireEvent.pointerMove(toolArea, { button: 0, clientX: pointer.x, clientY: pointer.y, shiftKey: true });
+        });
+        act(() => {
           fireEvent.pointerUp(toolArea, { button: 0, clientX: pointer.x, clientY: pointer.y, shiftKey: true });
         });
 
@@ -623,6 +676,106 @@ describe('ShapeToolArea', () => {
       expect(fullArgs.pos).toEqual({ x: 28, y: 38, width: 64, height: 64 });
       expect(fullArgs.args.start).toEqual({ x: preview.start.x - fullArgs.pos.x, y: preview.start.y - fullArgs.pos.y });
       expect(fullArgs.args.end).toEqual({ x: preview.end.x - fullArgs.pos.x, y: preview.end.y - fullArgs.pos.y });
+    });
+
+    it('drops the previewed constraint when Shift is released before pointer up', () => {
+      vi.useFakeTimers();
+      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 80, shiftKey: true });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+      // Shift is released before the button comes up.
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 80 });
+      });
+
+      const preview = drawShapeMock.mock.calls[0][1] as {
+        start: { x: number; y: number };
+        end: { x: number; y: number };
+      };
+      const fullArgs = createLayerFromToolMock.mock.calls[0][0];
+
+      // The preview was Shift-constrained to a 60x60 square: half = max(40, 60).
+      expect(preview.start).toEqual({ x: 10, y: 20 });
+      expect(preview.end).toEqual({ x: 70, y: 80 });
+      expect(preview.end.x - preview.start.x).toBe(preview.end.y - preview.start.y);
+
+      // handlePointerUp re-runs normalizeShapeGeometry with the release event's
+      // shiftKey, so the committed layer is the unconstrained 10,20 -> 50,80
+      // drag and no longer matches the square the preview drew.
+      expect(fullArgs.pos).toEqual({ x: 8, y: 18, width: 44, height: 64 });
+      expect(fullArgs.pos.width).not.toBe(fullArgs.pos.height);
+    });
+
+    it('creates a layer from a bare pointer-up without prompting or previewing', () => {
+      promptMock.mockReturnValue(null);
+      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      // Releasing at a different position with no pointermove leaves
+      // originalShapeRef null, so handlePointerUp re-derives the geometry from
+      // the release coordinate. That makes start != end, which skips the
+      // click-size prompt and commits a drag the user never previewed.
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 200, clientY: 260 });
+      });
+
+      expect(promptMock).not.toHaveBeenCalled();
+      expect(drawShapeMock).not.toHaveBeenCalled();
+      expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
+
+      const fullArgs = createLayerFromToolMock.mock.calls[0][0];
+      expect(fullArgs.pos).toEqual({ x: 8, y: 18, width: 194, height: 244 });
+      expect(fullArgs.args.start).toEqual({ x: 2, y: 2 });
+      expect(fullArgs.args.end).toEqual({ x: 192, y: 242 });
+    });
+
+    it('keeps fractional drag geometry inside the fractional layer box', () => {
+      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10.4, clientY: 20.6 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50.2, clientY: 80.9 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50.2, clientY: 80.9 });
+      });
+
+      const fullArgs = createLayerFromToolMock.mock.calls[0][0];
+      const { width, height } = fullArgs.pos;
+
+      // shapeGeometryBounds returns the raw padded extent, so a zoomed drag
+      // commits a fractional box rather than rounding to whole pixels.
+      expect(fullArgs.pos.x).toBeCloseTo(8.4, 10);
+      expect(fullArgs.pos.y).toBeCloseTo(18.6, 10);
+      expect(width).toBeCloseTo(43.8, 10);
+      expect(height).toBeCloseTo(64.3, 10);
+
+      // The layer-local geometry stays inside [0, width] x [0, height].
+      const localStart = fullArgs.args.start as { x: number; y: number };
+      const localEnd = fullArgs.args.end as { x: number; y: number };
+      expect(localStart.x).toBeCloseTo(2, 10);
+      expect(localStart.y).toBeCloseTo(2, 10);
+      expect(localEnd.x).toBeCloseTo(41.8, 10);
+      expect(localEnd.y).toBeCloseTo(62.3, 10);
+      expect(localStart.x).toBeGreaterThanOrEqual(0);
+      expect(localStart.y).toBeGreaterThanOrEqual(0);
+      expect(localEnd.x).toBeLessThanOrEqual(width);
+      expect(localEnd.y).toBeLessThanOrEqual(height);
     });
 
     it('computes bounds for an oval figure without clamping (no circle branch)', () => {
@@ -756,6 +909,274 @@ describe('ShapeToolArea', () => {
       // With documentFrame x=0, y=0 (from documentFrameFromSize), canvas coords == document coords
       expect(fullArgs.args.start).toEqual({ x: 2, y: 2 });
       expect(fullArgs.pos).toEqual({ x: 8, y: 18, width: 44, height: 44 });
+    });
+  });
+
+  describe('shared shape geometry wiring', () => {
+    it('derives a plain drag from normalizeShapeGeometry without constraints', () => {
+      const { view, toolArea } = renderToolArea();
+      const anchor = { x: 30, y: 40 };
+      const pointer = { x: 90, y: 70 };
+
+      const fullArgs = dragOnce(toolArea, anchor, pointer);
+
+      const expected = normalizeShapeGeometry(anchor, pointer, 'rectangle', { shiftKey: false, altKey: false });
+      expect(expected).toEqual({ start: { x: 30, y: 40 }, end: { x: 90, y: 70 } });
+      expect(committedGeometry(fullArgs)).toEqual(expected);
+      view.unmount();
+    });
+
+    it.each(['rectangle', 'oval', 'triangle', 'polygon'] as const)(
+      'applies the aspect constraint to %s when shift is held',
+      (figure) => {
+        toolArgsState.toolArgs.figure = figure;
+        const { view, toolArea } = renderToolArea();
+        const anchor = { x: 10, y: 20 };
+        const pointer = { x: 50, y: 80 };
+
+        const fullArgs = dragOnce(toolArea, anchor, pointer, { shiftKey: true });
+
+        const expected = normalizeShapeGeometry(anchor, pointer, figure, { shiftKey: true, altKey: false });
+        // The short axis grows to the long one, so both extents are 60.
+        expect(expected).toEqual({ start: { x: 10, y: 20 }, end: { x: 70, y: 80 } });
+
+        const geometry = committedGeometry(fullArgs);
+        expect(geometry).toEqual(expected);
+        expect(Math.abs(geometry.end.x - geometry.start.x)).toBe(60);
+        expect(Math.abs(geometry.end.y - geometry.start.y)).toBe(60);
+        expect(fullArgs.args.figure).toBe(figure);
+        view.unmount();
+      }
+    );
+
+    it('leaves the line figure unconstrained when shift is held', () => {
+      toolArgsState.toolArgs.figure = 'line';
+      const { view, toolArea } = renderToolArea();
+      const anchor = { x: 10, y: 20 };
+      const pointer = { x: 50, y: 80 };
+
+      const fullArgs = dragOnce(toolArea, anchor, pointer, { shiftKey: true });
+
+      const geometry = committedGeometry(fullArgs);
+      expect(geometry).toEqual(normalizeShapeGeometry(anchor, pointer, 'line', { shiftKey: true, altKey: false }));
+      expect(geometry).toEqual({ start: { x: 10, y: 20 }, end: { x: 50, y: 80 } });
+      // A free angle must survive Shift: clamping it to 60x60 would be a square.
+      expect(Math.abs(geometry.end.x - geometry.start.x)).toBe(40);
+      expect(Math.abs(geometry.end.y - geometry.start.y)).toBe(60);
+      view.unmount();
+    });
+
+    it('draws from the center when alt is held, so the anchor is the box midpoint', () => {
+      const { view, toolArea } = renderToolArea();
+      const anchor = { x: 50, y: 50 };
+      const pointer = { x: 120, y: 90 };
+
+      const fullArgs = dragOnce(toolArea, anchor, pointer, { altKey: true });
+
+      const geometry = committedGeometry(fullArgs);
+      expect(geometry).toEqual(normalizeShapeGeometry(anchor, pointer, 'rectangle', { shiftKey: false, altKey: true }));
+      expect(geometry).toEqual({ start: { x: -20, y: 10 }, end: { x: 120, y: 90 } });
+      expect(midPoint(geometry)).toEqual(anchor);
+      expect(geometry.end).toEqual(pointer);
+      view.unmount();
+    });
+
+    it('produces a centered box with equal half-extents for alt+shift', () => {
+      const { view, toolArea } = renderToolArea();
+      const anchor = { x: 50, y: 50 };
+      const pointer = { x: 100, y: 80 };
+
+      const fullArgs = dragOnce(toolArea, anchor, pointer, { altKey: true, shiftKey: true });
+
+      const geometry = committedGeometry(fullArgs);
+      expect(geometry).toEqual(normalizeShapeGeometry(anchor, pointer, 'rectangle', { shiftKey: true, altKey: true }));
+      // half = max(|100-50|, |80-50|) = 50 in both directions.
+      expect(geometry).toEqual({ start: { x: 0, y: 0 }, end: { x: 100, y: 100 } });
+      expect(midPoint(geometry)).toEqual(anchor);
+      expect(Math.abs(geometry.end.x - geometry.start.x)).toBe(Math.abs(geometry.end.y - geometry.start.y));
+      expect(midPoint(fullArgs.args)).toEqual({ x: 50 - fullArgs.pos.x, y: 50 - fullArgs.pos.y });
+      view.unmount();
+    });
+
+    it.each([
+      { name: 'plain', modifiers: {} as DragModifiers, anchor: { x: 30, y: 40 }, pointer: { x: 90, y: 70 } },
+      {
+        name: 'shift',
+        modifiers: { shiftKey: true } as DragModifiers,
+        anchor: { x: 30, y: 40 },
+        pointer: { x: 90, y: 70 },
+      },
+      {
+        name: 'alt',
+        modifiers: { altKey: true } as DragModifiers,
+        anchor: { x: 30, y: 40 },
+        pointer: { x: 90, y: 70 },
+      },
+      {
+        name: 'alt+shift',
+        modifiers: { altKey: true, shiftKey: true } as DragModifiers,
+        anchor: { x: 30, y: 40 },
+        pointer: { x: 90, y: 70 },
+      },
+    ])('computes the layer pos from shapeGeometryBounds for a $name drag', ({ modifiers, anchor, pointer }) => {
+      const { view, toolArea } = renderToolArea();
+
+      const fullArgs = dragOnce(toolArea, anchor, pointer, modifiers);
+
+      const lineWidth = toolArgsState.toolArgs.lineWidth;
+      const geometry = normalizeShapeGeometry(anchor, pointer, 'rectangle', {
+        shiftKey: Boolean(modifiers.shiftKey),
+        altKey: Boolean(modifiers.altKey),
+      });
+      expect(committedGeometry(fullArgs)).toEqual(geometry);
+      expect(fullArgs.pos).toEqual(shapeGeometryBounds(geometry, lineWidth));
+      // Padding is half the stroke plus one pixel of antialiasing slack.
+      expect(fullArgs.pos.x).toBe(Math.min(geometry.start.x, geometry.end.x) - lineWidth / 2 - 1);
+      expect(fullArgs.pos.width).toBe(Math.abs(geometry.end.x - geometry.start.x) + lineWidth + 2);
+      view.unmount();
+    });
+
+    it('scales the committed bounds with the tool line width', () => {
+      toolArgsState.toolArgs.lineWidth = 7.5;
+      const { view, toolArea } = renderToolArea();
+      const anchor = { x: 30, y: 40 };
+      const pointer = { x: 90, y: 70 };
+
+      const fullArgs = dragOnce(toolArea, anchor, pointer);
+
+      const geometry = { start: anchor, end: pointer };
+      expect(fullArgs.pos).toEqual({ x: 25.25, y: 35.25, width: 69.5, height: 39.5 });
+      expect(fullArgs.pos).toEqual(shapeGeometryBounds(geometry, 7.5));
+      view.unmount();
+    });
+
+    it.each([
+      { name: 'plain', modifiers: {} as DragModifiers },
+      { name: 'shift', modifiers: { shiftKey: true } as DragModifiers },
+      { name: 'alt', modifiers: { altKey: true } as DragModifiers },
+    ])('rebases the committed start and end by -pos for a $name drag', ({ modifiers }) => {
+      const { view, toolArea } = renderToolArea();
+      const anchor = { x: 30, y: 40 };
+      const pointer = { x: 90, y: 70 };
+
+      const fullArgs = dragOnce(toolArea, anchor, pointer, modifiers);
+
+      const geometry = committedGeometry(fullArgs);
+      expect(fullArgs.args.start).toEqual({
+        x: geometry.start.x - fullArgs.pos.x,
+        y: geometry.start.y - fullArgs.pos.y,
+      });
+      expect(fullArgs.args.end).toEqual({ x: geometry.end.x - fullArgs.pos.x, y: geometry.end.y - fullArgs.pos.y });
+      // The rebased min corner lands on the padding inset (lineWidth / 2 + 1).
+      expect(fullArgs.args.start.x).toBe(toolArgsState.toolArgs.lineWidth / 2 + 1);
+      expect(fullArgs.args.start.y).toBe(toolArgsState.toolArgs.lineWidth / 2 + 1);
+      view.unmount();
+    });
+
+    it('rebases the committed start and end by -pos for every figure', () => {
+      for (const figure of ['rectangle', 'oval', 'triangle', 'polygon', 'line'] as const) {
+        toolArgsState.toolArgs.figure = figure;
+        createLayerFromToolMock.mockClear();
+        const { view, toolArea } = renderToolArea();
+        const anchor = { x: 40, y: 30 };
+        const pointer = { x: 120, y: 95 };
+
+        const fullArgs = dragOnce(toolArea, anchor, pointer, { shiftKey: true });
+
+        const geometry = committedGeometry(fullArgs);
+        expect(fullArgs.args.start, figure).toEqual({
+          x: geometry.start.x - fullArgs.pos.x,
+          y: geometry.start.y - fullArgs.pos.y,
+        });
+        expect(fullArgs.args.end, figure).toEqual({
+          x: geometry.end.x - fullArgs.pos.x,
+          y: geometry.end.y - fullArgs.pos.y,
+        });
+        expect(fullArgs.args.figure, figure).toBe(figure);
+        view.unmount();
+      }
+    });
+
+    it('keeps a space-drag translation without re-normalizing on release', () => {
+      const { view, toolArea } = renderToolArea();
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 120, clientY: 110 });
+      });
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space' }));
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 150, clientY: 140 });
+      });
+      // Releasing far away with Shift held must not snap the translated shape
+      // back to the pointer: the moved geometry wins.
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 400, clientY: 320, shiftKey: true });
+      });
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Space' }));
+      });
+
+      const fullArgs = createLayerFromToolMock.mock.calls[0][0] as CommittedLayer;
+      const geometry = committedGeometry(fullArgs);
+      expect(geometry).toEqual({ start: { x: 130, y: 130 }, end: { x: 150, y: 140 } });
+      expect(geometry).not.toEqual(
+        normalizeShapeGeometry({ x: 100, y: 100 }, { x: 400, y: 320 }, 'rectangle', { shiftKey: true, altKey: false })
+      );
+      expect(fullArgs.pos).toEqual(shapeGeometryBounds(geometry, toolArgsState.toolArgs.lineWidth));
+      view.unmount();
+    });
+
+    it('keeps the translated geometry for the rest of the gesture after Space is released', () => {
+      // `movedBySpace` only compares startRef against the anchor, so releasing
+      // Space mid-gesture does not re-anchor the shape on pointer up.
+      const { view, toolArea } = renderToolArea();
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 120, clientY: 110 });
+      });
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Space' }));
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 150, clientY: 140 });
+      });
+      act(() => {
+        window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Space' }));
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 200, clientY: 260 });
+      });
+
+      const fullArgs = createLayerFromToolMock.mock.calls[0][0] as CommittedLayer;
+      const geometry = committedGeometry(fullArgs);
+      expect(geometry).toEqual({ start: { x: 130, y: 130 }, end: { x: 150, y: 140 } });
+      expect(fullArgs.pos).toEqual(shapeGeometryBounds(geometry, toolArgsState.toolArgs.lineWidth));
+
+      // A fresh gesture after Space is released re-anchors on the new drag.
+      createLayerFromToolMock.mockClear();
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 200, clientY: 260 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 200, clientY: 260 });
+      });
+
+      const nextArgs = createLayerFromToolMock.mock.calls[0][0] as CommittedLayer;
+      const nextGeometry = committedGeometry(nextArgs);
+      expect(nextGeometry).toEqual({ start: { x: 100, y: 100 }, end: { x: 200, y: 260 } });
+      expect(nextArgs.pos).toEqual(shapeGeometryBounds(nextGeometry, toolArgsState.toolArgs.lineWidth));
+      view.unmount();
     });
   });
 });

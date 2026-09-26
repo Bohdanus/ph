@@ -71,19 +71,6 @@ vi.mock('../toolIcons.tsx', () => {
   };
 });
 
-const LONG_PRESS_DELAY = 300;
-
-const longPress = (button: HTMLElement) => {
-  fireEvent.pointerDown(button, { button: 0 });
-  act(() => {
-    vi.advanceTimersByTime(LONG_PRESS_DELAY);
-  });
-  fireEvent.pointerUp(button, { button: 0 });
-  fireEvent.click(button);
-};
-
-const toolbarButtonByName = (name: string) => screen.getByTestId(`tool-button-${name}`);
-
 const resetMocks = () => {
   goToTool.mockReset();
   Object.assign(toolArgsRef, { toolName: 'draw', figure: undefined });

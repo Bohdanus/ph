@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { AssetRegistry } from '../asset-registry.ts';
 import { convertLegacyHistorySafely, legacyHistoryToDurable } from '../history-adapter.ts';
+import { collectDurableAssetIds, type AssetId } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
 import { OPEN_DOCUMENT_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 import type { TransformToolArgs } from '../../tools/transform.ts';
@@ -87,7 +88,9 @@ describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
     expect(result.diagnostics).toHaveLength(1);
     expect(result.diagnostics[0]).toMatchObject({
       historyId: 'pen-tool',
+      actionName: TOOL_ACTION,
       severity: 'error',
+      code: 'unsupported-history-feature',
     });
     expect(result.diagnostics[0]?.message).toMatch(/cannot be replayed durably/);
   });
@@ -110,7 +113,9 @@ describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
     expect(result.diagnostics).toHaveLength(1);
     expect(result.diagnostics[0]).toMatchObject({
       historyId: 'unknown-tool',
+      actionName: TOOL_ACTION,
       severity: 'error',
+      code: 'unsupported-history-feature',
     });
     expect(result.diagnostics[0]?.message).toMatch(/Unknown processor/);
   });
@@ -133,7 +138,9 @@ describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
     expect(result.diagnostics).toHaveLength(1);
     expect(result.diagnostics[0]).toMatchObject({
       historyId: 'mixed-transform',
+      actionName: TOOL_ACTION,
       severity: 'error',
+      code: 'unsupported-history-feature',
     });
     expect(result.diagnostics[0]?.message).toMatch(/Mixed trapezoid and affine transform is unsupported/);
   });
@@ -159,7 +166,9 @@ describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
     expect(result.diagnostics).toHaveLength(1);
     expect(result.diagnostics[0]).toMatchObject({
       historyId: 'malformed',
+      actionName: TOOL_ACTION,
       severity: 'error',
+      code: 'invalid-history-entry',
     });
     expect(result.diagnostics[0]?.message).toMatch(/Non-plain/);
   });
@@ -182,7 +191,9 @@ describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
     expect(result.diagnostics).toHaveLength(1);
     expect(result.diagnostics[0]).toMatchObject({
       historyId: 'nan-transform',
+      actionName: TOOL_ACTION,
       severity: 'error',
+      code: 'unsupported-history-feature',
     });
     expect(result.diagnostics[0]?.message).toMatch(/Transform values must be finite/);
   });
@@ -208,7 +219,12 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     expect(result.status).toBe('unavailable');
     expect(result.document).toBeNull();
     expect(result.diagnostics).toHaveLength(1);
-    expect(result.diagnostics[0]).toMatchObject({ historyId: 'pen-tool', severity: 'error' });
+    expect(result.diagnostics[0]).toMatchObject({
+      historyId: 'pen-tool',
+      actionName: TOOL_ACTION,
+      severity: 'error',
+      code: 'unsupported-history-feature',
+    });
   });
 
   it('returns unavailable status for an unknown processor entry', () => {
@@ -227,7 +243,12 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
 
     expect(result.status).toBe('unavailable');
     expect(result.document).toBeNull();
-    expect(result.diagnostics[0]).toMatchObject({ historyId: 'unknown-tool', severity: 'error' });
+    expect(result.diagnostics[0]).toMatchObject({
+      historyId: 'unknown-tool',
+      actionName: TOOL_ACTION,
+      severity: 'error',
+      code: 'unsupported-history-feature',
+    });
   });
 
   it('returns unavailable status for non-finite transform values', () => {
@@ -246,7 +267,12 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
 
     expect(result.status).toBe('unavailable');
     expect(result.document).toBeNull();
-    expect(result.diagnostics[0]).toMatchObject({ historyId: 'nan-transform', severity: 'error' });
+    expect(result.diagnostics[0]).toMatchObject({
+      historyId: 'nan-transform',
+      actionName: TOOL_ACTION,
+      severity: 'error',
+      code: 'unsupported-history-feature',
+    });
   });
 
   it('rolls back asset registration when conversion fails, leaving no dangling assets', () => {
@@ -321,6 +347,83 @@ describe('convertLegacyHistorySafely boundary (P0.1)', () => {
     expect(result.document).not.toBeNull();
     expect(result.diagnostics).toHaveLength(0);
     expect(result.document?.history).toHaveLength(2);
+  });
+
+  it('commits the asset transaction and reconciles the reachable set for a valid conversion', async () => {
+    const registry = new AssetRegistry();
+    const { bitmap } = createOwnedBitmap(10, 10);
+    const imageLayer = {
+      ...blankLayer('img-layer'),
+      source: {
+        kind: 'image' as const,
+        bitmap,
+        isBedrock: false,
+        pos: { x: 0, y: 0, width: 10, height: 10 },
+      },
+      bitmap,
+    };
+    const transaction = vi.spyOn(registry, 'beginDocumentAssetTransaction');
+    const reconcile = vi.spyOn(registry, 'reconcileDocumentAssets');
+
+    const result = convertSafely(
+      [
+        {
+          id: 'img-layer-item',
+          actionName: 'new layer',
+          layerId: 'img-layer',
+          layerSource: imageLayer.source as never,
+        },
+        { id: 'blur-edit', actionName: TOOL_ACTION, layerId: 'img-layer', args: { toolName: 'blur', radius: 4 } },
+      ],
+      registry
+    );
+
+    expect(result.status).toBe('current');
+    expect(transaction).toHaveBeenCalledExactlyOnceWith('test-doc');
+    expect(reconcile).toHaveBeenCalledExactlyOnceWith('test-doc', collectDurableAssetIds(result.document!));
+    const reachable = reconcile.mock.calls[0]?.[1] as ReadonlySet<AssetId>;
+    expect(reachable.size).toBe(1);
+    // The reconciled baseline is still resolvable through the registry.
+    const lease = await registry.resolve([...reachable][0]!);
+    expect(lease.bitmap).toBe(bitmap);
+    lease.release();
+  });
+
+  it('rolls back the asset transaction and skips reconciliation for a rejected conversion', () => {
+    const registry = new AssetRegistry();
+    const { bitmap, close } = createOwnedBitmap(10, 10);
+    const imageLayer = {
+      ...blankLayer('img-layer'),
+      source: {
+        kind: 'image' as const,
+        bitmap,
+        isBedrock: false,
+        pos: { x: 0, y: 0, width: 10, height: 10 },
+      },
+      bitmap,
+    };
+    const reconcile = vi.spyOn(registry, 'reconcileDocumentAssets');
+    const register = vi.spyOn(registry, 'registerBaseline');
+
+    const result = convertSafely(
+      [
+        {
+          id: 'img-layer-item',
+          actionName: 'new layer',
+          layerId: 'img-layer',
+          layerSource: imageLayer.source as never,
+        },
+        { id: 'unsupported', actionName: TOOL_ACTION, layerId: 'img-layer', args: { toolName: 'pen' } },
+      ],
+      registry
+    );
+
+    expect(result.status).toBe('unavailable');
+    expect(reconcile).not.toHaveBeenCalled();
+    const registeredIds = register.mock.results.map((call) => call.value as AssetId);
+    expect(registeredIds).toHaveLength(1);
+    expect(registry.getRecord(registeredIds[0]!)).toBeUndefined();
+    expect(close).not.toHaveBeenCalled();
   });
 });
 

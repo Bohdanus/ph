@@ -5,39 +5,44 @@ import type { ToolArgs } from '../tool-types.ts';
 import { CurrentToolProvider, useCurrentTool } from '../useCurrentTool.tsx';
 import { StoreProvider, useStore } from '../StoreContext.tsx';
 
-const { lastSavedSettings } = vi.hoisted(() => ({
-  lastSavedSettings: {
-    draw: {
-      toolName: 'draw',
-      penType: 'pen',
-      lineWidth: 5,
-      alpha: 1,
-      color: '#000000',
-      lineDash: null,
+const { lastSavedSettings, seedShapeSettings } = vi.hoisted(() => {
+  const makeSeedShapeSettings = () => ({
+    toolName: 'shape',
+    figure: 'rectangle',
+    alpha: 1,
+    color: '#000000',
+    backgroundColor: '#ffffff',
+    hasFill: false,
+    lineWidth: 5,
+    lineDash: null,
+  });
+
+  return {
+    seedShapeSettings: makeSeedShapeSettings,
+    lastSavedSettings: {
+      draw: {
+        toolName: 'draw',
+        penType: 'pen',
+        lineWidth: 5,
+        alpha: 1,
+        color: '#000000',
+        lineDash: null,
+      },
+      shape: makeSeedShapeSettings(),
+      text: {
+        toolName: 'text',
+        text: 'Hello',
+        fontSize: 64,
+        lineHeight: 1.1,
+        rect: null,
+        bold: false,
+        italic: false,
+        fontFamily: 'Arial',
+        align: 'left',
+      },
     },
-    shape: {
-      toolName: 'shape',
-      figure: 'rectangle',
-      alpha: 1,
-      color: '#000000',
-      backgroundColor: '#ffffff',
-      hasFill: false,
-      lineWidth: 5,
-      lineDash: null,
-    },
-    text: {
-      toolName: 'text',
-      text: 'Hello',
-      fontSize: 64,
-      lineHeight: 1.1,
-      rect: null,
-      bold: false,
-      italic: false,
-      fontFamily: 'Arial',
-      align: 'left',
-    },
-  },
-}));
+  };
+});
 
 const { saveLastSettingsMock } = vi.hoisted(() => ({ saveLastSettingsMock: vi.fn() }));
 
@@ -88,6 +93,9 @@ function renderForShape() {
 describe('useCurrentTool', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // `lastSavedSettings` is mutable module state shared by every test in this
+    // file, so restore the seed before each one instead of trusting test order.
+    lastSavedSettings.shape = seedShapeSettings();
   });
 
   it('throws when used outside CurrentToolProvider', () => {
@@ -142,6 +150,18 @@ describe('useCurrentTool', () => {
       });
 
       expect(saveLastSettingsMock).toHaveBeenCalledWith(newArgs);
+    });
+
+    it('persists the normalized figure instead of the legacy one', () => {
+      const { result } = renderForShape();
+      const legacyArgs = { ...shapeArgs, figure: 'circle' as unknown as 'oval' } as ToolArgs;
+
+      act(() => {
+        result.current.tool.setToolArgs(legacyArgs);
+      });
+
+      expect(saveLastSettingsMock).toHaveBeenCalledWith({ ...legacyArgs, figure: 'oval' });
+      expect(saveLastSettingsMock).not.toHaveBeenCalledWith(expect.objectContaining({ figure: 'circle' }));
     });
 
     it('updates currentArgs ref in store', () => {
@@ -245,16 +265,12 @@ describe('useCurrentTool', () => {
     it('normalizes a legacy figure coming from already-corrupted saved settings', () => {
       lastSavedSettings.shape = { ...lastSavedSettings.shape, figure: 'circle' } as typeof lastSavedSettings.shape;
 
-      try {
-        const { result } = renderForShape();
-        act(() => {
-          result.current.tool.patchToolArgs('shape', { lineWidth: 3 });
-        });
+      const { result } = renderForShape();
+      act(() => {
+        result.current.tool.patchToolArgs('shape', { lineWidth: 3 });
+      });
 
-        expect(result.current.tool.getToolArgs('shape')).toMatchObject({ figure: 'oval', lineWidth: 3 });
-      } finally {
-        lastSavedSettings.shape = { ...lastSavedSettings.shape, figure: 'rectangle' };
-      }
+      expect(result.current.tool.getToolArgs('shape')).toMatchObject({ figure: 'oval', lineWidth: 3 });
     });
   });
 

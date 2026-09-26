@@ -79,6 +79,29 @@ function renderStoreProbe() {
   );
 }
 
+const DurableProbe = () => {
+  const [{ durableStatus, durableDiagnostics }, dispatch] = useStore();
+
+  return (
+    <div>
+      <div data-testid="durable-status">{durableStatus}</div>
+      <div data-testid="durable-diagnostics">{JSON.stringify(durableDiagnostics)}</div>
+      <button
+        onClick={() =>
+          dispatch({
+            type: 'COMMIT_DOCUMENT_EDIT',
+            payload: {
+              historyItem: { id: 'pen-edit', actionName: 'tool', layerId: 'layer-1', args: { toolName: 'pen' } },
+            },
+          })
+        }
+      >
+        Commit unsupported edit
+      </button>
+    </div>
+  );
+};
+
 describe('StoreContext selection lifecycle', () => {
   it('clears committed selections and the active selection id only through the clear action', () => {
     renderStoreProbe();
@@ -126,5 +149,57 @@ describe('StoreContext history lifecycle', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Replace document' }));
 
     expect(screen.getByTestId('history-state').textContent).toBe('replacement.psd:1:0:0:document-2:1');
+  });
+});
+
+describe('StoreContext durable diagnostic contract', () => {
+  it('exposes structured migration diagnostics instead of preformatted strings', () => {
+    render(
+      <StoreProvider>
+        <DurableProbe />
+      </StoreProvider>
+    );
+
+    expect(screen.getByTestId('durable-status').textContent).toBe('unavailable');
+    expect(screen.getByTestId('durable-diagnostics').textContent).toBe('[]');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Commit unsupported edit' }));
+
+    expect(screen.getByTestId('durable-status').textContent).toBe('unavailable');
+    const diagnostics: unknown = JSON.parse(screen.getByTestId('durable-diagnostics').textContent ?? '[]');
+    expect(Array.isArray(diagnostics)).toBe(true);
+    expect(diagnostics).toHaveLength(1);
+    // A diagnostic is a machine-readable object, never a formatted string.
+    expect(typeof (diagnostics as unknown[])[0]).toBe('object');
+    expect(diagnostics).toEqual([
+      {
+        historyId: 'pen-edit',
+        actionName: 'tool',
+        severity: 'error',
+        code: 'unsupported-history-feature',
+        message: 'Layer layer-1 is unavailable',
+      },
+    ]);
+  });
+
+  it('no longer publishes the durable replay presentation surface through the context', () => {
+    const captured: Record<string, unknown>[] = [];
+    const SurfaceProbe = () => {
+      const [store] = useStore();
+      captured.push(store as unknown as Record<string, unknown>);
+      return null;
+    };
+
+    render(
+      <StoreProvider>
+        <SurfaceProbe />
+      </StoreProvider>
+    );
+
+    const store = captured[captured.length - 1]!;
+    expect('replayCoordinator' in store).toBe(false);
+    expect('presentationMaterialization' in store).toBe(false);
+    expect('getReplayRevisionToken' in store).toBe(false);
+    expect(Object.keys(store)).toEqual(expect.not.arrayContaining(['replayCoordinator']));
   });
 });

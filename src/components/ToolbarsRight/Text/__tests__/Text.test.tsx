@@ -155,7 +155,18 @@ describe('Text toolbar', () => {
   });
 
   describe('keyboard navigation', () => {
-    it('allows tab navigation through all focusable elements', () => {
+    const pressArrowOnRange = (range: HTMLInputElement, key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight') => {
+      if (key === 'ArrowUp' || key === 'ArrowRight') {
+        range.stepUp();
+      } else {
+        range.stepDown();
+      }
+      fireEvent.input(range);
+    };
+
+    const lastToolArgs = () => mockSetToolArgs.mock.lastCall?.[0] as Record<string, unknown>;
+
+    it('allows tab navigation through all focusable elements', async () => {
       renderWithProvider(<Text />);
       const user = userEvent.setup();
 
@@ -172,121 +183,155 @@ describe('Text toolbar', () => {
       textInput.focus();
       expect(textInput).toHaveFocus();
 
-      userEvent.tab();
+      await user.tab();
       expect(fontSelect).toHaveFocus();
 
-      userEvent.tab();
+      await user.tab();
       expect(fontSizeSlider).toHaveFocus();
 
-      userEvent.tab();
+      await user.tab();
       expect(lineHeightSlider).toHaveFocus();
 
-      userEvent.tab();
+      await user.tab();
       expect(alignSelect).toHaveFocus();
 
-      userEvent.tab();
+      await user.tab();
       expect(boldButton).toHaveFocus();
 
-      userEvent.tab();
+      await user.tab();
       expect(italicButton).toHaveFocus();
 
-      userEvent.tab();
+      await user.tab();
       expect(applyButton).toHaveFocus();
 
-      userEvent.tab();
+      await user.tab();
       expect(clearButton).toHaveFocus();
 
-      userEvent.tab({ shift: true });
+      await user.tab({ shift: true });
       expect(applyButton).toHaveFocus();
     });
 
     it('allows arrow key navigation on font size slider', () => {
       renderWithProvider(<Text />);
-      const fontSizeSlider = screen.getByLabelText(/Font Size/);
+      const fontSizeSlider = screen.getByLabelText(/Font Size/) as HTMLInputElement;
 
       fontSizeSlider.focus();
-      const initialSize = Number(fontSizeSlider.value);
-      fireEvent.keyDown(fontSizeSlider, { key: 'ArrowRight' });
-      expect(Number(fontSizeSlider.value)).toBeGreaterThan(initialSize);
+      expect(fontSizeSlider).toHaveFocus();
+      expect(fontSizeSlider.type).toBe('range');
+      expect(fontSizeSlider.min).toBe('8');
+      expect(fontSizeSlider.max).toBe('500');
 
-      fireEvent.keyDown(fontSizeSlider, { key: 'ArrowLeft' });
-      expect(Number(fontSizeSlider.value)).toBe(initialSize);
+      const initialSize = Number(fontSizeSlider.value);
+      expect(initialSize).toBe(64);
+
+      pressArrowOnRange(fontSizeSlider, 'ArrowRight');
+      expect(lastToolArgs().fontSize).toBe(initialSize + 1);
+
+      pressArrowOnRange(fontSizeSlider, 'ArrowLeft');
+      expect(lastToolArgs().fontSize).toBe(initialSize - 1);
     });
 
     it('allows arrow key navigation on line height slider', () => {
       renderWithProvider(<Text />);
-      const lineHeightSlider = screen.getByLabelText(/Line Height/);
+      const lineHeightSlider = screen.getByLabelText(/Line Height/) as HTMLInputElement;
 
       lineHeightSlider.focus();
-      const initialHeight = Number(lineHeightSlider.value);
-      fireEvent.keyDown(lineHeightSlider, { key: 'ArrowUp' });
-      expect(Number(lineHeightSlider.value)).toBeGreaterThan(initialHeight);
+      expect(lineHeightSlider).toHaveFocus();
+      expect(lineHeightSlider.type).toBe('range');
+      expect(lineHeightSlider.step).toBe('0.05');
 
-      fireEvent.keyDown(lineHeightSlider, { key: 'ArrowDown' });
-      expect(Number(lineHeightSlider.value)).toBe(initialHeight);
+      const initialHeight = Number(lineHeightSlider.value);
+      expect(initialHeight).toBe(1.1);
+
+      pressArrowOnRange(lineHeightSlider, 'ArrowUp');
+      expect(lastToolArgs().lineHeight).toBeCloseTo(initialHeight + 0.05, 10);
+
+      pressArrowOnRange(lineHeightSlider, 'ArrowDown');
+      expect(lastToolArgs().lineHeight).toBeCloseTo(initialHeight - 0.05, 10);
     });
 
-    it('allows arrow key navigation on align select', () => {
+    it('changes alignment through the native select and reports it to the store', async () => {
       renderWithProvider(<Text />);
-      const alignSelect = screen.getByLabelText('Align');
+      const user = userEvent.setup();
+      const alignSelect = screen.getByLabelText('Align') as HTMLSelectElement;
+
+      expect(Array.from(alignSelect.options, (option) => option.value)).toEqual(['left', 'center', 'right']);
+      expect(alignSelect).toHaveValue('left');
 
       alignSelect.focus();
-      fireEvent.keyDown(alignSelect, { key: 'ArrowDown' });
-      expect(alignSelect).toHaveValue('center');
+      expect(alignSelect).toHaveFocus();
 
-      fireEvent.keyDown(alignSelect, { key: 'ArrowDown' });
-      expect(alignSelect).toHaveValue('right');
+      await user.selectOptions(alignSelect, 'center');
+      expect(lastToolArgs().align).toBe('center');
+      expect(alignSelect).toHaveValue('left');
 
-      fireEvent.keyDown(alignSelect, { key: 'ArrowUp' });
-      expect(alignSelect).toHaveValue('center');
+      await user.selectOptions(alignSelect, 'right');
+      expect(lastToolArgs().align).toBe('right');
+      expect(alignSelect).toHaveValue('left');
     });
 
-    it('allows enter/space to toggle bold and italic buttons', () => {
+    it('allows enter/space to toggle bold and italic buttons', async () => {
       renderWithProvider(<Text />);
+      const user = userEvent.setup();
       const boldButton = screen.getByRole('button', { name: 'B' });
       const italicButton = screen.getByRole('button', { name: 'I' });
 
       boldButton.focus();
-      fireEvent.keyDown(boldButton, { key: 'Enter' });
-      expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ bold: true }));
+      await user.keyboard('{Enter}');
+      expect(lastToolArgs().bold).toBe(true);
 
       italicButton.focus();
-      fireEvent.keyDown(italicButton, { key: ' ' });
-      expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ italic: true }));
+      expect(italicButton).toHaveFocus();
+      await user.keyboard(' ');
+      expect(lastToolArgs().italic).toBe(true);
     });
 
-    it('allows enter/space to trigger apply and clear buttons', () => {
+    it('allows enter/space to trigger apply and clear buttons', async () => {
       renderWithProvider(<Text />);
+      const user = userEvent.setup();
       const applyButton = screen.getByRole('button', { name: 'Apply' });
       const clearButton = screen.getByRole('button', { name: 'Clear' });
 
       applyButton.focus();
-      fireEvent.keyDown(applyButton, { key: 'Enter' });
-      expect(mockCreateLayerFromTool).toHaveBeenCalled();
+      expect(applyButton).toHaveFocus();
+      await user.keyboard('{Enter}');
+      expect(mockCreateLayerFromTool).toHaveBeenCalledWith(
+        expect.objectContaining({ args: expect.objectContaining({ text: 'Hello' }) })
+      );
 
       mockCreateLayerFromTool.mockClear();
 
       clearButton.focus();
-      fireEvent.keyDown(clearButton, { key: ' ' });
-      expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+      expect(clearButton).toHaveFocus();
+      await user.keyboard(' ');
+      expect(mockCreateLayerFromTool).not.toHaveBeenCalled();
+      expect(lastToolArgs().text).toBe('');
+      expect(lastToolArgs().rect).toBeNull();
     });
 
-    it('allows typing in text input', () => {
+    it('reports typed text to the store while the textarea stays controlled by toolArgs.text', async () => {
       renderWithProvider(<Text />);
-      const textInput = screen.getByLabelText('Text');
+      const user = userEvent.setup();
+      const textInput = screen.getByLabelText('Text') as HTMLTextAreaElement;
+
+      expect(textInput).toHaveValue('Hello');
 
       textInput.focus();
-      fireEvent.change(textInput, { target: { value: 'New Text' } });
-      expect(textInput).toHaveValue('New Text');
+      await user.type(textInput, '!');
+
+      expect(lastToolArgs().text).toBe('Hello!');
+      expect(textInput).toHaveValue('Hello');
     });
 
-    it('escape key does not close anything (no popovers)', () => {
+    it('escape key does not close anything (no popovers)', async () => {
       renderWithProvider(<Text />);
+      const user = userEvent.setup();
       const fontSizeSlider = screen.getByLabelText(/Font Size/);
 
       fontSizeSlider.focus();
-      fireEvent.keyDown(fontSizeSlider, { key: 'Escape' });
+      await user.keyboard('{Escape}');
       expect(fontSizeSlider).toHaveFocus();
+      expect(screen.queryByRole('button', { name: 'Georgia' })).not.toBeInTheDocument();
     });
   });
 });

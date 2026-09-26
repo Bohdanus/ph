@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import type { Selection } from '../../../../contexts/general-types.ts';
@@ -138,9 +138,9 @@ describe('RectangularSelection toolbar', () => {
   });
 
   describe('keyboard navigation', () => {
-    it('allows tab navigation through all focusable elements', () => {
-      render(<RectangularSelection />);
+    it('allows tab navigation through all focusable elements', async () => {
       const user = userEvent.setup();
+      render(<RectangularSelection />);
 
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
@@ -149,38 +149,46 @@ describe('RectangularSelection toolbar', () => {
       copyButton.focus();
       expect(copyButton).toHaveFocus();
 
-      userEvent.tab();
+      await user.tab();
       expect(pasteButton).toHaveFocus();
 
-      userEvent.tab();
+      await user.tab();
       expect(clearButton).toHaveFocus();
 
-      userEvent.tab({ shift: true });
+      await user.tab();
+      expect(document.activeElement).toBe(document.body);
+
+      await user.tab({ shift: true });
+      expect(clearButton).toHaveFocus();
+
+      await user.tab({ shift: true });
       expect(pasteButton).toHaveFocus();
 
-      userEvent.tab({ shift: true });
+      await user.tab({ shift: true });
       expect(copyButton).toHaveFocus();
     });
 
     it('allows enter/space to trigger copy, paste, and clear buttons', async () => {
+      const user = userEvent.setup();
       render(<RectangularSelection />);
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
       const clearButton = screen.getByRole('button', { name: 'Clear' });
 
       copyButton.focus();
-      fireEvent.keyDown(copyButton, { key: 'Enter' });
+      expect(copyButton).toHaveFocus();
+      await user.keyboard('{Enter}');
 
       pasteButton.focus();
-      fireEvent.keyDown(pasteButton, { key: ' ' });
+      expect(pasteButton).toHaveFocus();
+      await user.keyboard(' ');
 
       clearButton.focus();
-      fireEvent.keyDown(clearButton, { key: 'Enter' });
+      expect(clearButton).toHaveFocus();
+      await user.keyboard('{Enter}');
 
-      await waitFor(() => {
-        expect(copyActiveSelectionMock).toHaveBeenCalled();
-      });
-      expect(pasteSelectionClipboardMock).toHaveBeenCalled();
+      expect(copyActiveSelectionMock).toHaveBeenCalledWith(expect.objectContaining({ id: 'selection-1' }));
+      expect(pasteSelectionClipboardMock).toHaveBeenCalledTimes(1);
       expect(dispatchMock).toHaveBeenCalledWith({ type: 'CLEAR_SELECTIONS' });
     });
 
@@ -193,23 +201,46 @@ describe('RectangularSelection toolbar', () => {
       expect(copyButton).toHaveFocus();
     });
 
-    it('disabled buttons are not focusable via tab when disabled', () => {
-      resetStoreState({ activeSelectionId: null, selections: [] });
+    it('disabled buttons are not focusable via tab when disabled', async () => {
+      hasSelectionClipboard.current = false;
+      const user = userEvent.setup();
       render(<RectangularSelection />);
 
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
       const clearButton = screen.getByRole('button', { name: 'Clear' });
 
-      expect(copyButton).toBeDisabled();
+      expect(copyButton).not.toBeDisabled();
+      expect(clearButton).not.toBeDisabled();
       expect(pasteButton).toBeDisabled();
 
-      copyButton.focus();
-      expect(document.activeElement).toBe(copyButton);
+      pasteButton.focus();
+      expect(pasteButton).not.toHaveFocus();
+      expect(document.activeElement).toBe(document.body);
 
-      const user = userEvent.setup();
-      userEvent.tab();
+      copyButton.focus();
+      expect(copyButton).toHaveFocus();
+
+      await user.tab();
       expect(clearButton).toHaveFocus();
+
+      await user.tab();
+      expect(document.activeElement).toBe(document.body);
+
+      await user.tab({ shift: true });
+      expect(clearButton).toHaveFocus();
+
+      cleanup();
+      hasSelectionClipboard.current = false;
+      resetStoreState({ activeSelectionId: null, selections: [] });
+      render(<RectangularSelection />);
+
+      expect(screen.getByRole('button', { name: 'Copy' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Paste' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
+
+      await user.tab();
+      expect(document.activeElement).toBe(document.body);
     });
   });
 });

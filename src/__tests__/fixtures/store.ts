@@ -1,4 +1,6 @@
-import type { StoreDispatch } from '@/contexts/StoreContext.tsx';
+import type { DurableDocumentStatus, StoreDispatch } from '@/contexts/StoreContext.tsx';
+import type { MigrationDiagnostic } from '@/contexts/history-adapter.ts';
+import type { DurableDocument } from '@/contexts/history-model.ts';
 import type { HistoryItem } from '@/contexts/history-types.ts';
 import type { LayersRecord, LayerId } from '@/contexts/layer-types.ts';
 import type { Size, Selection } from '@/contexts/general-types.ts';
@@ -17,7 +19,6 @@ export interface MockStoreState {
   currentArgs?: { current: ToolArgs };
   clearPreviewLayers?: () => void;
   previewLayers?: Record<LayerId, { layer: unknown; toolArgs?: ToolArgs }>;
-  textCommitMarkerRef?: { current: { args: ToolArgs; layer: unknown } | null };
   hasImage?: boolean;
   hasUnsavedChanges?: boolean;
   fileName?: string;
@@ -38,10 +39,9 @@ export interface MockStoreState {
   documentId?: string;
   documentRevision?: number;
   branchRevision?: number;
-  durableDocument?: unknown;
-  durableStatus?: string;
-  durableDiagnostics?: string[];
-  materializedDocument?: unknown;
+  durableDocument?: DurableDocument | null;
+  durableStatus?: DurableDocumentStatus;
+  durableDiagnostics?: readonly MigrationDiagnostic[];
   color?: string;
   backgroundColor?: string;
 }
@@ -56,7 +56,6 @@ export const createMockStoreState = (overrides: MockStoreState = {}): MockStoreS
   currentArgs: { current: {} as ToolArgs },
   clearPreviewLayers: vi.fn(),
   previewLayers: {},
-  textCommitMarkerRef: { current: null },
   hasImage: false,
   hasUnsavedChanges: false,
   fileName: '',
@@ -80,7 +79,6 @@ export const createMockStoreState = (overrides: MockStoreState = {}): MockStoreS
   durableDocument: null,
   durableStatus: 'unavailable',
   durableDiagnostics: [],
-  materializedDocument: null,
   color: '#000000',
   backgroundColor: '#ffffff',
   ...overrides,

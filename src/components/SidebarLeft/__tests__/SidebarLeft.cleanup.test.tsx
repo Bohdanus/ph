@@ -128,4 +128,60 @@ describe('SidebarLeft cleanup', () => {
 
     expect(screen.queryByRole('menu')).toBeNull();
   });
+
+  it('cancels a pending long-press on pointercancel', () => {
+    vi.useFakeTimers();
+    render(<SidebarLeft />);
+
+    const brushButton = toolbarButtonByName('brush');
+    act(() => {
+      fireEvent.pointerDown(brushButton, { button: 0 });
+    });
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY - 1);
+    });
+    act(() => {
+      fireEvent.pointerCancel(brushButton);
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY);
+    });
+
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('leaves no pending long-press timer behind once the flyout is open', () => {
+    vi.useFakeTimers();
+    render(<SidebarLeft />);
+
+    longPress(toolbarButtonByName('brush'));
+
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('tears down the open flyout and its listeners on unmount', () => {
+    vi.useFakeTimers();
+    const { unmount } = render(<SidebarLeft />);
+
+    longPress(toolbarButtonByName('brush'));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+
+    unmount();
+
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(LONG_PRESS_DELAY);
+    });
+    act(() => {
+      fireEvent.keyDown(window, { key: 'Escape' });
+    });
+    act(() => {
+      fireEvent.click(document.body);
+    });
+
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
 });

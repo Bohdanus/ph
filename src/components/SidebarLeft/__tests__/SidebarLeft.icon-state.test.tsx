@@ -1,6 +1,10 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import type { ReactElement } from 'react';
 import SidebarLeft from '../SidebarLeft.tsx';
+import { toolIcons } from '../toolIcons.tsx';
+import { toolbarMap } from '../../../../toolbar-mapping.ts';
+import type { ToolbarTool } from '../../../../toolbar-mapping.ts';
 
 const goToTool = vi.fn();
 const patchToolArgsMock = vi.fn();
@@ -34,55 +38,75 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
 }));
 
 vi.mock('../toolIcons.tsx', () => {
-  const Icon = ({ title }: { title: string }) => <svg aria-hidden="true">{title}</svg>;
+  const iconNames = [
+    'reposition',
+    'rectangular-selection',
+    'freehand-lasso',
+    'polygonal-lasso',
+    'feather-magnetic-lasso',
+    'magic-wand',
+    'crop',
+    'draw',
+    'shape',
+    'shape-rectangle',
+    'shape-oval',
+    'shape-line',
+    'shape-triangle',
+    'shape-polygon',
+    'text',
+    'color',
+    'blur',
+    'levels',
+    'transform',
+    'brush',
+    'pencil',
+    'color-replacement',
+    'pen',
+    'freeform-pen',
+    'curvature-pen',
+    'add-anchor-point',
+    'delete-anchor-point',
+    'convert-point',
+    'rectangle',
+    'ellipse',
+    'triangle',
+    'polygon',
+    'line',
+    'custom-shape',
+  ];
 
   return {
-    toolIcons: {
-      reposition: Icon,
-      'rectangular-selection': Icon,
-      'freehand-lasso': Icon,
-      'polygonal-lasso': Icon,
-      'feather-magnetic-lasso': Icon,
-      'magic-wand': Icon,
-      crop: Icon,
-      draw: Icon,
-      shape: Icon,
-      text: Icon,
-      color: Icon,
-      blur: Icon,
-      levels: Icon,
-      transform: Icon,
-      brush: Icon,
-      pencil: Icon,
-      'color-replacement': Icon,
-      pen: Icon,
-      'freeform-pen': Icon,
-      'curvature-pen': Icon,
-      'add-anchor-point': Icon,
-      'delete-anchor-point': Icon,
-      'convert-point': Icon,
-      rectangle: Icon,
-      ellipse: Icon,
-      triangle: Icon,
-      polygon: Icon,
-      line: Icon,
-      'custom-shape': Icon,
-    },
+    toolIcons: Object.fromEntries(
+      iconNames.map((iconName) => {
+        const Icon = ({ title }: { title: string }) => (
+          <svg aria-hidden="true" data-icon={iconName}>
+            {title}
+          </svg>
+        );
+        return [iconName, Icon];
+      })
+    ),
   };
 });
 
-const LONG_PRESS_DELAY = 300;
+const toolbarButtonByName = (name: string) => screen.getByTestId(`tool-button-${name}`);
 
-const longPress = (button: HTMLElement) => {
-  fireEvent.pointerDown(button, { button: 0 });
+const mockedIcons = toolIcons as Record<string, ((props: { title: string }) => ReactElement) | undefined>;
+
+const iconNameIn = (element: HTMLElement) => element.querySelector('svg')?.getAttribute('data-icon') ?? null;
+
+const openShapeFlyout = () => {
   act(() => {
-    vi.advanceTimersByTime(LONG_PRESS_DELAY);
+    fireEvent.contextMenu(toolbarButtonByName('shape'));
   });
-  fireEvent.pointerUp(button, { button: 0 });
-  fireEvent.click(button);
+  return screen.getByRole('menu', { name: 'Shape tools' });
 };
 
-const toolbarButtonByName = (name: string) => screen.getByTestId(`tool-button-${name}`);
+const shapeGroup = (toolbarMap.flat() as readonly (readonly ToolbarTool[])[])
+  .flat()
+  .filter((tool) => tool.name === 'shape' || tool.name === 'custom-shape');
+
+const expectedIconNames = shapeGroup.map((tool) => (tool.figure ? `shape-${tool.figure}` : tool.name));
 
 const resetMocks = () => {
   goToTool.mockReset();
@@ -123,5 +147,67 @@ describe('SidebarLeft icon and selection state', () => {
     render(<SidebarLeft />);
 
     expect(toolbarButtonByName('brush')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('shows the rectangle figure icon on the default shape tile', () => {
+    render(<SidebarLeft />);
+
+    expect(iconNameIn(toolbarButtonByName('shape'))).toBe('shape-rectangle');
+  });
+
+  it('renders the figure specific icon for every entry of the shape flyout', () => {
+    render(<SidebarLeft />);
+    const menu = openShapeFlyout();
+    const items = within(menu).getAllByRole('menuitemradio');
+
+    expect(items).toHaveLength(expectedIconNames.length);
+    expect(items.map((item) => iconNameIn(item))).toEqual(expectedIconNames);
+
+    for (const tool of shapeGroup) {
+      const item = within(menu).getByRole('menuitemradio', { name: new RegExp(tool.label) });
+
+      expect(iconNameIn(item)).toBe(tool.figure ? `shape-${tool.figure}` : tool.name);
+    }
+  });
+
+  it('falls back to the shared shape icon when a figure has no dedicated icon entry', () => {
+    const removed = mockedIcons['shape-line'];
+    delete mockedIcons['shape-line'];
+
+    try {
+      render(<SidebarLeft />);
+      const menu = openShapeFlyout();
+      const lineItem = within(menu).getByRole('menuitemradio', { name: /Line Tool/ });
+
+      expect(iconNameIn(lineItem)).toBe('shape');
+      expect(
+        within(menu)
+          .getAllByRole('menuitemradio')
+          .map((item) => iconNameIn(item))
+      ).not.toContain('shape-line');
+    } finally {
+      mockedIcons['shape-line'] = removed;
+    }
+  });
+
+  it('renders the custom shape icon for the flyout entry without a figure', () => {
+    render(<SidebarLeft />);
+    const menu = openShapeFlyout();
+    const customShapeItem = within(menu).getByRole('menuitemradio', { name: /Custom Shape Tool/ });
+
+    expect(iconNameIn(customShapeItem)).toBe('custom-shape');
+  });
+
+  it('keeps the checked flyout entry on the icon of the active figure', () => {
+    Object.assign(storeStateRef, { toolName: 'shape' });
+    Object.assign(toolArgsRef, { toolName: 'shape', figure: 'oval' });
+    render(<SidebarLeft />);
+
+    const menu = openShapeFlyout();
+    const items = within(menu).getAllByRole('menuitemradio');
+    const selectedItems = items.filter((item) => item.getAttribute('aria-checked') === 'true');
+
+    expect(selectedItems).toHaveLength(1);
+    expect(iconNameIn(selectedItems[0])).toBe('shape-oval');
   });
 });

@@ -69,7 +69,9 @@ describe('Levels toolbar', () => {
     mockSetToolArgs.mockClear();
     mockResetToLastSavedArgs.mockClear();
     mockCanUndo.mockClear();
+    mockCanUndo.mockReturnValue(false);
     mockUndo.mockClear();
+    mockIsToolDirty.current = true;
     setActiveLayerId('layer-1');
   });
 
@@ -86,6 +88,28 @@ describe('Levels toolbar', () => {
     expect(screen.getByRole('button', { name: 'Reset' })).toBeInTheDocument();
   });
 
+  it('undoes the last history step instead of resetting when the tool has no unsaved changes', async () => {
+    mockIsToolDirty.current = false;
+    mockCanUndo.mockReturnValue(true);
+    const user = userEvent.setup();
+    render(<Levels />);
+
+    const resetButton = screen.getByRole('button', { name: 'Reset' });
+    expect(resetButton).toBeEnabled();
+
+    await user.click(resetButton);
+
+    expect(mockUndo).toHaveBeenCalledTimes(1);
+    expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
+  });
+
+  it('disables the Reset button without history and without unsaved changes', () => {
+    mockIsToolDirty.current = false;
+    render(<Levels />);
+
+    expect(screen.getByRole('button', { name: 'Reset' })).toBeDisabled();
+  });
+
   it('does not call tempUpdateLayer when activeLayerId is null', () => {
     setActiveLayerId(null);
     render(<Levels />);
@@ -93,6 +117,43 @@ describe('Levels toolbar', () => {
     fireEvent.change(screen.getByLabelText(/Brightness/), { target: { value: '75' } });
 
     expect(mockTempUpdateLayer).not.toHaveBeenCalled();
+  });
+
+  it('coalesces slider changes into a single layer update on the next animation frame', () => {
+    const frames: FrameRequestCallback[] = [];
+    const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+
+    try {
+      render(<Levels />);
+
+      act(() => {
+        fireEvent.change(screen.getByLabelText(/Brightness/), { target: { value: '25' } });
+      });
+      act(() => {
+        fireEvent.change(screen.getByLabelText(/Brightness/), { target: { value: '60' } });
+      });
+
+      expect(frames).toHaveLength(1);
+      expect(mockTempUpdateLayer).not.toHaveBeenCalled();
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+
+      act(() => {
+        frames.forEach((frame) => frame(0));
+      });
+
+      expect(mockTempUpdateLayer).toHaveBeenCalledTimes(1);
+      expect(mockTempUpdateLayer).toHaveBeenCalledWith({
+        id: 'layer-1',
+        toolArgs: { toolName: 'levels', brightness: 60, contrast: 50 },
+      });
+      expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
+      expect(mockSetToolArgs).toHaveBeenCalledWith({ toolName: 'levels', brightness: 60, contrast: 50 });
+    } finally {
+      rafSpy.mockRestore();
+    }
   });
 
   it('brightness slider reflects current value', () => {
@@ -163,6 +224,40 @@ describe('Levels toolbar', () => {
       fireEvent.click(resetButton);
 
       expect(mockResetToLastSavedArgs).toHaveBeenCalled();
+    });
+
+    it('reaches the sliders and the reset button by tabbing in DOM order', async () => {
+      const user = userEvent.setup();
+      render(<Levels />);
+
+      const brightnessSlider = screen.getByLabelText(/Brightness/);
+      const contrastSlider = screen.getByLabelText(/Contrast/);
+      const resetButton = screen.getByRole('button', { name: 'Reset' });
+
+      await user.tab();
+      expect(brightnessSlider).toHaveFocus();
+
+      await user.tab();
+      expect(contrastSlider).toHaveFocus();
+
+      await user.tab();
+      expect(resetButton).toHaveFocus();
+    });
+
+    it('resets to the last saved args when the focused reset button is activated with Enter', async () => {
+      const user = userEvent.setup();
+      render(<Levels />);
+
+      const resetButton = screen.getByRole('button', { name: 'Reset' });
+      await user.tab();
+      await user.tab();
+      await user.tab();
+      expect(resetButton).toHaveFocus();
+
+      await user.keyboard('{Enter}');
+
+      expect(mockResetToLastSavedArgs).toHaveBeenCalledTimes(1);
+      expect(mockUndo).not.toHaveBeenCalled();
     });
 
     it('escape key does not close anything (no popovers)', () => {

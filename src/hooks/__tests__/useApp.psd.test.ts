@@ -18,9 +18,6 @@ function createMockStoreData(): StoreData {
     } as { current: ToolArgs },
     clearPreviewLayers: vi.fn(),
     previewLayers: { current: {} },
-    replayCoordinator: { current: null },
-    presentationMaterialization: { current: null },
-    getReplayRevisionToken: vi.fn(),
     hasImage: true,
     hasUnsavedChanges: false,
     fileName: '',
@@ -179,7 +176,7 @@ describe('useApp PSD replacement', () => {
     expect(dispatch.mock.calls[0][0].payload.updates.layers).toEqual(document.layers);
   });
 
-  it('retains the raster upload path rather than creating a PSD baseline', () => {
+  it('retains the raster upload path rather than creating a PSD baseline', async () => {
     const { dispatch } = setup();
     const image = {
       width: 80,
@@ -189,7 +186,7 @@ describe('useApp PSD replacement', () => {
       naturalWidth: 80,
       naturalHeight: 40,
     } as HTMLImageElement;
-    useApp().setImageFromUpload({ fileName: 'photo.png', image });
+    await useApp().setImageFromUpload({ fileName: 'photo.png', image });
     expect(mocks.createLayerFromBitmap).toHaveBeenCalledExactlyOnceWith(
       {
         bitmap: image,
@@ -199,7 +196,7 @@ describe('useApp PSD replacement', () => {
       },
       true
     );
-    expect(dispatch).toHaveBeenCalledWith({ type: 'SET_FILE_NAME', payload: 'photo.png' });
+    expect(dispatch).toHaveBeenCalledExactlyOnceWith({ type: 'SET_FILE_NAME', payload: 'photo.png' });
     expect(dispatch.mock.calls.every(([action]) => !action.payload?.history)).toBe(true);
   });
 

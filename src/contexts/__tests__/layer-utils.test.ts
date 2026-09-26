@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   getSortedLayersArray,
   layersArrayToRecord,
@@ -6,8 +6,10 @@ import {
   maxLayerOrder,
   getLayerIdByPoint,
   reorderLayers,
+  saveLayerCanvas,
 } from '../layer-utils.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
+import type { BitmapSource } from '../general-types.ts';
 
 function makeLayer(overrides: Partial<Layer> & { id: string; order: number }): Layer {
   return {
@@ -183,5 +185,107 @@ describe('reorderLayers', () => {
     const original = { ...layers.a };
     reorderLayers({ layers, layerToMoveId: 'a', afterWhichLayerId: 'nonexistent' });
     expect(layers.a).toEqual(original);
+  });
+});
+
+describe('saveLayerCanvas', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function makeBitmap(overrides: Partial<ImageBitmap> = {}): ImageBitmap {
+    return { width: 20, height: 10, close: vi.fn(), ...overrides } as unknown as ImageBitmap;
+  }
+
+  it('returns undefined and never materializes a layer without a staged canvas', () => {
+    const createImageBitmapStub = vi.fn();
+    vi.stubGlobal('createImageBitmap', createImageBitmapStub);
+    const layer = makeLayer({ id: 'a', order: 1, tmpCanvas: null });
+
+    expect(saveLayerCanvas(layer)).toBeUndefined();
+    expect(createImageBitmapStub).not.toHaveBeenCalled();
+    expect(layer.bitmap).toBeNull();
+  });
+
+  it('adopts the resolved bitmap and clears the staged canvas on success', async () => {
+    const canvas = new OffscreenCanvas(20, 10) as unknown as BitmapSource;
+    const bitmap = makeBitmap();
+    const createImageBitmapStub = vi.fn(async () => bitmap);
+    vi.stubGlobal('createImageBitmap', createImageBitmapStub);
+    const layer = makeLayer({ id: 'a', order: 1, tmpCanvas: canvas });
+
+    await expect(saveLayerCanvas(layer)).resolves.toBe(bitmap);
+    expect(createImageBitmapStub).toHaveBeenCalledWith(canvas);
+    expect(layer.bitmap).toBe(bitmap);
+    expect(layer.tmpCanvas).toBeNull();
+  });
+
+  it('closes the stale bitmap and keeps the newer preview when the staged canvas was replaced', async () => {
+    const staged = new OffscreenCanvas(20, 10) as unknown as BitmapSource;
+    const newer = new OffscreenCanvas(30, 15) as unknown as BitmapSource;
+    const previousBitmap = makeBitmap({ width: 4, height: 4 });
+    let resolveBitmap: (bitmap: ImageBitmap) => void = () => undefined;
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(
+        () =>
+          new Promise<ImageBitmap>((resolve) => {
+            resolveBitmap = resolve;
+          })
+      )
+    );
+    const layer = makeLayer({ id: 'a', order: 1, tmpCanvas: staged, bitmap: previousBitmap });
+
+    const pending = saveLayerCanvas(layer);
+    layer.tmpCanvas = newer;
+    const materialized = makeBitmap();
+    resolveBitmap(materialized);
+
+    await expect(pending).resolves.toBeUndefined();
+    expect(materialized.close).toHaveBeenCalledTimes(1);
+    expect(layer.bitmap).toBe(previousBitmap);
+    expect(layer.tmpCanvas).toBe(newer);
+  });
+
+  it('resolves undefined and keeps the staged canvas when materialization rejects', async () => {
+    const canvas = new OffscreenCanvas(20, 10) as unknown as BitmapSource;
+    const failure = new Error('bitmap materialization failed');
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => {
+        throw failure;
+      })
+    );
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const layer = makeLayer({ id: 'a', order: 1, tmpCanvas: canvas, bitmap: null });
+
+    await expect(saveLayerCanvas(layer)).resolves.toBeUndefined();
+    expect(consoleError).toHaveBeenCalledWith('Unable to materialize layer presentation cache', failure);
+    expect(layer.bitmap).toBeNull();
+    expect(layer.tmpCanvas).toBe(canvas);
+  });
+
+  it('swallows a failure raised while adopting the bitmap and keeps the staged canvas', async () => {
+    const canvas = new OffscreenCanvas(20, 10) as unknown as BitmapSource;
+    const bitmap = makeBitmap();
+    vi.stubGlobal(
+      'createImageBitmap',
+      vi.fn(async () => bitmap)
+    );
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const layer = makeLayer({ id: 'a', order: 1, tmpCanvas: canvas });
+    const failure = new Error('adoption failed');
+    Object.defineProperty(layer, 'bitmap', {
+      configurable: true,
+      get: () => null,
+      set: () => {
+        throw failure;
+      },
+    });
+
+    await expect(saveLayerCanvas(layer)).resolves.toBeUndefined();
+    expect(consoleError).toHaveBeenCalledWith('Unable to materialize layer presentation cache', failure);
+    expect(layer.tmpCanvas).toBe(canvas);
   });
 });
