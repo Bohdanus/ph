@@ -107,7 +107,6 @@ export type DurableOperation =
   | Readonly<{ kind: 'rasterize-layer'; layerId: LayerId; result: DurableLayerSnapshot }>
   | Readonly<{ kind: 'set-document-frame'; previous: DocumentFrame; next: DocumentFrame }>
   | Readonly<{ kind: 'merge-document'; result: DurableLayerSnapshot; removedLayerIds: readonly LayerId[] }>
-  | Readonly<{ kind: 'replace-document'; document: DurableDocument }>
   | Readonly<{ kind: 'set-selection'; before: SelectionSnapshot; after: SelectionSnapshot }>;
 
 /** Compatibility alias used by the initial history-model scaffolding. */
@@ -268,8 +267,6 @@ function cloneOperation(operation: DurableOperation): DurableOperation {
       return Object.freeze({ ...operation, orderByLayerId: Object.freeze({ ...operation.orderByLayerId }) });
     case 'remove-layer':
       return Object.freeze({ ...operation });
-    case 'replace-document':
-      return Object.freeze({ ...operation, document: cloneDurableDocument(operation.document) });
   }
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { legacyHistoryToDurable, UnsupportedHistoryFeatureError } from '../history-adapter.ts';
+import { legacyHistoryToDurable } from '../history-adapter.ts';
 import { normalizeTransformHistoryArgs } from '../affine-transform.ts';
 import { replayDurableDocument } from '../durable-replay.ts';
 import type { HistoryItem } from '../history-types.ts';
@@ -110,14 +110,21 @@ describe('durable history adapter and replay', () => {
       layerId,
       processorId: 'transform',
     });
-    expect(() =>
-      convert({
-        id: 'mixed-transform',
-        actionName: TOOL_ACTION,
-        layerId,
-        args: { ...rawTransform, trapezoid: 25 },
-      })
-    ).toThrowError(UnsupportedHistoryFeatureError);
+
+    const mixed = convert({
+      id: 'mixed-transform',
+      actionName: TOOL_ACTION,
+      layerId,
+      args: { ...rawTransform, trapezoid: 25 },
+    });
+
+    expect(mixed.diagnostics).toHaveLength(1);
+    expect(mixed.diagnostics[0]).toMatchObject({
+      historyId: 'mixed-transform',
+      severity: 'error',
+    });
+    expect(mixed.diagnostics[0]?.message).toMatch(/Mixed trapezoid and affine transform is unsupported/);
+    expect(mixed.document.history).toHaveLength(0);
   });
 
   it('keeps disabled affine and filter entries disabled and excludes them from replay', () => {

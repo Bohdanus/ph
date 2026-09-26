@@ -200,26 +200,24 @@ describe('AssetRegistry materialization cache', () => {
     second.release();
   });
 
-  it.fails('does not leak the first bitmap when concurrent same-key requests overlap', async () => {
-    // BUG: AssetRegistry.materialize does not track in-flight producers by
-    // key. When two concurrent requests share a key, both call the producer
-    // and the second cache.set overwrites the first entry without closing
-    // its bitmap. The first produced bitmap is permanently leaked.
+  it('deduplicates concurrent same-key requests, sharing one producer result without leaking', async () => {
     const registry = new AssetRegistry({ maxCacheBytes: 1024 });
     const first = createOwnedBitmap();
     const second = createOwnedBitmap();
 
     const firstDeferred = deferred<BitmapSource>();
     const secondDeferred = deferred<BitmapSource>();
+    const producerA = vi.fn(() => firstDeferred.promise);
+    const producerB = vi.fn(() => secondDeferred.promise);
 
     const matA = registry.materialize({
       key: 'shared',
-      producer: () => firstDeferred.promise,
+      producer: producerA,
       byteSize: 4,
     });
     const matB = registry.materialize({
       key: 'shared',
-      producer: () => secondDeferred.promise,
+      producer: producerB,
       byteSize: 4,
     });
 
@@ -229,11 +227,24 @@ describe('AssetRegistry materialization cache', () => {
     secondDeferred.resolve(second.bitmap);
     const leaseB = await matB;
 
+    // Only the first producer is called; the second is deduplicated onto the
+    // in-flight pending promise. The second bitmap is never produced.
+    expect(producerA).toHaveBeenCalledOnce();
+    expect(producerB).not.toHaveBeenCalled();
+
+    // Both callers share the same cached bitmap.
+    expect(leaseA.bitmap).toBe(first.bitmap);
+    expect(leaseB.bitmap).toBe(first.bitmap);
+
     leaseA.release();
     leaseB.release();
 
-    expect(first.close).toHaveBeenCalledTimes(1);
+    // second.bitmap was never produced — no leak.
     expect(second.close).not.toHaveBeenCalled();
+
+    // first.bitmap is held by the cache until cleanup evicts it.
+    registry.shutdown();
+    expect(first.close).toHaveBeenCalledTimes(1);
   });
 
   it('does not evict a cache entry that has an active lease', async () => {
@@ -264,21 +275,54 @@ describe('AssetRegistry materialization cache', () => {
     secondLease.release();
   });
 
-  it('disposes matching unreleased cache entries when a document is disposed', async () => {
+  it('tombstones a cache entry with an active lease when its document is disposed, then cleans up on lease release', async () => {
     const registry = new AssetRegistry();
+    const { bitmap, close } = createOwnedBitmap();
 
-    const first = await registry.materialize({
-      key: 'doc-a-mat',
+    const lease = await registry.materialize({
+      key: 'doc-mat',
       documentId: 'document-a',
-      producer: () => createOwnedBitmap().bitmap,
+      producer: () => bitmap,
       byteSize: 4,
     });
-    first.release();
 
+    // Lease is active; disposing the document must tombstone rather than
+    // close the bitmap immediately.
     registry.disposeDocument('document-a');
+    expect(close).not.toHaveBeenCalled();
 
-    const record = registry.getRecord('doc-a-mat' as never);
-    void record; // materialize entries are not AssetRecords, just verify no crash
+    // Releasing the tombstoned lease cleans up the entry and closes the bitmap.
+    lease.release();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('eviction only closes cache-owned, unleased materializations', async () => {
+    const registry = new AssetRegistry({ maxCacheBytes: 4 });
+    const owned = createOwnedBitmap();
+    const leased = createOwnedBitmap();
+
+    const ownedLease = await registry.materialize({
+      key: 'owned',
+      producer: () => owned.bitmap,
+      byteSize: 4,
+    });
+    ownedLease.release();
+
+    const leasedLease = await registry.materialize({
+      key: 'leased',
+      producer: () => leased.bitmap,
+      byteSize: 4,
+    });
+    // leasedLease stays active to prevent its eviction.
+
+    // Under the byte budget, the unleased (owned) entry is closed, but the
+    // leased entry survives.
+    expect(owned.close).toHaveBeenCalledTimes(1);
+    expect(leased.close).not.toHaveBeenCalled();
+
+    leasedLease.release();
+    registry.shutdown();
+    expect(leased.close).toHaveBeenCalledTimes(1);
   });
 
   it('bounds the cache to maxCacheEntries after releases and evictions', async () => {

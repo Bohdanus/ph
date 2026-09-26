@@ -25,11 +25,17 @@ export type AssetLease = Readonly<{
   release: () => void;
 }>;
 
-export type MaterializationLease = Readonly<{
+export type MaterializationLease<Metadata = undefined> = Readonly<{
   key: string;
   bitmap: BitmapSource;
   byteSize: number;
+  metadata: Metadata;
   release: () => void;
+}>;
+
+export type DocumentAssetTransaction = Readonly<{
+  commit: () => void;
+  rollback: () => void;
 }>;
 
 type AssetEntry = {
@@ -45,9 +51,16 @@ type CacheEntry = {
   documentId?: string;
   bitmap: BitmapSource;
   byteSize: number;
+  metadata: unknown;
   retainCount: number;
   lastUsed: number;
+  invalidated: boolean;
 };
+
+type MaterializationResult<Metadata> = Readonly<{
+  bitmap: BitmapSource;
+  metadata: Metadata;
+}>;
 
 export type AssetRegistryOptions = Readonly<{
   maxCacheBytes?: number;
@@ -78,19 +91,34 @@ function disposeOwnedBitmap(bitmap: BitmapSource) {
   if (isOwnedImageBitmap(bitmap)) bitmap.close();
 }
 
+function immutableRasterCopy(bitmap: BitmapSource): BitmapSource {
+  const width = bitmapDimension(bitmap, 'width');
+  const height = bitmapDimension(bitmap, 'height');
+  if (typeof OffscreenCanvas === 'undefined') {
+    throw new Error('OffscreenCanvas is required to synchronously register a mutable raster source');
+  }
+  const canvas = new OffscreenCanvas(width, height);
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('A 2D canvas context is required to register a mutable raster source');
+  context.drawImage(bitmap as CanvasImageSource, 0, 0, width, height);
+  if (typeof canvas.transferToImageBitmap !== 'function') {
+    throw new Error('transferToImageBitmap is required to synchronously register a mutable raster source');
+  }
+  return canvas.transferToImageBitmap();
+}
+
 /**
  * Runtime-only owner for external raster data and derived materializations.
  *
- * `registerBaseline` is synchronous and therefore does not copy mutable DOM
- * sources. Callers passing a canvas or HTMLImageElement must use
- * `registerBaselineAsync`, which creates an adopted ImageBitmap first. The
- * explicit `adopt`/`borrow` option makes transfer of ownership observable.
+ * `registerBaseline` accepts an ImageBitmap or snapshots a mutable drawable
+ * into a registry-owned immutable ImageBitmap before assigning an AssetId.
  */
 export class AssetRegistry {
   private readonly assets = new Map<AssetId, AssetEntry>();
   private readonly externalIds = new WeakMap<object, AssetId>();
   private readonly documentGenerations = new Map<string, number>();
   private readonly cache = new Map<string, CacheEntry>();
+  private readonly pendingMaterializations = new Map<string, Promise<CacheEntry>>();
   private cacheBytes = 0;
   private clock = 0;
   private readonly maxCacheBytes: number;
@@ -111,12 +139,39 @@ export class AssetRegistry {
     return this.documentGenerations.get(documentId) ?? 0;
   }
 
+  /**
+   * Groups synchronous baseline registrations so a rejected durable
+   * conversion cannot retain assets that no published document references.
+   */
+  beginDocumentAssetTransaction(documentId: string): DocumentAssetTransaction {
+    const existingAssets = new Set<AssetId>();
+    for (const [assetId, entry] of this.assets) {
+      if (entry.baselineDocuments.has(documentId)) existingAssets.add(assetId);
+    }
+
+    let settled = false;
+    return {
+      commit: () => {
+        settled = true;
+      },
+      rollback: () => {
+        if (settled) return;
+        settled = true;
+        for (const [assetId, entry] of this.assets) {
+          if (existingAssets.has(assetId) || !entry.baselineDocuments.delete(documentId)) continue;
+          this.release(assetId);
+        }
+      },
+    };
+  }
+
   registerBaseline(
     documentId: string,
     bitmap: BitmapSource,
     options: Readonly<{ ownership?: AssetOwnership }> = {}
   ): AssetId {
-    const ownership = options.ownership ?? (sourceType(bitmap) === 'image-bitmap' ? 'adopt' : 'borrow');
+    const originalSourceType = sourceType(bitmap);
+    const requestedOwnership = options.ownership ?? (originalSourceType === 'image-bitmap' ? 'adopt' : 'borrow');
     const external = bitmap as unknown as object;
     const existingId = this.externalIds.get(external);
     if (existingId) {
@@ -133,8 +188,13 @@ export class AssetRegistry {
     }
 
     const id = uuidv4() as AssetId;
-    const width = bitmapDimension(bitmap, 'width');
-    const height = bitmapDimension(bitmap, 'height');
+    // A durable descriptor never aliases a caller-owned HTML image/canvas.
+    const storedBitmap = originalSourceType === 'image-bitmap' ? bitmap : immutableRasterCopy(bitmap);
+    // A borrowed mutable input remains caller-owned, but its immutable copy
+    // is always registry-owned and must be closed on final release.
+    const ownership = originalSourceType === 'image-bitmap' ? requestedOwnership : 'adopt';
+    const width = bitmapDimension(storedBitmap, 'width');
+    const height = bitmapDimension(storedBitmap, 'height');
     const record: AssetRecord = Object.freeze({
       id,
       documentId,
@@ -142,13 +202,13 @@ export class AssetRegistry {
       width,
       height,
       byteSize: width * height * 4,
-      sourceType: sourceType(bitmap),
+      sourceType: originalSourceType,
       ownership,
       disposed: false,
     });
     this.assets.set(id, {
       record,
-      bitmap,
+      bitmap: storedBitmap,
       baselineDocuments: new Set([documentId]),
       retainCount: 1,
       disposed: false,
@@ -166,14 +226,15 @@ export class AssetRegistry {
     bitmap: BitmapSource,
     options: Readonly<{ ownership?: AssetOwnership }> = {}
   ): Promise<AssetId> {
-    // ImageBitmap is already immutable with explicit close semantics. Other
-    // drawable sources must be copied before entering a durable descriptor.
+    // ImageBitmap is already immutable with explicit close semantics.
     if (sourceType(bitmap) === 'image-bitmap') {
       return this.registerBaseline(documentId, bitmap, options);
     }
     const create = globalThis.createImageBitmap;
     if (!create) throw new Error('createImageBitmap is required to adopt a mutable raster source');
     const immutable = await create(bitmap as never);
+    // The registry owns the immutable copy; the mutable caller resource was
+    // borrowed and remains the caller's responsibility.
     return this.registerBaseline(documentId, immutable, { ownership: 'adopt' });
   }
 
@@ -198,6 +259,7 @@ export class AssetRegistry {
     this.assets.delete(assetId);
   }
 
+  /** Returns a retained lease. The caller must release it exactly once. */
   async resolve(assetId: AssetId, signal?: AbortSignal): Promise<AssetLease> {
     const entry = this.assets.get(assetId);
     if (!entry || entry.disposed) throw new Error(`Unknown or disposed asset: ${assetId}`);
@@ -224,34 +286,81 @@ export class AssetRegistry {
     };
   }
 
-  async materialize(
+  /**
+   * Returns a retained lease over a cache-owned materialization. Concurrent
+   * callers sharing a key share one producer result but receive independent
+   * release obligations.
+   */
+  async materialize<Metadata = undefined>(
     input: Readonly<{
       key: string;
       documentId?: string;
-      producer: () => Promise<BitmapSource> | BitmapSource;
+      producer: () =>
+        Promise<BitmapSource | MaterializationResult<Metadata>> | BitmapSource | MaterializationResult<Metadata>;
       byteSize?: number;
     }>
-  ): Promise<MaterializationLease> {
+  ): Promise<MaterializationLease<Metadata>> {
     const cached = this.cache.get(input.key);
-    if (cached) {
+    if (cached && !cached.invalidated) {
       cached.retainCount += 1;
       cached.lastUsed = ++this.clock;
-      return this.cacheLease(cached);
+      return this.cacheLease<Metadata>(cached);
+    }
+    if (cached) {
+      throw new DOMException('Materialization invalidated by document disposal', 'AbortError');
     }
 
-    const bitmap = await input.producer();
-    const entry: CacheEntry = {
-      key: input.key,
-      documentId: input.documentId,
-      bitmap,
-      byteSize: input.byteSize ?? bitmapDimension(bitmap, 'width') * bitmapDimension(bitmap, 'height') * 4,
-      retainCount: 1,
-      lastUsed: ++this.clock,
-    };
-    this.cache.set(entry.key, entry);
-    this.cacheBytes += entry.byteSize;
-    this.evictCache();
-    return this.cacheLease(entry);
+    let pending = this.pendingMaterializations.get(input.key);
+    const ownsRequest = !pending;
+    if (!pending) {
+      const documentGeneration = input.documentId ? this.getDocumentGeneration(input.documentId) : undefined;
+      pending = (async () => {
+        const produced = await input.producer();
+        const result =
+          typeof produced === 'object' && produced !== null && 'bitmap' in produced
+            ? (produced as MaterializationResult<Metadata>)
+            : { bitmap: produced as BitmapSource, metadata: undefined as Metadata };
+
+        if (input.documentId && documentGeneration !== this.getDocumentGeneration(input.documentId)) {
+          disposeOwnedBitmap(result.bitmap);
+          throw new DOMException('Materialization invalidated by document disposal', 'AbortError');
+        }
+
+        const entry: CacheEntry = {
+          key: input.key,
+          documentId: input.documentId,
+          bitmap: result.bitmap,
+          byteSize:
+            input.byteSize ?? bitmapDimension(result.bitmap, 'width') * bitmapDimension(result.bitmap, 'height') * 4,
+          metadata: result.metadata,
+          // Reserve the first lease before cache eviction. Concurrent waiters
+          // retain below after the shared producer resolves.
+          retainCount: 1,
+          lastUsed: ++this.clock,
+          invalidated: false,
+        };
+        this.cache.set(entry.key, entry);
+        this.cacheBytes += entry.byteSize;
+        this.evictCache();
+        return entry;
+      })();
+      this.pendingMaterializations.set(input.key, pending);
+      void pending.then(
+        () => {
+          if (this.pendingMaterializations.get(input.key) === pending) this.pendingMaterializations.delete(input.key);
+        },
+        () => {
+          if (this.pendingMaterializations.get(input.key) === pending) this.pendingMaterializations.delete(input.key);
+        }
+      );
+    }
+
+    const entry = await pending;
+    if (!ownsRequest) {
+      entry.retainCount += 1;
+      entry.lastUsed = ++this.clock;
+    }
+    return this.cacheLease<Metadata>(entry);
   }
 
   disposeDocument(documentId: string): void {
@@ -260,8 +369,12 @@ export class AssetRegistry {
       this.release(entry.record.id);
     }
     for (const [key, entry] of this.cache) {
-      if (entry.documentId !== documentId || entry.retainCount !== 0) continue;
-      this.removeCacheEntry(key, entry);
+      if (entry.documentId !== documentId) continue;
+      if (entry.retainCount === 0) {
+        this.removeCacheEntry(key, entry);
+      } else {
+        entry.invalidated = true;
+      }
     }
     this.nextGeneration(documentId);
   }
@@ -278,23 +391,29 @@ export class AssetRegistry {
     }
   }
 
-  private cacheLease(entry: CacheEntry): MaterializationLease {
+  private cacheLease<Metadata>(entry: CacheEntry): MaterializationLease<Metadata> {
     let released = false;
     return {
       key: entry.key,
       bitmap: entry.bitmap,
       byteSize: entry.byteSize,
+      metadata: entry.metadata as Metadata,
       release: () => {
         if (released) return;
         released = true;
         entry.retainCount = Math.max(0, entry.retainCount - 1);
         entry.lastUsed = ++this.clock;
+        if (entry.invalidated && entry.retainCount === 0) {
+          this.removeCacheEntry(entry.key, entry);
+          return;
+        }
         this.evictCache();
       },
     };
   }
 
   private removeCacheEntry(key: string, entry: CacheEntry) {
+    if (this.cache.get(key) !== entry) return;
     this.cache.delete(key);
     this.cacheBytes -= entry.byteSize;
     disposeOwnedBitmap(entry.bitmap);

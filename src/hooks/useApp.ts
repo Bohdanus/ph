@@ -1,5 +1,6 @@
-import type { Size } from '../contexts/general-types.ts';
+import type { BitmapSource, Size } from '../contexts/general-types.ts';
 import { useStore } from '../contexts/StoreContext.tsx';
+import type { Layer, LayersRecord } from '../contexts/layer-types.ts';
 import type { BlankImageParams, ToolName } from '../contexts/tool-types.ts';
 import { useLayers } from '../contexts/useLayer.ts';
 import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/useFile.tsx';
@@ -12,11 +13,19 @@ import { documentFrameFromSize } from '../contexts/document-frame.ts';
 
 export interface UseAppType {
   setBlankImage: (data: BlankImageParams) => void;
-  setImageFromUpload: (data: ImageUploadResponse) => void;
+  setImageFromUpload: (data: ImageUploadResponse) => Promise<void>;
 
   handleImageSave: (data: ImageSaveResponse) => void;
 
   goToTool: (toolName: ToolName) => void;
+}
+
+async function immutableRaster(bitmap: BitmapSource): Promise<BitmapSource> {
+  if (typeof (bitmap as { close?: unknown }).close === 'function') return bitmap;
+  if (!globalThis.createImageBitmap) {
+    throw new Error('createImageBitmap is required to import a mutable raster source');
+  }
+  return globalThis.createImageBitmap(bitmap as CanvasImageSource);
 }
 
 /**
@@ -67,15 +76,32 @@ export const useApp = (): UseAppType => {
     createBlankLayer({ ...params }, true);
   }
 
-  function setImageFromUpload(data: ImageUploadResponse) {
+  async function setImageFromUpload(data: ImageUploadResponse) {
     const { fileName } = data;
     if ('document' in data) {
       const { size, layers, warnings } = data.document;
       if (warnings.length && !window.confirm(`PSD import limitations:\n\n${warnings.join('\n')}\n\nOpen anyway?`))
         return;
-      const activeLayerId = Object.values(layers).sort((a, b) => b.order - a.order)[0]?.id ?? null;
+      const immutableLayers = Object.fromEntries(
+        await Promise.all(
+          Object.entries(layers).map(async ([id, layer]): Promise<[string, Layer]> => {
+            if (layer.source?.kind !== 'image') return [id, layer];
+            const bitmap = await immutableRaster(layer.source.bitmap);
+            return [
+              id,
+              {
+                ...layer,
+                bitmap,
+                tmpCanvas: null,
+                source: { ...layer.source, bitmap },
+              },
+            ];
+          })
+        )
+      ) as LayersRecord;
+      const activeLayerId = Object.values(immutableLayers).sort((a, b) => b.order - a.order)[0]?.id ?? null;
       const baseline = Object.fromEntries(
-        Object.values(layers).map((layer) => [layer.id, { ...layer, pos: { ...layer.pos } }])
+        Object.values(immutableLayers).map((layer) => [layer.id, { ...layer, pos: { ...layer.pos } }])
       );
       setRefValue(currentArgsRef, {} as typeof currentArgsRef.current);
       clearPreviewLayers?.();
@@ -99,7 +125,7 @@ export const useApp = (): UseAppType => {
             fileName,
             totalSize: size,
             documentFrame: documentFrameFromSize(size),
-            layers,
+            layers: immutableLayers,
             activeLayerId,
             deletedLayers: {},
             hasImage: true,
@@ -120,7 +146,7 @@ export const useApp = (): UseAppType => {
     _setFileName(fileName);
     const size = { width: image.width, height: image.height };
     handleImageCreate(size);
-    createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true);
+    await createLayerFromBitmap({ bitmap: image, name: fileName, size, isBedrock: true }, true);
   }
 
   function goToTool(nextToolName: ToolName) {

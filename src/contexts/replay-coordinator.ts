@@ -74,18 +74,13 @@ export class ReplayCoordinator<T> {
     this.current = undefined;
   }
 
-  isCurrent(
-    requestId: number,
-    token: ReplayRevisionToken,
-    isStillValid?: (token: ReplayRevisionToken) => boolean
-  ): boolean {
+  isCurrent(requestId: number, isStillValid?: (token: ReplayRevisionToken) => boolean): boolean {
     const current = this.current;
-    return (
-      !!current &&
-      current.requestId === requestId &&
-      sameToken(current.token, token) &&
-      (isStillValid ? isStillValid(token) : true)
-    );
+    if (!current || current.requestId !== requestId) return false;
+    // A request token is an immutable start snapshot. Only a fresh token
+    // supplied by the StoreContext-backed callback can prove it is current.
+    // When no callback is supplied, a matching live requestId is sufficient.
+    return isStillValid ? !!isStillValid(current.token) : true;
   }
 
   async request(input: ReplayRequest<T>): Promise<ReplayRequestOutcome<T>> {
@@ -109,14 +104,14 @@ export class ReplayCoordinator<T> {
       state('materializing');
       result = await input.materialize({ signal: controller.signal, requestId, yieldToHost });
       materialized = true;
-      if (controller.signal.aborted || !this.isCurrent(requestId, input.token, input.isStillValid)) {
+      if (controller.signal.aborted || !this.isCurrent(requestId, input.isStillValid)) {
         input.release?.(result);
         state(controller.signal.aborted ? 'cancelled' : 'stale');
         return { requestId, state: controller.signal.aborted ? 'cancelled' : 'stale' };
       }
       state('publishable');
       // Re-check immediately before the only publication callback.
-      if (controller.signal.aborted || !this.isCurrent(requestId, input.token, input.isStillValid)) {
+      if (controller.signal.aborted || !this.isCurrent(requestId, input.isStillValid)) {
         input.release?.(result);
         state(controller.signal.aborted ? 'cancelled' : 'stale');
         return { requestId, state: controller.signal.aborted ? 'cancelled' : 'stale' };

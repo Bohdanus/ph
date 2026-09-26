@@ -93,7 +93,7 @@ function renderWithProbe() {
 }
 
 describe('StoreContext durable conversion boundary', () => {
-  it('dispatching an unsupported tool does not throw and retains the previous durable document', () => {
+  it('dispatching an unsupported tool does not throw and marks the durable state unavailable', () => {
     const { getProbe, dispatch } = renderWithProbe();
 
     const baseline = baselineItem();
@@ -110,10 +110,8 @@ describe('StoreContext durable conversion boundary', () => {
       });
     });
 
-    const store = getProbe().store;
-    const retainedDocument = store.durableDocument;
-    expect(retainedDocument).not.toBeNull();
-    expect(store.durableDiagnostics).toHaveLength(0);
+    expect(getProbe().store.durableDocument).not.toBeNull();
+    expect(getProbe().store.durableDiagnostics).toHaveLength(0);
 
     const unsupported = toolItem('pen-edit', 'pen');
 
@@ -136,7 +134,10 @@ describe('StoreContext durable conversion boundary', () => {
 
     expect(threw).toBe(false);
     const after = getProbe().store;
-    expect(after.durableDocument).toBe(retainedDocument);
+    // The failed conversion explicitly marks the durable state unavailable
+    // rather than silently presenting a partially converted document as current.
+    expect(after.durableDocument).toBeNull();
+    expect(after.durableStatus).toBe('unavailable');
     expect(after.durableDiagnostics).toHaveLength(1);
     expect(after.durableDiagnostics[0]).toMatch(/error/);
     expect(after.durableDiagnostics[0]).toMatch(/pen/);
@@ -217,54 +218,50 @@ describe('StoreContext durable conversion boundary', () => {
 
     expect(threw).toBe(false);
     const store = getProbe().store;
-    expect(store.durableDocument).not.toBeNull();
+    // The malformed entry produces a diagnostic and is skipped, which marks
+    // the durable state unavailable rather than presenting a partial document.
+    expect(store.durableDocument).toBeNull();
+    expect(store.durableStatus).toBe('unavailable');
     expect(store.durableDiagnostics).toHaveLength(1);
     expect(store.durableDiagnostics[0]).toMatch(/Non-plain/);
   });
 });
 
 describe('StoreContext legacy-to-durable cursor mapping', () => {
-  it.fails(
-    'does not advance the durable cursor to the tip when the legacy cursor points at a skipped no-op entry',
-    () => {
-      // BUG: buildDurableDocument falls back to durableDocument.history.length - 1
-      // (the tip) when the legacy cursor entry is omitted during conversion.
-      // The correct behaviour is to return the last durable entry at or before
-      // the skipped entry — i.e. not advance into the future.
-      const { getProbe, dispatch } = renderWithProbe();
+  it('does not advance the durable cursor to the tip when the legacy cursor points at a skipped no-op entry', () => {
+    const { getProbe, dispatch } = renderWithProbe();
 
-      const baseline = baselineItem();
-      const blur = toolItem('blur-edit', 'blur', { radius: 4 });
-      const noop = toolItem('noop-edit', 'reposition');
-      const color = toolItem('color-edit', 'color', { grayscale: 0.5 });
+    const baseline = baselineItem();
+    const blur = toolItem('blur-edit', 'blur', { radius: 4 });
+    const noop = toolItem('noop-edit', 'reposition');
+    const color = toolItem('color-edit', 'color', { grayscale: 0.5 });
 
-      act(() => {
-        dispatch()({
-          type: 'REPLACE_DOCUMENT',
-          payload: {
-            documentId: 'doc-cursor',
-            history: [baseline, blur, noop, color],
-            historyIndex: 2,
-            updates: {},
-          },
-        });
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-cursor',
+          history: [baseline, blur, noop, color],
+          historyIndex: 2,
+          updates: {},
+        },
       });
+    });
 
-      const document = getProbe().store.durableDocument as DurableDocument;
-      expect(document).not.toBeNull();
+    const document = getProbe().store.durableDocument as DurableDocument;
+    expect(document).not.toBeNull();
 
-      // Legacy cursor is at index 2 (the no-op). The no-op is skipped during
-      // conversion, so the durable history is [blur, color]. The cursor must
-      // not fall back to the tip (color); it must represent the state at or
-      // before the no-op, i.e. after the blur (durable index 0).
-      expect(document.history).toHaveLength(2);
-      const historyIds = document.history.map((entry) => entry.id);
-      expect(historyIds).toEqual(['blur-edit', 'color-edit']);
+    // Legacy cursor is at index 2 (the no-op). The no-op is skipped during
+    // conversion, so the durable history is [blur, color]. The cursor must
+    // not fall back to the tip (color); it must represent the state at or
+    // before the no-op, i.e. after the blur (durable index 0).
+    expect(document.history).toHaveLength(2);
+    const historyIds = document.history.map((entry) => entry.id);
+    expect(historyIds).toEqual(['blur-edit', 'color-edit']);
 
-      expect(historyIds).not.toContain('noop-edit');
-      expect(document.cursor).toBe(0);
-    }
-  );
+    expect(historyIds).not.toContain('noop-edit');
+    expect(document.cursor).toBe(0);
+  });
 
   it('maps the cursor correctly when pointing at a disabled (retained) entry', () => {
     const { getProbe, dispatch } = renderWithProbe();

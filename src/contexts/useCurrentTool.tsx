@@ -49,10 +49,16 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
     setRefValue(currentArgsRef, toolArgs);
   }, [toolArgs, currentArgsRef]);
 
-  const _setToolArgs = useCallback((args: ToolArgs) => {
-    saveLastSettings(args);
-    setToolState({ toolName: args.toolName, args });
-  }, []);
+  const _setToolArgs = useCallback(
+    (args: ToolArgs) => {
+      // Tool commits can happen before React publishes the next state. Keep
+      // the imperative dirty-tool reader in the same state transition.
+      setRefValue(currentArgsRef, args);
+      saveLastSettings(args);
+      setToolState({ toolName: args.toolName, args });
+    },
+    [currentArgsRef]
+  );
 
   const getToolArgs = useCallback(
     <TName extends ToolName>(name: TName): ToolArgsFor<TName> | null => {

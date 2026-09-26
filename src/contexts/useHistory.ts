@@ -1,16 +1,17 @@
 import { useStore } from './StoreContext.tsx';
-import type { LayersRecord } from './layer-types.ts';
+import type { Layer, LayersRecord } from './layer-types.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import type { ToolArgs } from './tool-types.ts';
-import { toolProcessors } from '../tools/toolProcessors.ts';
-import { createLayerSource, getSortedLayersArray } from './layer-utils.ts';
-import { drawLayer } from './layer-renderer.ts';
-import { replayHistory } from './history-replay.ts';
-import { resizeCanvas } from '../util/canvas.ts';
 import { SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION } from '../util/constants.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { updateHistoryTimeline } from './history-timeline.ts';
-import { documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
+import { freezeDurableDocument } from './history-model.ts';
+import { convertLegacyHistorySafely } from './history-adapter.ts';
+import { replayDurableDocument } from './durable-replay.ts';
+import { materializeDocument, type MaterializedDocument } from './materialization.ts';
+import { getAssetRegistry } from './asset-registry.ts';
+import { replayTokensEqual } from './replay-coordinator.ts';
+import { useRef } from 'react';
 
 export function getHistoryItemTitle(item: HistoryItem) {
   const { actionName, args, layerSource } = item;
@@ -29,20 +30,22 @@ export function getHistoryItemTitle(item: HistoryItem) {
 }
 
 export const useHistory = () => {
-  const [
-    {
-      canvasRef,
-      history,
-      historyIndex,
-      deletedLayers,
-      activeLayerId,
-      totalSize: currentSize,
-      documentFrame: currentDocumentFrame,
-      branchRevision = 0,
-      clearPreviewLayers,
-    },
-    dispatch,
-  ] = useStore();
+  const [store, dispatch] = useStore();
+  const {
+    history,
+    historyIndex,
+    deletedLayers,
+    totalSize: currentSize,
+    documentFrame: currentDocumentFrame,
+    branchRevision = 0,
+    clearPreviewLayers,
+    documentId,
+    documentRevision,
+    durableDocument,
+    replayCoordinator,
+    getReplayRevisionToken,
+  } = store;
+  const presentationMaterialization = useRef<MaterializedDocument | null>(null);
 
   const setHistoryIndex = (index: number) => {
     resetHistoryTo(index);
@@ -74,76 +77,100 @@ export const useHistory = () => {
   //   return history.filter((item) => item.layerId === layerId);
   // }
 
-  function _drawAllLayers(layers: LayersRecord, frame: DocumentFrame) {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const totalSize = documentFrameSize(frame);
-    resizeCanvas(canvas, totalSize.width, totalSize.height);
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, totalSize.width, totalSize.height);
-
-    const sorted = getSortedLayersArray(layers);
-
-    for (const layer of sorted) {
-      if (!layer.visible) continue;
-
-      if (!drawLayer(ctx, layer, frame)) {
-        console.error('skipped layer without bitmap', layer.id);
-      } // todo should not happen, but just in case
-    }
+  function runtimeLayersFromMaterialization(materialized: MaterializedDocument): LayersRecord {
+    return Object.fromEntries(
+      Object.values(materialized.replay.layers).map(({ snapshot, operations }) => {
+        const layer = materialized.layers[snapshot.id];
+        if (!layer) throw new Error(`Missing materialization for layer ${snapshot.id}`);
+        const runtimeLayer: Layer = {
+          id: snapshot.id,
+          name: snapshot.name,
+          isBedrock: snapshot.isBedrock,
+          visible: snapshot.visible,
+          opacity: snapshot.opacity,
+          locked: snapshot.locked,
+          blendMode: snapshot.blendMode,
+          order: snapshot.order,
+          // The bitmap already includes retained operations, so rendering it
+          // must not reapply its logical source or operation stack.
+          pos: { ...layer.bounds },
+          operations: [],
+          bitmap: layer.bitmap,
+          tmpCanvas: null,
+          ...(operations.length ? { lastHistoryId: undefined } : {}),
+        };
+        return [snapshot.id, runtimeLayer];
+      })
+    );
   }
 
   function resetHistoryTo(targetIndex: number, _history: HistoryItem[] = history, _branchRevision = branchRevision) {
     if (!Number.isInteger(targetIndex) || targetIndex < 0 || targetIndex >= _history.length) return;
-    // History navigation cancels transient previews; the target is rebuilt
-    // entirely from retained history below.
+    // Navigation cancels transient previews before creating the immutable
+    // durable snapshot that will be the sole materialization input.
     clearPreviewLayers?.();
-    const initialFrame = currentDocumentFrame ?? documentFrameFromSize(currentSize);
-    const replay = replayHistory(
-      _history,
-      targetIndex,
-      currentSize,
-      {
-        createLayer: ({ layerId, layers, source }) => createLayerSource({ layerId, layers, source, deferSave: true }),
-        applyRasterTool: (layer, args) => {
-          const bitmap = layer.tmpCanvas ?? layer.bitmap;
-          if (!bitmap) return layer;
-          const [canvas, patch] = toolProcessors[args.toolName].imageProcessor({ bitmap, size: layer.pos })(args);
-          return {
-            ...layer,
-            pos: patch ? { ...layer.pos, ...patch } : layer.pos,
-            source: undefined,
-            tmpCanvas: canvas,
-          };
-        },
-      },
-      initialFrame
-    );
-
-    const sortedLayers = getSortedLayersArray(replay.layers);
-    const nextActiveLayerId =
-      activeLayerId && replay.layers[activeLayerId]
-        ? activeLayerId
-        : (sortedLayers[sortedLayers.length - 1]?.id ?? null);
-
-    dispatch({
-      type: 'APPLY_HISTORY_REPLAY',
-      payload: {
-        updates: {
-          layers: replay.layers,
-          deletedLayers: { ...deletedLayers },
-          activeLayerId: nextActiveLayerId,
-          totalSize: replay.totalSize,
-          documentFrame: replay.documentFrame,
-          selections: replay.selections,
-          activeSelectionId: replay.activeSelectionId,
-        },
-        timeline: { entries: _history, cursor: targetIndex, branchRevision: _branchRevision },
-      },
+    const converted = convertLegacyHistorySafely(_history, {
+      documentId,
+      documentRevision,
+      branchRevision: _branchRevision,
+      durableRevision: (durableDocument?.durableRevision ?? 0) + 1,
+      initialSize: currentSize,
+      initialFrame: currentDocumentFrame,
     });
+    const diagnostics = converted.diagnostics.map((diagnostic) => `${diagnostic.severity}: ${diagnostic.message}`);
+    if (!converted.document) {
+      // Keep the currently published canvas rather than replacing it with a
+      // replay that omitted an unsupported history entry.
+      console.error('Durable history replay is unavailable', diagnostics);
+      dispatch({ type: 'SET_DURABLE_STATUS', payload: { status: 'unavailable', diagnostics } });
+      return;
+    }
 
-    _drawAllLayers(replay.layers, replay.documentFrame);
+    const durableCursor = converted.legacyCursorToDurableCursor[targetIndex] ?? -1;
+    const document = freezeDurableDocument({ ...converted.document, cursor: durableCursor });
+    const replay = replayDurableDocument(document);
+    const token = getReplayRevisionToken();
+
+    void replayCoordinator.current
+      .request({
+        token,
+        isStillValid: (snapshot) => replayTokensEqual(snapshot, getReplayRevisionToken()),
+        materialize: async ({ signal }) =>
+          materializeDocument(replay, {
+            documentId,
+            baselineAssetGeneration: getAssetRegistry().getDocumentGeneration(documentId),
+            operationSetRevision: document.durableRevision,
+            assetRegistry: getAssetRegistry(),
+            signal,
+          }),
+        publish: (materialized) => {
+          const previous = presentationMaterialization.current;
+
+          presentationMaterialization.current = materialized;
+          dispatch({
+            type: 'PUBLISH_DURABLE_REPLAY',
+            payload: {
+              updates: {
+                layers: runtimeLayersFromMaterialization(materialized),
+                deletedLayers: { ...deletedLayers },
+                activeLayerId: materialized.replay.activeLayerId,
+                documentFrame: materialized.replay.frame,
+                selections: [...materialized.replay.selections.selections],
+                activeSelectionId: materialized.replay.selections.activeSelectionId,
+              },
+              timeline: { entries: _history, cursor: targetIndex, branchRevision: _branchRevision },
+              durableDocument: document,
+              durableStatus: 'current',
+              durableDiagnostics: diagnostics,
+            },
+          });
+          previous?.release();
+        },
+        release: (materialized) => materialized.release(),
+      })
+      .then((outcome) => {
+        if (outcome.state === 'failed') console.error('Durable history materialization failed', outcome.error);
+      });
   }
 
   function toggleDisabled(historyId: string) {

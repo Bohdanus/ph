@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { AssetRegistry } from '../asset-registry.ts';
+import type { BitmapSource } from '../general-types.ts';
 import type { DurableReplayLayer, DurableReplayResult } from '../durable-replay.ts';
 import type { MaterializationRequest } from '../materialization.ts';
 import { materializeLayer, materializeDocument, createMaterializationKey } from '../materialization.ts';
 import type { AssetId } from '../history-model.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import type { DurableOperation, DurableLayerSnapshot, DurableLayerSource } from '../history-model.ts';
+import { toolProcessors } from '../../tools/toolProcessors.ts';
 
 const defaultFrame: DocumentFrame = { x: 0, y: 0, width: 400, height: 300 };
 
@@ -14,6 +16,14 @@ function createOwnedBitmap(width = 10, height = 10) {
   const close = vi.fn();
   const bitmap = { width, height, close } as unknown as ImageBitmap;
   return { bitmap, close };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 function blankSource(size: { width: number; height: number }): DurableLayerSource {
@@ -153,6 +163,83 @@ describe('materializeLayer safety (P0.3)', () => {
     await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow(/Unknown raster processor/);
   });
 
+  it('rejects cleanly for a raster source with invalid (zero) dimensions', async () => {
+    const registry = new AssetRegistry();
+    const { bitmap } = createOwnedBitmap(10, 10);
+    const assetId = registry.registerBaseline('document-a', bitmap, { ownership: 'adopt' });
+
+    // A source descriptor with zero dimensions produces degenerate bounds
+    // during rendering — the failure must be controlled, not a crash.
+    const layer = makeRasterLayer('layer-1', assetId, 0, 0);
+    await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow(/degenerate bounds/);
+  });
+
+  it('rejects cleanly when a raster processor throws during execution', async () => {
+    const registry = new AssetRegistry();
+    const { bitmap } = createOwnedBitmap(100, 80);
+    const assetId = registry.registerBaseline('document-a', bitmap, { ownership: 'adopt' });
+
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation(() => () => {
+      throw new Error('processor execution failed');
+    });
+
+    const layer = makeRasterLayer('layer-1', assetId, 100, 80, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 3 }),
+      }),
+    ]);
+
+    try {
+      await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow('processor execution failed');
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+    }
+    registry.shutdown();
+  });
+
+  it('does not close an unrelated baseline bitmap when a layer materialization fails', async () => {
+    const registry = new AssetRegistry();
+    const goodBitmap = createOwnedBitmap(10, 10);
+    const badBitmap = createOwnedBitmap(10, 10);
+
+    registry.registerBaseline('document-a', goodBitmap.bitmap, { ownership: 'adopt' });
+    const badAssetId = registry.registerBaseline('document-a', badBitmap.bitmap, { ownership: 'adopt' });
+
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation(() => () => {
+      throw new Error('processor execution failed');
+    });
+
+    const layer = makeRasterLayer('layer-1', badAssetId, 100, 80, [
+      Object.freeze({
+        kind: 'apply-raster-processor' as const,
+        layerId: 'layer-1',
+        processorId: 'blur',
+        version: 1,
+        args: Object.freeze({ toolName: 'blur', radius: 3 }),
+      }),
+    ]);
+
+    try {
+      await expect(materializeLayer(layer, makeRequest(registry))).rejects.toThrow('processor execution failed');
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+    }
+
+    // The failed materialization must not close the unrelated baseline bitmap.
+    expect(goodBitmap.close).not.toHaveBeenCalled();
+    expect(badBitmap.close).not.toHaveBeenCalled();
+
+    registry.shutdown();
+    expect(goodBitmap.close).toHaveBeenCalledTimes(1);
+    expect(badBitmap.close).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects cleanly when a raster processor produces no output', async () => {
     const registry = new AssetRegistry();
     const operations: DurableOperation[] = [
@@ -261,6 +348,37 @@ describe('materializeDocument safety (P0.3)', () => {
     expect(releaseLeases.mock.calls.length).toBe(initialCalls + 2);
 
     registry.shutdown();
+  });
+});
+
+describe('registry generation guard (P0.3)', () => {
+  it('rejects cleanly when the source asset is disposed while materialization is pending', async () => {
+    const registry = new AssetRegistry();
+    const { bitmap, close } = createOwnedBitmap(10, 10);
+    registry.registerBaseline('document-a', bitmap, { ownership: 'adopt' });
+
+    const deferredProducer = deferred<BitmapSource>();
+    const pending = registry.materialize({
+      key: 'pending-mat',
+      documentId: 'document-a',
+      producer: () => deferredProducer.promise,
+      byteSize: 4,
+    });
+
+    // Dispose the document while materialization is still pending.
+    registry.disposeDocument('document-a');
+    expect(close).toHaveBeenCalledTimes(1);
+
+    // Resuming the producer detects the generation mismatch and rejects.
+    const replacement = createOwnedBitmap().bitmap;
+    deferredProducer.resolve(replacement);
+    await expect(pending).rejects.toThrow(/invalidated/);
+
+    // The replacement bitmap produced by the producer is cleaned up by the
+    // generation guard.
+    expect(replacement.close).toHaveBeenCalled();
+
+    void pending.catch(() => undefined);
   });
 });
 

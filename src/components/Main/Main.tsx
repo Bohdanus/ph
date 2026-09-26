@@ -124,7 +124,7 @@ const Main = () => {
       )
         return;
       try {
-        setImageFromUpload(await loadDocumentFile(file));
+        await setImageFromUpload(await loadDocumentFile(file));
       } catch (error) {
         window.alert(`Failed to open file: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -225,11 +225,10 @@ const Main = () => {
         <div className="flex flex-col items-center gap-4">
           <button
             className={PRIMARY_BUTTON_LARGE}
-            onClick={() =>
-              openLoadImageDialog().then((data) => {
-                if (data) setImageFromUpload(data);
-              })
-            }
+            onClick={async () => {
+              const data = await openLoadImageDialog();
+              if (data) await setImageFromUpload(data);
+            }}
             data-testid="main-open-file-button"
           >
             Open File

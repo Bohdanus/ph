@@ -26,7 +26,7 @@ export type MaterializedLayer = Readonly<{
   layerId: string;
   bitmap: BitmapSource;
   bounds: Pos;
-  lease: MaterializationLease;
+  lease: MaterializationLease<Pos>;
 }>;
 
 export type MaterializedDocument = Readonly<{
@@ -88,7 +88,13 @@ function operationFilter(operations: readonly DurableOperation[]): string {
         (operation): operation is Extract<DurableOperation, { kind: 'apply-filter' }> =>
           operation.kind === 'apply-filter'
       )
-      .map((operation) => filterForOperation(operation.filter))
+      .map((operation) => {
+        const processor = toolProcessors[operation.filter.toolName];
+        if (!processor || processor.replay.version !== operation.filter.version) {
+          throw new Error(`Unsupported filter ${operation.filter.toolName} v${operation.filter.version}`);
+        }
+        return filterForOperation(operation.filter);
+      })
       .join(' ') || 'none'
   );
 }
@@ -174,10 +180,15 @@ function closeOwnedBitmap(bitmap: BitmapSource) {
 
 export function createMaterializationKey(layer: DurableReplayLayer, request: MaterializationRequest): string {
   const operations = layer.operations.map((operation) => stableValue(operation));
+  const sourceGeneration =
+    layer.snapshot.source.kind === 'raster'
+      ? (request.assetRegistry.getRecord(layer.snapshot.source.assetId)?.generation ?? -1)
+      : 0;
   return stableStringify({
     documentId: request.documentId,
     baselineAssetGeneration: request.baselineAssetGeneration,
     source: stableValue(layer.snapshot.source),
+    sourceGeneration,
     operationSetRevision: request.operationSetRevision,
     operations,
     pos: layer.snapshot.pos,
@@ -203,71 +214,111 @@ export async function materializeLayer(
       // remains intrinsic, while processors and final placement use the
       // current geometry, matching the runtime layer renderer.
       let size = layerSize(layer);
-      let presentation: BitmapSource | undefined;
-      try {
-        for (const operation of layer.operations) {
-          if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
-          if (operation.kind !== 'apply-raster-processor') continue;
-          const processor = toolProcessors[operation.processorId as keyof typeof toolProcessors];
-          if (!processor) throw new Error(`Unknown raster processor ${operation.processorId} v${operation.version}`);
-          const [processed, patch] = processor.imageProcessor({ bitmap, size })(operation.args as ToolArgs);
-          if (!processed) throw new Error(`Raster processor ${operation.processorId} produced no raster`);
-          bitmap = processed;
-          size = { ...size, ...(patch ?? {}), width: processed.width, height: processed.height };
-        }
-        const affine = operationAffine(layer.operations);
+      let origin = { x: layer.snapshot.pos.x, y: layer.snapshot.pos.y };
+      let ownsBitmap = false;
+
+      const replaceOwnedBitmap = (next: BitmapSource) => {
+        const previous = bitmap;
+        const previousWasOwned = ownsBitmap;
+        if (previousWasOwned && previous !== next) closeOwnedBitmap(previous);
+        bitmap = next;
+        // A processor may return its input unchanged. Preserve the input's
+        // ownership in that case rather than claiming a borrowed source.
+        ownsBitmap = previous === next ? previousWasOwned : true;
+      };
+
+      const renderRetainedSegment = async (operations: readonly DurableOperation[], force = false) => {
+        if (!force && operations.length === 0) return;
+        const affine = operationAffine(operations);
         const bounds = getAffineBounds(affine, size);
         const output = createCanvas(bounds.width, bounds.height);
         const ctx = context2d(output);
         ctx.save();
         try {
-          ctx.filter = operationFilter(layer.operations);
+          // Retained operations use the documented product rule: affine
+          // operations compose first, then filters apply to that presentation.
+          ctx.filter = operationFilter(operations);
           ctx.translate(-bounds.x, -bounds.y);
           ctx.transform(affine.a, affine.b, affine.c, affine.d, affine.e, affine.f);
           ctx.drawImage(bitmap, 0, 0, size.width, size.height);
         } finally {
           ctx.restore();
         }
-        presentation = await toOwnedBitmap(output);
+        replaceOwnedBitmap(await toOwnedBitmap(output));
+        origin = { x: origin.x + bounds.x, y: origin.y + bounds.y };
+        size = { width: bounds.width, height: bounds.height };
+      };
+
+      try {
+        let retainedOperations: DurableOperation[] = [];
+        for (const operation of layer.operations) {
+          if (request.signal?.aborted) throw new DOMException('Materialization aborted', 'AbortError');
+
+          if (operation.kind === 'apply-affine-transform' || operation.kind === 'apply-filter') {
+            retainedOperations.push(operation);
+            continue;
+          }
+          if (operation.kind !== 'apply-raster-processor') continue;
+
+          // A raster processor consumes the exact presentation produced by all
+          // preceding retained operations. It cannot be moved before them.
+          // Always draw into a private surface before a pixel processor. Some
+          // processors mutate their input canvas, while registry assets and
+          // source-local rasters are borrowed for this operation.
+          await renderRetainedSegment(retainedOperations, true);
+          retainedOperations = [];
+          const processor = toolProcessors[operation.processorId as keyof typeof toolProcessors];
+          if (!processor) throw new Error(`Unknown raster processor ${operation.processorId} v${operation.version}`);
+          if (processor.replay.version !== operation.version) {
+            throw new Error(`Unsupported raster processor ${operation.processorId} v${operation.version}`);
+          }
+          const [processed, patch] = processor.imageProcessor({ bitmap, size })(operation.args as ToolArgs);
+          if (!processed) throw new Error(`Raster processor ${operation.processorId} produced no raster`);
+          replaceOwnedBitmap(processed);
+          origin = {
+            x: patch?.x ?? origin.x,
+            y: patch?.y ?? origin.y,
+          };
+          size = { width: processed.width, height: processed.height };
+        }
+        await renderRetainedSegment(retainedOperations, true);
+        const presentation = bitmap;
+        const presentationIsOwned = ownsBitmap;
+        ownsBitmap = false;
+        const bounds: Pos = { x: origin.x, y: origin.y, width: size.width, height: size.height };
         if (!request.frame) {
-          const result = presentation;
-          presentation = undefined;
-          return result;
+          return { bitmap: presentation, metadata: bounds };
         }
 
         const frameSurface = createCanvas(request.frame.width, request.frame.height);
         const frameContext = context2d(frameSurface);
         frameContext.drawImage(
           presentation,
-          layer.snapshot.pos.x + bounds.x - request.frame.x,
-          layer.snapshot.pos.y + bounds.y - request.frame.y,
+          bounds.x - request.frame.x,
+          bounds.y - request.frame.y,
           bounds.width,
           bounds.height
         );
-        closeOwnedBitmap(presentation);
-        presentation = undefined;
-        return toOwnedBitmap(frameSurface);
+        if (presentationIsOwned) closeOwnedBitmap(presentation);
+        return {
+          bitmap: await toOwnedBitmap(frameSurface),
+          metadata: {
+            x: request.frame.x,
+            y: request.frame.y,
+            width: request.frame.width,
+            height: request.frame.height,
+          },
+        };
       } finally {
         source.release();
-        if (presentation) closeOwnedBitmap(presentation);
+        if (ownsBitmap) closeOwnedBitmap(bitmap);
       }
     },
   });
-  const affine = operationAffine(layer.operations);
-  const sourceBounds = getAffineBounds(affine, layerSize(layer));
-  const bounds = request.frame
-    ? { x: request.frame.x, y: request.frame.y, width: request.frame.width, height: request.frame.height }
-    : {
-        ...layer.snapshot.pos,
-        x: layer.snapshot.pos.x + sourceBounds.x,
-        y: layer.snapshot.pos.y + sourceBounds.y,
-        width: sourceBounds.width,
-        height: sourceBounds.height,
-      };
   return {
     layerId: layer.snapshot.id,
     bitmap: lease.bitmap,
-    bounds,
+    bounds: lease.metadata,
     lease,
   };
 }

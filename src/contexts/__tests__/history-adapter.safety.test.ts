@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { AssetRegistry } from '../asset-registry.ts';
-import { legacyHistoryToDurable, UnsupportedHistoryFeatureError } from '../history-adapter.ts';
+import { convertLegacyHistorySafely, legacyHistoryToDurable } from '../history-adapter.ts';
 import type { HistoryItem } from '../history-types.ts';
 import { OPEN_DOCUMENT_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 import type { TransformToolArgs } from '../../tools/transform.ts';
@@ -56,6 +56,13 @@ function convert(items: HistoryItem[], registry: AssetRegistry) {
   });
 }
 
+function convertSafely(items: HistoryItem[], registry: AssetRegistry) {
+  return convertLegacyHistorySafely([...baselineHistory(), ...items], {
+    documentId: 'test-doc',
+    registry,
+  });
+}
+
 function transformArgs(overrides: Partial<TransformToolArgs>): TransformToolArgs {
   return {
     toolName: 'transform',
@@ -71,39 +78,64 @@ function transformArgs(overrides: Partial<TransformToolArgs>): TransformToolArgs
   };
 }
 
-describe('legacyHistoryToDurable safety boundary', () => {
-  it('throws UnsupportedHistoryFeatureError for an unsupported tool that has no durable replay kind', () => {
+describe('legacyHistoryToDurable safety boundary (P0.1)', () => {
+  it('records a per-entry diagnostic and skips the entry for an unsupported tool', () => {
     const registry = new AssetRegistry();
-    expect(() =>
-      convert([{ id: 'pen-tool', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } }], registry)
-    ).toThrow(UnsupportedHistoryFeatureError);
+    const result = convert([{ id: 'pen-tool', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } }], registry);
+
+    expect(result.document.history).toHaveLength(0);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      historyId: 'pen-tool',
+      severity: 'error',
+    });
+    expect(result.diagnostics[0]?.message).toMatch(/cannot be replayed durably/);
   });
 
-  it('throws UnsupportedHistoryFeatureError for an unknown processor (toolName not registered)', () => {
+  it('records a per-entry diagnostic and skips the entry for an unknown processor', () => {
     const registry = new AssetRegistry();
-    expect(() =>
-      convert(
-        [{ id: 'unknown-tool', actionName: TOOL_ACTION, layerId, args: { toolName: 'nonexistent-tool' as never } }],
-        registry
-      )
-    ).toThrowError(/Unknown processor/);
+    const result = convert(
+      [
+        {
+          id: 'unknown-tool',
+          actionName: TOOL_ACTION,
+          layerId,
+          args: { toolName: 'nonexistent-tool' as never },
+        },
+      ],
+      registry
+    );
+
+    expect(result.document.history).toHaveLength(0);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      historyId: 'unknown-tool',
+      severity: 'error',
+    });
+    expect(result.diagnostics[0]?.message).toMatch(/Unknown processor/);
   });
 
-  it('throws UnsupportedHistoryFeatureError for a mixed trapezoid-plus-affine transform', () => {
+  it('records a per-entry diagnostic and skips the entry for a mixed trapezoid-plus-affine transform', () => {
     const registry = new AssetRegistry();
-    expect(() =>
-      convert(
-        [
-          {
-            id: 'mixed-transform',
-            actionName: TOOL_ACTION,
-            layerId,
-            args: { ...transformArgs({ rotate: 17, trapezoid: 25 }) },
-          },
-        ],
-        registry
-      )
-    ).toThrowError(/Mixed trapezoid and affine transform is unsupported/);
+    const result = convert(
+      [
+        {
+          id: 'mixed-transform',
+          actionName: TOOL_ACTION,
+          layerId,
+          args: { ...transformArgs({ rotate: 17, trapezoid: 25 }) },
+        },
+      ],
+      registry
+    );
+
+    expect(result.document.history).toHaveLength(0);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      historyId: 'mixed-transform',
+      severity: 'error',
+    });
+    expect(result.diagnostics[0]?.message).toMatch(/Mixed trapezoid and affine transform is unsupported/);
   });
 
   it('produces a per-entry diagnostic and skips the entry for malformed non-plain arguments', () => {
@@ -132,21 +164,27 @@ describe('legacyHistoryToDurable safety boundary', () => {
     expect(result.diagnostics[0]?.message).toMatch(/Non-plain/);
   });
 
-  it('throws UnsupportedHistoryFeatureError for non-finite transform values', () => {
+  it('records a per-entry diagnostic and skips the entry for non-finite transform values', () => {
     const registry = new AssetRegistry();
-    expect(() =>
-      convert(
-        [
-          {
-            id: 'nan-transform',
-            actionName: TOOL_ACTION,
-            layerId,
-            args: transformArgs({ rotate: NaN }),
-          },
-        ],
-        registry
-      )
-    ).toThrow(UnsupportedHistoryFeatureError);
+    const result = convert(
+      [
+        {
+          id: 'nan-transform',
+          actionName: TOOL_ACTION,
+          layerId,
+          args: transformArgs({ rotate: NaN }),
+        },
+      ],
+      registry
+    );
+
+    expect(result.document.history).toHaveLength(0);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      historyId: 'nan-transform',
+      severity: 'error',
+    });
+    expect(result.diagnostics[0]?.message).toMatch(/Transform values must be finite/);
   });
 
   it('does not register raster assets for a baseline that only uses blank sources', () => {
@@ -158,3 +196,216 @@ describe('legacyHistoryToDurable safety boundary', () => {
     expect(result.diagnostics).toHaveLength(0);
   });
 });
+
+describe('convertLegacyHistorySafely boundary (P0.1)', () => {
+  it('returns unavailable status with a diagnostic and null document for an unsupported tool entry', () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely(
+      [{ id: 'pen-tool', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } }],
+      registry
+    );
+
+    expect(result.status).toBe('unavailable');
+    expect(result.document).toBeNull();
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({ historyId: 'pen-tool', severity: 'error' });
+  });
+
+  it('returns unavailable status for an unknown processor entry', () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely(
+      [
+        {
+          id: 'unknown-tool',
+          actionName: TOOL_ACTION,
+          layerId,
+          args: { toolName: 'nonexistent-tool' as never },
+        },
+      ],
+      registry
+    );
+
+    expect(result.status).toBe('unavailable');
+    expect(result.document).toBeNull();
+    expect(result.diagnostics[0]).toMatchObject({ historyId: 'unknown-tool', severity: 'error' });
+  });
+
+  it('returns unavailable status for non-finite transform values', () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely(
+      [
+        {
+          id: 'nan-transform',
+          actionName: TOOL_ACTION,
+          layerId,
+          args: transformArgs({ rotate: NaN }),
+        },
+      ],
+      registry
+    );
+
+    expect(result.status).toBe('unavailable');
+    expect(result.document).toBeNull();
+    expect(result.diagnostics[0]).toMatchObject({ historyId: 'nan-transform', severity: 'error' });
+  });
+
+  it('rolls back asset registration when conversion fails, leaving no dangling assets', () => {
+    const registry = new AssetRegistry();
+    const { bitmap, close } = createOwnedBitmap(10, 10);
+    const imageLayer = {
+      ...blankLayer('img-layer'),
+      source: {
+        kind: 'image' as const,
+        bitmap,
+        isBedrock: false,
+        pos: { x: 0, y: 0, width: 10, height: 10 },
+      },
+      bitmap,
+    };
+
+    const result = convertSafely(
+      [
+        {
+          id: 'img-layer-item',
+          actionName: 'new layer',
+          layerId: 'img-layer',
+          layerSource: imageLayer.source as never,
+        },
+        {
+          id: 'unsupported',
+          actionName: TOOL_ACTION,
+          layerId: 'img-layer',
+          args: { toolName: 'pen' },
+        },
+      ],
+      registry
+    );
+
+    expect(result.status).toBe('unavailable');
+    expect(result.document).toBeNull();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('a later valid edit recovers durable conversion after a prior failure', () => {
+    const registry = new AssetRegistry();
+
+    const badResult = convertSafely(
+      [{ id: 'pen-tool', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } }],
+      registry
+    );
+    expect(badResult.status).toBe('unavailable');
+    expect(badResult.document).toBeNull();
+
+    const goodResult = convertSafely(
+      [{ id: 'blur-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'blur', radius: 4 } }],
+      registry
+    );
+    expect(goodResult.status).toBe('current');
+    expect(goodResult.document).not.toBeNull();
+    expect(goodResult.diagnostics).toHaveLength(0);
+    expect(goodResult.document?.history).toHaveLength(1);
+    expect(goodResult.document?.history[0]?.id).toBe('blur-edit');
+  });
+
+  it('a valid conversion with no errors returns current status and a populated document', () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely(
+      [
+        { id: 'blur-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'blur', radius: 4 } },
+        { id: 'color-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'color', grayscale: 0.5 } },
+      ],
+      registry
+    );
+
+    expect(result.status).toBe('current');
+    expect(result.document).not.toBeNull();
+    expect(result.diagnostics).toHaveLength(0);
+    expect(result.document?.history).toHaveLength(2);
+  });
+});
+
+describe('legacy-to-durable cursor mapping (P0.2)', () => {
+  it('maps a skipped no-op entry to the preceding durable cursor, never the tip', () => {
+    const registry = new AssetRegistry();
+    const result = convert(
+      [
+        { id: 'blur-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'blur', radius: 4 } },
+        { id: 'noop-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'reposition' } },
+        { id: 'color-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'color', grayscale: 0.5 } },
+      ],
+      registry
+    );
+
+    // Durable history: [blur-entry(0), color-entry(1)]. The no-op at legacy
+    // index 2 is skipped (null operation), so its cursor must map to durable
+    // index 0 (the blur), not the tip (index 1).
+    expect(result.document.history.map((entry) => entry.id)).toEqual(['blur-edit', 'color-edit']);
+    const cursorMap = result.legacyCursorToDurableCursor;
+    expect(cursorMap[2]).toBe(0); // no-op → preceding durable entry
+    expect(cursorMap[2]).not.toBe(1); // not the tip
+  });
+
+  it('maps an unsupported (error) entry to the preceding durable cursor, never the tip', () => {
+    const registry = new AssetRegistry();
+    const result = convert(
+      [
+        { id: 'blur-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'blur', radius: 4 } },
+        { id: 'pen-tool', actionName: TOOL_ACTION, layerId, args: { toolName: 'pen' } },
+        { id: 'color-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'color', grayscale: 0.5 } },
+      ],
+      registry
+    );
+
+    // The pen tool throws, is caught, and skipped. Durable history: [blur(0), color(1)].
+    expect(result.document.history.map((entry) => entry.id)).toEqual(['blur-edit', 'color-edit']);
+    const cursorMap = result.legacyCursorToDurableCursor;
+    expect(cursorMap[2]).toBe(0); // unsupported → preceding durable entry
+    expect(cursorMap[2]).not.toBe(1); // not the tip
+  });
+
+  it('retains a disabled entry in history and maps the cursor to its durable index', () => {
+    const registry = new AssetRegistry();
+    const result = convert(
+      [
+        { id: 'blur-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'blur', radius: 4 } },
+        {
+          id: 'color-edit',
+          actionName: TOOL_ACTION,
+          layerId,
+          disabled: true,
+          args: { toolName: 'color', grayscale: 0.5 },
+        },
+        { id: 'blur2-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'blur', radius: 8 } },
+      ],
+      registry
+    );
+
+    // Disabled entries are retained (marked enabled=false) but excluded from active replay.
+    expect(result.document.history.map((entry) => entry.enabled)).toEqual([true, false, true]);
+    const cursorMap = result.legacyCursorToDurableCursor;
+    expect(cursorMap[2]).toBe(1); // disabled entry maps to its own index
+  });
+
+  it('never advances the cursor to the tip when the legacy cursor precedes a later valid edit', () => {
+    const registry = new AssetRegistry();
+    const result = convert(
+      [
+        { id: 'first-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'blur', radius: 2 } },
+        { id: 'second-edit', actionName: TOOL_ACTION, layerId, args: { toolName: 'color', grayscale: 0.3 } },
+      ],
+      registry
+    );
+
+    const cursorMap = result.legacyCursorToDurableCursor;
+    // Legacy cursor at index 1 (before the second edit) maps to durable index 0,
+    // not the tip (index 1).
+    expect(cursorMap[1]).toBe(0);
+    expect(cursorMap[1]).not.toBe(1);
+  });
+});
+
+function createOwnedBitmap(width = 1, height = 1) {
+  const close = vi.fn();
+  const bitmap = { width, height, close } as unknown as ImageBitmap;
+  return { bitmap, close };
+}

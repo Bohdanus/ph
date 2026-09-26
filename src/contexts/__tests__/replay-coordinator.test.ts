@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ReplayCoordinator, type ReplayRevisionToken } from '../replay-coordinator.ts';
+import { ReplayCoordinator, type ReplayRevisionToken, replayTokensEqual } from '../replay-coordinator.ts';
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -154,6 +154,39 @@ describe('ReplayCoordinator', () => {
     // new request was issued (no cancellation signal).
     valid = false;
     materialization.resolve('result');
+
+    const result = await requestPromise;
+    expect(isStillValid).toHaveBeenCalled();
+    expect(result.state).toBe('stale');
+    expect(publish).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledWith('result');
+  });
+
+  it('proves that a copied token being equal is not enough to stay current', async () => {
+    // A copied (snapshot) token has identical values to the request token.
+    // The coordinator must still consult the validity callback against fresh
+    // live state — token equality alone must not keep a request current.
+    const coordinator = new ReplayCoordinator<string>();
+    const publish = vi.fn();
+    const release = vi.fn();
+    const token = createToken(1);
+
+    expect(replayTokensEqual(token, { ...token })).toBe(true);
+
+    let liveValid = true;
+    const isStillValid = vi.fn(() => liveValid);
+
+    const requestPromise = coordinator.request({
+      token: { ...token },
+      materialize: () => Promise.resolve('result'),
+      publish,
+      release,
+      isStillValid,
+    });
+
+    // Live state changed (e.g. a new edit committed). The copied token still
+    // matches, but the validity callback must reject it.
+    liveValid = false;
 
     const result = await requestPromise;
     expect(isStillValid).toHaveBeenCalled();

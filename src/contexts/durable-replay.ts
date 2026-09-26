@@ -50,21 +50,6 @@ function addOperation(layer: DurableReplayLayer, operation: DurableOperation): D
   return Object.freeze({ snapshot: layer.snapshot, operations: Object.freeze([...layer.operations, operation]) });
 }
 
-function replaceDocument(
-  operation: Extract<DurableOperation, { kind: 'replace-document' }>,
-  layers: Map<LayerId, DurableReplayLayer>
-) {
-  layers.clear();
-  for (const snapshot of operation.document.baseline.layers) {
-    layers.set(snapshot.id, Object.freeze({ snapshot: cloneLayerSnapshot(snapshot), operations: Object.freeze([]) }));
-  }
-  return {
-    frame: Object.freeze({ ...operation.document.baseline.frame }),
-    selections: cloneSelectionSnapshot(operation.document.baseline.selections),
-    activeLayerId: operation.document.baseline.activeLayerId,
-  };
-}
-
 /** Pure logical reducer. It never resolves an asset and never creates a canvas. */
 export function replayDurableDocument(document: DurableDocument, targetCursor = document.cursor): DurableReplayResult {
   const normalizedCursor = Math.max(-1, Math.min(targetCursor, document.history.length - 1));
@@ -81,13 +66,6 @@ export function replayDurableDocument(document: DurableDocument, targetCursor = 
     if (!entry?.enabled) continue;
     const operation = entry.operation;
     switch (operation.kind) {
-      case 'replace-document': {
-        const replacement = replaceDocument(operation, layers);
-        frame = replacement.frame;
-        selections = replacement.selections;
-        activeLayerId = replacement.activeLayerId;
-        break;
-      }
       case 'create-layer':
         layers.set(
           operation.layer.id,

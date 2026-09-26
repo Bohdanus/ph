@@ -16,8 +16,10 @@ import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
 import { cloneDocumentFrame, documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
 import { freezeDurableDocument, type DurableDocument } from './history-model.ts';
-import { legacyHistoryToDurable } from './history-adapter.ts';
+import { convertLegacyHistorySafely, type DurableConversionStatus } from './history-adapter.ts';
 import { getAssetRegistry } from './asset-registry.ts';
+import type { MaterializedDocument } from './materialization.ts';
+import { ReplayCoordinator, type ReplayRevisionToken } from './replay-coordinator.ts';
 
 export type StoreData = {
   // refs
@@ -33,6 +35,10 @@ export type StoreData = {
   // Transient previews are document-scoped, not hook-instance-scoped. This
   // lets toolbars, export, and tool switching share one draft transaction.
   previewLayers: React.MutableRefObject<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>;
+  /** Runtime-only publication state. Neither ref is part of durable history. */
+  replayCoordinator: React.MutableRefObject<ReplayCoordinator<MaterializedDocument>>;
+  presentationMaterialization: React.MutableRefObject<MaterializedDocument | null>;
+  getReplayRevisionToken: () => ReplayRevisionToken;
 
   // file / image state
   hasImage: boolean;
@@ -65,6 +71,8 @@ export type StoreData = {
   branchRevision: number;
   /** Canonical replay state. Runtime layers remain a presentation projection during cutover. */
   durableDocument: DurableDocument | null;
+  /** A non-current sidecar must never be used as a replay or export input. */
+  durableStatus: DurableConversionStatus | 'stale';
   durableDiagnostics: readonly string[];
 
   // colors
@@ -85,6 +93,7 @@ type StoreUpdates = Partial<
     | 'documentRevision'
     | 'branchRevision'
     | 'durableDocument'
+    | 'durableStatus'
     | 'durableDiagnostics'
   >
 >;
@@ -108,6 +117,7 @@ type Action =
         updates?: StoreUpdates;
         historyItem: HistoryItem;
         durableDocument?: DurableDocument | null;
+        durableStatus?: DurableConversionStatus | 'stale';
         durableDiagnostics?: readonly string[];
       };
     }
@@ -117,7 +127,18 @@ type Action =
         updates: StoreUpdates;
         timeline: HistoryTimeline;
         durableDocument?: DurableDocument | null;
+        durableStatus?: DurableConversionStatus | 'stale';
         durableDiagnostics?: readonly string[];
+      };
+    }
+  | {
+      type: 'PUBLISH_DURABLE_REPLAY';
+      payload: {
+        updates: StoreUpdates;
+        timeline: HistoryTimeline;
+        durableDocument: DurableDocument;
+        durableStatus: DurableConversionStatus;
+        durableDiagnostics: readonly string[];
       };
     }
   | {
@@ -128,8 +149,13 @@ type Action =
         history: HistoryItem[];
         historyIndex?: number;
         durableDocument?: DurableDocument | null;
+        durableStatus?: DurableConversionStatus | 'stale';
         durableDiagnostics?: readonly string[];
       };
+    }
+  | {
+      type: 'SET_DURABLE_STATUS';
+      payload: { status: DurableConversionStatus | 'stale'; diagnostics: readonly string[] };
     }
   | { type: 'SET_COLOR'; payload: string }
   | { type: 'SET_BACKGROUND_COLOR'; payload: string }
@@ -160,6 +186,17 @@ const initialState: StoreData = {
   currentArgs: { current: {} as ToolArgs },
   clearPreviewLayers: () => undefined,
   previewLayers: { current: {} },
+  replayCoordinator: { current: new ReplayCoordinator<MaterializedDocument>() },
+  presentationMaterialization: { current: null },
+  getReplayRevisionToken: () => ({
+    documentId: 'uninitialized',
+    documentRevision: 0,
+    durableRevision: 0,
+    branchRevision: 0,
+    cursor: 0,
+    baselineAssetGeneration: 0,
+    operationSetRevision: 0,
+  }),
 
   hasImage: false,
   hasUnsavedChanges: false,
@@ -185,6 +222,7 @@ const initialState: StoreData = {
   documentRevision: 0,
   branchRevision: 0,
   durableDocument: null,
+  durableStatus: 'unavailable',
   durableDiagnostics: [],
 
   color: '#000000',
@@ -242,7 +280,7 @@ function reducer(state: StoreData, action: Action): StoreData {
       return {
         ...state,
         totalSize: action.payload,
-        documentFrame: { ...state.documentFrame, ...action.payload },
+        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
       };
     case 'SET_TOOL_NAME':
       return { ...state, isToolDirty: false, toolName: action.payload };
@@ -252,7 +290,11 @@ function reducer(state: StoreData, action: Action): StoreData {
       }
       return { ...state, isToolDirty: action.payload };
     case 'SET_LAYERS':
-      return { ...state, layers: action.payload };
+      return {
+        ...state,
+        layers: action.payload,
+        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
+      };
     case 'SET_ACTIVE_LAYER':
       if (state.activeLayerId === action.payload) {
         return state;
@@ -263,18 +305,21 @@ function reducer(state: StoreData, action: Action): StoreData {
         ...state,
         layers: action.payload.layers,
         activeLayerId: action.payload.activeLayerId,
+        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
         hasUnsavedChanges: true,
       };
     case 'UPDATE_LAYERS':
       return {
         ...state,
         layers: action.payload,
+        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
         hasUnsavedChanges: true,
       };
     case 'BATCH_UPDATES':
       return {
         ...state,
         ...action.payload,
+        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
       };
     case 'COMMIT_DOCUMENT_EDIT': {
       const timeline = updateHistoryTimeline(
@@ -293,6 +338,8 @@ function reducer(state: StoreData, action: Action): StoreData {
         ...(action.payload.durableDocument !== undefined
           ? {
               durableDocument: action.payload.durableDocument,
+              durableStatus:
+                action.payload.durableStatus ?? (action.payload.durableDocument ? 'current' : 'unavailable'),
               durableDiagnostics: action.payload.durableDiagnostics ?? [],
             }
           : {}),
@@ -314,10 +361,29 @@ function reducer(state: StoreData, action: Action): StoreData {
         ...(action.payload.durableDocument !== undefined
           ? {
               durableDocument: action.payload.durableDocument,
+              durableStatus:
+                action.payload.durableStatus ?? (action.payload.durableDocument ? 'current' : 'unavailable'),
               durableDiagnostics: action.payload.durableDiagnostics ?? [],
             }
           : {}),
         hasUnsavedChanges: true,
+      };
+    }
+    case 'PUBLISH_DURABLE_REPLAY': {
+      const replayUpdates = action.payload.updates;
+      const replayFrame = replayUpdates.documentFrame;
+      return {
+        ...state,
+        ...replayUpdates,
+        ...(replayFrame
+          ? { documentFrame: cloneDocumentFrame(replayFrame), totalSize: documentFrameSize(replayFrame) }
+          : {}),
+        history: [...action.payload.timeline.entries],
+        historyIndex: action.payload.timeline.cursor,
+        branchRevision: action.payload.timeline.branchRevision,
+        durableDocument: action.payload.durableDocument,
+        durableStatus: action.payload.durableStatus,
+        durableDiagnostics: action.payload.durableDiagnostics,
       };
     }
     case 'REPLACE_DOCUMENT': {
@@ -333,6 +399,7 @@ function reducer(state: StoreData, action: Action): StoreData {
         documentRevision: state.documentRevision + 1,
         branchRevision: 0,
         durableDocument: action.payload.durableDocument ?? null,
+        durableStatus: action.payload.durableStatus ?? (action.payload.durableDocument ? 'current' : 'unavailable'),
         durableDiagnostics: action.payload.durableDiagnostics ?? [],
         history: action.payload.history,
         historyIndex: action.payload.historyIndex ?? action.payload.history.length - 1,
@@ -342,6 +409,8 @@ function reducer(state: StoreData, action: Action): StoreData {
       return { ...state, color: action.payload };
     case 'SET_BACKGROUND_COLOR':
       return { ...state, backgroundColor: action.payload };
+    case 'SET_DURABLE_STATUS':
+      return { ...state, durableStatus: action.payload.status, durableDiagnostics: action.payload.diagnostics };
     case 'SET_SELECTIONS':
       return {
         ...state,
@@ -410,31 +479,23 @@ function buildDurableDocument(
   historyCursor: number,
   branchRevision: number
 ) {
-  try {
-    const converted = legacyHistoryToDurable(history, {
-      documentId: state.documentId,
-      documentRevision: state.documentRevision,
-      branchRevision,
-      durableRevision: (state.durableDocument?.durableRevision ?? 0) + 1,
-      initialSize: state.totalSize,
-      initialFrame: state.documentFrame,
-    });
-    const durableEntryId = history[historyCursor]?.id;
-    const cursor = durableEntryId ? converted.document.history.findIndex((entry) => entry.id === durableEntryId) : -1;
-    return {
-      document: freezeDurableDocument({
-        ...converted.document,
-        cursor: cursor >= 0 ? cursor : converted.document.history.length - 1,
-      }),
-      diagnostics: converted.diagnostics.map((diagnostic) => `${diagnostic.severity}: ${diagnostic.message}`),
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error('Durable history conversion failed', error);
-    return state.durableDocument
-      ? { document: state.durableDocument, diagnostics: [...(state.durableDiagnostics ?? []), `error: ${message}`] }
-      : { document: null, diagnostics: [`error: ${message}`] };
-  }
+  const converted = convertLegacyHistorySafely(history, {
+    documentId: state.documentId,
+    documentRevision: state.documentRevision,
+    branchRevision,
+    durableRevision: (state.durableDocument?.durableRevision ?? 0) + 1,
+    initialSize: state.totalSize,
+    initialFrame: state.documentFrame,
+  });
+  const cursor =
+    Number.isInteger(historyCursor) && historyCursor >= 0
+      ? (converted.legacyCursorToDurableCursor[historyCursor] ?? -1)
+      : -1;
+  return {
+    status: converted.status,
+    document: converted.document ? freezeDurableDocument({ ...converted.document, cursor }) : null,
+    diagnostics: converted.diagnostics.map((diagnostic) => `${diagnostic.severity}: ${diagnostic.message}`),
+  };
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -448,6 +509,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const currentArgsRef = useRef<ToolArgs>({} as ToolArgs);
   const previewLayersRef = useRef<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>({});
+  const replayCoordinatorRef = useRef(new ReplayCoordinator<MaterializedDocument>());
+  const presentationMaterializationRef = useRef<MaterializedDocument | null>(null);
   const clearPreviewLayers = () => {
     previewLayersRef.current = {};
   };
@@ -458,10 +521,38 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     latestStateRef.current = storeState;
   }, [storeState]);
+  const getReplayRevisionToken = (): ReplayRevisionToken => {
+    const current = latestStateRef.current;
+    const durableDocument = current.durableStatus === 'current' ? current.durableDocument : null;
+    return {
+      documentId: current.documentId,
+      documentRevision: current.documentRevision,
+      durableRevision: durableDocument?.durableRevision ?? -1,
+      branchRevision: current.branchRevision,
+      cursor: current.historyIndex,
+      baselineAssetGeneration: getAssetRegistry().getDocumentGeneration(current.documentId),
+      operationSetRevision: durableDocument?.durableRevision ?? -1,
+    };
+  };
   const dispatch: StoreDispatch = (action) => {
     // Legacy writers still submit HistoryItem; conversion and registry ownership
     // happen here so the reducer remains a pure atomic state transition.
     const currentState = latestStateRef.current;
+    if (
+      action.type === 'COMMIT_DOCUMENT_EDIT' ||
+      action.type === 'APPLY_HISTORY_REPLAY' ||
+      action.type === 'REPLACE_DOCUMENT' ||
+      action.type === 'SET_LAYERS' ||
+      action.type === 'ADD_LAYER' ||
+      action.type === 'UPDATE_LAYERS' ||
+      action.type === 'BATCH_UPDATES' ||
+      action.type === 'SET_SIZE' ||
+      action.type === 'SET_TOOL_NAME'
+    ) {
+      replayCoordinatorRef.current.cancel();
+      presentationMaterializationRef.current?.release();
+      presentationMaterializationRef.current = null;
+    }
     if (action.type === 'COMMIT_DOCUMENT_EDIT') {
       const timeline = updateHistoryTimeline(
         {
@@ -493,6 +584,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         historyIndex: timeline.cursor,
         branchRevision: timeline.branchRevision,
         durableDocument: converted.document,
+        durableStatus: converted.status,
         durableDiagnostics: converted.diagnostics,
       };
       rawDispatch({
@@ -500,6 +592,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         payload: {
           ...action.payload,
           durableDocument: converted.document,
+          durableStatus: converted.status,
           durableDiagnostics: converted.diagnostics,
         },
       });
@@ -533,6 +626,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         historyIndex: action.payload.timeline.cursor,
         branchRevision: action.payload.timeline.branchRevision,
         durableDocument: converted.document,
+        durableStatus: converted.status,
         durableDiagnostics: converted.diagnostics,
       };
       rawDispatch({
@@ -540,6 +634,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         payload: {
           ...action.payload,
           durableDocument: converted.document,
+          durableStatus: converted.status,
           durableDiagnostics: converted.diagnostics,
         },
       });
@@ -572,6 +667,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         documentRevision: currentState.documentRevision + 1,
         branchRevision: 0,
         durableDocument: converted.document,
+        durableStatus: converted.status,
         durableDiagnostics: converted.diagnostics,
         history: action.payload.history,
         historyIndex: action.payload.historyIndex ?? action.payload.history.length - 1,
@@ -581,11 +677,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         payload: {
           ...action.payload,
           durableDocument: converted.document,
+          durableStatus: converted.status,
           durableDiagnostics: converted.diagnostics,
         },
       });
       return;
     }
+    if (action.type === 'PUBLISH_DURABLE_REPLAY') {
+      const replayFrame = action.payload.updates.documentFrame;
+      latestStateRef.current = {
+        ...currentState,
+        ...action.payload.updates,
+        ...(replayFrame
+          ? { documentFrame: cloneDocumentFrame(replayFrame), totalSize: documentFrameSize(replayFrame) }
+          : {}),
+        history: [...action.payload.timeline.entries],
+        historyIndex: action.payload.timeline.cursor,
+        branchRevision: action.payload.timeline.branchRevision,
+        durableDocument: action.payload.durableDocument,
+        durableStatus: action.payload.durableStatus,
+        durableDiagnostics: action.payload.durableDiagnostics,
+      };
+      rawDispatch(action);
+      return;
+    }
+    latestStateRef.current = reducer(currentState, action);
     rawDispatch(action);
   };
   const previousDocumentId = useRef(storeState.documentId);
@@ -605,6 +721,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     currentArgs: currentArgsRef,
     clearPreviewLayers,
     previewLayers: previewLayersRef,
+    replayCoordinator: replayCoordinatorRef,
+    presentationMaterialization: presentationMaterializationRef,
+    getReplayRevisionToken,
   };
   //
   // function setSizeMemo(width: number, height: number) {

@@ -131,7 +131,7 @@ const DesktopHeader = () => {
                     )
                       return;
                     const data = await openLoadImageDialog();
-                    if (data) setImageFromUpload(data);
+                    if (data) await setImageFromUpload(data);
                     setOpenMenu(null);
                   }}
                   data-testid="header-file-open-button"

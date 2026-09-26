@@ -52,6 +52,13 @@ if (!testGlobal.OffscreenCanvas) {
     getContext() {
       return { ...canvasContext, canvas: this } as unknown as OffscreenCanvasRenderingContext2D;
     }
+    transferToImageBitmap() {
+      return {
+        width: this.width,
+        height: this.height,
+        close: vi.fn(),
+      } as unknown as ImageBitmap;
+    }
   } as unknown as typeof OffscreenCanvas;
 }
 

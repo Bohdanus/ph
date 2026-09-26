@@ -59,6 +59,21 @@ export type MigrationDiagnostic = Readonly<{
 export type LegacyConversionResult = Readonly<{
   document: DurableDocument;
   diagnostics: readonly MigrationDiagnostic[];
+  /**
+   * For each legacy entry, the latest durable entry that does not occur after
+   * it. Skipped legacy entries deliberately map to the preceding durable
+   * cursor, never to the durable history tip.
+   */
+  legacyCursorToDurableCursor: readonly number[];
+}>;
+
+export type DurableConversionStatus = 'current' | 'unavailable';
+
+export type DurableConversionAttempt = Readonly<{
+  status: DurableConversionStatus;
+  document: DurableDocument | null;
+  diagnostics: readonly MigrationDiagnostic[];
+  legacyCursorToDurableCursor: readonly number[];
 }>;
 
 export type LegacyConversionOptions = Readonly<{
@@ -344,7 +359,11 @@ export function legacyHistoryToDurable(
   options: LegacyConversionOptions = {}
 ): LegacyConversionResult {
   if (!Array.isArray(history)) {
-    return { document: cloneDurableDocument(history as DurableDocument), diagnostics: [] };
+    return {
+      document: cloneDurableDocument(history as DurableDocument),
+      diagnostics: [],
+      legacyCursorToDurableCursor: [],
+    };
   }
   const legacyHistory = history as readonly HistoryItem[];
   const documentId = options.documentId ?? uuidv4();
@@ -358,34 +377,26 @@ export function legacyHistoryToDurable(
     activeLayerId: null,
   };
   const diagnostics: MigrationDiagnostic[] = [];
+  const legacyCursorToDurableCursor: number[] = [];
   let currentLayers = new Map(initial.layers.map((layer) => [layer.id, layer]));
+  let currentFrame = { ...initial.frame };
+  let currentSelections = initial.selections;
   const entries: DurableHistoryEntry[] = [];
   const baseline = initial;
 
   for (const item of legacyHistory) {
     if (item.documentSource && (item.actionName === OPEN_DOCUMENT_ACTION || entries.length === 0)) {
       // The first open-document source is the baseline, not a replay operation.
-      if (entries.length === 0) continue;
-      const document = snapshotFromDocumentSource(item, documentId, registry);
-      if (document)
-        entries.push(
-          entry(
-            item.id,
-            {
-              kind: 'replace-document',
-              document: freezeDurableDocument({
-                documentId,
-                documentRevision: 0,
-                branchRevision: 0,
-                durableRevision: 0,
-                baseline: document,
-                history: [],
-                cursor: -1,
-              }),
-            },
-            isEntryEnabled(item)
-          )
-        );
+      if (entries.length === 0) {
+        legacyCursorToDurableCursor.push(-1);
+        continue;
+      }
+      diagnostics.push({
+        historyId: item.id,
+        severity: 'error',
+        message: 'Document replacement must create a new durable document and cannot appear inside a document history.',
+      });
+      legacyCursorToDurableCursor.push(entries.length - 1);
       continue;
     }
     let operation: DurableOperation | null = null;
@@ -444,20 +455,23 @@ export function legacyHistoryToDurable(
         operation = Object.freeze({ kind: 'remove-layer', layerId: item.layerId });
       } else if (item.actionName === SET_DOCUMENT_FRAME_ACTION) {
         const args = item.args as { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame } | undefined;
-        if (args?.nextFrame)
+        if (args?.nextFrame) {
           operation = Object.freeze({
             kind: 'set-document-frame',
-            previous: args.previousFrame ?? baseline.frame,
+            previous: args.previousFrame ?? currentFrame,
             next: { ...args.nextFrame },
           });
+          if (enabled) currentFrame = { ...args.nextFrame };
+        }
       } else if (item.actionName === SELECTION_ACTION) {
         const args = item.args as
           { previousSelectionState?: SelectionSnapshot; nextSelectionState?: SelectionSnapshot } | undefined;
         operation = Object.freeze({
           kind: 'set-selection',
-          before: args?.previousSelectionState ?? baseline.selections,
+          before: args?.previousSelectionState ?? currentSelections,
           after: args?.nextSelectionState ?? selectionSnapshot(),
         });
+        if (enabled) currentSelections = operation.after;
       } else if (item.actionName === MERGE_ACTION && source) {
         const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, currentLayers);
         const layer = convertLayer(runtimeLayer, documentId, registry);
@@ -480,15 +494,14 @@ export function legacyHistoryToDurable(
         throw new UnsupportedHistoryFeatureError(`Unsupported legacy action ${item.actionName}`, item.id);
       }
     } catch (error) {
-      if (error instanceof UnsupportedHistoryFeatureError) throw error;
       diagnostics.push({
         historyId: item.id,
         severity: 'error',
         message: error instanceof Error ? error.message : String(error),
       });
     }
-    if (!operation) continue;
-    entries.push(entry(item.id, operation, enabled));
+    if (operation) entries.push(entry(item.id, operation, enabled));
+    legacyCursorToDurableCursor.push(entries.length - 1);
   }
 
   const document = freezeDurableDocument({
@@ -500,7 +513,51 @@ export function legacyHistoryToDurable(
     history: entries,
     cursor: entries.length - 1,
   });
-  return { document, diagnostics };
+  return { document, diagnostics, legacyCursorToDurableCursor: Object.freeze(legacyCursorToDurableCursor) };
+}
+
+/**
+ * Conversion has runtime asset side effects, so do not expose a partial
+ * document after an unsupported entry. The legacy path remains the fallback
+ * until every history action has a durable equivalent.
+ */
+export function convertLegacyHistorySafely(
+  history: readonly HistoryItem[] | DurableDocument,
+  options: LegacyConversionOptions = {}
+): DurableConversionAttempt {
+  const registry = options.registry ?? getAssetRegistry();
+  const isDurableDocument = (h: readonly HistoryItem[] | DurableDocument): h is DurableDocument =>
+    !Array.isArray(h) && 'documentId' in h;
+  const documentId = options.documentId ?? (isDurableDocument(history) ? history.documentId : undefined);
+  const transaction = documentId ? registry.beginDocumentAssetTransaction(documentId) : undefined;
+
+  try {
+    const converted = legacyHistoryToDurable(history, { ...options, registry });
+    if (converted.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
+      transaction?.rollback();
+      return {
+        status: 'unavailable',
+        document: null,
+        diagnostics: converted.diagnostics,
+        legacyCursorToDurableCursor: converted.legacyCursorToDurableCursor,
+      };
+    }
+    transaction?.commit();
+    return { status: 'current', ...converted };
+  } catch (error) {
+    transaction?.rollback();
+    return {
+      status: 'unavailable',
+      document: null,
+      diagnostics: [
+        {
+          severity: 'error',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      ],
+      legacyCursorToDurableCursor: [],
+    };
+  }
 }
 
 /** Named alias used at the compatibility boundary by importers and callers. */

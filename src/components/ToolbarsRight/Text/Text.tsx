@@ -1,4 +1,4 @@
-import React, { type ChangeEvent, useEffect } from 'react';
+import React, { type ChangeEvent, useEffect, useRef } from 'react';
 import { calculateNewRect } from '../../../util/rect.ts';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
@@ -11,6 +11,7 @@ const Text: React.FC<{}> = () => {
   const [{ canvasRef, color, textareaRef, totalSize }] = useStore();
   const { createLayerFromTool } = useLayers();
   const { toolArgs, setToolArgs: onChange } = useCurrentTool();
+  const appliedArgsRef = useRef<typeof toolArgs | null>(null);
 
   useEffect(() => {
     if (isTextToolArgs(toolArgs) && toolArgs.color !== color) {
@@ -80,8 +81,10 @@ const Text: React.FC<{}> = () => {
 
   const applyText = () => {
     if (text && rect) {
-      createLayerFromTool({ args: toolArgs });
+      if (appliedArgsRef.current === toolArgs) return;
+      appliedArgsRef.current = toolArgs;
       onChange({ ...toolArgs, text: '', rect: null });
+      createLayerFromTool({ args: toolArgs });
     }
   };
 

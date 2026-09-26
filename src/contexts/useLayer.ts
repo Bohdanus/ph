@@ -71,6 +71,14 @@ function normalizeCommittedToolArgs(layer: Layer, args: ToolArgs): ToolArgs | ob
   return retained ?? args;
 }
 
+async function immutableRaster(bitmap: ImageLayerSource['bitmap']): Promise<ImageLayerSource['bitmap']> {
+  if (typeof (bitmap as { close?: unknown }).close === 'function') return bitmap;
+  if (!globalThis.createImageBitmap) {
+    throw new Error('createImageBitmap is required to import a mutable raster source');
+  }
+  return globalThis.createImageBitmap(bitmap as CanvasImageSource);
+}
+
 export const useLayers = () => {
   const [
     {
@@ -156,12 +164,13 @@ export const useLayers = () => {
     );
   };
 
-  const createLayerFromBitmap = (params: FileImageParams, replaceDocument = false) => {
+  const createLayerFromBitmap = async (params: FileImageParams, replaceDocument = false) => {
     const currentLayers = replaceDocument ? {} : commitDirtyTool();
 
     const source: ImageLayerSource = {
       kind: 'image',
       ...params,
+      bitmap: await immutableRaster(params.bitmap),
     };
     const newLayer = createLayerSource({ layers: currentLayers, source });
 
