@@ -289,7 +289,7 @@ describe('StoreContext layer action table', () => {
     expect(store().activeLayerId).toBeNull();
   });
 
-  it('SET_ACTIVE_LAYER marks a converted sidecar stale when the focus really moves', () => {
+  it('SET_ACTIVE_LAYER moves the focus without invalidating a converted sidecar', () => {
     const { store, dispatch } = renderWithProbe();
 
     act(() => {
@@ -300,7 +300,10 @@ describe('StoreContext layer action table', () => {
     });
 
     expect(store().activeLayerId).toBe(layerId);
-    expect(store().durableStatus).toBe('stale');
+    // The durable active layer is derived from the first history entry, never
+    // from `state.activeLayerId`, so focus alone cannot make the shadow
+    // unfaithful and must not consume the append gate's base.
+    expect(store().durableStatus).toBe('current');
   });
 
   it('BATCH_UPDATES applies every field and marks a converted sidecar stale', () => {
@@ -376,8 +379,11 @@ describe('StoreContext selection action table', () => {
     expect(selections[1]!.isActive).toBe(true);
     expect(store().activeSelectionId).toBe('second');
     expect(store().selectionDraft).toEqual({ status: 'idle' });
-    expect(store().durableStatus).toBe('stale');
-    expect(getProbe().store.durableStatus).toBe('stale');
+    // A selection can only enter the durable document through a
+    // `SELECTION_ACTION` history entry, so appending no history means the
+    // converted sidecar stays a faithful projection.
+    expect(store().durableStatus).toBe('current');
+    expect(getProbe().store.durableStatus).toBe('current');
   });
 
   it('a committed selection without geometry defaults to polygon and is always marked committed', () => {
@@ -441,7 +447,7 @@ describe('StoreContext selection action table', () => {
     expect(store().activeSelectionId).toBe('second');
   });
 
-  it('SET_ACTIVE_SELECTION re-flags exactly one record and marks a converted sidecar stale', () => {
+  it('SET_ACTIVE_SELECTION re-flags exactly one record and leaves a converted sidecar current', () => {
     const { store, dispatch } = renderWithProbe();
 
     act(() => {
@@ -456,7 +462,7 @@ describe('StoreContext selection action table', () => {
 
     expect(store().selections.map((selection) => selection.isActive)).toEqual([false, true]);
     expect(store().activeSelectionId).toBe('b');
-    expect(store().durableStatus).toBe('stale');
+    expect(store().durableStatus).toBe('current');
 
     act(() => {
       dispatch()({ type: 'SET_ACTIVE_SELECTION', payload: null });
@@ -611,8 +617,6 @@ describe('StoreContext durable staleness matrix', () => {
     ['SET_LAYERS', { [layerId]: makeLayer() }],
     ['ADD_LAYER', { layers: { [layerId]: makeLayer() }, activeLayerId: layerId }],
     ['UPDATE_LAYERS', { [layerId]: makeLayer() }],
-    ['SET_ACTIVE_SELECTION', 'missing'],
-    ['CLEAR_SELECTIONS', undefined],
   ] as const)('downgrades a converted sidecar to stale for %s', (actionType, payload) => {
     const { store, dispatch } = renderWithProbe();
 
@@ -628,30 +632,44 @@ describe('StoreContext durable staleness matrix', () => {
     expect(store().durableStatus).toBe('stale');
   });
 
-  it('downgrades a converted sidecar to stale for MARK_SELECTION_COPIED and SET_ACTIVE_LAYER', () => {
+  /**
+   * The counterweight to the matrix above. Every one of these writes only
+   * selection state or layer focus, appends no history entry, and touches none
+   * of the six inputs `buildDurableDocument` converts from. Marking any of them
+   * `stale` would spend the append gate's base on a non-durable change and send
+   * an ordinary crop append back to a whole-timeline reconversion.
+   */
+  it.each([
+    ['SET_ACTIVE_LAYER', layerId],
+    ['SET_SELECTIONS', [makeSelection('a')]],
+    ['ADD_SELECTION', makeSelection('a')],
+    ['COMMIT_SELECTION', makeSelection('a')],
+    ['UPDATE_SELECTION', makeSelection('a')],
+    ['MOVE_SELECTION', makeSelection('a')],
+    ['SET_ACTIVE_SELECTION', 'a'],
+    ['MARK_SELECTION_COPIED', { id: 'a' }],
+    ['CLEAR_SELECTIONS', undefined],
+  ] as const)('keeps a converted sidecar current through %s', (actionType, payload) => {
     const { store, dispatch } = renderWithProbe();
 
     act(() => {
       dispatch()({ type: 'SET_DURABLE_STATUS', payload: { status: 'current', diagnostics: [] } });
     });
+    // A selection update needs an existing record, so seed one that every
+    // branch above can address without an ordering dependency.
     act(() => {
       dispatch()({ type: 'COMMIT_SELECTION', payload: makeSelection('a') });
     });
     act(() => {
       dispatch()({ type: 'SET_DURABLE_STATUS', payload: { status: 'current', diagnostics: [] } });
     });
-    act(() => {
-      dispatch()({ type: 'MARK_SELECTION_COPIED', payload: { id: 'a' } });
-    });
-    expect(store().durableStatus).toBe('stale');
+    expect(store().durableStatus).toBe('current');
 
     act(() => {
-      dispatch()({ type: 'SET_DURABLE_STATUS', payload: { status: 'current', diagnostics: [] } });
+      dispatch()({ type: actionType, payload } as never);
     });
-    act(() => {
-      dispatch()({ type: 'SET_ACTIVE_LAYER', payload: layerId });
-    });
-    expect(store().durableStatus).toBe('stale');
+
+    expect(store().durableStatus).toBe('current');
   });
 
   it('a stale sidecar stays stale rather than degrading further', () => {
@@ -660,8 +678,11 @@ describe('StoreContext durable staleness matrix', () => {
     act(() => {
       dispatch()({ type: 'SET_DURABLE_STATUS', payload: { status: 'stale', diagnostics: [] } });
     });
+    // Re-pointed off CLEAR_SELECTIONS, which no longer writes the status at
+    // all, so it could no longer exercise the degradation rule. SET_SIZE writes
+    // `totalSize`, one of the six durable inputs, so it still does.
     act(() => {
-      dispatch()({ type: 'CLEAR_SELECTIONS' });
+      dispatch()({ type: 'SET_SIZE', payload: { width: 321, height: 123 } });
     });
 
     expect(store().durableStatus).toBe('stale');

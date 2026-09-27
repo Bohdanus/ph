@@ -39,6 +39,40 @@ import {
  * `current` describes an exact, transactionally converted shadow; `stale`
  * means runtime state changed outside that conversion; `unavailable` means
  * conversion failed and no durable shadow may be consumed.
+ *
+ * INVARIANT: `stale` must mean "the durable document is no longer a faithful
+ * projection of the history", and nothing else. `buildDurableDocument` below
+ * converts the history entries and reads exactly six pieces of store state as
+ * conversion inputs: `documentId`, `documentRevision`, `branchRevision`,
+ * `totalSize` (as `initialSize`), `documentFrame` (as `initialFrame`), and
+ * `durableDocument.durableRevision`. Those are the only inputs whose movement
+ * can make a stored durable document unfaithful, so a transition that writes
+ * none of them must not downgrade the status.
+ *
+ * Two consequences make the narrow rule safe rather than merely optimistic:
+ *
+ * 1. Runtime layers and selection state never reach the converted document.
+ *    `DurableBaseline.activeLayerId` is derived from the FIRST history entry
+ *    (`history-adapter.ts` `snapshotFromDocumentSource`), never from
+ *    `state.activeLayerId`, and `DurableBaseline.selections` is derived from the
+ *    history timeline — currently the empty `selectionSnapshot()`, and under the
+ *    shared selection-baseline rule the first enabled `SELECTION_ACTION`
+ *    entry's `previousSelectionState` — never from live store state. A selection
+ *    can therefore only enter the document through a `SELECTION_ACTION` history
+ *    entry, and a layer operation only through a history entry. This holds
+ *    whichever rule seeds the baseline, because both read the timeline.
+ * 2. `stale` is sticky. Every action that writes one of the six inputs either
+ *    marks `stale` or reconverts and writes the resulting status, so no
+ *    non-reconverting transition can ever clear a `stale` that a durable input
+ *    produced. A transition that stops marking `stale` therefore cannot unblock
+ *    a publication that a genuine divergence had blocked.
+ *
+ * The append gate (`decideDurableAppend`, reached at the `base:` argument of the
+ * `COMMIT_DOCUMENT_EDIT` dispatcher branch) additionally re-checks
+ * `documentId`, `documentRevision` and `branchRevision` against the live state,
+ * and a publish extends the stored document without reconverting it — so the
+ * gate depends on input freshness, not on the reconversion being byte-stable
+ * (conversion mints fresh `AssetId`s from the asset registry's identity cache).
  */
 export type DurableDocumentStatus = DurableConversionStatus | 'stale';
 
@@ -266,13 +300,15 @@ function commitSelection(state: StoreData, selection: Selection): StoreData {
     geometry: selection.geometry ?? 'polygon',
   };
 
+  // No durable input moves: `ADD_SELECTION`/`COMMIT_SELECTION` write only
+  // selection state, append no history entry, and the conversion never reads
+  // selection state (see the `DurableDocumentStatus` invariant).
   return {
     ...state,
     selections: [...state.selections.map((current) => ({ ...current, isActive: false })), committedSelection],
     activeSelectionId: committedSelection.id,
     selectionDraft: { status: 'idle' },
     selectionCleared: null,
-    durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
   };
 }
 
@@ -283,6 +319,10 @@ function updateCommittedSelection(state: StoreData, selection: Selection): Store
     geometry: selection.geometry ?? 'polygon',
   };
 
+  // No durable input moves, for the same reason as `commitSelection`. These
+  // transitions are the common case while a selection is being dragged, so
+  // downgrading here would make an ordinary crop append fall back to a
+  // whole-timeline reconversion.
   return {
     ...state,
     selections: state.selections.map((current) =>
@@ -290,7 +330,6 @@ function updateCommittedSelection(state: StoreData, selection: Selection): Store
     ),
     activeSelectionId: committedSelection.isActive ? committedSelection.id : state.activeSelectionId,
     selectionDraft: { status: 'idle' },
-    durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
   };
 }
 
@@ -306,6 +345,9 @@ function reducer(state: StoreData, action: Action): StoreData {
       if (state.totalSize.width === action.payload.width && state.totalSize.height === action.payload.height) {
         return state;
       }
+      // `totalSize` is the conversion's `initialSize`, so this genuinely moves a
+      // durable input. It is the only transition outside the three document
+      // writers that does, which is why the append gate relies on it invalidating.
       return {
         ...state,
         totalSize: action.payload,
@@ -319,6 +361,12 @@ function reducer(state: StoreData, action: Action): StoreData {
       }
       return { ...state, isToolDirty: action.payload };
     case 'SET_LAYERS':
+      // Kept conservative on purpose. Runtime layers are not one of the six
+      // conversion inputs, but no production writer dispatches this action; a
+      // layer create/remove/reorder reaches the document through a history entry
+      // in `COMMIT_DOCUMENT_EDIT`, which reconverts. Marking here costs nothing
+      // and means a future layer writer cannot be assumed to arrive on a
+      // reconverting path.
       return {
         ...state,
         layers: action.payload,
@@ -328,12 +376,12 @@ function reducer(state: StoreData, action: Action): StoreData {
       if (state.activeLayerId === action.payload) {
         return state;
       }
-      return {
-        ...state,
-        activeLayerId: action.payload,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
-      };
+      // Focus only. The converted document's active layer is derived from the
+      // first history entry, so this writes no durable input.
+      return { ...state, activeLayerId: action.payload };
     case 'ADD_LAYER':
+      // Conservative, as for `SET_LAYERS`: zero production dispatch, and a real
+      // layer create is a history append that reconverts.
       return {
         ...state,
         layers: action.payload.layers,
@@ -345,7 +393,7 @@ function reducer(state: StoreData, action: Action): StoreData {
       // Legacy escape hatch, retained for compatibility. No production writer
       // uses it: layer changes that belong to a document edit go through
       // `COMMIT_DOCUMENT_EDIT`, and cache promotion goes through
-      // `PROMOTE_LAYER_PRESENTATIONS`.
+      // `PROMOTE_LAYER_PRESENTATIONS`. Conservative, as for `SET_LAYERS`.
       return {
         ...state,
         layers: action.payload,
@@ -373,9 +421,11 @@ function reducer(state: StoreData, action: Action): StoreData {
       return published === state.layers ? state : { ...state, layers: published };
     }
     case 'BATCH_UPDATES':
-      // Metadata-only in production. The wider legacy payload stays
-      // conservatively stale-marking because a compatibility caller may still
-      // hand it document state.
+      // Metadata-only in production (the sole writer passes `fileName` and
+      // `hasUnsavedChanges`). The wider legacy payload type still admits
+      // `totalSize` and `documentFrame`, which are durable inputs, so this
+      // transition stays conservatively stale-marking rather than trusting the
+      // current callers to stay narrow.
       return {
         ...state,
         ...action.payload,
@@ -455,11 +505,11 @@ function reducer(state: StoreData, action: Action): StoreData {
     case 'SET_DURABLE_STATUS':
       return { ...state, durableStatus: action.payload.status, durableDiagnostics: action.payload.diagnostics };
     case 'SET_SELECTIONS':
+      // Selection state only; no durable input moves.
       return {
         ...state,
         selections: action.payload,
         activeSelectionId: action.payload.find((selection) => selection.isActive)?.id ?? null,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
       };
     case 'ADD_SELECTION':
     case 'COMMIT_SELECTION':
@@ -468,11 +518,11 @@ function reducer(state: StoreData, action: Action): StoreData {
     case 'MOVE_SELECTION':
       return updateCommittedSelection(state, action.payload);
     case 'SET_ACTIVE_SELECTION':
+      // Selection focus only; no durable input moves.
       return {
         ...state,
         activeSelectionId: action.payload,
         selections: state.selections.map((selection) => ({ ...selection, isActive: selection.id === action.payload })),
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
       };
     case 'START_SELECTION_DRAFT':
       return {
@@ -491,6 +541,7 @@ function reducer(state: StoreData, action: Action): StoreData {
         selectionClipboard: action.payload,
       };
     case 'MARK_SELECTION_COPIED':
+      // Selection metadata only; the clipboard itself already never invalidated.
       return {
         ...state,
         selections: state.selections.map((selection) =>
@@ -504,16 +555,15 @@ function reducer(state: StoreData, action: Action): StoreData {
               }
             : selection
         ),
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
       };
     case 'CLEAR_SELECTIONS':
+      // Selection state only; no durable input moves.
       return {
         ...state,
         selections: [],
         activeSelectionId: null,
         selectionDraft: { status: 'idle' },
         selectionCleared: { status: 'cleared', version: (state.selectionCleared?.version ?? 0) + 1 },
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
       };
     default:
       return state;
