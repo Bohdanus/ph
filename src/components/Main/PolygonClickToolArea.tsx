@@ -4,6 +4,7 @@ import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import type { Point, Selection } from '../../contexts/general-types.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import { useDoubleClick } from '../../hooks/useDoubleClick.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import {
@@ -147,6 +148,7 @@ function drawPolygonOverlay({
 
 export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickToolProps) => {
   const [{ containerRef, selections, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
+  const { clearSelections } = useSelectionHistory();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { toolArgs } = useCurrentTool();
 
@@ -514,7 +516,15 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     if (isFreehand || selectionDragRef.current) return;
 
     if (pointsRef.current.length === 0) {
-      dispatch({ type: 'CLEAR_SELECTIONS' });
+      // Routed through the single-writer hook rather than the raw
+      // `CLEAR_SELECTIONS` action, so a Backspace deselect appends the history
+      // entry that makes it undoable. Scope is unchanged — the hook clears every
+      // selection, exactly as the raw action's reducer arm did — and the draft
+      // is already empty here, so there is no draft reset to keep. The hook's own
+      // guard makes the "nothing selected" case dispatch nothing, which is
+      // stronger than the raw action: that used to bump the `selectionCleared`
+      // repaint marker over an already-empty selection.
+      clearSelections();
       return;
     }
 

@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import type { Selection } from '../../../contexts/general-types.ts';
 import type { FeatherMagneticLassoToolArgs } from '../../../tools/featherMagneticLasso.ts';
+import { SELECTION_ACTION } from '../../../util/constants.ts';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { FeatherMagneticLassoToolArea } from '../FeatherMagneticLassoToolArea.tsx';
 
 const h = vi.hoisted(() => ({
+  activeSelectionId: null as string | null,
   dispatch: vi.fn(),
   shortcutHandlers: new Map<string, () => void>(),
   selections: [] as Selection[],
@@ -38,8 +40,15 @@ vi.mock('../../../hooks/useKeyboardEvents.tsx', () => ({
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
     {
+      activeSelectionId: h.activeSelectionId,
       canvasRef: { current: h.canvas },
       containerRef: { current: document.createElement('div') },
+      // The single-writer hook reads the legacy timeline so it can plan the
+      // append. An empty timeline at cursor -1 is what a store with nothing
+      // appended yet actually looks like, and `planHistoryAppend` reports the
+      // out-of-range cursor as a diagnostic rather than refusing the edit.
+      history: [],
+      historyIndex: -1,
       selections: h.selections,
       totalSize: { width: 200, height: 120 },
     },
@@ -62,6 +71,7 @@ describe('FeatherMagneticLassoToolArea', () => {
   let getContextSpy: ReturnType<typeof vi.spyOn> | null = null;
 
   beforeEach(() => {
+    h.activeSelectionId = null;
     h.dispatch.mockClear();
     h.shortcutHandlers.clear();
     h.selections = [];
@@ -189,6 +199,64 @@ describe('FeatherMagneticLassoToolArea', () => {
 
   const committed = () =>
     h.dispatch.mock.calls.filter(([action]) => (action as { type: string }).type === 'COMMIT_SELECTION');
+
+  const LASSO_SELECTION: Selection = {
+    id: 'sel-1',
+    geometry: 'polygon',
+    sourceTool: 'feather-magnetic-lasso',
+    lifecycle: 'committed',
+    isActive: true,
+    pos: { x: 4, y: 8, width: 16, height: 24 },
+    points: [
+      { x: 4, y: 8 },
+      { x: 20, y: 8 },
+      { x: 20, y: 32 },
+    ],
+  };
+
+  const setStoreSelections = (selections: Selection[], activeSelectionId: string | null = null) => {
+    h.selections = selections;
+    h.activeSelectionId = activeSelectionId;
+  };
+
+  /**
+   * Backspace over an empty draft no longer dispatches a raw `CLEAR_SELECTIONS`
+   * reducer action: it is a document edit that appends to history, so the
+   * deselect is undoable like any other. One dispatch carries both the history
+   * item and the resulting selection state, so the two cannot disagree.
+   *
+   * `durableEntry` is deliberately not matched. The store publishes the planned
+   * entry only when its durable document still describes the timeline the plan
+   * was made against, and the boundary's failure fallback omits it entirely;
+   * both are correct, so the pin asserts the contract the two paths share. `id`
+   * is a fresh uuid per call, hence `expect.any(String)`.
+   */
+  const CLEAR_SELECTION_EDIT = expect.objectContaining({
+    type: 'COMMIT_DOCUMENT_EDIT',
+    payload: expect.objectContaining({
+      historyItem: expect.objectContaining({
+        id: expect.any(String),
+        actionName: SELECTION_ACTION,
+        args: expect.objectContaining({
+          previousSelectionState: {
+            selections: [LASSO_SELECTION],
+            activeSelectionId: 'sel-1',
+          },
+          nextSelectionState: { selections: [], activeSelectionId: null },
+        }),
+      }),
+      // The visible half of the same transition. `selectionDraft` and
+      // `selectionCleared` are asserted too: they are the other two fields the
+      // raw reducer arm moved, so leaving them out would let the hook silently
+      // stop resetting the draft or repainting the overlay.
+      updates: expect.objectContaining({
+        activeSelectionId: null,
+        selectionCleared: expect.objectContaining({ status: 'cleared', version: 1 }),
+        selectionDraft: { status: 'idle' },
+        selections: [],
+      }),
+    }),
+  });
 
   const renderArea = (overlayCtxRef: { current: CanvasRenderingContext2D | null }) => {
     const { container, unmount } = render(
@@ -396,13 +464,32 @@ describe('FeatherMagneticLassoToolArea', () => {
     });
 
     it('clears existing selections with Backspace when no draft exists', () => {
+      setStoreSelections([LASSO_SELECTION], 'sel-1');
       const mockCtx = createMockContext();
       renderArea({ current: mockCtx });
 
       h.dispatch.mockClear();
       h.shortcutHandlers.get('Backspace')?.();
 
-      expect(h.dispatch).toHaveBeenCalledWith({ type: 'CLEAR_SELECTIONS' });
+      // Exactly one dispatch: the history append and the cleared selection ride
+      // on the same action, so there is no window in which one has landed
+      // without the other.
+      expect(h.dispatch).toHaveBeenCalledTimes(1);
+      expect(h.dispatch).toHaveBeenCalledWith(CLEAR_SELECTION_EDIT);
+    });
+
+    it('dispatches nothing with Backspace when there is neither a draft nor a selection', () => {
+      setStoreSelections([], null);
+      const mockCtx = createMockContext();
+      renderArea({ current: mockCtx });
+
+      h.dispatch.mockClear();
+      h.shortcutHandlers.get('Backspace')?.();
+
+      // The writer guards on the selection state itself, so an already-empty
+      // document records nothing: no history entry describing a change that did
+      // not happen, and no edit flagging the document dirty.
+      expect(h.dispatch).not.toHaveBeenCalled();
     });
 
     it('treats Delete exactly like Backspace', () => {
