@@ -69,6 +69,9 @@ const buildDrawArgs = (args: ToolArgs, penType: 'pen' | 'spray', lineWidth?: num
 const replay = (kind: ToolReplayKind, requiresRaster: boolean, deterministic = true) =>
   Object.freeze({ kind, deterministic, version: 1, requiresRaster });
 
+/** The width `defaultSettings.pencil` seeds the pencil with (src/tools/settings.ts:126). */
+const DEFAULT_PENCIL_LINE_WIDTH = 3;
+
 const unimplemented = () => () => [null as never] as ToolResult;
 
 export const toolProcessors: Record<ToolName, ToolProcessorDefinition> = {
@@ -171,9 +174,12 @@ export const toolProcessors: Record<ToolName, ToolProcessorDefinition> = {
     commit: 'raster',
     replay: replay('raster-processor', true),
     imageProcessor: (params) => (args) => {
-      const [canvas] = draw({ size: params.size } as CreatorToolParams)(
-        buildDrawArgs(args, 'pen', Math.max(1, Number((args as Partial<DrawToolArgs>).lineWidth ?? 3)))
-      );
+      // `??` guards only `undefined` and `null`, so a non-numeric string reaches
+      // `Number` as NaN — and `Math.max(1, NaN)` is NaN, which the canvas ignores
+      // in favour of a width it picks itself. Only a finite width may reach the clamp.
+      const width = Number((args as Partial<DrawToolArgs>).lineWidth ?? DEFAULT_PENCIL_LINE_WIDTH);
+      const lineWidth = Number.isFinite(width) ? Math.max(1, width) : DEFAULT_PENCIL_LINE_WIDTH;
+      const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'pen', lineWidth));
       return [canvas];
     },
   },
@@ -211,11 +217,11 @@ export const toolProcessors: Record<ToolName, ToolProcessorDefinition> = {
     replay: replay('unimplemented', false, false),
     imageProcessor: unimplemented,
   },
-  rectangle: { commit: 'source', replay: replay('source', false), imageProcessor: shape },
-  ellipse: { commit: 'source', replay: replay('source', false), imageProcessor: shape },
+  rectangle: { creator: true, commit: 'source', replay: replay('source', false), imageProcessor: shape },
+  ellipse: { creator: true, commit: 'source', replay: replay('source', false), imageProcessor: shape },
   triangle: { creator: true, commit: 'source', replay: replay('source', false), imageProcessor: shape },
   polygon: { creator: true, commit: 'source', replay: replay('source', false), imageProcessor: shape },
-  line: { commit: 'source', replay: replay('source', false), imageProcessor: shape },
+  line: { creator: true, commit: 'source', replay: replay('source', false), imageProcessor: shape },
   'custom-shape': {
     commit: 'unimplemented',
     replay: replay('unimplemented', false, false),

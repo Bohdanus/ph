@@ -126,9 +126,12 @@ describe('toolProcessors registry', () => {
     expect(creators.sort()).toEqual(
       [
         'draw',
+        'ellipse',
         'freehand-lasso',
+        'line',
         'polygon',
         'polygonal-lasso',
+        'rectangle',
         'rectangular-selection',
         'shape',
         'text',
@@ -140,20 +143,18 @@ describe('toolProcessors registry', () => {
     }
   });
 
-  it.fails(
-    'treats every figure variant as layer-creating, like triangle and polygon (src/tools/toolProcessors.ts:214-218)',
-    () => {
-      // Asymmetry: `rectangle` (:214), `ellipse` (:215) and `line` (:218) commit as `source`
-      // but are not flagged `creator`, unlike `triangle` (:216) and `polygon` (:217), so they
-      // cannot create a layer on an empty document. The chain has no `never`/exhaustiveness
-      // trap, so a new figure variant fails the same way.
-      const figureVariants = ['rectangle', 'ellipse', 'triangle', 'polygon', 'line'] as const;
+  it('flags every tool routed to the shape processor as a deterministic creator', () => {
+    // The figure family is derived from the processor identity rather than a
+    // hand-written name list, so a new shape variant cannot be registered
+    // without the `creator` flag `materialization.ts:161` reads.
+    const shapeFamily = toolNames.filter((toolName) => toolProcessors[toolName].imageProcessor === shape);
 
-      for (const toolName of figureVariants) {
-        expect(toolProcessors[toolName].creator, toolName).toBe(true);
-      }
+    expect(shapeFamily.sort()).toEqual(['ellipse', 'line', 'polygon', 'rectangle', 'shape', 'triangle']);
+    for (const toolName of shapeFamily) {
+      expect(toolProcessors[toolName].creator, toolName).toBe(true);
+      expect(toolProcessors[toolName].commit, toolName).toBe('source');
     }
-  );
+  });
 
   it('maps the full tool roster onto the declared commit kinds', () => {
     const commits = Object.fromEntries(toolNames.map((toolName) => [toolName, toolProcessors[toolName].commit]));
@@ -288,26 +289,29 @@ describe('paint tool raster processors', () => {
     expect(recorded.lineWidth).toBe(3);
   });
 
-  it('passes a NaN pencil line width straight through to the context (src/tools/toolProcessors.ts:175)', () => {
-    // `Math.max(1, Number(lineWidth ?? 3))` only guards `undefined`; `NaN ?? 3` is `NaN`
-    // and `Math.max(1, NaN)` is `NaN`, so a non-finite width reaches `ctx.lineWidth`.
-    //
-    // This is a characterization of the CURRENT behavior, and the `it.fails` right below is the
-    // same input asserting the DESIRED behavior. Fixing `toolProcessors.ts:175` breaks this
-    // test too, so delete it together with that one — do not let it read as a regression pin.
-    const recorded = run('pencil', { lineWidth: Number.NaN, points: stroke });
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['-Infinity', Number.NEGATIVE_INFINITY],
+    ['a non-numeric string', 'wide'],
+  ])('falls a non-finite pencil line width (%s) back to the 3 default', (_label, lineWidth) => {
+    // `??` guards only `undefined`/`null`, so any of these produced NaN and
+    // `Math.max(1, NaN)` wrote NaN to `ctx.lineWidth`, where the canvas silently
+    // substituted its own width (src/tools/toolProcessors.ts:175-181).
+    const recorded = run('pencil', { lineWidth: lineWidth as number, points: stroke });
 
-    expect(Number.isNaN(recorded.lineWidth)).toBe(true);
+    expect(recorded.lineWidth).toBe(3);
   });
 
-  it.fails(
-    'guards a non-finite pencil line width before it reaches the context (src/tools/toolProcessors.ts:175)',
-    () => {
-      const recorded = run('pencil', { lineWidth: Number.NaN, points: stroke });
+  it('clamps an empty or blank pencil line width like any other width below 1', () => {
+    // `Number('')` and `Number(' ')` are 0, not NaN, so a blank string always
+    // reached the clamp and never `ctx.lineWidth` as NaN.
+    for (const lineWidth of ['', ' ']) {
+      const recorded = run('pencil', { lineWidth: lineWidth as unknown as number, points: stroke });
 
-      expect(recorded.lineWidth).toBe(1);
+      expect(recorded.lineWidth, JSON.stringify(lineWidth)).toBe(1);
     }
-  );
+  });
 
   it('color replacement always rasterizes with the spray pen and its own alpha ramp', () => {
     const recorded = run('color-replacement', { penType: 'pen', lineWidth: 6, points: stroke.slice(0, 1) });
