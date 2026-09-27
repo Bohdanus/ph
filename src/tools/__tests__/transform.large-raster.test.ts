@@ -7,7 +7,6 @@ const { resampleRowByRow } = vi.hoisted(() => ({ resampleRowByRow: vi.fn() }));
 
 vi.mock('../../util/homography-resample.ts', () => ({
   MAX_HOMOGRAPHY_SUBSAMPLES: 4,
-  resampleThroughHomography: vi.fn(),
   resampleThroughHomographyRowByRow: resampleRowByRow,
 }));
 
@@ -100,6 +99,17 @@ describe('transform raster ceilings', () => {
     expect(source.data.length).toBe(size.width * size.height * 4);
   });
 
+  it.each([
+    { width: 6000, height: 4000 },
+    { width: 6928, height: 3464 },
+    { width: 8000, height: 6000 },
+  ])('warps a $width x $height layer at both slider limits', (size) => {
+    for (const trapezoid of [-85, 85]) {
+      expect(() => transform(makeParams(size))({ ...baseArgs, trapezoid })).not.toThrow();
+    }
+    expect(resampleRowByRow).toHaveBeenCalledTimes(2);
+  });
+
   it('accepts a 24 megapixel affine transform at the same ceiling', () => {
     const size = { width: 6000, height: 4000 };
 
@@ -112,12 +122,8 @@ describe('transform raster ceilings', () => {
   it('still rejects a raster beyond the shared ceiling on both paths', () => {
     const size = { width: 9000, height: 9000 };
 
-    expect(() => transform(makeParams(size))({ ...baseArgs, resizeX: 200, resizeY: 200 })).toThrow(
-      'Affine transform exceeds raster bounds'
-    );
-    expect(() => transform(makeParams(size))({ ...baseArgs, trapezoid: 25 })).toThrow(
-      'Raster transform exceeds supported bounds'
-    );
+    expect(() => transform(makeParams(size))({ ...baseArgs, resizeX: 200, resizeY: 200 })).toThrow(/exceeds .*bounds/);
+    expect(() => transform(makeParams(size))({ ...baseArgs, trapezoid: 25 })).toThrow(/exceeds .*bounds/);
     expect(resampleRowByRow).not.toHaveBeenCalled();
   });
 });

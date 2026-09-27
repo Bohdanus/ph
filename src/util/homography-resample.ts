@@ -1,4 +1,4 @@
-import { differentiateHomography, type Homography } from './homography.ts';
+import { differentiateHomography, projectiveRowScale, type Homography } from './homography.ts';
 
 export const MAX_HOMOGRAPHY_SUBSAMPLES = 4;
 
@@ -32,6 +32,7 @@ function resampleRow(
   const targetData = destination.data;
   const lastSourceX = sourceWidth - 1;
   const lastSourceY = sourceHeight - 1;
+  const rowScale = projectiveRowScale(inverse);
 
   for (let x = 0; x < targetWidth; x++) {
     const offset = (writeRow * targetWidth + x) * 4;
@@ -58,10 +59,10 @@ function resampleRow(
       for (let subX = 0; subX < subsamples; subX++) {
         const sampleX = x + (subX + 0.5) / subsamples;
         const denominator = inverse.g * sampleX + inverse.h * sampleRowY + inverse.i;
-        if (denominator === 0) continue;
+        if (!(Math.abs(denominator) > rowScale * Math.max(1, sampleX, sampleRowY))) continue;
         const u = (inverse.a * sampleX + inverse.b * sampleRowY + inverse.c) / denominator;
         const v = (inverse.d * sampleX + inverse.e * sampleRowY + inverse.f) / denominator;
-        if (u < 0 || u > sourceWidth || v < 0 || v > sourceHeight) continue;
+        if (!(u >= 0 && u <= sourceWidth && v >= 0 && v <= sourceHeight)) continue;
 
         const clampedU = clampToTexelCenters(u, sourceWidth);
         const clampedV = clampToTexelCenters(v, sourceHeight);

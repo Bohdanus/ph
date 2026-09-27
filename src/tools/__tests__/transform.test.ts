@@ -36,6 +36,7 @@ type MockContext = {
 type MockCanvas = {
   width: number;
   height: number;
+  pixels: ImageData;
   contexts: MockContext[];
   getContext: () => MockContext;
 };
@@ -51,7 +52,7 @@ function makeImageData(width: number, height: number, fill: (data: Uint8ClampedA
   return { data, width, height, colorSpace: 'srgb' } as ImageData;
 }
 
-function createMockContext(): MockContext {
+function createMockContext(canvas: MockCanvas): MockContext {
   const ctmCalls: RecordedCtmCall[] = [];
   const smoothing = { enabled: false, quality: 'low' };
   const context: MockContext = {
@@ -66,7 +67,10 @@ function createMockContext(): MockContext {
       })
     ),
     createImageData: vi.fn((width: number, height: number) => makeImageData(width, height, () => undefined)),
-    putImageData: vi.fn((imageData: ImageData) => ({ ...imageData, data: new Uint8ClampedArray(imageData.data) })),
+    putImageData: vi.fn((imageData: ImageData, x: number, y: number) => {
+      const length = Math.min(imageData.width, canvas.width - x) * 4;
+      canvas.pixels.data.set(imageData.data.subarray(0, length), (y * canvas.width + x) * 4);
+    }),
     translate: (x, y) => {
       ctmCalls.push({ op: 'translate', values: [x, y] });
     },
@@ -105,18 +109,19 @@ function createMockContext(): MockContext {
 class MockOffscreenCanvas implements MockCanvas {
   width: number;
   height: number;
+  pixels: ImageData;
   contexts: MockContext[] = [];
 
   constructor(width: number, height: number) {
     this.width = Math.max(1, Math.ceil(width));
     this.height = Math.max(1, Math.ceil(height));
+    this.pixels = makeImageData(this.width, this.height, () => undefined);
     createdCanvases.push(this);
   }
 
   getContext() {
-    const context = createMockContext();
-    this.contexts.push(context);
-    return context;
+    if (!this.contexts[0]) this.contexts.push(createMockContext(this));
+    return this.contexts[0];
   }
 }
 
@@ -161,6 +166,10 @@ function destinationContextOf(result: readonly unknown[]): MockContext {
 function sourceContextsOf(result: readonly unknown[]): MockContext[] {
   const destination = result[0] as unknown as MockCanvas;
   return createdCanvases.filter((canvas) => canvas !== destination).flatMap((canvas) => canvas.contexts);
+}
+
+function assembledRaster(result: readonly unknown[]): ImageData {
+  return (result[0] as unknown as MockCanvas).pixels;
 }
 
 function composeRecordedCtm(calls: readonly RecordedCtmCall[]): AffineTransform {
@@ -216,18 +225,6 @@ function expectAffineCloseTo(actual: AffineTransform, expected: AffineTransform,
 function pixelAt(image: ImageData, x: number, y: number): number[] {
   const offset = (y * image.width + x) * 4;
   return [image.data[offset], image.data[offset + 1], image.data[offset + 2], image.data[offset + 3]];
-}
-
-function assembledRaster(context: MockContext, width: number, height: number): ImageData {
-  const assembled = makeImageData(width, height, () => undefined);
-  context.putImageData.mock.calls.forEach((call, index) => {
-    const x = call[1] as number;
-    const y = call[2] as number;
-    const row = context.putImageData.mock.results[index].value as ImageData;
-    const length = Math.min(row.width, width - x) * 4;
-    assembled.data.set(row.data.subarray(0, length), y * width * 4);
-  });
-  return assembled;
 }
 
 describe('transform tool', () => {
@@ -318,7 +315,15 @@ describe('transform tool', () => {
       const params = makeParams(makeBitmap(100, 100), { width: 100, height: 100 });
       const [canvas] = transform(params)(withArgs({ trapezoid: 25 }));
       expect(canvas).toBeInstanceOf(globalThis.OffscreenCanvas);
-      expect(canvas.width).toBeGreaterThan(0);
+      expect(canvas.width).toBe(100);
+      expect(canvas.height).toBe(100);
+    });
+
+    it('warps a one pixel layer without collapsing it', () => {
+      const params = makeParams(makeBitmap(1, 1), { width: 1, height: 1 });
+      const [canvas] = transform(params)(withArgs({ trapezoid: 50 }));
+
+      expect([canvas.width, canvas.height]).toEqual([1, 1]);
     });
   });
 
@@ -352,13 +357,16 @@ describe('transform tool', () => {
     it('throws when a rounded dimension collapses below one pixel', () => {
       const size = { width: 100, height: 100 };
       const args = withArgs({ resizeX: 0.2, resizeY: 100 });
-      const retained = transformToolArgsToAffine(args, size);
-      const bounds = getAffineBounds(retained!, size);
 
-      expect(bounds.width).toBeGreaterThan(0);
       expect(() => transform(makeParams(makeBitmap(size.width, size.height), size))(args)).toThrow(
         'Raster transform exceeds supported bounds'
       );
+    });
+
+    it('rejects a sub-pixel layer instead of rounding it up to one pixel', () => {
+      const params = makeParams(makeBitmap(1, 1), { width: 0.4, height: 0.4 });
+
+      expect(() => transform(params)(withArgs())).toThrow('Invalid raster transform dimensions or values');
     });
 
     it('rounds getAffineBounds identically for every non-degenerate raster size', () => {
@@ -459,9 +467,9 @@ describe('transform tool', () => {
   });
 
   describe('draw matrix parity with the retained affine path', () => {
-    it('pins the retained-path raster contract reached only by a direct imageProcessor call, not the live route', () => {
+    it('pins the retained-path raster contract reached only by a direct imageProcessor call, not the live route, because useLayer routes every trapezoid === 0 transform to the retained affine path', () => {
       const size = { width: 48, height: 36 };
-      const args = withArgs({ rotate: 90, resizeX: 100, resizeY: 100 });
+      const args = withArgs({ rotate: 90 });
       const retained = transformToolArgsToAffine(args, size)!;
       const bounds = getAffineBounds(retained, size);
       const params = makeParams(makeBitmap(size.width, size.height), size);
@@ -475,6 +483,32 @@ describe('transform tool', () => {
         multiplyAffineTransforms({ a: 1, b: 0, c: 0, d: 1, e: -bounds.x, f: -bounds.y }, retained)
       );
       expect([result[0].width, result[0].height]).toEqual([size.height, size.width]);
+    });
+
+    it('installs the skew, rotate, mirror and scale matrix at the exact analytic bounds', () => {
+      const size = { width: 60, height: 40 };
+      const args = withArgs({ rotate: 30, skewX: 5, skewY: 3, mirrorH: true, resizeX: 120, resizeY: 90 });
+      const params = makeParams(makeBitmap(size.width, size.height), size);
+
+      const context = destinationContextOf(transform(params)(args));
+
+      expect(context.ctmCalls).toHaveLength(1);
+      expect(context.ctmCalls[0].op).toBe('setTransform');
+      expect(context.ctmCalls[0].values.map((value) => Number(value.toFixed(6)))).toEqual([
+        -1.091724, -0.654464, -0.381809, 0.755839, 80.775794, 39.267826,
+      ]);
+    });
+
+    it('registers a rotate-only transform on the exact bounds, not on a rounded raster centre', () => {
+      const size = { width: 100, height: 100 };
+      const args = withArgs({ rotate: 45 });
+      const params = makeParams(makeBitmap(size.width, size.height), size);
+
+      const context = destinationContextOf(transform(params)(args));
+      const [, , , , e, f] = context.ctmCalls[0].values;
+
+      expect(e).toBeCloseTo(70.710678, 6);
+      expect(f).toBeCloseTo(0, 9);
     });
 
     it('composes the same draw matrix as transformToolArgsToAffine for skew, rotation, and scale', () => {
@@ -491,25 +525,7 @@ describe('transform tool', () => {
       );
     });
 
-    it('installs the retained matrix itself through setTransform instead of chained transform calls', () => {
-      const size = { width: 40, height: 25 };
-      const args = withArgs({ rotate: 12, skewX: 20, skewY: -8, resizeX: 175, resizeY: 60 });
-      const retained = transformToolArgsToAffine(args, size)!;
-      const params = makeParams(makeBitmap(size.width, size.height), size);
-
-      const context = destinationContextOf(transform(params)(args));
-
-      expect(context.ctmCalls.map((call) => call.op)).toEqual(['setTransform']);
-      const [call] = context.ctmCalls;
-      expect(call.values).toHaveLength(6);
-      const [, b, c, , e, f] = call.values;
-      expect(b).toBeCloseTo(retained.b, 12);
-      expect(c).toBeCloseTo(retained.c, 12);
-      expect(e).toBeCloseTo(retained.e - getAffineBounds(retained, size).x, 12);
-      expect(f).toBeCloseTo(retained.f - getAffineBounds(retained, size).y, 12);
-    });
-
-    it('matches the layer-renderer composition for a 90 degree rotation', () => {
+    it('produces the raster the layer renderer would place for a 90 degree rotation', () => {
       const size = { width: 30, height: 12 };
       const args = withArgs({ rotate: 90 });
       const retained = transformToolArgsToAffine(args, size)!;
@@ -609,13 +625,35 @@ describe('transform tool', () => {
       const params = makeParams(makeBitmap(size.width, size.height), size);
 
       const result = transform(params)(withArgs({ trapezoid: 50 }));
-      const written = assembledRaster(destinationContextOf(result), size.width, size.height);
+      const written = assembledRaster(result);
       const alphas = Array.from({ length: size.height }, (_unused, y) => pixelAt(written, 50, y)[3]);
+      const faintest = alphas.indexOf(Math.min(...alphas));
 
       expect(alphas[50]).toBe(255);
       expect(Math.min(...alphas)).toBeLessThan(255);
-      expect(alphas.indexOf(Math.min(...alphas))).toBeGreaterThan(60);
-      expect(alphas.indexOf(Math.min(...alphas))).toBeLessThan(75);
+      expect(Math.abs(faintest - 66.666667)).toBeLessThanOrEqual(1);
+      expect(faintest).not.toBe(50);
+    });
+
+    it.each([85, -85])('produces a complete raster at the slider limit of %i', (trapezoid) => {
+      sourcePixelAt = () => [10, 20, 30, 255];
+      const size = { width: 64, height: 64 };
+      const params = makeParams(makeBitmap(size.width, size.height), size);
+
+      const written = assembledRaster(transform(params)(withArgs({ trapezoid })));
+
+      for (let y = 0; y < size.height; y++) {
+        expect(pixelAt(written, 32, y)[3], `row ${y} collapsed`).toBe(255);
+      }
+    });
+
+    it('reports a taper inside the bound whose horizon still makes the quad singular', () => {
+      const size = { width: 100, height: 50 };
+      const params = makeParams(makeBitmap(size.width, size.height), size);
+
+      expect(() => transform(params)(withArgs({ trapezoid: 99.999999 }))).toThrow(
+        'Trapezoid geometry is not invertible'
+      );
     });
   });
 
@@ -633,7 +671,6 @@ describe('transform tool', () => {
       expect(sourceContext.drawImage).toHaveBeenCalledTimes(1);
       expect(destinationContext.createImageData).toHaveBeenCalledWith(size.width, 1);
       expect(destinationContext.createImageData).toHaveBeenCalledTimes(1);
-      expect(destinationContext.putImageData).toHaveBeenCalledTimes(size.height);
       expect(sourceContext.smoothing).toEqual({ enabled: true, quality: 'high' });
     });
 
@@ -663,8 +700,7 @@ describe('transform tool', () => {
       const size = { width: 40, height: 20 };
       const params = makeParams(makeBitmap(size.width, size.height), size);
 
-      const result = transform(params)(withArgs({ trapezoid: 50 }));
-      const written = assembledRaster(destinationContextOf(result), size.width, size.height);
+      const written = assembledRaster(transform(params)(withArgs({ trapezoid: 50 })));
 
       expect(pixelAt(written, 20, 0)).toEqual([10, 20, 30, 255]);
       expect(pixelAt(written, 20, 19)).toEqual([10, 20, 30, 255]);
@@ -672,6 +708,20 @@ describe('transform tool', () => {
       expect(pixelAt(written, 0, 0)[3]).toBeLessThan(255);
       expect(pixelAt(written, 0, 19)).toEqual([0, 0, 0, 0]);
       expect(pixelAt(written, 39, 19)).toEqual([0, 0, 0, 0]);
+    });
+
+    it('reads the source at the layer size on both paths, whatever the bitmap reports', () => {
+      const bitmap = makeBitmap(100, 100);
+      const size = { width: 50, height: 50 };
+      const params = makeParams(bitmap, size);
+
+      const affine = transform(params)(withArgs({ rotate: 20 }));
+      const trapezoid = transform(params)(withArgs({ trapezoid: 50 }));
+      const affineContext = sourceContextsOf(affine)[0] ?? destinationContextOf(affine);
+      const trapezoidContext = sourceContextsOf(trapezoid)[0];
+
+      expect(affineContext.drawImage).toHaveBeenCalledWith(bitmap, 0, 0, size.width, size.height);
+      expect(trapezoidContext.drawImage).toHaveBeenCalledWith(bitmap, 0, 0, size.width, size.height);
     });
 
     it('does not return a position patch when trapezoid keeps the same dimensions', () => {

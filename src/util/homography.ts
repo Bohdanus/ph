@@ -1,8 +1,8 @@
 import type { Point } from '../contexts/general-types.ts';
 
-export const HOMOGRAPHY_RELATIVE_EPSILON = 1e-12;
-export const HOMOGRAPHY_TOLERANCE = 1e-6;
-export const HOMOGRAPHY_CORRESPONDENCE_COUNT = 4;
+const HOMOGRAPHY_RELATIVE_EPSILON = 1e-12;
+const HOMOGRAPHY_TOLERANCE = 1e-6;
+const HOMOGRAPHY_CORRESPONDENCE_COUNT = 4;
 
 export type Homography = Readonly<{
   a: number;
@@ -50,10 +50,8 @@ export function homographyMagnitude(matrix: Homography): number {
   return Math.max(
     Math.abs(matrix.a),
     Math.abs(matrix.b),
-    Math.abs(matrix.c),
     Math.abs(matrix.d),
     Math.abs(matrix.e),
-    Math.abs(matrix.f),
     Math.abs(matrix.g),
     Math.abs(matrix.h),
     Math.abs(matrix.i)
@@ -73,11 +71,24 @@ export function applyHomography(matrix: Homography, point: Point): Point | null 
   return { x: derivatives.u, y: derivatives.v };
 }
 
-const DENOMINATOR_EPSILON = 1e-12;
+export function projectiveRowScale(matrix: Homography): number {
+  return HOMOGRAPHY_RELATIVE_EPSILON * Math.max(Math.abs(matrix.g), Math.abs(matrix.h), Math.abs(matrix.i));
+}
+
+export function projectiveDenominator(
+  matrix: Homography,
+  x: number,
+  y: number,
+  rowScale: number = projectiveRowScale(matrix)
+): number | null {
+  const denominator = matrix.g * x + matrix.h * y + matrix.i;
+  if (!Number.isFinite(denominator)) return null;
+  return Math.abs(denominator) > rowScale * Math.max(1, Math.abs(x), Math.abs(y)) ? denominator : null;
+}
 
 export function differentiateHomography(matrix: Homography, point: Point): HomographyDerivatives | null {
-  const denominator = matrix.g * point.x + matrix.h * point.y + matrix.i;
-  if (!Number.isFinite(denominator) || Math.abs(denominator) <= DENOMINATOR_EPSILON) return null;
+  const denominator = projectiveDenominator(matrix, point.x, point.y);
+  if (denominator === null) return null;
 
   const u = (matrix.a * point.x + matrix.b * point.y + matrix.c) / denominator;
   const v = (matrix.d * point.x + matrix.e * point.y + matrix.f) / denominator;

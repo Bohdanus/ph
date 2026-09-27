@@ -92,6 +92,18 @@ describe('homography', () => {
         expect(mapped!.y).toBeLessThanOrEqual(size.height);
       }
     });
+
+    it.each([
+      { width: 6928, height: 3464 },
+      { width: 8000, height: 6000 },
+    ])('solves the slider-limit taper for a $width x $height layer', (size) => {
+      for (const trapezoid of [-85, 85]) {
+        const matrix = solveHomography(rectCorners(size), getTrapezoidQuad(size, trapezoid));
+
+        expect(matrix).not.toBeNull();
+        expect(invertHomography(matrix!)).not.toBeNull();
+      }
+    });
   });
 
   describe('invertHomography', () => {
@@ -129,8 +141,9 @@ describe('homography', () => {
         const cross =
           (mappedTo.x - mappedFrom.x) * (midpoint.y - mappedFrom.y) -
           (mappedTo.y - mappedFrom.y) * (midpoint.x - mappedFrom.x);
+        const edgeLength = Math.hypot(mappedTo.x - mappedFrom.x, mappedTo.y - mappedFrom.y);
 
-        expect(Math.abs(cross)).toBeLessThan(1e-6);
+        expect(Math.abs(cross) / edgeLength).toBeLessThan(1e-9);
       }
     });
 
@@ -161,6 +174,16 @@ describe('homography', () => {
       expect(isInvertibleHomography(scaled)).toBe(true);
       expect(homographyDeterminant(singular)).toBe(0);
       expect(isInvertibleHomography(singular)).toBe(false);
+    });
+
+    it.each([1e2, 1e4, 1e6])('stays invertible under a pure translation of %g', (offset) => {
+      const translated: Homography = { a: 1, b: 0, c: offset, d: 0, e: 1, f: offset, g: 0, h: 0, i: 1 };
+      const inverse = invertHomography(translated);
+
+      expect(homographyDeterminant(translated)).toBe(1);
+      expect(isInvertibleHomography(translated)).toBe(true);
+      expect(inverse).not.toBeNull();
+      expectPointCloseTo(applyHomography(inverse!, { x: 0, y: 0 }), { x: -offset, y: -offset });
     });
   });
 

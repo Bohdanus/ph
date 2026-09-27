@@ -1,8 +1,8 @@
 import type { AffineTransform } from '../contexts/affine-transform.ts';
 import {
-  MAX_AFFINE_COORDINATE,
-  MAX_AFFINE_PIXELS,
   getAffineBounds,
+  isTrapezoidOnlyTransform,
+  rasterizeBounds,
   transformToolArgsToAffine,
 } from '../contexts/affine-transform.ts';
 import type { BitmapSource, Point, Pos, Size } from '../contexts/general-types.ts';
@@ -22,6 +22,7 @@ export type TransformToolArgs = {
 
   toolName: 'transform';
 };
+
 export function getTransformDrawMatrix(transform: AffineTransform, bounds: Pos): AffineTransform {
   return Object.freeze({
     a: transform.a,
@@ -63,23 +64,6 @@ function boundsOfPoints(points: readonly Point[]): Pos {
   return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
 }
 
-function rasterizeBounds(bounds: Pos): Size {
-  const width = Math.round(bounds.width);
-  const height = Math.round(bounds.height);
-  if (
-    !Number.isFinite(width) ||
-    !Number.isFinite(height) ||
-    width < 1 ||
-    height < 1 ||
-    width > MAX_AFFINE_COORDINATE ||
-    height > MAX_AFFINE_COORDINATE ||
-    width * height > MAX_AFFINE_PIXELS
-  ) {
-    throw new Error('Raster transform exceeds supported bounds');
-  }
-  return { width, height };
-}
-
 function renderAffine(bitmap: BitmapSource, size: Size, args: TransformToolArgs): ToolResult {
   const transform = transformToolArgsToAffine(args, size);
   if (!transform) throw new Error('Trapezoid cannot be combined with retained affine transforms');
@@ -100,23 +84,29 @@ function renderAffine(bitmap: BitmapSource, size: Size, args: TransformToolArgs)
   return [canvas, { width, height }];
 }
 
+function readSourcePixels(bitmap: BitmapSource, size: Size): ImageData {
+  const sourceCanvas = new OffscreenCanvas(size.width, size.height);
+  const context = sourceCanvas.getContext('2d')!;
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(bitmap, 0, 0, size.width, size.height);
+  return context.getImageData(0, 0, size.width, size.height);
+}
+
 function renderTrapezoid(bitmap: BitmapSource, size: Size, trapezoid: number): ToolResult {
   if (Math.abs(trapezoid) >= 100) throw new Error('Trapezoid taper must stay within 100 percent');
 
-  const quad = getTrapezoidQuad(size, trapezoid);
-  const { width, height } = rasterizeBounds(boundsOfPoints(quad));
+  const absoluteQuad = getTrapezoidQuad(size, trapezoid);
+  const bounds = boundsOfPoints(absoluteQuad);
+  const { width, height } = rasterizeBounds(bounds);
+  const quad = absoluteQuad.map((corner) => ({ x: corner.x - bounds.x, y: corner.y - bounds.y }));
 
   const forward = solveHomography(sourceRectCorners(size), quad);
   if (!forward) throw new Error('Trapezoid geometry is not invertible');
   const inverse = invertHomography(forward);
   if (!inverse) throw new Error('Trapezoid geometry is not invertible');
 
-  const sourceCanvas = new OffscreenCanvas(size.width, size.height);
-  const sourceContext = sourceCanvas.getContext('2d')!;
-  sourceContext.imageSmoothingEnabled = true;
-  sourceContext.imageSmoothingQuality = 'high';
-  sourceContext.drawImage(bitmap, 0, 0);
-  const sourceImage = sourceContext.getImageData(0, 0, size.width, size.height);
+  const sourceImage = readSourcePixels(bitmap, size);
 
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext('2d')!;
@@ -147,13 +137,6 @@ export const transform =
     ) {
       throw new Error('Invalid raster transform dimensions or values');
     }
-    if (
-      trapezoid !== 0 &&
-      (rotate !== 0 || mirrorH || mirrorV || skewX !== 0 || skewY !== 0 || resizeX !== 100 || resizeY !== 100)
-    ) {
-      throw new Error('Trapezoid cannot be combined with retained affine transforms');
-    }
-
     const args: TransformToolArgs = {
       rotate,
       mirrorH,
@@ -167,5 +150,8 @@ export const transform =
     };
 
     if (trapezoid === 0) return renderAffine(bitmap, size, args);
+    if (!isTrapezoidOnlyTransform(args)) {
+      throw new Error('Trapezoid cannot be combined with retained affine transforms');
+    }
     return renderTrapezoid(bitmap, size, trapezoid);
   };
