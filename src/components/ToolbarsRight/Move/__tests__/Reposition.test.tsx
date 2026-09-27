@@ -107,4 +107,10 @@ describe('Reposition toolbar', () => {
 
     expect(screen.getByText('Drag or resize on canvas')).toBeInTheDocument();
   });
+
+  it('publishes the hint test id the e2e spec resolves by', () => {
+    render(<Reposition />);
+
+    expect(screen.getByTestId('reposition-hint-text')).toHaveTextContent('Drag or resize on canvas');
+  });
 });

@@ -13,19 +13,18 @@ HiDPI macOS host; re-verify before acting on any rate quoted here.
 ## 1. Blocking now
 
 Nothing. The blocking gates are green: `lint:check`, `tsc -b` (all three
-projects), the app suite (173/173 files), and the e2e helper unit tests (692 pass,
+projects), the app suite (173/173 files), and the e2e helper unit tests (693 pass,
 2 expected-fail). Nothing in this section should block other work.
 
 ## 2. The e2e suite is red and cannot be made a gate yet
 
-4–6 of the 97 tests fail on the default headless run. Full detail, with
+2–4 of the 97 tests fail on the default headless run. Full detail, with
 measurements, in `OPEN_PROBLEMS.md`.
 
 | tests                                         | count | note                 |
 | --------------------------------------------- | ----- | -------------------- |
 | `cdp-helpers.spec.ts:220, 239`                | 2     | headless-only        |
 | `cdp-helpers.spec.ts:113 :129 :146 :163 :195` | 5     | headed-only          |
-| `levels.spec.ts:64, 109`                      | 2     | both modes           |
 | `sidebar-keyboard.spec.ts:77, 89`             | 0–2   | 4 of 5 runs headless |
 
 **Next actions, highest value first:**
@@ -37,24 +36,29 @@ measurements, in `OPEN_PROBLEMS.md`.
    the decoded image's own dimensions instead of `window.devicePixelRatio`, which is
    already how `screenshotBoundsToCss` and `screenshot-scale.ts` derive scale.
    Correcting the comment is worthwhile on its own even before the fix.
-2. **`getWorkspaceCanvas`** (`canvas-helpers.ts:173`, the `.or()` on `:174`). Needs
-   `data-testid="workspace-canvas"` on the workspace canvas in
-   `src/components/Main/Main.tsx` — **and** that alone is not enough: `.or()` is a
-   union, so adding the testid turns a silent wrong-element lookup into a strict-mode
-   violation. All three of the following are needed together:
-   - the testid in `src/` (the only change this suite would make to app code),
-   - `getWorkspaceCanvas` changed to express real priority (it is synchronous and
-     returns a `Locator`, so it cannot await; `.first()` is wrong because the
-     colour-picker preview canvas precedes `main` in the document),
-   - `resolveFakeLocator` (`canvas-helpers.fixtures.ts:181`) changed to stop
-     discarding all but the first match, plus the 5 pinning tests in
-     `canvas-interaction.unit.test.ts:26-51` updated.
-   - `src/` is currently untouched by the e2e commit, deliberately.
-3. **Flyout-close race** (`sidebar-keyboard.spec.ts:77, 89`). Enter closes the
+2. **Flyout-close race** (`sidebar-keyboard.spec.ts:77, 89`). Enter closes the
    flyout asynchronously and the assertion can still see it open. Undiagnosed.
    `verifyPrimaryTool` in the first test would distinguish "never closed" from
    "closed late" — establish that first, then add the missing readiness assertion
    rather than a timeout.
+
+**Done since the migration — `getWorkspaceCanvas` (previously item 2 here).** All
+three parts landed together, and the two `levels.spec.ts` failures it caused are
+green:
+
+- `data-testid="workspace-canvas"` is now published in `src/components/Main/Main.tsx`
+  on the primary `<canvas>`. This is the one app-source change the suite has made.
+- `getWorkspaceCanvas` is now `page.getByTestId('workspace-canvas')`. The
+  `testId.or(nth(1))` fallback was removed rather than repaired: `.or()` is a union,
+  so with the test id in place it resolved to 2 elements and every `boundingBox()`
+  raised a strict-mode violation. A single-selector locator cannot.
+- `resolveFakeLocator` is gone, replaced by `resolveFakeMatches`, which returns the
+  whole match list so a union can no longer read as a single-element hit. The 5
+  pins in `canvas-interaction.unit.test.ts:26` were rewritten and a sixth pins
+  `.or()` as a union.
+
+`data-testid="reposition-hint-text"` went in alongside it, replacing the two
+`getByText('Drag or resize on canvas')` lookups in `select-move.spec.ts`.
 
 ## 3. Pipeline work
 
@@ -137,14 +141,16 @@ specifics worth calling out:
 
 ## 6. Explicitly not attempted
 
-- **No app-source changes.** `src/` is untouched by the e2e commit, including the
-  one-line `data-testid` that the specs' helper says it expects. That was
-  deliberate: it is a one-line change to production code, and it is only half a fix
-  (see §2.2).
+- **One app-source change, made deliberately.** `data-testid="workspace-canvas"` in
+  `src/components/Main/Main.tsx` and `data-testid="reposition-hint-text"` in
+  `src/components/ToolbarsRight/Move/Reposition.tsx`, both landed with the helper
+  change they unblock (see §2). The e2e commit itself left `src/` untouched; that
+  is no longer true of the tree.
 - **No rewriting of the imported test logic** beyond the mechanical minimum:
   type-only imports required by `verbatimModuleSyntax`, genuinely unused imports
   removed, and one `cause` added to satisfy `preserve-caught-error`. Behaviour is
-  unchanged.
+  unchanged — except for the `getWorkspaceCanvas` selector, which is a deliberate
+  behaviour change recorded in §2.
 - **No baseline regeneration.** The 8 visual-regression specs pass against the
   committed baselines, so there was no need, and rewriting committed image data was
   not authorized.

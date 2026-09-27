@@ -4,10 +4,13 @@ Not a changelog. Each entry is an unfixed defect, with the evidence that proves
 it. Every line number was re-read from the working tree after the suite was
 moved into this repository.
 
-Gates: `npm run test:e2e:unit` 692 passed / 2 expected-fail (10 files),
-`npm run tsc` clean, `npm run lint:check` clean, 97 e2e tests collected — on the
-default headless run: 90 pass, 5 fail, 2 skipped (headed: 88 pass, 7 fail,
-2 skipped). The headless totals move by ±1 because of the keyboard race below.
+Gates: `npm run test:e2e:unit` 693 passed / 2 expected-fail (10 files),
+`npm run tsc` clean, `npm run lint:check` clean (0 errors, 19 pre-existing
+warnings), 97 e2e tests collected — on the default headless run: 92 pass, 3 fail,
+2 skipped. The headless totals move by 0–2 because of the keyboard race below,
+which fired on the run quoted here. Headed was not re-measured by the test-id
+change; the previously measured headed failing set is the 5 CDP specs, which that
+change does not touch.
 
 The app's own gates are green: `npm run tsc` exits 0 and `npm run test` reports
 173/173 files passing (3811 pass, 42 expected-fail).
@@ -27,17 +30,16 @@ breakage or unmaintainable. **P3** = cosmetic / robustness.
 **Run the suite headless** — `npm run test:e2e`. That is the default, and the
 reason is the first entry below.
 
-On the default (headless) configuration, 4–6 of the 97 tests fail, depending on
+On the default (headless) configuration, 2–4 of the 97 tests fail, depending on
 whether the keyboard race below fires:
 
 | tests                                                     | count | mode                                                       |
 | --------------------------------------------------------- | ----- | ---------------------------------------------------------- |
 | `e2e/helpers/cdp-helpers.spec.ts:220, 239`                | 2     | headless only                                              |
 | `e2e/helpers/cdp-helpers.spec.ts:113, 129, 146, 163, 195` | 5     | **headed only**                                            |
-| `e2e/levels.spec.ts:64, 109`                              | 2     | both                                                       |
 | `e2e/sidebar-keyboard.spec.ts:77, 89`                     | 0–2   | intermittent; 4 of 5 runs headless, 0 of 2 observed headed |
 
-A headed run fails 7; a headless run fails 5 in the typical run. The two CDP groups
+A headed run fails 5 or 7; a headless run fails 2 or 3 in a typical run. The two CDP groups
 are disjoint and each mode's failing set was reproduced identically across repeats.
 
 All of these were introduced with the specs and are independent of how they were
@@ -139,89 +141,31 @@ scale from the decoded dimensions, so this also makes the specs consistent with 
 rest of the suite. The helper's comment at `cdp-helpers.ts:35-40` needs correcting
 either way.
 
-### P1 — 2 Levels specs resolve the wrong canvas
+## Fixed since the suite moved into this repository
 
-`e2e/levels.spec.ts:96` and `:137` (`changes red line via brightness` / `via contrast`)
+- **The workspace canvas was resolved by document index** (was P1; it broke
+  `levels.spec.ts:64, 109` in both browser modes). `data-testid="workspace-canvas"`
+  is now published on the primary `<canvas>` in `src/components/Main/Main.tsx`, and
+  `getWorkspaceCanvas` is that single selector. Both specs pass, measured headless.
+  There is deliberately no positional fallback: a document index lands on the Draw
+  toolbar's 96x48 preview canvas, or on a `display: none` overlay once selecting
+  Levels unmounts it, which is what made `boundingBox()` null. The helper's comment
+  carries that reasoning.
+- **`.or()` is a union, not a priority** (was P1). Publishing the test id alone did
+  not fix the specs - `.or()` returns every element matched by _either_ side, so
+  `getByTestId(...).or(locator('canvas').nth(1))` resolved to 2 elements and every
+  `boundingBox()` raised a strict-mode violation. A single-selector locator matches
+  at most one element, which is why the test id and the helper could ship as one
+  change.
+- **The locator test double collapsed the union** (was P2). `resolveFakeLocator` took
+  `?.[0]`, so a correctly built union read as a clean single-element hit and the
+  intended-priority pins passed against semantics Playwright does not provide - which
+  is how the defect above survived a 694-test suite. It is replaced by
+  `resolveFakeMatches`, which returns the whole match list; the five pins were
+  rewritten to the real contract and a sixth pins `.or()` as a union.
 
-```ts
-const adjustedBox = await canvas.boundingBox();
-expect(adjustedBox, 'Canvas should have visible coordinates after opening Levels').not.toBeNull();
-```
-
-`getWorkspaceCanvas` (`e2e/helpers/canvas-helpers.ts:174`) is:
-
-```ts
-return page.getByTestId('workspace-canvas').or(page.locator('canvas').nth(1));
-```
-
-`data-testid="workspace-canvas"` **does not exist anywhere in `src/`** — the
-comment above the helper describes an app contract that was never implemented. So
-the locator always falls through to `canvas.nth(1)`, i.e. a _document index_.
-That index is not stable. Measured across the same flow:
-
-| stage                          | canvases in document                 | `.nth(1)` resolves to        |
-| ------------------------------ | ------------------------------------ | ---------------------------- |
-| after selecting Draw           | 96x48 preview, 974x840, 974x840, 0x0 | the 974x840 workspace canvas |
-| after opening the color flyout | unchanged                            | the 974x840 workspace canvas |
-| after selecting Levels         | 974x840, 0x0, 0x0                    | a **hidden 0x0** canvas      |
-
-Opening Levels unmounts the tool-preview canvas, which shifts every later canvas
-down one index, and `.nth(1)` then lands on a `display: none` overlay whose
-`boundingBox()` is `null`. Both specs fail there.
-
-The same shift is why the two failures look like an app-layout bug and are not:
-the canvas under test never moved.
-
-**Mode-independent.** Verified failing in both headed and headless runs, 2/2 each,
-so this is a real defect and not an artifact of the browser mode described above.
-
-Fix: publish `data-testid="workspace-canvas"` on the workspace canvas in
-`src/components/Main/Main.tsx` (the `<canvas ref={canvasRef}>`, the first of the
-three), and see the entry below for why that alone is not sufficient.
-
-### P1 — `.or()` is a union, not a priority
-
-`e2e/helpers/canvas-helpers.ts:174`
-
-The helper's own comment reads "Primary: `data-testid="workspace-canvas"` /
-Fallback: second canvas element". Playwright's `.or()` does not implement that
-priority — it returns every element matched by _either_ side. Adding the missing
-testid therefore does not fix the spec; it converts a silent wrong-element
-lookup into a hard failure. Verified by adding the testid and re-running:
-
-```
-Error: locator.boundingBox: Error: strict mode violation:
-getByTestId('workspace-canvas').or(locator('canvas').nth(1)) resolved to 2 elements:
-  1) <canvas ... data-testid="workspace-canvas" ...>
-  2) <canvas ... class="... absolute pointer-events-none"></canvas>
-```
-
-That change was reverted; `src/` is untouched. Any fix has to express real
-priority. `getWorkspaceCanvas` is synchronous and returns a `Locator`, so it
-cannot await to choose, and `.first()` is not a substitute — the color-picker
-preview canvas precedes `main` in the document, so `.first()` would select the
-96x48 preview. The workable options are to drop the fallback and rely on the
-testid alone, or to make the helper async and resolve the testid first.
-
-### P2 — the test double collapses the union, hiding the above
-
-`e2e/helpers/__tests__/canvas-interaction.unit.test.ts:26`, and `:37` in particular
-
-Five tests pin the intended priority semantics, including
-`'prefers the test-id canvas over the positional fallback'`, which builds
-`[canvas, canvas, canvas('workspace-canvas')]` and expects the third element.
-Real Playwright would return all three matches. They pass because the double
-_does_ model `.or()` as a union — `canvas-helpers.fixtures.ts:164-167` returns
-`[...candidates(), ...otherCandidates()]` — but the assertion helper
-`resolveFakeLocator` (`:181`) then takes `?.[0]`, silently discarding every match
-after the first. The union is built correctly and then thrown away by the reader.
-
-That is why the bug survived a 694-test suite: the specs assert the behaviour the
-helper _intends_ rather than the behaviour Playwright _provides_, and the reader
-that would have exposed the difference returns a single element. Any fix to
-`getWorkspaceCanvas` must change `resolveFakeLocator` (or assert on the full
-match list) first, or the unit tests will keep passing against the wrong
-semantics.
+`data-testid="reposition-hint-text"` was published on the Move hint in the same change,
+replacing two `getByText('Drag or resize on canvas')` lookups in `select-move.spec.ts`.
 
 ---
 
@@ -547,15 +491,16 @@ single-tool groups`.
 - The CDP failing set is deterministic per browser mode and the two modes' sets are
   disjoint: headed fails `:113 :129 :146 :163 :195`, headless fails `:220 :239`.
   Reproduced identically across repeats.
-- `levels.spec.ts:64` and `:109` fail in both modes, 2/2 each, so the
-  `getWorkspaceCanvas` index shift is a real defect rather than a mode artifact.
+- `levels.spec.ts:64` and `:109` used to fail in both modes, 2/2 each, which is
+  what established the `getWorkspaceCanvas` index shift as a real defect rather
+  than a mode artifact. Both pass now that the canvas is found by test id.
 
 **Not verified:**
 
 - Whether the CDP failures reproduce on a 1x host. The multiplier tracks the browser
   mode, and CI's headless Linux runner is a third configuration that has not been
   observed directly — only inferred from the local headed/headless split. This, plus
-  the open Levels and flyout defects, is why the `e2e` CI job is `continue-on-error`:
+  the open flyout defect, is why the `e2e` CI job is `continue-on-error`:
   a blocking job would be permanently red, and filtering the known failures by title
   would hide new ones.
 - The headed failure rate of the keyboard flyout race. 0 failures in 2 observed

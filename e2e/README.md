@@ -4,7 +4,7 @@ Playwright end-to-end specs for this application, plus Vitest unit tests for the
 spec helpers themselves. The application under test is `src/` in this repository.
 
 - [`OPEN_PROBLEMS.md`](OPEN_PROBLEMS.md) — defects in the test code, with evidence.
-  4–6 of the 97 tests fail on the default headless run.
+  2–4 of the 97 tests fail on the default headless run.
 - [`MIGRATION-TODO.md`](MIGRATION-TODO.md) — what the move into this repository left
   undone: open fixes, pipeline gaps, and carried-over debt.
 
@@ -44,13 +44,15 @@ that headed mode also changes which tests fail, independently of any human:
 | `cdp-helpers.spec.ts:113 :129 :146 :163 :195` | 5 fail | pass     |
 | `cdp-helpers.spec.ts:220, 239`                | pass   | 2 fail   |
 
-So a headed run fails 7 and headless fails 5, on disjoint subsets, reproducibly. If
+So a headed run fails 5 and headless fails 2, on disjoint subsets, reproducibly. If
 you run headed, expect those 5 CDP failures — they are not a regression, and they
-are not what CI will report.
+are not what CI will report. (Headed was not re-run after the workspace-canvas test
+ID landed; the 2 mode-independent `levels.spec.ts` failures it also counted are fixed,
+which is where the reduction comes from.)
 
-**What headless does not fix:** the real open defects below survive it.
+**What headless does not fix:** the real open defect below survives it.
 `sidebar-keyboard.spec.ts:77` and `:89` race on "flyout closed after Enter" and fail
-in 4 of 5 **headless** runs, and the 2 `levels.spec.ts` failures are mode-independent.
+in 4 of 5 **headless** runs.
 Headless removes a failure class; it does not make the suite green.
 
 Headed runs are for **looking at**, not for gating on. Use `npm run test:e2e:headed`
@@ -249,19 +251,19 @@ committed pixels can never be rewritten by line-ending normalisation.
 | Suite             | Command                 | Result                                      |
 | ----------------- | ----------------------- | ------------------------------------------- |
 | App unit tests    | `npm run test`          | 3811 pass + 42 expected-fail, 173/173 files |
-| Helper unit tests | `npm run test:e2e:unit` | 692 pass, 2 expected-fail (10 files)        |
-| E2E tests         | `npm run test:e2e`      | 90 pass, 5 fail, 2 skipped (21 files)       |
+| Helper unit tests | `npm run test:e2e:unit` | 693 pass, 2 expected-fail (10 files)        |
+| E2E tests         | `npm run test:e2e`      | 92 pass, 3 fail, 2 skipped (21 files)       |
 
-**4–6 of the 97 e2e tests fail on the default headless run** (this HiDPI host);
-the spread is the keyboard race below. A headed run fails 7, on a different set.
-All are pre-existing defects in the tests, not integration breakage, and each is
-written up with evidence in `OPEN_PROBLEMS.md`:
+**2–4 of the 97 e2e tests fail on the default headless run** (this HiDPI host);
+the spread is the keyboard race below, which fired on the run quoted above. A
+headed run fails the 5 CDP specs, on a different set. All are pre-existing
+defects in the tests, not integration breakage, and each is written up with
+evidence in `OPEN_PROBLEMS.md`:
 
 | failing tests                                 | count | mode                 |
 | --------------------------------------------- | ----- | -------------------- |
 | `cdp-helpers.spec.ts:220, 239`                | 2     | headless only        |
 | `cdp-helpers.spec.ts:113 :129 :146 :163 :195` | 5     | **headed only**      |
-| `levels.spec.ts:64, 109`                      | 2     | both                 |
 | `sidebar-keyboard.spec.ts:77, 89`             | 0–2   | 4 of 5 runs headless |
 
 - The CDP group derives its expected capture size from `window.devicePixelRatio`,
@@ -269,11 +271,14 @@ written up with evidence in `OPEN_PROBLEMS.md`:
   emulated ratio — forcing the emulation to match the host changes which tests fail
   instead of fixing them. Which subset fails is deterministic per mode. See
   `OPEN_PROBLEMS.md` for the measurements and the fix direction.
-- `levels.spec.ts` — `getWorkspaceCanvas` resolves the workspace canvas by document
-  index, and the index shifts when opening the Levels panel unmounts the
-  tool-preview canvas. Verified failing in both modes, 2/2 each.
 - `sidebar-keyboard.spec.ts:77, 89` — a real race on "flyout closed after Enter",
   failing in 4 of 5 headless runs. **Not fixed by running headless.**
+
+The workspace canvas is located by `data-testid="workspace-canvas"`, published on the
+primary `<canvas>` in `src/components/Main/Main.tsx`. There is no positional fallback:
+a document index put the locator on the Draw preview canvas, or on a hidden overlay
+once a tool change unmounted it. `getWorkspaceCanvas` is a single-selector locator
+precisely so it can only ever match one element.
 
 2 tests are declared `test.skip`: the Photopea PSD round-trip (needs the external
 photopea.com) and one right-click flyout case.
@@ -350,7 +355,7 @@ unchanged by this work apart from `tsc -b` now also building `tsconfig.e2e.json`
 
 `e2e` installs Chrome and runs the browser tests against the dev server started by
 `playwright.config.ts`. It is marked `continue-on-error: true` and is
-**informational only**, because 5 of the 97 tests fail for reasons documented in
+**informational only**, because 2–4 of the 97 tests fail for reasons documented in
 `OPEN_PROBLEMS.md`, and because the CDP failure tracks the browser mode in a way not
 yet observed on a Linux runner. It runs the full suite with no `--grep-invert`, so
 the job reports the true state including the known failures rather than a filtered

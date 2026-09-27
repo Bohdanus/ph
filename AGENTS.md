@@ -26,8 +26,8 @@ Do not run, and do not reach for a workaround that involves:
 `kilo.jsonc` denies most of these at the permission layer, and
 `e2e/global-setup.ts` refuses the rest inside Playwright with a message saying what
 to run instead. Both exist so this rule survives a model that has forgotten it. Do
-not "fix" a failure by flipping the mode; a headed run fails 7 of the 97 tests
-against headless's 5, on a disjoint set.
+not "fix" a failure by flipping the mode; a headed run fails 5 of the 97 tests
+against headless's 2–4, on a disjoint set.
 
 If something genuinely only reproduces visually, that is the operator's call. Ask
 them to run `npm run test:e2e:headed` themselves.
@@ -59,7 +59,7 @@ Playwright already writes what you need. Do not open a viewer.
 
 ## Known failures
 
-On the default headless run, 5 of the 97 e2e tests fail and 2 are skipped. They are
+On the default headless run, 2–4 of the 97 e2e tests fail and 2 are skipped. They are
 documented defects, not regressions, and several are **pinned** by a unit test that
 asserts the current broken behaviour on purpose - a pin is a tripwire that fails the
 moment the defect is fixed, so a fix must remove the pin in the same change.
@@ -67,7 +67,6 @@ moment the defect is fixed, so a fix must remove the pin in the same change.
 | tests                                      | count |
 | ------------------------------------------ | ----- |
 | `e2e/helpers/cdp-helpers.spec.ts:220, 239` | 2     |
-| `e2e/levels.spec.ts:64, 109`               | 2     |
 | `e2e/sidebar-keyboard.spec.ts:77, 89`      | 0-2   |
 
 Read `e2e/OPEN_PROBLEMS.md` before investigating any of them, and read

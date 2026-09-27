@@ -154,7 +154,9 @@ const locatorCandidates = new WeakMap<Locator, () => FakeElement[]>();
 
 /**
  * Minimal locator model over a fixed element list: `getByTestId`/`locator` filter,
- * `nth` selects one candidate, `or` appends the other locator's candidates after its own.
+ * `nth` selects one candidate, `or` returns the UNION of both sides rather than a
+ * priority. `or` is modelled here only so a test can pin that union; no helper
+ * should reach for it to mean "prefer".
  */
 function fakeLocator(candidates: () => FakeElement[]): Locator {
   const double: Partial<Locator> = {
@@ -178,6 +180,17 @@ export function createFakePage(dom: FakeElement[]): Page {
   });
 }
 
-export function resolveFakeLocator(locator: Locator): FakeElement | undefined {
-  return locatorCandidates.get(locator)?.()[0];
+/**
+ * Every element the locator matches, in the double's resolution order.
+ *
+ * This returns the whole list on purpose. The reader that preceded it took `?.[0]`,
+ * which built a correct union and then discarded every match after the first - so a
+ * locator resolving to 2 elements read as a clean single-element hit and no test
+ * could tell a union from a priority. Assert on the list, not on its head.
+ *
+ * `or` concatenates the two sides where real Playwright document-orders them, so do
+ * not read an `or` result's order as Playwright's.
+ */
+export function resolveFakeMatches(locator: Locator): FakeElement[] {
+  return locatorCandidates.get(locator)?.() ?? [];
 }

@@ -70,6 +70,12 @@ describe('Main', () => {
     expect(screen.getByTestId('main-blank-image-button')).toBeInTheDocument();
   });
 
+  it('publishes the workspace canvas test id the e2e helper resolves by', () => {
+    render(<Main />);
+
+    expect(screen.getByTestId('workspace-canvas')).toBeInTheDocument();
+  });
+
   it('opens a dropped image file', async () => {
     const file = new File(['image'], 'photo.png', { type: 'image/png' });
     const loadDocumentFile = await import('../../../contexts/image-load-save-utils.ts');

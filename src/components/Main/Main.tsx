@@ -171,7 +171,11 @@ const Main = () => {
             }
           }
         >
-          <canvas ref={canvasRef} className="h-full w-full object-contain pointer-events-none" />
+          <canvas
+            ref={canvasRef}
+            data-testid="workspace-canvas"
+            className="h-full w-full object-contain pointer-events-none"
+          />
         </div>
         <canvas
           ref={toolOverlayRef}

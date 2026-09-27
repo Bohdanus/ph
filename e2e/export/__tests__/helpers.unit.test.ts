@@ -583,11 +583,9 @@ describe('Export Helpers', () => {
     it('prepares the download directory, strokes the canvas and returns the source data url', async () => {
       const box: Box = { x: 64, y: 48, width: 512, height: 384 };
       const canvas = createLocatorMock({ boundingBox: vi.fn().mockResolvedValue(box) });
-      const cssCanvas = createLocatorMock();
       const drawTool = createLocatorMock();
       const { surface, page } = createPageMock({
         getByTestId: byKey({ 'workspace-canvas': canvas, 'tool-button-draw': drawTool }, canvas),
-        locator: byKey({ canvas: cssCanvas }, canvas),
       });
 
       const result = await setupExportTest(page, createTestInfoMock());
@@ -595,9 +593,11 @@ describe('Export Helpers', () => {
       expect(surface.goto).toHaveBeenCalledWith('/', { waitUntil: 'domcontentloaded' });
       expect(vi.mocked(rm)).toHaveBeenCalledWith(DOWNLOAD_DIRECTORY, { recursive: true, force: true });
       expect(vi.mocked(mkdir)).toHaveBeenCalledWith(DOWNLOAD_DIRECTORY, { recursive: true });
-      expect(surface.locator).toHaveBeenCalledWith('canvas');
-      expect(cssCanvas.nth).toHaveBeenCalledWith(1);
-      expect(canvas.or).toHaveBeenCalledWith(cssCanvas);
+      // The workspace canvas is found by test id only. A positional fallback would put
+      // this locator on the Draw preview canvas or a hidden overlay depending on which
+      // tool is active, so there is deliberately no `locator('canvas')` call here.
+      expect(surface.getByTestId).toHaveBeenCalledWith('workspace-canvas');
+      expect(surface.locator).not.toHaveBeenCalled();
       expect(mocks.mockExpect).toHaveBeenCalledWith(canvas);
       expect(drawTool.click).toHaveBeenCalled();
       expect(surface.mouse.move.mock.calls).toEqual([

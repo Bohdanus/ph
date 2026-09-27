@@ -18,35 +18,71 @@ import {
   createTestInfoMock,
   createFakePage,
   makeOutputDir,
-  resolveFakeLocator,
+  resolveFakeMatches,
 } from './canvas-helpers.fixtures';
 
 const BOX: BoundingBox = { x: 100, y: 100, width: 200, height: 200 };
 
 describe('getWorkspaceCanvas', () => {
-  it('resolves the canvas carrying the workspace test id', () => {
-    const dom = [canvasElement('color-picker'), canvasElement('workspace-canvas'), canvasElement()];
-    expect(resolveFakeLocator(getWorkspaceCanvas(createFakePage(dom)))).toBe(dom[1]);
+  it('resolves to the single canvas carrying the workspace test id', () => {
+    // The Draw toolbar mounts a 96x48 preview canvas ahead of the workspace, so the
+    // test id has to carry the resolution - a document index would land on the preview.
+    const dom = [canvasElement(), canvasElement('workspace-canvas'), canvasElement()];
+    expect(resolveFakeMatches(getWorkspaceCanvas(createFakePage(dom)))).toEqual([dom[1]]);
   });
 
-  it('falls back to the second canvas when nothing carries the test id', () => {
+  it('resolves to nothing when the app does not publish the test id', () => {
+    // The app contract is a hard dependency now: no fallback, so an unpublished test
+    // id has to fail here rather than silently resolve to some other canvas.
     const dom = [canvasElement(), canvasElement(), canvasElement()];
-    expect(resolveFakeLocator(getWorkspaceCanvas(createFakePage(dom)))).toBe(dom[1]);
+    expect(resolveFakeMatches(getWorkspaceCanvas(createFakePage(dom)))).toEqual([]);
   });
 
-  it('prefers the test-id canvas over the positional fallback', () => {
+  it('matches one element, so strict mode cannot fire', () => {
+    // The regression that made the earlier `testId.or(nth(1))` attempt fail: once the
+    // test id existed, the union matched the workspace canvas AND the fallback, and
+    // every boundingBox() raised "resolved to 2 elements". A single-selector locator
+    // cannot produce that.
+    const dom = [canvasElement(), canvasElement('workspace-canvas'), canvasElement()];
+    const matches = resolveFakeMatches(getWorkspaceCanvas(createFakePage(dom)));
+    expect(matches).toHaveLength(1);
+  });
+
+  it('is unaffected by canvases appearing or disappearing elsewhere in the document', () => {
+    // Opening a different tool unmounts the Draw preview canvas, which is what shifted
+    // the old positional fallback onto a hidden overlay. Resolution is by identity, so
+    // the same element is matched before and after the DOM around it changes.
+    const before = [canvasElement(), canvasElement('workspace-canvas'), canvasElement()];
+    const after = [canvasElement('workspace-canvas'), canvasElement(), canvasElement()];
+    expect(resolveFakeMatches(getWorkspaceCanvas(createFakePage(before)))).toEqual(
+      resolveFakeMatches(getWorkspaceCanvas(createFakePage(after)))
+    );
+  });
+
+  it('ignores a non-canvas element in the document', () => {
+    // The locator keys off the test id, not the tag, so a sibling without the id is
+    // not a candidate. A non-canvas element that *did* publish the id would be a
+    // second match and trip strict mode - that is the app's contract to keep.
+    const dom = [{ selector: 'div' }, canvasElement('workspace-canvas')];
+    expect(resolveFakeMatches(getWorkspaceCanvas(createFakePage(dom)))).toEqual([dom[1]]);
+  });
+});
+
+describe('Locator.or', () => {
+  it('returns the union of both sides, not a priority', () => {
+    // Pinned so the reason `getWorkspaceCanvas` cannot use `.or()` stays executable.
+    // A reader that takes the first match would hide this and make a union look like
+    // a preference, which is the mistake the helper already made once.
+    //
+    // Membership, not order: the double concatenates the two sides, whereas real
+    // Playwright returns the union in document order. Asserting the order here would
+    // pin the double's behaviour and call it Playwright's.
     const dom = [canvasElement(), canvasElement(), canvasElement('workspace-canvas')];
-    expect(resolveFakeLocator(getWorkspaceCanvas(createFakePage(dom)))).toBe(dom[2]);
-  });
-
-  it('uses the fallback when the test-id canvas is the first of several', () => {
-    const dom = [canvasElement('workspace-canvas'), canvasElement(), canvasElement()];
-    expect(resolveFakeLocator(getWorkspaceCanvas(createFakePage(dom)))).toBe(dom[0]);
-  });
-
-  it('resolves to nothing when neither selector matches', () => {
-    const dom = [{ selector: 'div' }];
-    expect(resolveFakeLocator(getWorkspaceCanvas(createFakePage(dom)))).toBeUndefined();
+    const page = createFakePage(dom);
+    const union = page.getByTestId('workspace-canvas').or(page.locator('canvas').nth(1));
+    const matches = resolveFakeMatches(union);
+    expect(matches).toHaveLength(2);
+    expect(matches).toEqual(expect.arrayContaining([dom[1], dom[2]]));
   });
 });
 

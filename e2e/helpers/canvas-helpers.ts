@@ -166,12 +166,20 @@ export async function loadImageData(screenshot: Buffer): Promise<ImageDataResult
 }
 
 /**
- * Returns the workspace canvas locator with fallback selectors.
- * Primary: data-testid="workspace-canvas"
- * Fallback: second canvas element (nth(1)) - first is usually the color picker canvas
+ * Returns the workspace canvas locator.
+ *
+ * `data-testid="workspace-canvas"` is the only selector. An earlier version paired it
+ * with `page.locator('canvas').nth(1)` via `.or()`, which was never a priority: `.or()`
+ * returns the union of both sides, so as soon as the test id existed the locator
+ * resolved to 2 elements and every `boundingBox()` call raised a strict mode
+ * violation. The fallback was a document index anyway, and it was a wrong one - the
+ * Draw toolbar mounts a preview canvas ahead of the workspace, and unmounting it when
+ * another tool is selected shifted the index onto a hidden overlay.
+ *
+ * The app publishes the test id, so the fallback has no remaining job.
  */
 export function getWorkspaceCanvas(page: Page): Locator {
-  return page.getByTestId('workspace-canvas').or(page.locator('canvas').nth(1));
+  return page.getByTestId('workspace-canvas');
 }
 
 export async function takeLineScreenshot(

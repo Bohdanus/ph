@@ -45,9 +45,7 @@ test.describe('Select & Move', () => {
     // Select Move Tool (reposition)
     await clickToolButton(page, 'reposition');
     // Verify the reposition toolbox is visible
-    // Migrating to getByTestId('reposition-hint-text') is blocked: Reposition.tsx in the app
-    // repo renders this hint with no data-testid, id, or role to anchor on.
-    await expect(page.getByText('Drag or resize on canvas')).toBeVisible();
+    await expect(page.getByTestId('reposition-hint-text')).toBeVisible();
 
     await page.mouse.move(box.x + 250, box.y + 150);
     await page.mouse.down();
@@ -76,7 +74,7 @@ test.describe('Select & Move', () => {
     // Select Move Tool (reposition)
     await clickToolButton(page, 'reposition');
     // Verify the reposition toolbox is visible
-    await expect(page.getByText('Drag or resize on canvas')).toBeVisible();
+    await expect(page.getByTestId('reposition-hint-text')).toBeVisible();
 
     await page.mouse.move(box.x + 250, box.y + 150);
     await page.mouse.down();
