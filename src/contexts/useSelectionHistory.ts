@@ -37,9 +37,7 @@ type SelectionCommitUpdate = {
  * routed here no longer dispatches the raw action, so the store's post-state is
  * whatever this function returns — and that is also precisely what the history
  * entry records as `nextSelectionState`. History and live state therefore
- * cannot disagree with each other, which is the property that matters; the raw
- * arms keep their own derivation for the polygon and lasso gestures, which are
- * a later slice.
+ * cannot disagree with each other, which is the property that matters.
  */
 function committedSelectionUpdate(
   mode: SelectionCommitMode,
@@ -177,12 +175,11 @@ export function appendSelectionClear({
  *    action with no `durableEntry`, which leaves the durable state to the store's
  *    whole-timeline reconversion — the same path a pre-existing action takes.
  *
- * Scope note: the Clear/Deselect *controls* and the two creating gestures below
- * (magic wand, rectangle) are routed here. The polygon, freehand and feathered
- * magnetic lasso gesture paths still dispatch the raw action, because those
- * gestures are a later slice of the same migration. The tool switch in `goToTool`
- * is routed here too, through `appendSelectionClear` rather than through this
- * hook, because `useApp` is called outside a component render.
+ * Scope note: every gesture that ends in a committed selection is routed here —
+ * the Clear/Deselect controls, the magic wand, the rectangle, and the polygon and
+ * feathered magnetic lasso. The tool switch in `goToTool` is routed through
+ * `appendSelectionClear` rather than through this hook, because `useApp` is
+ * called outside a component render.
  */
 export const useSelectionHistory = () => {
   const [

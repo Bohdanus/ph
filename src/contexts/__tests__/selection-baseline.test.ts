@@ -153,13 +153,25 @@ describe('deriveSelectionBaseline', () => {
     expect(deriveSelectionBaseline(history)).toEqual({ selections: [], activeSelectionId: null });
   });
 
-  it('looks the supplying selection action up across the whole timeline, not up to a cursor', () => {
-    // A selection created by a gesture writes no history entry, so the only
-    // record that it existed is the `previousSelectionState` of whatever cleared
-    // it later. Bounding the lookup at a replay target would make undoing a
-    // tool-switch deselect a silent visual no-op, so this pins the unbounded scan
-    // for the helper itself, for legacy replay, and for the durable conversion
-    // together: they all seed from an entry the cursor has not reached.
+  it('passes the whole timeline to the baseline lookup, and only the replay assertion sits at a cursor', () => {
+    // The clear entry that supplies the selection is at index 3 and the replay
+    // cursor is 1, so all three assertions below read a supplying entry the
+    // cursor has not reached. Which of them could detect a bound on that lookup
+    // — the change HANDOFF item 31 proposes making it actionable — is not the
+    // same thing:
+    //
+    // - `deriveSelectionBaseline(history)` takes the timeline and nothing else
+    //   (`selection-baseline.ts:56`), and so does `convert`, because
+    //   `legacyHistoryToDurable` hands its own `history` argument straight
+    //   through (`history-adapter.ts:465`). Neither call site has a cursor to
+    //   pass, so neither can fail by being bounded at a replay target: bounding
+    //   the lookup means changing those signatures, and these two assertions are
+    //   tripwires on the signatures, not on cursor behaviour.
+    // - `replayHistory(history, 1, …)` is the only cursor-sensitive call here. It
+    //   seeds from the FULL timeline (`history-replay.ts:68`) and then replays
+    //   entries 0 and 1, so a lookup bounded at the target would seed an empty
+    //   baseline and `replayed.selections` below would fail. That pair of
+    //   assertions is the only part of this test a bound can break.
     const previous = outOfHistorySelection('restored');
     const history = timelineWithOutOfHistorySelection(previous);
     const cursorBeforeTheClear = 1;

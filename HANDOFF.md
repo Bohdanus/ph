@@ -959,14 +959,24 @@ re-deriving it has removed a user-visible capability, not corrected a pin.
 Both consumers take the timeline wholesale, so the bound has to reach `deriveSelectionBaseline` (add a
 cursor argument) and be threaded through `history-replay.ts:68` and `history-adapter.ts:465`
 together — bounding one and not the other re-opens the parity divergence that `selection-baseline.ts`
-exists to close. The doc comment above `deriveSelectionBaseline` (`selection-baseline.ts:48-55`)
-states the old rationale — "the first non-disabled `SELECTION_ACTION` entry's `previousSelectionState`
-is the only record that the selection ever existed" — and is false once the bound lands; rewrite it in
-the same change.
+exists to close.
 
-**Files.** `src/contexts/selection-baseline.ts`, `src/contexts/history-replay.ts`,
-`src/contexts/history-adapter.ts`, `src/contexts/__tests__/useHistory.test.tsx`,
-`src/contexts/__tests__/history-replay.test.ts`
+**Two comments carry the stale rationale, so both must be rewritten in the same change — not one of
+them:**
+
+- `selection-baseline.ts:46-55` — the doc comment above `deriveSelectionBaseline`. The claim is at
+  `:50-51`, "the first non-disabled `SELECTION_ACTION` entry's `previousSelectionState` is the only
+  record that the selection ever existed", with `:52-54` restating it for the durable baseline.
+- `history-adapter.ts:460-464` — the comment above the `deriveSelectionBaseline(legacyHistory)` call
+  at `:465` repeats it in the adapter's own voice: "It cannot be narrowed to the pre-first-entry state
+  **while a selection is created outside history**: the tool-switch clear's `previousSelectionState` is
+  the only record that the selection existed." Rewriting only the first leaves the rule's owner
+  corrected and its caller still advertising the reason it must not be bounded, so the next reader
+  takes the call site as exempt from the bound being introduced at the signature.
+
+**Files.** `src/contexts/selection-baseline.ts:46-59`, `src/contexts/history-replay.ts:68`,
+`src/contexts/history-adapter.ts:460-465`, `src/contexts/__tests__/useHistory.test.tsx:439`,
+`src/contexts/__tests__/history-replay.test.ts:90,117`
 
 ---
 
@@ -994,3 +1004,61 @@ field. Do not add a history field for presentation alone while the legacy timeli
 replay authority.
 
 **Files.** `src/contexts/useHistory.ts:15-29`, `src/components/SidebarRight/HistoryTab.tsx`
+
+---
+
+## 33. Four `ToolbarsRight` Clear pins run the writer's failure fallback, not the append boundary
+
+**Problem.** Four toolbar tests build a `useStore` mock that omits `history` and `historyIndex`, so
+the Clear control's writer never reaches the append boundary's success branch:
+
+| test file                                                      | store mock | the shared expectation        | its Clear assertion(s)         |
+| -------------------------------------------------------------- | ---------- | ----------------------------- | ------------------------------ |
+| `MagicWand/__tests__/MagicWand.test.tsx`                       | `:52-58`   | `CLEAR_SELECTION_EDIT` `:120` | `:303-311`, `:520`             |
+| `RectangularSelection/__tests__/RectangularSelection.test.tsx` | `:14-29`   | `CLEAR_SELECTION_EDIT` `:59`  | `:125-131`, `:163-169`, `:292` |
+| `Lasso/__tests__/FeatherMagneticLasso.test.tsx`                | `:20-25`   | `CLEAR_SELECTION_EDIT` `:101` | `:330`                         |
+| `Lasso/__tests__/FreehandLasso.test.tsx`                       | `:14-17`   | `CLEAR_SELECTION_EDIT` `:86`  | `:254`                         |
+
+The chain, all confirmed by reading the files:
+
+- `appendSelectionClear` (`useSelectionHistory.ts:95`) passes `history` and `historyIndex` straight
+  into the planner's `timeline` (`:133-142`). The hook's destructure gives a default to
+  `branchRevision` only (`:194`), so both of those arrive as `undefined`.
+- `planHistoryAppend` runs `translate` first, which succeeds, then `validateTimeline`
+  (`history-append.ts:160`), which evaluates `timeline.entries.some(...)` at `:161` on `undefined` and
+  throws.
+- The writer's `catch` (`:144-150`) converts that into the fallback dispatch at `:149`, which
+  re-creates the same `HistoryItem` and omits `durableEntry` entirely.
+
+The two dispatches are therefore byte-identical apart from `durableEntry`: `:143` sends the plan the
+translator produced, `:149` sends the same `type`, the same `payload.updates` and an equivalent
+`payload.historyItem` (`createHistoryItem(item, id)` is what `planHistoryAppend` itself calls at
+`:189`). Each `CLEAR_SELECTION_EDIT` matches `type`, `payload.historyItem` and `payload.updates` and
+deliberately never matches `durableEntry` — a choice its own doc comment defends (`MagicWand.test.tsx:114-118`,
+`RectangularSelection.test.tsx:53-57`, `FeatherMagneticLasso.test.tsx:95-99`, `FreehandLasso.test.tsx:80-84`).
+The pins therefore pass on the failure path while reading as success-path pins, and a regression that
+made the planner throw would leave all four files green.
+
+**Fix.** Add `history: []` and `historyIndex: -1` to each of the four store mocks, plus `branchRevision: 0`
+for shape parity with the hook's default. With those, `validateTimeline` returns the diagnostic at
+`history-append.ts:171-178` instead of throwing, `planHistoryAppend` still returns the translated entry
+(`:192-197`), and the `try` branch dispatches — the success path.
+
+Then assert `durableEntry` in at least one file, `FreehandLasso.test.tsx` being the smallest (a single
+use of the constant, `:254`). The shape is
+`expect.objectContaining({ id: expect.any(String), operation: expect.objectContaining({ kind: 'set-selection' }) })`
+(`DurableHistoryEntry` at `history-model.ts:115-120`, built by `deriveSetSelectionEntry` at
+`history-adapter.ts:311-328`). Without it the success path is assumed, and one assertion is what makes
+the other three files' silence mean something.
+
+Finally, the doc comment above each `CLEAR_SELECTION_EDIT` has to change with the mock. Its current
+wording — "the store publishes the planned entry only when its durable document still describes the
+timeline the plan was made against … both are correct" — describes a decision a component test with a
+mocked store cannot reach: publication is the store's (`StoreContext.tsx:731`), and the component only
+emits the plan. The comment should say the component's contract is to plan and dispatch, and that the
+publish decision is downstream.
+
+**Files.** `src/components/ToolbarsRight/MagicWand/__tests__/MagicWand.test.tsx:52-58,120`,
+`src/components/ToolbarsRight/RectangularSelection/__tests__/RectangularSelection.test.tsx:14-29,59`,
+`src/components/ToolbarsRight/Lasso/__tests__/FeatherMagneticLasso.test.tsx:20-25,101`,
+`src/components/ToolbarsRight/Lasso/__tests__/FreehandLasso.test.tsx:14-17,86`
