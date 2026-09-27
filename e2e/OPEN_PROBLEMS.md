@@ -351,20 +351,6 @@ Combined, a test that sets a colour can pass having changed nothing. The specs
 that set a colour now pass `verifySwatch: true`, which closes the loop from
 the call side, but the helper itself is still permissive.
 
-## P2 — selection thresholds are hardcoded, not in the constants table
-
-`e2e/helpers/canvas-helpers.ts:430-432` **[pinned]**
-
-```ts
-const redMax = colorThresholds?.redMax ?? 80;
-const greenMin = colorThresholds?.greenMin ?? 80;
-const blueMin = colorThresholds?.blueMin ?? 180;
-```
-
-Every other threshold lives in `STROKE_ANALYSIS`. These three cannot be
-derived or overridden through the constants object, which is the drift risk the
-constants table exists to prevent.
-
 ## P2 — duplicated default threshold literals
 
 `e2e/helpers/image-comparison.ts:22` vs `:111` **[pinned]**
@@ -381,15 +367,6 @@ The check compares the computed value against a literal
 `` `rgb(${r}, ${g}, ${b})` ``. Any legitimately non-opaque computed value —
 `opacity`, `color(srgb ...)`, a gradient or animation in flight — fails even
 though the colour is correct. Not reproduced; flagged as fragility.
-
-## P2 — a negative sample radius reports "no colour here"
-
-`e2e/helpers/canvas-helpers.ts:467` **[pinned]**
-
-`for (let y = pointY - radius; y <= pointY + radius; y++)` never executes when
-`radius < 0`, so `getColorAtPoint` returns `null` — meaning "nothing at this
-point" — instead of sampling the centre pixel or rejecting the argument. A
-misconfigured constant reads as a legitimate miss.
 
 ## P2 — an unsound source-side cast
 
@@ -414,25 +391,6 @@ to satisfy the compiler would erase the evidence of the defect and churn every
 call site. ESLint reports both as warnings — the e2e block sets `args: 'all'`,
 which is what makes them visible at all.
 
-## P2 — the per-call dynamic import makes the fs surface unspyable
-
-`e2e/helpers/canvas-helpers.ts:193`, `e2e/helpers/cdp-helpers.ts:32`
-
-`takeLineScreenshot` does `await import('node:fs/promises')` inside the hot
-helper. Because that is an ESM namespace binding rather than the spied CJS
-export, a `vi.spyOn(fs, 'mkdir')` records zero calls even when `mkdir`
-definitely ran — so mkdir/attach ordering cannot be asserted. A top-level import
-fixes both the per-call cost and the untestability.
-
-## P3 — a missing output directory surfaces as a raw `TypeError`
-
-`e2e/helpers/canvas-helpers.ts:192` **[pinned, message-matched]**
-
-`path.join(testInfo.outputDir, ...)` runs before the `fs.mkdir` and has no
-guard, so a `TestInfo` without an `outputDir` fails with
-`The "path" argument must be of type string. Received undefined` — no
-screenshot taken, no attachment made, and nothing naming the test.
-
 ## P3 — zero-sized image yields `NaN` edges
 
 `screenshotBoundsToCss` (`e2e/helpers/canvas-helpers.ts:29`) and
@@ -441,13 +399,6 @@ divide by the image or box dimension, so a zero-sized input produces `NaN` or
 `Infinity` instead of throwing. Deliberate — the modules stay branch-free and
 total, and it is pinned — but a `NaN` coordinate reaching `page.mouse.click` is
 opaque. Callers must reject empty images first.
-
-## P3 — `drawLine` silently drops an explicit `steps: 0`
-
-`e2e/helpers/canvas-helpers.ts:288` **[pinned]**
-
-`if (options.steps)` is a truthy check, so `steps: 0` drops the whole options
-object rather than being forwarded. Unreachable from current call sites.
 
 ## P3 — `TOOL_NAME_MAP` lookup is case-sensitive
 

@@ -93,7 +93,10 @@ describe('Locator.or', () => {
 });
 
 describe('takeLineScreenshot', () => {
-  afterEach(cleanupTempDirs);
+  afterEach(async () => {
+    await cleanupTempDirs();
+    vi.restoreAllMocks();
+  });
 
   it('captures the documented default clip and hands the buffer back', async () => {
     const outputDir = await makeOutputDir('default-clip');
@@ -170,17 +173,44 @@ describe('takeLineScreenshot', () => {
     expect(path.basename(capturedPath)).toBe('line-test.png');
   });
 
-  // PIN: a missing `testInfo.outputDir` reaches `path.join` unchecked, so it surfaces as
-  // a raw V8 ERR_INVALID_ARG_TYPE about the "path" argument rather than a message naming
-  // the problem. Asserting that exact message (not just `TypeError`) is what keeps the pin
-  // honest: fixing the source to `throw new TypeError('testInfo.outputDir is required')`,
-  // or to default the path, breaks this test instead of silently passing it.
-  it('rejects without capturing anything when testInfo has no output directory', async () => {
+  it('creates the output directory through the spied fs surface, not a private namespace', async () => {
+    // The helper used to `await import('node:fs/promises')` per call. That binds an ESM
+    // namespace whose `mkdir` is a copy taken at load time, so a `vi.spyOn(fs, 'mkdir')`
+    // replaced a property on a different object and recorded zero calls while `mkdir`
+    // certainly ran — the spy proves the import is now a top-level one. mkdir/attach
+    // ordering is covered by the test above; this covers the fs surface itself.
+    const outputDir = await makeOutputDir('spied-mkdir');
+    const mkdir = vi.spyOn(fs, 'mkdir');
+    const capture = createScreenshotSpy(Buffer.from('png'));
+    const { testInfo } = createTestInfoMock(outputDir);
+
+    await takeLineScreenshot(createPageMock({ screenshot: capture }), BOX, 'line-test', testInfo);
+
+    expect(mkdir).toHaveBeenCalledWith(outputDir, { recursive: true });
+  });
+
+  it('names the helper and the missing field when testInfo has no output directory', async () => {
+    // `path.join` used to run unguarded, so a TestInfo without an `outputDir` failed with
+    // V8's `The "path" argument must be of type string` — naming neither the helper nor
+    // the field. The guard runs before anything is captured or attached.
     const capture = createScreenshotSpy(Buffer.from('png'));
     const { testInfo, attach } = createTestInfoMock();
     const page = createPageMock({ screenshot: capture });
 
-    await expect(takeLineScreenshot(page, BOX, 'line-test', testInfo)).rejects.toThrow(/path.*must be of type string/);
+    await expect(takeLineScreenshot(page, BOX, 'line-test', testInfo)).rejects.toThrow(
+      new Error('takeLineScreenshot: testInfo.outputDir is required to capture and attach a screenshot')
+    );
+    expect(capture).not.toHaveBeenCalled();
+    expect(attach).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty output directory as readily as a missing one', async () => {
+    const capture = createScreenshotSpy(Buffer.from('png'));
+    const { testInfo, attach } = createTestInfoMock('');
+
+    await expect(
+      takeLineScreenshot(createPageMock({ screenshot: capture }), BOX, 'line-test', testInfo)
+    ).rejects.toThrow(/testInfo\.outputDir is required/);
     expect(capture).not.toHaveBeenCalled();
     expect(attach).not.toHaveBeenCalled();
   });
@@ -237,18 +267,17 @@ describe('drawLine', () => {
     expect(input.move.mock.calls[1]).toEqual([BOX.x + 100, BOX.y + 100, { steps: 5 }]);
   });
 
-  // PIN: the guard is a truthy check, so an explicit `steps: 0` is silently dropped
-  // instead of being forwarded, where Playwright would read 0 as "do not interpolate".
-  // A fix that switches the guard to `!== undefined` breaks this expectation.
-  it('silently drops a steps value of zero instead of forwarding it', async () => {
+  it('forwards an explicit steps of zero rather than dropping the options object', async () => {
+    // `if (options.steps)` used to be a truthy check, so `steps: 0` took the no-options
+    // branch and Playwright never saw it. `0` is a real instruction — do not interpolate —
+    // so the presence of the field is what decides, not its value.
     const input = createMouseMock();
 
     await drawLine(createPageMock({ mouse: input.mouse }), BOX, 0, 0, 100, 100, { steps: 0 });
 
-    expect(input.move.mock.calls).toEqual([
-      [BOX.x, BOX.y],
-      [BOX.x + 100, BOX.y + 100],
-    ]);
+    expect(input.move).toHaveBeenCalledTimes(2);
+    expect(input.move.mock.calls[0]).toEqual([BOX.x, BOX.y]);
+    expect(input.move.mock.calls[1]).toEqual([BOX.x + 100, BOX.y + 100, { steps: 0 }]);
   });
 
   it('passes negative box-relative coordinates through untouched', async () => {

@@ -17,18 +17,31 @@ interface DrawingSpec {
   shapes: DrawingShape[];
 }
 
+/**
+ * The serialised argument of `page.evaluate`. It is passed as a single object rather than
+ * destructured in the callback: the callback runs in the browser, where those names do not
+ * exist, so `page.evaluate` would be injecting three implicit parameters. Naming the shape
+ * once here also keeps the callback free of the outer `width` / `height` / `drawSpec`, which
+ * `no-shadow` correctly reports as redeclarations.
+ */
+interface CanvasDrawArgs {
+  width: number;
+  height: number;
+  drawSpec: DrawingSpec;
+}
+
 const createTestImage = async (page: Page, width: number, height: number, drawSpec: DrawingSpec) => {
   const base64 = await page.evaluate(
-    async ({ width, height, drawSpec }: { width: number; height: number; drawSpec: DrawingSpec }) => {
+    async (args: CanvasDrawArgs) => {
       const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
+      canvas.width = args.width;
+      canvas.height = args.height;
       const ctx = canvas.getContext('2d')!;
-      if (drawSpec.fillStyle) ctx.fillStyle = drawSpec.fillStyle;
-      if (drawSpec.strokeStyle) ctx.strokeStyle = drawSpec.strokeStyle;
-      if (drawSpec.lineWidth !== undefined) ctx.lineWidth = drawSpec.lineWidth;
-      if (drawSpec.globalAlpha !== undefined) ctx.globalAlpha = drawSpec.globalAlpha;
-      for (const shape of drawSpec.shapes) {
+      if (args.drawSpec.fillStyle) ctx.fillStyle = args.drawSpec.fillStyle;
+      if (args.drawSpec.strokeStyle) ctx.strokeStyle = args.drawSpec.strokeStyle;
+      if (args.drawSpec.lineWidth !== undefined) ctx.lineWidth = args.drawSpec.lineWidth;
+      if (args.drawSpec.globalAlpha !== undefined) ctx.globalAlpha = args.drawSpec.globalAlpha;
+      for (const shape of args.drawSpec.shapes) {
         if (shape.type === 'fillRect') {
           ctx.fillRect(shape.x, shape.y, shape.w, shape.h);
         } else if (shape.type === 'strokeRect') {
