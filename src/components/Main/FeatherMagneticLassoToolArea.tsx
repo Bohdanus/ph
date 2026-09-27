@@ -18,6 +18,7 @@ import {
   type MagneticSegmentResult,
 } from '../../util/magneticLasso.ts';
 import { canvasToDocumentPoint, documentFrameFromSize, type DocumentFrame } from '../../contexts/document-frame.ts';
+import { resetOverlayAlpha } from '../../util/canvas.ts';
 
 const MIN_POINTS_FOR_SELECTION = 3;
 const CLOSE_START_THRESHOLD = 10;
@@ -75,6 +76,7 @@ function drawFeatherMagneticOverlay({
   }
 
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  resetOverlayAlpha(ctx);
   selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
   if (draftPoints.length === 0) return;
 

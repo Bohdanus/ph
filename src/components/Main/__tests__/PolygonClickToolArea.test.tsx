@@ -412,6 +412,23 @@ describe('PolygonClickToolArea', () => {
       expect(ctx.lineTo).toHaveBeenCalledWith(10, 10);
     });
 
+    it('strokes at full opacity when the shared overlay was left at a tool alpha', () => {
+      const ctx = createMockContext();
+      const alphaAtStroke: number[] = [];
+      vi.mocked(ctx.stroke).mockImplementation(() => {
+        alphaAtStroke.push(ctx.globalAlpha);
+      });
+      ctx.globalAlpha = 0.2;
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { clientX: 60, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { clientX: 60, clientY: 60 });
+
+      expect(alphaAtStroke.length).toBeGreaterThan(0);
+      expect(alphaAtStroke.every((alpha) => alpha === 1)).toBe(true);
+    });
+
     it('draws only the start and end handles for a long freehand path', () => {
       const ctx = createMockContext();
       const toolArea = renderArea({ current: ctx }).ctx;

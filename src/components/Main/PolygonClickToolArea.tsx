@@ -17,6 +17,7 @@ import {
   moveSelectionByDelta,
 } from '../../util/selection.ts';
 import { canvasToDocumentPoint, documentFrameFromSize, type DocumentFrame } from '../../contexts/document-frame.ts';
+import { resetOverlayAlpha } from '../../util/canvas.ts';
 
 const MIN_POINTS_FOR_SELECTION = 3;
 const CLOSE_START_THRESHOLD = 10; // px in image coordinate space
@@ -59,6 +60,7 @@ function drawPolygonOverlay({
 }) {
   const canvas = ctx.canvas;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  resetOverlayAlpha(ctx);
   selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
 
   if (points.length === 0) return;

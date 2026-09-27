@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { resizeCanvas } from '../canvas.ts';
+import { resetOverlayAlpha, resizeCanvas } from '../canvas.ts';
+import type { Ctx2D } from '../../contexts/general-types.ts';
 
 /**
  * Assigning `width`/`height` on a real canvas resets its drawing state, so the
@@ -94,5 +95,45 @@ describe('resizeCanvas', () => {
     expect(widthWrites).toEqual([2]);
     expect(heightWrites).toEqual([2]);
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
+function createAlphaCtx(globalAlpha: number) {
+  return { globalAlpha, setLineDash: vi.fn() } as unknown as Ctx2D;
+}
+
+describe('resetOverlayAlpha', () => {
+  it('restores full opacity on a context a previous tool left at its own alpha', () => {
+    const ctx = createAlphaCtx(0.2);
+
+    resetOverlayAlpha(ctx);
+
+    expect(ctx.globalAlpha).toBe(1);
+  });
+
+  it('leaves an already clean context at full opacity', () => {
+    const ctx = createAlphaCtx(1);
+
+    resetOverlayAlpha(ctx);
+
+    expect(ctx.globalAlpha).toBe(1);
+  });
+
+  it('resets on every call, so a paint can never inherit the previous one', () => {
+    const ctx = createAlphaCtx(0.5);
+
+    resetOverlayAlpha(ctx);
+    ctx.globalAlpha = 0.9;
+    resetOverlayAlpha(ctx);
+
+    expect(ctx.globalAlpha).toBe(1);
+  });
+
+  it('leaves the line dash alone, which the painters that use one own themselves', () => {
+    const ctx = createAlphaCtx(0.2);
+
+    resetOverlayAlpha(ctx);
+
+    expect(ctx.setLineDash).not.toHaveBeenCalled();
   });
 });

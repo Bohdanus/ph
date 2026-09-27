@@ -995,3 +995,42 @@ field. Do not add a history field for presentation alone while the legacy timeli
 replay authority.
 
 **Files.** `src/contexts/useHistory.ts:15-29`, `src/components/SidebarRight/HistoryTab.tsx`
+
+---
+
+## 33. The tool overlay context is shared across tool switches, and two painters still inherit `globalAlpha`
+
+**Problem.** `Main.tsx:87` hands every tool area the _same_ `2d` context: the overlay canvas is
+mounted unconditionally and only its `display` is toggled (`Main.tsx:180-198`), so `getContext('2d')`
+returns one object for the whole session. `setupDrawCtx` (`src/tools/draw.ts:35`) and `setShapeCtx`
+(`src/tools/shape.ts:129`) write `globalAlpha` onto it with no `save()`/`restore()`, so the last
+stroke's alpha is still set when the next tool paints. The default brush alpha is 0.9
+(`src/tools/settings.ts:115`), which is why a session that has drawn _anything_ leaves the next
+tool wrong, not just one where the user dragged the Opacity slider to 20 %.
+
+`resetOverlayAlpha` (`src/util/canvas.ts`) now runs at the entry of the overlay paints that could be
+reached legally, but **two painters are still unfixed, both behind
+`.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt`**:
+
+1. **`useRect.drawMask` — the crop / rectangular-selection / text dim.**
+   `src/hooks/useRect.ts:155-163` fills `rgba(0, 0, 0, 0.7)` and never sets `globalAlpha`, so the dim
+   renders at `0.7 × stroke alpha`: 0.63 after any default brush stroke, 0.14 at 20 % opacity, and
+   the crop boundary becomes effectively invisible. The committed layer is at full opacity, so
+   nothing else in the UI contradicts it. `useRect.ts` is EXCLUDED (line 114) and `useRect.test.ts`
+   (line 109) is EXCLUDED. _Fix:_ call `resetOverlayAlpha(ctx)` immediately after the
+   `if (!ctx) return;` guard in `drawMask`, before the `if (!hideBlend)` block — the dash at
+   `:167`/`:169` is already owned by `drawMask` and must stay after the reset.
+2. **The magic-wand selection outline.** `drawSelectionOutline`
+   (`src/util/selection.ts:141`) is in the EXCLUDED list (line 135), so the reset had to be added at
+   its callers instead: `PolygonClickToolArea.drawPolygonOverlay` and
+   `FeatherMagneticLassoToolArea` now call it, but `MagicWandToolArea.tsx:35` and `:102`
+   (EXCLUDED, line 12) do not, so a magic-wand selection outline still renders at the leaked alpha.
+   _Fix:_ either the two `drawSelectionOutline` loops in `MagicWandToolArea`, or one
+   `resetOverlayAlpha` inside `drawSelectionOutline` itself — which retires the per-caller resets in
+   all three areas at once and is the better shape.
+
+`usePolylineAnts.ts` looks like a third victim and is not: `useMarchingPath` has no production
+caller, so its context is never the shared overlay.
+
+**Files.** `src/hooks/useRect.ts:143-163`, `src/components/Main/MagicWandToolArea.tsx:35,102`,
+`src/util/selection.ts:141`
