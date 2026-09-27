@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import type { Selection } from '../../../../contexts/general-types.ts';
+import { SELECTION_ACTION } from '../../../../util/constants.ts';
 import MagicWand from '../MagicWand.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -51,7 +52,9 @@ const POLYGON_SELECTION: Selection = {
 const storeState = vi.hoisted(() => ({
   activeSelectionId: null as string | null,
   canvasRef: { current: document.createElement('canvas') },
-  selections: [],
+  // Explicit element type: an inferred `never[]` makes `resetStoreState` reject
+  // any real selection, and the Clear pin has to seed one.
+  selections: [] as Selection[],
 }));
 
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
@@ -96,7 +99,41 @@ function setClipboardState(overrides: Partial<typeof clipboardState> = {}) {
 
 function withActivePolygonSelection() {
   setClipboardState({ activeSelection: POLYGON_SELECTION, hasSelectionClipboard: true });
+  // The Clear control writes through the append boundary, which reads the
+  // selection from the store, so the store has to agree with the clipboard mock
+  // that enables the button. An empty store would make Clear a deliberate no-op.
+  resetStoreState({ selections: [POLYGON_SELECTION], activeSelectionId: POLYGON_SELECTION.id });
 }
+
+/**
+ * Clear is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
+ * edit that appends to history, so a deselect can be undone. The contract is one
+ * `COMMIT_DOCUMENT_EDIT` carrying both the history item and the resulting
+ * selection state.
+ *
+ * `durableEntry` is deliberately not matched. The store publishes the planned
+ * entry only when its durable document still describes the timeline the plan was
+ * made against, and the boundary's failure fallback omits it entirely; both are
+ * correct, so the pin asserts the contract the two paths share. `id` is a fresh
+ * uuid per call, hence `expect.any(String)`.
+ */
+const CLEAR_SELECTION_EDIT = expect.objectContaining({
+  type: 'COMMIT_DOCUMENT_EDIT',
+  payload: expect.objectContaining({
+    historyItem: expect.objectContaining({
+      id: expect.any(String),
+      actionName: SELECTION_ACTION,
+      args: expect.objectContaining({
+        previousSelectionState: expect.objectContaining({
+          selections: [expect.objectContaining({ id: 'selection-polygon-1' })],
+          activeSelectionId: 'selection-polygon-1',
+        }),
+        nextSelectionState: { selections: [], activeSelectionId: null },
+      }),
+    }),
+    updates: expect.objectContaining({ selections: [], activeSelectionId: null }),
+  }),
+});
 
 describe('MagicWand toolbar', () => {
   beforeEach(() => {
@@ -263,13 +300,13 @@ describe('MagicWand toolbar', () => {
       }
     });
 
-    it('clears the selections through the explicit clear action', () => {
+    it('clears the selections as one undoable document edit', () => {
       withActivePolygonSelection();
       render(<MagicWand />);
 
       fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
 
-      expect(dispatchMock).toHaveBeenCalledExactlyOnceWith({ type: 'CLEAR_SELECTIONS' });
+      expect(dispatchMock).toHaveBeenCalledExactlyOnceWith(CLEAR_SELECTION_EDIT);
       expect(pasteSelectionClipboardMock).not.toHaveBeenCalled();
     });
   });
@@ -480,7 +517,7 @@ describe('MagicWand toolbar', () => {
       expect(clearButton).toHaveFocus();
       await user.keyboard('{Enter}');
 
-      expect(dispatchMock).toHaveBeenCalledWith({ type: 'CLEAR_SELECTIONS' });
+      expect(dispatchMock).toHaveBeenCalledExactlyOnceWith(CLEAR_SELECTION_EDIT);
     });
 
     it('escape key does not close anything (no popovers)', () => {

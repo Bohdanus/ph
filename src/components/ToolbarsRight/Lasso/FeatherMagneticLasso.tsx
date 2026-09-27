@@ -1,9 +1,9 @@
 import React, { type ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
-import { useStore } from '../../../contexts/StoreContext.tsx';
 import type { FeatherMagneticLassoToolArgs } from '../../../tools/featherMagneticLasso.ts';
 import { useSelectionClipboard } from '../../../contexts/useSelectionClipboard.ts';
+import { useSelectionHistory } from '../../../contexts/useSelectionHistory.ts';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
 
 const SLIDER_CLASS = 'h-1.5 w-24 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700';
@@ -52,10 +52,10 @@ const SETTING_HELP = [
 ] as const;
 
 const FeatherMagneticLasso: React.FC<{}> = () => {
-  const [, dispatch] = useStore();
   const { getToolArgs, patchToolArgs } = useCurrentTool();
   const { activeSelection, copyActiveSelection, hasSelectionClipboard, pasteSelectionClipboard } =
     useSelectionClipboard();
+  const { clearSelections } = useSelectionHistory();
   const [isCopying, setIsCopying] = useState(false);
   const [isInfoHovered, setIsInfoHovered] = useState(false);
   const [isInfoPinned, setIsInfoPinned] = useState(false);
@@ -181,7 +181,7 @@ const FeatherMagneticLasso: React.FC<{}> = () => {
   };
 
   const handleClear = () => {
-    dispatch({ type: 'CLEAR_SELECTIONS' });
+    clearSelections();
   };
 
   const handleInfoButtonClick = () => {

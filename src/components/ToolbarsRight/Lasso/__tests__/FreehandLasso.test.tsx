@@ -1,5 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Selection } from '../../../../contexts/general-types.ts';
+import { SELECTION_ACTION } from '../../../../util/constants.ts';
 import FreehandLasso from '../FreehandLasso.tsx';
 
 const getToolArgsResult = vi.hoisted(() => ({
@@ -8,6 +10,11 @@ const getToolArgsResult = vi.hoisted(() => ({
 
 const mockPatchToolArgs = vi.hoisted(() => vi.fn());
 const mockDispatch = vi.hoisted(() => vi.fn());
+
+const storeState = vi.hoisted(() => ({
+  activeSelectionId: null as string | null,
+  selections: [] as Selection[],
+}));
 
 const clipboardState = vi.hoisted(() => ({
   activeSelection: null as { id: string; geometry: string } | null,
@@ -20,7 +27,7 @@ const clipboardMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [{}, mockDispatch],
+  useStore: () => [storeState, mockDispatch],
 }));
 
 vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
@@ -50,6 +57,55 @@ const setSelectionState = (
   clipboardState.hasSelectionClipboard = state.hasClipboard ?? false;
 };
 
+const LASSO_SELECTION: Selection = {
+  id: 'sel-1',
+  geometry: 'polygon',
+  sourceTool: 'freehand-lasso',
+  lifecycle: 'committed',
+  isActive: true,
+  pos: { x: 4, y: 8, width: 16, height: 24 },
+  points: [
+    { x: 4, y: 8 },
+    { x: 20, y: 8 },
+    { x: 20, y: 32 },
+  ],
+};
+
+/**
+ * Clear is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
+ * edit that appends to history, so a deselect can be undone. The store mock has
+ * to carry a live selection for the writer to read — an already-empty document
+ * makes Clear a deliberate no-op, which is a different test.
+ *
+ * `durableEntry` is deliberately not matched. The store publishes the planned
+ * entry only when its durable document still describes the timeline the plan was
+ * made against, and the boundary's failure fallback omits it entirely; both are
+ * correct, so the pin asserts the contract the two paths share. `id` is a fresh
+ * uuid per call, hence `expect.any(String)`.
+ */
+const CLEAR_SELECTION_EDIT = expect.objectContaining({
+  type: 'COMMIT_DOCUMENT_EDIT',
+  payload: expect.objectContaining({
+    historyItem: expect.objectContaining({
+      id: expect.any(String),
+      actionName: SELECTION_ACTION,
+      args: expect.objectContaining({
+        previousSelectionState: expect.objectContaining({
+          selections: [expect.objectContaining({ id: 'sel-1' })],
+          activeSelectionId: 'sel-1',
+        }),
+        nextSelectionState: { selections: [], activeSelectionId: null },
+      }),
+    }),
+    updates: expect.objectContaining({ selections: [], activeSelectionId: null }),
+  }),
+});
+
+const setStoreSelections = (selections: Selection[], activeSelectionId: string | null = null) => {
+  storeState.selections = selections;
+  storeState.activeSelectionId = activeSelectionId;
+};
+
 const getModeButton = () => screen.getByRole('button', { name: /^(Fill|Outline)$/ });
 const getCopyButton = () => screen.getByRole('button', { name: 'Copy' });
 const getPasteButton = () => screen.getByRole('button', { name: 'Paste' });
@@ -59,6 +115,7 @@ describe('FreehandLasso toolbar', () => {
   beforeEach(() => {
     setToolArgsResult(false);
     setSelectionState();
+    setStoreSelections([]);
     mockPatchToolArgs.mockClear();
     mockDispatch.mockClear();
     clipboardMocks.copyActiveSelection.mockClear();
@@ -187,13 +244,14 @@ describe('FreehandLasso toolbar', () => {
     expect(mockDispatch).not.toHaveBeenCalled();
   });
 
-  it('dispatches CLEAR_SELECTIONS from the clear button', () => {
+  it('appends a selection history entry from the clear button', () => {
     setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
+    setStoreSelections([LASSO_SELECTION], LASSO_SELECTION.id);
     render(<FreehandLasso />);
 
     fireEvent.click(getClearButton());
 
-    expect(mockDispatch).toHaveBeenCalledWith({ type: 'CLEAR_SELECTIONS' });
+    expect(mockDispatch).toHaveBeenCalledExactlyOnceWith(CLEAR_SELECTION_EDIT);
   });
 
   it('documents the draw interaction for the user', () => {
@@ -209,6 +267,7 @@ describe('FreehandLasso Mode toggle accessibility', () => {
     setToolArgsResult(false);
     mockPatchToolArgs.mockClear();
     setSelectionState();
+    setStoreSelections([]);
   });
 
   it('signals the Mode toggle only by swapping the label text and the CSS class (FreehandLasso.tsx:47-59)', () => {

@@ -1,16 +1,16 @@
 import React, { type ChangeEvent, useState } from 'react';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
-import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useSelectionClipboard } from '../../../contexts/useSelectionClipboard.ts';
+import { useSelectionHistory } from '../../../contexts/useSelectionHistory.ts';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
 
 const SLIDER_CLASS = 'h-1.5 w-28 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700';
 
 const MagicWand: React.FC<{}> = () => {
-  const [, dispatch] = useStore();
   const { getToolArgs, patchToolArgs } = useCurrentTool();
   const { activeSelection, copyActiveSelection, hasSelectionClipboard, pasteSelectionClipboard } =
     useSelectionClipboard();
+  const { clearSelections } = useSelectionHistory();
   const [isCopying, setIsCopying] = useState(false);
 
   const args = getToolArgs('magic-wand');
@@ -46,7 +46,7 @@ const MagicWand: React.FC<{}> = () => {
   };
 
   const handleClear = () => {
-    dispatch({ type: 'CLEAR_SELECTIONS' });
+    clearSelections();
   };
 
   return (
