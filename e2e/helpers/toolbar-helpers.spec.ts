@@ -1,5 +1,13 @@
 import { test, expect } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { clickToolButton, getToolButton, toggleToolbarLayout, verifyPrimaryTool } from './toolbar-helpers';
+
+/**
+ * The fixtures below set `window.__clicked` from an inline `onclick`, so the flag is
+ * read back through a typed window rather than an `any` cast.
+ */
+const readClickedFlag = (page: Page): Promise<boolean | undefined> =>
+  page.evaluate(() => (window as Window & { __clicked?: boolean }).__clicked);
 
 test.describe('Toolbar Helpers - Integration', () => {
   test('getToolButton returns locator with correct testid', async ({ page }) => {
@@ -17,13 +25,13 @@ test.describe('Toolbar Helpers - Integration', () => {
   test('clickToolButton clicks testid button when available', async ({ page }) => {
     await page.setContent('<button data-testid="tool-button-brush" onclick="window.__clicked=true">Brush</button>');
     await clickToolButton(page, 'brush');
-    expect(await page.evaluate(() => (window as any).__clicked)).toBe(true);
+    expect(await readClickedFlag(page)).toBe(true);
   });
 
   test('clickToolButton falls back to role button when testid not found', async ({ page }) => {
     await page.setContent('<button role="button" onclick="window.__clicked=true">Eraser</button>');
     await clickToolButton(page, 'eraser');
-    expect(await page.evaluate(() => (window as any).__clicked)).toBe(true);
+    expect(await readClickedFlag(page)).toBe(true);
   });
 
   test('verifyPrimaryTool checks button text', async ({ page }) => {
@@ -36,6 +44,6 @@ test.describe('Toolbar Helpers - Integration', () => {
       '<button data-testid="toolbar-layout-toggle" onclick="window.__clicked=true">Toggle</button>'
     );
     await toggleToolbarLayout(page);
-    expect(await page.evaluate(() => (window as any).__clicked)).toBe(true);
+    expect(await readClickedFlag(page)).toBe(true);
   });
 });

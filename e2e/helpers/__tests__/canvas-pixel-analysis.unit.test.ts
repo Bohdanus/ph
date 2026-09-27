@@ -346,8 +346,28 @@ describe('getColorAtPoint', () => {
     expect(await getColorAtPoint(createImageData(100, 100), 50, 50, 5)).toBeNull();
   });
 
-  it('returns null for a negative radius instead of sampling the centre', async () => {
-    expect(await getColorAtPoint(solidRed(100, 100), 50, 50, -5)).toBeNull();
+  it('clamps a negative radius to the centre pixel instead of reporting no colour', async () => {
+    // A negative radius made `pointY - radius > pointY + radius`, so the loop body never
+    // ran and the helper returned null — which means "nothing at this point" to every
+    // caller. A misconfigured constant must not read as a legitimate miss. White field
+    // with a single red centre, so any radius wider than 0 would average in white.
+    const image = createImageData(100, 100);
+    fillAll(image, WHITE);
+    setPixel(image, 50, 50, RED);
+
+    expect(await getColorAtPoint(image, 50, 50, -5)).toEqual({ red: 255, green: 0, blue: 0 });
+    expect(await getColorAtPoint(image, 50, 50, -5)).toEqual(await getColorAtPoint(image, 50, 50, 0));
+    expect(await getColorAtPoint(image, 50, 50, -1)).toEqual(await getColorAtPoint(image, 50, 50, 0));
+  });
+
+  it('still reports no colour for a negative radius when the centre pixel is transparent', async () => {
+    // The clamp fixes the radius, not the sample: null here means the centre really is
+    // empty, which is the only case where null is the honest answer.
+    const image = createImageData(100, 100);
+    fillAll(image, WHITE, TRANSPARENT);
+    setPixel(image, 50, 50, RED, TRANSPARENT);
+
+    expect(await getColorAtPoint(image, 50, 50, -5)).toBeNull();
   });
 
   it('clamps a radius that reaches past every image edge', async () => {

@@ -11,6 +11,23 @@ export type ToolbarTool = {
 export type ToolbarToolGroup = readonly ToolbarTool[];
 
 /**
+ * The label half of a flyout item's `data-testid`.
+ *
+ * `SidebarLeft` mints `tool-flyout-item-${tool.name}-${slugifyToolLabel(tool.label)}`,
+ * and the e2e helper has to build the same string, so this is the one definition of
+ * the rule rather than a component-local helper plus a transcription of it.
+ *
+ * The transformation is deliberately narrower than a general slugifier: every run of
+ * non-alphanumeric characters — including a leading or trailing one — becomes exactly
+ * one `-`, and nothing is trimmed. `'  My Label  '` is `'-my-label-'` and `'Color & Tone'`
+ * is `'color-tone'`, because those are the ids the application produces. Do not "tidy"
+ * the edges or spell the ampersand out: a slug that differs from this one is a selector
+ * that silently misses, and the unit test in `e2e/helpers/__tests__/toolbar-helpers.unit.test.ts`
+ * compares the helper's independent copy against this function for every real label.
+ */
+export const slugifyToolLabel = (label: string): string => label.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-');
+
+/**
  * Photoshop-inspired toolbar map in the canonical one-column order.
  *
  * Each nested array is one flyout menu. Unsupported Photoshop tools are

@@ -13,14 +13,14 @@ HiDPI macOS host; re-verify before acting on any rate quoted here.
 ## 1. Blocking now
 
 Nothing. The blocking gates are green: `lint:check`, `tsc -b` (all three
-projects), the app suite (176/176 files), and the e2e helper unit tests (694 pass,
-2 expected-fail). Nothing in this section should block other work.
+projects), `npm run test`, and `npm run test:e2e:unit`. Nothing in this section
+should block other work.
 
 ## 2. The e2e suite is now green
 
-**97 pass, 0 fail, 2 skipped** on the default headless run, reproduced across
-repeated full runs. Both items this section used to list as open are fixed, and so is
-the `levels.spec.ts` pair. Each was fixed by changing an assertion or a wait, never by
+**Nothing fails** on the default headless run, reproduced across repeated full
+runs. Both items this section used to list as open are fixed, and so is the
+`levels.spec.ts` pair. Each was fixed by changing an assertion or a wait, never by
 loosening a threshold, adding a skip, or re-recording a baseline. Evidence, including
 the measurements that established each defect and the mutation tests that prove the
 fixes, is in `OPEN_PROBLEMS.md`.
@@ -28,7 +28,7 @@ fixes, is in `OPEN_PROBLEMS.md`.
 | formerly failing tests            | was                                     | now                                                |
 | --------------------------------- | --------------------------------------- | -------------------------------------------------- |
 | `cdp-helpers.spec.ts`             | 2 headless, 5 headed, disjoint per mode | capture scale no longer asserted; mode-independent |
-| `sidebar-keyboard.spec.ts:77, 89` | 0–2, 5 of 12 measured headless runs     | root-caused to an rAF focus race, then awaited     |
+| `sidebar-keyboard.spec.ts:76, 88` | 0–2, 5 of 12 measured headless runs     | root-caused to an rAF focus race, then awaited     |
 | `levels.spec.ts:64, 109`          | 2, both modes                           | canvas located by test id, not document order      |
 
 **Done since the migration — `getWorkspaceCanvas` (previously item 2 here).** All
@@ -75,71 +75,36 @@ it had never been established by any run.
   are only ever compared against a Vite dev server. Serving `dist/` via
   `npm run preview` would need a `webServer.command` switch, and would be a
   possible baseline-affecting change.
-- **Pre-commit does not run the e2e unit tests.** `.husky/pre-commit` runs
-  `lint-staged` then `npm run tsc`. An e2e helper change gets type-checked but no
-  local test feedback; only the `e2e-unit` CI job catches it. The suite runs in
-  ~660 ms, so adding `npm run test:e2e:unit` is cheap. Left alone deliberately:
-  it changes the local commit path, which is a workflow decision.
-- **lint-staged only covers `*.{ts,tsx}`.** The e2e docs, root `README.md` and the
-  workflow YAML are not formatted or linted at commit time. CI's
-  `prettier --check .` does catch them, but only in CI. Adding
-  `"*.{md,yml,yaml,json}"` to `lint-staged` would match what `lint:check` enforces.
-- **No Playwright browser cache in the `e2e` job.** `playwright install --with-deps
-chrome` runs on every build. `actions/cache` on `~/.cache/ms-playwright` would
-  cut a few minutes per run.
-- **e2e helper coverage is never produced in CI.** `test:e2e:unit:coverage` exists
-  as a script but no job calls it. Note it covers 6 of the 7 helper modules:
-  `cdp-helpers.ts` has no vitest tests, only the Playwright spec.
-- **`concurrency` and `permissions: contents: read` were added to the workflow in
-  this cleanup.** They were not present before; no job needs write access.
+- **No Playwright browser cache in the `e2e` job.** `npx playwright install
+--with-deps chrome` runs on every build. `actions/cache` on
+  `~/.cache/ms-playwright` would cut a few minutes per run.
 
 ## 4. Carried-over debt in the imported code
 
 `OPEN_PROBLEMS.md` is the authoritative list with line numbers. The migration
 specifics worth calling out:
 
-- **~18 `no-shadow` / `no-explicit-any` eslint warnings** in the imported specs.
-  `src/` has zero, so this is a regression against the repo's own bar. They are
-  warnings, not errors, and were left rather than churning ported test code.
 - **Reformatted to this repo's Prettier style.** The source repo had no
   `.prettierrc`, so its code used Prettier defaults (double quotes, 80 columns).
   Everything under `e2e/` was reformatted to the repo's config (single quotes, 120
   columns). Any file added to `e2e/` later must be run through `npm run format` or
   `lint:check` will fail.
-- **8 lines of Russian comments across 6 spec files** (`color.spec.ts`,
-  `example.spec.ts`, `layers.spec.ts`, `levels.spec.ts` ×2, `select-move.spec.ts`,
-  `viewport-drawing.spec.ts`), carried over verbatim. Everything else in the repo
-  is English. Not translated, because editing ported test comments is churn
-  without functional value — but it is inconsistent.
-- **`expectCanvasToMatch` is dead code** (`image-comparison.ts:99`) with a P1 defect
-  in its defaults: a trailing `...options` spread overwrites the `??` defaults, so a
-  caller passing `maxDiffPixels: undefined` gets Playwright's default of `0`. Zero
-  call sites outside its own unit test, so the failure cannot occur today. Delete it
-  or fix it; `compareScreenshots` is what the visual-regression spec actually uses
-  and does not have the bug.
 - **10 orphaned committed baselines, ~2.1 MB** (8 raw exports, plus
   `drawing-icon.ico.png` and `source-baseline.png`). Nothing reads them. Left in
   place because deleting committed baselines was not authorized. `drawing.bmp`
   alone is 1.92 MB.
-- **`exportAndVerify` ignores its `testInfo` argument** (`export/helpers.ts:153`).
-  `tsconfig.e2e.json` sets `noUnusedParameters: false` specifically so this and
-  `expectCanvasToMatch`'s unread `page` survive `tsc -b`. Once the dead code above
-  is removed, both can be deleted and the setting turned back on.
 
 ## 5. Repository housekeeping
 
 - **The source repository still exists** at `/Users/bkalynovskyi/ps-playwright`
   and is untouched. It is now redundant. Archive or delete it, once someone has
   confirmed nothing is still being pulled from it.
-- **`main` is unpushed** — 8 commits ahead of `origin/main`, including the whole
-  e2e migration. `npm audit`, the `Test` step and the `e2e` job have therefore never
-  actually run in CI against this tree.
-- **`HANDOFF.md`** sits untracked in the repo root and is not gitignored, so a
-  plain `git add -A` would commit it. Either gitignore it or move it.
-- **Husky v9 deprecation.** `.husky/pre-commit` still uses the two-line
-  `husky.sh` preamble, which prints a warning on every commit and **will fail in
-  husky v10**. Pre-existing, unrelated to this migration, but it is a dated
-  breakage that will block commits on upgrade.
+- **`main` is unpushed** — `origin/main` is behind it, so `npm audit`, the `Test`
+  step and the `e2e` job have therefore never actually run in CI against this tree.
+  Push it and read the first CI run before treating any gate here as proven.
+- **`HANDOFF.md`** is tracked in the repo root, so it ships with the code. Keep it
+  that way, and keep it problem-focused: an entry that has been fixed and verified
+  is deleted rather than reworded into a closed note.
 
 ## 6. Explicitly not attempted
 
@@ -153,7 +118,7 @@ specifics worth calling out:
   removed, and one `cause` added to satisfy `preserve-caught-error`. Behaviour is
   unchanged — except for the `getWorkspaceCanvas` selector, which is a deliberate
   behaviour change recorded in §2.
-- **No baseline regeneration.** The 8 visual-regression specs pass against the
+- **No baseline regeneration.** The visual-regression specs pass against the
   committed baselines, so there was no need, and rewriting committed image data was
   not authorized. That claim rested on the void `updateSnapshots` check described in
   §2 — the spec was re-recording rather than comparing, so "passes against the

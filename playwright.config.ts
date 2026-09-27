@@ -7,6 +7,20 @@ import { defineConfig, devices } from '@playwright/test';
  * standalone test package these specs were extracted from, `webServer` below can
  * actually start it. Running the e2e suite needs nothing started by hand.
  */
+/**
+ * The port the dev server and the tests agree on. Every worktree under
+ * `.kilo/worktrees/` serves its OWN checkout, so two worktrees defaulting to
+ * 5173 are two different applications on one port: `reuseExistingServer`
+ * attaches the second run to the FIRST worktree's code, which then looks
+ * exactly like "my change did nothing".
+ *
+ * Set PLAYWRIGHT_PORT to isolate a run. That alone disables server reuse below,
+ * so a run cannot attach to whatever happens to hold the port. The strictPort
+ * flag turns a silent attach into a startup failure instead.
+ */
+const port = process.env.PLAYWRIGHT_PORT ?? '5173';
+const baseUrl = `http://localhost:${port}`;
+
 export default defineConfig({
   testDir: './e2e',
   // Unit files live under a `__tests__` DIRECTORY and are named `*.unit.test.ts`.
@@ -36,7 +50,7 @@ export default defineConfig({
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Override in another environment: PLAYWRIGHT_BASE_URL=https://example.com npm run test:e2e */
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5173',
+    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? baseUrl,
     // HEADLESS IS THE DEFAULT. Do not flip this to headed-on-local.
     //
     // A headed browser puts a live, clickable window on the operator's desktop for
@@ -90,12 +104,19 @@ export default defineConfig({
 
   /* Run the dev server before starting the tests */
   webServer: {
-    // `npm run dev` is this repository's Vite dev server, serving `src/` on :5173.
-    command: 'npm run dev',
-    url: 'http://localhost:5173',
-    // CI must never attach to an unknown listener on :5173, so it always starts its
+    // `npm run dev` is this repository's Vite dev server, serving `src/` on the
+    // port above. `--strictPort` makes a port clash a hard failure rather than
+    // Vite's default silent hop to 5174, which would leave the tests pointed at
+    // a server this run never started.
+    command: `npm run dev -- --port ${port} --strictPort`,
+    url: baseUrl,
+    // CI must never attach to an unknown listener, so it always starts its
     // own server. Locally, reuse a server you already have unless you opt out.
-    reuseExistingServer: process.env.CI ? false : process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER !== 'false',
+    // An explicit PLAYWRIGHT_PORT is a request to test THIS checkout, so it
+    // also turns reuse off: a server left behind on that port by an earlier run
+    // is this run's own stale process, not someone else's to share.
+    reuseExistingServer:
+      process.env.CI || process.env.PLAYWRIGHT_PORT ? false : process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER !== 'false',
     timeout: 120_000,
   },
 });

@@ -1,15 +1,10 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, expectTypeOf, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
-import type { Locator, Page, TestInfo } from '@playwright/test';
-import {
-  DEFAULT_THRESHOLD,
-  compareScreenshots,
-  expectCanvasToMatch,
-  saveScreenshotArtifact,
-} from '../image-comparison';
+import type { Page, TestInfo } from '@playwright/test';
+import { DEFAULT_THRESHOLD, compareScreenshots, saveScreenshotArtifact } from '../image-comparison';
 import type { CompareOptions, CompareResult } from '../image-comparison';
 
 type ScreenshotOptions = NonNullable<Parameters<Page['screenshot']>[0]>;
@@ -17,31 +12,10 @@ type ClipRegion = { x: number; y: number; width: number; height: number };
 type Rgba = { r: number; g: number; b: number; alpha: number };
 type Rect = { left: number; top: number; width: number; height: number };
 type Size = { width: number; height: number };
-type CanvasScreenshotOptions = {
-  threshold?: number;
-  maxDiffPixels?: number;
-  maxDiffPixelRatio?: number;
-  mask?: Locator[];
-  animations?: 'disabled' | 'allow';
-  caret?: 'hide' | 'initial';
-  scale?: 'css' | 'device';
-};
-
-const { expectMock, toHaveScreenshotMock } = vi.hoisted(() => {
-  const toHaveScreenshotMock = vi.fn<(name: string, options?: CanvasScreenshotOptions) => Promise<void>>();
-  const expectMock = vi.fn((_actual: unknown) => ({ toHaveScreenshot: toHaveScreenshotMock }));
-  return { expectMock, toHaveScreenshotMock };
-});
-
-vi.mock('@playwright/test', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@playwright/test')>()),
-  expect: expectMock,
-}));
 
 const createMockPage = (screenshot: Page['screenshot']): Page => ({ screenshot }) as Page;
 const createMockTestInfo = (outputDir: string, attach: TestInfo['attach']): TestInfo =>
   ({ outputDir, attach }) as TestInfo;
-const createMockLocator = (partial: Partial<Locator> = {}): Locator => partial as Locator;
 const noOpScreenshot = () => vi.fn(async (): Promise<Buffer> => Buffer.alloc(0));
 
 const OPAQUE_RED: Rgba = { r: 255, g: 0, b: 0, alpha: 1 };
@@ -103,33 +77,6 @@ const red10x10 = () => solidPng(SQUARE_10, OPAQUE_RED);
 const green10x10 = () => solidPng(SQUARE_10, OPAQUE_GREEN);
 const halfGreen10x10 = () => patchedPng(SQUARE_10, OPAQUE_RED, [HALF_PATCH]);
 const patched100 = (...patches: Rect[]) => patchedPng(SQUARE_100, OPAQUE_RED, patches);
-
-const requireNumeric = (value: number | undefined, label: string): number => {
-  if (typeof value !== 'number') {
-    throw new Error(`expected a numeric ${label}, received ${String(value)}`);
-  }
-  return value;
-};
-
-const recordedSnapshot = (callIndex = 0): string => {
-  const call = toHaveScreenshotMock.mock.calls[callIndex];
-  if (!call) throw new Error(`toHaveScreenshot was not called at index ${callIndex}`);
-  return call[0];
-};
-
-const recordedCanvasOptions = (callIndex = 0): CanvasScreenshotOptions => {
-  const call = toHaveScreenshotMock.mock.calls[callIndex];
-  if (!call) throw new Error(`toHaveScreenshot was not called at index ${callIndex}`);
-  const [, options] = call;
-  if (!options) throw new Error(`toHaveScreenshot was called without options at index ${callIndex}`);
-  return options;
-};
-
-const recordedCanvas = (callIndex = 0): unknown => {
-  const call = expectMock.mock.calls[callIndex];
-  if (!call) throw new Error(`expect was not called at index ${callIndex}`);
-  return call[0];
-};
 
 const recordedScreenshotOptions = (
   screenshot: { mock: { calls: [ScreenshotOptions?][] } },
@@ -715,170 +662,6 @@ describe('Image Comparison Helpers', () => {
         path: artifactPath('delegated-write'),
         contentType: 'image/png',
       });
-    });
-  });
-
-  describe('expectCanvasToMatch', () => {
-    const snapshotName = 'canvas-snapshot.png';
-    const page = createMockPage(noOpScreenshot());
-    const canvas = createMockLocator();
-
-    interface HelperDefaults {
-      threshold: number;
-      maxDiffPixels: number;
-      maxDiffPixelRatio: number;
-    }
-
-    let helperDefaults: HelperDefaults;
-
-    beforeAll(async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName);
-      const options = recordedCanvasOptions();
-      helperDefaults = {
-        threshold: requireNumeric(options.threshold, 'threshold'),
-        maxDiffPixels: requireNumeric(options.maxDiffPixels, 'maxDiffPixels'),
-        maxDiffPixelRatio: requireNumeric(options.maxDiffPixelRatio, 'maxDiffPixelRatio'),
-      };
-    });
-
-    beforeEach(() => {
-      expectMock.mockClear();
-      toHaveScreenshotMock.mockClear();
-    });
-
-    it('forwards the canvas it was given to the visual assertion', async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName);
-
-      expect(expectMock).toHaveBeenCalledTimes(1);
-      expect(recordedCanvas()).toBe(canvas);
-    });
-
-    it('forwards the snapshot name unchanged', async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName);
-
-      expect(recordedSnapshot()).toBe(snapshotName);
-    });
-
-    it('forwards the helper defaults plus the fixed visual options', async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName);
-
-      expect(recordedCanvasOptions()).toEqual({
-        ...helperDefaults,
-        animations: 'disabled',
-        caret: 'hide',
-        scale: 'css',
-      });
-      // helperDefaults is captured from the call under test, so pin the literals separately.
-      const options = recordedCanvasOptions();
-      expect(options.threshold).toBe(0.2);
-      expect(options.maxDiffPixels).toBe(100);
-      expect(options.maxDiffPixelRatio).toBe(0.01);
-    });
-
-    it('keeps the default threshold in sync with the exported DEFAULT_THRESHOLD', async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName);
-
-      expect(helperDefaults.threshold).toBe(DEFAULT_THRESHOLD);
-    });
-
-    it('applies partial overrides while retaining the untouched defaults', async () => {
-      const threshold = helperDefaults.threshold / 2;
-      const maxDiffPixels = helperDefaults.maxDiffPixels / 2;
-
-      await expectCanvasToMatch(page, canvas, snapshotName, { threshold, maxDiffPixels });
-
-      expect(recordedCanvasOptions()).toEqual({
-        ...helperDefaults,
-        threshold,
-        maxDiffPixels,
-        animations: 'disabled',
-        caret: 'hide',
-        scale: 'css',
-      });
-    });
-
-    it('forwards a mask list through to the visual assertion', async () => {
-      const mask = [createMockLocator(), createMockLocator()];
-
-      await expectCanvasToMatch(page, canvas, snapshotName, { mask });
-
-      expect(recordedCanvasOptions().mask).toBe(mask);
-      expect(recordedCanvasOptions().threshold).toBe(helperDefaults.threshold);
-    });
-
-    it('awaits the visual assertion before resolving', async () => {
-      let resolved = false;
-      toHaveScreenshotMock.mockImplementationOnce(async () => {
-        await Promise.resolve();
-        resolved = true;
-      });
-
-      await expectCanvasToMatch(page, canvas, snapshotName);
-
-      expect(resolved).toBe(true);
-    });
-
-    it('surfaces a visual assertion failure to the caller', async () => {
-      const failure = new Error('toHaveScreenshot failed');
-      toHaveScreenshotMock.mockRejectedValueOnce(failure);
-
-      await expect(expectCanvasToMatch(page, canvas, snapshotName)).rejects.toThrow(failure);
-    });
-
-    it('tolerates an explicit undefined mask without replacing the other defaults', async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName, { mask: undefined });
-
-      const options = recordedCanvasOptions();
-      expect(options.mask).toBeUndefined();
-      expect(options.threshold).toBe(helperDefaults.threshold);
-      expect(options.maxDiffPixels).toBe(helperDefaults.maxDiffPixels);
-      expect(options.animations).toBe('disabled');
-    });
-
-    it.fails('reapplies the default threshold when the caller passes an explicit undefined threshold', async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName, { threshold: undefined });
-
-      expect(requireNumeric(recordedCanvasOptions().threshold, 'threshold')).toBe(DEFAULT_THRESHOLD);
-    });
-
-    it.fails(
-      'reapplies the default diff-pixel budget when the caller passes an explicit undefined budget',
-      async () => {
-        await expectCanvasToMatch(page, canvas, snapshotName, { maxDiffPixels: undefined });
-
-        expect(requireNumeric(recordedCanvasOptions().maxDiffPixels, 'maxDiffPixels')).toBe(
-          helperDefaults.maxDiffPixels
-        );
-      }
-    );
-
-    const invalidCanvases: [string, unknown][] = [
-      ['undefined', undefined],
-      ['null', null],
-      ['a plain object', {}],
-      ['a string', 'canvas'],
-      ['a number', 0],
-    ];
-
-    it.each(invalidCanvases)(
-      'hands an invalid canvas (%s) to the visual assertion instead of silently skipping it',
-      async (_label, invalidCanvas) => {
-        await expectCanvasToMatch(page, invalidCanvas as Locator, snapshotName);
-
-        expect(expectMock).toHaveBeenCalledTimes(1);
-        expect(recordedCanvas()).toBe(invalidCanvas);
-        expect(toHaveScreenshotMock).toHaveBeenCalledTimes(1);
-      }
-    );
-
-    it('propagates a failure from building the visual assertion without wrapping it', async () => {
-      const failure = new Error('expect() may only be used inside a Playwright test');
-      expectMock.mockImplementationOnce(() => {
-        throw failure;
-      });
-
-      await expect(expectCanvasToMatch(page, canvas, snapshotName)).rejects.toThrow(failure);
-      expect(toHaveScreenshotMock).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { Mouse } from '@playwright/test';
 import {
   DEFAULT_LINE_CLIP,
   drawLine,
@@ -93,7 +94,10 @@ describe('Locator.or', () => {
 });
 
 describe('takeLineScreenshot', () => {
-  afterEach(cleanupTempDirs);
+  afterEach(async () => {
+    await cleanupTempDirs();
+    vi.restoreAllMocks();
+  });
 
   it('captures the documented default clip and hands the buffer back', async () => {
     const outputDir = await makeOutputDir('default-clip');
@@ -170,17 +174,44 @@ describe('takeLineScreenshot', () => {
     expect(path.basename(capturedPath)).toBe('line-test.png');
   });
 
-  // PIN: a missing `testInfo.outputDir` reaches `path.join` unchecked, so it surfaces as
-  // a raw V8 ERR_INVALID_ARG_TYPE about the "path" argument rather than a message naming
-  // the problem. Asserting that exact message (not just `TypeError`) is what keeps the pin
-  // honest: fixing the source to `throw new TypeError('testInfo.outputDir is required')`,
-  // or to default the path, breaks this test instead of silently passing it.
-  it('rejects without capturing anything when testInfo has no output directory', async () => {
+  it('creates the output directory through the spied fs surface, not a private namespace', async () => {
+    // The helper used to `await import('node:fs/promises')` per call. That binds an ESM
+    // namespace whose `mkdir` is a copy taken at load time, so a `vi.spyOn(fs, 'mkdir')`
+    // replaced a property on a different object and recorded zero calls while `mkdir`
+    // certainly ran — the spy proves the import is now a top-level one. mkdir/attach
+    // ordering is covered by the test above; this covers the fs surface itself.
+    const outputDir = await makeOutputDir('spied-mkdir');
+    const mkdir = vi.spyOn(fs, 'mkdir');
+    const capture = createScreenshotSpy(Buffer.from('png'));
+    const { testInfo } = createTestInfoMock(outputDir);
+
+    await takeLineScreenshot(createPageMock({ screenshot: capture }), BOX, 'line-test', testInfo);
+
+    expect(mkdir).toHaveBeenCalledWith(outputDir, { recursive: true });
+  });
+
+  it('names the helper and the missing field when testInfo has no output directory', async () => {
+    // `path.join` used to run unguarded, so a TestInfo without an `outputDir` failed with
+    // V8's `The "path" argument must be of type string` — naming neither the helper nor
+    // the field. The guard runs before anything is captured or attached.
     const capture = createScreenshotSpy(Buffer.from('png'));
     const { testInfo, attach } = createTestInfoMock();
     const page = createPageMock({ screenshot: capture });
 
-    await expect(takeLineScreenshot(page, BOX, 'line-test', testInfo)).rejects.toThrow(/path.*must be of type string/);
+    await expect(takeLineScreenshot(page, BOX, 'line-test', testInfo)).rejects.toThrow(
+      new Error('takeLineScreenshot: testInfo.outputDir is required to capture and attach a screenshot')
+    );
+    expect(capture).not.toHaveBeenCalled();
+    expect(attach).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty output directory as readily as a missing one', async () => {
+    const capture = createScreenshotSpy(Buffer.from('png'));
+    const { testInfo, attach } = createTestInfoMock('');
+
+    await expect(
+      takeLineScreenshot(createPageMock({ screenshot: capture }), BOX, 'line-test', testInfo)
+    ).rejects.toThrow(/testInfo\.outputDir is required/);
     expect(capture).not.toHaveBeenCalled();
     expect(attach).not.toHaveBeenCalled();
   });
@@ -207,6 +238,66 @@ describe('takeLineScreenshot', () => {
     expect(capture).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * Bounds the modelled interpolation loop. This model transcribes the SERVER `Mouse.move` and
+ * nothing above it, so it has no client validator to reject a `steps: Infinity` — the real
+ * client refuses that one, but here the bound is simply never reached. The cap turns that into
+ * a red assertion instead of a dead worker, and so into a usable before/after measurement.
+ */
+const MOVE_LIMIT = 64;
+
+interface RecordedPointerEvent {
+  type: 'mousemove' | 'mousedown' | 'mouseup';
+  x: number;
+  y: number;
+}
+
+interface PointerRecorder {
+  mouse: Mouse;
+  events: RecordedPointerEvent[];
+}
+
+/**
+ * Playwright's server `Mouse.move`, transcribed: `const { steps = 1 } = options` followed by
+ * `for (let i = 1; i <= steps; i++)`, emitting one event per iteration at the interpolated
+ * point. A double that only records what was forwarded to it cannot tell `steps: 0` from no
+ * `steps` at all - both read as "a move to the endpoint" - because the loop that decides how
+ * many events the page receives runs inside Playwright. This model puts that loop in the test,
+ * so a test can assert the gesture the page would actually see.
+ */
+function createPointerRecorder(): PointerRecorder {
+  const events: RecordedPointerEvent[] = [];
+  let x = 0;
+  let y = 0;
+  // The `Partial<T>` annotation is the real type check (it rejects keys the real interface
+  // does not have); the `as T` cast below it is unchecked. Same idiom as the fixtures module.
+  const double: Partial<Mouse> = {
+    move: async (nextX, nextY, options = {}) => {
+      const { steps = 1 } = options;
+      const fromX = x;
+      const fromY = y;
+      x = nextX;
+      y = nextY;
+      // Truncates a `steps` that never reaches its bound, so an unfixed helper reports a red
+      // test here rather than taking the whole run down. See `MOVE_LIMIT`.
+      for (let i = 1; i <= steps && i <= MOVE_LIMIT; i++) {
+        events.push({
+          type: 'mousemove',
+          x: fromX + (nextX - fromX) * (i / steps),
+          y: fromY + (nextY - fromY) * (i / steps),
+        });
+      }
+    },
+    down: async () => {
+      events.push({ type: 'mousedown', x, y });
+    },
+    up: async () => {
+      events.push({ type: 'mouseup', x, y });
+    },
+  };
+  return { mouse: double as Mouse, events };
+}
 
 describe('drawLine', () => {
   it('presses, drags between the box-relative endpoints and releases', async () => {
@@ -237,18 +328,67 @@ describe('drawLine', () => {
     expect(input.move.mock.calls[1]).toEqual([BOX.x + 100, BOX.y + 100, { steps: 5 }]);
   });
 
-  // PIN: the guard is a truthy check, so an explicit `steps: 0` is silently dropped
-  // instead of being forwarded, where Playwright would read 0 as "do not interpolate".
-  // A fix that switches the guard to `!== undefined` breaks this expectation.
-  it('silently drops a steps value of zero instead of forwarding it', async () => {
+  it('draws the line for an explicit steps of zero rather than dispatching no move', async () => {
+    // Playwright's server `Mouse.move` interpolates with `for (let i = 1; i <= steps; i++)`, so
+    // a forwarded `steps: 0` iterates zero times: the page receives `mousedown` and `mouseup`
+    // at the same point and the stroke has zero length. `0` means "do not interpolate", which
+    // is one move, so the gesture a caller asks for with `steps: 0` is the gesture it gets
+    // with no options at all. Asserting the recorded event sequence is what makes this a
+    // statement about the line that gets drawn; asserting the forwarded argument would pass
+    // just as happily against the no-op.
+    const explicitZero = createPointerRecorder();
+    await drawLine(createPageMock({ mouse: explicitZero.mouse }), BOX, 0, 0, 100, 100, { steps: 0 });
+
+    const omitted = createPointerRecorder();
+    await drawLine(createPageMock({ mouse: omitted.mouse }), BOX, 0, 0, 100, 100);
+
+    expect(explicitZero.events).toEqual([
+      { type: 'mousemove', x: BOX.x, y: BOX.y },
+      { type: 'mousedown', x: BOX.x, y: BOX.y },
+      { type: 'mousemove', x: BOX.x + 100, y: BOX.y + 100 },
+      { type: 'mouseup', x: BOX.x + 100, y: BOX.y + 100 },
+    ]);
+    expect(explicitZero.events).toEqual(omitted.events);
+  });
+
+  it('forwards an explicit steps of zero as the single move Playwright defaults to', async () => {
+    // The forwarding half of the contract above: `0` is normalised to 1 rather than dropped
+    // and rather than passed through, so the call still carries an explicit `steps`.
     const input = createMouseMock();
 
     await drawLine(createPageMock({ mouse: input.mouse }), BOX, 0, 0, 100, 100, { steps: 0 });
 
-    expect(input.move.mock.calls).toEqual([
-      [BOX.x, BOX.y],
-      [BOX.x + 100, BOX.y + 100],
-    ]);
+    expect(input.move).toHaveBeenCalledTimes(2);
+    expect(input.move.mock.calls[0]).toEqual([BOX.x, BOX.y]);
+    expect(input.move.mock.calls[1]).toEqual([BOX.x + 100, BOX.y + 100, { steps: 1 }]);
+  });
+
+  it('draws the line for a negative steps instead of collapsing the stroke', async () => {
+    // `-5` was truthy, so it reached Playwright before the normalisation existed and had the
+    // same zero-length outcome as `0`: the loop bound is never reached. Latent - no call site
+    // passes a negative count - but the clamp covers it, so it is pinned.
+    const input = createPointerRecorder();
+
+    await drawLine(createPageMock({ mouse: input.mouse }), BOX, 0, 0, 100, 100, { steps: -5 });
+
+    expect(input.events.at(-1)).toEqual({ type: 'mouseup', x: BOX.x + 100, y: BOX.y + 100 });
+    expect(input.events.filter((event) => event.type === 'mousemove')).toHaveLength(2);
+  });
+
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['a fractional count', 2.5],
+  ])('falls back to the single move for %s, which Playwright rejects outright', async (_label, steps) => {
+    // The client validator is `steps: expected integer, got float <value>`, so forwarding one
+    // of these throws between `mousedown` and `mouseup` and leaves the button down. A count the
+    // helper cannot use has to mean one move, not a broken gesture.
+    const input = createPointerRecorder();
+
+    await drawLine(createPageMock({ mouse: input.mouse }), BOX, 0, 0, 100, 100, { steps });
+
+    expect(input.events.at(-1)).toEqual({ type: 'mouseup', x: BOX.x + 100, y: BOX.y + 100 });
+    expect(input.events.filter((event) => event.type === 'mousemove')).toHaveLength(2);
   });
 
   it('passes negative box-relative coordinates through untouched', async () => {

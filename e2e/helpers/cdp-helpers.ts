@@ -1,4 +1,5 @@
 import { type Page, type TestInfo } from '@playwright/test';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 
 interface BoundingBox {
@@ -28,9 +29,12 @@ export async function captureCanvasScreenshot(
   name: string,
   clip?: ClipOptions
 ): Promise<Buffer> {
-  const screenshotPath = path.join(testInfo.outputDir, `${name}.png`);
-  const fs = await import('node:fs/promises');
-  await fs.mkdir(testInfo.outputDir, { recursive: true });
+  const outputDir = testInfo.outputDir;
+  if (typeof outputDir !== 'string' || outputDir === '') {
+    throw new Error('captureCanvasScreenshot: testInfo.outputDir is required to capture and attach a screenshot');
+  }
+  const screenshotPath = path.join(outputDir, `${name}.png`);
+  await fs.mkdir(outputDir, { recursive: true });
   const cdp = await page.context().newCDPSession(page);
   // CDP clip coordinates are CSS pixels, and the captured image comes back at
   // `clip_size x clip.scale x deviceScaleFactor` image pixels -- native device pixels,

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, expectTypeOf } from 'vitest';
 import type { Mock } from 'vitest';
 import type { Page } from '@playwright/test';
+import { slugifyToolLabel, toolbarMap } from '../../../toolbar-mapping.ts';
 import {
   TOOL_NAME_MAP,
   TOOL_DISPLAY_LABEL_MAP,
@@ -25,9 +26,12 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks } = vi.hois
   type Target = { __elements: Array<{ visible: boolean; focused: boolean; testId: string | null; text: string }> };
   type Check = { target: Target; options?: { timeout?: number } };
 
-  const visibilityChecks: Check[] = [];
-  const hiddenChecks: Check[] = [];
-  const textChecks: Array<{ target: Target; expected: string }> = [];
+  // The bindings below are returned to names declared on the outer scope, so the
+  // locals are spelled differently: shadowing them would make every recorded check
+  // ambiguous about which array it lands in.
+  const recordedVisibilityChecks: Check[] = [];
+  const recordedHiddenChecks: Check[] = [];
+  const recordedTextChecks: Array<{ target: Target; expected: string }> = [];
 
   const locatorLabel = (target: Target): string => {
     const testId = target.__elements[0]?.testId;
@@ -37,21 +41,21 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks } = vi.hois
   const timedOut = (matcher: string, target: Target, timeout?: number): Error =>
     new Error(`Timed out ${timeout ?? 0}ms waiting for expect(locator${locatorLabel(target)}).${matcher}()`);
 
-  const playwrightExpect = vi.fn((target: Target) => ({
+  const hoistedExpect = vi.fn((target: Target) => ({
     toBeVisible: vi.fn(async (options?: { timeout?: number }) => {
-      visibilityChecks.push({ target, options });
+      recordedVisibilityChecks.push({ target, options });
       if (!target.__elements.some((element) => element.visible)) {
         throw timedOut('toBeVisible', target, options?.timeout);
       }
     }),
     toBeHidden: vi.fn(async (options?: { timeout?: number }) => {
-      hiddenChecks.push({ target, options });
+      recordedHiddenChecks.push({ target, options });
       if (target.__elements.some((element) => element.visible)) {
         throw timedOut('toBeHidden', target, options?.timeout);
       }
     }),
     toContainText: vi.fn(async (expected: string) => {
-      textChecks.push({ target, expected });
+      recordedTextChecks.push({ target, expected });
       if (!target.__elements.some((element) => element.text.includes(expected))) {
         throw timedOut('toContainText', target);
       }
@@ -65,7 +69,12 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks } = vi.hois
     }),
   }));
 
-  return { playwrightExpect, visibilityChecks, hiddenChecks, textChecks };
+  return {
+    playwrightExpect: hoistedExpect,
+    visibilityChecks: recordedVisibilityChecks,
+    hiddenChecks: recordedHiddenChecks,
+    textChecks: recordedTextChecks,
+  };
 });
 
 vi.mock('@playwright/test', () => ({
@@ -396,18 +405,57 @@ const IDEMPOTENCY_SAMPLES = [
 // Names that exist on Object.prototype. A plain object literal map answers these
 // lookups with the inherited function/accessor, so `expected` is what normalization
 // should yield once the maps are own-property-safe.
-const INHERITED_NAME_CASES: Array<{ input: string; expected: string }> = [
-  { input: 'constructor', expected: 'constructor' },
-  { input: 'toString', expected: 'tostring' },
-  { input: 'valueOf', expected: 'valueof' },
-  { input: 'hasOwnProperty', expected: 'hasownproperty' },
-  { input: '__proto__', expected: 'proto' },
-  { input: 'isPrototypeOf', expected: 'isprototypeof' },
-  { input: 'propertyIsEnumerable', expected: 'propertyisenumerable' },
-  { input: 'toLocaleString', expected: 'tolocalestring' },
+//
+// `slugExpected` is the same name run through the flyout-item slug rule, which is a
+// different function: it does not trim, so `'__proto__'` keeps a dash on each side of
+// `proto` where `normalizeToolName` trims them away. The two coincide for every other
+// case here because each is a single run of alphanumerics.
+const INHERITED_NAME_CASES: Array<{ input: string; expected: string; slugExpected: string }> = [
+  { input: 'constructor', expected: 'constructor', slugExpected: 'constructor' },
+  { input: 'toString', expected: 'tostring', slugExpected: 'tostring' },
+  { input: 'valueOf', expected: 'valueof', slugExpected: 'valueof' },
+  { input: 'hasOwnProperty', expected: 'hasownproperty', slugExpected: 'hasownproperty' },
+  { input: '__proto__', expected: 'proto', slugExpected: '-proto-' },
+  { input: 'isPrototypeOf', expected: 'isprototypeof', slugExpected: 'isprototypeof' },
+  { input: 'propertyIsEnumerable', expected: 'propertyisenumerable', slugExpected: 'propertyisenumerable' },
+  { input: 'toLocaleString', expected: 'tolocalestring', slugExpected: 'tolocalestring' },
 ];
 
 const INHERITED_NAME_KEYS = INHERITED_NAME_CASES.map(({ input }) => input);
+
+// Tool names whose regex metacharacters used to be interpolated straight into the
+// role fallback's `new RegExp(...)`. Each `decoy` is a button that the *unescaped*
+// pattern does match, which is why the old selector resolved to the wrong element
+// rather than to no element at all. `'C:\\Tool'` is the two-character escape for the
+// name the button really carries, `C:\Tool`.
+const REGEX_METACHARACTER_CASES: Array<{ name: string; decoy: string }> = [
+  { name: 'Brush (B)', decoy: 'Brush B' },
+  { name: 'Levels[beta]', decoy: 'Levelsbeta' },
+  { name: 'Crop.v2', decoy: 'Crop-v2' },
+  { name: 'Zoom+', decoy: 'Zoom' },
+  { name: 'Paint|Fill', decoy: 'Paint' },
+  { name: 'C:\\Tool', decoy: 'C:Tool' },
+];
+
+// The `slugifyToolLabel` in `toolbar-mapping.ts`, which is what
+// `SidebarLeft` mints `tool-flyout-item-${tool.name}-${slugifyToolLabel(tool.label)}` with.
+// It is imported rather than transcribed: a second copy in this file would pin itself, and
+// an application-side change to the rule would then go unnoticed here.
+//
+// `toolbar-mapping.ts` sits at the repository root and reaches into `src/` through
+// `import type` only, which is erased at runtime — so importing it does not pull app
+// source into this Node-environment project (see the note in `vitest.e2e.config.ts`).
+// Every label the application can put in a flyout item, walked out of `toolbarMap` so the
+// list cannot go stale: `toolbarMap` is groups → flyout menus → tools, three levels deep.
+const REAL_TOOL_LABELS: string[] = toolbarMap.flatMap((group) =>
+  group.flatMap((menu) => menu.map((tool) => tool.label))
+);
+
+// The labels the suite passes to the slug-consuming helpers:
+// `e2e/levels.spec.ts:86,128` and `e2e/sidebar-flyout.spec.ts:73,86`. They are a subset
+// of REAL_TOOL_LABELS; they are listed separately because those are the three paths an
+// e2e run actually exercises end to end.
+const SUITE_FLYOUT_LABELS = ['Levels', 'Pencil Tool', 'Ellipse Tool'];
 
 const KEYBOARD_CASES: Array<{
   requested: 'ArrowDown' | 'ArrowUp' | 'Enter' | ' ';
@@ -525,14 +573,35 @@ describe('Toolbar Helpers', () => {
         }
       });
 
-      it('only matches mapped display names case-sensitively', () => {
-        expect(resolveToolName('SELECT & MOVE')).toBe('select-and-move');
-        expect(resolveToolName('select and move')).toBe('select-and-move');
+      it('matches a mapped display name case-insensitively', () => {
         expect(resolveToolName('Select & Move')).toBe('reposition');
+        expect(resolveToolName('SELECT & MOVE')).toBe('reposition');
+        expect(resolveToolName('select & move')).toBe('reposition');
+        expect(resolveToolName('SeLeCt & MoVe')).toBe('reposition');
       });
 
-      it('still resolves legitimate mapped and unmapped tool names', () => {
-        expect(resolveToolName('Select & Move')).toBe('reposition');
+      it('matches a map entry added after module load, case-insensitively', () => {
+        // A lowercased index would have been built at module load and would miss this,
+        // so the lookup scans the map's own keys instead of caching them.
+        TOOL_NAME_MAP['Crop & Slice'] = 'Crop Tool';
+        try {
+          expect(resolveToolName('crop & SLICE')).toBe('crop-tool');
+        } finally {
+          delete TOOL_NAME_MAP['Crop & Slice'];
+        }
+      });
+
+      it('does not let the case-insensitive lookup reach an inherited member', () => {
+        expect(resolveToolName('CONSTRUCTOR')).toBe('constructor');
+        expect(resolveToolName('__PROTO__')).toBe('proto');
+        expect(resolveToolName('TOSTRING')).toBe('tostring');
+      });
+
+      it('passes through a differently cased name that is not a mapped key', () => {
+        // 'select and move' spells the word out, so it is not the key 'Select & Move':
+        // the whole key is compared, not a normalized form of it.
+        expect(resolveToolName('select and move')).toBe('select-and-move');
+        expect(resolveToolName('BRUSH TOOL')).toBe('brush-tool');
         expect(resolveToolName('brush')).toBe('brush');
       });
     });
@@ -548,12 +617,15 @@ describe('Toolbar Helpers', () => {
         }
       );
 
-      it.each(INHERITED_NAME_CASES)('normalizeToolName and generateSlug(%j) do not throw', ({ input, expected }) => {
-        expect(() => normalizeToolName(input)).not.toThrow();
-        expect(normalizeToolName(input)).toBe(expected);
-        expect(() => generateSlug(input)).not.toThrow();
-        expect(generateSlug(input)).toBe(expected);
-      });
+      it.each(INHERITED_NAME_CASES)(
+        'normalizeToolName and generateSlug(%j) do not throw',
+        ({ input, expected, slugExpected }) => {
+          expect(() => normalizeToolName(input)).not.toThrow();
+          expect(normalizeToolName(input)).toBe(expected);
+          expect(() => generateSlug(input)).not.toThrow();
+          expect(generateSlug(input)).toBe(slugExpected);
+        }
+      );
 
       it.each(INHERITED_NAME_KEYS)('TOOL_NAME_MAP and TOOL_DISPLAY_LABEL_MAP have no inherited entry for %j', (key) => {
         expect(TOOL_NAME_MAP[key]).toBeUndefined();
@@ -570,21 +642,58 @@ describe('Toolbar Helpers', () => {
         expect(generateSlug('Color Balance')).toBe('color-balance');
       });
 
-      it('handles special characters in label (strips trailing non-alphanumeric)', () => {
-        expect(generateSlug('Item @#$%')).toBe('item');
+      it('leaves a trailing separator run as a dash, the way the application does', () => {
+        // The app does not trim, so the id it mints ends in a dash. An earlier version
+        // pinned 'item' here — a slug the app cannot produce for this label.
+        expect(generateSlug('Item @#$%')).toBe('item-');
       });
 
       it('handles numbers', () => {
         expect(generateSlug('Tool 2')).toBe('tool-2');
       });
 
-      it('strips leading/trailing whitespace and non-alphanumeric', () => {
-        expect(generateSlug('  My Label  ')).toBe('my-label');
+      it('keeps leading and trailing separator runs as dashes, the way the application does', () => {
+        // '-my-label-', not 'my-label': the run on each side is a run.
+        expect(generateSlug('  My Label  ')).toBe('-my-label-');
       });
 
       it('returns an empty string for an empty label', () => {
         expect(generateSlug('')).toBe('');
       });
+
+      it('collapses an ampersand into the surrounding run instead of spelling it out', () => {
+        // normalizeToolName would answer 'color-and-tone'. The app mints 'color-tone',
+        // because ' & ' is one run of non-alphanumeric characters.
+        expect(generateSlug('Color & Tone')).toBe('color-tone');
+        expect(generateSlug('R&B')).toBe('r-b');
+        expect(generateSlug('A && B')).toBe('a-b');
+      });
+
+      it('is compared against the application rule for every real toolbar label', () => {
+        // The tripwire is the it.each below: the helper keeps its own copy of the rule so
+        // that the comparison is not a tautology. Change one side alone and it goes red.
+        // This case only fails if the label set itself stops being read, which would
+        // silently turn the 28 real cases above into zero.
+        expect(REAL_TOOL_LABELS.length).toBeGreaterThan(0);
+        expect(REAL_TOOL_LABELS).toContain('Levels');
+      });
+
+      it.each(REAL_TOOL_LABELS)('reproduces the application slug for the real toolbar label %j', (label) => {
+        expect(generateSlug(label)).toBe(slugifyToolLabel(label));
+      });
+
+      it.each(SUITE_FLYOUT_LABELS)('reproduces the application slug for the suite label %j', (label) => {
+        expect(generateSlug(label)).toBe(slugifyToolLabel(label));
+      });
+
+      it.each(SUITE_FLYOUT_LABELS)(
+        'happens to agree with normalizeToolName for the suite label %j, which is why no spec moves',
+        (label) => {
+          // A property of these three labels — none carries '&' or edge punctuation — not
+          // a rule. 'Color & Tone' above is the counterexample.
+          expect(generateSlug(label)).toBe(normalizeToolName(label));
+        }
+      );
 
       it('FlyoutItem interface has toolName and label string fields', () => {
         expectTypeOf<FlyoutItem>().toEqualTypeOf<{
@@ -659,6 +768,61 @@ describe('Toolbar Helpers', () => {
       await clickToolButton(dom.page, 'brush');
 
       expect(dom.clicked).toEqual([legacyButton]);
+    });
+
+    it('resolves a differently cased display name to the mapped testid', async () => {
+      const dom = createFakeDom();
+      const button = dom.add({ testId: 'tool-button-reposition' });
+
+      await clickToolButton(dom.page, 'select & move');
+
+      expect(dom.mocks.getByTestId).toHaveBeenCalledWith('tool-button-reposition');
+      expect(dom.clicked).toEqual([button]);
+    });
+
+    it.each(REGEX_METACHARACTER_CASES)(
+      'treats the accessible name %j as data, not as a pattern',
+      async ({ name, decoy }) => {
+        const dom = createFakeDom();
+        // The decoy is added first, so an unescaped pattern that matched it would
+        // click it and leave the real button untouched.
+        const decoyButton = dom.add({ testId: 'legacy-decoy', name: decoy });
+        const target = dom.add({ testId: 'legacy-target', name });
+
+        await clickToolButton(dom.page, name);
+
+        // Asserted on the pattern itself, not only on the element that ended up
+        // clicked, so a regression is attributed to the selector instead of to the
+        // order of the fallback candidates.
+        const options = dom.mocks.getByRole.mock.calls[0][1];
+        expect(options?.name).toBeInstanceOf(RegExp);
+        const pattern = options?.name as RegExp;
+        expect(pattern.test(name)).toBe(true);
+        expect(pattern.test(decoy)).toBe(false);
+        // Control: the unescaped form is what the defect searched for, so this decoy
+        // is a real tripwire rather than a name the old pattern also ignored.
+        expect(new RegExp(name).test(decoy)).toBe(true);
+        expect(dom.clicked).toEqual([target]);
+        expect(dom.clicked).not.toContain(decoyButton);
+      }
+    );
+
+    it('constructs a pattern from C:\\Tool without throwing, and pins what it then matches', () => {
+      // An earlier comment here claimed `C:\\Tool` "throws on construction". It does not:
+      // `\T` is an Annex B IdentityEscape, so the pattern builds and then matches `C:Tool`
+      // — a name the caller never asked for — while failing to match its own literal name.
+      // The `u` flag is the only thing that makes this a SyntaxError. Pinned here so the
+      // doc comment on `escapeRegExp` cannot drift back into claiming otherwise.
+      const unescaped = new RegExp('C:\\Tool');
+
+      expect(() => new RegExp('C:\\Tool')).not.toThrow();
+      expect(unescaped.test('C:\\Tool')).toBe(false);
+      expect(unescaped.test('C:Tool')).toBe(true);
+      // eslint-disable-next-line no-invalid-regexp -- the invalidity is the assertion: only `u` makes this a SyntaxError
+      expect(() => new RegExp('C:\\Tool', 'u')).toThrow(SyntaxError);
+
+      // The escaped form the helper actually builds, which does match itself.
+      expect(new RegExp('C:\\\\Tool', 'i').test('C:\\Tool')).toBe(true);
     });
 
     it('clicks only the first of several testid matches', async () => {

@@ -25,17 +25,16 @@
     "strict": true,
     "noImplicitAny": true,
     "noUnusedLocals": true,
-    // OFF, unlike tsconfig.app.json / tsconfig.node.json, and unlike the standalone
-    // package these specs came from (which left it off by omission).
+    // ON, matching tsconfig.app.json / tsconfig.node.json. It was off here only to
+    // accommodate unread parameters, and there are now none: `exportAndVerify`'s
+    // `testInfo` attaches the exported bytes to the report when the pixel comparison
+    // fails (`e2e/export/helpers.ts:230`). An earlier version of this comment claimed a
+    // dead parameter was "a documented defect in e2e/OPEN_PROBLEMS.md"; it was not, and
+    // the parameter was not missing a step.
     //
-    // Two e2e helpers take a parameter that they deliberately do not read:
-    // `exportAndVerify`'s `testInfo` and `expectCanvasToMatch`'s `page`. Both are
-    // documented defects in e2e/OPEN_PROBLEMS.md, and every call site already
-    // threads the argument. Deleting the parameter to satisfy the compiler would
-    // erase the evidence of the defect and churn every call site; the fix is to
-    // start using the argument. Unused *locals* stay an error, and ESLint still
-    // reports both as `no-unused-vars` warnings, so neither is silent.
-    "noUnusedParameters": false,
+    // The e2e ESLint block also sets `args: 'all'`, so an unread parameter is reported by
+    // both tools rather than by one and hidden by the other.
+    "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true

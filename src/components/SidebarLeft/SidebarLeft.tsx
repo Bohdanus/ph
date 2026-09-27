@@ -3,7 +3,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useApp } from '../../hooks/useApp.ts';
 import ToolTooltip from './ToolTooltip.tsx';
 import { toolIcons } from './toolIcons.tsx';
-import { toolbarMap, type ToolbarTool, type ToolbarToolGroup } from '../../../toolbar-mapping.ts';
+import { slugifyToolLabel, toolbarMap, type ToolbarTool, type ToolbarToolGroup } from '../../../toolbar-mapping.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 
 const TOOL_BUTTON_BASE_CLASS =
@@ -14,8 +14,6 @@ const TOOL_BUTTON_ACTIVE_CLASS =
 
 const TOOL_BUTTON_INACTIVE_CLASS =
   'border-gray-300 bg-gray-200/80 hover:border-gray-400 hover:bg-white dark:border-gray-700 dark:bg-gray-900/60 dark:hover:border-gray-500 dark:hover:bg-gray-700';
-
-const slugify = (value: string) => value.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-');
 
 const LayoutIcon = ({ singleColumn }: { singleColumn: boolean }) => (
   <span aria-hidden="true" className="flex items-center justify-center text-lg leading-none font-black tracking-tight">
@@ -159,7 +157,7 @@ const SidebarLeft = () => {
     return (
       <li
         className="group relative"
-        key={`${groupIndex}-${group.map(({ label }) => slugify(label)).join('-')}`}
+        key={`${groupIndex}-${group.map(({ label }) => slugifyToolLabel(label)).join('-')}`}
         ref={(element) => {
           toolGroupRefs.current[groupIndex] = element;
         }}
@@ -171,7 +169,6 @@ const SidebarLeft = () => {
             aria-label={primaryTool.label}
             aria-pressed={group.some((tool) => tool.name === toolName)}
             className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}`}
-            disabled={!hasImage}
             onClick={() => {
               if (hasFlyout && ignoreNextClickRef.current) {
                 ignoreNextClickRef.current = false;
@@ -283,7 +280,7 @@ const SidebarLeft = () => {
               const isSelected = isToolSelected(tool);
 
               return (
-                <li key={`${tool.name}-${slugify(tool.label)}`} role="none">
+                <li key={`${tool.name}-${slugifyToolLabel(tool.label)}`} role="none">
                   <button
                     aria-checked={isSelected}
                     aria-label={tool.label}
@@ -292,7 +289,6 @@ const SidebarLeft = () => {
                         ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-100'
                         : 'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700'
                     }`}
-                    disabled={!hasImage}
                     onClick={() => {
                       setPrimaryTools((current) => ({ ...current, [groupIndex]: tool }));
                       selectTool(tool);
@@ -300,7 +296,7 @@ const SidebarLeft = () => {
                     }}
                     role="menuitemradio"
                     type="button"
-                    data-testid={`tool-flyout-item-${tool.name}-${slugify(tool.label)}`}
+                    data-testid={`tool-flyout-item-${tool.name}-${slugifyToolLabel(tool.label)}`}
                   >
                     <FlyoutIcon title={tool.label} />
                     <span className="flex-1 whitespace-nowrap">{tool.label}</span>

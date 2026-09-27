@@ -53,10 +53,10 @@ is expected to be green too, but that has not been measured here, and per
 `AGENTS.md` it should not be: an operator's stray click reaching the page is
 indistinguishable from a real race, so a green headed run would be weak evidence.
 
-**What headless does not fix:** the real open defect below survives it.
-`sidebar-keyboard.spec.ts:77` and `:89` race on "flyout closed after Enter" and fail
-in 4 of 5 **headless** runs.
-Headless removes a failure class; it does not make the suite green.
+**What headless does not fix:** a real race. This suite had one —
+`sidebar-keyboard.spec.ts` raced on "flyout closed after Enter" and fired in **headless**
+runs with no operator input at all. Headless removes a failure class; it does not
+by itself make a suite green.
 
 Headed runs are for **looking at**, not for gating on. Use `npm run test:e2e:headed`
 for the one thing headless cannot do: watching a canvas or WebGL interaction that
@@ -65,13 +65,15 @@ and keyboard alone.
 
 `--headed`, `--ui` and `--debug` override the config's `headless` setting after the
 config has been read, and `show-report` / `show-trace` / `codegen` never read it at
-all. So the headless default alone is a convention with five ways around it.
+all. So the headless default alone is a convention with several ways around it.
 `e2e/global-setup.ts` closes the first three: it runs before any browser is created
-and throws, naming the flag that asked for a window. `kilo.jsonc` denies all of them
-at the agent permission layer, including the npm script spellings. The escape hatch
-for all of it is `PLAYWRIGHT_ALLOW_HEADED=1`, which `test:e2e:headed` sets and which
-the guard also honours, so the config and the guard can never disagree about whether
-a run was authorised. `AGENTS.md` states the rule for coding agents.
+and throws, naming the flag that asked for a window. `kilo.jsonc` denies them at
+the agent permission layer, including the npm script spellings, with one deliberate
+exception: `--debug` and `test:e2e:debug` are `ask`, not `deny`, so a wrong guess
+reaches a prompt instead of a silent block. The escape hatch for all of it is
+`PLAYWRIGHT_ALLOW_HEADED=1`, which `test:e2e:headed` sets and which the guard also
+honours, so the config and the guard can never disagree about whether a run was
+authorised. `AGENTS.md` states the rule for coding agents.
 
 ## Running the e2e suite
 
@@ -81,17 +83,40 @@ npm run test:e2e
 
 Nothing needs to be started by hand. `playwright.config.ts` declares a
 `webServer` running `npm run dev`, so Playwright starts the Vite dev server on
-<http://localhost:5173> and tears it down afterwards.
+<http://localhost:5173> and tears it down afterwards. 5173 is a default, not a
+constant: `PLAYWRIGHT_PORT` moves the dev server, the `baseURL` the tests use, and
+the port that is probed, in one step.
 
-If you already have a dev server on that port, Playwright reuses it. Point the
-suite somewhere else with `PLAYWRIGHT_BASE_URL`:
+```bash
+PLAYWRIGHT_PORT=5391 npm run test:e2e
+```
+
+Set it in a second worktree. Every worktree serves its own checkout, so a run that
+attaches to a :5173 server it did not start is testing the other checkout's code,
+which reads exactly like "my change did nothing". An explicit `PLAYWRIGHT_PORT`
+also turns server reuse off by itself — it is a request to test _this_ checkout, so
+a server already on that port is this run's own stale process rather than someone
+else's to share.
+
+With nothing set, a dev server you already have on :5173 is reused, which is
+convenient when it is the only thing on the port. `PLAYWRIGHT_REUSE_EXISTING_SERVER=false`
+turns that off and forces Playwright to start its own server:
+
+```bash
+PLAYWRIGHT_REUSE_EXISTING_SERVER=false npm run test:e2e
+```
+
+That is now a loud failure rather than a workaround: with the port occupied, the
+reuse check refuses before it would launch anything, and the dev server is started
+with `--strictPort` so it cannot silently hop to the next free port. On a port
+somebody else is serving, reach for `PLAYWRIGHT_PORT` instead.
+
+Point the suite at a server you did not start with `PLAYWRIGHT_BASE_URL`. It wins
+navigation, so keep it and `PLAYWRIGHT_PORT` consistent:
 
 ```bash
 PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e
 ```
-
-Set `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` to force Playwright to start its own
-server instead of attaching to whatever is already listening.
 
 The project defaults to the system Chrome channel (`channel: 'chrome'`), so
 install it once with:
@@ -114,11 +139,10 @@ npm run test:e2e:unit              # single run
 npm run test:e2e:unit:coverage     # with a coverage report in ./coverage-e2e
 ```
 
-Coverage covers 6 of the 7 helper modules. `e2e/helpers/cdp-helpers.ts` is absent
-from the report: its only tests are the Playwright specs in
-`cdp-helpers.spec.ts`, which run in a browser and so are outside this Vitest
-project. That is the same reason 5 of those specs are currently red — see
-`OPEN_PROBLEMS.md`.
+Every helper module under `e2e/helpers/` is in the report. That is the durable part
+of it, and a tripwire in both directions: a new helper module with no
+`__tests__` file silently drops off the list, and nothing fails — there are no
+coverage thresholds in `vitest.e2e.config.ts`.
 
 These run under a **second, independent Vitest project** (`vitest.e2e.config.ts`),
 not the root `vitest.config.ts`. The split is not cosmetic:
@@ -149,12 +173,10 @@ at runtime.
 ## Type checking and linting
 
 `e2e/` is a TypeScript project reference off the root `tsconfig.json`, so
-`npm run tsc` type-checks the specs, the helpers and the unit tests. Note that
-`tsc -b` is _not_ currently green for the whole repository — nine `src` test files
-import `@testing-library/user-event`, which is missing from `package.json`. That is
-pre-existing and unrelated to this suite; `tsc -b` reports **zero** errors for
-`e2e/`. It also means `.husky/pre-commit` cannot pass, so nothing here is enforced
-by the pre-commit hook today.
+`npm run tsc` (`tsc -b`) type-checks the specs, the helpers and the unit tests
+alongside the app and node projects. It is green. `.husky/pre-commit` runs
+`lint-staged`, `npm run tsc` and `npm run test:e2e:unit`, so a change under `e2e/`
+is type-checked and unit-tested before it is committed, not only in CI.
 
 Settings that differ from `tsconfig.app.json`, and why:
 
@@ -163,9 +185,11 @@ Settings that differ from `tsconfig.app.json`, and why:
   `describe`/`it`/`expect` from `vitest` explicitly, and the e2e Vitest project does
   not set `globals: true`, so implicit globals would typecheck and then fail at
   runtime.
-- `noUnusedParameters: false` — see `tsconfig.e2e.json` for why. Unused _locals_
-  are still an error, and the e2e ESLint block uses `args: 'all'` so both
-  deliberately-unread parameters are reported as warnings.
+- `noUnusedParameters: true`, as in the app and node configs. It was off here only to
+  accommodate two unread parameters, and `tsconfig.e2e.json` records what happened to
+  both. No e2e parameter is deliberately unread, so an unused one is a type error
+  rather than a warning nobody has to read; the e2e ESLint block's `args: 'all'`
+  reports the same thing a second way, so neither tool can hide it from the other.
 - No `paths` alias and no `jsx`: nothing under `e2e/` imports app source. The e2e
   suite drives the real application through a browser, so reaching into `src/` from
   here would duplicate what the app's own unit tests already cover.
@@ -198,13 +222,13 @@ npm run test:e2e:update-baselines
   (`sharp` + `pixelmatch`, entirely in Node — no browser round-trip).
 - Comparison must satisfy **both** a per-pixel threshold and a cap on differing
   pixels. `visual-regression.spec.ts` passes `threshold: 0.01` and
-  `maxDiffPixels: 100` explicitly. The shared helpers carry their own defaults
-  (`DEFAULT_THRESHOLD = 0.2`, `maxDiffPixels = 100`, `maxDiffPixelRatio = 0.01`),
-  but `expectCanvasToMatch` in `e2e/helpers/image-comparison.ts` ends its options
-  object with a `...options` spread, so an explicitly-passed `undefined` overrides
-  the default instead of falling back to it. Treat the defaults as a starting
-  point, not a guarantee — read the call site. This is tracked as a P1 in
-  `OPEN_PROBLEMS.md`.
+  `maxDiffPixels: 100` explicitly. The budgets live in one place —
+  `DEFAULT_THRESHOLD = 0.2`, `DEFAULT_MAX_DIFF_PIXELS = 100`,
+  `DEFAULT_MAX_DIFF_PIXEL_RATIO = 0.01` in `e2e/helpers/image-comparison.ts` — and
+  `compareScreenshots` reads them through `options.x ?? DEFAULT_X`, so an
+  explicitly-passed `undefined` falls back to the default instead of overwriting it.
+  Read the call site rather than assuming a budget: the number that ran is whatever
+  the call site passed, or the default when it passed nothing.
 - The ICO test is a different comparison: it allows at most
   `CHANGED_CHANNEL_THRESHOLD_ICO` (20,000) colour channels to drift by more than
   `CHANNEL_DELTA_TOLERANCE` (40) from the source canvas.
@@ -249,22 +273,23 @@ committed pixels can never be rewritten by line-ending normalisation.
 
 ## Current status
 
-97 tests in 21 spec files, plus 694 helper unit tests (10 files).
+Nothing fails on the default headless run, and that is stable across repeated full
+runs. The numbers move every time a test is added, so the three commands below are
+where to read them.
 
-| Suite             | Command                 | Result                                      |
-| ----------------- | ----------------------- | ------------------------------------------- |
-| App unit tests    | `npm run test`          | 3881 pass + 42 expected-fail, 176/176 files |
-| Helper unit tests | `npm run test:e2e:unit` | 694 pass, 2 expected-fail (10 files)        |
-| E2E tests         | `npm run test:e2e`      | 97 pass, 0 fail, 2 skipped (21 files)       |
+| Suite             | Command                 |
+| ----------------- | ----------------------- |
+| App unit tests    | `npm run test`          |
+| Helper unit tests | `npm run test:e2e:unit` |
+| E2E tests         | `npm run test:e2e`      |
 
-**Nothing fails on the default headless run**, and that is stable across repeated
-full runs. Three groups used to; all three are fixed, and each was fixed by changing
+Three groups used to; all three are fixed, and each was fixed by changing
 an assertion or a wait rather than by loosening a threshold:
 
 | formerly failing tests            | was                                     | now                                                               |
 | --------------------------------- | --------------------------------------- | ----------------------------------------------------------------- |
 | `cdp-helpers.spec.ts`             | 2 headless, 5 headed, disjoint per mode | capture scale is no longer asserted; mode-independent             |
-| `sidebar-keyboard.spec.ts:77, 89` | 0–2, 5 of 12 measured headless runs     | root-caused to a `requestAnimationFrame` focus race, then awaited |
+| `sidebar-keyboard.spec.ts:76, 88` | 0–2, 5 of 12 measured headless runs     | root-caused to a `requestAnimationFrame` focus race, then awaited |
 | `levels.spec.ts:64, 109`          | 2, both modes                           | canvas located by test id, not document order                     |
 
 - The CDP group derived its expected capture size from `window.devicePixelRatio`, but
@@ -292,8 +317,8 @@ precisely so it can only ever match one element.
 2 tests are declared `test.skip`: the Photopea PSD round-trip (needs the external
 photopea.com) and one right-click flyout case.
 
-A local run uses `retries: 0` (only `CI` sets `retries: 2`), so the keyboard race is
-a hard red run locally.
+A local run uses `retries: 0`; only `CI` sets `retries: 2`, so a local failure is
+never retried away.
 
 ## Test commands
 
@@ -349,18 +374,25 @@ PLAYWRIGHT_CHANNEL=msedge npx playwright test
 `.github/workflows/ci.yml` has three jobs.
 
 `e2e-unit` is the **blocking** gate for this directory: it runs
-`npm run test:e2e:unit` (692 pass, 2 expected-fail) and `npx tsc -b
-tsconfig.e2e.json` (0 errors). It needs no browser and no application instance.
+`npm run test:e2e:unit`, then `npm run test:e2e:unit:coverage`, and uploads
+`coverage-e2e/` as the `e2e-helper-coverage` artifact. It needs no browser and no
+application instance. The coverage step is ordered after the gate on purpose, so a
+failure there is reported against a job whose tests already passed and can never
+stand in for the gate; and because `vitest.e2e.config.ts` declares no coverage
+thresholds, that step cannot go red on a percentage — only a failing test turns it
+red.
 
 It is a **separate job** rather than a step inside `ci` on purpose. Sharing a job
 would mean this coverage is only ever reached after the app pipeline's own steps
 succeed, so a break anywhere in `ci` would silently remove the only gate on the e2e
 code while the workflow still looked like it was covered. A separate job cannot be
-skipped that way. It also builds only `tsconfig.e2e.json`, so an app-project type
-error cannot take the e2e type-check down with it.
+skipped that way. It carries no type-check step of its own: the `ci` job's
+`npm run tsc` is `tsc -b`, which builds `tsconfig.e2e.json` along with the app and
+node projects, so a second scoped run here could only repeat it.
 
-`ci` is the pre-existing app pipeline (lint, audit, type-check, test, build),
-unchanged by this work apart from `tsc -b` now also building `tsconfig.e2e.json`.
+`ci` is the pre-existing app pipeline: lint, audit, type-check, an assertion that
+every tracked `.ts`/`.tsx` is inside some project's `include`, unit tests, and the
+production build. `tsc -b` is what also builds `tsconfig.e2e.json`.
 
 `e2e` installs Chrome and runs the browser tests against the dev server started by
 `playwright.config.ts`. It is still marked `continue-on-error: true`, and that

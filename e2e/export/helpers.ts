@@ -145,6 +145,26 @@ export async function submitSaveDialogForDownload(
   return download;
 }
 
+/**
+ * Why an export failed to match its source canvas.
+ *
+ * `context-unavailable` is the browser refusing a `2d` context for the comparison
+ * canvases — an environment failure, not a rendering one. Reporting it as
+ * `pixels-differ` destroys the only information that would have identified it.
+ */
+export type PixelComparisonFailure = 'context-unavailable' | 'pixels-differ';
+
+export type PixelComparisonResult = { ok: true } | { ok: false; reason: PixelComparisonFailure };
+
+const PIXEL_COMPARISON_FAILURE_MESSAGES: Record<PixelComparisonFailure, string> = {
+  'context-unavailable': 'the browser provided no 2d canvas context to compare the export against',
+  'pixels-differ': 'pixels differ too much from source',
+};
+
+function pixelComparisonFailureMessage(label: string, reason: PixelComparisonFailure): string {
+  return `${label}: ${PIXEL_COMPARISON_FAILURE_MESSAGES[reason]}`;
+}
+
 export async function exportAndVerify(
   page: Page,
   format: ExportFormat,
@@ -165,7 +185,14 @@ export async function exportAndVerify(
   expect(file.byteLength, `${format.label} file should not be empty`).toBeGreaterThan(100);
 
   if (format.comparePixels) {
-    const matchesSource = await page.evaluate(
+    const payload = {
+      source: sourceDataUrl,
+      exported: file.toString('base64'),
+      mime: mimeType(format.extension),
+      threshold: CHANGED_CHANNEL_THRESHOLD_GENERAL,
+      tolerance: CHANNEL_DELTA_TOLERANCE,
+    };
+    const comparison = await page.evaluate<PixelComparisonResult, typeof payload>(
       async ({ source, exported, mime, threshold, tolerance }) => {
         const loadImage = (data: string) =>
           new Promise<HTMLImageElement>((resolve, reject) => {
@@ -182,7 +209,7 @@ export async function exportAndVerify(
         sourceCanvas.height = exportedCanvas.height = sourceImage.height;
         const sourceContext = sourceCanvas.getContext('2d');
         const exportedContext = exportedCanvas.getContext('2d');
-        if (!sourceContext || !exportedContext) return false;
+        if (!sourceContext || !exportedContext) return { ok: false, reason: 'context-unavailable' };
         sourceContext.drawImage(sourceImage, 0, 0);
         exportedContext.drawImage(exportedImage, 0, 0, sourceImage.width, sourceImage.height);
         const original = sourceContext.getImageData(0, 0, sourceImage.width, sourceImage.height).data;
@@ -193,17 +220,21 @@ export async function exportAndVerify(
             if (Math.abs(original[index + channel] - actual[index + channel]) > tolerance) changedChannels += 1;
           }
         }
-        return changedChannels < threshold;
+        return changedChannels < threshold ? { ok: true } : { ok: false, reason: 'pixels-differ' };
       },
-      {
-        source: sourceDataUrl,
-        exported: file.toString('base64'),
-        mime: mimeType(format.extension),
-        threshold: CHANGED_CHANNEL_THRESHOLD_GENERAL,
-        tolerance: CHANNEL_DELTA_TOLERANCE,
-      }
+      payload
     );
-    expect(matchesSource, `${format.label}: pixels differ too much from source`).toBe(true);
+    if (!comparison.ok) {
+      // The bytes the comparison actually ran on, so the failure can be diagnosed from
+      // the report instead of reconstructed.
+      await testInfo.attach(`${format.label}-pixel-comparison-failed`, {
+        body: file,
+        contentType: mimeType(format.extension),
+      });
+    }
+    expect(comparison.ok, comparison.ok ? '' : pixelComparisonFailureMessage(format.label, comparison.reason)).toBe(
+      true
+    );
   }
 
   return target;
@@ -247,7 +278,13 @@ export async function exportIcoAndVerify(
 
   const iconFile = await readFile(iconTarget);
   expect(iconFile.byteLength, 'ICO file should not be empty').toBeGreaterThan(100);
-  const iconMatchesSource = await page.evaluate(
+  const iconPayload = {
+    source: sourceDataUrl,
+    exported: iconFile.toString('base64'),
+    threshold: CHANGED_CHANNEL_THRESHOLD_ICO,
+    tolerance: CHANNEL_DELTA_TOLERANCE,
+  };
+  const iconComparison = await page.evaluate<PixelComparisonResult, typeof iconPayload>(
     async ({ source, exported, threshold, tolerance }) => {
       const loadImage = (data: string) =>
         new Promise<HTMLImageElement>((resolve, reject) => {
@@ -264,7 +301,7 @@ export async function exportIcoAndVerify(
       sourceCanvas.height = iconCanvas.height = sourceImage.height;
       const sourceContext = sourceCanvas.getContext('2d');
       const iconContext = iconCanvas.getContext('2d');
-      if (!sourceContext || !iconContext) return false;
+      if (!sourceContext || !iconContext) return { ok: false, reason: 'context-unavailable' };
       sourceContext.drawImage(sourceImage, 0, 0);
       iconContext.drawImage(iconImage, 0, 0, sourceImage.width, sourceImage.height);
       const sourcePixels = sourceContext.getImageData(0, 0, sourceImage.width, sourceImage.height).data;
@@ -275,16 +312,14 @@ export async function exportIcoAndVerify(
           if (Math.abs(sourcePixels[index + channel] - iconPixels[index + channel]) > tolerance) changedChannels += 1;
         }
       }
-      return changedChannels < threshold;
+      return changedChannels < threshold ? { ok: true } : { ok: false, reason: 'pixels-differ' };
     },
-    {
-      source: sourceDataUrl,
-      exported: iconFile.toString('base64'),
-      threshold: CHANGED_CHANNEL_THRESHOLD_ICO,
-      tolerance: CHANNEL_DELTA_TOLERANCE,
-    }
+    iconPayload
   );
-  expect(iconMatchesSource, 'ICO: pixels differ too much from source').toBe(true);
+  expect(
+    iconComparison.ok,
+    iconComparison.ok ? '' : pixelComparisonFailureMessage(icoFormat.label, iconComparison.reason)
+  ).toBe(true);
 
   return iconTarget;
 }
@@ -304,7 +339,8 @@ export async function waitForPhotopeaReady(page: Page): Promise<void> {
   await page
     .waitForFunction(
       () => {
-        return !!(window as any).pea || !!document.querySelector('[data-name="app"]');
+        const photopeaWindow = window as Window & { pea?: unknown };
+        return !!photopeaWindow.pea || !!document.querySelector('[data-name="app"]');
       },
       undefined,
       { timeout: 10_000 }
@@ -323,5 +359,10 @@ export async function verifyPsdInPhotopea(page: Page, psdPath: string): Promise<
   const input = page.locator('input[type="file"]').first();
   await expect(input).toHaveCount(1);
   await input.setInputFiles(psdPath);
-  await expect(page.locator('body')).toContainText('drawing', { timeout: 30_000 });
+  // The uploaded document is named after the file, so the expectation is derived from
+  // the path this function was given rather than from the filename the export dialog
+  // happens to be filled with — a renamed export then fails loudly instead of
+  // verifying a file that was never opened.
+  const expectedDocumentName = path.basename(psdPath, path.extname(psdPath));
+  await expect(page.locator('body')).toContainText(expectedDocumentName, { timeout: 30_000 });
 }

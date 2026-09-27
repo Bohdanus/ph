@@ -11,31 +11,75 @@ const RED_HEX = '#ff0000';
 const RED_SHORTHAND_HEX = '#f00';
 const RED_RGB_CSS = 'rgb(255, 0, 0)';
 const RED_CHANNEL_MAX = 255;
+const GREEN_RGB_CSS = 'rgb(0, 128, 0)';
 const NON_ERROR_EVALUATE_REJECTION = 'Target page, context or browser has been closed';
+const MISSING_INPUT_MESSAGE = 'setForegroundColor: no HTMLInputElement matched [data-testid="foreground-color-input"]';
+/**
+ * Every serialisation of the same colour a browser is allowed to hand back for
+ * a computed `background-color`. The comparison is per channel, so all of them
+ * verify as red. Each carries an alpha above 0: a swatch that paints nothing has
+ * not received the colour, whatever its channels say.
+ */
+const RED_COMPUTED_FORMS = [
+  RED_RGB_CSS,
+  'rgba(255, 0, 0, 0.5)',
+  'rgb(255 0 0)',
+  'rgb(255 0 0 / 50%)',
+  'rgb(100% 0% 0%)',
+  'color(srgb 1 0 0)',
+  'color(srgb 1 0 0 / 0.5)',
+  'color(srgb 100% 0% 0%)',
+] as const;
+/**
+ * Computed values that paint nothing, in every spelling a browser produces for
+ * them: the initial value of a background that was never set, a gradient or
+ * other `background-image` covering the element (the background-color computes
+ * to `rgba(0, 0, 0, 0)` there too), and an authored transparent colour.
+ */
+const TRANSPARENT_COMPUTED_FORMS = [
+  'rgba(0, 0, 0, 0)',
+  'rgba(255, 0, 0, 0)',
+  'rgb(255 0 0 / 0%)',
+  'rgb(255 0 0 / 0)',
+  'color(srgb 1 0 0 / 0)',
+  'transparent',
+] as const;
 // Approximation of real Playwright output, used only to assert error propagation.
 const SWATCH_MISMATCH_MESSAGE =
-  "Expected: 'rgb(255, 0, 0)'\nReceived: 'rgb(0, 128, 0)'\nCall log: - expected 'background-color' ...";
+  'expect.poll(received).toBe(expected)\n\nExpected: "#ff0000"\nReceived: "#008000"\n\nCall log: - polled 5 times';
 
 type Rgb = ReturnType<typeof hexToRgb>;
-type SwatchHandle = { readonly selector: string };
-type AbsentLocator = { readonly absentSelector: string; readonly count: () => Promise<number> };
+type SwatchEvaluate = (pageFunction: (element: object) => string) => Promise<string>;
+type SwatchHandle = { readonly selector: string; readonly evaluate: Mock<SwatchEvaluate> };
+type AbsentLocator = {
+  readonly absentSelector: string;
+  readonly count: () => Promise<number>;
+  readonly evaluate: SwatchEvaluate;
+};
 type LocatorMock = { readonly locator: Mock<(selector: string) => object>; readonly swatch: SwatchHandle };
 type StubEvent = { readonly type: string; readonly bubbles?: boolean };
 type InputStub = { readonly testId: string; readonly dispatchEvent: Mock<(event: StubEvent) => boolean> };
 type InputPrototype = { value?: string };
+type InputElementConstructor = { new (): object; prototype: InputPrototype };
+type StubDomOptions = { readonly nonInputSelectors?: readonly string[] };
 type MockPageParts = {
   evaluate: Page['evaluate'];
   locator?: (selector: string) => object;
 };
 
-const { mockExpect, mockToHaveCSS } = vi.hoisted(() => {
-  const mockToHaveCSS = vi.fn<(property: string, expected: string) => Promise<void>>();
-  const mockExpect = vi.fn<
-    (subject: object) => {
-      toHaveCSS: (property: string, expected: string) => Promise<void>;
-    }
-  >();
-  return { mockExpect, mockToHaveCSS };
+const { mockExpect, mockPoll, mockPollAssertion } = vi.hoisted(() => {
+  // The helper only reaches Playwright through `expect.poll`, so the stand-in is
+  // a poll implementation plus the assertion it delegates to. The local names
+  // differ from the destructured ones below on purpose: identical names would
+  // be flagged as shadowing, and the outer bindings are not in scope yet.
+  const pollAssertion = vi.fn<(received: string, expected: string) => void>();
+  const poll = vi.fn((pollCallback: () => Promise<string> | string) => ({
+    toBe: async (expected: string) => {
+      pollAssertion(await pollCallback(), expected);
+    },
+  }));
+  const expectStandIn = Object.assign(vi.fn<(subject: object) => object>(), { poll });
+  return { mockExpect: expectStandIn, mockPoll: poll, mockPollAssertion: pollAssertion };
 });
 
 vi.mock('@playwright/test', () => ({
@@ -44,14 +88,31 @@ vi.mock('@playwright/test', () => ({
 
 const createMockPage = (parts: MockPageParts): Page => parts as Page;
 
-const isAbsentLocator = (subject: object): subject is AbsentLocator => 'absentSelector' in subject;
+const SWATCH_ELEMENT = { selector: FOREGROUND_COLOR_SWATCH_SELECTOR };
 
-const createLocatorMock = (publishedSelectors: readonly string[] = [FOREGROUND_COLOR_SWATCH_SELECTOR]): LocatorMock => {
-  const swatch: SwatchHandle = { selector: FOREGROUND_COLOR_SWATCH_SELECTOR };
+/** Stands in for the missing-locator timeout the real `locator.evaluate` reports. */
+const createAbsentLocator = (selector: string): AbsentLocator => ({
+  absentSelector: selector,
+  count: async () => 0,
+  evaluate: () => Promise.reject(new Error(`Timed out waiting for locator('${selector}')`)),
+});
+
+const createLocatorMock = (
+  publishedSelectors: readonly string[] = [FOREGROUND_COLOR_SWATCH_SELECTOR],
+  computedBackgroundColor: string = RED_RGB_CSS
+): LocatorMock => {
+  const swatch: SwatchHandle = {
+    selector: FOREGROUND_COLOR_SWATCH_SELECTOR,
+    evaluate: vi.fn<SwatchEvaluate>(async (pageFunction) => {
+      // The helper hands the page function a live element and reads
+      // getComputedStyle from the window, so the stub supplies both and the real
+      // extraction code is what runs here.
+      vi.stubGlobal('window', { getComputedStyle: () => ({ backgroundColor: computedBackgroundColor }) });
+      return pageFunction(SWATCH_ELEMENT);
+    }),
+  };
   const locator = vi.fn<(selector: string) => object>((selector: string) =>
-    publishedSelectors.includes(selector)
-      ? swatch
-      : ({ absentSelector: selector, count: async () => 0 } satisfies AbsentLocator)
+    publishedSelectors.includes(selector) ? swatch : createAbsentLocator(selector)
   );
   return { locator, swatch };
 };
@@ -97,11 +158,24 @@ const PROTOTYPE_WITHOUT_VALUE_SETTER: InputPrototype = {};
 
 const stubDom = (
   elementsBySelector: Record<string, InputStub>,
-  inputPrototype: InputPrototype
+  inputPrototype: InputPrototype,
+  { nonInputSelectors = [] }: StubDomOptions = {}
 ): Mock<(selector: string) => InputStub | null> => {
   const querySelector = vi.fn((selector: string) => elementsBySelector[selector] ?? null);
+  // The helper guards with `instanceof window.HTMLInputElement`, so the stand-in
+  // has to be a constructor whose prototype is the same object the native value
+  // setter is probed on. Elements published under a selector listed in
+  // `nonInputSelectors` keep the default prototype, which models an element
+  // that matched the selector without being an input.
+  const HTMLInputElementStandIn = function () {} as unknown as InputElementConstructor;
+  HTMLInputElementStandIn.prototype = inputPrototype;
+  for (const [selector, element] of Object.entries(elementsBySelector)) {
+    if (!nonInputSelectors.includes(selector)) {
+      Object.setPrototypeOf(element, inputPrototype);
+    }
+  }
   vi.stubGlobal('document', { querySelector });
-  vi.stubGlobal('window', { HTMLInputElement: { prototype: inputPrototype } });
+  vi.stubGlobal('window', { HTMLInputElement: HTMLInputElementStandIn });
   vi.stubGlobal(
     'Event',
     vi.fn(function stubEvent(this: unknown, type: string, init?: { bubbles?: boolean }) {
@@ -150,9 +224,39 @@ describe('Color Helpers', () => {
       expect(hexToRgb('f00')).toEqual({ r: RED_CHANNEL_MAX, g: 0, b: 0 });
     });
 
+    it('expands 4-char #rgba shorthand and drops the alpha digit (CSS-4)', () => {
+      expect(hexToRgb('#f00a')).toEqual({ r: RED_CHANNEL_MAX, g: 0, b: 0 });
+      expect(hexToRgb('#0f0a')).toEqual({ r: 0, g: RED_CHANNEL_MAX, b: 0 });
+      expect(hexToRgb('#00fa')).toEqual({ r: 0, g: 0, b: RED_CHANNEL_MAX });
+      expect(hexToRgb('#abc4')).toEqual({ r: 170, g: 187, b: 204 });
+      expect(hexToRgb('f00f')).toEqual({ r: RED_CHANNEL_MAX, g: 0, b: 0 });
+      expect(hexToRgb('#f000')).toEqual({ r: RED_CHANNEL_MAX, g: 0, b: 0 });
+    });
+
+    it('strips the alpha byte from 8-digit #rrggbbaa hex (CSS-4)', () => {
+      expect(hexToRgb('#ff0000ff')).toEqual({ r: RED_CHANNEL_MAX, g: 0, b: 0 });
+      expect(hexToRgb('#ff000000')).toEqual({ r: RED_CHANNEL_MAX, g: 0, b: 0 });
+      expect(hexToRgb('#00ff0080')).toEqual({ r: 0, g: RED_CHANNEL_MAX, b: 0 });
+      expect(hexToRgb('#0000ff00')).toEqual({ r: 0, g: 0, b: RED_CHANNEL_MAX });
+      expect(hexToRgb('00ff00ff')).toEqual({ r: 0, g: RED_CHANNEL_MAX, b: 0 });
+    });
+
+    it('throws for shorthand whose digits are not hex', () => {
+      expect(() => hexToRgb('#rgba')).toThrow('hexToRgb: expected 3, 4, 6 or 8 hex digits, got "rgba"');
+      expect(() => hexToRgb('#zzzz')).toThrow('hexToRgb: expected 3, 4, 6 or 8 hex digits, got "zzzz"');
+      // A non-hex alpha digit must not be dropped as if the value were `#ffff00`.
+      expect(() => hexToRgb('#ff0zz')).toThrow('hexToRgb: expected 3, 4, 6 or 8 hex digits, got "ff0zz"');
+      expect(() => hexToRgb('#ff0000zz')).toThrow('hexToRgb: expected 3, 4, 6 or 8 hex digits, got "ff0000zz"');
+    });
+
     it('throws for multiple leading hash characters (invalid CSS)', () => {
-      expect(() => hexToRgb('##ff0000')).toThrow('hexToRgb: expected 3 or 6 hex digits');
-      expect(() => hexToRgb('###00ff00')).toThrow('hexToRgb: expected 3 or 6 hex digits');
+      expect(() => hexToRgb('##ff0000')).toThrow('hexToRgb: expected 3, 4, 6 or 8 hex digits');
+      expect(() => hexToRgb('###00ff00')).toThrow('hexToRgb: expected 3, 4, 6 or 8 hex digits');
+    });
+
+    it('reaches the digit check for a 3-char string that is not hex', () => {
+      // Not a length problem, so the error names the digits rather than the shape.
+      expect(() => hexToRgb('red')).toThrow('hexToRgb: invalid hex value "red"');
     });
 
     it('handles whitespace-padded input', () => {
@@ -175,44 +279,29 @@ describe('Color Helpers', () => {
       expect(() => hexToRgb('#zzzzzz')).toThrow('hexToRgb: invalid hex value');
     });
 
-    it('throws for unsupported length (8-char with alpha)', () => {
-      expect(() => hexToRgb('#ff0000ff')).toThrow('hexToRgb: expected 3 or 6 hex digits, got "ff0000ff"');
-    });
-
-    it('throws for 4-char #rgba alpha shorthand (CSS-4 form is unsupported)', () => {
-      expect(() => hexToRgb('#f00a')).toThrow('hexToRgb: expected 3 or 6 hex digits, got "f00a"');
-      expect(() => hexToRgb('#0f0a')).toThrow('hexToRgb: expected 3 or 6 hex digits, got "0f0a"');
-      expect(() => hexToRgb('#rgba')).toThrow('hexToRgb: expected 3 or 6 hex digits, got "rgba"');
-    });
-
     it('throws for named colors', () => {
       expect(() => hexToRgb('red')).toThrow('hexToRgb: invalid hex value "red"');
-      expect(() => hexToRgb('rebeccapurple')).toThrow('hexToRgb: expected 3 or 6 hex digits, got "rebeccapurple"');
-      expect(() => hexToRgb('transparent')).toThrow('hexToRgb: expected 3 or 6 hex digits, got "transparent"');
+      expect(() => hexToRgb('rebeccapurple')).toThrow(
+        'hexToRgb: expected 3, 4, 6 or 8 hex digits, got "rebeccapurple"'
+      );
+      expect(() => hexToRgb('transparent')).toThrow('hexToRgb: expected 3, 4, 6 or 8 hex digits, got "transparent"');
     });
 
     it('throws for rgb() functional notation', () => {
-      expect(() => hexToRgb('rgb(255, 0, 0)')).toThrow('hexToRgb: expected 3 or 6 hex digits, got "rgb(255, 0, 0)"');
+      expect(() => hexToRgb('rgb(255, 0, 0)')).toThrow(
+        'hexToRgb: expected 3, 4, 6 or 8 hex digits, got "rgb(255, 0, 0)"'
+      );
       expect(() => hexToRgb('rgba(255, 0, 0, 0.5)')).toThrow(
-        'hexToRgb: expected 3 or 6 hex digits, got "rgba(255, 0, 0, 0.5)"'
+        'hexToRgb: expected 3, 4, 6 or 8 hex digits, got "rgba(255, 0, 0, 0.5)"'
       );
     });
   });
 
   describe('setForegroundColor', () => {
     beforeEach(() => {
-      mockExpect.mockReset();
-      mockToHaveCSS.mockReset();
-      mockToHaveCSS.mockResolvedValue(undefined);
-      mockExpect.mockImplementation((subject: object) => ({
-        toHaveCSS: async (property: string, expected: string) => {
-          // Approximation of real Playwright's missing-locator timeout.
-          if (isAbsentLocator(subject)) {
-            throw new Error(`Timed out waiting for locator('${subject.absentSelector}')`);
-          }
-          await mockToHaveCSS(property, expected);
-        },
-      }));
+      mockPoll.mockClear();
+      mockPollAssertion.mockReset();
+      mockPollAssertion.mockImplementation(() => undefined);
     });
 
     afterEach(() => {
@@ -230,10 +319,10 @@ describe('Color Helpers', () => {
       expect(evaluate).toHaveBeenCalledWith(expect.any(Function), RED_HEX);
       expect(evaluate).toHaveBeenCalledTimes(1);
       expect(locator).not.toHaveBeenCalled();
-      expect(mockExpect).not.toHaveBeenCalled();
+      expect(mockPoll).not.toHaveBeenCalled();
     });
 
-    it('verifies swatch CSS color when verifySwatch is true (branch 4, calls hexToRgb internally)', async () => {
+    it('verifies the swatch per channel when verifySwatch is true (branch 4, calls hexToRgb internally)', async () => {
       const evaluate = createResolvedEvaluate();
       const { locator, swatch } = createLocatorMock();
       const page = createMockPage({ evaluate, locator });
@@ -242,8 +331,125 @@ describe('Color Helpers', () => {
 
       expect(evaluate).toHaveBeenCalledWith(expect.any(Function), RED_HEX);
       expect(locator).toHaveBeenCalledWith(FOREGROUND_COLOR_SWATCH_SELECTOR);
-      expect(mockExpect).toHaveBeenCalledWith(swatch);
-      expect(mockToHaveCSS).toHaveBeenCalledWith('background-color', RED_RGB_CSS);
+      expect(mockPoll).toHaveBeenCalledTimes(1);
+      expect(swatch.evaluate).toHaveBeenCalledTimes(1);
+      expect(mockPollAssertion).toHaveBeenCalledWith(RED_HEX, RED_HEX);
+    });
+
+    it('verifies a correctly-set colour the browser serialises differently', async () => {
+      for (const computed of RED_COMPUTED_FORMS) {
+        mockPollAssertion.mockClear();
+        const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], computed);
+        const page = createMockPage({ evaluate: createResolvedEvaluate(), locator });
+
+        await setForegroundColor(page, RED_HEX, true);
+
+        expect(mockPollAssertion).toHaveBeenCalledWith(RED_HEX, RED_HEX);
+      }
+    });
+
+    it('reports an unsupported colour notation by name instead of reading its channels', async () => {
+      // Chromium preserves a perceptual or wide-gamut declaration verbatim, so
+      // these reach the swatch check. None of their numbers are sRGB channels,
+      // so each is named rather than read as if it were.
+      for (const [computed, notation] of [
+        ['oklch(0.7 0.1 20)', 'oklch'],
+        ['lab(50 40 59.5)', 'lab'],
+        ['hwb(120 0% 0%)', 'hwb'],
+        ['hsl(120 100% 50%)', 'hsl'],
+      ] as const) {
+        mockPollAssertion.mockClear();
+        const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], computed);
+        const page = createMockPage({ evaluate: createResolvedEvaluate(), locator });
+
+        await expect(setForegroundColor(page, RED_HEX, true)).rejects.toThrow(
+          `setForegroundColor: unsupported colour notation "${notation}()" in computed value "${computed}"`
+        );
+
+        expect(mockPollAssertion).not.toHaveBeenCalled();
+      }
+    });
+
+    it('reports an unsupported colour space inside color() by name instead of reading it as sRGB', async () => {
+      // `color(srgb-linear 1 0 0)` is a different space: read as sRGB its `1`
+      // means 1/255, which reported `Received: "#010000"` and sent the reader
+      // after a colour bug rather than after the notation.
+      for (const [computed, space] of [
+        ['color(srgb-linear 1 0 0)', 'srgb-linear'],
+        ['color(display-p3 1 0 0)', 'display-p3'],
+        ['color(rec2020 1 0 0)', 'rec2020'],
+      ] as const) {
+        mockPollAssertion.mockClear();
+        const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], computed);
+        const page = createMockPage({ evaluate: createResolvedEvaluate(), locator });
+
+        await expect(setForegroundColor(page, RED_HEX, true)).rejects.toThrow(
+          `setForegroundColor: unsupported colour space "${space}" in computed value "${computed}"`
+        );
+
+        expect(mockPollAssertion).not.toHaveBeenCalled();
+      }
+    });
+
+    it('rejects a computed value that is not a colour function at all', async () => {
+      for (const computed of ['', '   ', 'red', 'none']) {
+        mockPollAssertion.mockClear();
+        const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], computed);
+        const page = createMockPage({ evaluate: createResolvedEvaluate(), locator });
+
+        await expect(setForegroundColor(page, RED_HEX, true)).rejects.toThrow(
+          `setForegroundColor: cannot read colour channels from computed value "${computed}": not a colour function`
+        );
+
+        expect(mockPollAssertion).not.toHaveBeenCalled();
+      }
+    });
+
+    it('refuses a fully transparent swatch, whose channels carry no colour', async () => {
+      // The regression: `rgba(255, 0, 0, 0)` parses to `#ff0000`, so a swatch
+      // painting NOTHING verified as the colour that was set. The pre-fix
+      // `toHaveCSS` rejected the same swatch, so this is a net weakening of the
+      // one assertion whose job is to prove the store kept the colour.
+      for (const computed of TRANSPARENT_COMPUTED_FORMS) {
+        mockPollAssertion.mockClear();
+        const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], computed);
+        const page = createMockPage({ evaluate: createResolvedEvaluate(), locator });
+
+        await expect(setForegroundColor(page, RED_HEX, true)).rejects.toThrow(
+          `setForegroundColor: foreground swatch computed "${computed}" at alpha 0`
+        );
+
+        // The comparison never ran, so no channels can satisfy the assertion.
+        expect(mockPollAssertion).not.toHaveBeenCalled();
+      }
+    });
+
+    it('refuses a fully transparent swatch in the notation the browser computes for the store colour', async () => {
+      // `color` is always a `#rrggbb` from the store, so a swatch that has not
+      // taken it computes the initial `rgba(0, 0, 0, 0)` — and one covered by a
+      // `background-image` computes the same value.
+      const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], 'rgba(0, 0, 0, 0)');
+      const page = createMockPage({ evaluate: createResolvedEvaluate(), locator });
+
+      await expect(setForegroundColor(page, RED_HEX, true)).rejects.toThrow(
+        `setForegroundColor: foreground swatch computed "rgba(0, 0, 0, 0)" at alpha 0, which paints nothing, so it cannot carry the expected colour "${RED_HEX}"`
+      );
+
+      expect(mockPollAssertion).not.toHaveBeenCalled();
+    });
+
+    it('still verifies a swatch at partial opacity, which does carry the colour', async () => {
+      // The case the exact-string comparison got wrong: an animation in flight
+      // or a translucent swatch is legitimately non-opaque and must verify.
+      for (const computed of ['rgba(255, 0, 0, 0.5)', 'rgb(255 0 0 / 25%)', 'color(srgb 1 0 0 / 0.5)']) {
+        mockPollAssertion.mockClear();
+        const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], computed);
+        const page = createMockPage({ evaluate: createResolvedEvaluate(), locator });
+
+        await setForegroundColor(page, RED_HEX, true);
+
+        expect(mockPollAssertion).toHaveBeenCalledWith(RED_HEX, RED_HEX);
+      }
     });
 
     it('verifies swatch CSS color with 3-char shorthand hex', async () => {
@@ -253,7 +459,11 @@ describe('Color Helpers', () => {
 
       await setForegroundColor(page, RED_SHORTHAND_HEX, true);
 
-      expect(mockToHaveCSS).toHaveBeenCalledWith('background-color', RED_RGB_CSS);
+      // The shorthand is expanded to the simple colour a colour input can hold
+      // before it is written, and that same colour is what the swatch is
+      // verified against.
+      expect(evaluate).toHaveBeenCalledWith(expect.any(Function), RED_HEX);
+      expect(mockPollAssertion).toHaveBeenCalledWith(RED_HEX, RED_HEX);
     });
 
     it('applies the color to the foreground color input through the native value setter', async () => {
@@ -273,35 +483,94 @@ describe('Color Helpers', () => {
       expect(input.dispatchEvent).toHaveBeenNthCalledWith(2, { type: 'change', bubbles: true });
     });
 
-    it('ignores a color input published under a different testid', async () => {
+    it('writes the simple colour a colour input can store, dropping alpha and case', async () => {
       const { prototype, applied } = createNativeValueSetterProbe();
-      const otherInput = createInputStub('background-color-input');
-      const querySelector = stubDom({ [OTHER_COLOR_INPUT_SELECTOR]: otherInput }, prototype);
-      const evaluate = createRunningEvaluate();
-      const page = createMockPage({ evaluate });
+      const input = createInputStub('foreground-color-input');
+      stubDom({ [FOREGROUND_COLOR_INPUT_SELECTOR]: input }, prototype);
+      const page = createMockPage({ evaluate: createRunningEvaluate() });
 
-      await setForegroundColor(page, RED_HEX);
+      await setForegroundColor(page, '#FF0000FF');
 
-      expect(querySelector).toHaveBeenCalledWith(FOREGROUND_COLOR_INPUT_SELECTOR);
-      expect(querySelector).not.toHaveBeenCalledWith(OTHER_COLOR_INPUT_SELECTOR);
-      expect(applied).toEqual([]);
-      expect(otherInput.dispatchEvent).not.toHaveBeenCalled();
+      // `#000000` is what a colour input silently stores for a value it cannot
+      // parse, so anything the DOM cannot hold is expanded here instead.
+      expect(applied).toEqual([{ element: input, color: RED_HEX }]);
     });
 
-    it('silently does nothing when input element not found (branch 1)', async () => {
+    it('rejects a colour it cannot parse before touching the DOM', async () => {
+      const { prototype, applied } = createNativeValueSetterProbe();
+      const input = createInputStub('foreground-color-input');
+      const querySelector = stubDom({ [FOREGROUND_COLOR_INPUT_SELECTOR]: input }, prototype);
+      const { locator } = createLocatorMock();
+      const page = createMockPage({ evaluate: createRunningEvaluate(), locator });
+
+      await expect(setForegroundColor(page, 'red')).rejects.toThrow('hexToRgb: invalid hex value "red"');
+
+      expect(querySelector).not.toHaveBeenCalled();
+      expect(applied).toEqual([]);
+      expect(input.dispatchEvent).not.toHaveBeenCalled();
+      expect(locator).not.toHaveBeenCalled();
+      expect(mockPoll).not.toHaveBeenCalled();
+    });
+
+    it('rejects every notation a colour input would silently rewrite to black', async () => {
+      for (const value of ['rgb(255, 0, 0)', 'transparent', '', '   ']) {
+        const { prototype, applied } = createNativeValueSetterProbe();
+        const input = createInputStub('foreground-color-input');
+        const querySelector = stubDom({ [FOREGROUND_COLOR_INPUT_SELECTOR]: input }, prototype);
+        const page = createMockPage({ evaluate: createRunningEvaluate() });
+
+        await expect(setForegroundColor(page, value)).rejects.toThrow(/^hexToRgb: /);
+
+        expect(querySelector).not.toHaveBeenCalled();
+        expect(applied).toEqual([]);
+      }
+    });
+
+    it('throws a named error when the foreground colour input is not found', async () => {
       const { prototype, applied } = createNativeValueSetterProbe();
       const querySelector = stubDom({}, prototype);
       const { locator } = createLocatorMock();
       const evaluate = createRunningEvaluate();
       const page = createMockPage({ evaluate, locator });
 
-      await setForegroundColor(page, RED_HEX);
+      await expect(setForegroundColor(page, RED_HEX)).rejects.toThrow(MISSING_INPUT_MESSAGE);
 
       expect(evaluate).toHaveBeenCalledWith(expect.any(Function), RED_HEX);
       expect(querySelector).toHaveBeenCalledWith(FOREGROUND_COLOR_INPUT_SELECTOR);
       expect(applied).toEqual([]);
       expect(locator).not.toHaveBeenCalled();
-      expect(mockExpect).not.toHaveBeenCalled();
+      expect(mockPoll).not.toHaveBeenCalled();
+    });
+
+    it('throws the same named error when the testid is published on a non-input element', async () => {
+      const { prototype, applied } = createNativeValueSetterProbe();
+      const notAnInput = createInputStub('foreground-color-input');
+      stubDom({ [FOREGROUND_COLOR_INPUT_SELECTOR]: notAnInput }, prototype, {
+        nonInputSelectors: [FOREGROUND_COLOR_INPUT_SELECTOR],
+      });
+      const page = createMockPage({ evaluate: createRunningEvaluate() });
+
+      // An unsound cast would have reached the native setter here and failed with
+      // an opaque `TypeError: Illegal invocation`.
+      await expect(setForegroundColor(page, RED_HEX)).rejects.toThrow(MISSING_INPUT_MESSAGE);
+
+      expect(applied).toEqual([]);
+      expect(notAnInput.dispatchEvent).not.toHaveBeenCalled();
+    });
+
+    it('throws rather than writing to a color input published under a different testid', async () => {
+      const { prototype, applied } = createNativeValueSetterProbe();
+      const otherInput = createInputStub('background-color-input');
+      const querySelector = stubDom({ [OTHER_COLOR_INPUT_SELECTOR]: otherInput }, prototype);
+      const evaluate = createRunningEvaluate();
+      const page = createMockPage({ evaluate });
+
+      await expect(setForegroundColor(page, RED_HEX)).rejects.toThrow(MISSING_INPUT_MESSAGE);
+
+      expect(querySelector).toHaveBeenCalledWith(FOREGROUND_COLOR_INPUT_SELECTOR);
+      expect(querySelector).not.toHaveBeenCalledWith(OTHER_COLOR_INPUT_SELECTOR);
+      expect(applied).toEqual([]);
+      expect(otherInput.dispatchEvent).not.toHaveBeenCalled();
     });
 
     it('throws when native value setter not found (branch 2)', async () => {
@@ -332,23 +601,25 @@ describe('Color Helpers', () => {
       await expect(setForegroundColor(page, RED_HEX, true)).rejects.toBe(NON_ERROR_EVALUATE_REJECTION);
 
       expect(locator).not.toHaveBeenCalled();
-      expect(mockExpect).not.toHaveBeenCalled();
+      expect(mockPoll).not.toHaveBeenCalled();
     });
 
-    it('surfaces a swatch mismatch reported by the CSS assertion', async () => {
-      const { locator, swatch } = createLocatorMock();
+    it('surfaces a swatch mismatch reported by the channel comparison', async () => {
+      const { locator, swatch } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], GREEN_RGB_CSS);
       const evaluate = createResolvedEvaluate();
-      mockToHaveCSS.mockRejectedValueOnce(new Error(SWATCH_MISMATCH_MESSAGE));
+      mockPollAssertion.mockImplementationOnce(() => {
+        throw new Error(SWATCH_MISMATCH_MESSAGE);
+      });
       const page = createMockPage({ evaluate, locator });
 
-      await expect(setForegroundColor(page, RED_HEX, true)).rejects.toThrow("Received: 'rgb(0, 128, 0)'");
+      await expect(setForegroundColor(page, RED_HEX, true)).rejects.toThrow('Received: "#008000"');
 
-      expect(mockExpect).toHaveBeenCalledWith(swatch);
-      expect(mockToHaveCSS).toHaveBeenCalledWith('background-color', RED_RGB_CSS);
+      expect(swatch.evaluate).toHaveBeenCalledTimes(1);
+      expect(mockPollAssertion).toHaveBeenCalledWith('#008000', RED_HEX);
     });
 
     it('does not accept a swatch published under a different testid', async () => {
-      const { locator } = createLocatorMock([OTHER_COLOR_SWATCH_SELECTOR]);
+      const { locator, swatch } = createLocatorMock([OTHER_COLOR_SWATCH_SELECTOR]);
       const evaluate = createResolvedEvaluate();
       const page = createMockPage({ evaluate, locator });
 
@@ -359,7 +630,7 @@ describe('Color Helpers', () => {
       expect(locator).toHaveBeenCalledTimes(1);
       expect(locator).toHaveBeenCalledWith(FOREGROUND_COLOR_SWATCH_SELECTOR);
       expect(locator).not.toHaveBeenCalledWith(OTHER_COLOR_SWATCH_SELECTOR);
-      expect(mockToHaveCSS).not.toHaveBeenCalled();
+      expect(swatch.evaluate).not.toHaveBeenCalled();
     });
 
     it('rejects before touching the swatch when verifySwatch is true and the color is not hex', async () => {
@@ -372,29 +643,7 @@ describe('Color Helpers', () => {
       await expect(setForegroundColor(page, 'red', true)).rejects.toThrow('hexToRgb: invalid hex value "red"');
 
       expect(locator).not.toHaveBeenCalled();
-      expect(mockExpect).not.toHaveBeenCalled();
-    });
-
-    // Deliberate pin of an open defect: setForegroundColor only validates via hexToRgb
-    // when verifySwatch is true, so with the default the DOM is touched with no pre-flight
-    // validation and a non-hex color is written verbatim. This test fails the moment that
-    // validation is added up front.
-    it('writes a non-hex color to the input without validating it when verifySwatch is false', async () => {
-      const { prototype, applied } = createNativeValueSetterProbe();
-      const input = createInputStub('foreground-color-input');
-      const querySelector = stubDom({ [FOREGROUND_COLOR_INPUT_SELECTOR]: input }, prototype);
-      const evaluate = createRunningEvaluate();
-      const { locator } = createLocatorMock();
-      const page = createMockPage({ evaluate, locator });
-
-      await expect(setForegroundColor(page, 'red')).resolves.toBeUndefined();
-
-      expect(querySelector).toHaveBeenCalledTimes(1);
-      expect(querySelector).toHaveBeenCalledWith(FOREGROUND_COLOR_INPUT_SELECTOR);
-      expect(applied).toEqual([{ element: input, color: 'red' }]);
-      expect(input.dispatchEvent).toHaveBeenCalledTimes(2);
-      expect(locator).not.toHaveBeenCalled();
-      expect(mockExpect).not.toHaveBeenCalled();
+      expect(mockPoll).not.toHaveBeenCalled();
     });
   });
 });

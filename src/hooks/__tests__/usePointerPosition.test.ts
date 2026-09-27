@@ -59,11 +59,13 @@ function createRef(el: HTMLDivElement | null): RefObject<HTMLDivElement | null> 
   return { current: el };
 }
 
-function createResizeEntry(contentRect: { width: number; height: number }): ResizeObserverEntry {
+type Size = { width: number; height: number };
+
+function createResizeEntry(borderBox: Size, contentBox: Size = borderBox): ResizeObserverEntry {
   return {
-    contentRect: DOMRect.fromRect({ x: 0, y: 0, width: contentRect.width, height: contentRect.height }),
-    contentBoxSize: [],
-    borderBoxSize: [],
+    contentRect: DOMRect.fromRect({ x: 0, y: 0, width: contentBox.width, height: contentBox.height }),
+    contentBoxSize: [{ inlineSize: contentBox.width, blockSize: contentBox.height }],
+    borderBoxSize: [{ inlineSize: borderBox.width, blockSize: borderBox.height }],
     devicePixelContentBoxSize: [],
     target: document.createElement('div'),
   };
@@ -93,8 +95,8 @@ class ControllableResizeObserver implements ResizeObserver {
     this.disconnectCalls += 1;
   }
 
-  emit(contentRect: { width: number; height: number }) {
-    this.callback([createResizeEntry(contentRect)], this);
+  emit(borderBox: Size, contentBox: Size = borderBox) {
+    this.callback([createResizeEntry(borderBox, contentBox)], this);
   }
 
   emitEmpty() {
@@ -389,11 +391,11 @@ describe('usePointerPosition', () => {
       expect(result.current.isMouseDown.current).toBe(true);
     });
 
-    it('accepts a pointer id of 0 and clears its state on pointerup', () => {
-      // Every other test in this file uses a non-zero id, so the `if (activePointerId.current)`
-      // guard in `clearEvent` (usePointerPosition.ts:102) never saw the falsy arm. `0` is a
-      // legitimate `PointerEvent.pointerId`, and treating it as "no active pointer" means the
-      // capture is never released for it.
+    it('releases capture and clears all pointer state on pointerup of a pointer id of 0', () => {
+      // `0` is a legitimate `PointerEvent.pointerId` -- Pointer Events reserves only
+      // `-1`, and whether a UA numbers from 0 is implementation-specific -- so it must
+      // not be confused with the "no active pointer" sentinel. Defensive: no shipping
+      // engine is known to do this, and the hook is not guarding a reported bug.
       const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
 
@@ -401,22 +403,53 @@ describe('usePointerPosition', () => {
         result.current.isPointerDownValid(pointerEvent(el, { button: 0, pointerId: 0 }));
       });
 
-      // The down is accepted and 0 is recorded, so `isPointerDownValid` does not reject it.
       expect(result.current.pointerIdRef.current).toBe(0);
-      expect(result.current.isMouseDown.current).toBe(true);
+      expect(el.setPointerCapture).toHaveBeenCalledWith(0);
 
       let handled: boolean | undefined;
       act(() => {
         handled = result.current.isPointerUpValid(pointerEvent(el, { pointerId: 0 }));
       });
 
-      // `isPointerUpValid` compares `0 !== 0` and proceeds; the state is cleared...
       expect(handled).toBe(true);
+      expect(el.releasePointerCapture).toHaveBeenCalledWith(0);
       expect(result.current.pointerIdRef.current).toBeNull();
       expect(result.current.isMouseDown.current).toBe(false);
-      // ...but the capture is NOT released, because the falsy id skips the call. That is the
-      // defect this pins: the pointer stays captured for the lifetime of the document.
+    });
+
+    it('does not release a capture for a pointerup with no active pointer', () => {
+      const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      let handled: boolean | undefined;
+      act(() => {
+        handled = result.current.isPointerUpValid(pointerEvent(el, { pointerId: 0 }));
+      });
+
+      expect(handled).toBe(false);
       expect(el.releasePointerCapture).not.toHaveBeenCalled();
+    });
+
+    it('never hands the null sentinel to releasePointerCapture from the cleanup guard', () => {
+      // `isPointerUpValid` gates on `activePointerId.current === e.pointerId`, so an
+      // event whose own `pointerId` is the `null` sentinel is the only way to reach
+      // `clearEvent` with no active pointer -- which is exactly the state the
+      // `activePointerId.current !== null` guard exists for. Deleting the guard calls
+      // `releasePointerCapture(null)`, and this assertion is what says it must not.
+      const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+      const sentinelEvent = pointerEvent(el, { pointerId: null as unknown as number });
+
+      let handled: boolean | undefined;
+      act(() => {
+        handled = result.current.isPointerUpValid(sentinelEvent);
+      });
+
+      expect(handled).toBe(true);
+      expect(el.releasePointerCapture).not.toHaveBeenCalled();
+      // The rest of the cleanup still runs, so a stray event cannot leave a stale
+      // isMouseDown behind.
+      expect(result.current.isMouseDown.current).toBe(false);
     });
 
     it('still clears state when releasePointerCapture throws (capture already lost)', () => {
@@ -584,11 +617,46 @@ describe('usePointerPosition', () => {
 
       expect(onResize).toHaveBeenCalledTimes(1);
       expect(getBoundingClientRect).toHaveBeenCalled();
-      // NOTE (prod defect, see report): the reported contentRect width/height is
-      // discarded here -- calculateDimensions() re-reads getBoundingClientRect(),
-      // so the dimensions below are 200x200, not 500x100.
+      // The observed rect drives the recompute: 500x100 around a 100x100 image
+      // scales by 1 and leaves a 200px gap on each horizontal side.
       expect(onResize).toHaveBeenCalledWith(
-        expect.objectContaining({ scale: 2, innerWidth: 200, innerHeight: 200, offsetX: 0, offsetY: 0 })
+        expect.objectContaining({ scale: 1, innerWidth: 100, innerHeight: 100, offsetX: 200, offsetY: 0 })
+      );
+    });
+
+    it('sizes the recompute from the observed border box, not the content box or a re-read', () => {
+      vi.useFakeTimers();
+      vi.stubGlobal('ResizeObserver', ControllableResizeObserver);
+
+      // The element's own rect keeps reporting 200x200, so a re-read of
+      // getBoundingClientRect() would silently replace the observed measurement.
+      const { el, getBoundingClientRect } = createContainer({ left: 5, top: 6, width: 200, height: 200 });
+      const onResize = vi.fn();
+
+      renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE, onResize }));
+      onResize.mockClear();
+      getBoundingClientRect.mockClear();
+
+      act(() => {
+        // 4px border: the border box is 400x300, the content box 392x292.
+        ControllableResizeObserver.instances[0].emit({ width: 400, height: 300 }, { width: 392, height: 292 });
+        vi.advanceTimersByTime(32);
+      });
+
+      expect(onResize).toHaveBeenCalledTimes(1);
+      // 400x300 around a 100x100 image scales by 3 and centres the 300x300 image
+      // with a 50px gap on each side. The re-read 200x200 would give scale 2, and
+      // the 392x292 content box would give 2.92.
+      expect(onResize).toHaveBeenCalledWith(
+        expect.objectContaining({
+          outerWidth: 400,
+          outerHeight: 300,
+          scale: 3,
+          innerWidth: 300,
+          innerHeight: 300,
+          offsetX: 50,
+          offsetY: 0,
+        })
       );
     });
 

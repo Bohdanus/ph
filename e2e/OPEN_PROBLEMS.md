@@ -1,19 +1,27 @@
 # Open Problems
 
 Not a changelog. Each entry is an unfixed defect, with the evidence that proves
-it. Every line number was re-read from the working tree after the suite was
-moved into this repository.
+it. The one section that is not work says so on its own heading. Line numbers are
+re-read from the working tree when the entry is written; where an entry sits
+against a spec that has since been rewritten, its references are a record of the
+past and are labelled as such.
 
-Gates: `npm run test:e2e:unit` 694 passed / 2 expected-fail (10 files),
-`npm run tsc` clean, `npm run lint:check` clean (0 errors, 19 pre-existing
-warnings), 97 e2e tests collected — on the default headless run: **97 pass, 0 fail,
-2 skipped**, reproduced across repeated full runs. The suite is green in its default
-configuration. Headed was not re-measured; it was 5 failing before the CDP fix below
-and that fix is deliberately mode-independent, so the headed set is expected to be
-empty too, but that is a prediction rather than a measurement.
+Gates: `npm run tsc` exits 0, `npm run lint:check` reports no errors, and
+`npm run test:e2e:unit` passes. The app's own gates are green too: `npm run tsc`
+and `npm run test`.
 
-The app's own gates are green: `npm run tsc` exits 0 and `npm run test` reports
-176/176 files passing (3881 pass, 42 expected-fail).
+The numbers this file used to open with — tests passed, expected-fail pins,
+files, mode-specific failure sets — were each a snapshot of one tree, and each has
+been wrong since it was written while the number beside it stayed silent. A count
+that does appear here is a count somebody measured; read the current one off the
+command.
+
+**A full headed run of the suite as it stands has never been measured, and
+`AGENTS.md` forbids an agent from running one.** The headed observations quoted
+below are real measurements, but they predate headless becoming the default and
+they describe code that has since changed. What a headed run of the suite as it
+stands would do is an inference from the shape of the assertions, and it is
+labelled as such where it appears.
 
 Many entries below are **pinned** — a unit test asserts the current, incorrect
 behavior on purpose. A pin is a tripwire: it passes today and fails the moment the
@@ -40,7 +48,7 @@ must not drift back into:
 | was failing                           | was                                     | now                                            |
 | ------------------------------------- | --------------------------------------- | ---------------------------------------------- |
 | `e2e/helpers/cdp-helpers.spec.ts`     | 2 headless, 5 headed, disjoint per mode | scale-agnostic contract; mode-independent      |
-| `e2e/sidebar-keyboard.spec.ts:77, 89` | 0–2, ~42% of headless runs              | root-caused to an rAF focus race, then awaited |
+| `e2e/sidebar-keyboard.spec.ts:76, 88` | 0–2, ~42% of headless runs              | root-caused to an rAF focus race, then awaited |
 | `e2e/levels.spec.ts:64, 109`          | 2, both modes                           | canvas found by test id, not document order    |
 
 All of these were introduced with the specs and were independent of how they were
@@ -48,7 +56,16 @@ moved into this repository: each was reproducible with no changes to the specs o
 to `src/`. The remaining entries below are latent defects that no current run
 trips — none of them is a known failure.
 
-### P1 — a headed run lets the operator's own input fail the suite
+### Invariant — headless is the default, and the refusal is structural
+
+**This is not a work item.** The mitigation is already shipped, and the rest of
+this file is the work queue. `playwright.config.ts:83` resolves
+`headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1'`, and
+`playwright.config.ts:46` loads `e2e/global-setup.ts`, which throws on `--headed`,
+`--ui` and `--debug` and on any project that resolves to `headless: false`
+(`e2e/global-setup.ts:44-61`). The refusal arrives before a browser exists, so the
+rule is structural rather than remembered. What follows is the reasoning the default
+rests on, kept because whoever removes the guard needs it.
 
 A headed browser puts a live, clickable window on the operator's desktop for the
 whole run. Anything the human does to that window — a stray click, a mouse that
@@ -61,11 +78,11 @@ then get recorded as "flaky" and neither gets fixed.
 **This is a preventive rule, and it is worth being precise about the evidence.** No
 operator-input-caused failure has been reproduced in this suite: the one
 intermittent failure on record before headless became the default
-(`sidebar-keyboard.spec.ts:89`) turned out to be a real race that fires in headless
-runs with no operator input at all — see the P2 below. The hazard is reported as
-recurring across this project's test work generally, which is why the default is
-structural rather than procedural: it removes the failure class instead of relying
-on everyone to remember.
+(`sidebar-keyboard.spec.ts:88`) turned out to be a real race that fires in headless
+runs with no operator input at all — see the Enter entry below. The hazard is
+reported as recurring across this project's test work generally, which is why the
+default is structural rather than procedural: it removes the failure class instead
+of relying on everyone to remember.
 
 Headless is also simply better for this suite, and that part is measured. The
 failure sets are disjoint per mode and deterministic across repeats:
@@ -75,14 +92,15 @@ failure sets are disjoint per mode and deterministic across repeats:
 | CDP, deriving expected size from `getDevicePixelRatio()` (`:113` `:129` `:146` `:163` `:195`) | 5 fail | pass     |
 | CDP, explicit `deviceScaleFactor: 2` block (`:220` `:239`)                                    | pass   | 2 fail   |
 
-So headless removes 5 failures and adds 2. The net is better, and the remaining two
-are a known defect with a known fix direction (below), not a mystery.
+So headless was the better mode even then, and both sets have since been fixed
+(below).
 
 **Headed runs are for looking at, not for gating on.** If you must run headed, a
-headless result is what CI will produce, so the 5 CDP failures listed above are
-_expected_ in a headed run and are not a regression. `test:e2e:headed` prints that
-warning on every invocation, so the tradeoff is visible at the moment it is
-accepted.
+headless result is what CI will produce. The five CDP failures in the table above
+were _expected_ in a headed run at the time and are fixed now, so a headed run is
+expected to be green too — which is the one claim in this file that no run in this
+repository can establish. `test:e2e:headed` prints its warning on every invocation,
+so the tradeoff is visible at the moment it is accepted.
 
 **The invariant is "the default", not "impossible".** `npx playwright test --headed`,
 `npm run test:e2e:ui` and `npm run test:e2e:debug` all bypass `use.headless` and open
@@ -112,8 +130,8 @@ dpr=1  actual=480x320  css=240x160  ratio=2
 
 The emulated ratio says 1, the capture is 2x, and the five assertions above are off
 by exactly the host's backing scale. The helper's own comment
-(`e2e/helpers/cdp-helpers.ts:35-40`) asserts the opposite, that the result is
-`clip_size x clip.scale x deviceScaleFactor`.
+(`e2e/helpers/cdp-helpers.ts:39-51`) used to assert the opposite, that the result
+is `clip_size x clip.scale x deviceScaleFactor`.
 
 **The multiplier is not a function of the emulated ratio.** Forcing the emulation to
 match the host does not fix the specs; it changes which ones fail. Sweeping the
@@ -140,7 +158,7 @@ Fix direction: assert against the decoded image's own dimensions instead of
 `window.devicePixelRatio`, which makes the specs independent of host scale and of
 mode entirely. `screenshotBoundsToCss` and `screenshot-scale.ts` already derive
 scale from the decoded dimensions, so this also makes the specs consistent with the
-rest of the suite. The helper's comment at `cdp-helpers.ts:35-40` needs correcting
+rest of the suite. The helper's comment at `cdp-helpers.ts:39-51` needed correcting
 either way.
 
 **How it was fixed.** The contract `imageWidth === rect.width * devicePixelRatio` was
@@ -189,7 +207,7 @@ native device pixels and that the scale must not be assumed.
 - **The locator test double collapsed the union** (was P2). `resolveFakeLocator` took
   `?.[0]`, so a correctly built union read as a clean single-element hit and the
   intended-priority pins passed against semantics Playwright does not provide - which
-  is how the defect above survived a 694-test suite. It is replaced by
+  is how the defect above survived the e2e helper unit suite. It is replaced by
   `resolveFakeMatches`, which returns the whole match list; the five pins were
   rewritten to the real contract and a sixth pins `.or()` as a union.
 
@@ -262,222 +280,98 @@ testing, not inspection.
   wired, and a positive control proves the threshold is real.
 - `waitForCanvasRedraw` — a 28-line poll loop with 4 direct call sites across 3 spec
   files (`e2e/example.spec.ts:26`, `e2e/viewport-drawing.spec.ts:33`,
-  `e2e/select-move.spec.ts:39` and `:74`) plus 2 indirect ones in
-  `e2e/export/helpers.ts:110` and `:232`, had zero unit coverage. Now 32 tests,
+  `e2e/select-move.spec.ts:39` and `:72`) plus 2 indirect ones in
+  `e2e/export/helpers.ts:110` and `:263`, had zero unit coverage. Now 32 tests,
   and it delegates to a single shared implementation.
 
 ---
 
-## P2 — `expectCanvasToMatch` ignores its own defaults (currently unreachable)
+## P2 — an empty CDP capture is reported as a successful capture
 
-`e2e/helpers/image-comparison.ts:111` **[pinned by 2 `it.fails`]**
+`e2e/helpers/cdp-helpers.ts:64-66`
 
-The `??` defaults are computed and then unconditionally overwritten by a
-trailing `...options` spread. A caller spreading a partial options object with
-an explicit `undefined` key silently reverts to **Playwright's** defaults.
+`Buffer.from(data, 'base64')` is never length-checked, so a response whose `data`
+is `''` decodes to a zero-byte buffer that the helper writes to
+`<outputDir>/<name>.png`, attaches to the report, and returns as the capture. The
+caller is told the capture succeeded and the report carries a file that is not an
+image. The failure surfaces later and somewhere else: whatever reads the artifact
+(`loadImageData`) raises a decode error naming the file, so the message points at
+the consumer rather than at the capture that produced nothing.
 
-`maxDiffPixels` is the damaging one: Playwright's default is `0`, so a caller
-passing `maxDiffPixels: undefined` gets a **zero** pixel budget instead of the
-intended `100` — false visual-regression failures, with a cause invisible at
-the call site because `?? 100` looks correct.
+Fix: reject a decoded payload of length 0 with an error naming
+`captureCanvasScreenshot`, before the write and before the attach, so the capture
+failure is the one the caller sees. Test the decoded length, not just the field:
+`{ data: '' }` is a present, correctly-typed response that decodes to nothing, so
+a `typeof data === 'string'` guard alone still lets it through.
 
-**Downgraded from P1 to P2 because the function has no call sites.** A
-repo-wide search finds `expectCanvasToMatch` only in its own unit test, so the
-failure mode above cannot occur today. It is a live landmine rather than a live
-bug: the first spec that calls it with a spread options object gets a zero pixel
-budget and a misleading failure. Either fix the defaults or delete the function —
-the exported `compareScreenshots` is what `visual-regression.spec.ts` actually
-uses, and it does not have this defect.
+Pinned by `reports success for an empty capture, writing and attaching a zero-byte
+file` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:340`. A fix removes that
+pin in the same change.
 
-The two `it.fails` tripwires (`image-comparison.unit.test.ts:838, 844`) will
-start failing the moment the defaults are fixed. That is intentional; remove them
-in the same change.
+## P2 — a failing detach replaces the capture error and destroys the cause
 
-Fix if kept: spread first, default second, and read the defaults from
-`DEFAULT_THRESHOLD`.
+`e2e/helpers/cdp-helpers.ts:68-70`
 
-## P1 — a failed canvas context is reported as a pixel mismatch
+`finally { await cdp.detach() }` runs on the way out whether or not the capture
+threw, and a rejection from it becomes the rejection the caller sees. When the
+capture fails and the detach also fails — the likely pairing, because a capture
+fails most often when the page or the target is already gone — the reported error
+is the detach's, and the real cause is never reported at all. The one thing this
+helper's error path has to do is name what went wrong.
 
-`e2e/export/helpers.ts:185`
+Fix: keep the in-flight failure and let the detach replace it only when there is
+none. Hold the capture's error (or nest the capture in its own `try`/`catch`) and
+run the detach inside a `catch` that attaches the detach error as `cause` when
+something is already failing. Do not swallow a detach failure on the success path:
+a session that cannot be closed is the leak this helper exists to avoid.
 
-`if (!sourceContext || !exportedContext) return false;` then
-`expect(..., '...: pixels differ too much from source').toBe(true)`. A failed
-`getContext('2d')` reaches the developer as a colour problem. Fix: return a
-discriminated `{ ok, reason }` and assert on the reason.
+Pinned by `reports a detach failure in place of the capture failure when both fail`
+in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:371`. A fix removes that pin in
+the same change.
 
-## P1 — unescaped tool name in a RegExp selector
+## P2 — a CDP response without `data` surfaces as a raw `TypeError` from `Buffer`
 
-`e2e/helpers/toolbar-helpers.ts:67`
+`e2e/helpers/cdp-helpers.ts:60, 64`
 
-`new RegExp(name.replace(/&/g, 'and'), 'i')` builds a pattern from an
-unescaped name. Verified against the real function: `'Brush (B)'`,
-`'Levels[beta]'` and `'C:\Tool'` each produce a regex that does **not** match
-their own literal accessible name, so the button is silently not found and the
-error below it names a name that was never searched. `'a|b'` matches the wrong
-button.
+A `Page.captureScreenshot` response that omits `data` reaches
+`Buffer.from(undefined, 'base64')`, which throws `The first argument must be of
+type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like
+Object. Received undefined` (Node 24). The message names neither CDP, nor this
+helper, nor the test, so the reader has to find the call site before they can tell
+what failed. The sibling helper in the same directory checks its inputs and names
+itself (`canvas-helpers.ts:207-209`); this one does not.
 
-Latent today — no call site passes a name containing `()[]+|?*^\$`. Fix:
-`new RegExp(escapeRegExp(name.replace(/&/g, 'and')), 'i')`. Needs sign-off
-because it changes selector behaviour.
+Fix: validate the response before decoding — `typeof data === 'string'`, and
+non-empty — with an error that names `captureCanvasScreenshot` and the CDP request
+it came from. Merge this with the length check above rather than adding a second
+guard on the same two lines.
 
-## P2 — `hexToRgb` rejects valid CSS-4 hex
-
-`e2e/helpers/color-helpers.ts:12` **[pinned]**
-
-The 3-character expansion runs before the length guard, so 4-digit `#rgba` and
-8-digit `#rrggbbaa` fall into the error branch:
-
-```
-hexToRgb('#ff0000ff') -> expected 3 or 6 hex digits, got "ff0000ff"
-hexToRgb('#f00a')     -> expected 3 or 6 hex digits, got "f00a"
-```
-
-Both are valid CSS and should yield `{r:255,g:0,b:0}`. Consequence:
-`setForegroundColor(page, '#ff0000ff', true)` rejects a colour the application
-itself accepts.
-
-## P2 — `setForegroundColor` can succeed without setting the colour
-
-`e2e/helpers/color-helpers.ts:24-27` **[pinned]**
-
-Two independent ways to get a green result with nothing changed:
-
-1. No validation before the DOM is touched. `hexToRgb` is only called when
-   `verifySwatch` is true, so `setForegroundColor(page, 'red')` writes `red`
-   into a `<input type="color">` and resolves successfully.
-2. `if (input) {` (`:26`) makes a missing or renamed testid a silent no-op.
-
-Combined, a test that sets a colour can pass having changed nothing. The specs
-that set a colour now pass `verifySwatch: true`, which closes the loop from
-the call side, but the helper itself is still permissive.
-
-## P2 — selection thresholds are hardcoded, not in the constants table
-
-`e2e/helpers/canvas-helpers.ts:430-432` **[pinned]**
-
-```ts
-const redMax = colorThresholds?.redMax ?? 80;
-const greenMin = colorThresholds?.greenMin ?? 80;
-const blueMin = colorThresholds?.blueMin ?? 180;
-```
-
-Every other threshold lives in `STROKE_ANALYSIS`. These three cannot be
-derived or overridden through the constants object, which is the drift risk the
-constants table exists to prevent.
-
-## P2 — duplicated default threshold literals
-
-`e2e/helpers/image-comparison.ts:22` vs `:111` **[pinned]**
-
-`compareScreenshots` uses the exported `DEFAULT_THRESHOLD`; `expectCanvasToMatch`
-re-inlines `0.2`, `100`, `0.01`. Currently equal, so latent rather than
-observable. A test fails if the two drift apart.
-
-## P2 — swatch verification compares an exact CSS string
-
-`e2e/helpers/color-helpers.ts` **[pinned]**
-
-The check compares the computed value against a literal
-`` `rgb(${r}, ${g}, ${b})` ``. Any legitimately non-opaque computed value —
-`opacity`, `color(srgb ...)`, a gradient or animation in flight — fails even
-though the colour is correct. Not reproduced; flagged as fragility.
-
-## P2 — a negative sample radius reports "no colour here"
-
-`e2e/helpers/canvas-helpers.ts:467` **[pinned]**
-
-`for (let y = pointY - radius; y <= pointY + radius; y++)` never executes when
-`radius < 0`, so `getColorAtPoint` returns `null` — meaning "nothing at this
-point" — instead of sampling the centre pixel or rejecting the argument. A
-misconfigured constant reads as a legitimate miss.
-
-## P2 — an unsound source-side cast
-
-`e2e/helpers/color-helpers.ts:25`
-
-`document.querySelector(...) as HTMLInputElement` asserts an element type
-`querySelector` cannot guarantee. A non-`input` element published under that
-testid reaches `descriptor.set.call(input, color)` and throws an opaque
-`TypeError: Illegal invocation`. This is the mirror image of the
-`as unknown as` casts removed from the test files.
-
-## P2 — `exportAndVerify` ignores its `testInfo` argument
-
-`e2e/export/helpers.ts:153`
-
-The parameter is never referenced in the body, so every caller threads a
-`TestInfo` for nothing. `setupExportTest` does use its own.
-
-`tsconfig.e2e.json` sets `noUnusedParameters: false` specifically so this and
-`expectCanvasToMatch`'s unread `page` survive `npm run tsc`; deleting a parameter
-to satisfy the compiler would erase the evidence of the defect and churn every
-call site. ESLint reports both as warnings — the e2e block sets `args: 'all'`,
-which is what makes them visible at all.
-
-## P2 — the per-call dynamic import makes the fs surface unspyable
-
-`e2e/helpers/canvas-helpers.ts:193`, `e2e/helpers/cdp-helpers.ts:32`
-
-`takeLineScreenshot` does `await import('node:fs/promises')` inside the hot
-helper. Because that is an ESM namespace binding rather than the spied CJS
-export, a `vi.spyOn(fs, 'mkdir')` records zero calls even when `mkdir`
-definitely ran — so mkdir/attach ordering cannot be asserted. A top-level import
-fixes both the per-call cost and the untestability.
-
-## P3 — a missing output directory surfaces as a raw `TypeError`
-
-`e2e/helpers/canvas-helpers.ts:192` **[pinned, message-matched]**
-
-`path.join(testInfo.outputDir, ...)` runs before the `fs.mkdir` and has no
-guard, so a `TestInfo` without an `outputDir` fails with
-`The "path" argument must be of type string. Received undefined` — no
-screenshot taken, no attachment made, and nothing naming the test.
+Pinned by `rejects with a raw TypeError when the CDP response omits data, and
+detaches` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:322`. A fix removes
+that pin in the same change.
 
 ## P3 — zero-sized image yields `NaN` edges
 
-`screenshotBoundsToCss` (`e2e/helpers/canvas-helpers.ts:29`) and
+`screenshotBoundsToCss` (`e2e/helpers/canvas-helpers.ts:30`) and
 `imagePointToCss` / `cssPointToImage` (`e2e/helpers/screenshot-scale.ts`)
 divide by the image or box dimension, so a zero-sized input produces `NaN` or
 `Infinity` instead of throwing. Deliberate — the modules stay branch-free and
 total, and it is pinned — but a `NaN` coordinate reaching `page.mouse.click` is
 opaque. Callers must reject empty images first.
 
-## P3 — `drawLine` silently drops an explicit `steps: 0`
-
-`e2e/helpers/canvas-helpers.ts:288` **[pinned]**
-
-`if (options.steps)` is a truthy check, so `steps: 0` drops the whole options
-object rather than being forwarded. Unreachable from current call sites.
-
-## P3 — `TOOL_NAME_MAP` lookup is case-sensitive
-
-`e2e/helpers/toolbar-helpers.ts:13`, `:25`, `:37`
-
-`resolveToolName('SELECT & MOVE')` returns `'select-and-move'`, not
-`'reposition'`. Harmless today only because the role fallback regex is
-case-insensitive — two weaknesses cancelling out.
-
-Separately, `generateSlug` does not expand `&` while `normalizeToolName` does,
-so the two produce different slugs for the same label.
-
-## P3 — verification asserts a hardcoded filename
-
-`e2e/export/helpers.ts:326`
-
-Verification asserts `toContainText('drawing')` instead of deriving the expected
-name from its own `psdPath` argument, coupling it to the hardcoded
-`'drawing'` / `'drawing-icon'` filled at `:156` and `:243`. A renamed export
-silently verifies the wrong file.
-
 ## P3 — transparent pixels weighted as fully opaque (low confidence)
 
-`e2e/helpers/canvas-helpers.ts:214`, `:475` **[pinned]**
+`e2e/helpers/canvas-helpers.ts:231` and `:507` **[pinned]**
 
 `dominantRed` and `getColorAtPoint` skip only `alpha === 0`, so a nearly
 invisible pixel counts at full weight. A weighting concern rather than a
 correctness bug, and the only helper that reports the colour back to the caller.
-Every other helper in the file uses `a !== 0` as a filter, so these are the only
-two places the distinction is observable.
+They are the two places the distinction bites hardest, because the other two
+`alpha === 0` filters, in `hasDarkPixels` (`:254`) and `hasRedPixels` (`:274`),
+answer a yes/no question where one nearly-invisible pixel is the same as one
+opaque one. The other half of the file, `getDarkPixelBounds` (`:401`) and
+`getSelectionBounds` (`:457`), filters on `a !== 0` instead — a different question
+asked with a boolean rather than a weight.
 
 ## P3 — 10 orphaned committed baselines (2.1 MB)
 
@@ -498,9 +392,50 @@ The directory holds 17 files. Seven are read — the formats with
 A repo-wide grep finds no reference to any of the 10. All are safe to delete; they
 were left in place because deleting committed baselines was not authorized.
 
+## P3 — the artifact name is interpolated into a path unsanitised
+
+`e2e/helpers/cdp-helpers.ts:36-37`
+
+Only `outputDir` is created, so `name` is sound only if it is a bare filename. A
+name containing a separator (`nested/thing`) fails with `ENOENT` on a parent
+directory that was never created, and a name that traverses (`../escaped`) resolves
+outside `outputDir` — the file is written there, attached from there, and is not
+removed by anything that cleans the output dir. Severity is low only because
+`outputDir` is a throwaway per-test directory under `test-results/`.
+
+Fix: **reject, do not sanitise.** Validate that `name` is a single path component
+(no separator, not `.` or `..`) and throw an error naming the helper, for the same
+reason the `outputDir` guard throws: the caller passed something impossible, and
+silently rewriting it would attach the report under a name the test never asked
+for. Sanitising would also let two distinct names collide into one artifact.
+
+Pinned by `treats a name containing a path separator as a path, not a filename`
+(`:454`) and `writes outside the output directory when the name traverses out of it`
+(`:468`) in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts`. A fix removes both
+pins in the same change; the first one's own comment names sanitisation as the
+shape a fix must not take.
+
+## P3 — the `outputDir` guard in `captureCanvasScreenshot` has no test
+
+`e2e/helpers/cdp-helpers.ts:33-35`
+
+The guard exists and is the same shape as `canvas-helpers.ts:207-209`, but it is
+the module's only uncovered statement: `npm run test:e2e:unit:coverage` reports
+`cdp-helpers.ts` at 93.75% statements and 93.33% lines with line 34 — the `throw` —
+uncovered, against 100% of its functions. The sibling guard is pinned
+(`e2e/helpers/__tests__/canvas-interaction.unit.test.ts:192-216`), so nothing fails
+if this one is deleted, and the raw V8 failure it exists to replace
+(`The "path" argument must be of type string. Received undefined`) returns with it.
+
+Fix: add the two cases to `e2e/helpers/__tests__/cdp-helpers.unit.test.ts` — a
+`TestInfo` with no `outputDir` and one with an empty string — asserting the helper's
+own message and that no CDP session was opened. `createTestInfoMock()`
+(`e2e/helpers/__tests__/canvas-helpers.fixtures.ts:121`) already makes `outputDir`
+optional, so the double needs no change.
+
 ## Fixed — Enter did not reliably close the flyout (was P2, a real race)
 
-`e2e/sidebar-keyboard.spec.ts:77` and `:89`
+`e2e/sidebar-keyboard.spec.ts:76` and `:88`
 
 `expect(locator).toBeHidden() failed — waiting for getByRole('menu')`, at the
 assertion that follows `page.keyboard.press('Enter')`.
@@ -564,12 +499,12 @@ single-tool groups`.
 **Verified by running the suite against a real browser:**
 
 - The 7 comparison formats match the committed baselines.
-  `e2e/export/visual-regression.spec.ts` passes all 8 specs, so every baseline the
-  spec reads decodes and matches its committed pixels on this host. The ICO spec
-  passes in-browser against the source canvas.
+  `e2e/export/visual-regression.spec.ts` passes, so every baseline the spec reads
+  decodes and matches its committed pixels on this host. The ICO spec passes
+  in-browser against the source canvas.
 
-  **This was not true until the `updateSnapshots` guard was fixed — see the entry
-  below.** The check that produced this claim was `if (testInfo.config.updateSnapshots)`,
+  **This was not true until the `updateSnapshots` guard was fixed — see that entry
+  above.** The check that produced this claim was `if (testInfo.config.updateSnapshots)`,
   and Playwright's default for that option is the string `'missing'`, so the branch was
   always taken: every run re-recorded the baseline and returned before
   `compareScreenshots`. The comparison below it was unreachable, so "matches the

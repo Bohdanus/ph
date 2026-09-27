@@ -30,15 +30,69 @@ export function normalizeToolName(name: string): string {
     .replace(/[^a-z0-9]+/g, '-');
 }
 
-export function resolveToolName(toolName: string): string {
-  return normalizeToolName(TOOL_NAME_MAP[toolName] ?? toolName);
+/**
+ * Looks a label up in `TOOL_NAME_MAP` regardless of how the caller cased it.
+ *
+ * The exact-key lookup runs first, then an own-key scan. A scan is used instead of
+ * a lowercased index because the maps are rebuilt by tests, and a second index would
+ * go stale the moment an entry is added; the scan is over `Object.keys`, so it can
+ * only ever see own entries and can never answer with an `Object.prototype` member.
+ */
+function lookupMappedToolName(toolName: string): string | undefined {
+  const exact = TOOL_NAME_MAP[toolName];
+  if (typeof exact === 'string') return exact;
+
+  const wanted = toolName.toLowerCase();
+  const display = Object.keys(TOOL_NAME_MAP).find((key) => key.toLowerCase() === wanted);
+  if (display === undefined) return undefined;
+
+  const internal = TOOL_NAME_MAP[display];
+  return typeof internal === 'string' ? internal : undefined;
 }
 
+export function resolveToolName(toolName: string): string {
+  return normalizeToolName(lookupMappedToolName(toolName) ?? toolName);
+}
+
+/**
+ * The label half of the `tool-flyout-item-${tool.name}-${slug}` test id.
+ *
+ * The application mints that id with `slugifyToolLabel` from `toolbar-mapping.ts`, which
+ * `SidebarLeft` imports, so anything that shifts the output here moves the helper off the
+ * element it asserts on. `normalizeToolName` is a *different* rule — it expands `&` to
+ * `and` and trims the ends, and the application does neither — so it does not belong here:
+ * for `Color & Tone` it yields `color-and-tone` where the app mints `color-tone`.
+ *
+ * The body below is therefore an independent copy of `slugifyToolLabel` rather than an
+ * import of it. Delegating would make the two sides move together and leave nothing to
+ * compare; keeping the copy means a change to either one alone is caught by
+ * `e2e/helpers/__tests__/toolbar-helpers.unit.test.ts`, which asserts the two agree for
+ * every label in `toolbar-mapping.ts` and for every label the suite passes. Do not trim
+ * the ends here to "tidy" the output: a slug the app cannot mint is a silent miss, and
+ * that test is the only thing standing between the two.
+ */
 export function generateSlug(label: string): string {
-  return label
-    .toLowerCase()
-    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '')
-    .replace(/[^a-z0-9]+/g, '-');
+  return label.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-');
+}
+
+/**
+ * Escapes a tool's accessible name for use inside a `RegExp`.
+ *
+ * The role fallback below matches by name, and a name is data, not a pattern. Unescaped,
+ * `Brush (B)` and `Levels[beta]` fail to match their own literal name because the group
+ * and the class are interpreted, `Crop.v2`/`Zoom+`/`Paint|Fill` match a shorter name than
+ * the caller asked for, and `C:\Tool` does not throw — the trailing `\T` is an Annex B
+ * IdentityEscape, so the pattern silently matches `C:Tool` and nothing else. Only the `u`
+ * flag would make that construction throw, and the only flag here is `i`.
+ *
+ * The repository has no shared `escapeRegExp`, and this is the only place under `e2e/`
+ * that builds a regex out of a tool name, so the helper stays local rather than
+ * introducing a shared util for one caller. (`src/components/SidebarLeft/__tests__/SidebarLeft.icon-state.test.tsx`
+ * interpolates a tool label into a `RegExp` the same unescaped way; that is app-test scope,
+ * not this helper's.)
+ */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export async function clickToolButton(page: Page, toolName: string): Promise<void> {
@@ -64,7 +118,9 @@ export async function clickToolButton(page: Page, toolName: string): Promise<voi
 
   const attempted: string[] = [];
   for (const name of fallbackNames) {
-    const roleTool = page.getByRole('button', { name: new RegExp(name.replace(/&/g, 'and'), 'i') });
+    // `&` expands to "and" because the legacy labels spell the word out while the
+    // map keys do not; the expansion is part of the data, so it is escaped too.
+    const roleTool = page.getByRole('button', { name: new RegExp(escapeRegExp(name.replace(/&/g, 'and')), 'i') });
     if (await roleTool.count()) {
       await roleTool.first().click();
       return;

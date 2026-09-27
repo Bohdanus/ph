@@ -60,7 +60,7 @@ test.describe('Levels adjustment', () => {
     await page.goto('/');
   });
 
-  // меняет красную линию через brightness
+  // changes red line via brightness
   test('changes red line via brightness', async ({ page }, testInfo) => {
     const canvas = getWorkspaceCanvas(page);
     await expect(canvas).toBeVisible();
@@ -105,7 +105,7 @@ test.describe('Levels adjustment', () => {
     expect(afterBrightness.red).not.toBe(original!.red);
   });
 
-  // меняет красную линию через contrast
+  // changes red line via contrast
   test('changes red line via contrast', async ({ page }, testInfo) => {
     const canvas = getWorkspaceCanvas(page);
     await expect(canvas).toBeVisible();

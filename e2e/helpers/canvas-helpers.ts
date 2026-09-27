@@ -1,4 +1,5 @@
 import { type Page, type Locator, type TestInfo } from '@playwright/test';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { imageBoundsToCss } from './screenshot-scale';
@@ -137,6 +138,11 @@ export const STROKE_ANALYSIS = {
   RED_PIXEL_GREEN_MAX: 100, // For hasRedPixels
   RED_PIXEL_BLUE_MAX: 100, // For hasRedPixels
 
+  // Selection detection (getSelectionBounds, tuned for the app's selection colour)
+  SELECTION_RED_MAX: 80, // For getSelectionBounds: red <= 80 (low red)
+  SELECTION_GREEN_MIN: 80, // For getSelectionBounds: green >= 80 (medium green)
+  SELECTION_BLUE_MIN: 180, // For getSelectionBounds: blue >= 180 (high blue)
+
   // Spray detection
   SPRAY_LUMINANCE_THRESHOLD: 200, // Luminance > 200 = bright spray
   SPRAY_SATURATION_THRESHOLD: 30, // Saturation < 30 = grayscale spray
@@ -197,9 +203,12 @@ export async function takeLineScreenshot(
   };
   const actualClip = buildClip(clip, defaultClip);
 
-  const screenshotPath = path.join(testInfo.outputDir, `${name}.png`);
-  const fs = await import('node:fs/promises');
-  await fs.mkdir(testInfo.outputDir, { recursive: true });
+  const outputDir = testInfo.outputDir;
+  if (typeof outputDir !== 'string' || outputDir === '') {
+    throw new Error('takeLineScreenshot: testInfo.outputDir is required to capture and attach a screenshot');
+  }
+  const screenshotPath = path.join(outputDir, `${name}.png`);
+  await fs.mkdir(outputDir, { recursive: true });
   const screenshot = await page.screenshot({
     path: screenshotPath,
     clip: actualClip,
@@ -274,8 +283,30 @@ export async function hasRedPixels(screenshot: Buffer | ImageDataResult): Promis
 }
 
 export interface DrawLineOptions {
-  /** Interpolated mouse moves between the endpoints. Omit for a single jump. */
+  /**
+   * Interpolated mouse moves between the endpoints. Omit for a single jump.
+   *
+   * `0` is a real instruction meaning "do not interpolate", so `drawLine` acts on it - but
+   * it does not forward it, because Playwright reads a `steps` below 1 as "no move at all".
+   * See `interpolationSteps` below. Anything larger than 1 reaches `page.mouse.move` as given.
+   */
   steps?: number;
+}
+
+/**
+ * The `steps` value `drawLine` actually hands to Playwright.
+ *
+ * Playwright's server `Mouse.move` is `const { steps = 1 } = options` followed by
+ * `for (let i = 1; i <= steps; i++)`, so forwarding a `steps` below 1 dispatches zero moves:
+ * the endpoint is never reached and the press/release pair collapses into a zero-length
+ * stroke. Its client validator answers a non-integer with
+ * `steps: expected integer, got float <value>`, so a miscomputed `NaN`, `Infinity` or
+ * fractional count throws between `mousedown` and `mouseup`, leaving the button down.
+ * Both collapse to 1, which is Playwright's own default and the one move that lands on the
+ * endpoint.
+ */
+function interpolationSteps(steps: number): number {
+  return Number.isInteger(steps) && steps > 1 ? steps : 1;
 }
 
 /**
@@ -293,10 +324,10 @@ export async function drawLine(
 ): Promise<void> {
   await page.mouse.move(box.x + startX, box.y + startY);
   await page.mouse.down();
-  if (options.steps) {
-    await page.mouse.move(box.x + endX, box.y + endY, { steps: options.steps });
-  } else {
+  if (options.steps === undefined) {
     await page.mouse.move(box.x + endX, box.y + endY);
+  } else {
+    await page.mouse.move(box.x + endX, box.y + endY, { steps: interpolationSteps(options.steps) });
   }
   await page.mouse.up();
 }
@@ -435,9 +466,9 @@ export async function getSelectionBounds(
    * - blueMin: 180 (high blue)
    */
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
-  const redMax = colorThresholds?.redMax ?? 80;
-  const greenMin = colorThresholds?.greenMin ?? 80;
-  const blueMin = colorThresholds?.blueMin ?? 180;
+  const redMax = colorThresholds?.redMax ?? STROKE_ANALYSIS.SELECTION_RED_MAX;
+  const greenMin = colorThresholds?.greenMin ?? STROKE_ANALYSIS.SELECTION_GREEN_MIN;
+  const blueMin = colorThresholds?.blueMin ?? STROKE_ANALYSIS.SELECTION_BLUE_MIN;
 
   const bounds = await scanPixelsForBounds(
     imageData,
@@ -458,6 +489,16 @@ export async function getSelectionBounds(
   };
 }
 
+/**
+ * Averages the opaque pixels within `radius` of the point, ignoring near-white ones when
+ * `ignoreNearWhite` is set. Returns null when the point is outside the image or every
+ * sampled pixel was skipped.
+ *
+ * `radius` is a sampling window, so it is clamped to 0 rather than rejected: a negative
+ * window used to select no pixels at all, which reads as "nothing at this point" — a
+ * legitimate miss — rather than as the misconfigured constant it is. A clamped radius
+ * still returns null when the centre pixel itself is transparent.
+ */
 export async function getColorAtPoint(
   screenshot: Buffer | ImageDataResult,
   pointX: number,
@@ -471,9 +512,10 @@ export async function getColorAtPoint(
   if (pointX < 0 || pointX >= width || pointY < 0 || pointY >= height) return null;
 
   const colors = { red: 0, green: 0, blue: 0, count: 0 };
+  const sampleRadius = Math.max(0, radius);
   const nearWhiteThreshold = options?.nearWhiteThreshold ?? STROKE_ANALYSIS.NEAR_WHITE_THRESHOLD;
-  for (let y = pointY - radius; y <= pointY + radius; y++) {
-    for (let x = pointX - radius; x <= pointX + radius; x++) {
+  for (let y = pointY - sampleRadius; y <= pointY + sampleRadius; y++) {
+    for (let x = pointX - sampleRadius; x <= pointX + sampleRadius; x++) {
       if (x < 0 || x >= width || y < 0 || y >= height) continue;
       const index = (y * width + x) * 4;
       const red = data[index];

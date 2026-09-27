@@ -1,5 +1,7 @@
 {
   "compilerOptions": {
+    // See tsconfig.app.json: this keeps the buildinfo under node_modules/.tmp instead
+    // of dropping an untracked tsconfig.node.tsbuildinfo into the repo root.
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
     "target": "ES2023",
     "lib": ["ES2023"],

@@ -125,10 +125,9 @@ export default defineConfig([
       'react-compiler/react-compiler': 'off',
       'react-refresh/only-export-components': 'off',
       // `args: 'all'` rather than the inherited default `after-used`. The default
-      // ignores a dead parameter that sits before a used one, which is exactly the
-      // shape of `expectCanvasToMatch`'s unread `page` — dead under `tsc` (see the
-      // `noUnusedParameters` note in tsconfig.e2e.json) and silent under ESLint too.
-      // `args: 'all'` reports every unread parameter, so neither defect can hide.
+      // ignores a dead parameter that sits before a used one, so `tsc` and ESLint
+      // would disagree about whether that parameter is dead. `args: 'all'` reports
+      // every unread parameter, so the two cannot disagree.
       // The `^_` patterns keep the mocks that must match a real signature but never
       // read a parameter out of the report.
       '@typescript-eslint/no-unused-vars': [

@@ -179,16 +179,28 @@ export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
     if (hasFill) ctx.fill();
     ctx.stroke();
   } else if (figure === 'rectangle') {
-    const w = end.x - start.x;
-    const h = end.y - start.y;
+    // A rectangle is quadrant-independent, so derive the top-left corner and the
+    // positive extents the way shapeGeometryBounds allocates them, not the way
+    // the raw drag happened to run. normalizeShapeGeometry keeps the drag
+    // quadrant, so a drag up-and-left reaches here with end < start; taking the
+    // absolute extents alone would keep the wrong origin and mirror the shape
+    // into the opposite quadrant, and a negative extent would also invert which
+    // corner each `r` offset in roundedRectPath is measured from -- `r` itself is
+    // clamped to `min(|width|/2, |height|/2, radius)`, so a negative extent still
+    // cannot widen the radius -- dilating the rounded path by `r` outward on every
+    // negative axis and sending it outside the layer bounds.
+    const x = Math.min(start.x, end.x);
+    const y = Math.min(start.y, end.y);
+    const w = Math.abs(end.x - start.x);
+    const h = Math.abs(end.y - start.y);
     const radius = args.cornerRadius ?? 0;
     if (radius > 0) {
-      roundedRectPath(ctx, start.x, start.y, w, h, radius);
+      roundedRectPath(ctx, x, y, w, h, radius);
       if (hasFill) ctx.fill();
       ctx.stroke();
     } else {
-      if (hasFill) ctx.fillRect(start.x, start.y, w, h);
-      ctx.strokeRect(start.x, start.y, w, h);
+      if (hasFill) ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
     }
   } else if (figure === 'oval') {
     const rx = Math.abs(end.x - start.x) / 2;

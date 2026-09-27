@@ -5,6 +5,9 @@ import type { ToolArgs } from '../contexts/tool-types.ts';
 import type { TextToolArgs } from '../tools/text.ts';
 import { normalizeFigure, type ShapeToolArgs } from '../tools/shape.ts';
 import type { CropToolArgs } from '../tools/crop.ts';
+import type { BlurToolArgs } from '../tools/blur.ts';
+import type { ColorsToolArgs } from '../tools/colors.ts';
+import type { LevelsToolArgs } from '../tools/levels.ts';
 
 /**
  * Tool args may arrive from an older build that still had dedicated Circle and
@@ -65,5 +68,17 @@ export function saveLastSettings(args: ToolArgs) {
       ...(lastSavedSettings[toolName] ?? {}),
       ...(args as ToolArgs),
     });
+  } else if (toolName === 'blur') {
+    lastSavedSettings.blur = cloneDeep(args as BlurToolArgs);
+  } else if (toolName === 'color') {
+    lastSavedSettings.color = cloneDeep(args as ColorsToolArgs);
+  } else if (toolName === 'levels') {
+    lastSavedSettings.levels = cloneDeep(args as LevelsToolArgs);
+  } else {
+    // Every `ToolName` is persisted above by design. Without this trap a tool added to
+    // `ToolArgsByName` falls off the end of the chain, its settings are dropped, and its sliders
+    // silently reset on the next switch. Adding a tool without adding an arm here is a typecheck error.
+    const _exhaustive: never = toolName;
+    void _exhaustive;
   }
 }

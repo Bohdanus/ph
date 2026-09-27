@@ -376,6 +376,38 @@ describe('useLayers tempUpdateLayer defensive affine guards', () => {
 
     expect(result.current.store.previewLayers.current).toEqual({});
   });
+
+  it('contains a throw from the imageProcessor call a trapezoid-only transform reaches', () => {
+    // `transform` is `commit: 'affine-operation'`, so a trapezoid-only transform is
+    // neither a `layer-operation` nor a `geometry` commit and falls past both early
+    // returns to the `imageProcessor` call -- the one every live pointer move takes.
+    // `|trapezoid| >= 100` is `src/tools/transform.ts:97`'s own refusal, reached with no
+    // mocking of the processor at all.
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { result } = setup({ layers: { edited: makeLayer('edited', 0) }, activeLayerId: 'edited' });
+
+    act(() => {
+      result.current.layers.tempUpdateLayer({
+        id: 'edited',
+        toolArgs: {
+          toolName: 'transform',
+          trapezoid: 150,
+          rotate: 0,
+          mirrorH: false,
+          mirrorV: false,
+          skewX: 0,
+          skewY: 0,
+          resizeX: 100,
+          resizeY: 100,
+        } as ToolArgs,
+      });
+    });
+
+    // The throw is contained, so no preview is written and it never reaches a React
+    // event handler. A guard on the `flattenRequired` branch alone would not cover this.
+    expect(result.current.store.previewLayers.current).toEqual({});
+    expect(consoleError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('100') }));
+  });
 });
 
 describe('useLayers updateLayerByTool flattening boundary', () => {

@@ -18,7 +18,7 @@ async function waitForRedStroke(page: Page, box: BoundingBox): Promise<void> {
   await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'red pixels' });
 }
 
-// скриншот области холста содержит линию выбранного красного цвета
+// screenshot of canvas area contains line of selected red color
 test('screenshot of canvas area contains line of selected red color', async ({ page }, testInfo) => {
   await page.goto('/');
 

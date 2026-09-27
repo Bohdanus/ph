@@ -57,49 +57,58 @@ export function usePointerPosition<T extends HTMLElement>(
     return nextRect;
   }, [ref]);
 
-  const calculateDimensions = useCallback(() => {
-    const rect = readContainerRect() ?? containerRectRef.current;
-    if (!rect) return;
+  const calculateDimensions = useCallback(
+    (observed?: Pos) => {
+      // A rect handed in by the ResizeObserver is the measurement for this event,
+      // so it is used as is. Re-reading `getBoundingClientRect()` here discarded
+      // the observed size and substituted a second, possibly different one.
+      if (observed) containerRectRef.current = observed;
+      const rect = observed ?? readContainerRect() ?? containerRectRef.current;
+      if (!rect) return;
 
-    const { width: outerWidth, height: outerHeight } = rect;
-    const { width: imageWidth, height: imageHeight } = imageSize;
+      const { width: outerWidth, height: outerHeight } = rect;
+      const { width: imageWidth, height: imageHeight } = imageSize;
 
-    const scaleX = outerWidth / imageWidth;
-    const scaleY = outerHeight / imageHeight;
+      const scaleX = outerWidth / imageWidth;
+      const scaleY = outerHeight / imageHeight;
 
-    const scale = Math.min(scaleX, scaleY);
+      const scale = Math.min(scaleX, scaleY);
 
-    const innerWidth = imageWidth * scale;
-    const innerHeight = imageHeight * scale;
-    const offsetX = (outerWidth - innerWidth) / 2;
-    const offsetY = (outerHeight - innerHeight) / 2;
+      const innerWidth = imageWidth * scale;
+      const innerHeight = imageHeight * scale;
+      const offsetX = (outerWidth - innerWidth) / 2;
+      const offsetY = (outerHeight - innerHeight) / 2;
 
-    dimensionsRef.current = {
-      innerWidth,
-      innerHeight,
-      outerWidth,
-      outerHeight,
-      offsetX,
-      offsetY,
-      scale,
-    };
+      dimensionsRef.current = {
+        innerWidth,
+        innerHeight,
+        outerWidth,
+        outerHeight,
+        offsetX,
+        offsetY,
+        scale,
+      };
 
-    onResizeRef.current?.(dimensionsRef.current);
-  }, [imageSize, readContainerRect]);
+      onResizeRef.current?.(dimensionsRef.current);
+    },
+    [imageSize, readContainerRect]
+  );
 
   useEffect(() => {
     calculateDimensions();
   }, [calculateDimensions]);
 
   useResizeObserverRAF(ref, (rect: Pos) => {
-    containerRectRef.current = rect;
-    calculateDimensions();
+    calculateDimensions(rect);
   });
 
   function clearEvent(e: React.PointerEvent<T>) {
     // Safe even if capture was already lost
     try {
-      if (activePointerId.current) {
+      // Only the `null` sentinel means "no active pointer" -- a truthiness test also
+      // reads a pointer numbered 0 as absent, because Pointer Events reserves only `-1`
+      // and a UA may number from 0. Defensive rather than a fix for a reported engine.
+      if (activePointerId.current !== null) {
         e.currentTarget.releasePointerCapture(activePointerId.current);
       }
     } catch {

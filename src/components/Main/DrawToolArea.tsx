@@ -22,17 +22,17 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
 
   const args = toolArgs as DrawToolArgs;
   const pointsRef = useRef<Point[]>([]);
-  const frameRequested = useRef<number | null>(null);
 
   const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown } = usePointerPosition({
     ref: containerRef,
     imageSize: totalSize,
   });
 
+  // Repaints synchronously on every pointer move. The overlay is a cheap
+  // clearRect + stroke of the accumulated points, so this stays interactive
+  // without frame batching; ShapeToolArea batches via requestAnimationFrame.
   const flushDrawingFrame = () => {
     if (!overlayCtxRef.current) return;
-
-    frameRequested.current = null;
 
     overlayCtxRef.current.clearRect(0, 0, totalSize.width, totalSize.height);
 
@@ -46,7 +46,8 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (!isPointerDownValid(event)) return;
 
-    const ctx = overlayCtxRef.current!;
+    const ctx = overlayCtxRef.current;
+    if (!ctx) return;
     setupDrawCtx(ctx, args);
 
     const coords = getLocalCoords(event);
@@ -61,18 +62,11 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     const coords = getLocalCoords(event);
     pointsRef.current.push(coords);
 
-    if (frameRequested.current !== null) return;
-
     flushDrawingFrame();
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
     if (!isPointerUpValid(event)) return;
-
-    if (frameRequested.current !== null) {
-      cancelAnimationFrame(frameRequested.current);
-      frameRequested.current = null;
-    }
 
     const coords = getLocalCoords(event);
     const lastPoint = pointsRef.current[pointsRef.current.length - 1];

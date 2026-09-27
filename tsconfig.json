@@ -1,4 +1,11 @@
 {
+  // Solution-style stub: this project owns no files of its own, only the three
+  // projects below. A bare `npx tsc` / `npx tsc --noEmit` at the repo root therefore
+  // resolves zero input files and always exits 0 — that is the design, not a defect,
+  // and it is why nothing should be gated on it.
+  //
+  // The authoritative typecheck is `tsc -b`, i.e. `npm run tsc`, which builds
+  // tsconfig.app.json, tsconfig.node.json and tsconfig.e2e.json.
   "files": [],
   "references": [
     { "path": "./tsconfig.app.json" },

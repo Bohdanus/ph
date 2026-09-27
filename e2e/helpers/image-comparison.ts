@@ -1,4 +1,4 @@
-import { expect, type Page, type TestInfo } from '@playwright/test';
+import { type Page, type TestInfo } from '@playwright/test';
 import path from 'node:path';
 import compare from 'pixelmatch';
 import sharp from 'sharp';
@@ -19,7 +19,14 @@ export interface CompareResult {
   diffRatio: number;
 }
 
+/**
+ * The comparison defaults, in one place. `compareScreenshots` is their only reader, and
+ * must read them from here: a literal written into a second function looks equal today
+ * and silently becomes a different budget the day it drifts.
+ */
 export const DEFAULT_THRESHOLD = 0.2;
+export const DEFAULT_MAX_DIFF_PIXELS = 100;
+export const DEFAULT_MAX_DIFF_PIXEL_RATIO = 0.01;
 
 /**
  * Saves an image artifact to the test output dir and attaches it to the report.
@@ -57,8 +64,8 @@ export async function compareScreenshots(
   options: CompareOptions = {}
 ): Promise<CompareResult> {
   const threshold = options.threshold ?? DEFAULT_THRESHOLD;
-  const maxDiffPixels = options.maxDiffPixels ?? 100;
-  const maxDiffPixelRatio = options.maxDiffPixelRatio ?? 0.01;
+  const maxDiffPixels = options.maxDiffPixels ?? DEFAULT_MAX_DIFF_PIXELS;
+  const maxDiffPixelRatio = options.maxDiffPixelRatio ?? DEFAULT_MAX_DIFF_PIXEL_RATIO;
 
   // Decode both images to raw RGBA using sharp (handles DPR, color space, etc.)
   const [actualDecoded, expectedDecoded] = await Promise.all([
@@ -89,31 +96,4 @@ export async function compareScreenshots(
     diffPixels,
     diffRatio,
   };
-}
-
-/**
- * Compare canvas content to expected image.
- * Uses Playwright's built-in visual comparison via expect().toHaveScreenshot()
- * This is the recommended approach for visual regression.
- */
-export async function expectCanvasToMatch(
-  page: Page,
-  canvas: ReturnType<Page['getByTestId']>,
-  snapshotName: string,
-  options: {
-    threshold?: number;
-    maxDiffPixels?: number;
-    maxDiffPixelRatio?: number;
-    mask?: ReturnType<Page['getByTestId']>[];
-  } = {}
-) {
-  await expect(canvas).toHaveScreenshot(snapshotName, {
-    threshold: options.threshold ?? 0.2,
-    maxDiffPixels: options.maxDiffPixels ?? 100,
-    maxDiffPixelRatio: options.maxDiffPixelRatio ?? 0.01,
-    animations: 'disabled',
-    caret: 'hide',
-    scale: 'css',
-    ...options,
-  });
 }
