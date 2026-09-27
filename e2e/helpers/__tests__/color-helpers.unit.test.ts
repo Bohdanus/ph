@@ -17,7 +17,8 @@ const MISSING_INPUT_MESSAGE = 'setForegroundColor: no HTMLInputElement matched [
 /**
  * Every serialisation of the same colour a browser is allowed to hand back for
  * a computed `background-color`. The comparison is per channel, so all of them
- * verify as red.
+ * verify as red. Each carries an alpha above 0: a swatch that paints nothing has
+ * not received the colour, whatever its channels say.
  */
 const RED_COMPUTED_FORMS = [
   RED_RGB_CSS,
@@ -28,6 +29,20 @@ const RED_COMPUTED_FORMS = [
   'color(srgb 1 0 0)',
   'color(srgb 1 0 0 / 0.5)',
   'color(srgb 100% 0% 0%)',
+] as const;
+/**
+ * Computed values that paint nothing, in every spelling a browser produces for
+ * them: the initial value of a background that was never set, a gradient or
+ * other `background-image` covering the element (the background-color computes
+ * to `rgba(0, 0, 0, 0)` there too), and an authored transparent colour.
+ */
+const TRANSPARENT_COMPUTED_FORMS = [
+  'rgba(0, 0, 0, 0)',
+  'rgba(255, 0, 0, 0)',
+  'rgb(255 0 0 / 0%)',
+  'rgb(255 0 0 / 0)',
+  'color(srgb 1 0 0 / 0)',
+  'transparent',
 ] as const;
 // Approximation of real Playwright output, used only to assert error propagation.
 const SWATCH_MISMATCH_MESSAGE =
@@ -333,13 +348,108 @@ describe('Color Helpers', () => {
       }
     });
 
-    it('reports an unrecognised computed colour form by name instead of passing', async () => {
-      const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], 'oklch(0.7 0.1 20)');
+    it('reports an unsupported colour notation by name instead of reading its channels', async () => {
+      // Chromium preserves a perceptual or wide-gamut declaration verbatim, so
+      // these reach the swatch check. None of their numbers are sRGB channels,
+      // so each is named rather than read as if it were.
+      for (const [computed, notation] of [
+        ['oklch(0.7 0.1 20)', 'oklch'],
+        ['lab(50 40 59.5)', 'lab'],
+        ['hwb(120 0% 0%)', 'hwb'],
+        ['hsl(120 100% 50%)', 'hsl'],
+      ] as const) {
+        mockPollAssertion.mockClear();
+        const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], computed);
+        const page = createMockPage({ evaluate: createResolvedEvaluate(), locator });
+
+        await expect(setForegroundColor(page, RED_HEX, true)).rejects.toThrow(
+          `setForegroundColor: unsupported colour notation "${notation}()" in computed value "${computed}"`
+        );
+
+        expect(mockPollAssertion).not.toHaveBeenCalled();
+      }
+    });
+
+    it('reports an unsupported colour space inside color() by name instead of reading it as sRGB', async () => {
+      // `color(srgb-linear 1 0 0)` is a different space: read as sRGB its `1`
+      // means 1/255, which reported `Received: "#010000"` and sent the reader
+      // after a colour bug rather than after the notation.
+      for (const [computed, space] of [
+        ['color(srgb-linear 1 0 0)', 'srgb-linear'],
+        ['color(display-p3 1 0 0)', 'display-p3'],
+        ['color(rec2020 1 0 0)', 'rec2020'],
+      ] as const) {
+        mockPollAssertion.mockClear();
+        const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], computed);
+        const page = createMockPage({ evaluate: createResolvedEvaluate(), locator });
+
+        await expect(setForegroundColor(page, RED_HEX, true)).rejects.toThrow(
+          `setForegroundColor: unsupported colour space "${space}" in computed value "${computed}"`
+        );
+
+        expect(mockPollAssertion).not.toHaveBeenCalled();
+      }
+    });
+
+    it('rejects a computed value that is not a colour function at all', async () => {
+      for (const computed of ['', '   ', 'red', 'none']) {
+        mockPollAssertion.mockClear();
+        const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], computed);
+        const page = createMockPage({ evaluate: createResolvedEvaluate(), locator });
+
+        await expect(setForegroundColor(page, RED_HEX, true)).rejects.toThrow(
+          `setForegroundColor: cannot read colour channels from computed value "${computed}": not a colour function`
+        );
+
+        expect(mockPollAssertion).not.toHaveBeenCalled();
+      }
+    });
+
+    it('refuses a fully transparent swatch, whose channels carry no colour', async () => {
+      // The regression: `rgba(255, 0, 0, 0)` parses to `#ff0000`, so a swatch
+      // painting NOTHING verified as the colour that was set. The pre-fix
+      // `toHaveCSS` rejected the same swatch, so this is a net weakening of the
+      // one assertion whose job is to prove the store kept the colour.
+      for (const computed of TRANSPARENT_COMPUTED_FORMS) {
+        mockPollAssertion.mockClear();
+        const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], computed);
+        const page = createMockPage({ evaluate: createResolvedEvaluate(), locator });
+
+        await expect(setForegroundColor(page, RED_HEX, true)).rejects.toThrow(
+          `setForegroundColor: foreground swatch computed "${computed}" at alpha 0`
+        );
+
+        // The comparison never ran, so no channels can satisfy the assertion.
+        expect(mockPollAssertion).not.toHaveBeenCalled();
+      }
+    });
+
+    it('refuses a fully transparent swatch in the notation the browser computes for the store colour', async () => {
+      // `color` is always a `#rrggbb` from the store, so a swatch that has not
+      // taken it computes the initial `rgba(0, 0, 0, 0)` — and one covered by a
+      // `background-image` computes the same value.
+      const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], 'rgba(0, 0, 0, 0)');
       const page = createMockPage({ evaluate: createResolvedEvaluate(), locator });
 
       await expect(setForegroundColor(page, RED_HEX, true)).rejects.toThrow(
-        'setForegroundColor: cannot read colour channels from computed value "oklch(0.7 0.1 20)"'
+        `setForegroundColor: foreground swatch computed "rgba(0, 0, 0, 0)" at alpha 0, which paints nothing, so it cannot carry the expected colour "${RED_HEX}"`
       );
+
+      expect(mockPollAssertion).not.toHaveBeenCalled();
+    });
+
+    it('still verifies a swatch at partial opacity, which does carry the colour', async () => {
+      // The case the exact-string comparison got wrong: an animation in flight
+      // or a translucent swatch is legitimately non-opaque and must verify.
+      for (const computed of ['rgba(255, 0, 0, 0.5)', 'rgb(255 0 0 / 25%)', 'color(srgb 1 0 0 / 0.5)']) {
+        mockPollAssertion.mockClear();
+        const { locator } = createLocatorMock([FOREGROUND_COLOR_SWATCH_SELECTOR], computed);
+        const page = createMockPage({ evaluate: createResolvedEvaluate(), locator });
+
+        await setForegroundColor(page, RED_HEX, true);
+
+        expect(mockPollAssertion).toHaveBeenCalledWith(RED_HEX, RED_HEX);
+      }
     });
 
     it('verifies swatch CSS color with 3-char shorthand hex', async () => {
