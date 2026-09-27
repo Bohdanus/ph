@@ -1,4 +1,4 @@
-import { expect, type Page, type TestInfo } from '@playwright/test';
+import { type Page, type TestInfo } from '@playwright/test';
 import path from 'node:path';
 import compare from 'pixelmatch';
 import sharp from 'sharp';
@@ -20,9 +20,9 @@ export interface CompareResult {
 }
 
 /**
- * The comparison defaults, in one place, for both helpers below. `compareScreenshots`
- * and `expectCanvasToMatch` must read them from here: a literal written into a second
- * function looks equal today and silently becomes a different budget the day it drifts.
+ * The comparison defaults, in one place. `compareScreenshots` is their only reader, and
+ * must read them from here: a literal written into a second function looks equal today
+ * and silently becomes a different budget the day it drifts.
  */
 export const DEFAULT_THRESHOLD = 0.2;
 export const DEFAULT_MAX_DIFF_PIXELS = 100;
@@ -96,33 +96,4 @@ export async function compareScreenshots(
     diffPixels,
     diffRatio,
   };
-}
-
-/**
- * Compare canvas content to expected image.
- * Uses Playwright's built-in visual comparison via expect().toHaveScreenshot()
- * This is the recommended approach for visual regression.
- */
-export async function expectCanvasToMatch(
-  canvas: ReturnType<Page['getByTestId']>,
-  snapshotName: string,
-  options: {
-    threshold?: number;
-    maxDiffPixels?: number;
-    maxDiffPixelRatio?: number;
-    mask?: ReturnType<Page['getByTestId']>[];
-  } = {}
-) {
-  // `...options` first, defaults after. A trailing spread copies an explicitly-passed
-  // `undefined` straight over the default, which handed the caller Playwright's own
-  // `maxDiffPixels: 0` — a zero pixel budget, reported as a visual regression.
-  await expect(canvas).toHaveScreenshot(snapshotName, {
-    ...options,
-    threshold: options.threshold ?? DEFAULT_THRESHOLD,
-    maxDiffPixels: options.maxDiffPixels ?? DEFAULT_MAX_DIFF_PIXELS,
-    maxDiffPixelRatio: options.maxDiffPixelRatio ?? DEFAULT_MAX_DIFF_PIXEL_RATIO,
-    animations: 'disabled',
-    caret: 'hide',
-    scale: 'css',
-  });
 }
