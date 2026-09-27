@@ -24,15 +24,25 @@ function decodeBmpIcon(data: Uint8Array): ReturnType<typeof decodeBmp> {
     throw new Error('Invalid ICO bitmap dimensions');
   }
 
-  let auxiliarySize = 0;
-  if (compression === 3 && dibSize === 40) auxiliarySize = bitsPerPixel === 32 ? 16 : 12;
   const paletteCount = bitsPerPixel <= 8 ? colorsUsed || 1 << bitsPerPixel : 0;
-  const pixelDataOffset = dibSize + auxiliarySize + paletteCount * 4;
   const height = rawHeight / 2;
   const rowStride = Math.ceil((width * bitsPerPixel) / 32) * 4;
   const xorSize = rowStride * height;
   const maskStride = Math.ceil(width / 8) * 4;
-  ensureRange(view, pixelDataOffset, xorSize + maskStride * height);
+  const payloadSize = xorSize + maskStride * height;
+  // A 40-byte BI_BITFIELDS DIB is followed by the three RGB mask DWORDs, and the alpha DWORD
+  // that grows the block to 16 bytes is an optional extension the format does not require. In
+  // an ICO the masks sit outside the header, so `dibSize` is 40 in both forms and cannot tell
+  // them apart: the only discriminator is whether the entry still holds the XOR rows and the
+  // AND mask that follow the wider block. Where both fit, the 4-byte difference is
+  // unobservable, so the wider reading is the default and the narrower one the fallback.
+  let auxiliarySize = 0;
+  if (compression === 3 && dibSize === 40) {
+    const wideBlockSize = dibSize + 16 + paletteCount * 4;
+    auxiliarySize = bitsPerPixel === 32 && wideBlockSize + payloadSize <= view.byteLength ? 16 : 12;
+  }
+  const pixelDataOffset = dibSize + auxiliarySize + paletteCount * 4;
+  ensureRange(view, pixelDataOffset, payloadSize);
 
   const synthetic = new ArrayBuffer(14 + pixelDataOffset + xorSize);
   const syntheticView = new DataView(synthetic);
