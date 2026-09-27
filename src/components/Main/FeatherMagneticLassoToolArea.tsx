@@ -133,7 +133,7 @@ function drawFeatherMagneticOverlay({
 
 export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: FeatherMagneticLassoToolAreaProps) => {
   const [{ canvasRef, containerRef, selections, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
-  const { clearSelections } = useSelectionHistory();
+  const { clearSelections, commitSelection } = useSelectionHistory();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { toolArgs } = useCurrentTool();
   const args = toolArgs as FeatherMagneticLassoToolArgs;
@@ -385,7 +385,26 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
       return;
     }
 
-    dispatch({ type: 'COMMIT_SELECTION', payload: selection });
+    // This is the ONE commit point for the whole component, and the only place
+    // the lasso writes history. Every step before it is transient draft state:
+    // `startDraft`, `commitSegment` (per click and per auto-anchor),
+    // `maybeCommitAutoAnchor` (per `requestAnimationFrame` flush) and
+    // `appendClosingPath` all mutate refs and the overlay, and never dispatch —
+    // so the store's selection state is byte-identical at this line however many
+    // clicks, moves or frames the gesture took. That is what makes one call here
+    // — not one per anchor or per frame — the whole story for the gesture.
+    //
+    // Every route into it is a gesture end: the close-anchor click and the
+    // double-click in `handlePointerDown`, `handleContextMenu`, and the Enter
+    // shortcut. The `before` snapshot is not captured here — `commitSelection`
+    // reads the live store, exactly as the magic wand and the rectangle call
+    // sites do.
+    //
+    // `'create'`, never `'move'`: the payload is a freshly minted `uuidv4()`
+    // polygon, so it appends and activates a new selection. This component has
+    // no anchor/geometry drag path at all — `UPDATE_SELECTION` is never
+    // dispatched here — so a `'move'` commit is unreachable from this file.
+    commitSelection(selection, 'create');
     resetInteractionState();
   }
 

@@ -49,6 +49,9 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       selections: storeState.selections,
       toolOverlayRef: { current: document.createElement('canvas') },
       totalSize: { width: 800, height: 600 },
+      // Explicit, so the hook derives the same frame the tool area does rather
+      // than relying on an absent key.
+      documentFrame: null,
     },
     dispatchMock,
   ],
@@ -101,6 +104,39 @@ describe('PolygonClickToolArea', () => {
       { x: 20, y: 32 },
     ],
   };
+
+  /**
+   * A lasso commit is no longer a raw `COMMIT_SELECTION`: it is a document edit
+   * that appends to history, so a drawn selection is undoable on its own instead
+   * of surviving only as the `previousSelectionState` of whatever clears it later.
+   * The contract is ONE `COMMIT_DOCUMENT_EDIT` carrying both the history item and
+   * the resulting selection state, which is what the hook's
+   * `committedSelectionUpdate` derived — the raw action is no longer dispatched,
+   * so `updates.selections` IS the store state.
+   *
+   * `durableEntry` is deliberately not part of the pin, and `id` is a fresh uuid
+   * per call; the reasons are the same as the clear pin below.
+   */
+  type SelectionEdit = {
+    type: string;
+    payload: {
+      historyItem: { actionName: string; id: string };
+      updates: {
+        activeSelectionId: string | null;
+        selections: Selection[];
+        selectionCleared: null;
+        selectionDraft: { status: string };
+      };
+    };
+  };
+
+  const selectionEdits = (): SelectionEdit[] =>
+    (dispatchMock.mock.calls as unknown[][])
+      .map(([action]) => action as SelectionEdit)
+      .filter((action) => action.type === 'COMMIT_DOCUMENT_EDIT');
+
+  /** The single selection a `COMMIT_DOCUMENT_EDIT` published, which is the drawn lasso. */
+  const committedSelection = (): Selection => selectionEdits()[0].payload.updates.selections[0];
 
   it('pointsBoundingPos calculates correct bounding box', () => {
     const points: Point[] = [
@@ -174,21 +210,40 @@ describe('PolygonClickToolArea', () => {
       type: 'START_SELECTION_DRAFT',
       payload: { sourceTool: 'polygonal-lasso' },
     });
-    expect(dispatchMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'COMMIT_SELECTION',
-        payload: expect.objectContaining({
-          geometry: 'polygon',
-          lifecycle: 'committed',
-          sourceTool: 'polygonal-lasso',
-          points: [
-            { x: 1, y: 1 },
-            { x: 91, y: 1 },
-            { x: 91, y: 91 },
+    expect(selectionEdits()).toHaveLength(1);
+    expect(selectionEdits()[0]).toMatchObject({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        historyItem: { actionName: SELECTION_ACTION, id: expect.any(String) },
+        // The visible half of the same transition. `selectionDraft` and
+        // `selectionCleared` are asserted because they are the other two fields
+        // the raw `COMMIT_SELECTION` reducer arm moved, so leaving them out
+        // would let the hook silently stop resetting the draft or repainting the
+        // overlay.
+        updates: {
+          selectionCleared: null,
+          selectionDraft: { status: 'idle' },
+          selections: [
+            expect.objectContaining({
+              geometry: 'polygon',
+              lifecycle: 'committed',
+              isActive: true,
+              sourceTool: 'polygonal-lasso',
+              points: [
+                { x: 1, y: 1 },
+                { x: 91, y: 1 },
+                { x: 91, y: 91 },
+              ],
+              pos: { x: 9, y: 9, width: 92, height: 92 },
+            }),
           ],
-          pos: { x: 9, y: 9, width: 92, height: 92 },
-        }),
-      })
+        },
+      },
+    });
+    // The pointer maps to exactly the appended selection, which is what activates
+    // it: the two uuids cannot be pinned literally, their equality can.
+    expect(selectionEdits()[0].payload.updates.activeSelectionId).toBe(
+      selectionEdits()[0].payload.updates.selections[0].id
     );
   });
 
@@ -211,22 +266,19 @@ describe('PolygonClickToolArea', () => {
       type: 'START_SELECTION_DRAFT',
       payload: { sourceTool: 'freehand-lasso' },
     });
-    expect(dispatchMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'COMMIT_SELECTION',
-        payload: expect.objectContaining({
-          geometry: 'polygon',
-          lifecycle: 'committed',
-          sourceTool: 'freehand-lasso',
-          points: [
-            { x: 1, y: 1 },
-            { x: 21, y: 11 },
-            { x: 31, y: 41 },
-          ],
-          pos: { x: 9, y: 9, width: 32, height: 42 },
-        }),
-      })
-    );
+    expect(selectionEdits()).toHaveLength(1);
+    expect(committedSelection()).toMatchObject({
+      geometry: 'polygon',
+      lifecycle: 'committed',
+      isActive: true,
+      sourceTool: 'freehand-lasso',
+      points: [
+        { x: 1, y: 1 },
+        { x: 21, y: 11 },
+        { x: 31, y: 41 },
+      ],
+      pos: { x: 9, y: 9, width: 32, height: 42 },
+    });
   });
 
   it('cancels a freehand draft when the drag is too short to form a selection', () => {
@@ -248,7 +300,7 @@ describe('PolygonClickToolArea', () => {
       payload: { sourceTool: 'freehand-lasso' },
     });
     expect(dispatchMock).toHaveBeenCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
-    expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'COMMIT_SELECTION' }));
+    expect(selectionEdits()).toHaveLength(0);
   });
 
   it('does not collect freehand points after the pointer is released', () => {
@@ -270,7 +322,7 @@ describe('PolygonClickToolArea', () => {
     fireEvent.pointerMove(toolArea, { clientX: 120, clientY: 120 });
     fireEvent.pointerUp(toolArea, { clientX: 120, clientY: 120 });
 
-    expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'COMMIT_SELECTION' }));
+    expect(selectionEdits()).toHaveLength(0);
     expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'START_SELECTION_DRAFT' }));
   });
 
@@ -309,20 +361,16 @@ describe('PolygonClickToolArea', () => {
 
     fireEvent.pointerUp(toolArea, { clientX: 400, clientY: 300 });
 
-    expect(dispatchMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'COMMIT_SELECTION',
-        payload: expect.objectContaining({
-          points: [
-            { x: 1, y: 1 },
-            { x: 791, y: 591 },
-            { x: 391, y: 291 },
-          ],
-          pos: { x: 9, y: 9, width: 792, height: 592 },
-          sourceTool: 'freehand-lasso',
-        }),
-      })
-    );
+    expect(selectionEdits()).toHaveLength(1);
+    expect(committedSelection()).toMatchObject({
+      points: [
+        { x: 1, y: 1 },
+        { x: 791, y: 591 },
+        { x: 391, y: 291 },
+      ],
+      pos: { x: 9, y: 9, width: 792, height: 592 },
+      sourceTool: 'freehand-lasso',
+    });
   });
 
   it('draws active committed selections from store state so the lasso stays visible after finishing', () => {
@@ -528,7 +576,9 @@ describe('PolygonClickToolArea', () => {
 
       shortcutHandlers.get('Backspace')?.();
 
-      expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'COMMIT_SELECTION' }));
+      // Popping an anchor only redraws the draft; it is not a gesture end, so it
+      // must never append a history entry.
+      expect(selectionEdits()).toHaveLength(0);
       expect(mockCtx.clearRect).toHaveBeenCalled();
     });
 
@@ -626,15 +676,11 @@ describe('PolygonClickToolArea', () => {
       dispatchMock.mockClear();
       shortcutHandlers.get('Enter')?.();
 
-      expect(dispatchMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'COMMIT_SELECTION',
-          payload: expect.objectContaining({
-            geometry: 'polygon',
-            sourceTool: 'polygonal-lasso',
-          }),
-        })
-      );
+      expect(selectionEdits()).toHaveLength(1);
+      expect(committedSelection()).toMatchObject({
+        geometry: 'polygon',
+        sourceTool: 'polygonal-lasso',
+      });
     });
 
     it('completes a freehand selection with Enter', () => {
@@ -652,15 +698,11 @@ describe('PolygonClickToolArea', () => {
       dispatchMock.mockClear();
       shortcutHandlers.get('Enter')?.();
 
-      expect(dispatchMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'COMMIT_SELECTION',
-          payload: expect.objectContaining({
-            geometry: 'polygon',
-            sourceTool: 'freehand-lasso',
-          }),
-        })
-      );
+      expect(selectionEdits()).toHaveLength(1);
+      expect(committedSelection()).toMatchObject({
+        geometry: 'polygon',
+        sourceTool: 'freehand-lasso',
+      });
     });
 
     it('cancels a freehand draft with Escape', () => {
@@ -696,7 +738,9 @@ describe('PolygonClickToolArea', () => {
 
       shortcutHandlers.get('Delete')?.();
 
-      expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'COMMIT_SELECTION' }));
+      // Popping an anchor only redraws the draft; it is not a gesture end, so it
+      // must never append a history entry.
+      expect(selectionEdits()).toHaveLength(0);
       expect(mockCtx.clearRect).toHaveBeenCalled();
     });
   });

@@ -148,7 +148,7 @@ function drawPolygonOverlay({
 
 export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickToolProps) => {
   const [{ containerRef, selections, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
-  const { clearSelections } = useSelectionHistory();
+  const { clearSelections, commitSelection } = useSelectionHistory();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { toolArgs } = useCurrentTool();
 
@@ -202,10 +202,29 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     });
     if (!selection) return;
 
-    dispatch({
-      type: 'COMMIT_SELECTION',
-      payload: selection,
-    });
+    // This is the ONE commit point for the whole component, and the only place a
+    // polygon or freehand-lasso gesture writes history. Everything before it is
+    // transient draft state: the per-anchor `pointsRef.current.push` in
+    // `handlePointerDown`, the per-sample `appendFreehandPoint` in
+    // `handlePointerMove`, and the `START_SELECTION_DRAFT` dispatch that opens
+    // the draft all leave the store's selection state untouched, so the store is
+    // byte-identical at this line no matter how many clicks or pointer moves the
+    // gesture took. That is what makes one call here — not one per anchor — the
+    // whole story for a multi-click gesture.
+    //
+    // Every route into it is a gesture end, not a step: the `useDoubleClick`
+    // close in `handlePointerDown`, `handleContextMenu`, the Enter shortcut, and
+    // `finishFreehandSelection` on pointer release/leave. The `before` snapshot is
+    // not captured here — `commitSelection` reads the live store, exactly as the
+    // magic wand and the rectangle call sites do.
+    //
+    // `'create'`, never `'move'`: the payload is a freshly minted `uuidv4()`
+    // polygon, so it appends and activates a new selection rather than replacing
+    // the geometry of an existing one. `handlePointerDown` refuses to open a
+    // draft while a committed selection is active, so the anchor/geometry drag
+    // that does update an existing selection takes the raw `UPDATE_SELECTION`
+    // path above and never reaches here.
+    commitSelection(selection, 'create');
 
     resetInteractionState();
   };
