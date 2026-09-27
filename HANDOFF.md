@@ -995,3 +995,42 @@ field. Do not add a history field for presentation alone while the legacy timeli
 replay authority.
 
 **Files.** `src/contexts/useHistory.ts:15-29`, `src/components/SidebarRight/HistoryTab.tsx`
+
+---
+
+## 37. The transient luma plane is a full-frame `Float32Array` where three rows would do
+
+**Problem.** `createEdgeMapFromImageData` (`magneticLasso.ts:144`) still allocates
+`luma = new Float32Array(width * height)` at `:146`, a full-frame buffer, and the Sobel pass at
+`:158-177` reads it at rows `y - 1`, `y` and `y + 1` of the output row only (`:160-167`). Nothing
+reads row `y + 2` or beyond, and no caller sees the array — it is a local of the call. A 3-row ring
+buffer of `3 * width` floats would make the peak luma cost `12 * width` bytes instead of
+`4 * width * height`, so on the app's own A4@300dpi preset (2480x3508) that is 29 KB instead of
+35 MB, and on the 100 MP document its own dialog allows (A3 at 2400 dpi, clamped to 10000 per side)
+under 120 KB instead of 400 MB.
+
+That buffer is the last remaining piece of the avoidable half of the P1 in
+`.kilo/reviews/2026-09-27-untouched/final/branches/magnetic-lasso-edge-map.md`. The shape trim
+dropped `gradientDirection` entirely and stopped returning `luma`, so retention is now `4N` instead
+of `12N`; what is left is this transient `4N`, allocated and touched on every pointer-down that
+begins a draft (`FeatherMagneticLassoToolArea.tsx` `startDraft` -> `createEdgeMapFromCanvas` ->
+`getImageData` at `magneticLasso.ts:138`).
+
+**It was not attempted, deliberately.** That brief scoped its trimming job to the _returned_ shape —
+delete `gradientDirection` from the type/allocation/write/return, and either drop `luma` from
+`EdgeMap` or keep it — and its "Must not regress" required the Sobel pass order not to change once
+`luma` became a local. Rewriting the two passes as a fused 3-row sweep changes that pass structure,
+so it was out of scope rather than overlooked.
+
+**Fix.** Fuse the luma fill and the Sobel pass into one row-major sweep that keeps a 3-row ring
+buffer, so row `y + 1` is filled on demand as the output row `y` is produced and the full-frame
+`luma` is never allocated. Two constraints bind the change: the Sobel weights and the `Float32Array`
+store order at `:169-171` must be reproduced exactly, or every `gradientMagnitude` value and every
+magnetised path moves; and the outermost ring must stay at zero, so the first and last rows and
+columns remain unwritten rather than being computed from partial windows. Pin the fused output
+against the current two-pass output on a non-uniform fixture before it lands — the existing
+`magneticLasso.test.ts` cases are uniform or 2x2, so a subtly shifted window would pass them all.
+The region bound on the `getImageData` at `:138` is the larger remaining cost and is a separate
+change.
+
+**Files.** `src/util/magneticLasso.ts:144-179`, `src/util/__tests__/magneticLasso.test.ts`
