@@ -171,7 +171,6 @@ const SidebarLeft = () => {
             aria-label={primaryTool.label}
             aria-pressed={group.some((tool) => tool.name === toolName)}
             className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}`}
-            disabled={!hasImage}
             onClick={() => {
               if (hasFlyout && ignoreNextClickRef.current) {
                 ignoreNextClickRef.current = false;
@@ -292,7 +291,6 @@ const SidebarLeft = () => {
                         ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-100'
                         : 'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700'
                     }`}
-                    disabled={!hasImage}
                     onClick={() => {
                       setPrimaryTools((current) => ({ ...current, [groupIndex]: tool }));
                       selectTool(tool);

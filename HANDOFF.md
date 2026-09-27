@@ -533,7 +533,7 @@ block rather than porting it.
 
 ---
 
-## 23. No durable-path test materializes a `rectangle`, `ellipse` or `line` vector source
+## 20. No durable-path test materializes a `rectangle`, `ellipse` or `line` vector source
 
 **Problem.** `history-adapter.ts:185` maps all six of `shape`, `rectangle`, `ellipse`, `triangle`,
 `polygon`, `line` to `kind: 'vector'`, and `materialization.ts:161` then throws
@@ -604,7 +604,7 @@ raster-boundary work) and `ps-integration` (`a0f66c4`, 3 ahead).
 
 ---
 
-## 23. A shape layer's declared extent is fractional while its bitmap is integral
+## 21. A shape layer's declared extent is fractional while its bitmap is integral
 
 Outside this file's stated scope (tool geometry, not migration-caused), recorded here because it is
 in the same commit path as the rounded-rectangle quadrant fix and is a real, unfixed defect.
@@ -637,3 +637,194 @@ construction. Do not round in only one place: the bug is precisely that the two 
 
 **Files.** `src/tools/shape.ts`, `src/tools/__tests__/shape.test.ts`,
 `src/components/Main/ShapeToolArea.tsx`, `src/contexts/layer-utils.ts`
+
+## 22. `Main.tsx`'s `canvasCtxRef` is never assigned, so the smoothing effect cannot run
+
+**Problem.** `Main.tsx:47` declares `const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null)`.
+It is read at `Main.tsx:98-101` (an `if (canvasCtxRef.current)` block that sets
+`imageSmoothingEnabled`/`imageSmoothingQuality`) and passed to the tool areas at `Main.tsx:208`.
+Nothing ever assigns it, so `.current` is permanently `null` and `:98-101` is unreachable.
+
+Verified unreachability, not merely absence of references:
+
+- `grep -rn 'canvasCtxRef' src e2e` returns 38 hits across 16 files. The **only** `.current =`
+  assignment to a context ref anywhere in `Main.tsx` is `toolCtxRef.current =` at `Main.tsx:87` —
+  a different ref, the tool overlay.
+- No `canvasCtxRef.current =` exists in any file, including tests.
+- The prop is never even destructured: in each of the five receiving components the identifier
+  appears exactly once, on the prop-type line. No receiver binds it, so no receiver can assign it.
+- `Main.tsx` does not destructure the store's own `canvasCtxRef` out of `useStore()` (see
+  `Main.tsx:25-39`), so this local ref is not shadowing an already-populated one.
+
+**Fix.** Delete the ref at `Main.tsx:47`, the inert effect at `Main.tsx:98-101`, and the prop at
+`Main.tsx:208` — **but all five receivers must change in the same change**, because three declare it
+required and the removal otherwise fails `npm run tsc`:
+
+- `CropToolArea.tsx:11` `canvasCtxRef: RefObject<...>` (required)
+- `MoveToolArea.tsx:21` `canvasCtxRef: RefObject<...>` (required)
+- `TextToolArea.tsx:11` `canvasCtxRef: RefObject<...>` (required)
+- `DummyToolArea.tsx:7` and `RectangularSelectionToolArea.tsx:15` (optional)
+
+Measured, not assumed: removing only the `Main.tsx:208` attribute produces
+`src/components/Main/Main.tsx(206,10): error TS2741: Property 'canvasCtxRef' is missing in type
+'{ className: string; overlayCtxRef: RefObject<CanvasRenderingContext2D | null>; }' but required in
+type 'cropToolAreaProps'.` The four test files that pass the prop must drop it too:
+`__tests__/CropToolArea.test.tsx` (12 sites), `__tests__/TextToolArea.test.tsx` (4),
+`__tests__/MoveToolArea.test.tsx` (2), `__tests__/DummyToolArea.test.tsx` (1). `DummyToolArea.tsx:6`
+carries the comment "keep these so Main can pass the same props as for real tool areas", so the whole
+prop pair was a uniform-signature shim that no tool area ever used.
+
+**Files.** `src/components/Main/Main.tsx`, `CropToolArea.tsx`, `MoveToolArea.tsx`, `TextToolArea.tsx`,
+`DummyToolArea.tsx`, `RectangularSelectionToolArea.tsx`, and their four `__tests__` files.
+
+---
+
+## 23. `Main.toolAreas.test.tsx` names image smoothing that no code performs
+
+**Problem.** `src/components/Main/__tests__/Main.toolAreas.test.tsx:186` is titled
+`'sizes both overlays to the document and enables smoothing on the main canvas'`, but it contains no
+smoothing assertion at all — only a size triple. Its first element asserts the main canvas is
+`[300, 150]`, which is jsdom's default `HTMLCanvasElement` size: `Main.tsx` resizes only
+`toolOverlayRef` (`:84-85`) and `rectOverlayRef` (`:92-93`), so no production code ever sets the main
+canvas dimensions. The smoothing half of the title describes the unreachable block in §23.
+
+**Fix.** Retitle to state what the test actually covers (overlay sizing against `totalSize`) and drop
+the main canvas from the expected triple, or keep the triple and name it as the jsdom default. Then
+delete this entry — the retitle is only correct once §23 is done, because until then the smoothing
+effect still exists in the source even if it cannot run.
+
+**Files.** `src/components/Main/__tests__/Main.toolAreas.test.tsx:186-195`.
+
+---
+
+## 24. `StoreContext`'s own `canvasCtxRef` is never assigned either
+
+**Problem.** A second, unrelated `canvasCtxRef` lives in the store: declared in the context type at
+`StoreContext.tsx:52`, seeded at `:221`, created at `:569`, and published at `:847`. It is
+`React.RefObject<CanvasRenderingContext2D | null | undefined>`. No file assigns `.current` — the
+`grep -rn 'canvasCtxRef'` sweep over `src` and `e2e` finds no assignment, and the only two non-declaration
+readers are test fixtures (`src/__tests__/fixtures/store.ts:18,56`,
+`src/hooks/__tests__/useApp.psd.test.ts:15`) that set it to `null`. Two tests assert only that the ref
+identity is stable across a dispatch (`StoreContext.reducer.test.tsx:824`,
+`StoreContext.test.tsx:228`), which holds for a ref nothing writes.
+
+**Fix.** Delete the field from `StoreState` (`StoreContext.tsx:52`), the seed at `:221`, the
+`useRef` at `:569`, the publish at `:847`, and the four fixture/test references. Distinct from §23:
+this one is a store-context member, not the `Main.tsx` local, and removing it changes the public
+context shape.
+
+**Files.** `src/contexts/StoreContext.tsx`, `src/__tests__/fixtures/store.ts`,
+`src/hooks/__tests__/useApp.psd.test.ts`, `src/contexts/__tests__/StoreContext.test.tsx`,
+`src/contexts/__tests__/StoreContext.reducer.test.tsx`.
+
+---
+
+## 25. `DrawToolArea` repaints synchronously on every pointer move
+
+**Problem.** `DrawToolArea` accumulates a point and calls `flushDrawingFrame()` — a `clearRect` plus
+`drawLine` over the whole accumulated path — on **every** `pointermove`, with no frame coalescing.
+Its sibling `ShapeToolArea.tsx:106` batches the same work through
+`requestAnimationFrame`, and `useDrag.ts:50`/`useRect.ts:373` batch as well, so a pointer event that
+carries several `pointermove` messages per display frame repaints several times for one visible frame.
+`drawLine` re-strokes the full point list each time, so cost grows with stroke length as well as with
+event rate. A `frameRequested` ref and a `cancelAnimationFrame` guard were present and removed as
+inert on `cleanup/app-dead-code`; they never scheduled anything, so removing them changed no
+behaviour. The synchronous path is what remains.
+
+**Fix.** Batch the repaint: keep a `frameRequested` ref, and in `handlePointerMove` return early when
+a frame is already pending, scheduling `flushDrawingFrame` via `requestAnimationFrame` instead of
+calling it directly. `handlePointerUp` must cancel any pending frame **and null the ref** before
+committing, or the last preview is dropped (this is exactly the defect §27 records in
+`ShapeToolArea`). Add a test that fires N `pointermove` events in one `act()` and asserts the
+overlay was stroked once.
+
+**Files.** `src/components/Main/DrawToolArea.tsx`, `src/components/Main/__tests__/DrawToolArea.test.tsx`.
+
+---
+
+## 26. `ShapeToolArea` cancels a pending frame without nulling the ref, freezing the next drag
+
+**Problem.** Two defects in the pointerup path, both confirmed by reading the file:
+
+1. `ShapeToolArea.tsx:125-128` calls `cancelAnimationFrame(frameRequested.current)` but never resets
+   `frameRequested.current = null`, and the `flushDrawingFrame()` on the next line is commented out.
+   `handlePointerMove` short-circuits on `if (frameRequested.current !== null) return;` at
+   `:104`, and `handlePointerDown` (`:69-82`) does not reset it either. So after the **first** shape
+   drag the ref stays non-null for the lifetime of the component and every later drag's preview is
+   silently dropped: the overlay shows nothing until pointerup. Compare `useDrag.ts:73-76` and
+   `useRect.ts:399-400`, which cancel **and** null.
+2. `ShapeToolArea.tsx:117-120` recomputes the committed geometry inside `if (!movedBySpace)` from
+   `anchorRef.current` and the pointerup point using `event.shiftKey` — the Shift state at
+   **release**, not the one in effect during the preview. Releasing Shift before the mouse commits a
+   different shape than the one drawn: a Shift-constrained square previews and commits an
+   unconstrained rectangle. The pointermove handler at `:94-97` already stored the correct
+   `startRef`/`endRef`; this branch overwrites them.
+
+**Fix.** In `handlePointerUp`, call `flushDrawingFrame()` in place of the commented line and null
+`frameRequested.current` after cancelling, so the overlay is flushed and the ref is reusable. Drop
+the `if (!movedBySpace)` recompute at `:117-123` and commit `startRef`/`endRef` as previewed — or, if
+a final-point correction is genuinely wanted, pass the shift state captured at pointerdown via a ref
+instead of reading `event.shiftKey`. Add a test that drags with Shift held, releases Shift, then
+releases the pointer, and asserts the committed args match the previewed square.
+
+**Files.** `src/components/Main/ShapeToolArea.tsx`, `src/components/Main/__tests__/ShapeToolArea.test.tsx`.
+
+---
+
+## 27. `flattenRequired` is declared outside `useLayer`, so its dead branch cannot be deleted alone
+
+**Problem.** `useLayer.ts:271` is a branch that flattens every layer via `mergeAllLayers()`
+before applying a tool. It is reachable only when `processor.flattenRequired` is truthy, and that flag
+is declared at `toolProcessors.ts:50` and **set by no production processor**: `grep -rn
+'flattenRequired' src e2e` returns four hits — the declaration, the read at `useLayer.ts:271`, and two
+test sites that spread it onto `brush` at
+`src/contexts/__tests__/useLayer.creation.test.tsx:383` and `:433`. Every one of the 25 entries in
+`toolProcessors` sets only `commit`, `replay`, `creator?` and `imageProcessor`. A branch only a test
+can reach is a branch nothing verifies: the two tests drive it by mutating the `toolProcessors`
+record at runtime and restoring it in a `finally`.
+
+The `imageProcessor` call inside the branch was unguarded while its siblings at `useLayer.ts:479-484`
+and `:488-502` wrap in `try { … } catch (error) { console.error(error); return; }`. That asymmetry is
+now fixed on `cleanup/app-dead-code`; the branch itself is kept because deleting it would orphan the
+field declaration, which lives in `toolProcessors.ts` — outside the file grant for that work.
+
+**Fix.** Delete the field from `toolProcessors.ts:50`, the branch from `useLayer.ts:271-297`, and the
+two injection sites plus their `describe` block in `useLayer.creation.test.tsx:381-460`. Alternatively,
+if whole-document tools are genuinely planned, keep the field and set it on the processors that need
+it — but then the branch needs a real caller, not a test-only flag.
+
+**Files.** `src/tools/toolProcessors.ts:50`, `src/contexts/useLayer.ts:271-297`,
+`src/contexts/__tests__/useLayer.creation.test.tsx:383,433`.
+
+---
+
+## 28. `tempUpdateLayer`'s live raster path calls `imageProcessor` with no try/catch
+
+**Problem.** `useLayer.ts:532-533` calls
+`processor.imageProcessor({ bitmap, size: layer.pos })(toolArgs)` unguarded, in the path every
+non-transform, non-layer-operation, non-geometry tool takes on each pointer move. A throw here escapes
+`tempUpdateLayer` into the React event handler and leaves `previewLayersRef` half-written. The two
+transform branches directly above it (`:479-484`, `:488-502`) are guarded, so the asymmetry is
+local to this one call.
+
+The six throw sites in `src/tools/transform.ts` (`:69, :97, :105, :107, :138, :154`) are **not**
+reachable from here: `isTransformArgs` is `args.toolName === 'transform'` (`useLayer.ts:68-70`), and
+the two guarded branches partition that tool name exhaustively — `trapezoid !== 0` returns at `:480`,
+and `undefined`/`NaN` trapezoid values also take the `!== 0` branch, so every transform-args call
+returns before `:532`. The `commit: 'unimplemented'` processors return `[null]` without throwing.
+
+That leaves `shape.ts:211` (`throw new Error('Tool "…" does not provide shape arguments')` when
+`!('figure' in args)`) as the only candidate reachable in principle, via the `shape` processor
+registered for `shape`, `rectangle`, `ellipse`, `triangle`, `polygon` and `line`. **I could not
+demonstrate a production-reachable throw**: `src/util/settings.ts:15` normalises with
+`({ ...args, figure: normalizeFigure(args.figure) })`, which always materialises the `figure` key, so
+the guard appears to hold for every tool-args path reachable from the UI. The `!('figure' in args)`
+guard is a runtime shape assertion on a type the compiler already narrows, and it is the only thing
+between a malformed args object and an unhandled throw on the live path.
+
+**Fix.** Wrap `:532-533` in the same `try { … } catch (error) { console.error(error); return; }` used
+at `:479-484` and `:488-502`, so a throwing processor degrades to a logged no-op instead of escaping
+into the event handler. If the `figure` key can be proven absent by some path, fix that path instead
+and add the case to the test that covers `tempUpdateLayer`'s raster preview.
+
+**Files.** `src/contexts/useLayer.ts:532-533`, `src/tools/shape.ts:211`.
