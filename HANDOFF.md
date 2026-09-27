@@ -995,3 +995,91 @@ field. Do not add a history field for presentation alone while the legacy timeli
 replay authority.
 
 **Files.** `src/contexts/useHistory.ts:15-29`, `src/components/SidebarRight/HistoryTab.tsx`
+
+---
+
+## 35. A drag with a non-square ratio set commits a rect the user was never shown
+
+**Problem.** `adjustWidthRatio` (`useRect.ts:206-221`) enforces `width = height / ratio`
+(`const wantedWidth = height / _aspectRatio;`, `:210`), but the drag that produced the rect enforced
+the **reciprocal**, `width = height * ratio` (`adjustFreePoint`, `useRect.ts:229-237`). The two
+conventions agree only when the ratio is 1, so on every drag with a non-square ratio set the effect
+at `useRect.ts:56-68` refits the rect `CropToolArea.tsx:24` just published into a _different_
+shape, sees `!isEqual` at `:64`, and repaints it. What the user sees after mouse-up and what `Apply`
+commits are then two different rects, and the committed one wins: `Crop.tsx:61` hands `rect`
+straight to `applyDocumentCrop`.
+
+Measured on the real hook, drag `(0,0)` -> `(200,200)`, ratio preset set, `onChangeEnd`'s payload
+fed back as `initialRect` exactly as `CropToolArea` does, and the last `onRepaint` payload read —
+which is the rect `drawMask` paints at `useRect.ts:181-182`:
+
+```
+Square 1:1: store(w=200.00 h=200.00) painted(w=200.00 h=200.00) equal=true
+3:4:       store(w=150.00 h=200.00) painted(w=266.67 h=200.00) equal=false
+4:3:       store(w=200.00 h=150.00) painted(w=112.50 h=150.00) equal=false
+16:9:      store(w=200.00 h=112.50) painted(w=63.28  h=112.50) equal=false
+9:16:      store(w=112.50 h=200.00) painted(w=355.56 h=200.00) equal=false
+```
+
+The user sees the overlay snap from 16:9 to 9:16 on release and then the document is cropped to
+16:9. The same inversion is a second, separate user-visible defect: picking "3:4" in the panel
+yields a 4:3 rect today, because the panel's own refit (`Crop.tsx:79-87`, introduced by `99ca9ba`)
+mirrors `adjustWidthRatio` rather than `adjustFreePoint`.
+
+**Fix.** `height / _aspectRatio` wants to be `height * _aspectRatio` at `useRect.ts:210`; with that
+one line, `adjustFreePoint`'s output is a fixed point of `adjustWidthRatio` and the effect's re-refit
+becomes a genuine no-op, which closes this and the wrong-orientation bug together.
+`adjustHeightRatio` (`useRect.ts:189-204`) already uses `width / ratio` and is consistent — the
+inversion is `adjustWidthRatio` alone.
+
+**The panel is a second copy of the same function, and nothing keeps the two in step.**
+`refitRectToAspect` (`Crop.tsx:79-87`) is byte-equal to `adjustWidthRatio` today (a 400 000-case
+differential fuzz over all five presets gave `mismatch: 0, maxDelta: 0`), and the only thing holding
+it there is a comment. `useRect`'s four `aspect ratio` tests
+(`src/hooks/__tests__/useRect.test.ts:285-320`) are vacuous — three assert
+`expect(result.current.onPointerDown).toBeDefined()` and the fourth asserts `typeof res === 'boolean'` —
+so none of them pins the refit shape, and `Crop.test.tsx`'s refit tests hard-code literals rather
+than deriving them from the hook. **A one-sided edit to either function, including flipping the axis
+to fit the height, leaves both suites green and silently re-opens the mis-crop.** So the line above
+must be changed in `useRect.ts:210` **and** `Crop.tsx:82` in the same change, and the fix should land
+a test that derives the panel's refit from the hook's, or extracts one shared helper both call.
+
+**Files.** `src/hooks/useRect.ts:206-221`, `src/components/ToolbarsRight/Crop/Crop.tsx:79-87`,
+`src/hooks/__tests__/useRect.test.ts:285-320`
+
+---
+
+## 36. Original / Free no longer restores the rect drawn before a ratio change
+
+**Problem.** This is a **regression caused by the fix** (`99ca9ba`), not a pre-existing bug — say so
+plainly, because the surrounding symptom looks like one. Before it, a ratio change only reshaped the
+overlay's private `startRectRef`, so the store still held the drawn rect and choosing
+`Original`/`Free` snapped the display back to it. Now the panel publishes the fitted rect
+(`Crop.tsx:43`), so the store holds **the fitted** rect and the pre-ratio rect is gone: there is
+nothing left to restore from, and the rect stays 16:9-shaped after switching back to `Free`. `Clear`
+(`Crop.tsx:67`, which nulls `rect` entirely) is the only way back, and the user loses their framing.
+
+`src/components/ToolbarsRight/Crop/__tests__/Crop.test.tsx:155-168`
+(`leaves the rect untouched when the ratio is reset to Original`) **encodes this loss as the
+contract** — `expect(lastToolArgs()).toEqual({ aspectRatio: null, rect: SQUARE_OF_RECT, … })`. It is
+honest, but it reads to the next session as a deliberate feature, and someone will "fix" it back
+into the mis-crop. Deleting or rewriting that test without restoring the round-trip would drop the
+only record that the loss exists.
+
+**The fix is forced.** The store has to hold what is displayed, and the pre-ratio rect was never
+stored anywhere; between a silent mis-crop and a lost framing, the mis-crop is worse. Restoring the
+round trip is a product decision with reach outside the Crop panel: it needs a `preRatioRect` field
+on `CropToolArgs` (`src/tools/crop.ts:5-9`), and that field must survive session persistence, where
+`saveLastSettings` strips `rect` but keeps `aspectRatio` (`src/util/settings.ts:33`; the crop
+defaults live at `src/tools/settings.ts:51`). Carrying it in panel state instead goes stale the
+moment the user drags a new rect after choosing a ratio.
+
+**Fix.** Decide the field: add `preRatioRect` to `CropToolArgs`, have `Crop.tsx:40-44` set it on
+every ratio change and `Free`/`Original` restore `preRatioRect ?? rect`, then **delete or rewrite
+`Crop.test.tsx:155-168` in the same change** to assert the round trip. If the operator instead
+decides the loss is acceptable, say so in writing and keep the test — but then the test name must
+change, because "leaves the rect untouched" describes a bug, not the contract.
+
+**Files.** `src/components/ToolbarsRight/Crop/Crop.tsx:40-44`,
+`src/components/ToolbarsRight/Crop/__tests__/Crop.test.tsx:155-168`, `src/tools/crop.ts:5-9`,
+`src/util/settings.ts:33`, `src/tools/settings.ts:51`

@@ -141,8 +141,13 @@ describe('Crop toolbar', () => {
 
     fireEvent.change(screen.getByLabelText('Aspect Ratio'), { target: { value: '1' } });
 
-    // Re-render against the store as it stands after the panel published the refit.
-    Object.assign(toolArgs, { aspectRatio: 1, rect: { ...SQUARE_OF_RECT } });
+    // Feed the panel's OWN published args back as the store's, which is what the real
+    // `setToolArgs` -> store -> `useCurrentTool` round trip does. Nothing here is hand-written,
+    // so the refit is in the causal chain: if the panel published a wrong rect, the rect Apply
+    // commits below is that wrong rect, and the first assertion reds on it.
+    const published = lastToolArgs() as { aspectRatio: number; rect: typeof SQUARE_OF_RECT; toolName: 'crop' };
+    expect(published.rect).toEqual(SQUARE_OF_RECT);
+    Object.assign(toolArgs, published);
     rerender(<Crop />);
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
