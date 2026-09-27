@@ -26,7 +26,7 @@ test.describe('Select & Move', () => {
     await expect(canvas).toBeVisible();
   });
 
-  // перемещает нарисованную линию
+  // moves drawn line
   test('moves drawn line', async ({ page }, testInfo) => {
     test.setTimeout(60_000);
 
@@ -59,7 +59,7 @@ test.describe('Select & Move', () => {
     expect(moved!.top).not.toBe(original!.top);
   });
 
-  // растягивает выделенную линию
+  // stretches selected line
   test('stretches selected line', async ({ page }, testInfo) => {
     test.setTimeout(60_000);
 

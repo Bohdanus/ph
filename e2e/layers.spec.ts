@@ -16,7 +16,7 @@ test.describe('Layers', () => {
     await expect(canvas).toBeVisible();
   });
 
-  // слои меняют порядок и последовательно удаляются
+  // layers change order and are deleted sequentially
   test('layers change order and are deleted sequentially', async ({ page }, testInfo) => {
     test.setTimeout(90_000);
 

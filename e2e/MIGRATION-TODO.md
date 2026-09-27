@@ -106,11 +106,6 @@ specifics worth calling out:
   Everything under `e2e/` was reformatted to the repo's config (single quotes, 120
   columns). Any file added to `e2e/` later must be run through `npm run format` or
   `lint:check` will fail.
-- **8 lines of Russian comments across 6 spec files** (`color.spec.ts`,
-  `example.spec.ts`, `layers.spec.ts`, `levels.spec.ts` ×2, `select-move.spec.ts`,
-  `viewport-drawing.spec.ts`), carried over verbatim. Everything else in the repo
-  is English. Not translated, because editing ported test comments is churn
-  without functional value — but it is inconsistent.
 - **`expectCanvasToMatch` is dead code** (`image-comparison.ts:99`) with a P1 defect
   in its defaults: a trailing `...options` spread overwrites the `??` defaults, so a
   caller passing `maxDiffPixels: undefined` gets Playwright's default of `0`. Zero

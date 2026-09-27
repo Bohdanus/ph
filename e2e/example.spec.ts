@@ -12,7 +12,7 @@ import {
 } from './helpers/canvas-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 
-// скриншот области холста содержит нарисованную черную линию
+// screenshot of canvas area contains drawn black line
 test('screenshot of canvas area contains drawn black line', async ({ page }, testInfo) => {
   await page.goto('/');
 

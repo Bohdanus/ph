@@ -12,7 +12,7 @@ test.describe('Viewport Drawing', () => {
   ];
 
   for (const viewport of viewports) {
-    // линия остаётся под курсором после изменения размера окна
+    // line stays under cursor after window resize
     test(`line stays under cursor after window resize (${viewport.name})`, async ({ page }, testInfo) => {
       test.setTimeout(60_000);
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
@@ -36,8 +36,8 @@ test.describe('Viewport Drawing', () => {
 
       // Mark endpoints visibly (browser doesn't include system cursor in screenshots)
       await page.evaluate(
-        ({ start, end }) => {
-          for (const point of [start, end]) {
+        ({ start: from, end: to }) => {
+          for (const point of [from, to]) {
             const marker = document.createElement('div');
             marker.dataset.testid = 'cursor-marker';
             marker.style.cssText = [
