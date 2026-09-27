@@ -182,16 +182,17 @@ describe('createLayerSource image sources', () => {
 });
 
 describe('createLayerSource blank sources', () => {
-  it('fills the canvas and materialises it immediately', async () => {
+  it('fills the canvas and leaves promotion to the store', () => {
+    // A published layer is owned by the store, so the factory only stages the
+    // canvas. Promotion is a reducer publication through
+    // `PROMOTE_LAYER_PRESENTATIONS`, covered in StoreContext.presentation.test.tsx.
     const layer = createLayerSource({ layers: {}, source: blankSource({ opacity: 1 }) });
     const staged = layer.tmpCanvas;
     expect(staged).not.toBeNull();
     expect((staged as OffscreenCanvas).width).toBe(16);
     expect((staged as OffscreenCanvas).height).toBe(9);
-    expect(createImageBitmapSpy).toHaveBeenCalledWith(staged);
-
-    await vi.waitFor(() => expect(layer.tmpCanvas).toBeNull());
-    expect(layer.bitmap).not.toBeNull();
+    expect(createImageBitmapSpy).not.toHaveBeenCalled();
+    expect(layer.bitmap).toBeNull();
   });
 
   it('applies the source opacity as the context alpha for a translucent fill', () => {
@@ -218,8 +219,8 @@ describe('createLayerSource blank sources', () => {
     expect((layer.tmpCanvas as OffscreenCanvas).width).toBe(16);
   });
 
-  it('keeps the staged canvas when the caller defers the save', () => {
-    const layer = createLayerSource({ layers: {}, source: blankSource(), deferSave: true });
+  it('stages the canvas without materialising it', () => {
+    const layer = createLayerSource({ layers: {}, source: blankSource() });
 
     expect(layer.tmpCanvas).not.toBeNull();
     expect(layer.bitmap).toBeNull();
@@ -228,7 +229,7 @@ describe('createLayerSource blank sources', () => {
 });
 
 describe('createLayerSource tool sources', () => {
-  it('rasterises the tool, applies its position patch and materialises the canvas', async () => {
+  it('rasterises the tool and applies its position patch without materialising the canvas', () => {
     const raster = new OffscreenCanvas(30, 12);
     const processor = vi
       .spyOn(toolProcessors.shape, 'imageProcessor')
@@ -241,10 +242,10 @@ describe('createLayerSource tool sources', () => {
     expect(layer.tmpCanvas).toBe(raster);
     // The patch overrides the source position rather than offsetting it.
     expect(layer.pos).toEqual({ x: 5, y: 6, width: 30, height: 12 });
-    expect(createImageBitmapSpy).toHaveBeenCalledWith(raster);
-
-    await vi.waitFor(() => expect(layer.tmpCanvas).toBeNull());
-    expect(layer.bitmap).not.toBeNull();
+    // Promotion is the store's publication, not the factory's: the raster is
+    // staged as-is and materialised only when the publisher asks for it.
+    expect(createImageBitmapSpy).not.toHaveBeenCalled();
+    expect(layer.bitmap).toBeNull();
     processor.mockRestore();
   });
 
@@ -259,11 +260,11 @@ describe('createLayerSource tool sources', () => {
     processor.mockRestore();
   });
 
-  it('keeps the staged canvas when the caller defers the save', () => {
+  it('stages the raster without materialising it', () => {
     const raster = new OffscreenCanvas(20, 10);
     const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [raster]);
 
-    const layer = createLayerSource({ layers: {}, source: toolSource(), deferSave: true });
+    const layer = createLayerSource({ layers: {}, source: toolSource() });
 
     expect(layer.tmpCanvas).toBe(raster);
     expect(createImageBitmapSpy).not.toHaveBeenCalled();
@@ -275,7 +276,7 @@ describe('createLayerSource tool sources', () => {
     const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [raster]);
     const source = toolSource();
 
-    const layer = createLayerSource({ layers: {}, source, deferSave: true });
+    const layer = createLayerSource({ layers: {}, source });
 
     expect(layer.source).toBe(source);
     processor.mockRestore();

@@ -413,7 +413,11 @@ describe('useLayers updateLayerByTool flattening boundary', () => {
       expect(Object.keys(store.layers)).toHaveLength(1);
       const merged = store.layers[store.activeLayerId!]!;
       expect(store.activeLayerId).toBe(merged.id);
-      expect(merged.tmpCanvas).toBe(raster);
+      // The raster is materialized and published through the store, so the
+      // staged canvas is released and the layer carries the cache instead. The
+      // promotion is identity-checked against the layer that requested it.
+      expect(merged.tmpCanvas).toBeNull();
+      expect(merged.bitmap).not.toBeNull();
       // The processor's position patch is absolute, so it replaces the merged
       // layer's world origin outright rather than offsetting it.
       expect(merged.pos).toEqual({ x: 1, y: 2, width: 200, height: 100 });
