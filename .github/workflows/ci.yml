@@ -6,6 +6,17 @@ on:
   pull_request:
     branches: [main]
 
+# Superseded runs are pointless work. The `e2e` job is informational, and this
+# workflow is triggered on every push to a PR branch as well as `main`.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only by default. No job in this workflow needs to write to the repository,
+# and an un-scoped GITHUB_TOKEN inherits whatever the org default happens to be.
+permissions:
+  contents: read
+
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -78,9 +89,8 @@ jobs:
     timeout-minutes: 30
     # INFORMATIONAL, NOT A GATE.
     #
-    # The blocking coverage for the e2e code is the `e2e-unit` job, not this one: it
-    # runs `npm run test:e2e:unit` and `tsc -b tsconfig.e2e.json` in isolation from the
-    # app pipeline's pre-existing failures. See the note on that job.
+    # The blocking coverage for the e2e code is the `e2e-unit` job, not this one.
+    # See the note on that job.
     #
     # This job is not blocking because 5 of the 97 tests fail for reasons documented in
     # e2e/OPEN_PROBLEMS.md: 2 CDP specs, 2 Levels specs, and a race in the sidebar

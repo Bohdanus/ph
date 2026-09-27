@@ -68,9 +68,11 @@ npm run test:e2e
 npm run test:e2e:unit
 ```
 
-See [`e2e/README.md`](e2e/README.md) for the end-to-end suite and
+See [`e2e/README.md`](e2e/README.md) for the end-to-end suite,
 [`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md) for its known defects — 4–6 of the
-97 e2e tests currently fail, for reasons documented there.
+97 e2e tests currently fail — and
+[`e2e/MIGRATION-TODO.md`](e2e/MIGRATION-TODO.md) for what the migration left
+undone.
 
 The e2e suite runs **headless** by default and that default should stay. A headed
 run leaves a live window on your desktop, and your own clicks, keystrokes and focus

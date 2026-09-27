@@ -3,6 +3,11 @@
 Playwright end-to-end specs for this application, plus Vitest unit tests for the
 spec helpers themselves. The application under test is `src/` in this repository.
 
+- [`OPEN_PROBLEMS.md`](OPEN_PROBLEMS.md) — defects in the test code, with evidence.
+  4–6 of the 97 tests fail on the default headless run.
+- [`MIGRATION-TODO.md`](MIGRATION-TODO.md) — what the move into this repository left
+  undone: open fixes, pipeline gaps, and carried-over debt.
+
 ```
 e2e/
 ├── *.spec.ts            # 11 top-level specs: canvas redraw, colour, layers,

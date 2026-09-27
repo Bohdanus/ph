@@ -213,7 +213,7 @@ Five tests pin the intended priority semantics, including
 Real Playwright would return all three matches. They pass because the double
 _does_ model `.or()` as a union — `canvas-helpers.fixtures.ts:164-167` returns
 `[...candidates(), ...otherCandidates()]` — but the assertion helper
-`resolveFakeLocator` (`:182`) then takes `?.[0]`, silently discarding every match
+`resolveFakeLocator` (`:181`) then takes `?.[0]`, silently discarding every match
 after the first. The union is built correctly and then thrown away by the reader.
 
 That is why the bug survived a 694-test suite: the specs assert the behaviour the
