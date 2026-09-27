@@ -634,19 +634,42 @@ single live instance.
 
 ---
 
+## 23. No durable-path test materializes a `rectangle`, `ellipse` or `line` vector source
+
+**Problem.** `history-adapter.ts:185` maps all six of `shape`, `rectangle`, `ellipse`, `triangle`,
+`polygon`, `line` to `kind: 'vector'`, and `materialization.ts:161` then throws
+`Source tool ${toolName} is not a deterministic creator` for any of them whose registry entry lacks
+`creator: true`. The registry now flags all six (`toolProcessors.ts:216-220`), but the only durable
+test that pushes a vector source through `materializeLayer` uses `toolName: 'shape'`
+(`materialization.assets.test.ts:406-425`) — so the `rectangle`/`ellipse`/`line` entries were never
+exercised end to end, and nothing in `src/contexts/__tests__` would have caught them missing the
+flag. `history-adapter.tool-conversion.test.ts:76-80` pins only the adapter half.
+
+Nothing in production reaches this code: `materializeLayer` and `materializeDocument` have no
+non-test importer (item 1), so the throw is latent.
+
+**Fix.** In `materialization.assets.test.ts`, extend the existing vector-source case into an
+`it.each` over `['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line']` with the matching
+`args` per tool, asserting `materializeLayer` resolves and yields a bitmap for every one. That
+converts the registry flag into a contract the durable path checks instead of a declaration in
+`toolProcessors.test.ts`. Belongs with the migration work, not with a registry edit.
+
+**Files.** `src/contexts/__tests__/materialization.assets.test.ts`
+
+---
+
 ## Known defects that are PINNED — do not "fix" them casually
 
 An `it.fails(...)` is a tripwire: it passes today and **fails the moment the defect is fixed**, so a
-fix must remove the pin in the same change. There are 42. The migration-relevant ones:
+fix must remove the pin in the same change. There are 40. The migration-relevant ones:
 
-| Location                                           | What it pins                                                                                                                                                                                                                                                                                                                                                                                           |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `materialization.ordering.test.ts:415`             | interleaved affine/filter grouping (item 3)                                                                                                                                                                                                                                                                                                                                                            |
-| `StoreContext.durable-boundary.test.tsx:441`       | `REPLACE_DOCUMENT` retains the prior frame crop                                                                                                                                                                                                                                                                                                                                                        |
-| `StoreContext.durable-boundary.test.tsx:602-633`   | the durable cutover is **absent** (item 1)                                                                                                                                                                                                                                                                                                                                                             |
-| `useSelectionClipboard.layerViaCopy.test.tsx:203`  | canvas→document position translation. **Its diagnosis is stale**: it blames a `documentToCanvasPos` call at `useSelectionClipboard.ts:100` that now calls `canvasToDocumentPos` (correct). The expectation matches neither the correct value nor the described bug. The polygon `points` array is still never frame-converted — a real unfixed clipboard bug under the plan's own coordinate contract. |
-| `tools/__tests__/tool-processors.test.ts:143, 303` | the new `affine-operation` commit kind                                                                                                                                                                                                                                                                                                                                                                 |
-| `text.test.ts:258`                                 | replaying text from a durable vector source without re-rasterizing                                                                                                                                                                                                                                                                                                                                     |
+| Location                                          | What it pins                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `materialization.ordering.test.ts:415`            | interleaved affine/filter grouping (item 3)                                                                                                                                                                                                                                                                                                                                                            |
+| `StoreContext.durable-boundary.test.tsx:441`      | `REPLACE_DOCUMENT` retains the prior frame crop                                                                                                                                                                                                                                                                                                                                                        |
+| `StoreContext.durable-boundary.test.tsx:602-633`  | the durable cutover is **absent** (item 1)                                                                                                                                                                                                                                                                                                                                                             |
+| `useSelectionClipboard.layerViaCopy.test.tsx:203` | canvas→document position translation. **Its diagnosis is stale**: it blames a `documentToCanvasPos` call at `useSelectionClipboard.ts:100` that now calls `canvasToDocumentPos` (correct). The expectation matches neither the correct value nor the described bug. The polygon `points` array is still never frame-converted — a real unfixed clipboard bug under the plan's own coordinate contract. |
+| `text.test.ts:258`                                | replaying text from a durable vector source without re-rasterizing                                                                                                                                                                                                                                                                                                                                     |
 
 E2E known failures, 2–4 of 97 on the default headless run (`e2e/OPEN_PROBLEMS.md`):
 

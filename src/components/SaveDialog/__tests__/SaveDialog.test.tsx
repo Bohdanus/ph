@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SaveDialog from '../SaveDialog.tsx';
 
 afterEach(cleanup);
@@ -211,10 +211,12 @@ describe('SaveDialog cancel and close paths', () => {
 });
 
 describe('SaveDialog failure handling', () => {
-  // SaveDialog.tsx:20-24 re-enables the controls from a `finally` block but has
-  // no `catch`, so a rejected onSave would surface as an unhandled rejection in
-  // Vitest. The production caller (useFile.handleImageSave) already swallows its
-  // own failures and resolves, so the observable contract here is the `finally`.
+  // The `catch` in `SaveDialog.handleSave` owns the user-visible failure: the
+  // `finally` alone only re-enables the controls, so without it a rejected
+  // `onSave` reached the void as an unhandled rejection and the user was told
+  // nothing. The production caller (useFile.handleImageSave) catches its own
+  // failures, alerts, and resolves, so the contract under test here is the
+  // component boundary a rejecting caller crosses.
   it('restores the controls when onSave resolves', async () => {
     const onClose = vi.fn();
     const onSave = vi.fn(() => Promise.resolve());
@@ -240,5 +242,116 @@ describe('SaveDialog failure handling', () => {
 
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByTestId('save-dialog')).toBeInTheDocument();
+  });
+});
+
+/**
+ * The app tsconfig intentionally ships without `@types/node`, so the Node-level
+ * rejection hook is reached through `globalThis` with a local structural type,
+ * the same shape `src/contexts/__tests__/unhandled-rejections.test.ts` uses.
+ */
+type RejectionHook = {
+  listeners(event: 'unhandledRejection'): Array<(...args: never[]) => void>;
+  removeAllListeners(event: 'unhandledRejection'): unknown;
+  on(event: 'unhandledRejection', listener: (reason: unknown) => void): unknown;
+  removeListener(event: 'unhandledRejection', listener: (reason: unknown) => void): unknown;
+};
+
+const rejectionHook = (globalThis as Record<string, unknown>).process as RejectionHook;
+
+describe('SaveDialog rejected save', () => {
+  let rejections: unknown[];
+  let alertSpy: ReturnType<typeof vi.spyOn>;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+  /**
+   * Node emits `unhandledRejection` on `process`, not on `window`, and Vitest
+   * installs its own listener that turns any such event into a file-level error.
+   * The runner's listeners are lifted for the duration of each test and restored
+   * afterwards, so a leaked rejection is asserted here instead of aborting the
+   * file. `onNodeRejection` is always installed, which is also what keeps Node
+   * from crashing on the rejected promise.
+   */
+  let runnerListeners: Array<(...args: never[]) => void>;
+  let onNodeRejection: (reason: unknown) => void;
+
+  beforeEach(() => {
+    rejections = [];
+    runnerListeners = rejectionHook.listeners('unhandledRejection');
+    rejectionHook.removeAllListeners('unhandledRejection');
+    onNodeRejection = (reason: unknown) => {
+      rejections.push(reason);
+    };
+    rejectionHook.on('unhandledRejection', onNodeRejection);
+    alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    rejectionHook.removeListener('unhandledRejection', onNodeRejection);
+    for (const listener of runnerListeners) {
+      rejectionHook.on('unhandledRejection', listener as (reason: unknown) => void);
+    }
+    alertSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+  });
+
+  /**
+   * Node reports an unhandled rejection at the microtask checkpoint after the
+   * rejecting tick, so one macrotask boundary is not enough; drain several
+   * deterministically instead of polling with a timeout.
+   */
+  const drain = async () => {
+    for (let tick = 0; tick < 4; tick += 1) {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    }
+  };
+
+  it('surfaces a rejected save to the user instead of dropping it into an unhandled rejection', async () => {
+    const onClose = vi.fn();
+    const onSave = vi.fn(() => Promise.reject(new Error('Encoding failed')));
+    render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
+
+    await act(async () => {
+      fireEvent.click(saveButton());
+    });
+    await drain();
+
+    expect(rejections).toEqual([]);
+    expect(consoleErrorSpy).toHaveBeenCalledExactlyOnceWith('Failed to save file:', expect.any(Error));
+    expect(alertSpy).toHaveBeenCalledExactlyOnceWith('Failed to save file: Encoding failed');
+  });
+
+  it('still restores the controls and leaves the dialog open after a rejected save', async () => {
+    const onClose = vi.fn();
+    const onSave = vi.fn(() => Promise.reject('PSD encoder exploded'));
+    render(<SaveDialog proposedName="design" onSave={onSave} onClose={onClose} />);
+
+    await act(async () => {
+      fireEvent.click(saveButton());
+    });
+    await drain();
+
+    // A non-Error rejection reason is stringified, matching useFile.tsx:132.
+    expect(alertSpy).toHaveBeenCalledExactlyOnceWith('Failed to save file: PSD encoder exploded');
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByTestId('save-dialog')).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('shows no failure feedback when the save resolves', async () => {
+    const onSave = vi.fn(() => Promise.resolve());
+    render(<SaveDialog proposedName="design" onSave={onSave} onClose={vi.fn()} />);
+
+    await act(async () => {
+      fireEvent.click(saveButton());
+    });
+    await drain();
+
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(rejections).toEqual([]);
   });
 });
