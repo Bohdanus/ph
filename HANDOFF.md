@@ -995,3 +995,38 @@ field. Do not add a history field for presentation alone while the legacy timeli
 replay authority.
 
 **Files.** `src/contexts/useHistory.ts:15-29`, `src/components/SidebarRight/HistoryTab.tsx`
+
+---
+
+## 41. The raster budget is a ceiling the operator set, and the AVIF half of it is still below the app's own maximum
+
+**Problem.** `MAX_TIFF_BYTES` / `MAX_TIFF_PIXELS` in `src/contexts/tiff-utils.ts:15-27` are a
+product decision, not a security constant, and nothing records where the numbers came from — so the
+next session will "tidy" them back to a round figure and nobody will notice. The two ceilings, and
+the reject-don't-clamp behaviour above them, are:
+
+- `MAX_TIFF_BYTES = 1_600_000_000` — the app's largest creatable document
+  (10000 × 10000 = 1e8 px, `NewImageDialog.tsx:77-78` clamps each axis to 10000 and both inputs
+  declare `max="10000"` at `:158`/`:178`) at 16 bytes per pixel, which is the largest per-pixel
+  buffer `UTIF.decodeImage` can build for a 4-sample page: `Math.min(32, t258[0])` bits per sample
+  (`UTIF.js:116`) times 4 samples.
+- `MAX_TIFF_PIXELS = MAX_TIFF_BYTES / 8` = 200,000,000 — the same budget read at 8 bytes per
+  pixel, the largest per-pixel buffer a displayable 16-bit RGBA page declares. Two times the app's
+  own maximum, so a document the dialog can create has headroom.
+- Above either ceiling the file is **rejected with an error, never clamped or downscaled**. That is
+  deliberate: a clamp silently hands the user a smaller image than the file they opened, and a
+  rejected file loses nothing.
+
+**The residual defect.** `MAX_AVIF_PIXELS` in `src/contexts/avif-utils.ts:5` is still
+`80_000_000` — below the 100 MP the New Image dialog can create, and applied to `loadAvifFile`
+(`:15`) but never to `encodeAvif` (`:24-26`). So `New ▸ A3 @ 1200 dpi`, then `Save as AVIF`,
+produces a file this build refuses to reopen. This is the same asymmetry the TIFF budget had; the
+TIFF side is fixed and this side is not.
+
+**Fix.** Replace `MAX_AVIF_PIXELS` with the same `MAX_TIFF_PIXELS` derivation, or export one
+`MAX_RASTER_PIXELS` from a module both codecs import so the two cannot drift again, and add the
+same budget call to `encodeAvif`. If the ceiling itself is wrong — if 200 MP is too generous or too
+tight for the product — that is the operator's call, and it must be made here rather than in a fix
+branch: the derivation above is what makes a different number defensible, not the number itself.
+
+**Files.** `src/contexts/avif-utils.ts:4-5,15,24-26`, `src/contexts/tiff-utils.ts:11-27`

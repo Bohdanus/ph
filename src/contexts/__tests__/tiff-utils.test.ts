@@ -283,16 +283,23 @@ describe('TIFF error paths', () => {
 
 /**
  * A TIFF is a 4-byte signature plus one IFD, so a ~200-byte file can declare 65535×65535.
- * `UTIF.decodeImage` then allocates `height * bytesPerRow` from those tags and `UTIF.toRGBA8`
- * allocates `width * height * 4` — 17.2 GB for that header, with no bound anywhere in the
- * path. These pin that the budget is consulted before either allocating call, and that it
- * rejects rather than silently downscaling.
+ * `UTIF.decodeImage` then allocates `height * bytesPerRow`, where a row is
+ * `ceil(width * bipp / 8) * 8` bytes and `bipp` is `Math.min(32, t258[0]) * t258.length` —
+ * a product the file itself controls, entry by entry. `UTIF.toRGBA8` then allocates
+ * `width * height * 4`. Nothing in the path bounds any of it, and a byte budget is the only
+ * one of the three that can: a page's pixel count is independent of its bit depth.
+ *
+ * These pin that the budget is consulted before each allocation, that it bounds bytes and
+ * sample counts as well as pixels, that it sits above the largest document the New Image
+ * dialog can create, that the encoder obeys the same one, and that it rejects rather than
+ * silently downscaling.
  */
-describe('TIFF decode pixel budget', () => {
+describe('TIFF raster byte budget', () => {
   beforeEach(() => {
     decode.mockReset();
     decodeImage.mockReset();
     toRGBA8.mockReset();
+    encodeImage.mockReset();
   });
 
   afterEach(() => {
@@ -304,7 +311,7 @@ describe('TIFF decode pixel budget', () => {
     decode.mockReturnValue([{ t256: [65535], t257: [65535] }]);
 
     await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-      'TIFF image is too large to open (65535×65535). Maximum is 80000000 pixels.'
+      'TIFF image is too large to open (65535×65535). Maximum is 200000000 pixels.'
     );
     expect(decodeImage).not.toHaveBeenCalled();
     expect(toRGBA8).not.toHaveBeenCalled();
@@ -321,26 +328,61 @@ describe('TIFF decode pixel budget', () => {
     });
 
     await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
-      'TIFF image is too large to open (40000×40000). Maximum is 80000000 pixels.'
+      'TIFF image is too large to open (40000×40000). Maximum is 200000000 pixels.'
     );
     expect(toRGBA8).not.toHaveBeenCalled();
   });
 
   it.each([
-    ['just over the cap', 10001, 8000],
+    ['one pixel over the cap', 10000, 20001],
     ['a single absurdly wide page', 1_000_000, 1000],
+    ['a square the New Image dialog cannot create', 20000, 20000],
   ])('rejects %s rather than clamping it to fit', async (_label, width, height) => {
     decode.mockReturnValue([{ t256: [width], t257: [height] }]);
 
     await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
       /TIFF image is too large to open/
     );
+    expect(decodeImage).not.toHaveBeenCalled();
     expect(toRGBA8).not.toHaveBeenCalled();
   });
 
-  it('still decodes a large page that sits exactly on the cap', async () => {
+  it.each([
+    [
+      'the largest document the New Image dialog can create',
+      {
+        width: 10000,
+        height: 10000,
+        t256: [10000],
+        t257: [10000],
+        t258: [8, 8, 8, 8],
+        t277: [4],
+        t259: [1],
+        t262: [2],
+      },
+    ],
+    [
+      'a 16-bit RGBA page of that same size',
+      {
+        width: 10000,
+        height: 10000,
+        t256: [10000],
+        t257: [10000],
+        t258: [16, 16, 16, 16],
+        t277: [4],
+        t259: [1],
+        t262: [2],
+      },
+    ],
+    [
+      'a greyscale page that sits exactly on the cap',
+      { width: 10000, height: 20000, t256: [10000], t257: [20000], t258: [8], t277: [1], t259: [1], t262: [1] },
+    ],
+  ])('decodes %s', async (_label, ifd) => {
+    // A budget under the dialog's own maximum is a budget that refuses files the app just
+    // created, and the refusal is silent until someone saves a document and cannot reopen it.
     installImageHarness();
-    const page = { width: 10000, height: 8000, t256: [10000], t257: [8000] };
+    const page = { ...ifd };
     decode.mockReturnValue([page]);
     toRGBA8.mockReturnValue(new Uint8Array(4));
 
@@ -351,6 +393,73 @@ describe('TIFF decode pixel budget', () => {
     await expect(pending).resolves.toBe(imageStub);
     expect(decodeImage).toHaveBeenCalledExactlyOnceWith(expect.any(ArrayBuffer), page);
     expect(toRGBA8).toHaveBeenCalledExactlyOnceWith(page);
+  });
+
+  it('refuses a small page whose bits-per-sample list is the allocation lever', async () => {
+    // 1000×1000 is 1/200th of the pixel cap and its decode buffer is 800 MB, a quarter of the
+    // byte ceiling, so neither budget refuses it on size. What refuses it is the format: 200
+    // BitsPerSample values against 4 samples per pixel is the factor UTIF multiplies the row
+    // by at `UTIF.js:116`, and a 510-byte file gets to choose it.
+    decode.mockReturnValue([
+      { t256: [1000], t257: [1000], t258: new Array(200).fill(32), t277: [4], t259: [1], t262: [2] },
+    ]);
+
+    await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+      'TIFF file is malformed: it declares 200 bits-per-sample values for 4 samples per pixel.'
+    );
+    expect(decodeImage).not.toHaveBeenCalled();
+    expect(toRGBA8).not.toHaveBeenCalled();
+  });
+
+  it('refuses a page whose row length alone runs past the byte budget', async () => {
+    // The sample counts agree here and the page is comfortably inside the pixel cap, so only
+    // the predicted `height * ceil(width * bipp / 8)` refuses it: six 32-bit samples is 24
+    // bytes per pixel, 1.92 GB over 10000×8000.
+    decode.mockReturnValue([
+      { t256: [10000], t257: [8000], t258: new Array(6).fill(32), t277: [6], t259: [1], t262: [2] },
+    ]);
+
+    await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+      'TIFF image is too large to open (10000×8000). ' +
+        'Decoding it would need more than 1600 MB, over the TIFF budget.'
+    );
+    expect(decodeImage).not.toHaveBeenCalled();
+    expect(toRGBA8).not.toHaveBeenCalled();
+  });
+
+  it('refuses a page whose strip byte counts enlarge the row past the budget', async () => {
+    // The `t262 === 32803` branch at `UTIF.js:119-121` replaces bipp wholesale with
+    // `round(t279 * 8 / (width * t278))`, so a one-row strip carrying a 2 GB byte count
+    // declares 16 Mbit per pixel. Every other tag on this page is an ordinary 8-bit RGBA IFD.
+    decode.mockReturnValue([
+      {
+        t256: [1000],
+        t257: [1000],
+        t258: [8, 8, 8, 8],
+        t277: [4],
+        t259: [1],
+        t262: [32803],
+        t278: [1],
+        t279: [2_000_000_000],
+      },
+    ]);
+
+    await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+      /Decoding it would need more than 1600 MB/
+    );
+    expect(decodeImage).not.toHaveBeenCalled();
+    expect(toRGBA8).not.toHaveBeenCalled();
+  });
+
+  it('refuses a header whose bit depth is unreadable rather than assuming it is small', async () => {
+    // `NaN > ceiling` is false, so an unparseable bit depth has to be refused on its own:
+    // a budget that cannot read the value is not evidence of a small image.
+    decode.mockReturnValue([
+      { t256: [1000], t257: [1000], t258: [NaN, NaN, NaN, NaN], t277: [4], t259: [1], t262: [2] },
+    ]);
+
+    await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(/over the TIFF budget/);
+    expect(decodeImage).not.toHaveBeenCalled();
   });
 
   it('leaves an IFD without usable geometry tags to the post-decode guard', async () => {
@@ -366,5 +475,38 @@ describe('TIFF decode pixel budget', () => {
 
     await expect(pending).resolves.toBe(imageStub);
     expect(toRGBA8).toHaveBeenCalledExactlyOnceWith({ width: 2, height: 1 });
+  });
+
+  describe('the encoder obeys the same budget', () => {
+    const canvasOf = (width: number, height: number) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      vi.spyOn(canvas, 'getContext').mockReturnValue({
+        getImageData: vi.fn(() => ({ data: new Uint8ClampedArray(4), width, height })),
+      } as unknown as CanvasRenderingContext2D);
+      return canvas;
+    };
+
+    it('encodes the largest document the New Image dialog can create', async () => {
+      encodeImage.mockReturnValue(new ArrayBuffer(4));
+
+      const blob = await encodeTiff(canvasOf(10000, 10000));
+
+      expect(encodeImage).toHaveBeenCalledExactlyOnceWith(expect.any(Uint8ClampedArray), 10000, 10000, {
+        t338: [2],
+      });
+      expect(blob.type).toBe('image/tiff');
+    });
+
+    it.each([
+      ['one pixel over the cap', 10000, 20001],
+      ['a square well past it', 30000, 30000],
+    ])('refuses to write %s into a file this build would then refuse to read', async (_label, width, height) => {
+      await expect(encodeTiff(canvasOf(width, height))).rejects.toThrow(
+        `TIFF image is too large to save (${width}×${height}). Maximum is 200000000 pixels.`
+      );
+      expect(encodeImage).not.toHaveBeenCalled();
+    });
   });
 });
