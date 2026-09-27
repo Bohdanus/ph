@@ -24,10 +24,14 @@ test.describe('Color Helpers', () => {
       await setForegroundColor(page, '#ff0000', true);
     });
 
-    test('does not throw when input not found', async ({ page }) => {
+    test('throws when input not found', async ({ page }) => {
       await page.setContent('<div>No input here</div>');
 
-      await expect(setForegroundColor(page, '#ff0000', false)).resolves.toBeUndefined();
+      // A missing input used to be a silent no-op: the helper resolved as if it
+      // had set the colour, so a renamed or absent testid could not fail a test.
+      await expect(setForegroundColor(page, '#ff0000', false)).rejects.toThrow(
+        'setForegroundColor: no HTMLInputElement matched [data-testid="foreground-color-input"]'
+      );
     });
 
     test('handles various hex formats', async ({ page }) => {

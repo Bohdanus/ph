@@ -320,37 +320,6 @@ Latent today — no call site passes a name containing `()[]+|?*^\$`. Fix:
 `new RegExp(escapeRegExp(name.replace(/&/g, 'and')), 'i')`. Needs sign-off
 because it changes selector behaviour.
 
-## P2 — `hexToRgb` rejects valid CSS-4 hex
-
-`e2e/helpers/color-helpers.ts:12` **[pinned]**
-
-The 3-character expansion runs before the length guard, so 4-digit `#rgba` and
-8-digit `#rrggbbaa` fall into the error branch:
-
-```
-hexToRgb('#ff0000ff') -> expected 3 or 6 hex digits, got "ff0000ff"
-hexToRgb('#f00a')     -> expected 3 or 6 hex digits, got "f00a"
-```
-
-Both are valid CSS and should yield `{r:255,g:0,b:0}`. Consequence:
-`setForegroundColor(page, '#ff0000ff', true)` rejects a colour the application
-itself accepts.
-
-## P2 — `setForegroundColor` can succeed without setting the colour
-
-`e2e/helpers/color-helpers.ts:24-27` **[pinned]**
-
-Two independent ways to get a green result with nothing changed:
-
-1. No validation before the DOM is touched. `hexToRgb` is only called when
-   `verifySwatch` is true, so `setForegroundColor(page, 'red')` writes `red`
-   into a `<input type="color">` and resolves successfully.
-2. `if (input) {` (`:26`) makes a missing or renamed testid a silent no-op.
-
-Combined, a test that sets a colour can pass having changed nothing. The specs
-that set a colour now pass `verifySwatch: true`, which closes the loop from
-the call side, but the helper itself is still permissive.
-
 ## P2 — selection thresholds are hardcoded, not in the constants table
 
 `e2e/helpers/canvas-helpers.ts:430-432` **[pinned]**
@@ -373,15 +342,6 @@ constants table exists to prevent.
 re-inlines `0.2`, `100`, `0.01`. Currently equal, so latent rather than
 observable. A test fails if the two drift apart.
 
-## P2 — swatch verification compares an exact CSS string
-
-`e2e/helpers/color-helpers.ts` **[pinned]**
-
-The check compares the computed value against a literal
-`` `rgb(${r}, ${g}, ${b})` ``. Any legitimately non-opaque computed value —
-`opacity`, `color(srgb ...)`, a gradient or animation in flight — fails even
-though the colour is correct. Not reproduced; flagged as fragility.
-
 ## P2 — a negative sample radius reports "no colour here"
 
 `e2e/helpers/canvas-helpers.ts:467` **[pinned]**
@@ -390,16 +350,6 @@ though the colour is correct. Not reproduced; flagged as fragility.
 `radius < 0`, so `getColorAtPoint` returns `null` — meaning "nothing at this
 point" — instead of sampling the centre pixel or rejecting the argument. A
 misconfigured constant reads as a legitimate miss.
-
-## P2 — an unsound source-side cast
-
-`e2e/helpers/color-helpers.ts:25`
-
-`document.querySelector(...) as HTMLInputElement` asserts an element type
-`querySelector` cannot guarantee. A non-`input` element published under that
-testid reaches `descriptor.set.call(input, color)` and throws an opaque
-`TypeError: Illegal invocation`. This is the mirror image of the
-`as unknown as` casts removed from the test files.
 
 ## P2 — `exportAndVerify` ignores its `testInfo` argument
 
