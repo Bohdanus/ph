@@ -5,6 +5,7 @@ import { documentFrameFromSize, isValidDocumentFrame } from './document-frame.ts
 import { AssetRegistry, getAssetRegistry } from './asset-registry.ts';
 import {
   DURABLE_SCHEMA_VERSION,
+  type DurableBaseline,
   type DurableDocument,
   type DurableFilter,
   type DurableHistoryEntry,
@@ -22,8 +23,9 @@ import {
 } from './history-model.ts';
 import type { HistoryItem } from './history-types.ts';
 import type { Layer, LayerId, LayerSource, LayersRecord } from './layer-types.ts';
-import type { BitmapSource, Selection, Size } from './general-types.ts';
+import type { BitmapSource, Size } from './general-types.ts';
 import type { ToolArgs } from './tool-types.ts';
+import { deriveSelectionBaseline, selectionSnapshot } from './selection-baseline.ts';
 import type { ActionType } from '../util/constants.ts';
 import {
   HIDE_LAYER_ACTION,
@@ -120,25 +122,6 @@ function plainObject(value: unknown, path: string): PlainObject {
   const result = plainValue(value, path);
   if (!result || Array.isArray(result) || typeof result !== 'object') throw new Error(`Expected object at ${path}`);
   return result as PlainObject;
-}
-
-function cloneSelection(selection: Selection): Selection {
-  return {
-    ...selection,
-    points: selection.points.map((point) => ({ ...point })),
-    pos: { ...selection.pos },
-    ...(selection.metadata ? { metadata: JSON.parse(JSON.stringify(selection.metadata)) } : {}),
-  };
-}
-
-function selectionSnapshot(
-  selections: readonly Selection[] = [],
-  activeSelectionId: string | null = null
-): SelectionSnapshot {
-  return Object.freeze({
-    selections: Object.freeze(selections.map(cloneSelection)),
-    activeSelectionId,
-  });
 }
 
 function sourceSize(source: LayerSource): Size {
@@ -282,6 +265,68 @@ export function deriveSetDocumentFrameEntry(
   return entry(item.id, operation, isEntryEnabled(item));
 }
 
+/**
+ * Structural guard for a durable selection snapshot.
+ *
+ * A key-absent `activeSelectionId` is ACCEPTED, because `replayHistory` reads it
+ * as `next?.activeSelectionId ?? null` (`history-replay.ts:107`): a snapshot that
+ * omits the id still retains its selections and only loses the active id.
+ * Rejecting that shape here would make the shadow clear selections that legacy
+ * replay keeps. The guard only asks whether the value can be read as a snapshot
+ * at all; normalizing the id to `null` is `deriveSetSelectionEntry`'s job.
+ */
+function isValidSelectionSnapshot(value: unknown): value is SelectionSnapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as { selections?: unknown; activeSelectionId?: unknown };
+  if (!Array.isArray(candidate.selections)) return false;
+  const { activeSelectionId } = candidate;
+  return activeSelectionId === undefined || activeSelectionId === null || typeof activeSelectionId === 'string';
+}
+
+/**
+ * The single derivation of a selection durable entry.
+ *
+ * This is the selection twin of `deriveSetDocumentFrameEntry`, for the same
+ * reason: the shadow conversion and the append boundary must produce the same
+ * entry for the same legacy item, so the rule lives here only.
+ *
+ * The rule is deliberately stricter than `replayHistory`, and the asymmetry is
+ * the point:
+ *
+ * - A missing or structurally unusable `nextSelectionState` yields NO durable
+ *   entry. Substituting an empty `after` would assert "no selection" for a state
+ *   the model cannot read, so a boundary that published it would be
+ *   indistinguishable from the user pressing "select none". Returning `null`
+ *   makes the caller report instead of inventing state.
+ * - A missing (or unreadable) `previousSelectionState` falls back to
+ *   `currentSelections`, the selection state the durable model already holds,
+ *   copied rather than aliased so the entry cannot be mutated through the
+ *   caller's snapshot. A baseline is never invented either.
+ *
+ * `replayHistory` does clear on an absent next state, and `legacyHistoryToDurable`
+ * keeps that behaviour so the shadow agrees with the legacy replay it shadows.
+ * That parity is a property of the *conversion*, not of this helper: the append
+ * boundary has no second authority to stay equal to, so it refuses the entry.
+ */
+export function deriveSetSelectionEntry(
+  item: HistoryItem,
+  currentSelections: SelectionSnapshot
+): DurableHistoryEntry | null {
+  const args = item.args as
+    { previousSelectionState?: SelectionSnapshot; nextSelectionState?: SelectionSnapshot } | undefined;
+  const next = args?.nextSelectionState;
+  if (!isValidSelectionSnapshot(next)) return null;
+  const previous = args?.previousSelectionState;
+  const operation = Object.freeze({
+    kind: 'set-selection',
+    before: isValidSelectionSnapshot(previous)
+      ? selectionSnapshot(previous.selections, previous.activeSelectionId)
+      : selectionSnapshot(currentSelections.selections, currentSelections.activeSelectionId),
+    after: selectionSnapshot(next.selections, next.activeSelectionId),
+  });
+  return entry(item.id, operation, isEntryEnabled(item));
+}
+
 function diagnosticFromError(error: unknown, item?: HistoryItem): MigrationDiagnostic {
   return {
     ...(item ? { historyId: item.id, actionName: item.actionName } : {}),
@@ -392,7 +437,6 @@ function snapshotFromDocumentSource(item: HistoryItem, documentId: string, regis
   return {
     frame: frameFromLegacy(item, documentSource.size),
     layers,
-    selections: selectionSnapshot(),
     activeLayerId,
   };
 }
@@ -413,19 +457,24 @@ export function legacyHistoryToDurable(
   const registry = options.registry ?? getAssetRegistry();
   const first = legacyHistory[0];
   const initialSize = options.initialSize ?? first?.documentSource?.size ?? { width: 1, height: 1 };
+  // Both branches must seed identically, so the durable baseline reads the same
+  // unbounded rule legacy replay uses. It cannot be narrowed to the pre-first-entry
+  // state while a selection is created outside history: the tool-switch clear's
+  // `previousSelectionState` is the only record that the selection existed, and
+  // `durable-replay.ts` applies only each operation's `after`.
+  const selectionBaseline = deriveSelectionBaseline(legacyHistory);
   const initial = snapshotFromDocumentSource(first, documentId, registry) ?? {
     frame: options.initialFrame ?? documentFrameFromSize(initialSize),
     layers: [],
-    selections: selectionSnapshot(),
     activeLayerId: null,
   };
+  const baseline: DurableBaseline = { ...initial, selections: selectionBaseline };
   const diagnostics: MigrationDiagnostic[] = [];
   const legacyCursorToDurableCursor: number[] = [];
   let currentLayers = new Map(initial.layers.map((layer) => [layer.id, layer]));
   let currentFrame = { ...initial.frame };
-  let currentSelections = initial.selections;
+  let currentSelections: SelectionSnapshot = selectionBaseline;
   const entries: DurableHistoryEntry[] = [];
-  const baseline = initial;
 
   for (const item of legacyHistory) {
     if (item.documentSource && (item.actionName === OPEN_DOCUMENT_ACTION || entries.length === 0)) {
@@ -505,14 +554,49 @@ export function legacyHistoryToDurable(
           if (frameEntry.enabled) currentFrame = { ...(frameEntry.operation as { next: DocumentFrame }).next };
         }
       } else if (item.actionName === SELECTION_ACTION) {
-        const args = item.args as
-          { previousSelectionState?: SelectionSnapshot; nextSelectionState?: SelectionSnapshot } | undefined;
-        operation = Object.freeze({
-          kind: 'set-selection',
-          before: args?.previousSelectionState ?? currentSelections,
-          after: args?.nextSelectionState ?? selectionSnapshot(),
-        });
-        if (enabled) currentSelections = operation.after;
+        const next = (item.args as { nextSelectionState?: unknown } | undefined)?.nextSelectionState;
+        if (next !== undefined && next !== null && !isValidSelectionSnapshot(next)) {
+          // Present but unreadable — `{}`, `{ selections: null }`, `[]`, a
+          // non-array, and so on. `replayHistory` throws on every one of these
+          // when it reads `next.selections.map(...)`, and the pre-derivation code
+          // threw too, though from inside `freezeDurableDocument` and therefore
+          // outside this loop's catch. Throwing here restores that fail-closed
+          // outcome from inside the loop: the per-item catch records an
+          // error-severity diagnostic naming this entry, and
+          // `convertLegacyHistorySafely` voids the document exactly as before.
+          // Falling through to the clear below would instead produce a durable
+          // document asserting "no selection" for an unreadable state, with a
+          // populated cursor map and no diagnostic — a silent wrong answer where
+          // legacy replay crashes.
+          throw new Error(`Selection entry ${item.id} carries an unusable nextSelectionState`);
+        }
+        const selectionEntry = deriveSetSelectionEntry(item, currentSelections);
+        if (selectionEntry) {
+          operation = selectionEntry.operation;
+          if (enabled) currentSelections = (operation as { after: SelectionSnapshot }).after;
+        } else {
+          // Genuinely absent (or explicitly null) next state. This is the one
+          // shape where an invented empty `after` is the correct answer, because
+          // it is the answer the legacy timeline itself produces: `replayHistory`
+          // reads `next?.selections ?? []`, so the shadow must clear here too.
+          // The append boundary has no second authority to stay equal to and
+          // reports a diagnostic instead of clearing — see deriveSetSelectionEntry.
+          // Both sides are re-cloned from the legacy args rather than adopted, so
+          // the operation and every `before` that follows it hold no reference into
+          // the history timeline. The twin derivation does the same for the valid
+          // case, so neither arm depends on the document's later deep freeze to
+          // keep an aliased snapshot out of the operation.
+          const args = item.args as { previousSelectionState?: SelectionSnapshot } | undefined;
+          const previous = args?.previousSelectionState;
+          operation = Object.freeze({
+            kind: 'set-selection',
+            before: previous
+              ? selectionSnapshot(previous.selections, previous.activeSelectionId)
+              : selectionSnapshot(currentSelections.selections, currentSelections.activeSelectionId),
+            after: selectionSnapshot(),
+          });
+          if (enabled) currentSelections = operation.after;
+        }
       } else if (item.actionName === MERGE_ACTION && source) {
         const runtimeLayer = sourceToRuntimeLayer(item.layerId, source, currentLayers);
         const layer = convertLayer(runtimeLayer, documentId, registry);

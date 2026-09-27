@@ -13,6 +13,7 @@ import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
 import { toolProcessors } from '../tools/toolProcessors.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform } from './affine-transform.ts';
+import { deriveSelectionBaseline, type SelectionHistoryArgs } from './selection-baseline.ts';
 import {
   HIDE_LAYER_ACTION,
   MERGE_ACTION,
@@ -37,11 +38,6 @@ export type HistoryReplayResult = {
 export type HistoryReplayDependencies = {
   createLayer: (input: { layerId: LayerId; layers: LayersRecord; source: LayerSource }) => Layer;
   applyRasterTool: (layer: Layer, args: ToolArgs) => Layer;
-};
-
-type SelectionHistoryArgs = {
-  previousSelectionState?: { selections: Selection[]; activeSelectionId: string | null };
-  nextSelectionState?: { selections: Selection[]; activeSelectionId: string | null };
 };
 
 function cloneLayer(layer: Layer): Layer {
@@ -69,10 +65,9 @@ export function replayHistory(
 ): HistoryReplayResult {
   let layers: LayersRecord = {};
   let documentFrame = cloneDocumentFrame(initialFrame);
-  const firstSelection = history.find((item) => item.actionName === SELECTION_ACTION && !item.disabled);
-  const selectionBaseline = (firstSelection?.args as SelectionHistoryArgs | undefined)?.previousSelectionState;
-  let selections: Selection[] = selectionBaseline?.selections.map((selection) => ({ ...selection })) ?? [];
-  let activeSelectionId: string | null = selectionBaseline?.activeSelectionId ?? null;
+  const selectionBaseline = deriveSelectionBaseline(history);
+  let selections: Selection[] = selectionBaseline.selections.map((selection) => ({ ...selection }));
+  let activeSelectionId: string | null = selectionBaseline.activeSelectionId;
 
   for (let index = 0; index <= targetIndex; index += 1) {
     const item = history[index];

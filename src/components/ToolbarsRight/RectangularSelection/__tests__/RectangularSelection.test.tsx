@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import type { Selection } from '../../../../contexts/general-types.ts';
+import { SELECTION_ACTION } from '../../../../util/constants.ts';
 import RectangularSelection from '../RectangularSelection.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -42,6 +43,36 @@ function resetStoreState(overrides: Partial<typeof storeState> = {}) {
     ...overrides,
   });
 }
+
+/**
+ * Clear is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
+ * edit that appends to history, so a deselect can be undone. The contract is one
+ * `COMMIT_DOCUMENT_EDIT` carrying both the history item and the resulting
+ * selection state.
+ *
+ * `durableEntry` is deliberately not matched. The store publishes the planned
+ * entry only when its durable document still describes the timeline the plan was
+ * made against, and the boundary's failure fallback omits it entirely; both are
+ * correct, so the pin asserts the contract the two paths share. `id` is a fresh
+ * uuid per call, hence `expect.any(String)`.
+ */
+const CLEAR_SELECTION_EDIT = expect.objectContaining({
+  type: 'COMMIT_DOCUMENT_EDIT',
+  payload: expect.objectContaining({
+    historyItem: expect.objectContaining({
+      id: expect.any(String),
+      actionName: SELECTION_ACTION,
+      args: expect.objectContaining({
+        previousSelectionState: expect.objectContaining({
+          selections: [expect.objectContaining({ id: 'selection-1' })],
+          activeSelectionId: 'selection-1',
+        }),
+        nextSelectionState: { selections: [], activeSelectionId: null },
+      }),
+    }),
+    updates: expect.objectContaining({ selections: [], activeSelectionId: null }),
+  }),
+});
 
 describe('RectangularSelection toolbar', () => {
   beforeEach(() => {
@@ -91,12 +122,12 @@ describe('RectangularSelection toolbar', () => {
     expect(pasteSelectionClipboardMock).toHaveBeenCalledTimes(1);
   });
 
-  it('clears committed selections through the explicit selection clear action', () => {
+  it('clears committed selections as one undoable document edit', () => {
     render(<RectangularSelection />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
 
-    expect(dispatchMock).toHaveBeenCalledWith({ type: 'CLEAR_SELECTIONS' });
+    expect(dispatchMock).toHaveBeenCalledExactlyOnceWith(CLEAR_SELECTION_EDIT);
   });
 
   it('disables Copy when no active selection', () => {
@@ -129,12 +160,12 @@ describe('RectangularSelection toolbar', () => {
     expect(copyActiveSelectionMock).not.toHaveBeenCalled();
   });
 
-  it('dispatches CLEAR_SELECTIONS when Clear clicked', () => {
+  it('appends a selection history entry when Clear clicked', () => {
     render(<RectangularSelection />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
 
-    expect(dispatchMock).toHaveBeenCalledWith({ type: 'CLEAR_SELECTIONS' });
+    expect(dispatchMock).toHaveBeenCalledExactlyOnceWith(CLEAR_SELECTION_EDIT);
   });
 
   describe('active selection resolution', () => {
@@ -258,7 +289,7 @@ describe('RectangularSelection toolbar', () => {
 
       expect(copyActiveSelectionMock).toHaveBeenCalledWith(expect.objectContaining({ id: 'selection-1' }));
       expect(pasteSelectionClipboardMock).toHaveBeenCalledTimes(1);
-      expect(dispatchMock).toHaveBeenCalledWith({ type: 'CLEAR_SELECTIONS' });
+      expect(dispatchMock).toHaveBeenCalledExactlyOnceWith(CLEAR_SELECTION_EDIT);
     });
 
     it('escape key does not close anything (no popovers)', () => {

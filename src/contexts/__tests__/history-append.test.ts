@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { createMockHistory, createMockHistoryItem } from '../../__tests__/fixtures/history.ts';
+import {
+  createMockHistory,
+  createMockHistoryItem,
+  createSelectionHistoryItem,
+} from '../../__tests__/fixtures/history.ts';
 import {
   decideDurableAppend,
   durableAppendDiagnostic,
@@ -8,14 +12,37 @@ import {
   type DurableAppendInput,
 } from '../history-append.ts';
 import { deriveSetDocumentFrameEntry } from '../history-adapter.ts';
-import { DURABLE_SCHEMA_VERSION, type DurableDocument, type DurableHistoryEntry } from '../history-model.ts';
-import { SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import {
+  DURABLE_SCHEMA_VERSION,
+  type DurableDocument,
+  type DurableHistoryEntry,
+  type SelectionSnapshot,
+} from '../history-model.ts';
+import { SELECTION_ACTION, SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 import type { DocumentFrame } from '../document-frame.ts';
+import type { Selection } from '../general-types.ts';
 import type { HistoryTimeline } from '../history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from '../history-types.ts';
 
 const baselineFrame: DocumentFrame = { x: 0, y: 0, width: 800, height: 600 };
 const croppedFrame: DocumentFrame = { x: 10, y: 20, width: 400, height: 300 };
+
+function selectionState(id: string): SelectionSnapshot {
+  return {
+    selections: [
+      {
+        id,
+        points: [{ x: 1, y: 2 }],
+        isActive: true,
+        pos: { x: 1, y: 2, width: 3, height: 4 },
+      } satisfies Selection,
+    ],
+    activeSelectionId: id,
+  };
+}
+
+const previousSelectionState = selectionState('sel-previous');
+const nextSelectionState = selectionState('sel-next');
 
 function createFrameEntry(id: string): DurableHistoryEntry {
   return {
@@ -154,6 +181,70 @@ describe('planHistoryAppend: durable translation', () => {
     expect(result.diagnostics[0].message).toContain(TOOL_ACTION);
     // No manufactured `unsupported` operation: the durable branch simply has none.
     expect(result.entry.actionName).toBe(TOOL_ACTION);
+  });
+});
+
+describe('planHistoryAppend: selection translation', () => {
+  const plan = (item: NewHistoryItem, currentSelections?: SelectionSnapshot) =>
+    planHistoryAppend({
+      item,
+      timeline: timeline(createMockHistory(1)),
+      currentFrame: baselineFrame,
+      ...(currentSelections ? { currentSelections } : {}),
+    });
+
+  it('translates a well-formed selection change into a set-selection entry', () => {
+    const result = plan(createSelectionHistoryItem(previousSelectionState, nextSelectionState));
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.durableEntry).toEqual({
+      id: result.entry.id,
+      schemaVersion: DURABLE_SCHEMA_VERSION,
+      enabled: true,
+      operation: { kind: 'set-selection', before: previousSelectionState, after: nextSelectionState },
+    });
+  });
+
+  it('falls back to the tracked current selections when the writer observed no previous state', () => {
+    const result = plan(createSelectionHistoryItem(undefined, nextSelectionState), previousSelectionState);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.durableEntry?.operation).toMatchObject({ kind: 'set-selection', before: previousSelectionState });
+  });
+
+  it.each([
+    ['an empty object', {}],
+    ['a null selections array', { selections: null }],
+    ['a bare array', []],
+    ['a non-array selections value', { selections: { id: 'sel-next' }, activeSelectionId: 'sel-next' }],
+    ['a string', 'selections'],
+    ['a number', 7],
+  ])('refuses %s as a next selection state instead of fabricating a cleared after', (_label, next) => {
+    const result = plan(createSelectionHistoryItem(previousSelectionState, next), previousSelectionState);
+
+    expect(result.durableEntry).toBeNull();
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      code: 'unsupported-history-feature',
+      severity: 'warning',
+      historyId: result.entry.id,
+      actionName: SELECTION_ACTION,
+    });
+    expect(result.diagnostics[0].message).toContain('never fabricates a cleared selection');
+    // The legacy edit still stands: a durable failure never rejects the append.
+    expect(result.entry.actionName).toBe(SELECTION_ACTION);
+  });
+
+  it.each([
+    ['an absent', undefined],
+    ['an explicitly null', null],
+  ])('refuses %s next selection state, where the shadow conversion clears instead', (_label, next) => {
+    const result = plan(createSelectionHistoryItem(previousSelectionState, next), previousSelectionState);
+
+    // Deliberate asymmetry: the conversion keeps the legacy clear, the boundary
+    // has no second authority to stay equal to and reports both shapes.
+    expect(result.durableEntry).toBeNull();
+    expect(result.diagnostics[0]).toMatchObject({ code: 'unsupported-history-feature', severity: 'warning' });
   });
 });
 
@@ -349,5 +440,103 @@ describe('decideDurableAppend', () => {
       actionName: SET_DOCUMENT_FRAME_ACTION,
     });
     expect(diagnostic.message).toContain('rebuilt from the legacy timeline');
+  });
+
+  const selectionPlan = planHistoryAppend({
+    item: createSelectionHistoryItem(previousSelectionState, nextSelectionState),
+    timeline: prior,
+    currentFrame: baselineFrame,
+    currentSelections: previousSelectionState,
+  });
+  const plannedSelection = selectionPlan.durableEntry as DurableHistoryEntry;
+  const decideSelection = (candidate: DurableHistoryEntry) =>
+    decide({
+      entry: selectionPlan.entry,
+      next: { entries: [...priorEntries, selectionPlan.entry], cursor: 1, branchRevision: 0 },
+      planned: candidate,
+    });
+
+  it('publishes the planned set-selection entry the boundary itself derived', () => {
+    const decision = decideSelection(plannedSelection);
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.history).toHaveLength(2);
+    expect(decision.document.history[1].operation).toEqual({
+      kind: 'set-selection',
+      before: previousSelectionState,
+      after: nextSelectionState,
+    });
+  });
+
+  it('accepts the defaulted before of a selection item that supplies no previous state', () => {
+    const bare = planHistoryAppend({
+      item: createSelectionHistoryItem(undefined, nextSelectionState),
+      timeline: prior,
+      currentFrame: baselineFrame,
+      currentSelections: previousSelectionState,
+    });
+
+    // `before` is only a baseline, so a boundary default is a legitimate answer
+    // where the legacy item never recorded one. Rejecting it would defeat every
+    // selection writer that creates history without a previous state.
+    const decision = decide({
+      entry: bare.entry,
+      next: { entries: [...priorEntries, bare.entry], cursor: 1, branchRevision: 0 },
+      planned: {
+        ...(bare.durableEntry as DurableHistoryEntry),
+        operation: { kind: 'set-selection', before: selectionState('defaulted'), after: nextSelectionState },
+      },
+    });
+
+    expect(decision.outcome).toBe('published');
+  });
+
+  it.each([
+    [
+      'a rewritten next selection state',
+      { operation: { kind: 'set-selection', before: previousSelectionState, after: selectionState('rewritten') } },
+      'the durable next selection state does not match the legacy entry',
+    ],
+    [
+      'a rewritten previous selection state',
+      { operation: { kind: 'set-selection', before: selectionState('rewritten'), after: nextSelectionState } },
+      'the durable previous selection state does not match the legacy entry',
+    ],
+    [
+      'a document frame operation',
+      { operation: { kind: 'set-document-frame', previous: baselineFrame, next: croppedFrame } },
+      'a selection change produced a "set-document-frame" operation',
+    ],
+  ] as const)('reports a mismatch for a selection entry carrying %s', (_label, replacement, reason) => {
+    const decision = decideSelection({ ...plannedSelection, ...replacement });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') expect(decision.reason).toBe(reason);
+  });
+
+  it('reports a mismatch for a published selection entry whose legacy item has no next state', () => {
+    const bare = planHistoryAppend({
+      item: createSelectionHistoryItem(undefined, undefined),
+      timeline: prior,
+      currentFrame: baselineFrame,
+      currentSelections: previousSelectionState,
+    });
+    // The boundary plans nothing here, so only a foreign publisher can reach the
+    // guard that refuses a `set-selection` entry the legacy item never described.
+    expect(bare.durableEntry).toBeNull();
+    const decision = decide({
+      entry: bare.entry,
+      next: { entries: [...priorEntries, bare.entry], cursor: 1, branchRevision: 0 },
+      planned: {
+        id: bare.entry.id,
+        schemaVersion: DURABLE_SCHEMA_VERSION,
+        enabled: true,
+        operation: { kind: 'set-selection', before: previousSelectionState, after: nextSelectionState },
+      },
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') expect(decision.reason).toBe('a selection change has no next selection state');
   });
 });

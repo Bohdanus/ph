@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
+import type { Selection } from '../../../../contexts/general-types.ts';
+import { SELECTION_ACTION } from '../../../../util/constants.ts';
 import FeatherMagneticLasso from '../FeatherMagneticLasso.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -15,16 +17,15 @@ const clipboardMock = vi.hoisted(() => ({
   pasteSelectionClipboard: vi.fn(),
 }));
 
+const storeState = vi.hoisted(() => ({
+  activeSelectionId: null as string | null,
+  canvasRef: { current: document.createElement('canvas') },
+  selections: [] as Selection[],
+  totalSize: { width: 800, height: 600 },
+}));
+
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [
-    {
-      activeSelectionId: null,
-      canvasRef: { current: document.createElement('canvas') },
-      selections: [],
-      totalSize: { width: 800, height: 600 },
-    },
-    dispatchMock,
-  ],
+  useStore: () => [storeState, dispatchMock],
 }));
 
 vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
@@ -71,6 +72,55 @@ const setClipboardState = (
   clipboardMock.hasSelectionClipboard = state.hasClipboard ?? false;
 };
 
+const LASSO_SELECTION: Selection = {
+  id: 'sel-1',
+  geometry: 'polygon',
+  sourceTool: 'feather-magnetic-lasso',
+  lifecycle: 'committed',
+  isActive: true,
+  pos: { x: 4, y: 8, width: 16, height: 24 },
+  points: [
+    { x: 4, y: 8 },
+    { x: 20, y: 8 },
+    { x: 20, y: 32 },
+  ],
+};
+
+/**
+ * Clear is no longer a raw `CLEAR_SELECTIONS` reducer action: it is a document
+ * edit that appends to history, so a deselect can be undone. The store mock has
+ * to carry a live selection for the writer to read — an already-empty document
+ * makes Clear a deliberate no-op, which is a different test.
+ *
+ * `durableEntry` is deliberately not matched. The store publishes the planned
+ * entry only when its durable document still describes the timeline the plan was
+ * made against, and the boundary's failure fallback omits it entirely; both are
+ * correct, so the pin asserts the contract the two paths share. `id` is a fresh
+ * uuid per call, hence `expect.any(String)`.
+ */
+const CLEAR_SELECTION_EDIT = expect.objectContaining({
+  type: 'COMMIT_DOCUMENT_EDIT',
+  payload: expect.objectContaining({
+    historyItem: expect.objectContaining({
+      id: expect.any(String),
+      actionName: SELECTION_ACTION,
+      args: expect.objectContaining({
+        previousSelectionState: expect.objectContaining({
+          selections: [expect.objectContaining({ id: 'sel-1' })],
+          activeSelectionId: 'sel-1',
+        }),
+        nextSelectionState: { selections: [], activeSelectionId: null },
+      }),
+    }),
+    updates: expect.objectContaining({ selections: [], activeSelectionId: null }),
+  }),
+});
+
+const setStoreSelections = (selections: Selection[], activeSelectionId: string | null = null) => {
+  storeState.selections = selections;
+  storeState.activeSelectionId = activeSelectionId;
+};
+
 const getInfoButton = () => screen.getByRole('button', { name: INFO_BUTTON_NAME });
 const getSlider = (name: RegExp) => screen.getByRole('slider', { name }) as HTMLInputElement;
 const getCheckbox = (name: RegExp) => screen.getByRole('checkbox', { name }) as HTMLInputElement;
@@ -98,6 +148,7 @@ describe('FeatherMagneticLasso toolbar', () => {
     clipboardMock.layerViaCopy.mockClear();
     clipboardMock.pasteSelectionClipboard.mockClear();
     setClipboardState();
+    setStoreSelections([]);
   });
 
   it('shows settings information in a portal tooltip when the info button is hovered', async () => {
@@ -249,6 +300,7 @@ describe('FeatherMagneticLasso toolbar', () => {
     it('activates copy, paste, and clear with enter and space', async () => {
       const activeSelection = { id: 'sel-1', geometry: 'lasso' };
       setClipboardState({ activeSelection, hasClipboard: true });
+      setStoreSelections([LASSO_SELECTION], LASSO_SELECTION.id);
       render(<FeatherMagneticLasso />);
       const user = userEvent.setup();
 
@@ -275,7 +327,7 @@ describe('FeatherMagneticLasso toolbar', () => {
       expect(clearButton).toHaveFocus();
       await user.keyboard('{Enter}');
 
-      expect(dispatchMock).toHaveBeenCalledWith({ type: 'CLEAR_SELECTIONS' });
+      expect(dispatchMock).toHaveBeenCalledExactlyOnceWith(CLEAR_SELECTION_EDIT);
     });
 
     it('opens info tooltip on info button focus', async () => {

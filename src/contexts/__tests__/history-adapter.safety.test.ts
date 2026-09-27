@@ -1,15 +1,50 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createSelectionHistoryItem } from '../../__tests__/fixtures/history.ts';
 import { AssetRegistry } from '../asset-registry.ts';
-import { convertLegacyHistorySafely, legacyHistoryToDurable } from '../history-adapter.ts';
-import { collectDurableAssetIds, type AssetId } from '../history-model.ts';
+import { convertLegacyHistorySafely, deriveSetSelectionEntry, legacyHistoryToDurable } from '../history-adapter.ts';
+import {
+  collectDurableAssetIds,
+  DURABLE_SCHEMA_VERSION,
+  type AssetId,
+  type SelectionSnapshot,
+} from '../history-model.ts';
+import type { Selection } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
-import { OPEN_DOCUMENT_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import { OPEN_DOCUMENT_ACTION, SELECTION_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 import type { TransformToolArgs } from '../../tools/transform.ts';
 
 const layerId = 'layer-1';
 const initialSize = { width: 400, height: 300 };
 const baselineFrame = { x: 0, y: 0, width: 400, height: 300 };
+
+/** A selection state the conversion can read: `selections` is a real array. */
+function selectionState(id = 'sel'): SelectionSnapshot {
+  return {
+    selections: [
+      {
+        id,
+        points: [{ x: 1, y: 2 }],
+        isActive: true,
+        pos: { x: 1, y: 2, width: 3, height: 4 },
+      } satisfies Selection,
+    ],
+    activeSelectionId: id,
+  };
+}
+
+/**
+ * The shapes `replayHistory` crashes on when it reads `next.selections.map(...)`
+ * and the durable model must not silently answer "no selection" for instead.
+ */
+const UNUSABLE_NEXT_STATES: readonly (readonly [string, unknown])[] = [
+  ['an empty object', {}],
+  ['a null selections array', { selections: null }],
+  ['a bare array', []],
+  ['a non-array selections value', { selections: { id: 'sel' }, activeSelectionId: 'sel' }],
+  ['a string', 'selections'],
+  ['a number', 7],
+];
 
 function blankLayer(id = layerId) {
   return {
@@ -512,3 +547,197 @@ function createOwnedBitmap(width = 1, height = 1) {
   const bitmap = { width, height, close } as unknown as ImageBitmap;
   return { bitmap, close };
 }
+
+describe('legacyHistoryToDurable selection fail-closed boundary', () => {
+  it.each(UNUSABLE_NEXT_STATES)(
+    'records an error diagnostic naming the entry for %s next selection state',
+    (_label, next) => {
+      const registry = new AssetRegistry();
+      const result = convert([createSelectionHistoryItem(selectionState(), next)], registry);
+
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.diagnostics[0]).toMatchObject({
+        historyId: 'selection-clear',
+        actionName: SELECTION_ACTION,
+        severity: 'error',
+        code: 'invalid-history-entry',
+      });
+      expect(result.diagnostics[0]?.message).toMatch(/unusable nextSelectionState/);
+      // No fabricated entry: an unreadable state never becomes a cleared selection.
+      expect(result.document.history).toHaveLength(0);
+    }
+  );
+
+  it.each(UNUSABLE_NEXT_STATES)('voids the document for %s next selection state', (_label, next) => {
+    const registry = new AssetRegistry();
+    const result = convertSafely([createSelectionHistoryItem(selectionState(), next)], registry);
+
+    expect(result.status).toBe('unavailable');
+    expect(result.document).toBeNull();
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      historyId: 'selection-clear',
+      actionName: SELECTION_ACTION,
+      severity: 'error',
+    });
+  });
+
+  it('names the offending entry id in the diagnostic message', () => {
+    const registry = new AssetRegistry();
+    const result = convertSafely(
+      [createSelectionHistoryItem(selectionState(), {}, { id: 'unreadable-selection' })],
+      registry
+    );
+
+    expect(result.status).toBe('unavailable');
+    expect(result.diagnostics[0]?.message).toContain('unreadable-selection');
+  });
+
+  it.each([
+    ['an absent', undefined],
+    ['an explicitly null', null],
+  ])('stays current and clears for %s next selection state', (_label, next) => {
+    const registry = new AssetRegistry();
+    const result = convertSafely([createSelectionHistoryItem(selectionState(), next)], registry);
+
+    // `replayHistory` reads `next?.selections ?? []`, so the shadow has to clear
+    // here to stay equal to the legacy replay it shadows.
+    expect(result.status).toBe('current');
+    expect(result.diagnostics).toEqual([]);
+    const operation = result.document?.history[0]?.operation;
+    expect(operation).toMatchObject({ kind: 'set-selection', after: { selections: [], activeSelectionId: null } });
+    expect(operation?.kind === 'set-selection' && operation.before.selections[0]?.id).toBe('sel');
+  });
+
+  it('separates an absent next state, which clears, from an unreadable one, which only reports', () => {
+    const registry = new AssetRegistry();
+    const converted = convert(
+      [
+        createSelectionHistoryItem(selectionState(), undefined, { id: 'absent-selection' }),
+        createSelectionHistoryItem(selectionState(), {}, { id: 'unreadable-selection' }),
+      ],
+      registry
+    );
+
+    const [cleared] = converted.document.history;
+    expect(cleared?.id).toBe('absent-selection');
+    expect(cleared?.operation).toMatchObject({
+      kind: 'set-selection',
+      after: { selections: [], activeSelectionId: null },
+    });
+    // Only the unreadable entry is reported, and it contributes no entry at all.
+    expect(converted.diagnostics).toHaveLength(1);
+    expect(converted.diagnostics[0]).toMatchObject({ historyId: 'unreadable-selection', severity: 'error' });
+  });
+});
+
+describe('deriveSetSelectionEntry', () => {
+  const currentSelection = selectionState('current');
+  const beforeOf = (derived: ReturnType<typeof deriveSetSelectionEntry>) =>
+    derived?.operation.kind === 'set-selection' ? derived.operation.before : null;
+  const afterOf = (derived: ReturnType<typeof deriveSetSelectionEntry>) =>
+    derived?.operation.kind === 'set-selection' ? derived.operation.after : null;
+
+  it('derives before and after from the legacy item and shares its entry id', () => {
+    const previousSelection = selectionState('previous');
+    const nextSelection = selectionState('next');
+
+    const derived = deriveSetSelectionEntry(
+      createSelectionHistoryItem(previousSelection, nextSelection),
+      currentSelection
+    );
+
+    expect(derived).toEqual({
+      id: 'selection-clear',
+      schemaVersion: DURABLE_SCHEMA_VERSION,
+      enabled: true,
+      operation: { kind: 'set-selection', before: previousSelection, after: nextSelection },
+    });
+  });
+
+  it('uses the tracked current selections as the before baseline when the item carries none', () => {
+    const nextSelection = selectionState('next');
+
+    const derived = deriveSetSelectionEntry(createSelectionHistoryItem(undefined, nextSelection), currentSelection);
+
+    expect(beforeOf(derived)).toEqual(currentSelection);
+    expect(afterOf(derived)).toEqual(nextSelection);
+  });
+
+  it.each(UNUSABLE_NEXT_STATES)(
+    'returns null for %s next selection state instead of an empty after',
+    (_label, next) => {
+      expect(deriveSetSelectionEntry(createSelectionHistoryItem(selectionState(), next), currentSelection)).toBeNull();
+    }
+  );
+
+  it.each([
+    ['an absent', undefined],
+    ['an explicitly null', null],
+  ])('returns null for %s next selection state, the shape only the conversion clears', (_label, next) => {
+    expect(deriveSetSelectionEntry(createSelectionHistoryItem(selectionState(), next), currentSelection)).toBeNull();
+  });
+
+  it('distinguishes a genuine select-none from a next state it cannot read', () => {
+    const cleared = deriveSetSelectionEntry(
+      createSelectionHistoryItem(selectionState(), { selections: [], activeSelectionId: null }),
+      currentSelection
+    );
+    const unreadable = deriveSetSelectionEntry(
+      createSelectionHistoryItem(selectionState(), { selections: null }),
+      currentSelection
+    );
+
+    // A real empty snapshot is a real clear and has to survive. The refusal must
+    // never be the same answer, or the two become indistinguishable downstream.
+    expect(afterOf(cleared)).toEqual({ selections: [], activeSelectionId: null });
+    expect(unreadable).toBeNull();
+  });
+
+  it('copies the baseline rather than aliasing the tracked current selections', () => {
+    const derived = deriveSetSelectionEntry(
+      createSelectionHistoryItem(undefined, selectionState('next')),
+      currentSelection
+    );
+    const before = beforeOf(derived);
+
+    expect(before).toEqual(currentSelection);
+    expect(before).not.toBe(currentSelection);
+    expect(before?.selections).not.toBe(currentSelection.selections);
+    expect(before?.selections[0]).not.toBe(currentSelection.selections[0]);
+    expect(before?.selections[0]?.points).not.toBe(currentSelection.selections[0]?.points);
+    expect(before?.selections[0]?.pos).not.toBe(currentSelection.selections[0]?.pos);
+  });
+
+  it('copies the previous state off the legacy item rather than aliasing its args', () => {
+    const previousSelection = selectionState('previous');
+    const derived = deriveSetSelectionEntry(
+      createSelectionHistoryItem(previousSelection, selectionState('next')),
+      currentSelection
+    );
+    const before = beforeOf(derived);
+
+    expect(before).toEqual(previousSelection);
+    expect(before).not.toBe(previousSelection);
+    expect(before?.selections[0]).not.toBe(previousSelection.selections[0]);
+  });
+
+  it('normalizes a key-absent activeSelectionId to null', () => {
+    const bare = { selections: selectionState('next').selections };
+
+    const derived = deriveSetSelectionEntry(createSelectionHistoryItem(undefined, bare), currentSelection);
+    const after = afterOf(derived);
+
+    expect(after?.activeSelectionId).toBeNull();
+    expect(after?.selections.map((selection) => selection.id)).toEqual(['next']);
+  });
+
+  it('carries the disabled state of the legacy item', () => {
+    const derived = deriveSetSelectionEntry(
+      createSelectionHistoryItem(undefined, selectionState('next'), { disabled: true }),
+      currentSelection
+    );
+
+    expect(derived?.enabled).toBe(false);
+  });
+});

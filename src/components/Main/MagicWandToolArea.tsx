@@ -2,6 +2,7 @@ import { type PointerEvent, type RefObject, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
+import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import type { Point, Selection } from '../../contexts/general-types.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import type { MagicWandToolArgs } from '../../tools/magicWand.ts';
@@ -19,6 +20,7 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { toolArgs } = useCurrentTool();
   const args = toolArgs as MagicWandToolArgs;
+  const { commitSelection } = useSelectionHistory();
 
   const { getLocalCoords } = usePointerPosition({
     ref: containerRef,
@@ -83,7 +85,12 @@ export const MagicWandToolArea = ({ className, overlayCtxRef }: MagicWandToolAre
       return;
     }
 
-    dispatch({ type: 'COMMIT_SELECTION', payload: selection });
+    // The gesture is a single click, so this is both its only pointer handler
+    // and its end-of-gesture commit point: there is no drag phase to keep
+    // transient, and `START_SELECTION_DRAFT` above is the only earlier dispatch.
+    // Routed through the single-writer hook so the drawn selection becomes one
+    // undoable document edit instead of living only on a later clear entry.
+    commitSelection(selection, 'create');
     redrawOverlay(selection);
   };
 

@@ -2,7 +2,9 @@
 
 Open problems in the history/presentation work. Every item below was re-verified against the
 working tree on 2026-09-27; claims that did not survive verification were dropped rather than
-softened. Re-read line numbers before editing — this file is a snapshot, not a live view.
+softened. Re-read line numbers before editing — this file is a snapshot, not a live view. Item
+numbers are stable identifiers that other items cite, so they are not renumbered: the gaps are
+entries that were fixed and deleted.
 
 **Scope:** the durable-replay migration and the presentation/append boundary. Tool features and
 visual fidelity are out of scope unless a defect is caused by this work.
@@ -23,30 +25,30 @@ branch.** Merge it first. It is 16 files, +1272/−189, of which 6 are productio
 
 It closes the following items in this file, all of which are open here today:
 
-| Item in this file                                               | Fixed by `b027de3` | How                                                                                                                                                                                                                                                                |
-| --------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **18** refused publication dropped with `console.debug`         | yes                | `console.error` with a message that names the invariant violation                                                                                                                                                                                                  |
-| **17** duplicate durable entry id has no second line of defence | yes                | `publishedEntryIds: Set<string>` in `history-adapter.ts`; the offending entry is _skipped_ and the diagnostic is `error`, not `warning`                                                                                                                            |
-| **16** invalid document frame converts with no diagnostic       | yes                | the `SET_DOCUMENT_FRAME_ACTION` branch gained an `else` that pushes a `warning` / `invalid-history-entry` diagnostic                                                                                                                                               |
-| **7** presentation bitmaps never released on layer delete       | yes                | new `retireDepartedLayers(before, after)` in `StoreContext.tsx`, driven off the layer set-difference, never off `deletedLayers`; runs on both the commit and the replay path, and retires the _current_ layer's bitmap so a borrowed raster is never double-closed |
-| **19** `saveLayerCanvas` is dead in production                  | yes                | the function is deleted, along with the `materializePresentationBitmap` import that `tsconfig.app.json:32` (`noUnusedLocals`) would otherwise reject                                                                                                               |
+| Item in this file                                               | Fixed by `b027de3` | How                                                                                                                                                  |
+| --------------------------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **18** refused publication dropped with `console.debug`         | yes                | `console.error` with a message that names the invariant violation                                                                                    |
+| **17** duplicate durable entry id has no second line of defence | yes                | `publishedEntryIds: Set<string>` in `history-adapter.ts`; the offending entry is _skipped_ and the diagnostic is `error`, not `warning`              |
+| **16** invalid document frame converts with no diagnostic       | yes                | the `SET_DOCUMENT_FRAME_ACTION` branch gained an `else` that pushes a `warning` / `invalid-history-entry` diagnostic                                 |
+| **19** `saveLayerCanvas` is dead in production                  | yes                | the function is deleted, along with the `materializePresentationBitmap` import that `tsconfig.app.json:32` (`noUnusedLocals`) would otherwise reject |
 
-**After merging, delete items 7, 16, 17, 18 and 19 from this file and re-derive the rest.** Do not
+**After merging, delete items 16, 17, 18 and 19 from this file and re-derive the rest.** Do not
 work them from this document.
 
 Two source comments still claim the planned durable entry is not published. That is false on this
-branch: `StoreContext.tsx:652` publishes it through `decideDurableAppend`.
+branch: `StoreContext.tsx:731` publishes it through `decideDurableAppend`.
 
-- `useLayer.ts:573-577` — "The planned durable entry is not published yet: the store still rebuilds its
-  diagnostic shadow from the legacy timeline".
-- `history-append.ts:21-25` — "Phase 1 status: plan only. The durable entry is derived at the append
+- `useLayer.ts:592-596` — "Document-frame changes are the first appends planned through the Phase 1
+  boundary. The planned durable entry is not published yet: the store still rebuilds its
+  diagnostic shadow from the legacy timeline…"
+- `history-append.ts:29-33` — "Phase 1 status: plan only. The durable entry is derived at the append
   point but is not published. `StoreContext` still converts the whole timeline into the diagnostic
   shadow, so publishing the planned entry here would create a second writer for a single append."
 
 **Fix.** Rewrite both to state the single-writer contract: the store publishes the planned entry when
 `decideDurableAppend` accepts it against its current durable document, and reconverts the whole
-timeline otherwise. Keep the "reporting never blocks the append" invariant next to the second one,
-where it is the reason the boundary's own diagnostics are redundant.
+timeline otherwise. Keep the "reporting never blocks the append" invariant — `history-append.ts:52-53`
+— next to the second one, where it is the reason the boundary's own diagnostics are redundant.
 
 ---
 
@@ -93,50 +95,7 @@ rest, and delete the duplicated composer. Do not attempt all five consumers at o
 
 ---
 
-## 2. P0 — the single-writer append path is defeated by `durableStatus` staleness
-
-**Problem.** `de91a83` is the only real single-writer slice: `applyDocumentCrop` hands its planned
-durable entry to `COMMIT_DOCUMENT_EDIT`, and the store publishes it instead of reconverting the
-timeline — _but only when the durable document still describes exactly the timeline the plan was
-made against._
-
-That precondition is almost never true in real use, because of a three-link chain:
-
-1. `StoreContext.tsx:654` — `base: currentState.durableStatus === 'current' ? currentState.durableDocument : null`
-2. The reducer sets `durableStatus: 'stale'` for roughly twenty action types, including
-   `SET_ACTIVE_LAYER` (`:327`), `SET_TOOL_NAME` (`:314`), `SET_TOOL_DIRTY` (`:316`),
-   `SET_COLOR` (`:451`), `SET_BACKGROUND_COLOR` (`:453`), and every selection action
-   (`SET_SELECTIONS` `:457` through `CLEAR_SELECTIONS` `:509`, including `ADD_SELECTION`,
-   `COMMIT_SELECTION`, `UPDATE_SELECTION`, `MOVE_SELECTION`, `SET_ACTIVE_SELECTION`,
-   `START_SELECTION_DRAFT`, `CANCEL_SELECTION_DRAFT`, `SET_SELECTION_CLIPBOARD`,
-   `MARK_SELECTION_COPIED`).
-3. `history-append.ts:221` — `if (!base) return { outcome: 'preconditions', reason: 'the durable document is unavailable' }`, which falls back to full reconversion **silently**.
-
-`durableStatus` only returns to `'current'` via a successful conversion (`:456`, from
-`converted.status`) or an explicit `SET_DURABLE_STATUS`. So:
-
-> **Two consecutive crops publish. A crop after any layer click, tool switch, colour change, or
-> selection action silently reconverts the entire timeline.**
-
-Nothing surfaces the difference. `durable-append-mismatch` is only emitted on the `mismatch`
-outcome; `preconditions` is by design a silent fallback, and the boundary's own diagnostics are
-discarded at the only call site (`useLayer.ts:568-576`).
-
-The tests miss it because they exercise the published path through `UPDATE_LAYERS`, which has no
-production caller (item 13).
-
-**Fix.** Do **not** weaken the gate — it is what makes publishing safe. Decouple the two concerns
-that one status field is conflating: a _selection_ is not a reason to invalidate the _durable
-document_. Either narrow what sets `stale` to actions that actually change durable state, or split
-the status into document-validity and append-readiness. Then add a test that publishes after an
-intervening `SET_ACTIVE_LAYER`.
-
-**Files.** `src/contexts/StoreContext.tsx`, `src/contexts/history-append.ts`,
-`src/contexts/useLayer.ts`, `src/contexts/__tests__/StoreContext.durable-append.test.tsx`
-
----
-
-## 3. P0 — interleaved affine and filter operations are grouped by type
+## 2. P0 — interleaved affine and filter operations are grouped by type
 
 **Problem.** `materialization.ts`'s product rule groups operations by kind rather than applying them
 in timeline order, so a filter applied between two affines is hoisted. Raster processors are now
@@ -224,43 +183,13 @@ in a test that dispatches through the hook and compares against the reducer resu
 
 ---
 
-## 7. Presentation bitmaps are never released when a layer is deleted
-
-> **Fixed on `fix/unit-tests` (`b027de3`).** Listed here because it is open on `main`; delete this
-> item after the merge. Full analysis preserved in §0.
-
-**Problem.** `DocumentPresentationScope` (`src/contexts/layer-presentation.ts:133`) keeps every
-bitmap it publishes in `published: Map<documentId, Set<BitmapSource>>`. `retire()` has exactly one
-call site — `src/contexts/StoreContext.tsx:622` — and fires only for the bitmap a promotion
-_replaces_. Layer removal (`src/contexts/useLayer.ts:390-424` → `COMMIT_DOCUMENT_EDIT` →
-`src/contexts/StoreContext.tsx:638-707`) never calls it; the `deletedLayers` record it keeps
-(`src/contexts/useLayer.ts:395`) nulls both caches, so the store drops the only other reference and
-the scope's `Set` becomes the sole owner. Nothing ever closes it.
-
-The retention is unbounded per document. A stranded bitmap can never be reclaimed by a later
-promotion, because `superseded` is built from the _current_ layer's bitmap
-(`src/contexts/StoreContext.tsx:607`) and a promotion naming a deleted layer is refused at `:605`
-(whose bitmap is then closed at `:610`). N add → promote → delete cycles on one document strand N
-full-raster `ImageBitmap`s — a 4000×3000 RGBA bitmap is roughly 48 MB.
-
-This is a net regression against `origin/main`, where `saveLayerCanvas` assigned `layer.bitmap` in
-place with no registry, so a removed layer's bitmap simply became unreachable and was
-GC-reclaimed.
-
-**Fix.** Retire on layer removal, driven off the layer set-difference rather than off
-`deletedLayers`, and assert `close()` is called for a deleted layer's published bitmap.
-
-**Files.** `src/contexts/layer-presentation.ts`, `src/contexts/StoreContext.tsx`,
-`src/contexts/useLayer.ts`
-
----
-
-## 8. The save/merge path bypasses the presentation scope entirely
+## 7. The save/merge path bypasses the presentation scope entirely
 
 **Problem.** `useLayer.ts:603` calls `createImageBitmap(canvasRef.current)` bare — no scope
 tracking, no lease, no `retire()` candidate. Every save and every flatten therefore creates a
-bitmap that the scope never learns about, so the scope's completeness guarantee (item 7) does not
-cover them even once item 7 is fixed.
+bitmap that the scope never learns about, so the scope's completeness guarantee does not cover them:
+retirement on removal covers the bitmaps a document edit drops from the layer record, and a bare
+`createImageBitmap` never enters that record.
 
 This also falsifies handoff 08 §4.6's claim that "nothing else assumes the global exists."
 
@@ -351,19 +280,18 @@ kind and its four test blocks.
 
 ## 13. `UPDATE_LAYERS` is an unguarded escape hatch with zero callers
 
-**Problem.** `UPDATE_LAYERS` is in the public `Action` union (`StoreContext.tsx:144`) with a
-hand-written reducer branch (`:344-354`) that sets `hasUnsavedChanges: true` and
+**Problem.** `UPDATE_LAYERS` is in the public `Action` union (`StoreContext.tsx:178`) with a
+hand-written reducer branch (`:392-402`) that sets `hasUnsavedChanges: true` and
 `durableStatus: 'stale'`. It has **no production caller**, and it has no
 `layersDifferOnlyByPresentation` guard — which is exactly the guard that was added for
 `PUBLISH_RUNTIME_PRESENTATION` at `layer-presentation.ts:96-112`.
 
 So the store exposes two ways to set layers, one guarded and one not, and the unguarded one is
-test-only. It is also what the append tests use to reach the published path, which is why item 2
-went unnoticed.
+test-only. It is also what the append tests use to reach the published path, which is how the
+`durableStatus` staleness that defeated that path in ordinary use stayed invisible.
 
 **Fix.** Delete `UPDATE_LAYERS`. If a test needs to move layers, dispatch
-`COMMIT_DOCUMENT_EDIT` with the same shape production uses — that also fixes the test fidelity in
-item 2.
+`COMMIT_DOCUMENT_EDIT` with the same shape production uses.
 
 **Files.** `src/contexts/StoreContext.tsx`, `src/contexts/__tests__/**`
 
@@ -386,21 +314,30 @@ it through `COMMIT_DOCUMENT_EDIT` so it participates in the single-writer contra
 
 ---
 
-## 15. 12 of the 13 live history writers still reconvert the whole timeline
+## 15. Only the crop and selection writers reach the append boundary; the rest reconvert the whole timeline
 
-**Problem.** The Phase 1 boundary (`history-append.ts`) is wired for exactly one action,
-`set-document-frame`. `planHistoryAppend` returns an `unsupported-history-feature` diagnostic for
-every other action, and every non-frame `COMMIT_DOCUMENT_EDIT` therefore calls
-`buildDurableDocument` on the whole timeline (`StoreContext.tsx:667-678`).
+**Problem.** `translate` (`history-append.ts:121`) handles exactly two action kinds:
+`SET_DOCUMENT_FRAME_ACTION` (`:122`) and `SELECTION_ACTION` (`:138`). Everything else returns
+`unsupported-history-feature` (`:154-158`), so a `COMMIT_DOCUMENT_EDIT` with no planned entry
+reconverts the whole timeline at `StoreContext.tsx:747-758`.
 
-Derived writer inventory on `main`:
+Derived writer inventory, from the `type: 'COMMIT_DOCUMENT_EDIT'` dispatch sites in non-test
+source. Three sites hand the store a `durableEntry`:
 
-- 14 history-appending dispatch sites, 13 with production callers
-- 1 boundary-ready (`applyDocumentCrop`)
-- 15 converted by adapter only (real durable operations, full reconversion per append)
-- 2 legacy-only (`addHistoryEntry`, `APPLY_HISTORY_REPLAY`)
-- 6 writers the plan's inventory omits: `SET_ACTIVE_LAYER`, `COMMIT_SELECTION`, `CLEAR_SELECTIONS`,
-  `UPDATE_SELECTION`, `MARK_SELECTION_COPIED`, `SET_DURABLE_STATUS`
+- `useLayer.ts:597` — `applyDocumentCrop`, `set-document-frame`
+- `useSelectionHistory.ts:158` — `clearSelections`, `set-selection`
+- `useSelectionHistory.ts:240` — `commitSelection` (`'create'` / `'move'`), `set-selection`
+
+Eleven further sites have production callers and carry no `durableEntry`, so each one
+reconverts: `useLayer.ts:166, 293, 310, 374, 408, 432, 452, 638`, `useApp.ts:159` (the tool-switch
+deselect, which builds its `SELECTION_ACTION` at `:165-174` without planning), and the two
+`useSelectionHistory.ts:174, 256` plan-failure fallbacks. `useHistory.ts:52` (`addHistoryEntry`) is
+the fifteenth site and has no production caller at all (item 14). `APPLY_HISTORY_REPLAY` and
+`REPLACE_DOCUMENT` remain legacy-only.
+
+The selection pair covers three gestures, not the whole selection surface: the polygon, freehand
+and feathered magnetic lasso paths still write no selection history (item 30), so a selection they
+create still reaches the timeline only as a later entry's `previousSelectionState`.
 
 The next slices are already named in the readiness docs: `set-layer-properties` and
 `reorder-layers`.
@@ -953,3 +890,108 @@ actually honours the wildcard. Nothing in the repo exercises it.
 
 **Files.** `/Users/bkalynovskyi/ph/.claude/settings.local.json` (untracked, outside the repository),
 `AGENTS.md`, `tsconfig.json`, `package.json`
+
+---
+
+## 30. The polygon, freehand and feathered magnetic lasso gestures still write no selection history
+
+**Problem.** `commitSelection` in `src/contexts/useSelectionHistory.ts:195` is the single writer for
+selection-creation history, and only two gestures use it: `MagicWandToolArea.tsx:23, 93` and
+`RectangularSelectionToolArea.tsx:27, 83`. The two remaining selection-creating paths still dispatch
+the raw actions:
+
+- `FeatherMagneticLassoToolArea.tsx:376` — `dispatch({ type: 'COMMIT_SELECTION', payload: selection })`
+- `PolygonClickToolArea.tsx:204` — `dispatch({ type: 'COMMIT_SELECTION', payload: selection })`
+- `PolygonClickToolArea.tsx:274` — `dispatch({ type: 'UPDATE_SELECTION', payload: selection })`, the
+  redraw of an already-committed polygon
+
+None of those reducer arms append to `history` or move `historyIndex`: `COMMIT_SELECTION` returns
+`commitSelection(state, …)` (`StoreContext.tsx:295-313`, dispatched at `:515-516`) and
+`UPDATE_SELECTION` returns `updateCommittedSelection(state, …)` (`:315-334`, dispatched at
+`:517-519`). Both are `{ ...state, … }` returns that never name `history` or `historyIndex`, so a
+selection these gestures create is recorded nowhere. It survives on the timeline only as the
+`previousSelectionState` of whatever clear entry happens to come later, and the panel
+disable-toggle, `resetHistoryTo` navigation and the durable conversion all treat that later entry
+as the event that created it.
+
+Both files also clear selections through the raw action rather than the writer —
+`FeatherMagneticLassoToolArea.tsx:304` and `PolygonClickToolArea.tsx:517` in `removeLastAnchor` when
+the last anchor is popped. The Clear/Deselect control path already goes through
+`useSelectionHistory.clearSelections`, so those two sites are the remaining un-routed clears on
+these components.
+
+**Fix.** Route each gesture-end commit through `commitSelection(selection, 'create')` — and
+`('…', 'move')` for the committed-polygon redraw at `PolygonClickToolArea.tsx:274` — exactly as the
+magic wand and rectangle already do. Capture the before-snapshot at gesture start: the polygon
+builds its points anchor by anchor across many clicks, so its `previousSelectionState` must be the
+state before the first anchor was placed, not the state at double-click. Keep every pointer-move
+preview transient, as the rectangle does — its whole drag is canvas overlay and the store is
+untouched until `onChangeEnd` (`RectangularSelectionToolArea.tsx:76-83`) — so the commit belongs at
+gesture end and nowhere else, or the gesture writes one history entry per pointer move. The same
+change should route `:304` / `:517` through `clearSelections`, and delete the now-dead comment in
+`useSelectionHistory.ts:36-42` that claims the raw arms are kept for the polygon and lasso gestures.
+
+**Files.** `src/components/Main/FeatherMagneticLassoToolArea.tsx`,
+`src/components/Main/PolygonClickToolArea.tsx`, `src/contexts/useSelectionHistory.ts`
+
+---
+
+## 31. The selection baseline lookup must stay unbounded over the whole timeline
+
+**Problem.** `deriveSelectionBaseline` (`selection-baseline.ts:56`) is deliberately unbounded: it
+takes the **first** non-disabled `SELECTION_ACTION` on the timeline and seeds from that entry's
+`previousSelectionState` (`:57-59`), with no cursor argument at all. Both consumers take the
+timeline wholesale — `history-replay.ts:68` and `history-adapter.ts:465` — so the durable baseline
+and the legacy replay start from the same snapshot, which is the parity property `0659ce9`
+extracted this rule to own.
+
+Bounding the lookup by replay target looks like a correctness fix and is a data-loss bug **until
+item 30 is done**, and that ordering is the whole content of this entry. Two tests pin the
+unbounded behaviour as load-bearing, not stale:
+
+- `src/contexts/__tests__/useHistory.test.tsx:439` — "restores a cleared selection when undoing the
+  tool-switch history entry". The fixture is a rename entry at index 0 and a selection-clear entry
+  at index 1; `undo()` from `historyIndex: 1` replays to index 0, and the only record that the
+  selection ever existed is the clear entry at index 1 — after the target. Bound the lookup and
+  undoing a tool-switch deselect becomes a silent visual no-op.
+- `src/contexts/__tests__/history-replay.test.ts:90` — "uses the first selection action baseline
+  before it and its next state at or after it". `replayHistory(history, 0, …)` at `:117` expects the
+  baseline, with the `SELECTION_ACTION` at index 1, again after the target index.
+
+**Fix.** Do not bound it yet. The precondition is that **every** selection-creating gesture records
+its own entry, so the first `SELECTION_ACTION` on the timeline is the one that created the state
+rather than a later entry that merely cleared it — i.e. item 30, plus the two raw clears it names.
+Once that holds, bound the lookup at the replay target and change those two tests **in the same
+change**: they must be re-derived to assert a creation entry that precedes the target, not deleted
+to make the bound pass. The unbounded behaviour is a live feature, so a fix that makes one of them
+fail has removed a user-visible capability, not corrected a pin.
+
+**Files.** `src/contexts/selection-baseline.ts`, `src/contexts/history-replay.ts`,
+`src/contexts/__tests__/useHistory.test.tsx`, `src/contexts/__tests__/history-replay.test.ts`
+
+---
+
+## 32. Every selection change now appears as a "Selection" row in the History panel
+
+**Problem.** `getHistoryItemTitle` (`useHistory.ts:15`) special-cases a tool source (`:18-20`),
+`TOOL_ACTION` (`:22-24`) and the crop (`:26`), and otherwise **falls through to the raw action
+name** (`:28`). `HistoryTab.tsx:22` renders that string, so a `SELECTION_ACTION` entry is labelled
+with the constant's own value.
+
+That was invisible while selections wrote no history. It is not any more: the Clear/Deselect
+controls, the magic-wand click and the rectangle drag end each now append one real entry through
+`commitSelection` / `clearSelections`, so every selection change in a session adds a row. Each row
+is also a navigation target (`resetHistoryTo(originalIndex)` at `HistoryTab.tsx:27`) and carries a
+disable toggle (`:45`), so a user can step onto or disable a row whose label says nothing about
+what it did — and there is no way to tell a creation from a clear, since both carry the same
+`layerId: 'selection'` and the same action name.
+
+**This is a UX decision, not a defect with one right answer.** The operator chooses between hiding
+selection entries from the panel, grouping consecutive ones into a single row, and relabelling them
+distinguishably (create / clear / resize). Whichever is chosen, the label has to come from
+something the entry actually carries; `nextSelectionState` and `previousSelectionState` are already
+on the item (`useSelectionHistory.ts:214-224`), so a relabel is derivable without a new history
+field. Do not add a history field for presentation alone while the legacy timeline is still the
+replay authority.
+
+**Files.** `src/contexts/useHistory.ts:15-29`, `src/components/SidebarRight/HistoryTab.tsx`

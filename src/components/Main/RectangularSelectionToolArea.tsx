@@ -2,6 +2,7 @@ import { type PointerEvent, type RefObject, useMemo, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useRect } from '../../hooks/useRect.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
+import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import type { RectXYSorted } from '../../contexts/general-types.ts';
 import {
   createCommittedRectangleSelection,
@@ -23,6 +24,7 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
   ] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const isEditingCommittedSelectionRef = useRef(false);
+  const { commitSelection } = useSelectionHistory();
 
   const activeRectangleSelection = getActiveRectangularSelection(selections, activeSelectionId);
   const activeRectangleRect = useMemo(
@@ -71,7 +73,14 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
           y: localSelection.pos.y + documentFrame.y,
         },
       };
-      dispatch({ type: existingSelection ? 'MOVE_SELECTION' : 'COMMIT_SELECTION', payload: selection });
+      // `onChangeEnd` is the gesture's real end: `useRect` calls it from its
+      // pointer-up handler, after the RAF-throttled drag has finished
+      // (`useRect.ts:392`). No `onChange`/`onRepaint` is wired up, so every
+      // intermediate pointer move stayed a canvas overlay draw and dispatched
+      // nothing — the store was untouched until this line. That is what makes one
+      // call per completed gesture the whole story for a rectangle drag, and the
+      // load-bearing reason this cannot be moved up into the move handler.
+      commitSelection(selection, existingSelection ? 'move' : 'create');
     },
   });
 

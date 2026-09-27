@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import type { Selection } from '../../../contexts/general-types.ts';
 import type { PointerEvent as ReactPointerEvent } from 'react';
+import { SELECTION_ACTION } from '../../../util/constants.ts';
 import { MagicWandToolArea } from '../MagicWandToolArea.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -22,14 +23,24 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   }),
 }));
 
+/**
+ * The wand commit is routed through `useSelectionHistory`, which reads the
+ * selection baseline AND the legacy append point (`history`/`historyIndex`) off
+ * the same store tuple the tool area reads, so the mock carries every field the
+ * single-writer hook destructures — a missing `activeSelectionId` would arrive
+ * as `undefined` inside the recorded `previousSelectionState`.
+ */
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
     {
       canvasRef: { current: sourceCanvas },
       containerRef: { current: document.createElement('div') },
       selections: storeState.selections,
+      activeSelectionId: null,
       totalSize: { width: 6, height: 6 },
       documentFrame: storeState.documentFrame,
+      history: [],
+      historyIndex: 0,
     },
     dispatchMock,
   ],
@@ -94,6 +105,46 @@ function createMockContext() {
   } as unknown as CanvasRenderingContext2D;
 }
 
+/**
+ * The wand commit is no longer a raw `COMMIT_SELECTION`: it is a document edit
+ * that appends to history, so a drawn selection is undoable on its own instead of
+ * surviving only as the `previousSelectionState` of whatever clears it later. The
+ * contract is one `COMMIT_DOCUMENT_EDIT` carrying both the history item and the
+ * resulting selection state.
+ *
+ * Only the fields below are narrowed: `durableEntry` is deliberately not part of
+ * the pin, because the store publishes the planned entry only when its durable
+ * document still describes the timeline the plan was made against, and the
+ * boundary's failure fallback omits it entirely — both are correct.
+ */
+type SelectionEdit = {
+  type: string;
+  payload: {
+    historyItem: { actionName: string; id: string };
+    updates: { selections: { id: string }[]; activeSelectionId: string | null };
+  };
+};
+
+/**
+ * The `COMMIT_DOCUMENT_EDIT` actions the mocked dispatch received.
+ *
+ * `updates.activeSelectionId` cannot be pinned to a literal, because both the
+ * history id and the selection id are fresh uuids minted per call. What is a real
+ * contract is the linkage between them, so the tests read the two values off the
+ * dispatched action and compare them.
+ */
+function selectionEdits(): SelectionEdit[] {
+  return (dispatchMock.mock.calls as unknown[][])
+    .map(([action]) => action as SelectionEdit)
+    .filter((action) => action.type === 'COMMIT_DOCUMENT_EDIT');
+}
+
+function singleSelectionEdit(): SelectionEdit {
+  const edits = selectionEdits();
+  expect(edits).toHaveLength(1);
+  return edits[0];
+}
+
 describe('MagicWandToolArea', () => {
   let getContextSpy: ReturnType<typeof vi.spyOn> | null = null;
 
@@ -129,20 +180,45 @@ describe('MagicWandToolArea', () => {
     });
     expect(dispatchMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'COMMIT_SELECTION',
+        type: 'COMMIT_DOCUMENT_EDIT',
         payload: expect.objectContaining({
-          geometry: 'polygon',
-          lifecycle: 'committed',
-          metadata: expect.objectContaining({
-            magicWand: expect.objectContaining({
-              boundaryPointCount: 4,
-              selectedPixelCount: 4,
-              tolerance: 0,
-            }),
+          historyItem: expect.objectContaining({
+            id: expect.any(String),
+            actionName: SELECTION_ACTION,
           }),
-          sourceTool: 'magic-wand',
+          updates: expect.objectContaining({
+            // Exactly one selection, appended: the raw `COMMIT_SELECTION` payload
+            // used to carry these fields itself.
+            selections: [
+              expect.objectContaining({
+                geometry: 'polygon',
+                lifecycle: 'committed',
+                isActive: true,
+                sourceTool: 'magic-wand',
+                points: [
+                  { x: 1, y: 1 },
+                  { x: 3, y: 1 },
+                  { x: 3, y: 3 },
+                  { x: 1, y: 3 },
+                ],
+                pos: { x: 1, y: 1, width: 4, height: 4 },
+                metadata: expect.objectContaining({
+                  magicWand: expect.objectContaining({
+                    boundaryPointCount: 4,
+                    selectedPixelCount: 4,
+                    tolerance: 0,
+                  }),
+                }),
+              }),
+            ],
+          }),
         }),
       })
+    );
+    // The pointer maps to exactly the appended selection, which is what activates
+    // it: the two uuids cannot be pinned literally, their equality can.
+    expect(singleSelectionEdit().payload.updates.activeSelectionId).toBe(
+      singleSelectionEdit().payload.updates.selections[0].id
     );
     expect(mockCtx.closePath).toHaveBeenCalled();
   });
@@ -201,7 +277,10 @@ describe('MagicWandToolArea', () => {
       payload: { sourceTool: 'magic-wand' },
     });
     expect(dispatchMock).toHaveBeenNthCalledWith(2, { type: 'CANCEL_SELECTION_DRAFT' });
-    expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'COMMIT_SELECTION' }));
+    // No history entry for a boundary that was never traced. `COMMIT_DOCUMENT_EDIT`
+    // is the only path that appends one, so this is the guard that survived the move
+    // off the raw `COMMIT_SELECTION` action.
+    expect(selectionEdits()).toEqual([]);
   });
 
   it('records the seed in document space', () => {
@@ -216,9 +295,30 @@ describe('MagicWandToolArea', () => {
 
     expect(dispatchMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: 'COMMIT_SELECTION',
+        type: 'COMMIT_DOCUMENT_EDIT',
         payload: expect.objectContaining({
-          metadata: expect.objectContaining({ magicWand: expect.objectContaining({ seed: { x: 5, y: 6 } }) }),
+          historyItem: expect.objectContaining({
+            id: expect.any(String),
+            actionName: SELECTION_ACTION,
+          }),
+          updates: expect.objectContaining({
+            selections: [
+              expect.objectContaining({
+                geometry: 'polygon',
+                lifecycle: 'committed',
+                isActive: true,
+                // The frame offsets the seed and the geometry together, so a
+                // seed converted without the bounds would leave the two in
+                // different spaces. Both are pinned here for that reason.
+                pos: { x: 4, y: 5, width: 4, height: 4 },
+                metadata: expect.objectContaining({
+                  magicWand: expect.objectContaining({
+                    seed: { x: 5, y: 6 },
+                  }),
+                }),
+              }),
+            ],
+          }),
         }),
       })
     );
