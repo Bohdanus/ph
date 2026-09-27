@@ -11,36 +11,43 @@ visual fidelity are out of scope unless a defect is caused by this work.
 
 ## 0. Branch state — read before the problem list
 
-`main` is `eb2160e`, **10 commits ahead of `origin/main`, unpushed.** `git status` is clean apart
-from this file.
+Everything below was verified on `cleanup/residue-handoff-docs` at `6f93c38` — the merge of the
+`cleanup/*` branches into `cleanup/integration`, 51 commits ahead of `origin/main` and 31 ahead of
+`main`. `main` is `8effced`, **21 commits ahead of `origin/main`, unpushed**, and 1 commit behind
+this branch, so the claims below describe `cleanup/residue-handoff-docs` and not `main`. `git status`
+is clean apart from this file.
 
-**`fix/unit-tests` is `b027de3` (+ `5da9f82`), 2 commits ahead of `main`, unmerged.** It is 10
-files, +802/−111, of which 5 are production: `StoreContext.tsx` (74), `layer-presentation.ts` (79),
-`history-adapter.ts` (63), `history-append.ts` (23), `layer-utils.ts` (function removed).
+**`fix/unit-tests` is `b027de3` (+ `5da9f82`), 2 commits ahead of `main`, unmerged into this
+branch.** Merge it first. It is 16 files, +1272/−189, of which 6 are production: `StoreContext.tsx`
+(+54/−4), `history-adapter.ts` (+82/−1), `history-append.ts` (+35/−7), `layer-presentation.ts`
+(+67/−12), `layer-utils.ts` (+1/−15) and `useLayer.ts` (+13/−4).
 
-Merge it first. It closes the following items in this file, all of which are open on `main` today:
+It closes the following items in this file, all of which are open here today:
 
-| Item in this file                                                               | Fixed by `b027de3` | How                                                                                                                                                                                                                                                                |
-| ------------------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **18** refused publication dropped with `console.debug`                         | yes                | `console.error` with a message that names the invariant violation                                                                                                                                                                                                  |
-| **17** duplicate durable entry id has no second line of defence                 | yes                | `publishedEntryIds: Set<string>` in `history-adapter.ts`; the offending entry is _skipped_ and the diagnostic is `error`, not `warning`                                                                                                                            |
-| **16** invalid document frame converts with no diagnostic                       | yes                | the `SET_DOCUMENT_FRAME_ACTION` branch gained an `else` that pushes a `warning` / `invalid-history-entry` diagnostic                                                                                                                                               |
-| **7** presentation bitmaps never released on layer delete                       | yes                | new `retireDepartedLayers(before, after)` in `StoreContext.tsx`, driven off the layer set-difference, never off `deletedLayers`; runs on both the commit and the replay path, and retires the _current_ layer's bitmap so a borrowed raster is never double-closed |
-| **21** (old 4) `saveLayerCanvas` is dead in production                          | yes                | the function is deleted, along with the `materializePresentationBitmap` import that `tsconfig.app.json:27` (`noUnusedLocals`) would otherwise reject                                                                                                               |
-| **22** (old 5) the comment justifying the discarded append diagnostics is false | yes                | `useLayer.ts:563-567` rewritten to state the current single-writer contract and cross-reference `history-append.ts` for the "reporting never blocks the append" invariant                                                                                          |
+| Item in this file                                               | Fixed by `b027de3` | How                                                                                                                                                                                                                                                                |
+| --------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **18** refused publication dropped with `console.debug`         | yes                | `console.error` with a message that names the invariant violation                                                                                                                                                                                                  |
+| **17** duplicate durable entry id has no second line of defence | yes                | `publishedEntryIds: Set<string>` in `history-adapter.ts`; the offending entry is _skipped_ and the diagnostic is `error`, not `warning`                                                                                                                            |
+| **16** invalid document frame converts with no diagnostic       | yes                | the `SET_DOCUMENT_FRAME_ACTION` branch gained an `else` that pushes a `warning` / `invalid-history-entry` diagnostic                                                                                                                                               |
+| **7** presentation bitmaps never released on layer delete       | yes                | new `retireDepartedLayers(before, after)` in `StoreContext.tsx`, driven off the layer set-difference, never off `deletedLayers`; runs on both the commit and the replay path, and retires the _current_ layer's bitmap so a borrowed raster is never double-closed |
+| **19** `saveLayerCanvas` is dead in production                  | yes                | the function is deleted, along with the `materializePresentationBitmap` import that `tsconfig.app.json:32` (`noUnusedLocals`) would otherwise reject                                                                                                               |
 
-**After merging, delete items 7, 16, 17, 18, 21, 22 from this file and re-derive the rest.** Do not
+**After merging, delete items 7, 16, 17, 18 and 19 from this file and re-derive the rest.** Do not
 work them from this document.
 
-Item 22 has a second instance that `b027de3` also fixes, and that this file never listed:
-`src/contexts/history-append.ts:19-25` carries the same false claim —
+Two source comments still claim the planned durable entry is not published. That is false on this
+branch: `StoreContext.tsx:652` publishes it through `decideDurableAppend`.
 
-> _"Phase 1 status: plan only. The durable entry is derived at the append point but is not published.
-> `StoreContext` still converts the whole timeline into the diagnostic shadow, so publishing the
-> planned entry here would create a second writer for a single append."_
+- `useLayer.ts:573-577` — "The planned durable entry is not published yet: the store still rebuilds its
+  diagnostic shadow from the legacy timeline".
+- `history-append.ts:21-25` — "Phase 1 status: plan only. The durable entry is derived at the append
+  point but is not published. `StoreContext` still converts the whole timeline into the diagnostic
+  shadow, so publishing the planned entry here would create a second writer for a single append."
 
-`de91a83` (09-27 10:12) invalidated it; `StoreContext.tsx:647-666` publishes the planned entry
-through `decideDurableAppend`.
+**Fix.** Rewrite both to state the single-writer contract: the store publishes the planned entry when
+`decideDurableAppend` accepts it against its current durable document, and reconverts the whole
+timeline otherwise. Keep the "reporting never blocks the append" invariant next to the second one,
+where it is the reason the boundary's own diagnostics are redundant.
 
 ---
 
@@ -560,7 +567,10 @@ converts the registry flag into a contract the durable path checks instead of a 
 ## Known defects that are PINNED — do not "fix" them casually
 
 An `it.fails(...)` is a tripwire: it passes today and **fails the moment the defect is fixed**, so a
-fix must remove the pin in the same change. There are 40. The migration-relevant ones:
+fix must remove the pin in the same change. There are 36, counted as `it.fails(...)` blocks:
+`grep -rn 'it.fails(' src e2e` returns 36 and every one is in `src/`, and `npm run test` independently
+reports the same 36 as `36 expected fail` out of 3,951 tests in 176 files. The migration-relevant
+ones:
 
 | Location                                          | What it pins                                                                                                                                                                                                                                                                                                                                                                                           |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -570,48 +580,49 @@ fix must remove the pin in the same change. There are 40. The migration-relevant
 | `useSelectionClipboard.layerViaCopy.test.tsx:203` | canvas→document position translation. **Its diagnosis is stale**: it blames a `documentToCanvasPos` call at `useSelectionClipboard.ts:100` that now calls `canvasToDocumentPos` (correct). The expectation matches neither the correct value nor the described bug. The polygon `points` array is still never frame-converted — a real unfixed clipboard bug under the plan's own coordinate contract. |
 | `text.test.ts:258`                                | replaying text from a durable vector source without re-rasterizing                                                                                                                                                                                                                                                                                                                                     |
 
-E2E known failures, 2–4 of 97 on the default headless run (`e2e/OPEN_PROBLEMS.md`):
-
-| tests                                                     | count | mode                               |
-| --------------------------------------------------------- | ----- | ---------------------------------- |
-| `e2e/helpers/cdp-helpers.spec.ts:220, 239`                | 2     | headless only                      |
-| `e2e/helpers/cdp-helpers.spec.ts:113, 129, 146, 163, 195` | 5     | **headed only**                    |
-| `e2e/sidebar-keyboard.spec.ts:77, 89`                     | 0–2   | intermittent; 4 of 5 runs headless |
-
-**`AGENTS.md` forbids every headed Playwright invocation** — `--headed`, `--ui`, `--debug`,
-`show-report`, `show-trace`, `codegen`, `PLAYWRIGHT_ALLOW_HEADED=1`,
-`test.use({headless: false})`. A headed run fails 5 of 97 against headless's 2–4, on a disjoint set,
-and the operator's own mouse and keyboard reach the page as real input. Do not flip the mode to
-make a failure go away.
+The e2e suite pins nothing. `grep -rn 'it.fails(' e2e` returns 0, there is no `test.fixme` and no
+`describe.skip`, and the only skips are the two `test.skip` declarations
+(`e2e/export/photopea.spec.ts:6`, `e2e/sidebar-flyout.spec.ts:48`). So a failure on the default
+headless run is a new defect rather than a known one; `e2e/OPEN_PROBLEMS.md` holds the latent
+defects the suite does not trip. `AGENTS.md` forbids every headed Playwright invocation, so a headed
+failure is not a gate and the mode must not be flipped to make one go away.
 
 ---
 
 ## Worktree hygiene
 
-`git worktree list` shows 15 worktrees. Seven are parked at `f11f7e7` (09-24 22:40) and are dead
+`git worktree list` shows 35 worktrees. Six are parked at `f11f7e7` (09-24 22:40) and are dead
 weight: `fix-history-adapter-safety-tests`, `fix-layerstab-tests`, `fix-replay-coordinator-tests`,
-`fix-useapp-psd-tests`, `fix-usehistory-tests`, `fix-userect-tests`, and `polished-ironclad`
-(detached at `50bb2b8`).
+`fix-useapp-psd-tests`, `fix-usehistory-tests` and `fix-userect-tests`. `polished-ironclad` is a
+seventh dead one: a detached worktree at `50bb2b8` with no branch of its own.
 
-`photoshop-fidelity`, `ps-shape-geometry`, `ps-ux-chrome` and `history-migration-08` are all 0
-commits ahead of `main` and safe to delete.
+`photoshop-fidelity`, `ps-shape-geometry` and `ps-ux-chrome` (all `50bb2b8`), `history-migration-08`
+(`92028a7`) and `ps-transform-geometry` (`ee8b360`) are each 0 commits ahead of `main` and safe to
+delete.
 
-Two hold unmerged work: `ps-transform-geometry` (`a3f9050`, 1 ahead — unifies raster CTM order and
-warps trapezoids through a homography; review it before deleting, it is adjacent to the migration's
-raster-boundary work) and `ps-integration` (`a0f66c4`, 3 ahead).
+One branch still holds unmerged work: `ps-integration` (`a0f66c4`, 2 ahead of `main`, 12 ahead of
+`origin/main`).
 
-`main` is 10 ahead of `origin/main` and nothing is pushed.
+Every `cleanup/*` branch except `cleanup/integration` itself is merged into `cleanup/integration`, so
+its worktree is removable once the work in it has landed: `app-dead-code`, `app-pointer-position`,
+`app-savedialog-toolprocessors`, `app-selection-null-guards`, `app-settings-exhaustiveness`,
+`app-shape-negative-size`, `cdp-helpers-tests`, `e2e-canvas-helpers`, `e2e-color-helpers`,
+`e2e-export-helpers`, `e2e-image-comparison`, `e2e-port-isolation`, `e2e-spec-comments-lint`,
+`e2e-toolbar-helpers`, `precommit-pipeline` and `tsconfig-coverage`. The three `cleanup/residue-*`
+worktrees are this work in progress — do not remove them.
+
+`main` is 21 ahead of `origin/main` and nothing is pushed.
 
 ---
 
 ## 21. A shape layer's declared extent is fractional while its bitmap is integral
 
-Outside this file's stated scope (tool geometry, not migration-caused), recorded here because it is
-in the same commit path as the rounded-rectangle quadrant fix and is a real, unfixed defect.
+Outside this file's stated scope (tool geometry, not migration-caused), recorded here because it is a
+real, unfixed defect in the same code path as the rounded-rectangle quadrant normalisation.
 
 **Problem.** `shapeGeometryBounds` (`src/tools/shape.ts:107-118`) returns a fractional box whenever
 the drag is fractional, which is every drag at a non-100% zoom. Nothing rounds it before the layer
-canvas is allocated: `ShapeToolArea.tsx:141` passes `pos` straight through, `useLayer.ts:242` only
+canvas is allocated: `ShapeToolArea.tsx:141` passes `pos` straight through, `useLayer.ts:247` only
 adds the frame offset (`canvasToDocumentPos` does not touch `width`/`height` —
 `document-frame.ts:44-46`), and `layer-utils.ts:204-213` hands `pos` to the tool processor, which
 allocates `new OffscreenCanvas(size.width, size.height)` (`shape.ts:223`). The constructor yields an
@@ -623,7 +634,7 @@ disagree by up to a pixel, so the right or bottom edge — including half the st
 deliberately padded for — is clipped or rescaled by that fraction on composite. `document-frame.ts:11-12`
 `Math.ceil`s the _frame_, which makes this reachable for any non-integer frame too.
 
-`src/tools/__tests__/shape.test.ts:258-274` currently asserts the fractional box as current
+`src/tools/__tests__/shape.test.ts:258-273` currently asserts the fractional box as current
 behaviour ("The box is the raw padded extent, so it stays fractional too"), so it documents the
 mismatch instead of catching it. That test is a declaration, not a pin: no `it.fails`, so it will
 keep passing after a fix and should be re-derived rather than deleted.
@@ -638,6 +649,8 @@ construction. Do not round in only one place: the bug is precisely that the two 
 **Files.** `src/tools/shape.ts`, `src/tools/__tests__/shape.test.ts`,
 `src/components/Main/ShapeToolArea.tsx`, `src/contexts/layer-utils.ts`
 
+---
+
 ## 22. `Main.tsx`'s `canvasCtxRef` is never assigned, so the smoothing effect cannot run
 
 **Problem.** `Main.tsx:47` declares `const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null)`.
@@ -647,7 +660,7 @@ Nothing ever assigns it, so `.current` is permanently `null` and `:98-101` is un
 
 Verified unreachability, not merely absence of references:
 
-- `grep -rn 'canvasCtxRef' src e2e` returns 38 hits across 16 files. The **only** `.current =`
+- `grep -rn 'canvasCtxRef' src e2e` returns 38 hits across 15 files. The **only** `.current =`
   assignment to a context ref anywhere in `Main.tsx` is `toolCtxRef.current =` at `Main.tsx:87` —
   a different ref, the tool overlay.
 - No `canvasCtxRef.current =` exists in any file, including tests.
@@ -686,11 +699,11 @@ prop pair was a uniform-signature shim that no tool area ever used.
 smoothing assertion at all — only a size triple. Its first element asserts the main canvas is
 `[300, 150]`, which is jsdom's default `HTMLCanvasElement` size: `Main.tsx` resizes only
 `toolOverlayRef` (`:84-85`) and `rectOverlayRef` (`:92-93`), so no production code ever sets the main
-canvas dimensions. The smoothing half of the title describes the unreachable block in §23.
+canvas dimensions. The smoothing half of the title describes the unreachable block in §22.
 
 **Fix.** Retitle to state what the test actually covers (overlay sizing against `totalSize`) and drop
 the main canvas from the expected triple, or keep the triple and name it as the jsdom default. Then
-delete this entry — the retitle is only correct once §23 is done, because until then the smoothing
+delete this entry — the retitle is only correct once §22 is done, because until then the smoothing
 effect still exists in the source even if it cannot run.
 
 **Files.** `src/components/Main/__tests__/Main.toolAreas.test.tsx:186-195`.
@@ -709,7 +722,7 @@ identity is stable across a dispatch (`StoreContext.reducer.test.tsx:824`,
 `StoreContext.test.tsx:228`), which holds for a ref nothing writes.
 
 **Fix.** Delete the field from `StoreState` (`StoreContext.tsx:52`), the seed at `:221`, the
-`useRef` at `:569`, the publish at `:847`, and the four fixture/test references. Distinct from §23:
+`useRef` at `:569`, the publish at `:847`, and the four fixture/test references. Distinct from §22:
 this one is a store-context member, not the `Main.tsx` local, and removing it changes the public
 context shape.
 
@@ -727,14 +740,13 @@ Its sibling `ShapeToolArea.tsx:106` batches the same work through
 `requestAnimationFrame`, and `useDrag.ts:50`/`useRect.ts:373` batch as well, so a pointer event that
 carries several `pointermove` messages per display frame repaints several times for one visible frame.
 `drawLine` re-strokes the full point list each time, so cost grows with stroke length as well as with
-event rate. A `frameRequested` ref and a `cancelAnimationFrame` guard were present and removed as
-inert on `cleanup/app-dead-code`; they never scheduled anything, so removing them changed no
-behaviour. The synchronous path is what remains.
+event rate. The file carries no `frameRequested` ref and no `cancelAnimationFrame` guard, so the
+synchronous path is the only path.
 
 **Fix.** Batch the repaint: keep a `frameRequested` ref, and in `handlePointerMove` return early when
 a frame is already pending, scheduling `flushDrawingFrame` via `requestAnimationFrame` instead of
 calling it directly. `handlePointerUp` must cancel any pending frame **and null the ref** before
-committing, or the last preview is dropped (this is exactly the defect §27 records in
+committing, or the last preview is dropped (this is exactly the defect §26 records in
 `ShapeToolArea`). Add a test that fires N `pointermove` events in one `act()` and asserts the
 overlay was stroked once.
 
@@ -762,7 +774,7 @@ overlay was stroked once.
 
 **Fix.** In `handlePointerUp`, call `flushDrawingFrame()` in place of the commented line and null
 `frameRequested.current` after cancelling, so the overlay is flushed and the ref is reusable. Drop
-the `if (!movedBySpace)` recompute at `:117-123` and commit `startRef`/`endRef` as previewed — or, if
+the `if (!movedBySpace)` recompute at `:116-123` and commit `startRef`/`endRef` as previewed — or, if
 a final-point correction is genuinely wanted, pass the shift state captured at pointerdown via a ref
 instead of reading `event.shiftKey`. Add a test that drags with Shift held, releases Shift, then
 releases the pointer, and asserts the committed args match the previewed square.
@@ -778,15 +790,10 @@ before applying a tool. It is reachable only when `processor.flattenRequired` is
 is declared at `toolProcessors.ts:50` and **set by no production processor**: `grep -rn
 'flattenRequired' src e2e` returns four hits — the declaration, the read at `useLayer.ts:271`, and two
 test sites that spread it onto `brush` at
-`src/contexts/__tests__/useLayer.creation.test.tsx:383` and `:433`. Every one of the 25 entries in
+`src/contexts/__tests__/useLayer.creation.test.tsx:383` and `:433`. Every one of the 29 entries in
 `toolProcessors` sets only `commit`, `replay`, `creator?` and `imageProcessor`. A branch only a test
 can reach is a branch nothing verifies: the two tests drive it by mutating the `toolProcessors`
 record at runtime and restoring it in a `finally`.
-
-The `imageProcessor` call inside the branch was unguarded while its siblings at `useLayer.ts:479-484`
-and `:488-502` wrap in `try { … } catch (error) { console.error(error); return; }`. That asymmetry is
-now fixed on `cleanup/app-dead-code`; the branch itself is kept because deleting it would orphan the
-field declaration, which lives in `toolProcessors.ts` — outside the file grant for that work.
 
 **Fix.** Delete the field from `toolProcessors.ts:50`, the branch from `useLayer.ts:271-297`, and the
 two injection sites plus their `describe` block in `useLayer.creation.test.tsx:381-460`. Alternatively,
@@ -813,10 +820,10 @@ the two guarded branches partition that tool name exhaustively — `trapezoid !=
 and `undefined`/`NaN` trapezoid values also take the `!== 0` branch, so every transform-args call
 returns before `:532`. The `commit: 'unimplemented'` processors return `[null]` without throwing.
 
-That leaves `shape.ts:211` (`throw new Error('Tool "…" does not provide shape arguments')` when
+That leaves `shape.ts:219-221` (`throw new Error('Tool "…" does not provide shape arguments')` when
 `!('figure' in args)`) as the only candidate reachable in principle, via the `shape` processor
 registered for `shape`, `rectangle`, `ellipse`, `triangle`, `polygon` and `line`. **I could not
-demonstrate a production-reachable throw**: `src/util/settings.ts:15` normalises with
+demonstrate a production-reachable throw**: `src/util/settings.ts:17-18` normalises with
 `({ ...args, figure: normalizeFigure(args.figure) })`, which always materialises the `figure` key, so
 the guard appears to hold for every tool-args path reachable from the UI. The `!('figure' in args)`
 guard is a runtime shape assertion on a type the compiler already narrows, and it is the only thing
@@ -827,4 +834,4 @@ at `:479-484` and `:488-502`, so a throwing processor degrades to a logged no-op
 into the event handler. If the `figure` key can be proven absent by some path, fix that path instead
 and add the case to the test that covers `tempUpdateLayer`'s raster preview.
 
-**Files.** `src/contexts/useLayer.ts:532-533`, `src/tools/shape.ts:211`.
+**Files.** `src/contexts/useLayer.ts:532-533`, `src/tools/shape.ts:219-221`.
