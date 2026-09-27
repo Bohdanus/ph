@@ -269,6 +269,27 @@ function createBoundaryLoops(mask: Uint8Array, width: number, height: number, bo
   return traceBoundaryLoops(edges, startMap);
 }
 
+type ClassifiedBoundaryLoops = {
+  outer: Point[][];
+  holes: Point[][];
+};
+
+/**
+ * Splits traced loops by winding direction, which is the only signal distinguishing an enclosed
+ * hole from a disjoint sibling region. `createBoundaryLoops` emits a directed edge for every
+ * selected/unselected adjacency (top->right, right->down, bottom->left, left->up), so an outer
+ * contour and the hole it encloses come out with opposite signed areas, while two disjoint
+ * regions are two independent outer contours and share a sign. Discarding the sign is what let a
+ * hole's loop lose to the outer loop on magnitude and then get dropped on the floor.
+ */
+function classifyBoundaryLoops(loops: Point[][]): ClassifiedBoundaryLoops {
+  const signed = loops.map((loop) => ({ loop, area: getPolygonArea(loop) }));
+  const outer = signed.filter((entry) => entry.area > 0);
+  const holes = signed.filter((entry) => entry.area <= 0);
+
+  return { outer: outer.map((entry) => entry.loop), holes: holes.map((entry) => entry.loop) };
+}
+
 function selectLargestBoundaryLoop(loops: Point[][]): Point[] {
   let bestLoop: Point[] = [];
   let bestArea = 0;
@@ -317,8 +338,14 @@ export function createMagicWandSelectionFromImageData(
   if (maskResult.selectedPixelCount === 0) return null;
 
   const loops = createBoundaryLoops(maskResult.mask, width, height, maskResult.bounds);
-  const boundaryPoints = selectLargestBoundaryLoop(loops);
+  const { outer, holes } = classifyBoundaryLoops(loops);
+  const boundaryPoints = selectLargestBoundaryLoop(outer);
   if (boundaryPoints.length < 3) return null;
+  // `Selection` carries a single point path, so an enclosed hole cannot be represented: committing
+  // the outer contour alone would cover pixels this mask reported as unselected, and would make
+  // `selectedPixelCount` under-report the committed polygon's area. Refuse the selection instead,
+  // which the caller already handles as a cancelled selection draft.
+  if (holes.length > 0) return null;
 
   const points = simplifyClosedPath(boundaryPoints, options.smoothing ?? 0);
   if (points.length < 3) return null;
