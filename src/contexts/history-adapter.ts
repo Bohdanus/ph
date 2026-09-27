@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 
 import type { DocumentFrame } from './document-frame.ts';
-import { documentFrameFromSize } from './document-frame.ts';
+import { documentFrameFromSize, isValidDocumentFrame } from './document-frame.ts';
 import { AssetRegistry, getAssetRegistry } from './asset-registry.ts';
 import {
   DURABLE_SCHEMA_VERSION,
@@ -255,6 +255,28 @@ function entry(id: string, operation: DurableOperation, enabled = true): Durable
   return Object.freeze({ id, schemaVersion: DURABLE_SCHEMA_VERSION, enabled, operation });
 }
 
+/**
+ * The single derivation of a document-frame durable entry.
+ *
+ * Both the shadow conversion and the Phase 1 append boundary must produce the
+ * same entry for the same legacy item, so the frame rule lives here only: an
+ * invalid next frame yields no durable entry at all, and `currentFrame` is the
+ * last *enabled* durable frame.
+ */
+export function deriveSetDocumentFrameEntry(
+  item: HistoryItem,
+  currentFrame: DocumentFrame
+): DurableHistoryEntry | null {
+  const args = item.args as { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame } | undefined;
+  if (!isValidDocumentFrame(args?.nextFrame)) return null;
+  const operation = Object.freeze({
+    kind: 'set-document-frame',
+    previous: args?.previousFrame ?? { ...currentFrame },
+    next: { ...args.nextFrame },
+  });
+  return entry(item.id, operation, isEntryEnabled(item));
+}
+
 function diagnosticFromError(error: unknown, item?: HistoryItem): MigrationDiagnostic {
   return {
     ...(item ? { historyId: item.id, actionName: item.actionName } : {}),
@@ -472,14 +494,10 @@ export function legacyHistoryToDurable(
         if (enabled) currentLayers.delete(item.layerId);
         operation = Object.freeze({ kind: 'remove-layer', layerId: item.layerId });
       } else if (item.actionName === SET_DOCUMENT_FRAME_ACTION) {
-        const args = item.args as { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame } | undefined;
-        if (args?.nextFrame) {
-          operation = Object.freeze({
-            kind: 'set-document-frame',
-            previous: args.previousFrame ?? currentFrame,
-            next: { ...args.nextFrame },
-          });
-          if (enabled) currentFrame = { ...args.nextFrame };
+        const frameEntry = deriveSetDocumentFrameEntry(item, currentFrame);
+        if (frameEntry) {
+          operation = frameEntry.operation;
+          if (frameEntry.enabled) currentFrame = { ...(frameEntry.operation as { next: DocumentFrame }).next };
         }
       } else if (item.actionName === SELECTION_ACTION) {
         const args = item.args as

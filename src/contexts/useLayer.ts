@@ -16,7 +16,6 @@ import {
   createLayerSource,
   getSortedLayersArray,
   reorderLayers,
-  saveLayerCanvas,
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs } from './tool-types.ts';
@@ -39,6 +38,8 @@ import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
 import type { NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
+import { planHistoryAppend } from './history-append.ts';
+import type { LayerPresentationRequest } from './layer-presentation.ts';
 import {
   canvasRectToDocumentFrame,
   canvasToDocumentPos,
@@ -89,12 +90,31 @@ export const useLayers = () => {
       totalSize,
       documentFrame: currentDocumentFrame,
       toolName,
+      history,
+      historyIndex,
+      branchRevision = 0,
       currentArgs: currentArgsRef,
       previewLayers: previewLayersRef,
+      promoteLayerPresentation,
     },
     dispatch,
   ] = useStore();
   const documentFrame = currentDocumentFrame ?? documentFrameFromSize(totalSize);
+
+  /**
+   * Presentation caches are materialized after the layer is published. The store
+   * owns the promotion, so a layer record the caller already dispatched is never
+   * mutated from a late async callback. One call per commit keeps the
+   * publication to a single store transition.
+   */
+  const requestPresentations = (candidates: Iterable<Layer>) => {
+    const requests: LayerPresentationRequest[] = [];
+    for (const layer of candidates) {
+      if (layer.tmpCanvas) requests.push({ layerId: layer.id, canvas: layer.tmpCanvas });
+    }
+    if (requests.length) promoteLayerPresentation(requests);
+  };
+  const requestPresentation = (layer: Layer) => requestPresentations([layer]);
 
   function clearOverlay() {
     const overlayCtx = toolOverlayRef.current?.getContext('2d');
@@ -133,6 +153,7 @@ export const useLayers = () => {
           },
         },
       });
+      requestPresentation(layer);
       return;
     }
 
@@ -143,6 +164,7 @@ export const useLayers = () => {
         historyItem: entry,
       },
     });
+    requestPresentation(layer);
   };
 
   const createBlankLayer = (params: BlankImageParams, replaceDocument = false) => {
@@ -223,6 +245,7 @@ export const useLayers = () => {
 
     const newLayer = createLayerSource({ layers, source });
 
+    // `_addLayer` publishes the layer and requests its presentation cache.
     _addLayer(newLayer, {
       layerId: newLayer.id,
       actionName: NEW_LAYER_ACTION,
@@ -259,6 +282,7 @@ export const useLayers = () => {
           historyItem: createHistoryItem({ layerId: mergedLayer.id, actionName: TOOL_ACTION, args: toolArgs }),
         },
       });
+      requestPresentation(updatedLayer);
       return;
     }
 
@@ -297,6 +321,9 @@ export const useLayers = () => {
 
     const committedLayers = { ...layers } as LayersRecord;
     let hasPreviewLayers = false;
+    // Keyed by layer id so the record that is actually published is the one that
+    // asks for a cache promotion.
+    const pendingPresentations = new Map<LayerId, Layer>();
 
     const pendingToolEdits: Array<{ layerId: LayerId; args: ToolArgs | object }> = [];
     for (const [id, preview] of Object.entries(previewLayersRef.current)) {
@@ -307,9 +334,7 @@ export const useLayers = () => {
         const committedArgs = normalizeCommittedToolArgs(layer, preview.toolArgs);
         if (committedArgs) pendingToolEdits.push({ layerId: id, args: committedArgs });
       }
-      if (layer.tmpCanvas) {
-        saveLayerCanvas(layer);
-      }
+      if (layer.tmpCanvas) pendingPresentations.set(id, layer);
     }
     previewLayersRef.current = {};
 
@@ -317,7 +342,7 @@ export const useLayers = () => {
     for (const layer of Object.values(committedLayers)) {
       if (layer.tmpCanvas) {
         const detachedLayer = { ...layer, pos: { ...layer.pos } };
-        saveLayerCanvas(detachedLayer);
+        pendingPresentations.set(detachedLayer.id, detachedLayer);
         committedLayers[layer.id] = detachedLayer;
         hasPreviewLayers = true;
         break;
@@ -326,7 +351,9 @@ export const useLayers = () => {
 
     if (hasPreviewLayers && !deferDispatch) {
       if (!pendingToolEdits.length) {
-        dispatch({ type: 'UPDATE_LAYERS', payload: committedLayers });
+        // No logical change to record: publish the already-known layer records so
+        // their promoted cache can land through the presentation boundary.
+        dispatch({ type: 'PUBLISH_RUNTIME_PRESENTATION', payload: { layers: committedLayers } });
       } else {
         for (const [index, pendingEdit] of pendingToolEdits.entries()) {
           dispatch({
@@ -343,6 +370,10 @@ export const useLayers = () => {
         }
       }
     }
+    // Promotion is requested after publication. A deferred caller publishes the
+    // same records in this tick, and the store re-checks the canvas identity
+    // before a promotion can reach a layer.
+    requestPresentations(pendingPresentations.values());
     return committedLayers;
   };
 
@@ -529,15 +560,25 @@ export const useLayers = () => {
     const nextFrame = canvasRectToDocumentFrame({ x, y, width, height }, documentFrame);
     if (!isValidDocumentFrame(nextFrame) || documentFrameEquals(documentFrame, nextFrame)) return false;
 
+    // Document-frame changes are the first appends planned through the Phase 1
+    // boundary. The planned durable entry is not published yet: the store still
+    // rebuilds its diagnostic shadow from the legacy timeline, and that shadow is
+    // the only durable signal the UI reports, so the plan's own diagnostics are
+    // deliberately not surfaced here.
+    const { entry } = planHistoryAppend({
+      item: {
+        layerId: 'document',
+        actionName: SET_DOCUMENT_FRAME_ACTION,
+        args: { previousFrame: documentFrame, nextFrame },
+      },
+      timeline: { entries: history, cursor: historyIndex, branchRevision },
+      currentFrame: documentFrame,
+    });
     dispatch({
       type: 'COMMIT_DOCUMENT_EDIT',
       payload: {
         updates: { documentFrame: nextFrame, totalSize: documentFrameSize(nextFrame) },
-        historyItem: createHistoryItem({
-          layerId: 'document',
-          actionName: SET_DOCUMENT_FRAME_ACTION,
-          args: { previousFrame: documentFrame, nextFrame },
-        }),
+        historyItem: entry,
       },
     });
     return true;

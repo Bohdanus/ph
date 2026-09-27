@@ -2,8 +2,9 @@ import { v4 as uuidv4 } from 'uuid';
 
 import type { Layer, LayerId, LayerOperation, LayerOperationArgs, LayerSource, LayersRecord } from './layer-types.ts';
 import { type CreatorToolParams, toolProcessors } from '../tools/toolProcessors.ts';
-import type { Point, Pos } from './general-types.ts';
+import type { BitmapSource, Point, Pos } from './general-types.ts';
 import { ellipsify } from '../util/string.ts';
+import { materializePresentationBitmap } from './layer-presentation.ts';
 import type { AffineTransform } from './affine-transform.ts';
 import { isPointInLayer } from './affine-transform.ts';
 
@@ -103,27 +104,17 @@ export const maxLayerOrder = (layers: LayersRecord) => {
 //   return { bitmap: canvas, historyLength, size: newSize };
 // }
 
-export function saveLayerCanvas(layer: Layer) {
-  const canvas = layer.tmpCanvas;
-  if (!canvas) return;
-
-  return createImageBitmap(canvas)
-    .then((bitmap) => {
-      // A newer preview or deletion may have replaced this canvas while saving.
-      if (layer.tmpCanvas !== canvas) {
-        bitmap.close();
-        return;
-      }
-      layer.bitmap = bitmap;
-      layer.tmpCanvas = null;
-      return bitmap;
-    })
-    .catch((error) => {
-      // This is a disposable presentation cache. Keep the source/tmp canvas
-      // available when materialization fails rather than leaking a rejection.
-      console.error('Unable to materialize layer presentation cache', error);
-      return undefined;
-    });
+/**
+ * Materializes a layer's disposable presentation canvas into an ImageBitmap.
+ *
+ * The bitmap is returned to the caller and is never written into `Layer`. A
+ * published runtime layer is owned by the store, so promoting a cache into it is
+ * a reducer publication rather than a late mutation of a record the caller
+ * already dispatched.
+ */
+export function saveLayerCanvas(layer: Layer): Promise<BitmapSource | undefined> | undefined {
+  if (!layer.tmpCanvas) return undefined;
+  return materializePresentationBitmap(layer.tmpCanvas);
 }
 
 export function createLayerOperation(args: LayerOperationArgs, id = uuidv4()): LayerOperation {
@@ -145,7 +136,6 @@ type LayerSourceParams = {
   layerId?: LayerId;
   layers: LayersRecord;
   source: LayerSource;
-  deferSave?: boolean;
 };
 
 function getNameFromSource(source: LayerSource) {
@@ -159,12 +149,7 @@ function getNameFromSource(source: LayerSource) {
   }
 }
 
-export function createLayerSource({
-  layerId: idFromHistory,
-  layers,
-  source,
-  deferSave = false,
-}: LayerSourceParams): Layer {
+export function createLayerSource({ layerId: idFromHistory, layers, source }: LayerSourceParams): Layer {
   const { kind, isBedrock } = source;
   const id = idFromHistory ?? uuidv4(); // when layer is re-created from history it should get the saved id
   const maxOrder = maxLayerOrder(layers) + 1;
@@ -216,7 +201,6 @@ export function createLayerSource({
     }
 
     layer.tmpCanvas = canvas;
-    if (!deferSave) saveLayerCanvas(layer);
   } else if (kind === 'tool') {
     // and this is a creator tool
     const [canvas, patch] = toolProcessors[source.args.toolName].imageProcessor({ size: pos } as CreatorToolParams)(
@@ -227,7 +211,6 @@ export function createLayerSource({
     }
 
     layer.tmpCanvas = canvas;
-    if (!deferSave) saveLayerCanvas(layer);
   }
 
   return layer;

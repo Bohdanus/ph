@@ -1,9 +1,10 @@
-import React, { createContext, useContext, useEffect, useRef, useReducer, type Dispatch } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useReducer, type Dispatch } from 'react';
 import { DEFAULT_TOOL } from '../util/constants.ts';
 
 import type { ReactNode, RefObject } from 'react';
 import type { Layer, LayerId, LayersRecord } from './layer-types.ts';
 import type {
+  BitmapSource,
   ClearedSelectionState,
   Selection,
   SelectionClipboard,
@@ -22,6 +23,16 @@ import {
   type MigrationDiagnostic,
 } from './history-adapter.ts';
 import { getAssetRegistry } from './asset-registry.ts';
+import {
+  closePresentationBitmap,
+  DocumentPresentationScope,
+  isSamePresentationCanvas,
+  layersDifferOnlyByPresentation,
+  materializePresentationBitmap,
+  type LayerPresentationBatch,
+  type LayerPresentationPromotion,
+  type LayerPresentationRequest,
+} from './layer-presentation.ts';
 
 /**
  * `current` describes an exact, transactionally converted shadow; `stale`
@@ -41,6 +52,13 @@ export type StoreData = {
 
   currentArgs: React.RefObject<ToolArgs>;
   clearPreviewLayers: () => void;
+  /**
+   * Promotion of a disposable presentation cache. The bitmaps are materialized
+   * asynchronously and published only while the requesting layers still hold
+   * those exact canvases, so no runtime layer is mutated outside a reducer
+   * publication. Pass every layer a single commit produced in one call.
+   */
+  promoteLayerPresentation: (request: LayerPresentationRequest | readonly LayerPresentationRequest[]) => void;
   // Transient previews are document-scoped, not hook-instance-scoped. This
   // lets toolbars, export, and tool switching share one draft transaction.
   previewLayers: React.MutableRefObject<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>;
@@ -100,8 +118,16 @@ type StoreUpdates = Partial<
     | 'durableDocument'
     | 'durableStatus'
     | 'durableDiagnostics'
+    | 'promoteLayerPresentation'
   >
 >;
+
+/**
+ * `BATCH_UPDATES` is the intended shape of a metadata-only batch. The action
+ * keeps the wider legacy payload for compatibility with existing callers; no
+ * production writer uses it for layer, frame, selection, or history state.
+ */
+export type StoreMetadataUpdates = Pick<StoreUpdates, 'fileName' | 'hasImage' | 'hasUnsavedChanges'>;
 
 type Action =
   | { type: 'SET_HAS_IMAGE'; payload: boolean }
@@ -115,6 +141,13 @@ type Action =
   | { type: 'SET_ACTIVE_LAYER'; payload: LayerId | null }
   | { type: 'ADD_LAYER'; payload: { layers: LayersRecord; activeLayerId: LayerId } }
   | { type: 'UPDATE_LAYERS'; payload: LayersRecord }
+  | { type: 'PUBLISH_RUNTIME_PRESENTATION'; payload: { layers: LayersRecord } }
+  | { type: 'PROMOTE_LAYER_PRESENTATIONS'; payload: LayerPresentationBatch }
+  /**
+   * Document metadata only, such as save state. Layer, frame, selection, and
+   * history mutations have their own actions, so a history writer can never be
+   * hidden inside a metadata batch.
+   */
   | { type: 'BATCH_UPDATES'; payload: StoreUpdates }
   | {
       type: 'COMMIT_DOCUMENT_EDIT';
@@ -180,6 +213,7 @@ const initialState: StoreData = {
 
   currentArgs: { current: {} as ToolArgs },
   clearPreviewLayers: () => undefined,
+  promoteLayerPresentation: () => undefined,
   previewLayers: { current: {} },
 
   hasImage: false,
@@ -299,13 +333,40 @@ function reducer(state: StoreData, action: Action): StoreData {
         hasUnsavedChanges: true,
       };
     case 'UPDATE_LAYERS':
+      // Legacy escape hatch, retained for compatibility. No production writer
+      // uses it: layer changes that belong to a document edit go through
+      // `COMMIT_DOCUMENT_EDIT`, and cache promotion goes through
+      // `PROMOTE_LAYER_PRESENTATIONS`.
       return {
         ...state,
         layers: action.payload,
         durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
         hasUnsavedChanges: true,
       };
+    case 'PUBLISH_RUNTIME_PRESENTATION':
+      // Presentation-only publication of already-known layer records. The
+      // dispatcher proves the payload differs from the stored layers only by a
+      // promoted cache, so this transition cannot move durable logical state,
+      // records no history, and does not invalidate the durable shadow.
+      return { ...state, layers: action.payload.layers };
+    case 'PROMOTE_LAYER_PRESENTATIONS': {
+      // One transition for every promotion a commit produced. The dispatcher
+      // already filtered out superseded canvases; the identity re-check keeps the
+      // reducer pure and correct on its own. A bitmap that misses here is still
+      // owned by the presentation scope, so it is closed on document release.
+      let published = state.layers;
+      for (const { layerId, canvas, bitmap } of action.payload.promotions) {
+        const layer = published[layerId];
+        if (!isSamePresentationCanvas(layer, canvas)) continue;
+        if (published === state.layers) published = { ...state.layers };
+        published[layerId] = { ...layer, bitmap, tmpCanvas: null };
+      }
+      return published === state.layers ? state : { ...state, layers: published };
+    }
     case 'BATCH_UPDATES':
+      // Metadata-only in production. The wider legacy payload stays
+      // conservatively stale-marking because a compatibility caller may still
+      // hand it document state.
       return {
         ...state,
         ...action.payload,
@@ -507,6 +568,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   // Keep live DOM refs out of the reducer initializer; expose them after state updates.
   const [storeState, rawDispatch] = useReducer(reducer, initialState);
   const latestStateRef = useRef(storeState);
+  // Presentation ownership is provider-scoped, not document-scoped. A document
+  // replacement commits in the same turn as a promotion requested just before
+  // it, so a per-document scope would dispose a bitmap the new document
+  // legitimately owns. The document boundary is the canvas identity token, and
+  // document exit releases that document's published caches explicitly.
+  const presentationScope = useMemo(() => new DocumentPresentationScope(), []);
+  useEffect(() => () => presentationScope.dispose(), [presentationScope]);
+  useEffect(() => {
+    const releasedDocumentId = storeState.documentId;
+    return () => presentationScope.releaseDocument(releasedDocumentId);
+  }, [presentationScope, storeState.documentId]);
   useEffect(() => {
     latestStateRef.current = storeState;
   }, [storeState]);
@@ -514,6 +586,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // Legacy writers still submit HistoryItem; conversion and registry ownership
     // happen here so the reducer remains a pure atomic state transition.
     const currentState = latestStateRef.current;
+    if (action.type === 'PROMOTE_LAYER_PRESENTATIONS') {
+      // A promotion is accepted only while the layer still holds the requesting
+      // canvas. A superseded bitmap can never reach a layer, so the dispatcher
+      // closes it here, and the cache it replaces is closed only when this
+      // boundary created it.
+      const superseded: Array<BitmapSource | null> = [];
+      const promotions = action.payload.promotions.filter(({ layerId, canvas, bitmap }) => {
+        if (isSamePresentationCanvas(currentState.layers[layerId], canvas)) {
+          presentationScope.trackPublished(currentState.documentId, bitmap);
+          superseded.push(currentState.layers[layerId].bitmap);
+          return true;
+        }
+        closePresentationBitmap(bitmap);
+        return false;
+      });
+      if (!promotions.length) return;
+      const accepted: Action =
+        promotions.length === action.payload.promotions.length
+          ? action
+          : { type: 'PROMOTE_LAYER_PRESENTATIONS', payload: { promotions } };
+      latestStateRef.current = reducer(currentState, accepted);
+      rawDispatch(accepted);
+      // Retire the replaced caches only after the publication, so a dropped
+      // update can never leave a live layer pointing at a closed bitmap.
+      for (const previous of superseded) presentationScope.retire(previous);
+      return;
+    }
+    if (action.type === 'PUBLISH_RUNTIME_PRESENTATION') {
+      if (!layersDifferOnlyByPresentation(currentState.layers, action.payload.layers)) {
+        // A refused publication is a contained no-op: the layer keeps rendering
+        // from its tmpCanvas and no logical state moves. It is the intended path
+        // for a record that only differs by an identity operation, so it is not
+        // a warning; a refusal that is not identity-only is the defect case.
+        console.debug('Ignored a runtime presentation publication that also changes durable layer state');
+        return;
+      }
+      latestStateRef.current = reducer(currentState, action);
+      rawDispatch(action);
+      return;
+    }
     if (action.type === 'COMMIT_DOCUMENT_EDIT') {
       const timeline = updateHistoryTimeline(
         {
@@ -650,6 +762,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     latestStateRef.current = reducer(currentState, action);
     rawDispatch(action);
   };
+  const promoteLayerPresentation = (request: LayerPresentationRequest | readonly LayerPresentationRequest[]) => {
+    const requests = (Array.isArray(request) ? request : [request as LayerPresentationRequest]).filter(
+      (candidate) => candidate.canvas
+    );
+    if (!requests.length) return;
+    // One scope owns every in-flight materialization and the store receives one
+    // publication for the whole batch, so a commit that dirties several layers
+    // costs a single store transition.
+    presentationScope.deliverBatch(
+      // Each materialization settles on its own so one failure cannot drop the
+      // bitmaps the other requests already produced.
+      Promise.all(
+        requests.map((candidate) =>
+          materializePresentationBitmap(candidate.canvas).catch((error) => {
+            console.error('Unable to materialize a layer presentation cache', error);
+            return undefined;
+          })
+        )
+      ),
+      (bitmaps) => {
+        const promotions = requests
+          .map((candidate, index) => {
+            const bitmap = bitmaps[index];
+            return bitmap ? { ...candidate, bitmap } : undefined;
+          })
+          .filter((promotion): promotion is LayerPresentationPromotion => promotion !== undefined);
+        if (!promotions.length) return;
+        dispatch({ type: 'PROMOTE_LAYER_PRESENTATIONS', payload: { promotions } });
+      }
+    );
+  };
   useEffect(
     () => () => {
       // The registry tombstones disposed document IDs, so this cleanup safely
@@ -668,6 +811,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     canvasCtxRef,
     currentArgs: currentArgsRef,
     clearPreviewLayers,
+    promoteLayerPresentation,
     previewLayers: previewLayersRef,
   };
   //

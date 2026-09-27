@@ -1,5 +1,5 @@
 import type { BitmapSource, Size } from '../contexts/general-types.ts';
-import { useStore } from '../contexts/StoreContext.tsx';
+import { useStore, type StoreMetadataUpdates } from '../contexts/StoreContext.tsx';
 import type { Layer, LayersRecord } from '../contexts/layer-types.ts';
 import type { BlankImageParams, ToolName } from '../contexts/tool-types.ts';
 import { useLayers } from '../contexts/useLayer.ts';
@@ -58,13 +58,9 @@ export const useApp = (): UseAppType => {
   }
 
   function handleImageSave({ fileName }: ImageSaveResponse) {
-    dispatch({
-      type: 'BATCH_UPDATES',
-      payload: {
-        fileName,
-        hasUnsavedChanges: false,
-      },
-    });
+    // Save state is the only thing a batch is allowed to carry.
+    const metadata: StoreMetadataUpdates = { fileName, hasUnsavedChanges: false };
+    dispatch({ type: 'BATCH_UPDATES', payload: metadata });
   }
 
   function _setFileName(fileName: string) {

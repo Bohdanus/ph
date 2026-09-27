@@ -92,7 +92,9 @@ export const useHistory = () => {
         targetIndex,
         currentSize,
         {
-          createLayer: ({ layerId, layers, source }) => createLayerSource({ layerId, layers, source, deferSave: true }),
+          // Replay layers keep their tmpCanvas: a cache is promoted only when the
+          // user commits an edit, and the renderer draws from the canvas.
+          createLayer: ({ layerId, layers, source }) => createLayerSource({ layerId, layers, source }),
           applyRasterTool: (layer, args) => {
             const bitmap = layer.tmpCanvas ?? layer.bitmap;
             if (!bitmap) return layer;
