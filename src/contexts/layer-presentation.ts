@@ -120,8 +120,9 @@ export function layersDifferOnlyByPresentation(current: LayersRecord, next: Laye
  *   before it can be published;
  * - refused because the requesting canvas is no longer the layer's canvas: the
  *   dispatcher, which closes it;
- * - published: the store layer, with the scope keeping the reference so a
- *   replacement cache or a departing document can close it deterministically.
+ * - published: the store layer, with the scope keeping the reference so a cache
+ *   the record replaces or stops naming, and a departing document, can close it
+ *   deterministically.
  *
  * The scope is deliberately provider-scoped rather than document-scoped: a
  * document replacement commits in the same turn as a promotion requested just

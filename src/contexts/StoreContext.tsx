@@ -559,6 +559,35 @@ function buildDurableDocument(
   }
 }
 
+/**
+ * Retires the presentation caches the published layer record no longer names.
+ *
+ * A cache is a candidate only when the transition dropped it from the live
+ * record: either its layer is gone, or the layer that took its place points at a
+ * different cache. `deletedLayers` and layer identity prove neither — the
+ * deleted record accumulates across removals and survives undo, and replay
+ * re-creates a removed layer under the same id with a freshly built cache — so
+ * neither is consulted here.
+ *
+ * Ownership still decides. `retire` closes a bitmap only when this scope
+ * published it, so a borrowed import, a replay source, and an in-flight
+ * materialization are all left alone, and a cache that merely moved to another
+ * layer stays live.
+ */
+function retireDepartedPresentationBitmaps(
+  presentationScope: DocumentPresentationScope,
+  previous: LayersRecord,
+  next: LayersRecord
+): void {
+  const live = new Set<BitmapSource>();
+  for (const layer of Object.values(next)) {
+    if (layer.bitmap) live.add(layer.bitmap);
+  }
+  for (const layer of Object.values(previous)) {
+    if (layer.bitmap && !live.has(layer.bitmap)) presentationScope.retire(layer.bitmap);
+  }
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   // refs
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -683,7 +712,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           durableAppendDiagnostic(action.payload.historyItem, planned.reason),
         ];
       }
-      latestStateRef.current = {
+      const nextState: StoreData = {
         ...currentState,
         ...updates,
         ...(nextFrame ? { documentFrame: cloneDocumentFrame(nextFrame), totalSize: documentFrameSize(nextFrame) } : {}),
@@ -694,6 +723,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         durableStatus: converted.status,
         durableDiagnostics: converted.diagnostics,
       };
+      latestStateRef.current = nextState;
       rawDispatch({
         ...action,
         payload: {
@@ -703,6 +733,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           durableDiagnostics: converted.diagnostics,
         },
       });
+      // Retirement runs after the transition is published, and only against the
+      // record that transition actually produced: a delete, a merge, and a
+      // commit that swaps a layer's cache all leave a published bitmap behind
+      // with no remaining reference. `hasUnsavedChanges` is the reducer's to set;
+      // the hand-built projection above deliberately leaves it to the reducer.
+      retireDepartedPresentationBitmaps(presentationScope, currentState.layers, nextState.layers);
       return;
     }
     if (action.type === 'APPLY_HISTORY_REPLAY') {
@@ -722,7 +758,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         action.payload.timeline.cursor,
         action.payload.timeline.branchRevision
       );
-      latestStateRef.current = {
+      const nextState: StoreData = {
         ...currentState,
         ...replayUpdates,
         ...(replayFrame
@@ -738,6 +774,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         durableStatus: converted.status,
         durableDiagnostics: converted.diagnostics,
       };
+      latestStateRef.current = nextState;
       rawDispatch({
         ...action,
         payload: {
@@ -747,6 +784,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           durableDiagnostics: converted.diagnostics,
         },
       });
+      // Replay is the other way a cache leaves the record, and the identity case
+      // is the common one: navigating back over a removal re-creates the layer
+      // under the same id with no cache at all, or with a different one. The
+      // replayed record is already painted, so retiring against it cannot blank
+      // a layer that is still on screen.
+      retireDepartedPresentationBitmaps(presentationScope, currentState.layers, nextState.layers);
       return;
     }
     if (action.type === 'REPLACE_DOCUMENT') {
