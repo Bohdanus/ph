@@ -19,7 +19,12 @@ import {
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs } from './tool-types.ts';
-import { type CreatorToolParams, type ProcessorToolParams, toolProcessors } from '../tools/toolProcessors.ts';
+import {
+  type CreatorToolParams,
+  type ProcessorToolParams,
+  type ToolResult,
+  toolProcessors,
+} from '../tools/toolProcessors.ts';
 import { reduceRect, sortRect, sortedRectToPos, trimRect } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
 import {
@@ -267,9 +272,14 @@ export const useLayers = () => {
       const mergedLayer = await mergeAllLayers();
       if (!mergedLayer?.bitmap) return;
 
-      const [canvas, positionPatch] = processor.imageProcessor({ bitmap: mergedLayer.bitmap, size: mergedLayer.pos })(
-        toolArgs
-      );
+      let result: ToolResult;
+      try {
+        result = processor.imageProcessor({ bitmap: mergedLayer.bitmap, size: mergedLayer.pos })(toolArgs);
+      } catch (error) {
+        console.error(error);
+        return;
+      }
+      const [canvas, positionPatch] = result;
       const updatedLayer = {
         ...mergedLayer,
         pos: positionPatch ? { ...mergedLayer.pos, ...positionPatch } : mergedLayer.pos,

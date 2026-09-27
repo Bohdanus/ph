@@ -134,11 +134,13 @@ describe('useMarchingPath animation lifecycle', () => {
     expect(rafMocks.frames.size).toBe(1);
   });
 
-  it.fails('stops the loop when paused before the first frame has run (src/hooks/usePolylineAnts.ts:135)', () => {
-    // Product defect: the pause branch guards on `if (animationIdRef.current)`,
+  it.fails('stops the loop when paused before the first frame has run (src/hooks/usePolylineAnts.ts:141)', () => {
+    // Product defect: the effect cleanup guards on `if (animationIdRef.current)`,
     // and the first frame handle is 0. Pausing while frame 0 is still pending
     // therefore never cancels it, so the animation loop keeps running (frozen,
-    // but never stopping) for the lifetime of the component.
+    // but never stopping) for the lifetime of the component. The pause branch
+    // in the effect body is gone; this cleanup guard is the only remaining
+    // falsy-0 path.
     const { rerender } = setup();
     expect([...rafMocks.frames.keys()]).toEqual([0]);
 
