@@ -157,8 +157,10 @@ On the default headless run **no e2e test fails**: 97 pass, 2 are skipped by
 declaration. That is stable across repeated full runs. Three defect groups used to
 fail here and have since been fixed in this repository — the CDP capture-size
 assertions, the keyboard flyout race, and the `levels.spec.ts` canvas lookup. Their
-evidence is kept in `e2e/OPEN_PROBLEMS.md` rather than deleted, because each explains
-a shape the suite must not drift back into.
+pin survives in `e2e/OPEN_PROBLEMS.md` rather than being deleted, because each
+explains a shape the suite must not drift back into. That pin is the whole of the
+allowed residue: it lives only as long as the tripwire does, and the fix that
+removes the tripwire removes the entry with it.
 
 The remaining `e2e/OPEN_PROBLEMS.md` entries are **latent** defects that no current
 run trips. Read it before investigating a failure; if a test does fail, the answer is
@@ -184,11 +186,43 @@ window, so ask the operator.
 
 ## Handoff documents
 
-`HANDOFF.md` and `.kilo/plans/` are strictly problem-focused and todo-oriented: no
-changelog, no "work completed", no status summaries. Each entry is a validated
-issue with a problem statement, the affected files, and an actionable fix. Verify
-every claim against the working tree first — stale line numbers send the next
-session after a bug that does not exist.
+`HANDOFF.md`, `.kilo/plans/` and `e2e/OPEN_PROBLEMS.md` are strictly
+problem-focused and todo-oriented: no changelog, no "work completed", no status
+summaries. Each entry is a validated issue with a problem statement, the
+affected files, and an actionable fix. Verify every claim against the working
+tree first — stale line numbers send the next session after a bug that does not
+exist.
+
+### Writing is the default, not a favour
+
+**Leave a handoff doc, or edit the existing one, whenever you find a validated
+issue, a strong recommendation, or a finding worth preserving.** The strongest
+case by far is a confirmed defect: you investigated, it is real, and nobody else
+knows. Not finding anything is the only reason to leave the doc alone — a
+session that found a real problem and wrote nothing down still lost it. Do not
+ask permission to write one.
+
+**Handoff docs are maintained like source: they ship with the code.** The
+handoff edit belongs in the same commit as the work that produced the finding.
+A stale entry is not neutral — the next session spends a full investigation on a
+bug that is already gone, and a missing entry loses the only record of a real
+one.
+
+### Lifecycle: entries die, they never get reworded
+
+- **Fixed and verified deletes the entry.** When a fix lands and another
+  subagent, a review, or a test confirms it, the issue MUST be removed from the
+  handoff. The same change that fixes an issue removes it.
+- **Never rewrite an open problem into a closed one.** Turning "issue X" into
+  "issue X fixed in abc123" is not maintenance — it is a new entry wearing the
+  old one's name. Delete it.
+- **A trail of fixed issues is pollution.** Every retained "fixed" note is
+  prose the next session reads instead of a problem it can act on, and it buries
+  the problems still open. The residue a fix may leave is a tripwire in the test
+  code, not a paragraph in the doc.
+- **Unverified is not closed.** A fix that landed without a check leaves the
+  entry alive: tighten it to say exactly what still needs verifying, and let
+  that verification delete it.
 
 ## Architecture status
 
