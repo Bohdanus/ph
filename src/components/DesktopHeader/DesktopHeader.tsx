@@ -78,11 +78,16 @@ const DesktopHeader = () => {
 
   const handleToolSelection = (toolName: ToolName) => {
     const figure = FIGURE_TOOLS[toolName];
-    // Patch first, then select — the same order as `SidebarLeft.selectTool`, so the
-    // figure lands in the args the panel is about to be handed.
+    // Select first, then patch — deliberately *not* the order
+    // `SidebarLeft.selectTool` uses. `goToTool` runs `commitDirtyTool()` against the
+    // OUTGOING tool (`useApp.ts:157`), and `patchToolArgs` writes straight into the
+    // live `currentArgsRef` (`useCurrentTool.tsx:70`). Patching first would leave the
+    // text branch at `useLayer.ts:329` reading shape args — no `.text`, no `.rect` —
+    // so it early-returns and an unapplied text layer is dropped with nothing to undo.
+    // Selecting first lets that commit read the text args it is meant to read.
     if (figure !== undefined) {
-      patchToolArgs('shape', { figure });
       goToTool('shape');
+      patchToolArgs('shape', { figure });
     } else {
       goToTool(toolName);
     }
