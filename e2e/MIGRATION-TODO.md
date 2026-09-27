@@ -121,10 +121,6 @@ specifics worth calling out:
   `drawing-icon.ico.png` and `source-baseline.png`). Nothing reads them. Left in
   place because deleting committed baselines was not authorized. `drawing.bmp`
   alone is 1.92 MB.
-- **`exportAndVerify` ignores its `testInfo` argument** (`export/helpers.ts:153`).
-  `tsconfig.e2e.json` sets `noUnusedParameters: false` specifically so this and
-  `expectCanvasToMatch`'s unread `page` survive `tsc -b`. Once the dead code above
-  is removed, both can be deleted and the setting turned back on.
 
 ## 5. Repository housekeeping
 

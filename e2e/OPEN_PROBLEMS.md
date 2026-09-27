@@ -296,15 +296,6 @@ in the same change.
 Fix if kept: spread first, default second, and read the defaults from
 `DEFAULT_THRESHOLD`.
 
-## P1 — a failed canvas context is reported as a pixel mismatch
-
-`e2e/export/helpers.ts:185`
-
-`if (!sourceContext || !exportedContext) return false;` then
-`expect(..., '...: pixels differ too much from source').toBe(true)`. A failed
-`getContext('2d')` reaches the developer as a colour problem. Fix: return a
-discriminated `{ ok, reason }` and assert on the reason.
-
 ## P1 — unescaped tool name in a RegExp selector
 
 `e2e/helpers/toolbar-helpers.ts:67`
@@ -401,19 +392,6 @@ testid reaches `descriptor.set.call(input, color)` and throws an opaque
 `TypeError: Illegal invocation`. This is the mirror image of the
 `as unknown as` casts removed from the test files.
 
-## P2 — `exportAndVerify` ignores its `testInfo` argument
-
-`e2e/export/helpers.ts:153`
-
-The parameter is never referenced in the body, so every caller threads a
-`TestInfo` for nothing. `setupExportTest` does use its own.
-
-`tsconfig.e2e.json` sets `noUnusedParameters: false` specifically so this and
-`expectCanvasToMatch`'s unread `page` survive `npm run tsc`; deleting a parameter
-to satisfy the compiler would erase the evidence of the defect and churn every
-call site. ESLint reports both as warnings — the e2e block sets `args: 'all'`,
-which is what makes them visible at all.
-
 ## P2 — the per-call dynamic import makes the fs surface unspyable
 
 `e2e/helpers/canvas-helpers.ts:193`, `e2e/helpers/cdp-helpers.ts:32`
@@ -459,15 +437,6 @@ case-insensitive — two weaknesses cancelling out.
 
 Separately, `generateSlug` does not expand `&` while `normalizeToolName` does,
 so the two produce different slugs for the same label.
-
-## P3 — verification asserts a hardcoded filename
-
-`e2e/export/helpers.ts:326`
-
-Verification asserts `toContainText('drawing')` instead of deriving the expected
-name from its own `psdPath` argument, coupling it to the hardcoded
-`'drawing'` / `'drawing-icon'` filled at `:156` and `:243`. A renamed export
-silently verifies the wrong file.
 
 ## P3 — transparent pixels weighted as fully opaque (low confidence)
 

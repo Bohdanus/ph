@@ -28,13 +28,16 @@
     // OFF, unlike tsconfig.app.json / tsconfig.node.json, and unlike the standalone
     // package these specs came from (which left it off by omission).
     //
-    // Two e2e helpers take a parameter that they deliberately do not read:
-    // `exportAndVerify`'s `testInfo` and `expectCanvasToMatch`'s `page`. Both are
-    // documented defects in e2e/OPEN_PROBLEMS.md, and every call site already
-    // threads the argument. Deleting the parameter to satisfy the compiler would
-    // erase the evidence of the defect and churn every call site; the fix is to
-    // start using the argument. Unused *locals* stay an error, and ESLint still
-    // reports both as `no-unused-vars` warnings, so neither is silent.
+    // Exactly one e2e helper still takes a parameter it does not read:
+    // `expectCanvasToMatch`'s `page` (e2e/helpers/image-comparison.ts:100), a
+    // documented defect in e2e/OPEN_PROBLEMS.md. Measured, not assumed — with this
+    // set to `true`, `tsc -b tsconfig.e2e.json` reports only that one TS6133.
+    // `exportAndVerify`'s `testInfo` was the second one and now attaches the
+    // exported bytes to the report when the pixel comparison fails, so the flag
+    // becomes `true` as soon as that dead parameter is gone.
+    //
+    // Unused *locals* stay an error, and the e2e ESLint block sets `args: 'all'`,
+    // so the remaining parameter is still reported rather than silent.
     "noUnusedParameters": false,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,

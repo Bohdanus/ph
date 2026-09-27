@@ -20,6 +20,7 @@ import {
   setupIcoTest,
   verifyPsdInPhotopea,
   type ExportFormat,
+  type PixelComparisonResult,
 } from '../helpers';
 import {
   CANVAS_REDRAW_CLIP,
@@ -291,7 +292,12 @@ interface PageSurface {
   waitForFunction: Mock<
     (pageFunction: () => boolean, arg?: unknown, options?: { timeout?: number }) => Promise<unknown>
   >;
-  evaluate: Mock<(compare: (payload: PixelPayload) => Promise<boolean>, payload: PixelPayload) => Promise<boolean>>;
+  evaluate: Mock<
+    (
+      compare: (payload: PixelPayload) => Promise<PixelComparisonResult>,
+      payload: PixelPayload
+    ) => Promise<PixelComparisonResult>
+  >;
   screenshot: Mock<(options?: { clip?: Box }) => Promise<Buffer>>;
   waitForTimeout: Mock<(timeout: number) => Promise<void>>;
   mouse: MouseSurface;
@@ -365,7 +371,7 @@ function createPageMock(overrides: Partial<PageSurface> = {}): {
     locator: byKey({}, fallback),
     waitForEvent: vi.fn().mockRejectedValue(new Error('waitForEvent was not configured for this test')),
     waitForFunction: vi.fn().mockResolvedValue(true),
-    evaluate: vi.fn().mockResolvedValue(true),
+    evaluate: vi.fn().mockResolvedValue({ ok: true }),
     screenshot: vi.fn(async () => strokePng(true)),
     waitForTimeout: vi.fn().mockResolvedValue(undefined),
     mouse: {
@@ -378,8 +384,13 @@ function createPageMock(overrides: Partial<PageSurface> = {}): {
   return { surface, page: asPlaywright<Page>(surface) };
 }
 
-function createTestInfoMock(outputDir: string = OUTPUT_DIR): TestInfo {
-  return asPlaywright<TestInfo>({ outputDir });
+interface TestInfoSurface {
+  outputDir: string;
+  attach: Mock<(name: string, options: { body: Buffer; contentType: string }) => Promise<void>>;
+}
+
+function createTestInfoMock(outputDir: string = OUTPUT_DIR): TestInfoSurface & TestInfo {
+  return asPlaywright<TestInfoSurface & TestInfo>({ outputDir, attach: vi.fn().mockResolvedValue(undefined) });
 }
 
 function createDownloadMock(suggestedFilename: string, failure: string | null = null): DownloadSurface {
@@ -756,22 +767,25 @@ describe('Export Helpers', () => {
     });
 
     it.each([
-      ['accepts an identical export', IDENTICAL_EXPORT, true],
-      ['rejects an export shifted by half its width', SHIFTED_EXPORT, false],
-      ['accepts an export differing by exactly the per-channel tolerance', WITHIN_TOLERANCE_EXPORT, true],
-      ['accepts an export differing only in the alpha channel', ALPHA_ONLY_EXPORT, true],
-    ])('pixel comparator %s', async (_label, exported, expected) => {
-      const { surface, page } = createSaveDialogPage();
-      await exportAndVerify(page, PNG_FORMAT, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, createTestInfoMock());
-      const [compare, payload] = surface.evaluate.mock.calls[0];
+      ['accepts an identical export', IDENTICAL_EXPORT, { ok: true }],
+      ['rejects an export shifted by half its width', SHIFTED_EXPORT, { ok: false, reason: 'pixels-differ' }],
+      ['accepts an export differing by exactly the per-channel tolerance', WITHIN_TOLERANCE_EXPORT, { ok: true }],
+      ['accepts an export differing only in the alpha channel', ALPHA_ONLY_EXPORT, { ok: true }],
+    ] satisfies Array<[string, StubImage, PixelComparisonResult]>)(
+      'pixel comparator %s',
+      async (_label, exported, expected) => {
+        const { surface, page } = createSaveDialogPage();
+        await exportAndVerify(page, PNG_FORMAT, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, createTestInfoMock());
+        const [compare, payload] = surface.evaluate.mock.calls[0];
 
-      stubCompareEnvironment({
-        [SOURCE_DATA_URL]: IDENTICAL_EXPORT,
-        [EXPORTED_PNG_DATA_URL]: exported,
-      });
+        stubCompareEnvironment({
+          [SOURCE_DATA_URL]: IDENTICAL_EXPORT,
+          [EXPORTED_PNG_DATA_URL]: exported,
+        });
 
-      await expect(compare(payload)).resolves.toBe(expected);
-    });
+        await expect(compare(payload)).resolves.toEqual(expected);
+      }
+    );
 
     it('pixel comparator decodes the export with the format mime type', async () => {
       const { surface, page } = createSaveDialogPage();
@@ -783,11 +797,11 @@ describe('Export Helpers', () => {
         [EXPORTED_PNG_DATA_URL]: IDENTICAL_EXPORT,
       });
 
-      await expect(compare(payload)).resolves.toBe(true);
+      await expect(compare(payload)).resolves.toEqual({ ok: true });
       expect(requestedSources).toEqual([SOURCE_DATA_URL, EXPORTED_PNG_DATA_URL]);
     });
 
-    it('pixel comparator reports a mismatch when the canvas context is unavailable', async () => {
+    it('pixel comparator reports an unavailable canvas context as its own failure, not a pixel mismatch', async () => {
       const { surface, page } = createSaveDialogPage();
       await exportAndVerify(page, PNG_FORMAT, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, createTestInfoMock());
       const [compare, payload] = surface.evaluate.mock.calls[0];
@@ -797,7 +811,7 @@ describe('Export Helpers', () => {
         { contextAvailable: false }
       );
 
-      await expect(compare(payload)).resolves.toBe(false);
+      await expect(compare(payload)).resolves.toEqual({ ok: false, reason: 'context-unavailable' });
     });
 
     it('pixel comparator rejects when the export cannot be decoded', async () => {
@@ -946,12 +960,48 @@ describe('Export Helpers', () => {
       expect(download.saveAs).toHaveBeenCalled();
     });
 
-    it('rejects when the exported pixels differ from the source', async () => {
-      const { page } = createSaveDialogPage({ evaluate: vi.fn().mockResolvedValue(false) });
+    it('rejects with the environment cause when the browser gives no canvas context to compare in', async () => {
+      const { page } = createSaveDialogPage({
+        evaluate: vi.fn().mockResolvedValue({ ok: false, reason: 'context-unavailable' }),
+      });
+
+      await expect(
+        exportAndVerify(page, PNG_FORMAT, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, createTestInfoMock())
+      ).rejects.toThrow(`${PNG_FORMAT.label}: the browser provided no 2d canvas context to compare the export against`);
+    });
+
+    it('rejects with the colour cause when the exported pixels differ from the source', async () => {
+      const { page } = createSaveDialogPage({
+        evaluate: vi.fn().mockResolvedValue({ ok: false, reason: 'pixels-differ' }),
+      });
 
       await expect(
         exportAndVerify(page, PNG_FORMAT, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, createTestInfoMock())
       ).rejects.toThrow(`${PNG_FORMAT.label}: pixels differ too much from source`);
+    });
+
+    it('attaches the exported bytes only when the pixel comparison failed', async () => {
+      const passing = createTestInfoMock();
+      const { page: passingPage } = createSaveDialogPage({ evaluate: vi.fn().mockResolvedValue({ ok: true }) });
+
+      await exportAndVerify(passingPage, PNG_FORMAT, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, passing);
+
+      expect(passing.attach).not.toHaveBeenCalled();
+
+      const failing = createTestInfoMock();
+      const { page: failingPage } = createSaveDialogPage({
+        evaluate: vi.fn().mockResolvedValue({ ok: false, reason: 'pixels-differ' }),
+      });
+
+      await expect(
+        exportAndVerify(failingPage, PNG_FORMAT, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, failing)
+      ).rejects.toThrow(`${PNG_FORMAT.label}: pixels differ too much from source`);
+
+      expect(failing.attach).toHaveBeenCalledTimes(1);
+      expect(failing.attach).toHaveBeenCalledWith(`${PNG_FORMAT.label}-pixel-comparison-failed`, {
+        body: mocks.exportedFile,
+        contentType: 'image/png',
+      });
     });
   });
 
@@ -1111,20 +1161,36 @@ describe('Export Helpers', () => {
     });
 
     it.each([
-      ['accepts an identical icon', IDENTICAL_EXPORT, true],
-      ['rejects an icon shifted by half its width', SHIFTED_EXPORT, false],
-    ])('ICO pixel comparator %s', async (_label, exported, expected) => {
+      ['accepts an identical icon', IDENTICAL_EXPORT, { ok: true }],
+      ['rejects an icon shifted by half its width', SHIFTED_EXPORT, { ok: false, reason: 'pixels-differ' }],
+    ] satisfies Array<[string, StubImage, PixelComparisonResult]>)(
+      'ICO pixel comparator %s',
+      async (_label, exported, expected) => {
+        const { surface, page } = createIcoExportPage();
+        await exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY);
+        const [compare, payload] = surface.evaluate.mock.calls[0];
+
+        const requestedSources = stubCompareEnvironment({
+          [SOURCE_DATA_URL]: IDENTICAL_EXPORT,
+          [EXPORTED_ICO_DATA_URL]: exported,
+        });
+
+        await expect(compare(payload)).resolves.toEqual(expected);
+        expect(requestedSources).toEqual([SOURCE_DATA_URL, EXPORTED_ICO_DATA_URL]);
+      }
+    );
+
+    it('ICO pixel comparator reports an unavailable canvas context as its own failure', async () => {
       const { surface, page } = createIcoExportPage();
       await exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY);
       const [compare, payload] = surface.evaluate.mock.calls[0];
 
-      const requestedSources = stubCompareEnvironment({
-        [SOURCE_DATA_URL]: IDENTICAL_EXPORT,
-        [EXPORTED_ICO_DATA_URL]: exported,
-      });
+      stubCompareEnvironment(
+        { [SOURCE_DATA_URL]: IDENTICAL_EXPORT, [EXPORTED_ICO_DATA_URL]: IDENTICAL_EXPORT },
+        { contextAvailable: false }
+      );
 
-      await expect(compare(payload)).resolves.toBe(expected);
-      expect(requestedSources).toEqual([SOURCE_DATA_URL, EXPORTED_ICO_DATA_URL]);
+      await expect(compare(payload)).resolves.toEqual({ ok: false, reason: 'context-unavailable' });
     });
 
     it('rejects without saving when the ICO download failed', async () => {
@@ -1157,8 +1223,20 @@ describe('Export Helpers', () => {
       expect(vi.mocked(readFile)).not.toHaveBeenCalled();
     });
 
+    it('rejects with the environment cause when the browser gives no canvas context to compare in', async () => {
+      const { page } = createIcoExportPage({
+        evaluate: vi.fn().mockResolvedValue({ ok: false, reason: 'context-unavailable' }),
+      });
+
+      await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY)).rejects.toThrow(
+        `${icoFormat.label}: the browser provided no 2d canvas context to compare the export against`
+      );
+    });
+
     it('rejects when the ICO pixels differ from the source', async () => {
-      const { page } = createIcoExportPage({ evaluate: vi.fn().mockResolvedValue(false) });
+      const { page } = createIcoExportPage({
+        evaluate: vi.fn().mockResolvedValue({ ok: false, reason: 'pixels-differ' }),
+      });
 
       await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY)).rejects.toThrow(
         'ICO: pixels differ too much from source'
@@ -1206,6 +1284,29 @@ describe('Export Helpers', () => {
         timeout: PHOTOPEA_EXPORT_VISIBLE_TIMEOUT_MS,
       });
       expect(body.textContent).toHaveBeenCalled();
+    });
+
+    it('expects the document name derived from the psd path, not the export dialog default', async () => {
+      const renamedPsdPath = '/tmp/export-unit/harbour-at-dusk.psd';
+      const { page } = createPhotopeaPage({ bodyText: 'harbour-at-dusk.psd 512 x 512' });
+
+      await verifyPsdInPhotopea(page, renamedPsdPath);
+
+      expect(mocks.matchers.toContainText).toHaveBeenCalledWith('harbour-at-dusk', {
+        timeout: PHOTOPEA_EXPORT_VISIBLE_TIMEOUT_MS,
+      });
+      // A hardcoded 'drawing' would pass the first test above and fail this one.
+      expect(mocks.matchers.toContainText).not.toHaveBeenCalledWith(EXPORT_FILENAME, expect.anything());
+    });
+
+    it('drops the extension and keeps interior dots when deriving the document name', async () => {
+      const { page } = createPhotopeaPage({ bodyText: '2026.09.27.sheet.psd 512 x 512' });
+
+      await verifyPsdInPhotopea(page, '/tmp/export-unit/2026.09.27.sheet.psd');
+
+      expect(mocks.matchers.toContainText).toHaveBeenCalledWith('2026.09.27.sheet', {
+        timeout: PHOTOPEA_EXPORT_VISIBLE_TIMEOUT_MS,
+      });
     });
 
     it('passes the readiness budgets as waitForFunction options, not as the evaluation argument', async () => {
