@@ -45,6 +45,39 @@ jobs:
         # so this also type-checks the Playwright specs and their helper unit tests.
         run: npm run tsc
 
+      - name: Assert every tracked TypeScript file is in a project
+        # A `.ts`/`.tsx` that no project's `include` reaches is type-checked by
+        # nothing: there is no error, and the file can sit there indefinitely. This
+        # is the durable form of that check.
+        #
+        # Note the scope: `tsc -b --listFiles` reports the whole program, so this
+        # fails for a file no project reaches at all. It does NOT fail for a file
+        # that only some other file imports — such a file IS in the program, so
+        # being reachable only through its importers stays invisible here. The
+        # `toolbar-mapping.ts` case was that shape, and the fix for it is the
+        # explicit `include` entry in tsconfig.app.json, not this step.
+        run: |
+          set -euo pipefail
+          dir="$(mktemp -d)"
+          # A non-zero exit here fails the step, so a type error or a broken build
+          # can never leave the comparison below running on a partial file list.
+          npx tsc -b --listFiles > "$dir/all"
+          # Strip the repo prefix without a regex: a checkout path containing a sed
+          # metacharacter would otherwise corrupt every line. Anything not under the
+          # repo root is reported on stderr rather than silently dropped.
+          grep -v '/node_modules/' "$dir/all" \
+            | awk -v root="$PWD/" \
+                'index($0, root) == 1 { print substr($0, length(root) + 1); next } \
+                 { print "!UNPREFIXED " $0 > "/dev/stderr" }' \
+            | sort -u > "$dir/included"
+          uncovered="$(comm -23 <(git ls-files '*.ts' '*.tsx' | sort -u) "$dir/included")"
+          if [ -n "$uncovered" ]; then
+            echo "::error::Tracked TypeScript files that no tsconfig project includes:"
+            echo "$uncovered"
+            exit 1
+          fi
+          echo "All $(git ls-files '*.ts' '*.tsx' | wc -l | tr -d ' ') tracked TypeScript files are type-checked by some project."
+
       - name: Test
         run: npm run test -- --coverage
 
@@ -58,8 +91,7 @@ jobs:
   # failed step aborts the rest, and a step ordered after a failing one simply never
   # runs while the workflow still reads as if it were covered.
   #
-  # It also builds only tsconfig.e2e.json, so an app-project type error cannot take
-  # the e2e type-check down with it. Needs no browser and no application instance.
+  # Needs no browser and no application instance.
   e2e-unit:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -78,11 +110,6 @@ jobs:
 
       - name: Unit test the e2e helpers
         run: npm run test:e2e:unit
-
-      - name: Type-check the e2e project
-        # `tsc -b` would also build the app project; scoping to tsconfig.e2e.json keeps
-        # an app type error from being reported as an e2e failure.
-        run: npx tsc -b tsconfig.e2e.json
 
   e2e:
     runs-on: ubuntu-latest

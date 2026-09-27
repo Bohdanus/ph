@@ -1,5 +1,10 @@
 {
   "compilerOptions": {
+    // Not an incremental-build optimisation: with `noEmit: true` and no `composite`,
+    // `tsc -b` re-checks this project on every run and never reports it up to date.
+    // What the setting actually does is redirect where `tsc -b` writes the buildinfo.
+    // Without it, the default path is the repo root, and every `npm run tsc` leaves
+    // an untracked `tsconfig.app.tsbuildinfo` next to this file.
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "target": "ES2022",
     "useDefineForClassFields": true,
@@ -30,5 +35,10 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"]
+  // `toolbar-mapping.ts` lives at the repo root, so `src` does not match it. It is
+  // listed explicitly: without it the file enters this program only through the
+  // imports of its consumers, and deleting the last one would drop it out of every
+  // TypeScript project with no error anywhere. Moving it under `src/` is the other
+  // option, but that is a wider refactor than this include deserves.
+  "include": ["src", "toolbar-mapping.ts"]
 }
