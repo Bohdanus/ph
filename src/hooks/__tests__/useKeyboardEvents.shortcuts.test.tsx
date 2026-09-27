@@ -250,7 +250,7 @@ describe('useKeyboardEvents auto-repeat', () => {
     expect(onKeyDown).toHaveBeenCalledTimes(1);
   });
 
-  it('does not prevent the default for a suppressed auto-repeat', () => {
+  it('keeps the app claim on a suppressed auto-repeat: no re-fire, default still prevented', () => {
     const onKeyDown = vi.fn();
     renderWithShortcut({ key: 'Backspace', preventDefault: true, onKeyDown });
 
@@ -263,7 +263,33 @@ describe('useKeyboardEvents auto-repeat', () => {
     document.body.dispatchEvent(event);
 
     expect(onKeyDown).not.toHaveBeenCalled();
-    expect(event.defaultPrevented).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('keeps preventing the default for a held key that allowInInput runs inside a contenteditable field', () => {
+    // The layer-rename field in LayersTab is a contenteditable span whose local
+    // onKeyDown does not stopPropagation, so a Backspace aimed at it reaches the
+    // document listener while a lasso/polygon draft is active. Suppressing the
+    // repeat must not hand the browser a held-Backspace default it has never had,
+    // or the field mungs its own text for as long as the key is held.
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <div contentEditable data-testid="rename-field" />
+        <ShortcutProbe shortcut={{ key: 'Backspace', preventDefault: true, allowInInput: true, onKeyDown }} />
+      </KeyboardEventsProvider>
+    );
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'Backspace',
+      repeat: true,
+      cancelable: true,
+      bubbles: true,
+    });
+    screen.getByTestId('rename-field').dispatchEvent(event);
+
+    expect(onKeyDown).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it('still prevents the default for a repeat:true registration', () => {
