@@ -998,28 +998,70 @@ replay authority.
 
 ---
 
-## 33. The tool overlay context is shared across tool switches, and two painters still inherit `globalAlpha`
+## 38. Two unbracketed writers leave the shared tool overlay context dirty, and two painters still inherit `globalAlpha`
 
 **Problem.** `Main.tsx:87` hands every tool area the _same_ `2d` context: the overlay canvas is
 mounted unconditionally and only its `display` is toggled (`Main.tsx:180-198`), so `getContext('2d')`
-returns one object for the whole session. `setupDrawCtx` (`src/tools/draw.ts:35`) and `setShapeCtx`
-(`src/tools/shape.ts:129`) write `globalAlpha` onto it with no `save()`/`restore()`, so the last
-stroke's alpha is still set when the next tool paints. The default brush alpha is 0.9
-(`src/tools/settings.ts:115`), which is why a session that has drawn _anything_ leaves the next
-tool wrong, not just one where the user dragged the Opacity slider to 20 %.
+returns one object for the whole session. Nothing resets it. `resizeCanvas`
+(`src/util/canvas.ts:3-6`) only assigns `canvas.width` when it differs, and the layout effect that
+would re-derive the context keys on `[rectOverlayRef, toolOverlayRef, totalSize]`
+(`Main.tsx:82-102`), none of which change on a tool switch — so the last state a writer left is the
+state the next tool paints in. The default brush alpha is 0.9 (`src/tools/settings.ts:115`), which
+is why a session that has drawn _anything_ leaves the next tool wrong, not just one where the user
+dragged the Opacity slider to 20 %.
 
-`resetOverlayAlpha` (`src/util/canvas.ts`) now runs at the entry of the overlay paints that could be
-reached legally, but **two painters are still unfixed, both behind
-`.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt`**:
+**Root cause — the two writers, and both are still unbracketed.** This is the part that must not be
+skipped, because fixing the two painters below without it leaves the cause exactly where it is.
 
-1. **`useRect.drawMask` — the crop / rectangular-selection / text dim.**
+1. `setupDrawCtx` (`src/tools/draw.ts:26-38`) writes `strokeStyle` (`:31`), `lineWidth` (`:32`),
+   `lineJoin` (`:33`), `lineCap` (`:34`), `globalAlpha` (`:35`) and, for a dashed pen, `setLineDash`
+   (`:37`), with no `save()`/`restore()` anywhere in the function.
+2. `setShapeCtx` (`src/tools/shape.ts:120-131`) does the same, ending at `globalAlpha` (`:129`) and
+   an unconditional `setLineDash` (`:130`).
+
+Neither call site brackets the call either: `DrawToolArea.tsx:51` and `ShapeToolArea.tsx:73`. The
+codebase's own precedent for precisely this hazard is `src/contexts/layer-renderer.ts:93-98`, which
+brackets the identical `globalAlpha` write on the main canvas in a `try`/`finally` — the asymmetry
+between the two is the defect.
+
+`resetOverlayAlpha` (`src/util/canvas.ts:8-10`) now runs at the entry of the overlay paints that
+could be reached legally, so four of the six reachable painters are correct. That is a **per-paint
+discipline, not a property of the context**: any painter added later without the reset re-opens the
+same leak, and `restore()` inside `useAnts.animate` (`src/hooks/useAnts.ts:56-70`) puts the leaked
+alpha straight back after painting, so that path does not even heal the context for the next painter.
+**This entry cannot be closed while the two writers remain unbracketed, even after both painters
+below are fixed** — a session that patches the two victims and deletes this section has fixed the
+symptoms and left the cause.
+
+_Fix for the writers:_ bracket each writer's work in `save()`/`restore()` at `DrawToolArea.tsx:51`
+and `ShapeToolArea.tsx:73`, or inside the two writers — **in addition to** the per-paint reset, not
+instead of it, because a bracket only protects what is inside it and a tool that is entered after a
+leak and never sets the value is still wrong. `DrawToolArea.tsx` and `ShapeToolArea.tsx` are EXCLUDED
+(lines 11 and 16) and `src/tools/shape.ts` is EXCLUDED (line 126); `src/tools/draw.ts` is **not** in
+`.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt`, but its `:37` is
+rank 3's hunk in the same function (branch `rev2/draw-pen-dash-inherit`), so it needs coordination
+rather than a solo edit. Do **not** neutralise this by writing `ctx.globalAlpha = 1` at the top of
+`setupDrawCtx`: `draw()` (`src/tools/draw.ts:40-54`) runs `setupDrawCtx` on a fresh `OffscreenCanvas`
+at the slider's alpha, and the committed layer would flatten to 1.
+
+**Two painters are still wrong, both behind
+`.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt`:**
+
+1. **`useRect.drawMask` — the crop / rectangular-selection / text dim. This is the headline symptom
+   of the whole defect, and it needs an owner, not another shrug.**
    `src/hooks/useRect.ts:155-163` fills `rgba(0, 0, 0, 0.7)` and never sets `globalAlpha`, so the dim
    renders at `0.7 × stroke alpha`: 0.63 after any default brush stroke, 0.14 at 20 % opacity, and
    the crop boundary becomes effectively invisible. The committed layer is at full opacity, so
-   nothing else in the UI contradicts it. `useRect.ts` is EXCLUDED (line 114) and `useRect.test.ts`
-   (line 109) is EXCLUDED. _Fix:_ call `resetOverlayAlpha(ctx)` immediately after the
-   `if (!ctx) return;` guard in `drawMask`, before the `if (!hideBlend)` block — the dash at
-   `:167`/`:169` is already owned by `drawMask` and must stay after the reset.
+   nothing else in the UI contradicts it. Reached from `CropToolArea.tsx:26`,
+   `TextToolArea.tsx:29` and `RectangularSelectionToolArea.tsx:45`, all three of which pass
+   `overlayRef: toolOverlayRef` and none of which sets `hideBlend`.
+   _Fix:_ one call to `resetOverlayAlpha(ctx)` immediately after the `if (!ctx) return;` guard at
+   `useRect.ts:146`, before the `if (!hideBlend)` block at `:155` — the dash at `:167`/`:169` is
+   already owned by `drawMask` and must stay after the reset.
+   _To land it:_ `useRect.ts` is EXCLUDED (line 114) and `useRect.test.ts` (line 109) is EXCLUDED, so
+   no test covers the hook and a fixer who honours the manifest cannot reach it. Either lift
+   `useRect.ts` from the manifest, or have the operator name an owner for it. Until one of those two
+   things happens this stays open — it will not be fixed by being recorded a fifth time.
 2. **The magic-wand selection outline.** `drawSelectionOutline`
    (`src/util/selection.ts:141`) is in the EXCLUDED list (line 135), so the reset had to be added at
    its callers instead: `PolygonClickToolArea.drawPolygonOverlay` and
@@ -1029,8 +1071,17 @@ reached legally, but **two painters are still unfixed, both behind
    `resetOverlayAlpha` inside `drawSelectionOutline` itself — which retires the per-caller resets in
    all three areas at once and is the better shape.
 
+The Text tool is the one place the leak is partly self-healing, so the symptom there looks
+inconsistent rather than constant: `TextToolArea.tsx:30` passes `onRepaint: redrawText` and
+`renderText` leaves the context at 1 with no `restore()`, so the first frame after entering the tool
+dims at the leaked alpha and every frame after it at 0.7 (`useRect.ts:182` fires the repaint after
+the dim). Crop and Rectangular Selection pass no `onRepaint` and are wrong on every frame. Do not
+read the difference as a flaky fix.
+
 `usePolylineAnts.ts` looks like a third victim and is not: `useMarchingPath` has no production
 caller, so its context is never the shared overlay.
 
-**Files.** `src/hooks/useRect.ts:143-163`, `src/components/Main/MagicWandToolArea.tsx:35,102`,
-`src/util/selection.ts:141`
+**Files.** `src/tools/draw.ts:26-38`, `src/tools/shape.ts:120-131`,
+`src/components/Main/DrawToolArea.tsx:51`, `src/components/Main/ShapeToolArea.tsx:73`,
+`src/hooks/useAnts.ts:56-70`, `src/hooks/useRect.ts:143-163`,
+`src/components/Main/MagicWandToolArea.tsx:35,102`, `src/util/selection.ts:141`
