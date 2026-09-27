@@ -1086,12 +1086,47 @@ describe('null 2D context handling', () => {
     ]);
   });
 
-  it('the bitmap-only wrappers degrade to an empty 1x1 canvas rather than throwing', () => {
+  it('the bitmap-only wrappers throw the named error rather than degrading to an empty 1x1 canvas', () => {
+    installNullContext();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // A `ClipboardCanvas` return has no in-band failure channel, and every consumer of
+    // one commits it as a layer's `tmpCanvas` -- `tempUpdateLayer`, the `kind: 'tool'`
+    // arm of `createLayerSource` and `applyRasterTool` all take it unchecked, and
+    // `layer-renderer.ts` rejects only zero dimensions. A blank 1x1 fallback would
+    // therefore be committed as a permanently transparent layer instead of failing.
+    expect(() => copyPolygonToCanvas(makeMockCanvas(40, 40), triangle())).toThrow(SelectionCanvasContextError);
+    expect(() => copyPolygonToCanvas(makeMockCanvas(40, 40), triangle())).not.toThrow(TypeError);
+    expect(() => copyPolygonToCanvas(makeMockCanvas(40, 40), triangle())).toThrow(
+      /copyPolygonToCanvas: the 6x6 selection canvas returned no 2D context/
+    );
+    expect(() => copyFeatheredPolygonToCanvas(makeMockCanvas(40, 40), triangle())).toThrow(SelectionCanvasContextError);
+    expect(() => copyFeatheredPolygonToCanvas(makeMockCanvas(40, 40), triangle())).not.toThrow(TypeError);
+    expect(() => copyFeatheredPolygonToCanvas(makeMockCanvas(40, 40), triangle())).toThrow(
+      /copyFeatheredPolygonToCanvas: the 8x8 selection canvas returned no 2D context/
+    );
+
+    // The underlying snapshot functions still report the same failure in band, so the
+    // cause stays readable on the path whose consumers do test for null.
+    expect(errorSpy.mock.calls.map(([error]) => (error as SelectionCanvasContextError).operation)).toEqual([
+      'copyPolygonSelectionToCanvas',
+      'copyPolygonSelectionToCanvas',
+      'copyPolygonSelectionToCanvas',
+      'copyFeatheredPolygonSelectionToCanvas',
+      'copyFeatheredPolygonSelectionToCanvas',
+      'copyFeatheredPolygonSelectionToCanvas',
+    ]);
+  });
+
+  it('still returns the empty 1x1 canvas for a degenerate polygon, which is a state and not a failure', () => {
     installNullContext();
     vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const polygon = copyPolygonToCanvas(makeMockCanvas(40, 40), triangle());
-    const feathered = copyFeatheredPolygonToCanvas(makeMockCanvas(40, 40), triangle());
+    // Every lasso tool seeds `points: []` and a click commits the tool, so the wrappers
+    // must keep handing back a canvas when there is genuinely nothing to copy. This is
+    // the one case where the placeholder is the answer rather than a silent failure.
+    const polygon = copyPolygonToCanvas(makeMockCanvas(40, 40), []);
+    const feathered = copyFeatheredPolygonToCanvas(makeMockCanvas(40, 40), []);
 
     expect([polygon.width, polygon.height]).toEqual([1, 1]);
     expect([feathered.width, feathered.height]).toEqual([1, 1]);

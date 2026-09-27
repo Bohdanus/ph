@@ -392,8 +392,10 @@ describe('usePointerPosition', () => {
     });
 
     it('releases capture and clears all pointer state on pointerup of a pointer id of 0', () => {
-      // `0` is a legitimate `PointerEvent.pointerId` and some touch engines number
-      // from it, so it must not be confused with the "no active pointer" sentinel.
+      // `0` is a legitimate `PointerEvent.pointerId` -- Pointer Events reserves only
+      // `-1`, and whether a UA numbers from 0 is implementation-specific -- so it must
+      // not be confused with the "no active pointer" sentinel. Defensive: no shipping
+      // engine is known to do this, and the hook is not guarding a reported bug.
       const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
 
@@ -426,6 +428,28 @@ describe('usePointerPosition', () => {
 
       expect(handled).toBe(false);
       expect(el.releasePointerCapture).not.toHaveBeenCalled();
+    });
+
+    it('never hands the null sentinel to releasePointerCapture from the cleanup guard', () => {
+      // `isPointerUpValid` gates on `activePointerId.current === e.pointerId`, so an
+      // event whose own `pointerId` is the `null` sentinel is the only way to reach
+      // `clearEvent` with no active pointer -- which is exactly the state the
+      // `activePointerId.current !== null` guard exists for. Deleting the guard calls
+      // `releasePointerCapture(null)`, and this assertion is what says it must not.
+      const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+      const sentinelEvent = pointerEvent(el, { pointerId: null as unknown as number });
+
+      let handled: boolean | undefined;
+      act(() => {
+        handled = result.current.isPointerUpValid(sentinelEvent);
+      });
+
+      expect(handled).toBe(true);
+      expect(el.releasePointerCapture).not.toHaveBeenCalled();
+      // The rest of the cleanup still runs, so a stray event cannot leave a stale
+      // isMouseDown behind.
+      expect(result.current.isMouseDown.current).toBe(false);
     });
 
     it('still clears state when releasePointerCapture throws (capture already lost)', () => {
@@ -614,7 +638,7 @@ describe('usePointerPosition', () => {
       getBoundingClientRect.mockClear();
 
       act(() => {
-        // 8px border: the border box is 400x300, the content box 392x292.
+        // 4px border: the border box is 400x300, the content box 392x292.
         ControllableResizeObserver.instances[0].emit({ width: 400, height: 300 }, { width: 392, height: 292 });
         vi.advanceTimersByTime(32);
       });

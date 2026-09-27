@@ -105,8 +105,9 @@ export function usePointerPosition<T extends HTMLElement>(
   function clearEvent(e: React.PointerEvent<T>) {
     // Safe even if capture was already lost
     try {
-      // `0` is a valid pointerId, so only the `null` sentinel means "no active
-      // pointer" -- a truthiness test leaks the capture of a pointer numbered 0.
+      // Only the `null` sentinel means "no active pointer" -- a truthiness test also
+      // reads a pointer numbered 0 as absent, because Pointer Events reserves only `-1`
+      // and a UA may number from 0. Defensive rather than a fix for a reported engine.
       if (activePointerId.current !== null) {
         e.currentTarget.releasePointerCapture(activePointerId.current);
       }
