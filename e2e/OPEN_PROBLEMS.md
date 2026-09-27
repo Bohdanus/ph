@@ -4,16 +4,16 @@ Not a changelog. Each entry is an unfixed defect, with the evidence that proves
 it. Every line number was re-read from the working tree after the suite was
 moved into this repository.
 
-Gates: `npm run test:e2e:unit` 693 passed / 2 expected-fail (10 files),
+Gates: `npm run test:e2e:unit` 694 passed / 2 expected-fail (10 files),
 `npm run tsc` clean, `npm run lint:check` clean (0 errors, 19 pre-existing
-warnings), 97 e2e tests collected — on the default headless run: 92 pass, 3 fail,
-2 skipped. The headless totals move by 0–2 because of the keyboard race below,
-which fired on the run quoted here. Headed was not re-measured by the test-id
-change; the previously measured headed failing set is the 5 CDP specs, which that
-change does not touch.
+warnings), 97 e2e tests collected — on the default headless run: **97 pass, 0 fail,
+2 skipped**, reproduced across repeated full runs. The suite is green in its default
+configuration. Headed was not re-measured; it was 5 failing before the CDP fix below
+and that fix is deliberately mode-independent, so the headed set is expected to be
+empty too, but that is a prediction rather than a measurement.
 
 The app's own gates are green: `npm run tsc` exits 0 and `npm run test` reports
-173/173 files passing (3811 pass, 42 expected-fail).
+176/176 files passing (3881 pass, 42 expected-fail).
 
 Many entries below are **pinned** — a unit test asserts the current, incorrect
 behavior on purpose. A pin is a tripwire: it passes today and fails the moment the
@@ -30,21 +30,23 @@ breakage or unmaintainable. **P3** = cosmetic / robustness.
 **Run the suite headless** — `npm run test:e2e`. That is the default, and the
 reason is the first entry below.
 
-On the default (headless) configuration, 2–4 of the 97 tests fail, depending on
-whether the keyboard race below fires:
+On the default (headless) configuration **nothing fails**: 97 pass, 2 are skipped by
+declaration, and that is stable across repeated full runs.
 
-| tests                                                     | count | mode                                                       |
-| --------------------------------------------------------- | ----- | ---------------------------------------------------------- |
-| `e2e/helpers/cdp-helpers.spec.ts:220, 239`                | 2     | headless only                                              |
-| `e2e/helpers/cdp-helpers.spec.ts:113, 129, 146, 163, 195` | 5     | **headed only**                                            |
-| `e2e/sidebar-keyboard.spec.ts:77, 89`                     | 0–2   | intermittent; 4 of 5 runs headless, 0 of 2 observed headed |
+Three defect groups used to fail here and have been fixed in this repository. Their
+evidence is kept below rather than deleted, because each explains a shape the suite
+must not drift back into:
 
-A headed run fails 5 or 7; a headless run fails 2 or 3 in a typical run. The two CDP groups
-are disjoint and each mode's failing set was reproduced identically across repeats.
+| was failing                           | was                                     | now                                            |
+| ------------------------------------- | --------------------------------------- | ---------------------------------------------- |
+| `e2e/helpers/cdp-helpers.spec.ts`     | 2 headless, 5 headed, disjoint per mode | scale-agnostic contract; mode-independent      |
+| `e2e/sidebar-keyboard.spec.ts:77, 89` | 0–2, ~42% of headless runs              | root-caused to an rAF focus race, then awaited |
+| `e2e/levels.spec.ts:64, 109`          | 2, both modes                           | canvas found by test id, not document order    |
 
-All of these were introduced with the specs and are independent of how they were
-moved into this repository: they are reproducible with no changes to the specs or
-to `src/`.
+All of these were introduced with the specs and were independent of how they were
+moved into this repository: each was reproducible with no changes to the specs or
+to `src/`. The remaining entries below are latent defects that no current run
+trips — none of them is a known failure.
 
 ### P1 — a headed run lets the operator's own input fail the suite
 
@@ -87,7 +89,7 @@ accepted.
 a real window, because that is what they are for. The rule applies to
 `npm run test:e2e` and to anyone interpreting its result.
 
-### P1 — CDP capture size does not match `window.devicePixelRatio`
+### Fixed — CDP capture size did not match `window.devicePixelRatio` (was P1)
 
 `e2e/helpers/cdp-helpers.spec.ts:113, 129, 146, 163, 195` (headed) and
 `:220, 239` (headless)
@@ -141,6 +143,33 @@ scale from the decoded dimensions, so this also makes the specs consistent with 
 rest of the suite. The helper's comment at `cdp-helpers.ts:35-40` needs correcting
 either way.
 
+**How it was fixed.** The contract `imageWidth === rect.width * devicePixelRatio` was
+deleted rather than re-derived, because the quantity it names is not a property of
+this code — it is Chrome's surface scale, which is mode- and host-dependent. Asserting
+it is what kept the suite red in exactly the modes it was written to protect.
+
+Replacing it with "the scale is whatever the decoded image says" would have been
+tautological, so the replacement asserts the three things that are true everywhere
+and that consumers depend on: the capture is exactly the requested rect, at one
+integral scale shared by both axes, with the correct pixels (`expectFaithfulCaptureOf`,
+plus the existing colour assertions, which carry the spatial guarantee because the
+fixture is red on blue). A fourth property - that the helper adds no rescaling of its
+own - is pinned against a reference rather than a constant, by comparing the capture
+to `page.screenshot({ scale: 'device' })` on the same clip. That is what a
+self-referential size check cannot see: a uniform 2x rescale survived every other
+assertion until that test was added.
+
+Verified by mutation, not by the green bar:
+
+| mutation                                        | caught by                           |
+| ----------------------------------------------- | ----------------------------------- |
+| helper ignores the clip, captures the viewport  | 8 of 13 tests (colour assertions)   |
+| width captured at a different scale than height | 8 of 13 tests (`scaleY === scaleX`) |
+| uniform `clip.scale: 2`                         | the Playwright-reference test alone |
+
+The helper's comment was corrected in the same change; it now says the capture is
+native device pixels and that the scale must not be assumed.
+
 ## Fixed since the suite moved into this repository
 
 - **The workspace canvas was resolved by document index** (was P1; it broke
@@ -166,6 +195,29 @@ either way.
 
 `data-testid="reposition-hint-text"` was published on the Move hint in the same change,
 replacing two `getByText('Drag or resize on canvas')` lookups in `select-move.spec.ts`.
+
+- **The visual-regression comparison never ran** (was P1, and it made the committed
+  baselines disposable). `e2e/export/visual-regression.spec.ts` gated the
+  record-vs-compare branch on `if (testInfo.config.updateSnapshots)`, but that option
+  is a string union `'all' | 'changed' | 'missing' | 'none'` whose **default is
+  `'missing'`** (`playwright/lib/common/index.js`, `takeFirst(..., "missing")`), and
+  `'missing'` is truthy. `playwright.config.ts` never overrides it, so on every run the
+  branch was taken: `writeFile` overwrote the committed baseline and the test returned
+  three lines before `readFile(baselineFilePath)`, `compareScreenshots` and the
+  `expect`. All 7 comparison formats were a no-op that reported success.
+
+  The failure was invisible in `git status` because re-encoding the same export
+  produced byte-identical files. It was not visible in any test either: the 8 specs
+  passed, and `OPEN_PROBLEMS.md` recorded that as evidence the baselines matched.
+
+  Fixed to `if (testInfo.config.updateSnapshots === 'all')`, so only an explicit
+  `--update-snapshots` may re-record. Verified by mutation, not by the green bar:
+  corrupting a baseline now fails the spec (sharp decode error), and substituting a
+  valid-but-different PNG fails it with
+  `Visual mismatch for PNG: 480000 diff pixels (ratio: 1.0000)` - every pixel of
+  800x600. Under the old check both mutations were silently overwritten. The
+  baselines were confirmed untouched by a post-fix run (identical mtimes, `git status`
+  clean), which is the direct evidence that the compare path is now the one running.
 
 ---
 
@@ -446,7 +498,7 @@ The directory holds 17 files. Seven are read — the formats with
 A repo-wide grep finds no reference to any of the 10. All are safe to delete; they
 were left in place because deleting committed baselines was not authorized.
 
-## P2 — Enter does not reliably close the flyout (a real race)
+## Fixed — Enter did not reliably close the flyout (was P2, a real race)
 
 `e2e/sidebar-keyboard.spec.ts:77` and `:89`
 
@@ -463,12 +515,39 @@ Headed rate is not established: 0 failures in 2 observed headed runs, which is n
 enough to claim it is mode-independent. It is only established that the race fires
 headless.
 
-The mechanism is a genuine race: Enter activates the highlighted flyout item, the
-flyout closes asynchronously, and the assertion can observe it still open. Not
-diagnosed further. Both tests assert `toBeHidden()` immediately after the keypress
-with no intermediate readiness assertion on the selection having been applied, and
-the first test's following `verifyPrimaryTool` would distinguish "never closed"
-from "closed late" — that distinction is the next thing to establish.
+**The mechanism was never "the flyout closes asynchronously".** That was the reading
+this entry used to stop at. It is diagnosed, and the diagnosis is elsewhere:
+`SidebarLeft.tsx` focuses the flyout's first item from a `requestAnimationFrame`
+callback in the tool button's keydown handler, _not_ in the React commit that mounts
+the menu. "The menu is visible" and "an item holds focus" are therefore two different
+moments, one animation frame apart.
+
+`openToolFlyoutViaKeyboard` waited only on visibility, so it could return inside that
+gap. The test's next `ArrowDown`/`Enter` then landed on the **tool button** handler
+again, which re-opens the flyout rather than navigating or activating it - so Enter
+left the flyout open, and the following `toBeHidden()` timed out after 5 s.
+
+**Fixed** by waiting for the app to actually take focus before returning. Measured
+on the same host, same command, 12 consecutive runs of the two Enter tests:
+
+| variant                            | failures |
+| ---------------------------------- | -------- |
+| wait on visibility only (previous) | 5 of 12  |
+| wait on the promised item's focus  | 0 of 12  |
+
+Two details the fix had to get right, both found by the first version failing:
+
+- The readiness wait belongs to the keyboard opener, not to `waitForFlyout`. The
+  right-click path never focuses an item, so a shared assertion would break it.
+- `ArrowUp` focuses the **last** item, not the first (`SidebarLeft.tsx`:
+  `event.key === 'ArrowUp' ? items.length - 1 : ...`). A single `.first()` assertion
+  is simply wrong for that key and was caught by running the file.
+
+Since the race was the suite's last intermittent failure, `openToolFlyoutViaKeyboard`'s
+unit pins were extended to cover the new contract: a two-item flyout so "first" and
+"last" are distinguishable, the correct end asserted per key, single-valued focus in
+the double, and a case that rejects when the flyout opens but nothing takes focus.
+Removing the readiness wait fails that last one.
 
 ## Known-skip tests
 
@@ -488,23 +567,38 @@ single-tool groups`.
   `e2e/export/visual-regression.spec.ts` passes all 8 specs, so every baseline the
   spec reads decodes and matches its committed pixels on this host. The ICO spec
   passes in-browser against the source canvas.
-- The CDP failing set is deterministic per browser mode and the two modes' sets are
-  disjoint: headed fails `:113 :129 :146 :163 :195`, headless fails `:220 :239`.
-  Reproduced identically across repeats.
+
+  **This was not true until the `updateSnapshots` guard was fixed — see the entry
+  below.** The check that produced this claim was `if (testInfo.config.updateSnapshots)`,
+  and Playwright's default for that option is the string `'missing'`, so the branch was
+  always taken: every run re-recorded the baseline and returned before
+  `compareScreenshots`. The comparison below it was unreachable, so "matches the
+  committed baselines" was never actually established by any run. It is now, and it was
+  established by mutation testing rather than by a green bar: a corrupted baseline fails
+  with a sharp decode error, and a valid-but-different baseline fails with
+  `Visual mismatch for PNG: 480000 diff pixels (ratio: 1.0000)`. Before the fix both
+  were silently overwritten and the spec passed.
+
+- The CDP failing set used to be deterministic per browser mode with disjoint sets:
+  headed failed `:113 :129 :146 :163 :195`, headless failed `:220 :239`,
+  reproduced identically across repeats. Both sets are now empty, and the new
+  assertions are mode-independent by construction rather than by observation.
 - `levels.spec.ts:64` and `:109` used to fail in both modes, 2/2 each, which is
   what established the `getWorkspaceCanvas` index shift as a real defect rather
   than a mode artifact. Both pass now that the canvas is found by test id.
 
 **Not verified:**
 
-- Whether the CDP failures reproduce on a 1x host. The multiplier tracks the browser
-  mode, and CI's headless Linux runner is a third configuration that has not been
-  observed directly — only inferred from the local headed/headless split. This, plus
-  the open flyout defect, is why the `e2e` CI job is `continue-on-error`:
-  a blocking job would be permanently red, and filtering the known failures by title
-  would hide new ones.
-- The headed failure rate of the keyboard flyout race. 0 failures in 2 observed
-  headed runs is not enough to conclude it is mode-independent.
+- A headed run of the whole suite. It was never re-measured here, and
+  `AGENTS.md` forbids it. The CDP fix removes the only headed-failing group and is
+  written to be mode-independent, so headed is expected to be green too — but that
+  is an inference from the assertions' shape, not a measurement. The operator-input
+  hazard that made headed runs untrustworthy is also why: a headed green run here
+  would not be strong evidence.
+- Whether the CDP capture scale reproduces on CI's headless Linux runner, a third
+  configuration never observed directly. It no longer matters for correctness — the
+  assertions no longer name a scale — but it is why the helper's comment still
+  describes the capture as "native device pixels" rather than a known factor.
 - Any operator-input-caused failure. None has ever been reproduced here; the
   headless default is preventive.
 - The pixel baselines are verified against a **dev-server** build, because

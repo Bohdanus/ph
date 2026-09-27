@@ -4,7 +4,8 @@ Playwright end-to-end specs for this application, plus Vitest unit tests for the
 spec helpers themselves. The application under test is `src/` in this repository.
 
 - [`OPEN_PROBLEMS.md`](OPEN_PROBLEMS.md) — defects in the test code, with evidence.
-  2–4 of the 97 tests fail on the default headless run.
+  None of them fails a current run; all are latent. See
+  [Current status](#current-status).
 - [`MIGRATION-TODO.md`](MIGRATION-TODO.md) — what the move into this repository left
   undone: open fixes, pipeline gaps, and carried-over debt.
 
@@ -36,19 +37,21 @@ intermittent, it also looks exactly like a real race, so the two get conflated a
 both get filed as "flaky".
 
 **To be precise about the evidence:** no operator-input-caused failure has ever been
-reproduced in this suite. Headless is a preventive default. What _is_ measured is
-that headed mode also changes which tests fail, independently of any human:
+reproduced in this suite. Headless is a preventive default. What _was_ measured, and
+what made headless the default rather than a preference, is that headed mode also
+changed which tests fail, independently of any human:
 
-| failing tests                                 | headed | headless |
+| formerly failing tests                        | headed | headless |
 | --------------------------------------------- | ------ | -------- |
 | `cdp-helpers.spec.ts:113 :129 :146 :163 :195` | 5 fail | pass     |
 | `cdp-helpers.spec.ts:220, 239`                | pass   | 2 fail   |
 
-So a headed run fails 5 and headless fails 2, on disjoint subsets, reproducibly. If
-you run headed, expect those 5 CDP failures — they are not a regression, and they
-are not what CI will report. (Headed was not re-run after the workspace-canvas test
-ID landed; the 2 mode-independent `levels.spec.ts` failures it also counted are fixed,
-which is where the reduction comes from.)
+The two groups were disjoint and each mode's set reproduced identically across
+repeats. Both are now fixed — the assertions no longer name a capture scale, so they
+are mode-independent by construction — and the suite is green headless. A headed run
+is expected to be green too, but that has not been measured here, and per
+`AGENTS.md` it should not be: an operator's stray click reaching the page is
+indistinguishable from a real race, so a green headed run would be weak evidence.
 
 **What headless does not fix:** the real open defect below survives it.
 `sidebar-keyboard.spec.ts:77` and `:89` race on "flyout closed after Enter" and fail
@@ -250,29 +253,35 @@ committed pixels can never be rewritten by line-ending normalisation.
 
 | Suite             | Command                 | Result                                      |
 | ----------------- | ----------------------- | ------------------------------------------- |
-| App unit tests    | `npm run test`          | 3811 pass + 42 expected-fail, 173/173 files |
-| Helper unit tests | `npm run test:e2e:unit` | 693 pass, 2 expected-fail (10 files)        |
-| E2E tests         | `npm run test:e2e`      | 92 pass, 3 fail, 2 skipped (21 files)       |
+| App unit tests    | `npm run test`          | 3881 pass + 42 expected-fail, 176/176 files |
+| Helper unit tests | `npm run test:e2e:unit` | 694 pass, 2 expected-fail (10 files)        |
+| E2E tests         | `npm run test:e2e`      | 97 pass, 0 fail, 2 skipped (21 files)       |
 
-**2–4 of the 97 e2e tests fail on the default headless run** (this HiDPI host);
-the spread is the keyboard race below, which fired on the run quoted above. A
-headed run fails the 5 CDP specs, on a different set. All are pre-existing
-defects in the tests, not integration breakage, and each is written up with
-evidence in `OPEN_PROBLEMS.md`:
+**Nothing fails on the default headless run**, and that is stable across repeated
+full runs. Three groups used to; all three are fixed, and each was fixed by changing
+an assertion or a wait rather than by loosening a threshold:
 
-| failing tests                                 | count | mode                 |
-| --------------------------------------------- | ----- | -------------------- |
-| `cdp-helpers.spec.ts:220, 239`                | 2     | headless only        |
-| `cdp-helpers.spec.ts:113 :129 :146 :163 :195` | 5     | **headed only**      |
-| `sidebar-keyboard.spec.ts:77, 89`             | 0–2   | 4 of 5 runs headless |
+| formerly failing tests            | was                                     | now                                                               |
+| --------------------------------- | --------------------------------------- | ----------------------------------------------------------------- |
+| `cdp-helpers.spec.ts`             | 2 headless, 5 headed, disjoint per mode | capture scale is no longer asserted; mode-independent             |
+| `sidebar-keyboard.spec.ts:77, 89` | 0–2, 5 of 12 measured headless runs     | root-caused to a `requestAnimationFrame` focus race, then awaited |
+| `levels.spec.ts:64, 109`          | 2, both modes                           | canvas located by test id, not document order                     |
 
-- The CDP group derives its expected capture size from `window.devicePixelRatio`,
-  but the observed capture multiplier is neither a function of that value nor of the
-  emulated ratio — forcing the emulation to match the host changes which tests fail
-  instead of fixing them. Which subset fails is deterministic per mode. See
-  `OPEN_PROBLEMS.md` for the measurements and the fix direction.
-- `sidebar-keyboard.spec.ts:77, 89` — a real race on "flyout closed after Enter",
-  failing in 4 of 5 headless runs. **Not fixed by running headless.**
+- The CDP group derived its expected capture size from `window.devicePixelRatio`, but
+  the capture scale is neither a function of that value nor of the emulated ratio.
+  The contract was removed rather than re-derived — the scale belongs to Chrome, not
+  to this code — and replaced with assertions that hold everywhere: exact rect, one
+  integral scale on both axes, correct pixels, and no rescaling of the helper's own.
+  Each was mutation-tested. See `OPEN_PROBLEMS.md` for the measurements.
+- `sidebar-keyboard.spec.ts` was a real race, and not the one it looked like: the app
+  focuses the flyout's first item in a `requestAnimationFrame`, so a keypress landing
+  in that one-frame gap is handled by the tool button again and re-opens the flyout
+  instead of activating an item. The opener now waits for the focus to land.
+- The visual-regression baselines are genuinely compared. They were not before:
+  `if (testInfo.config.updateSnapshots)` was always truthy, because Playwright's
+  default for that option is the string `'missing'`, so every run re-recorded the
+  baseline and returned before `compareScreenshots`. A green run now means the pixels
+  matched.
 
 The workspace canvas is located by `data-testid="workspace-canvas"`, published on the
 primary `<canvas>` in `src/components/Main/Main.tsx`. There is no positional fallback:
@@ -354,9 +363,21 @@ error cannot take the e2e type-check down with it.
 unchanged by this work apart from `tsc -b` now also building `tsconfig.e2e.json`.
 
 `e2e` installs Chrome and runs the browser tests against the dev server started by
-`playwright.config.ts`. It is marked `continue-on-error: true` and is
-**informational only**, because 2–4 of the 97 tests fail for reasons documented in
-`OPEN_PROBLEMS.md`, and because the CDP failure tracks the browser mode in a way not
-yet observed on a Linux runner. It runs the full suite with no `--grep-invert`, so
-the job reports the true state including the known failures rather than a filtered
-one. Flip `continue-on-error` to `false` once the tests are green.
+`playwright.config.ts`. It is still marked `continue-on-error: true`, and that
+justification no longer holds: it was there because 2–4 of the 97 tests failed for
+documented reasons, and **all of them are now fixed**. The suite is green locally,
+headless, across repeated full runs.
+
+It is left as-is because making the job blocking is a workflow decision that belongs
+to the operator, not a consequence of this work. It is also the one thing left to do
+to make the job a real gate: flipping `continue-on-error` to `false`. Two things
+should be settled first, because a blocking job is only as good as what it compares
+against:
+
+- a headed run, to confirm the CDP fix is green outside the headless configuration
+  this host can produce (see `AGENTS.md` — the operator runs it, not an agent);
+- whether the visual-regression baselines should be regenerated from a production
+  build rather than a dev server, since the job runs against `npm run dev`.
+
+Until then the job reports the true state including the 2 declared skips. It runs
+the full suite with no `--grep-invert`, so the report is unfiltered.

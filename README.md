@@ -116,7 +116,9 @@ The project uses GitHub Actions for continuous integration:
   the **blocking** gate for `e2e/`, kept as a separate job so a break in the app
   pipeline cannot silently skip the only coverage of that code.
 - **E2E Job**: Playwright specs in Chrome. Currently **informational**
-  (`continue-on-error`), because 2–4 of the 97 tests fail; see
+  (`continue-on-error`). That was justified by documented failures, and those are now
+  fixed — the suite is green headless — so the job is eligible to become a real gate;
+  flipping it is the operator's call. See
   [`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md).
 
 ![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)

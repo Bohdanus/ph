@@ -13,34 +13,23 @@ HiDPI macOS host; re-verify before acting on any rate quoted here.
 ## 1. Blocking now
 
 Nothing. The blocking gates are green: `lint:check`, `tsc -b` (all three
-projects), the app suite (173/173 files), and the e2e helper unit tests (693 pass,
+projects), the app suite (176/176 files), and the e2e helper unit tests (694 pass,
 2 expected-fail). Nothing in this section should block other work.
 
-## 2. The e2e suite is red and cannot be made a gate yet
+## 2. The e2e suite is now green
 
-2–4 of the 97 tests fail on the default headless run. Full detail, with
-measurements, in `OPEN_PROBLEMS.md`.
+**97 pass, 0 fail, 2 skipped** on the default headless run, reproduced across
+repeated full runs. Both items this section used to list as open are fixed, and so is
+the `levels.spec.ts` pair. Each was fixed by changing an assertion or a wait, never by
+loosening a threshold, adding a skip, or re-recording a baseline. Evidence, including
+the measurements that established each defect and the mutation tests that prove the
+fixes, is in `OPEN_PROBLEMS.md`.
 
-| tests                                         | count | note                 |
-| --------------------------------------------- | ----- | -------------------- |
-| `cdp-helpers.spec.ts:220, 239`                | 2     | headless-only        |
-| `cdp-helpers.spec.ts:113 :129 :146 :163 :195` | 5     | headed-only          |
-| `sidebar-keyboard.spec.ts:77, 89`             | 0–2   | 4 of 5 runs headless |
-
-**Next actions, highest value first:**
-
-1. **CDP capture multiplier** (`cdp-helpers.ts:35-40`). The helper's comment
-   asserts the result is `clip_size × clip.scale × deviceScaleFactor`; measurement
-   contradicts it, and the multiplier is a deterministic function of browser mode
-   rather than the emulated ratio. Root cause unknown. Fix direction: assert against
-   the decoded image's own dimensions instead of `window.devicePixelRatio`, which is
-   already how `screenshotBoundsToCss` and `screenshot-scale.ts` derive scale.
-   Correcting the comment is worthwhile on its own even before the fix.
-2. **Flyout-close race** (`sidebar-keyboard.spec.ts:77, 89`). Enter closes the
-   flyout asynchronously and the assertion can still see it open. Undiagnosed.
-   `verifyPrimaryTool` in the first test would distinguish "never closed" from
-   "closed late" — establish that first, then add the missing readiness assertion
-   rather than a timeout.
+| formerly failing tests            | was                                     | now                                                |
+| --------------------------------- | --------------------------------------- | -------------------------------------------------- |
+| `cdp-helpers.spec.ts`             | 2 headless, 5 headed, disjoint per mode | capture scale no longer asserted; mode-independent |
+| `sidebar-keyboard.spec.ts:77, 89` | 0–2, 5 of 12 measured headless runs     | root-caused to an rAF focus race, then awaited     |
+| `levels.spec.ts:64, 109`          | 2, both modes                           | canvas located by test id, not document order      |
 
 **Done since the migration — `getWorkspaceCanvas` (previously item 2 here).** All
 three parts landed together, and the two `levels.spec.ts` failures it caused are
@@ -60,13 +49,26 @@ green:
 `data-testid="reposition-hint-text"` went in alongside it, replacing the two
 `getByText('Drag or resize on canvas')` lookups in `select-move.spec.ts`.
 
+**Not asked for, and worth knowing — the visual-regression gate was void.**
+`visual-regression.spec.ts` gated the record-vs-compare branch on
+`if (testInfo.config.updateSnapshots)`, but Playwright's default for that option is
+the string `'missing'`, which is truthy. Every run re-recorded the committed baseline
+and returned before `compareScreenshots`, so all 7 comparison formats were a no-op
+that reported success. It was invisible because re-encoding the same export produced
+byte-identical files. Now `=== 'all'`, so a green run means the pixels matched. The
+helper unit suite and this file both cited "the baselines match" as a verified fact;
+it had never been established by any run.
+
 ## 3. Pipeline work
 
-- **The `e2e` CI job cannot fail, so it cannot catch a regression.** It is
-  `continue-on-error: true`, which makes "5 known failures" and "everything is
-  broken" both report success. Real fix: capture the failing test list and compare
-  it against a known-failures baseline, failing only on _new_ failures. That is
-  what turns the job into a usable gate. Until then it is a dashboard, not a gate.
+- **The `e2e` CI job still cannot fail, and the reason it could not is now gone.**
+  It is `continue-on-error: true`, which makes "everything is broken" and "all green"
+  both report success. That was acceptable while 2–4 tests failed for documented
+  reasons; it is not now, because a blocking job is achievable and the job is
+  currently blind either way. Flipping it is a workflow decision that belongs to the
+  operator, so it has not been flipped here. Two things to settle first: a headed run
+  to confirm the CDP fix outside the one configuration this host produces, and
+  whether the baselines should come from a production build.
 - **CI never runs the suite against a production build.** `playwright.config.ts`
   starts `npm run dev`, and the `ci` job's `Build` step is never exercised by the
   e2e suite. So nothing verifies `dist/` works, and the visual-regression baselines
@@ -153,5 +155,7 @@ specifics worth calling out:
   behaviour change recorded in §2.
 - **No baseline regeneration.** The 8 visual-regression specs pass against the
   committed baselines, so there was no need, and rewriting committed image data was
-  not authorized.
+  not authorized. That claim rested on the void `updateSnapshots` check described in
+  §2 — the spec was re-recording rather than comparing, so "passes against the
+  committed baselines" was never tested. It is tested now, and they do match.
 - **No `e2e` browser-job gating.** Left informational; see §3.
