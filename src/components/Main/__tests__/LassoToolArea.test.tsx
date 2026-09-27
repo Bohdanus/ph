@@ -398,7 +398,8 @@ describe('PolygonClickToolArea', () => {
     expect(mockCtx.stroke).toHaveBeenCalled();
   });
 
-  it('updates an active committed anchor when dragging an individual point', () => {
+  it('commits a reshape when an individual anchor is dragged and the pointer is released', () => {
+    storeState.activeSelectionId = 'selection-1';
     storeState.selections = [
       {
         id: 'selection-1',
@@ -421,22 +422,28 @@ describe('PolygonClickToolArea', () => {
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
     fireEvent.pointerMove(toolArea, { clientX: 20, clientY: 20 });
 
-    expect(dispatchMock).toHaveBeenCalledWith({
-      type: 'UPDATE_SELECTION',
-      payload: expect.objectContaining({
-        id: 'selection-1',
-        metadata: { movedAtVersion: 1 },
-        pos: { x: 19, y: 9, width: 82, height: 92 },
-        points: [
-          { x: 1, y: 11 },
-          { x: 81, y: 1 },
-          { x: 81, y: 91 },
-        ],
-      }),
+    // The drag is overlay-only: a move writes no history, it previews one.
+    expect(selectionEdits()).toHaveLength(0);
+
+    fireEvent.pointerUp(toolArea, { clientX: 20, clientY: 20 });
+
+    expect(selectionEdits()).toHaveLength(1);
+    // The same selection id, with the dragged anchor re-bounding the selection —
+    // a reshape, so `'move'` is the mode and the entry is undoable on its own.
+    expect(committedSelection()).toMatchObject({
+      id: 'selection-1',
+      metadata: { movedAtVersion: 1 },
+      pos: { x: 19, y: 9, width: 82, height: 92 },
+      points: [
+        { x: 1, y: 11 },
+        { x: 81, y: 1 },
+        { x: 81, y: 91 },
+      ],
     });
   });
 
-  it('moves the whole active committed selection when dragging inside the polygon', () => {
+  it('commits a translation when the selection is dragged from inside and the pointer is released', () => {
+    storeState.activeSelectionId = 'selection-1';
     storeState.selections = [
       {
         id: 'selection-1',
@@ -459,19 +466,55 @@ describe('PolygonClickToolArea', () => {
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 40 });
     fireEvent.pointerMove(toolArea, { clientX: 90, clientY: 55 });
 
-    expect(dispatchMock).toHaveBeenCalledWith({
-      type: 'UPDATE_SELECTION',
-      payload: expect.objectContaining({
+    expect(selectionEdits()).toHaveLength(0);
+
+    fireEvent.pointerUp(toolArea, { clientX: 90, clientY: 55 });
+
+    expect(selectionEdits()).toHaveLength(1);
+    expect(committedSelection()).toMatchObject({
+      id: 'selection-1',
+      metadata: { movedAtVersion: 1 },
+      // +10/+15, applied to the origin rather than to the stored position.
+      pos: { x: 19, y: 24, width: 92, height: 92 },
+      points: [
+        { x: 1, y: 1 },
+        { x: 91, y: 1 },
+        { x: 91, y: 91 },
+      ],
+    });
+  });
+
+  it('drops an abandoned drag when the pointer leaves the surface', () => {
+    storeState.activeSelectionId = 'selection-1';
+    storeState.selections = [
+      {
         id: 'selection-1',
-        metadata: { movedAtVersion: 1 },
-        pos: { x: 19, y: 24, width: 92, height: 92 },
+        isActive: true,
+        pos: { x: 9, y: 9, width: 92, height: 92 },
         points: [
           { x: 1, y: 1 },
           { x: 91, y: 1 },
           { x: 91, y: 91 },
         ],
-      }),
-    });
+      },
+    ];
+
+    const mockCtx = createMockContext();
+    const { container } = render(
+      <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
+    );
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 40 });
+    fireEvent.pointerMove(toolArea, { clientX: 90, clientY: 55 });
+    vi.mocked(mockCtx.moveTo).mockClear();
+
+    fireEvent.pointerLeave(toolArea, { clientX: 90, clientY: 55 });
+
+    // No history, and the overlay is back to the stored geometry: the move only
+    // ever lived in the drag ref, so dropping it needs no rollback.
+    expect(selectionEdits()).toHaveLength(0);
+    expect(mockCtx.moveTo).toHaveBeenCalledWith(10, 10);
   });
 
   it('changes cursor when hovering a committed anchor point', () => {

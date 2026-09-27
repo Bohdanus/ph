@@ -13,6 +13,7 @@ import {
   drawSelectionOutline,
   findSelectionAnchorAtPoint,
   getSelectionAtPoint,
+  hasSameSelectionGeometry,
   moveSelectionAnchor,
   moveSelectionByDelta,
 } from '../../util/selection.ts';
@@ -28,17 +29,32 @@ type PolygonClickToolProps = {
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
 };
 
+/**
+ * What every drag carries, whichever of the two kinds it is.
+ *
+ * `pointerId` is what makes the drag belong to one pointer: this surface takes
+ * no capture for a selection drag, so a second pointer's move or release
+ * reaches these handlers too, and neither may steer or end a gesture it did not
+ * start. `baseline` is the store's selection the drag began on, kept beside the
+ * moving `selection` because the move builders replace the latter with a new
+ * object on every pointer move — the geometry the gesture started from is
+ * otherwise gone by the time the drag is committed.
+ */
+type SelectionDragBase = {
+  pointerId: number | null;
+  baseline: Selection;
+  selection: Selection;
+};
+
 type SelectionDragState =
-  | {
+  | ({
       type: 'anchor';
       anchorIndex: number;
-      selection: Selection;
-    }
-  | {
+    } & SelectionDragBase)
+  | ({
       type: 'selection';
       origin: Point;
-      selection: Selection;
-    };
+    } & SelectionDragBase);
 
 function drawPolygonOverlay({
   ctx,
@@ -174,14 +190,22 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
-  function resetInteractionState() {
-    pointsRef.current = [];
-    previewRef.current = null;
-    freehandPointerIdRef.current = null;
-    freehandDrawingRef.current = false;
+  /**
+   * Take the running drag out of the ref in one synchronous step.
+   *
+   * Read and clear are the same step on purpose. `handlePointerUp` is the only
+   * commit point, and every other route out of a gesture is an abort, so a route
+   * that read the drag and cleared it in two statements could interleave with a
+   * later event between them and hand the same drag to a second commit. Handing
+   * the drag out of the ref is the only thing any of these routes does: the
+   * abort routes call this and drop the result, `handlePointerUp` calls this and
+   * commits the result, and the first of the two to run wins.
+   */
+  function takeSelectionDrag(): SelectionDragState | null {
+    const drag = selectionDragRef.current;
     selectionDragRef.current = null;
-    doubleClickResetRef.current();
-    clearOverlay();
+
+    return drag;
   }
 
   const finishSelection = ({ cancelIncomplete = false }: { cancelIncomplete?: boolean } = {}) => {
@@ -202,15 +226,16 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     });
     if (!selection) return;
 
-    // This is the ONE commit point for the whole component, and the only place a
-    // polygon or freehand-lasso gesture writes history. Everything before it is
-    // transient draft state: the per-anchor `pointsRef.current.push` in
-    // `handlePointerDown`, the per-sample `appendFreehandPoint` in
-    // `handlePointerMove`, and the `START_SELECTION_DRAFT` dispatch that opens
-    // the draft all leave the store's selection state untouched, so the store is
-    // byte-identical at this line no matter how many clicks or pointer moves the
-    // gesture took. That is what makes one call here — not one per anchor — the
-    // whole story for a multi-click gesture.
+    // One of the two commit points in this component — the other is
+    // `handlePointerUp`, which commits a drag of an already-committed selection
+    // as a `'move'`. Between them, every gesture path is transient draft state:
+    // the per-anchor `pointsRef.current.push` in `handlePointerDown`, the
+    // per-sample `appendFreehandPoint` in `handlePointerMove`, and the
+    // `START_SELECTION_DRAFT` dispatch that opens the draft all leave the store's
+    // selection state untouched, so the store is byte-identical at this line no
+    // matter how many clicks or pointer moves the gesture took. That is what makes
+    // one call here — not one per anchor — the whole story for a multi-click
+    // gesture.
     //
     // Every route into it is a gesture end, not a step: the `useDoubleClick`
     // close in `handlePointerDown`, `handleContextMenu`, the Enter shortcut, and
@@ -220,10 +245,9 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     //
     // `'create'`, never `'move'`: the payload is a freshly minted `uuidv4()`
     // polygon, so it appends and activates a new selection rather than replacing
-    // the geometry of an existing one. `handlePointerDown` refuses to open a
-    // draft while a committed selection is active, so the anchor/geometry drag
-    // that does update an existing selection takes the raw `UPDATE_SELECTION`
-    // path above and never reaches here.
+    // the geometry of an existing one. An anchor or geometry drag reuses an
+    // existing selection's `id` instead, and reaches the writer through the other
+    // commit point.
     commitSelection(selection, 'create');
 
     resetInteractionState();
@@ -291,10 +315,6 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     return point.x >= 0 && point.y >= 0 && point.x <= totalSize.width && point.y <= totalSize.height;
   }
 
-  function updateSelection(selection: Selection) {
-    dispatch({ type: 'UPDATE_SELECTION', payload: selection });
-  }
-
   function setCursor(event: PointerEvent<HTMLDivElement>, cursor: string) {
     try {
       event.currentTarget.style.cursor = cursor;
@@ -357,8 +377,31 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     }
   }
 
+  /**
+   * The store's selections with the dragged one substituted in.
+   *
+   * The dragged selection always came out of `selections` — by id, from either
+   * `getSelectionAtPoint` or `getAnchorSelectionAtPoint` in `handlePointerDown` —
+   * so the substitution replaces exactly the entry that would have been drawn and
+   * leaves every other selection's outline alone.
+   */
+  function withDraggedSelection(dragged: Selection): Selection[] {
+    return selections.map((selection) => (selection.id === dragged.id ? dragged : selection));
+  }
+
+  /**
+   * Repaint the whole overlay.
+   *
+   * `selectionOverride` exists for the drag branch only. The running drag lives
+   * in `selectionDragRef` and never reaches the store until gesture end, so the
+   * preview has to be painted from the ref's geometry while every other committed
+   * selection still comes from the store. It is a parameter rather than a second
+   * drawing path because `drawPolygonOverlay` already takes its `selections` as
+   * an argument, so substituting the array is the whole difference between
+   * "preview at the dragged position" and "repaint at the committed position".
+   */
   const redrawOverlay = useCallback(
-    ({ closePath = false }: { closePath?: boolean } = {}) => {
+    ({ closePath = false, selectionOverride }: { closePath?: boolean; selectionOverride?: Selection[] } = {}) => {
       const ctx = overlayCtxRef.current;
       if (!ctx) return;
       drawPolygonOverlay({
@@ -367,17 +410,64 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
         isFreehand,
         points: pointsRef.current,
         preview: previewRef.current,
-        selections,
+        selections: selectionOverride ?? selections,
         documentFrame,
       });
     },
     [documentFrame, isFreehand, overlayCtxRef, selections]
   );
 
+  /**
+   * Abandon the running drag, if any, and repaint the overlay from the store.
+   *
+   * The repaint is the load-bearing part, and it is `redrawOverlay` rather than
+   * `clearOverlay`. The store is never written during a drag, so `selections` —
+   * and with it `redrawOverlay`'s identity and the effect that calls it — does
+   * not change while the pointer is down. An abort that only cleared would wipe
+   * the whole overlay, including the committed selections' outlines, with no
+   * state change to bring them back, and they would stay gone until something
+   * else repainted. Repainting from the store is also exactly the right picture:
+   * the drag never reached the store, so the overlay must show the un-moved
+   * selection, which is the snap-back an abandoned drag now gets.
+   */
+  function abortSelectionDrag(): SelectionDragState | null {
+    const drag = takeSelectionDrag();
+    if (!drag) return null;
+
+    redrawOverlay();
+
+    return drag;
+  }
+
+  function resetInteractionState() {
+    pointsRef.current = [];
+    previewRef.current = null;
+    freehandPointerIdRef.current = null;
+    freehandDrawingRef.current = false;
+    doubleClickResetRef.current();
+    clearOverlay();
+    // After the clear, never before: `clearOverlay` has just wiped the committed
+    // outlines, so a drag dropped here has to be followed by a repaint that puts
+    // them back. `abortSelectionDrag` is a no-op when no drag was running, which
+    // is every route that reaches this while drawing a polygon.
+    abortSelectionDrag();
+  }
+
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
 
     event.preventDefault();
+
+    // A drag belongs to one pointer. This surface takes no capture for a
+    // selection drag, so a second primary press arrives here as an ordinary
+    // event and would otherwise be assigned `selectionDragRef` below, over the
+    // running drag with no commit: its accumulated geometry would be dropped
+    // silently and pointer 1's release would commit pointer 2's gesture, whose
+    // origin was hit-tested against the geometry the store is still showing —
+    // so the preview snaps backwards before it lands. Ending the displaced drag
+    // through the shared abort makes the outcome deterministic instead, and the
+    // repaint is what snaps the abandoned preview back.
+    abortSelectionDrag();
 
     const coords = getLocalCoords(event);
     const documentCoords = canvasToDocumentPoint(coords, documentFrame);
@@ -388,13 +478,25 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     if (activeAnchorSelection) {
       const anchorIndex = findSelectionAnchorAtPoint(activeAnchorSelection, documentCoords);
       if (anchorIndex !== null) {
-        selectionDragRef.current = { type: 'anchor', anchorIndex, selection: activeAnchorSelection };
+        selectionDragRef.current = {
+          type: 'anchor',
+          anchorIndex,
+          pointerId: getPointerId(event),
+          baseline: activeAnchorSelection,
+          selection: activeAnchorSelection,
+        };
         return;
       }
     }
 
     if (activeSelection) {
-      selectionDragRef.current = { type: 'selection', origin: documentCoords, selection: activeSelection };
+      selectionDragRef.current = {
+        type: 'selection',
+        origin: documentCoords,
+        pointerId: getPointerId(event),
+        baseline: activeSelection,
+        selection: activeSelection,
+      };
       return;
     }
 
@@ -424,8 +526,38 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
-    if (selectionDragRef.current) {
-      selectionDragRef.current = null;
+    // The single commit point for a drag. The polygon takes no pointer capture, so
+    // `pointerleave` is genuinely terminal rather than an interruption the browser
+    // will follow with an `up`: a drag that leaves the surface is one the user
+    // abandoned, and it is dropped by `handlePointerLeave` instead. Release is
+    // therefore the one event that means "this move happened", and it appends one
+    // entry for the whole gesture no matter how many pointer moves preceded it.
+    //
+    // The ref is read rather than taken here on purpose. A release from a pointer
+    // that did not start the drag must not consume it either: taking it
+    // unconditionally would let pointer 1's release destroy pointer 2's gesture,
+    // so ownership is checked first and only the owning release ends the drag.
+    const runningDrag = selectionDragRef.current;
+    if (runningDrag && runningDrag.pointerId === getPointerId(event)) {
+      takeSelectionDrag();
+
+      // Gated on DISPLACEMENT, not on the drag having been started. Every real
+      // click emits at least one pointer move, and each one rebuilds the
+      // selection through a builder that bumps `metadata.movedAtVersion`, so
+      // `commitSelection`'s deep-equal guard cannot tell a drag that moved from
+      // one that moved by nothing — and `COMMIT_DOCUMENT_EDIT` always sets
+      // `hasUnsavedChanges`, so a click that only selected something would
+      // otherwise add an undo step and raise the discard-unsaved-changes prompt.
+      // Geometry is what the move builders actually change, and the preview is
+      // already drawn from the final geometry, so a suppressed commit leaves the
+      // overlay showing exactly the picture it is skipping the append for — no
+      // repaint needed on this path.
+      if (!hasSameSelectionGeometry(runningDrag.baseline, runningDrag.selection)) {
+        // `'move'`, not `'create'`: the dragged selection carries the id of the
+        // already-committed selection the drag began on, so this replaces its
+        // geometry instead of appending a second selection.
+        commitSelection(runningDrag.selection, 'move');
+      }
       return;
     }
 
@@ -435,10 +567,12 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   };
 
   const handlePointerLeave = (event: PointerEvent<HTMLDivElement>) => {
-    if (selectionDragRef.current) {
-      selectionDragRef.current = null;
-      return;
-    }
+    // Abort, not commit. Deliberately terminal: the polygon's drag has no pointer
+    // capture, so dragging out of the window abandons the move, and there is no
+    // later `up` to distinguish "let go here" from "left the surface". Adding
+    // capture to make a leave a commit would also change the freehand gesture
+    // below, which is finished on leave by design.
+    if (abortSelectionDrag()) return;
 
     if (isFreehand) {
       finishFreehandSelection(event);
@@ -446,10 +580,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   };
 
   const handlePointerCancel = (event: PointerEvent<HTMLDivElement>) => {
-    if (selectionDragRef.current) {
-      selectionDragRef.current = null;
-      return;
-    }
+    if (abortSelectionDrag()) return;
 
     if (isFreehand) {
       cancelFreehandSelection(event);
@@ -462,17 +593,25 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
 
     const selectionDrag = selectionDragRef.current;
     if (selectionDrag) {
+      // A drag belongs to the pointer that started it. Without capture, a second
+      // pointer's move reaches this handler too, and honouring it would steer a
+      // gesture it has no claim to.
+      if (selectionDrag.pointerId !== getPointerId(event)) return;
+      // The running drag stays in the ref and the store is left alone, so a move
+      // of N pointer events writes N previews and no history. The overlay is
+      // repainted on every move from the ref's geometry; the store repaint below
+      // cannot do it, because nothing about the store changed.
       if (selectionDrag.type === 'anchor') {
         const nextSelection = moveSelectionAnchor(selectionDrag.selection, selectionDrag.anchorIndex, documentCoords);
         selectionDragRef.current = { ...selectionDrag, selection: nextSelection };
-        updateSelection(nextSelection);
+        redrawOverlay({ selectionOverride: withDraggedSelection(nextSelection) });
         return;
       }
 
       const delta = { x: documentCoords.x - selectionDrag.origin.x, y: documentCoords.y - selectionDrag.origin.y };
       const nextSelection = moveSelectionByDelta(selectionDrag.selection, delta);
       selectionDragRef.current = { ...selectionDrag, origin: documentCoords, selection: nextSelection };
-      updateSelection(nextSelection);
+      redrawOverlay({ selectionOverride: withDraggedSelection(nextSelection) });
       return;
     }
 
@@ -527,6 +666,9 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   function cancelSelectionDraft() {
     if (pointsRef.current.length === 0 && !selectionDragRef.current) return;
 
+    // Escape is an abort, not a commit: a drag caught by this is dropped by
+    // `resetInteractionState`, which repaints the store's unchanged selections
+    // rather than the dragged one.
     resetInteractionState();
     dispatch({ type: 'CANCEL_SELECTION_DRAFT' });
   }
@@ -595,11 +737,15 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     const ctx = overlayCtxRef.current;
 
     return () => {
+      // An unmount mid-drag is an abort like any other: the running drag is
+      // dropped through the same primitive every other route uses, so a gesture
+      // that ends here can never reach the commit point. The clear below tears the
+      // overlay down, so there is nothing left to repaint.
+      takeSelectionDrag();
       pointsRef.current = [];
       previewRef.current = null;
       freehandPointerIdRef.current = null;
       freehandDrawingRef.current = false;
-      selectionDragRef.current = null;
       resetDoubleClick();
 
       if (ctx) {

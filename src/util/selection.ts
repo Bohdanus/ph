@@ -269,6 +269,29 @@ export function moveSelectionByDelta(selection: Selection, delta: Point): Select
   };
 }
 
+/**
+ * Whether two selections occupy the same geometry: the same `pos` and the same
+ * `points`, element for element.
+ *
+ * `metadata` is deliberately excluded, and that exclusion is the whole point.
+ * Both move builders bump `metadata.movedAtVersion` on every call, including a
+ * zero delta, so a deep comparison of a dragged selection against the one it
+ * came from can never report "unchanged" and the selection writers' own
+ * deep-equal guard cannot suppress a drag that moved nothing. Geometry is what
+ * the move builders actually change, so it is the only comparison a drag commit
+ * can be gated on.
+ */
+export function hasSameSelectionGeometry(a: Selection, b: Selection): boolean {
+  if (a === b) return true;
+
+  const { pos: aPos, points: aPoints } = a;
+  const { pos: bPos, points: bPoints } = b;
+  if (aPos.x !== bPos.x || aPos.y !== bPos.y || aPos.width !== bPos.width || aPos.height !== bPos.height) return false;
+  if (aPoints.length !== bPoints.length) return false;
+
+  return aPoints.every((point, index) => point.x === bPoints[index].x && point.y === bPoints[index].y);
+}
+
 export type ClipboardCanvas = OffscreenCanvas | HTMLCanvasElement;
 
 export type SelectionCanvasSnapshot = {

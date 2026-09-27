@@ -124,6 +124,71 @@ describe('replayHistory', () => {
     expect(atSelection).toMatchObject({ selections: [nextSelection], activeSelectionId: nextSelection.id });
   });
 
+  it('replays a committed selection move back to the pre-move geometry and forward again', () => {
+    const dependencies = createDependencies();
+    const drawn: Selection = {
+      id: 'selection-1',
+      points: [
+        { x: 1, y: 1 },
+        { x: 91, y: 1 },
+        { x: 91, y: 91 },
+      ],
+      isActive: true,
+      pos: { x: 9, y: 9, width: 92, height: 92 },
+    };
+    const moved: Selection = {
+      ...drawn,
+      points: [
+        { x: 11, y: 6 },
+        { x: 101, y: 6 },
+        { x: 101, y: 96 },
+      ],
+      isActive: true,
+      pos: { x: 19, y: 4, width: 92, height: 92 },
+      metadata: { movedAtVersion: 1 },
+    };
+    // The shape a polygon's anchor or body drag now leaves behind: two entries,
+    // one per completed gesture, the second replacing the first selection's
+    // geometry rather than appending a second selection.
+    const history: HistoryItem[] = [
+      newLayerHistoryItem(),
+      {
+        id: 'selection-create',
+        actionName: SELECTION_ACTION,
+        layerId,
+        args: {
+          previousSelectionState: { selections: [], activeSelectionId: null },
+          nextSelectionState: { selections: [drawn], activeSelectionId: drawn.id },
+        },
+      },
+      {
+        id: 'selection-move',
+        actionName: SELECTION_ACTION,
+        layerId,
+        args: {
+          previousSelectionState: { selections: [drawn], activeSelectionId: drawn.id },
+          nextSelectionState: { selections: [moved], activeSelectionId: moved.id },
+        },
+      },
+    ];
+
+    // The user-visible fix: redo after the move returns the pre-move geometry, and
+    // undoing that redo puts the move back. A move that appended no history entry
+    // could not be undone at all, and redoing it left the moved geometry forever.
+    expect(replayHistory(history, 1, initialSize, dependencies)).toMatchObject({
+      selections: [drawn],
+      activeSelectionId: drawn.id,
+    });
+    expect(replayHistory(history, 2, initialSize, dependencies)).toMatchObject({
+      selections: [moved],
+      activeSelectionId: moved.id,
+    });
+    expect(replayHistory(history, 1, initialSize, dependencies)).toMatchObject({
+      selections: [drawn],
+      activeSelectionId: drawn.id,
+    });
+  });
+
   it('replays document-frame crops without changing layer world geometry or sources', () => {
     const dependencies = createDependencies();
     const baselineLayer = createTestLayer(layerId);
