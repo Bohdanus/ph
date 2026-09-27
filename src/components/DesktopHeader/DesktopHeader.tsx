@@ -8,7 +8,9 @@ import { MENU_ITEM_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { flushSync } from 'react-dom';
 import { hasPendingText } from '../../util/typeGuards.ts';
+import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { ToolName } from '../../contexts/tool-types.ts';
+import type { FigureType } from '../../tools/shape.ts';
 
 const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'reposition', label: 'Reposition' },
@@ -39,11 +41,34 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'custom-shape', label: 'Custom Shape Tool' },
 ];
 
+/**
+ * The five figure entries above are the *second* selection surface for the figures
+ * — the sidebar already selects them as `toolName: 'shape'` plus a `figure` patch.
+ * Dispatching the registered figure `ToolName`s directly mounted the Shape panel
+ * with, say, `toolName: 'rectangle'`, where its `toolName !== 'shape'` guard
+ * (`Shape.tsx:32`) suppressed the store-colour publish: the colour well said red
+ * and the shape committed `defaultSettings.rectangle.color`, black.
+ *
+ * So route them through the same path the sidebar uses, which is what makes that
+ * guard correct for every surface rather than special-casing this menu.
+ *
+ * `ellipse` is the trap: the registered `ToolName` is `ellipse` but the stored
+ * figure is `oval`, exactly as `toolbar-mapping.ts:77` spells it.
+ */
+const FIGURE_TOOLS: Partial<Record<ToolName, FigureType>> = {
+  rectangle: 'rectangle',
+  ellipse: 'oval',
+  triangle: 'triangle',
+  polygon: 'polygon',
+  line: 'line',
+};
+
 const DesktopHeader = () => {
   const [{ canvasRef, currentArgs, fileName, hasUnsavedChanges, totalSize, documentFrame, hasImage }] = useStore();
   const { commitDirtyTool } = useLayers();
   const { goToTool, setBlankImage, setImageFromUpload, handleImageSave } = useApp();
   const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
+  const { patchToolArgs } = useCurrentTool();
 
   const { theme, toggleTheme } = useTheme();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -52,7 +77,15 @@ const DesktopHeader = () => {
   const editMenuRef = useRef<HTMLLIElement>(null);
 
   const handleToolSelection = (toolName: ToolName) => {
-    goToTool(toolName);
+    const figure = FIGURE_TOOLS[toolName];
+    // Patch first, then select — the same order as `SidebarLeft.selectTool`, so the
+    // figure lands in the args the panel is about to be handed.
+    if (figure !== undefined) {
+      patchToolArgs('shape', { figure });
+      goToTool('shape');
+    } else {
+      goToTool(toolName);
+    }
     setOpenMenu(null);
   };
 

@@ -46,6 +46,7 @@ const layers = vi.hoisted(() => ({
 const currentTool = vi.hoisted(() => ({
   isToolDirty: false,
   resetToLastSavedArgs: vi.fn(),
+  patchToolArgs: vi.fn(),
 }));
 
 const themeState = vi.hoisted(() => ({ theme: 'light' as 'light' | 'dark', toggleTheme: vi.fn() }));
@@ -391,6 +392,47 @@ describe('DesktopHeader Edit menu actions', () => {
     fireEvent.click(screen.getByTestId(testId));
 
     expect(app.goToTool).toHaveBeenCalledExactlyOnceWith(toolName);
+  });
+});
+
+describe('DesktopHeader Tools menu figure entries', () => {
+  // These five entries are the second selection surface for the figures. The sidebar
+  // already reaches them as `goToTool('shape')` plus a `figure` patch; dispatching the
+  // registered figure `ToolName`s mounted the Shape panel with e.g. `toolName: 'rectangle'`,
+  // where the `args.toolName !== 'shape'` guard at Shape.tsx:32 suppressed the store-colour
+  // publish — so Tools > Rectangle Tool + a red colour well committed black.
+  //
+  // `ellipse` is the trap: the registered `ToolName` is `ellipse`, the stored figure is `oval`.
+  it.each([
+    ['tools-menu-rectangle-button', 'rectangle'],
+    ['tools-menu-ellipse-button', 'oval'],
+    ['tools-menu-triangle-button', 'triangle'],
+    ['tools-menu-polygon-button', 'polygon'],
+    ['tools-menu-line-button', 'line'],
+  ] as const)('selects %s as the shape tool with its figure, and closes the menu', (testId, figure) => {
+    render(<DesktopHeader />);
+
+    openMenu('Tools');
+    fireEvent.click(screen.getByTestId(testId));
+
+    expect(currentTool.patchToolArgs).toHaveBeenCalledExactlyOnceWith('shape', { figure });
+    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith('shape');
+    // The patch has to land in the args before the tool is selected, or the panel
+    // renders the previously selected figure.
+    expect(currentTool.patchToolArgs.mock.invocationCallOrder[0]).toBeLessThan(
+      app.goToTool.mock.invocationCallOrder[0]
+    );
+    expect(screen.queryByTestId(testId)).toBeNull();
+  });
+
+  it('leaves a non-figure tool on its own selection path', () => {
+    render(<DesktopHeader />);
+
+    openMenu('Tools');
+    fireEvent.click(screen.getByTestId('tools-menu-crop-button'));
+
+    expect(currentTool.patchToolArgs).not.toHaveBeenCalled();
+    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith('crop');
   });
 });
 
