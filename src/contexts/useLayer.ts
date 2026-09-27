@@ -272,6 +272,10 @@ export const useLayers = () => {
       const mergedLayer = await mergeAllLayers();
       if (!mergedLayer?.bitmap) return;
 
+      // No shipped processor sets `flattenRequired`, but the flag is part of the
+      // processor contract and this branch runs it, so it gets the same guard as the
+      // `imageProcessor` call in `tempUpdateLayer` rather than trusting the current
+      // registry to stay exception-free.
       let result: ToolResult;
       try {
         result = processor.imageProcessor({ bitmap: mergedLayer.bitmap, size: mergedLayer.pos })(toolArgs);
@@ -529,8 +533,23 @@ export const useLayers = () => {
       return;
     }
 
-    const [canvas, positionPatch] = processor.imageProcessor({ bitmap, size: layer.pos } as
-      CreatorToolParams | ProcessorToolParams)(toolArgs);
+    // This is the call every live pointer move reaches, so it is the one that has to be
+    // guarded. A trapezoid-only transform satisfies `commit: 'affine-operation'`, so it
+    // falls past both early returns above and lands here, and `transform` throws for
+    // several argument shapes (`src/tools/transform.ts`: a non-finite or over-tapered
+    // trapezoid, a non-invertible homography, degenerate affine bounds). Without the
+    // guard the throw escapes `tempUpdateLayer` into a React event handler.
+    let result: ToolResult;
+    try {
+      result = processor.imageProcessor({ bitmap, size: layer.pos } as CreatorToolParams | ProcessorToolParams)(
+        toolArgs
+      );
+    } catch (error) {
+      console.error(error);
+      return;
+    }
+
+    const [canvas, positionPatch] = result;
 
     const previewLayer = {
       ...layer,

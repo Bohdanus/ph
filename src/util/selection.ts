@@ -333,21 +333,37 @@ function requireSelectionCanvasContext(canvas: ClipboardCanvas, operation: strin
 }
 
 /**
- * For the snapshot-returning copy paths, which degrade instead of throwing.
+ * For the snapshot-returning copy paths, which report the failure in band.
  *
  * `copyPolygonSelectionToCanvas`, `copyFeatheredPolygonSelectionToCanvas` and
  * `copyRectSelectionToCanvas` already return `null` for every other "no snapshot is
- * possible" case, and their callers — `copySelectionToCanvas`, and the
- * `copyPolygonToCanvas` / `copyFeatheredPolygonToCanvas` wrappers — already turn that
- * `null` into a reported failure or an empty 1x1 bitmap. Their outermost callers
- * (`copySelection` / `layerViaCopy` in `src/contexts/useSelectionClipboard.ts`, then the
- * selection toolbars) consume a boolean return and render their own failure message, so
- * a throw here would bypass that channel and escape into a React event handler. The
- * named error is logged so the cause stays readable.
+ * possible" case, and their one production consumer, `copySelectionToCanvas`, is itself
+ * consumed through a null check: `copySelection` and `layerViaCopy` in
+ * `src/contexts/useSelectionClipboard.ts` both return `false` when the snapshot is null.
+ * So `null` is a real in-band channel on this path, and the named error is logged to
+ * keep the cause readable instead of surfacing as a bare `null`.
+ *
+ * The bitmap-only wrappers `copyPolygonToCanvas` / `copyFeatheredPolygonToCanvas` cannot
+ * use it. Their return value is committed as a layer's `tmpCanvas` with no null check
+ * anywhere on the way, so they throw. Nor can the outermost callers be counted on to
+ * report a failure afterwards: only `Lasso.tsx` reads `copyActiveSelection`'s boolean,
+ * while `FreehandLasso.tsx`, `FeatherMagneticLasso.tsx`, `MagicWand.tsx`,
+ * `RectangularSelection.tsx` and `AppKeyboardShortcuts.tsx` all discard it, and the
+ * keyboard shortcut discards it outside any `try`. A `null` there would delete those
+ * call sites' user-visible `alert` with nothing in its place.
  */
 function unavailableSelectionCanvasContext(operation: string, canvas: ClipboardCanvas): null {
   console.error(new SelectionCanvasContextError(operation, canvas.width, canvas.height));
   return null;
+}
+
+/**
+ * The margin the feathered copy path adds around the polygon's own bounds, shared so the
+ * bitmap-only wrapper can tell a degenerate polygon from a context failure the same way
+ * the snapshot function it delegates to does.
+ */
+function featheredBoundsPadding(antiAlias: boolean, featherRadius: number): number {
+  return Math.max(antiAlias ? 1 : 0, Math.ceil(featherRadius));
 }
 
 function drawPolygonPath(ctx: Ctx2D, points: Point[]): void {
@@ -359,7 +375,16 @@ function drawPolygonPath(ctx: Ctx2D, points: Point[]): void {
   ctx.closePath();
 }
 
+/**
+ * The snapshot the selection would occupy, or `null` when the polygon encloses nothing.
+ *
+ * The `null` cases are states rather than failures — too few points to bound, or bounds
+ * that collapse or clamp to zero — so a caller that must hand back a canvas anyway can
+ * tell them apart from a context failure, which has to be reported.
+ */
 function getSelectionCanvasBounds(points: Point[], padding = 0, imageSize?: Size): Pos | null {
+  if (points.length < 3) return null;
+
   const bounds = pointsBoundingPos({ points, lineWidth: padding });
   let minX = Math.floor(bounds.x);
   let minY = Math.floor(bounds.y);
@@ -427,7 +452,25 @@ export function copyPolygonSelectionToCanvas(
 }
 
 export function copyPolygonToCanvas(sourceCanvas: BitmapSource, points: Point[]): ClipboardCanvas {
-  return copyPolygonSelectionToCanvas(sourceCanvas, points)?.bitmap ?? createSelectionCanvas(1, 1);
+  // The bounds are derived here as well as inside `copyPolygonSelectionToCanvas`, and
+  // the arguments match, so a null snapshot beside a non-null `bounds` is exactly the
+  // null-context failure and nothing else.
+  const bounds = getSelectionCanvasBounds(points, 0);
+  const snapshot = copyPolygonSelectionToCanvas(sourceCanvas, points);
+  if (snapshot) return snapshot.bitmap;
+
+  // A polygon that encloses nothing is a real state rather than a failure: every lasso
+  // tool seeds `points: []`, and a click commits the tool with whatever the drag
+  // accumulated, so this case still has to hand back a canvas.
+  if (!bounds) return createSelectionCanvas(1, 1);
+
+  // Every other null is a failure, and a stand-in bitmap would be published as pixels:
+  // `tempUpdateLayer` (src/contexts/useLayer.ts), the `kind: 'tool'` arm of
+  // `createLayerSource` (src/contexts/layer-utils.ts) and `applyRasterTool`
+  // (src/contexts/useHistory.ts) all take this return value unchecked, and
+  // `layer-renderer.ts` rejects only zero dimensions, so a blank 1x1 survives as a
+  // permanently transparent layer. Fail loud instead.
+  throw new SelectionCanvasContextError('copyPolygonToCanvas', bounds.width, bounds.height);
 }
 
 function rasterizePolygonMask(points: Point[], width: number, height: number): Uint8Array {
@@ -562,13 +605,21 @@ export function copyFeatheredPolygonToCanvas(
     imageSize?: Size;
   } = {}
 ): ClipboardCanvas {
-  return (
-    copyFeatheredPolygonSelectionToCanvas(sourceCanvas, points, {
-      antiAlias,
-      featherRadius,
-      imageSize,
-    })?.bitmap ?? createSelectionCanvas(1, 1)
-  );
+  // Derived with the same rule `copyFeatheredPolygonSelectionToCanvas` uses, so the two
+  // agree on which nulls are a polygon that encloses nothing and which are a failure.
+  const bounds = getSelectionCanvasBounds(points, featheredBoundsPadding(antiAlias, featherRadius), imageSize);
+  const snapshot = copyFeatheredPolygonSelectionToCanvas(sourceCanvas, points, {
+    antiAlias,
+    featherRadius,
+    imageSize,
+  });
+  if (snapshot) return snapshot.bitmap;
+
+  if (!bounds) return createSelectionCanvas(1, 1);
+
+  // A `ClipboardCanvas` return has no null channel, and every consumer of it commits it
+  // as a layer bitmap, so a context failure here cannot degrade into a stand-in bitmap.
+  throw new SelectionCanvasContextError('copyFeatheredPolygonToCanvas', bounds.width, bounds.height);
 }
 
 export function copyFeatheredPolygonSelectionToCanvas(
@@ -588,7 +639,7 @@ export function copyFeatheredPolygonSelectionToCanvas(
     return null;
   }
 
-  const padding = Math.max(antiAlias ? 1 : 0, Math.ceil(featherRadius));
+  const padding = featheredBoundsPadding(antiAlias, featherRadius);
   const bounds = getSelectionCanvasBounds(points, padding, imageSize);
   if (!bounds) return null;
 

@@ -184,8 +184,11 @@ export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
     // the raw drag happened to run. normalizeShapeGeometry keeps the drag
     // quadrant, so a drag up-and-left reaches here with end < start; taking the
     // absolute extents alone would keep the wrong origin and mirror the shape
-    // into the opposite quadrant, and a negative extent cannot be clamped by
-    // roundedRectPath at all, which sent the path outside the layer bounds.
+    // into the opposite quadrant, and a negative extent would also invert which
+    // corner each `r` offset in roundedRectPath is measured from -- `r` itself is
+    // clamped to `min(|width|/2, |height|/2, radius)`, so a negative extent still
+    // cannot widen the radius -- dilating the rounded path by `r` outward on every
+    // negative axis and sending it outside the layer bounds.
     const x = Math.min(start.x, end.x);
     const y = Math.min(start.y, end.y);
     const w = Math.abs(end.x - start.x);
