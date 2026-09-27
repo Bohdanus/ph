@@ -208,7 +208,10 @@ describe('saveLayerCanvas', () => {
     expect(layer.bitmap).toBeNull();
   });
 
-  it('adopts the resolved bitmap and clears the staged canvas on success', async () => {
+  it('materializes the staged canvas without touching the record', async () => {
+    // A published layer is owned by the store, so this function only materializes.
+    // Promotion is a reducer publication (`PROMOTE_LAYER_PRESENTATIONS`), which is
+    // covered in StoreContext.presentation.test.tsx.
     const canvas = new OffscreenCanvas(20, 10) as unknown as BitmapSource;
     const bitmap = makeBitmap();
     const createImageBitmapStub = vi.fn(async () => bitmap);
@@ -217,14 +220,16 @@ describe('saveLayerCanvas', () => {
 
     await expect(saveLayerCanvas(layer)).resolves.toBe(bitmap);
     expect(createImageBitmapStub).toHaveBeenCalledWith(canvas);
-    expect(layer.bitmap).toBe(bitmap);
-    expect(layer.tmpCanvas).toBeNull();
+    expect(layer.bitmap).toBeNull();
+    expect(layer.tmpCanvas).toBe(canvas);
   });
 
-  it('closes the stale bitmap and keeps the newer preview when the staged canvas was replaced', async () => {
+  it('leaves the race check and the close to the store, returning the raw materialization', async () => {
+    // The superseded-canvas guard now lives at the store boundary: the promotion
+    // is refused and closed there, because only the store can tell whether the
+    // requesting canvas is still the layer's canvas.
     const staged = new OffscreenCanvas(20, 10) as unknown as BitmapSource;
     const newer = new OffscreenCanvas(30, 15) as unknown as BitmapSource;
-    const previousBitmap = makeBitmap({ width: 4, height: 4 });
     let resolveBitmap: (bitmap: ImageBitmap) => void = () => undefined;
     vi.stubGlobal(
       'createImageBitmap',
@@ -235,16 +240,16 @@ describe('saveLayerCanvas', () => {
           })
       )
     );
-    const layer = makeLayer({ id: 'a', order: 1, tmpCanvas: staged, bitmap: previousBitmap });
+    const layer = makeLayer({ id: 'a', order: 1, tmpCanvas: staged });
 
     const pending = saveLayerCanvas(layer);
     layer.tmpCanvas = newer;
     const materialized = makeBitmap();
     resolveBitmap(materialized);
 
-    await expect(pending).resolves.toBeUndefined();
-    expect(materialized.close).toHaveBeenCalledTimes(1);
-    expect(layer.bitmap).toBe(previousBitmap);
+    await expect(pending).resolves.toBe(materialized);
+    expect(materialized.close).not.toHaveBeenCalled();
+    expect(layer.bitmap).toBeNull();
     expect(layer.tmpCanvas).toBe(newer);
   });
 
@@ -266,26 +271,21 @@ describe('saveLayerCanvas', () => {
     expect(layer.tmpCanvas).toBe(canvas);
   });
 
-  it('swallows a failure raised while adopting the bitmap and keeps the staged canvas', async () => {
+  it('rejects when the platform cannot materialize a canvas', async () => {
+    // A missing createImageBitmap is a capability failure, not a contained
+    // cache miss: the promise rejects so the caller can keep the layer on its
+    // canvas and report it.
     const canvas = new OffscreenCanvas(20, 10) as unknown as BitmapSource;
-    const bitmap = makeBitmap();
-    vi.stubGlobal(
-      'createImageBitmap',
-      vi.fn(async () => bitmap)
-    );
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const layer = makeLayer({ id: 'a', order: 1, tmpCanvas: canvas });
-    const failure = new Error('adoption failed');
-    Object.defineProperty(layer, 'bitmap', {
-      configurable: true,
-      get: () => null,
-      set: () => {
-        throw failure;
-      },
-    });
-
-    await expect(saveLayerCanvas(layer)).resolves.toBeUndefined();
-    expect(consoleError).toHaveBeenCalledWith('Unable to materialize layer presentation cache', failure);
-    expect(layer.tmpCanvas).toBe(canvas);
+    const original = globalThis.createImageBitmap;
+    // @ts-expect-error deliberately removing the global for the negative path
+    delete globalThis.createImageBitmap;
+    try {
+      const layer = makeLayer({ id: 'a', order: 1, tmpCanvas: canvas });
+      await expect(saveLayerCanvas(layer)).rejects.toThrow(/createImageBitmap/);
+      expect(layer.bitmap).toBeNull();
+      expect(layer.tmpCanvas).toBe(canvas);
+    } finally {
+      globalThis.createImageBitmap = original;
+    }
   });
 });

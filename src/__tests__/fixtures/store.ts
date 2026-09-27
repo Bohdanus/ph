@@ -18,6 +18,7 @@ export interface MockStoreState {
   canvasCtxRef?: { current: CanvasRenderingContext2D | null };
   currentArgs?: { current: ToolArgs };
   clearPreviewLayers?: () => void;
+  promoteLayerPresentation?: (request: unknown) => void;
   previewLayers?: Record<LayerId, { layer: unknown; toolArgs?: ToolArgs }>;
   hasImage?: boolean;
   hasUnsavedChanges?: boolean;
@@ -55,6 +56,7 @@ export const createMockStoreState = (overrides: MockStoreState = {}): MockStoreS
   canvasCtxRef: { current: null },
   currentArgs: { current: {} as ToolArgs },
   clearPreviewLayers: vi.fn(),
+  promoteLayerPresentation: vi.fn(),
   previewLayers: {},
   hasImage: false,
   hasUnsavedChanges: false,
