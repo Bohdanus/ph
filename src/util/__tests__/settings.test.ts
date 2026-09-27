@@ -3,7 +3,7 @@ import { cloneDeep } from 'lodash-es';
 import { saveLastSettings } from '../settings.ts';
 import { defaultSettings, lastSavedSettings, savedDrawPerPen, savedArgsPerFigure } from '../../tools/settings.ts';
 import { isFigureType, normalizeFigure, type FigureType } from '../../tools/shape.ts';
-import type { ToolArgs } from '../../contexts/tool-types.ts';
+import type { ToolArgs, ToolArgsFor, ToolName } from '../../contexts/tool-types.ts';
 
 /**
  * Hard-coded copy of the narrowed `FigureType` union. The imported type cannot be
@@ -30,6 +30,19 @@ const loadPersistedArgs = <T extends { figure?: unknown }>(args: T): T => {
   const loaded = cloneDeep(args);
   if (isFigureType(loaded.figure)) return loaded;
   return { ...loaded, figure: normalizeFigure(loaded.figure) };
+};
+
+/**
+ * Mirrors the read a tool switch performs: `CurrentToolProvider` hands the incoming tool its
+ * args by deep-cloning `lastSavedSettings[toolName]` (src/contexts/useCurrentTool.tsx:33-51).
+ * Nothing else carries a tool's settings across a switch — `tempUpdateLayer` only writes a
+ * transient bitmap preview (src/contexts/useLayer.ts:459) — so this is the only path the
+ * settings have to survive.
+ */
+const switchToTool = <TName extends ToolName>(toolName: TName): ToolArgsFor<TName> => {
+  const args = cloneDeep(lastSavedSettings[toolName]) as ToolArgsFor<TName> & { figure?: unknown };
+  if (!('figure' in args)) return args as ToolArgsFor<TName>;
+  return loadPersistedArgs(args) as ToolArgsFor<TName>;
 };
 
 describe('saveLastSettings', () => {
@@ -258,6 +271,85 @@ describe('saveLastSettings', () => {
     };
     saveLastSettings(args);
     expect(args.points).toEqual([{ x: 1, y: 2 }]);
+  });
+
+  it('stores blur settings verbatim', () => {
+    const args = { radius: 25, toolName: 'blur' as const };
+    saveLastSettings(args);
+    expect(lastSavedSettings.blur).toEqual(args);
+  });
+
+  it('stores color settings verbatim', () => {
+    const args = { grayscale: 30, sepia: 60, saturation: 90, toolName: 'color' as const };
+    saveLastSettings(args);
+    expect(lastSavedSettings.color).toEqual(args);
+  });
+
+  it('stores levels settings verbatim', () => {
+    const args = { brightness: -40, contrast: 55, toolName: 'levels' as const };
+    saveLastSettings(args);
+    expect(lastSavedSettings.levels).toEqual(args);
+  });
+
+  it('does not alias the caller args when storing a filter tool', () => {
+    const args = { radius: 12, toolName: 'blur' as const };
+    saveLastSettings(args);
+    expect(lastSavedSettings.blur).not.toBe(args);
+  });
+});
+
+describe('saveLastSettings across a tool switch', () => {
+  beforeEach(() => {
+    resetLastSavedSettings();
+  });
+
+  afterEach(() => {
+    resetLastSavedSettings();
+  });
+
+  it('keeps the blur radius when another tool is edited between the two switches', () => {
+    saveLastSettings({ radius: 25, toolName: 'blur' });
+
+    // The second save is what loses the value in production: editing the other tool replaces
+    // the provider's in-memory args, so the switch back has to read `lastSavedSettings`.
+    switchToTool('levels');
+    saveLastSettings({ brightness: 40, contrast: -20, toolName: 'levels' });
+
+    expect(switchToTool('blur')).toEqual({ radius: 25, toolName: 'blur' });
+    expect(switchToTool('levels')).toEqual({ brightness: 40, contrast: -20, toolName: 'levels' });
+  });
+
+  it('keeps every color adjustment when another tool is edited between the two switches', () => {
+    saveLastSettings({ grayscale: 30, sepia: 60, saturation: 90, toolName: 'color' });
+
+    switchToTool('blur');
+    saveLastSettings({ radius: 8, toolName: 'blur' });
+
+    expect(switchToTool('color')).toEqual({ grayscale: 30, sepia: 60, saturation: 90, toolName: 'color' });
+  });
+
+  it('keeps both levels adjustments when another tool is edited between the two switches', () => {
+    saveLastSettings({ brightness: -40, contrast: 55, toolName: 'levels' });
+
+    switchToTool('color');
+    saveLastSettings({ grayscale: 15, sepia: 0, saturation: 0, toolName: 'color' });
+
+    expect(switchToTool('levels')).toEqual({ brightness: -40, contrast: 55, toolName: 'levels' });
+  });
+
+  it('persists a partial update on top of the previously saved filter settings', () => {
+    saveLastSettings({ grayscale: 30, sepia: 60, saturation: 90, toolName: 'color' });
+    switchToTool('levels');
+
+    saveLastSettings({ grayscale: 75, sepia: 60, saturation: 90, toolName: 'color' });
+
+    expect(switchToTool('color')).toEqual({ grayscale: 75, sepia: 60, saturation: 90, toolName: 'color' });
+  });
+
+  it('starts a filter tool from its neutral default when it has never been edited', () => {
+    expect(switchToTool('blur')).toEqual({ radius: 0, toolName: 'blur' });
+    expect(switchToTool('color')).toEqual({ grayscale: 0, sepia: 0, saturation: 0, toolName: 'color' });
+    expect(switchToTool('levels')).toEqual({ brightness: 0, contrast: 0, toolName: 'levels' });
   });
 });
 

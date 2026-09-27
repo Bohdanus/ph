@@ -175,28 +175,6 @@ describe('defaultSettings', () => {
   });
 });
 
-/** Tools whose adjustments the toolbars actually expose and therefore must survive a switch. */
-const tunableTools: ToolName[] = [
-  'blur',
-  'color',
-  'levels',
-  'transform',
-  'crop',
-  'draw',
-  'shape',
-  'text',
-  'reposition',
-  'polygonal-lasso',
-  'freehand-lasso',
-  'feather-magnetic-lasso',
-  'magic-wand',
-  'rectangle',
-  'ellipse',
-  'line',
-  'triangle',
-  'polygon',
-];
-
 describe('saveLastSettings tool-name coverage', () => {
   it('stores draw settings without the transient point list', () => {
     saveLastSettings({
@@ -274,21 +252,19 @@ describe('saveLastSettings tool-name coverage', () => {
     expect(lastSavedSettings.line).toMatchObject({ color: '#00ff00', lineWidth: 77 });
   });
 
-  it('proves the exhaustiveness gap: blur, color, and levels are the only unhandled tool names', () => {
-    // `saveLastSettings` is an if/else chain over tool names with no `else` and no `never`
-    // exhaustiveness check (src/util/settings.ts:17-68), so an unhandled name is dropped
-    // silently and its sliders reset on the next tool switch. The unhandled set is derived
-    // from `defaultSettings` rather than hand-listed: adding a tool without a branch fails
-    // here with the exact set of unhandled names, and closing the gap fails here too.
+  it('persists every registered tool name, so the chain cannot drop one', () => {
+    // `saveLastSettings` is an if/else chain over tool names. An unhandled name is dropped
+    // silently, so the tool's sliders reset on the next switch — the shape of the bug this
+    // contract exists to close. The chain ends in a `never` sentinel (src/util/settings.ts), which
+    // fails `npm run tsc` on a missing arm; this is the runtime counterpart. Both derive the set
+    // from `defaultSettings` rather than hand-listing it, so neither can drift.
     const unhandled = toolNames.filter((toolName) => {
       Reflect.deleteProperty(lastSavedSettings, toolName);
       saveLastSettings({ ...defaultSettings[toolName], toolName } as unknown as ToolArgs);
       return !(toolName in lastSavedSettings);
     });
 
-    expect(unhandled).toEqual(['blur', 'color', 'levels']);
-    // The unhandled names are all tunable, so the loss is user-visible, not internal state.
-    expect(tunableTools).toEqual(expect.arrayContaining(unhandled));
+    expect(unhandled).toEqual([]);
   });
 
   it('rejects args without a tool name', () => {
