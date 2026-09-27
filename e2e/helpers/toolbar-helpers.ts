@@ -57,32 +57,39 @@ export function resolveToolName(toolName: string): string {
 /**
  * The label half of the `tool-flyout-item-${tool.name}-${slug}` test id.
  *
- * The application mints that id in `SidebarLeft.tsx:303` with its own `slugify`
- * (`SidebarLeft.tsx:18`), so anything that shifts the output here moves the helper off
- * the element it asserts on. `normalizeToolName` is the one normalization both halves
- * of this module use, and for every label the suite passes it is byte-identical to that
- * `slugify` — the unit test pins that for `Levels`, `Pencil Tool` and `Ellipse Tool`, so
- * a future divergence fails there instead of silently re-targeting a flyout item.
+ * The application mints that id with `slugifyToolLabel` from `toolbar-mapping.ts`, which
+ * `SidebarLeft` imports, so anything that shifts the output here moves the helper off the
+ * element it asserts on. `normalizeToolName` is a *different* rule — it expands `&` to
+ * `and` and trims the ends, and the application does neither — so it does not belong here:
+ * for `Color & Tone` it yields `color-and-tone` where the app mints `color-tone`.
  *
- * Known residual, unreachable with the current toolbar: the app's `slugify` collapses
- * `&` into the surrounding separator run, and the `&`-to-`and` expansion here does not.
- * For a label like `Color & Tone` the two agree, because the ampersand is surrounded by
- * spaces; for `R&B` they do not (`r-b` versus `randb`). No label in `toolbar-mapping.ts`
- * contains an ampersand, and the app is the authority on its own test ids, so the helper
- * follows the module's normalization rather than forking a second one.
+ * The body below is therefore an independent copy of `slugifyToolLabel` rather than an
+ * import of it. Delegating would make the two sides move together and leave nothing to
+ * compare; keeping the copy means a change to either one alone is caught by
+ * `e2e/helpers/__tests__/toolbar-helpers.unit.test.ts`, which asserts the two agree for
+ * every label in `toolbar-mapping.ts` and for every label the suite passes. Do not trim
+ * the ends here to "tidy" the output: a slug the app cannot mint is a silent miss, and
+ * that test is the only thing standing between the two.
  */
 export function generateSlug(label: string): string {
-  return normalizeToolName(label);
+  return label.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-');
 }
 
 /**
  * Escapes a tool's accessible name for use inside a `RegExp`.
  *
- * The role fallback below matches by name, and a name is data, not a pattern: an
- * unescaped one makes `Brush (B)` fail to match itself, `Levels[beta]` match a
- * different tool, and `C:\Tool` throw on construction. The repository has no shared
- * `escapeRegExp`, and this module is the only place that builds a regex out of a tool
- * name, so the helper stays local rather than introducing a shared util for one caller.
+ * The role fallback below matches by name, and a name is data, not a pattern. Unescaped,
+ * `Brush (B)` and `Levels[beta]` fail to match their own literal name because the group
+ * and the class are interpreted, `Crop.v2`/`Zoom+`/`Paint|Fill` match a shorter name than
+ * the caller asked for, and `C:\Tool` does not throw — the trailing `\T` is an Annex B
+ * IdentityEscape, so the pattern silently matches `C:Tool` and nothing else. Only the `u`
+ * flag would make that construction throw, and the only flag here is `i`.
+ *
+ * The repository has no shared `escapeRegExp`, and this is the only place under `e2e/`
+ * that builds a regex out of a tool name, so the helper stays local rather than
+ * introducing a shared util for one caller. (`src/components/SidebarLeft/__tests__/SidebarLeft.icon-state.test.tsx`
+ * interpolates a tool label into a `RegExp` the same unescaped way; that is app-test scope,
+ * not this helper's.)
  */
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

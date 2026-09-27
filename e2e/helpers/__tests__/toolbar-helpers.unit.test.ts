@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, expectTypeOf } from 'vitest';
 import type { Mock } from 'vitest';
 import type { Page } from '@playwright/test';
+import { slugifyToolLabel, toolbarMap } from '../../../toolbar-mapping.ts';
 import {
   TOOL_NAME_MAP,
   TOOL_DISPLAY_LABEL_MAP,
@@ -404,15 +405,20 @@ const IDEMPOTENCY_SAMPLES = [
 // Names that exist on Object.prototype. A plain object literal map answers these
 // lookups with the inherited function/accessor, so `expected` is what normalization
 // should yield once the maps are own-property-safe.
-const INHERITED_NAME_CASES: Array<{ input: string; expected: string }> = [
-  { input: 'constructor', expected: 'constructor' },
-  { input: 'toString', expected: 'tostring' },
-  { input: 'valueOf', expected: 'valueof' },
-  { input: 'hasOwnProperty', expected: 'hasownproperty' },
-  { input: '__proto__', expected: 'proto' },
-  { input: 'isPrototypeOf', expected: 'isprototypeof' },
-  { input: 'propertyIsEnumerable', expected: 'propertyisenumerable' },
-  { input: 'toLocaleString', expected: 'tolocalestring' },
+//
+// `slugExpected` is the same name run through the flyout-item slug rule, which is a
+// different function: it does not trim, so `'__proto__'` keeps a dash on each side of
+// `proto` where `normalizeToolName` trims them away. The two coincide for every other
+// case here because each is a single run of alphanumerics.
+const INHERITED_NAME_CASES: Array<{ input: string; expected: string; slugExpected: string }> = [
+  { input: 'constructor', expected: 'constructor', slugExpected: 'constructor' },
+  { input: 'toString', expected: 'tostring', slugExpected: 'tostring' },
+  { input: 'valueOf', expected: 'valueof', slugExpected: 'valueof' },
+  { input: 'hasOwnProperty', expected: 'hasownproperty', slugExpected: 'hasownproperty' },
+  { input: '__proto__', expected: 'proto', slugExpected: '-proto-' },
+  { input: 'isPrototypeOf', expected: 'isprototypeof', slugExpected: 'isprototypeof' },
+  { input: 'propertyIsEnumerable', expected: 'propertyisenumerable', slugExpected: 'propertyisenumerable' },
+  { input: 'toLocaleString', expected: 'tolocalestring', slugExpected: 'tolocalestring' },
 ];
 
 const INHERITED_NAME_KEYS = INHERITED_NAME_CASES.map(({ input }) => input);
@@ -431,14 +437,24 @@ const REGEX_METACHARACTER_CASES: Array<{ name: string; decoy: string }> = [
   { name: 'C:\\Tool', decoy: 'C:Tool' },
 ];
 
-// The `slugify` in `src/components/SidebarLeft/SidebarLeft.tsx:18`, which is what
-// mints `tool-flyout-item-${tool.name}-${slugify(tool.label)}` (`:303`). It is
-// reproduced here rather than imported: nothing under `e2e/` may reach into app
-// source (see the note in `vitest.e2e.config.ts`).
-const appSlugify = (value: string): string => value.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-');
+// The `slugifyToolLabel` in `toolbar-mapping.ts`, which is what
+// `SidebarLeft` mints `tool-flyout-item-${tool.name}-${slugifyToolLabel(tool.label)}` with.
+// It is imported rather than transcribed: a second copy in this file would pin itself, and
+// an application-side change to the rule would then go unnoticed here.
+//
+// `toolbar-mapping.ts` sits at the repository root and reaches into `src/` through
+// `import type` only, which is erased at runtime — so importing it does not pull app
+// source into this Node-environment project (see the note in `vitest.e2e.config.ts`).
+// Every label the application can put in a flyout item, walked out of `toolbarMap` so the
+// list cannot go stale: `toolbarMap` is groups → flyout menus → tools, three levels deep.
+const REAL_TOOL_LABELS: string[] = toolbarMap.flatMap((group) =>
+  group.flatMap((menu) => menu.map((tool) => tool.label))
+);
 
-// The only labels the suite passes to the slug-consuming helpers:
-// `e2e/levels.spec.ts:86,128` and `e2e/sidebar-flyout.spec.ts:73,86`.
+// The labels the suite passes to the slug-consuming helpers:
+// `e2e/levels.spec.ts:86,128` and `e2e/sidebar-flyout.spec.ts:73,86`. They are a subset
+// of REAL_TOOL_LABELS; they are listed separately because those are the three paths an
+// e2e run actually exercises end to end.
 const SUITE_FLYOUT_LABELS = ['Levels', 'Pencil Tool', 'Ellipse Tool'];
 
 const KEYBOARD_CASES: Array<{
@@ -601,12 +617,15 @@ describe('Toolbar Helpers', () => {
         }
       );
 
-      it.each(INHERITED_NAME_CASES)('normalizeToolName and generateSlug(%j) do not throw', ({ input, expected }) => {
-        expect(() => normalizeToolName(input)).not.toThrow();
-        expect(normalizeToolName(input)).toBe(expected);
-        expect(() => generateSlug(input)).not.toThrow();
-        expect(generateSlug(input)).toBe(expected);
-      });
+      it.each(INHERITED_NAME_CASES)(
+        'normalizeToolName and generateSlug(%j) do not throw',
+        ({ input, expected, slugExpected }) => {
+          expect(() => normalizeToolName(input)).not.toThrow();
+          expect(normalizeToolName(input)).toBe(expected);
+          expect(() => generateSlug(input)).not.toThrow();
+          expect(generateSlug(input)).toBe(slugExpected);
+        }
+      );
 
       it.each(INHERITED_NAME_KEYS)('TOOL_NAME_MAP and TOOL_DISPLAY_LABEL_MAP have no inherited entry for %j', (key) => {
         expect(TOOL_NAME_MAP[key]).toBeUndefined();
@@ -623,34 +642,58 @@ describe('Toolbar Helpers', () => {
         expect(generateSlug('Color Balance')).toBe('color-balance');
       });
 
-      it('handles special characters in label (strips trailing non-alphanumeric)', () => {
-        expect(generateSlug('Item @#$%')).toBe('item');
+      it('leaves a trailing separator run as a dash, the way the application does', () => {
+        // The app does not trim, so the id it mints ends in a dash. An earlier version
+        // pinned 'item' here — a slug the app cannot produce for this label.
+        expect(generateSlug('Item @#$%')).toBe('item-');
       });
 
       it('handles numbers', () => {
         expect(generateSlug('Tool 2')).toBe('tool-2');
       });
 
-      it('strips leading/trailing whitespace and non-alphanumeric', () => {
-        expect(generateSlug('  My Label  ')).toBe('my-label');
+      it('keeps leading and trailing separator runs as dashes, the way the application does', () => {
+        // '-my-label-', not 'my-label': the run on each side is a run.
+        expect(generateSlug('  My Label  ')).toBe('-my-label-');
       });
 
       it('returns an empty string for an empty label', () => {
         expect(generateSlug('')).toBe('');
       });
 
-      it('expands ampersands the same way normalizeToolName does', () => {
-        expect(generateSlug('Color & Tone')).toBe('color-and-tone');
-        expect(generateSlug('Color & Tone')).toBe(normalizeToolName('Color & Tone'));
+      it('collapses an ampersand into the surrounding run instead of spelling it out', () => {
+        // normalizeToolName would answer 'color-and-tone'. The app mints 'color-tone',
+        // because ' & ' is one run of non-alphanumeric characters.
+        expect(generateSlug('Color & Tone')).toBe('color-tone');
+        expect(generateSlug('R&B')).toBe('r-b');
+        expect(generateSlug('A && B')).toBe('a-b');
       });
 
-      it.each(SUITE_FLYOUT_LABELS)('reproduces the app slugify for the suite label %j', (label) => {
-        expect(generateSlug(label)).toBe(appSlugify(label));
+      it('is compared against the application rule for every real toolbar label', () => {
+        // The tripwire is the it.each below: the helper keeps its own copy of the rule so
+        // that the comparison is not a tautology. Change one side alone and it goes red.
+        // This case only fails if the label set itself stops being read, which would
+        // silently turn the 28 real cases above into zero.
+        expect(REAL_TOOL_LABELS.length).toBeGreaterThan(0);
+        expect(REAL_TOOL_LABELS).toContain('Levels');
       });
 
-      it.each(SUITE_FLYOUT_LABELS)('agrees with normalizeToolName for the suite label %j', (label) => {
-        expect(generateSlug(label)).toBe(normalizeToolName(label));
+      it.each(REAL_TOOL_LABELS)('reproduces the application slug for the real toolbar label %j', (label) => {
+        expect(generateSlug(label)).toBe(slugifyToolLabel(label));
       });
+
+      it.each(SUITE_FLYOUT_LABELS)('reproduces the application slug for the suite label %j', (label) => {
+        expect(generateSlug(label)).toBe(slugifyToolLabel(label));
+      });
+
+      it.each(SUITE_FLYOUT_LABELS)(
+        'happens to agree with normalizeToolName for the suite label %j, which is why no spec moves',
+        (label) => {
+          // A property of these three labels — none carries '&' or edge punctuation — not
+          // a rule. 'Color & Tone' above is the counterexample.
+          expect(generateSlug(label)).toBe(normalizeToolName(label));
+        }
+      );
 
       it('FlyoutItem interface has toolName and label string fields', () => {
         expectTypeOf<FlyoutItem>().toEqualTypeOf<{
@@ -763,6 +806,24 @@ describe('Toolbar Helpers', () => {
         expect(dom.clicked).not.toContain(decoyButton);
       }
     );
+
+    it('constructs a pattern from C:\\Tool without throwing, and pins what it then matches', () => {
+      // An earlier comment here claimed `C:\\Tool` "throws on construction". It does not:
+      // `\T` is an Annex B IdentityEscape, so the pattern builds and then matches `C:Tool`
+      // — a name the caller never asked for — while failing to match its own literal name.
+      // The `u` flag is the only thing that makes this a SyntaxError. Pinned here so the
+      // doc comment on `escapeRegExp` cannot drift back into claiming otherwise.
+      const unescaped = new RegExp('C:\\Tool');
+
+      expect(() => new RegExp('C:\\Tool')).not.toThrow();
+      expect(unescaped.test('C:\\Tool')).toBe(false);
+      expect(unescaped.test('C:Tool')).toBe(true);
+      // eslint-disable-next-line no-invalid-regexp -- the invalidity is the assertion: only `u` makes this a SyntaxError
+      expect(() => new RegExp('C:\\Tool', 'u')).toThrow(SyntaxError);
+
+      // The escaped form the helper actually builds, which does match itself.
+      expect(new RegExp('C:\\\\Tool', 'i').test('C:\\Tool')).toBe(true);
+    });
 
     it('clicks only the first of several testid matches', async () => {
       const dom = createFakeDom();
