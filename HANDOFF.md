@@ -998,7 +998,7 @@ replay authority.
 
 ---
 
-## 33. `isToolDirty` has no production writer, so every reader of it is on its dead branch
+## 34. `isToolDirty` has no production writer, so every reader of it is on its dead branch
 
 **Problem.** `isToolDirty` has a type (`StoreContext.tsx:174`), a reducer arm (`:358-362`) and three
 readers — but **nothing dispatches `SET_TOOL_DIRTY` with `true`**. A grep for `SET_TOOL_DIRTY` alone
@@ -1013,9 +1013,9 @@ reader's `isToolDirty` arm is unreachable:
 - `src/components/Common/AppKeyboardShortcuts.tsx:111-120` — `Cmd+Z`. Same shape.
 - `src/components/Common/UndoButton.tsx:11-22` — **no production caller left.** The Blur, Color and
   Levels panels used it for a button labelled "Undo Blur" / "Reset" that discarded an _uncommitted_
-  adjustment; they now do that panel-locally. Only
-  `src/components/Common/__tests__/UndoControls.test.tsx` still renders it, so the component and its
-  `isToolDirty` arm are kept alive by a test alone.
+  adjustment; they now do that panel-locally, gated on a live preview so it cannot claim a reset it
+  cannot perform (item 35). Only `src/components/Common/__tests__/UndoControls.test.tsx` still
+  renders it, so the component and its `isToolDirty` arm are kept alive by a test alone.
 
 The flag's arm is also not a harmless no-op even if it were reachable: `resetToLastSavedArgs` clones
 `lastSavedSettings[toolName]`, and `_setToolArgs` calls `saveLastSettings(nextArgs)` on the same tick
@@ -1043,3 +1043,47 @@ branch, and the flag's deletion removes no live behaviour.
 `src/components/Common/UndoButton.tsx`, `src/components/Common/__tests__/UndoControls.test.tsx`,
 `src/components/HistoryControls/__tests__/HistoryControls.test.tsx`,
 `src/components/Common/__tests__/AppKeyboardShortcuts.test.tsx`
+
+---
+
+## 35. A committed Blur/Color/Levels adjustment has no panel affordance, only document undo
+
+**Problem.** The three panels' discard button removes an **uncommitted** preview and nothing else.
+`commitDirtyTool` (`useLayer.ts:323`) bakes the preview into a real layer, empties the preview map
+(`:353`) and appends a `TOOL_ACTION` entry (`:372-384`; `normalizeCommittedToolArgs` at `:72-77`
+returns non-transform args unchanged). It runs on tool switch (`useApp.ts:157`), on export
+(`DesktopHeader.tsx:168`, inside `flushSync`, panel still mounted) and in `mergeAllLayers`
+(`useLayer.ts:618`).
+
+From that moment the adjustment is a **document edit**. The panel's `hasLivePreview`
+(`Blur/Blur.tsx:59`, `Colors/Color.tsx:87`, `Levels/Levels.tsx:62`) is `false`, so the button is
+disabled, because `cancelLayerPreview` (`useLayer.ts:567-570`) only deletes the active layer's
+preview entry and that entry is gone. "Undo Blur" is therefore greyed out while the canvas carries
+the blur, and the only routes out are document-level: the header undo / `Cmd+Z`
+(`HistoryControls.tsx:9-14,21-22`), or the History row, which is labelled with the tool name
+(`useHistory.ts:22-24`) and rewinds the **whole** timeline to that row (`HistoryTab.tsx:23`,
+"Click to go back to this state"), discarding every entry after it.
+
+This is a deliberate scope rather than an oversight: the button is gated precisely so it cannot
+claim a reset it cannot perform. The gate is also the inverse of the one this button had before
+it — `UndoButton.tsx:14` disabled it whenever `canUndo()` was false, which is the _mid-adjustment_
+state on a fresh document — so the panel button is enabled exactly while an adjustment is
+uncommitted and disabled otherwise. Three tests pin the gate — `Blur.test.tsx:175`,
+`Color.test.tsx:284`, `Levels.test.tsx:136`, "leaves the discard/Reset disabled once the adjustment
+is committed" — and they go red if the gate is removed.
+
+**Fix.** Only if the operator wants the panel to own the committed case too. It must be a **typed
+store action**, not a call to `undo()`: routing a panel button at the document timeline is the
+defect item 34's `UndoButton` was, and `resetHistoryTo` would discard unrelated later edits along
+with the adjustment. The shape to add is a single-writer action that reverts the newest
+`TOOL_ACTION` entry for the active layer when that entry's `args.toolName` matches the panel's
+tool — appended through the same boundary as every other history write, not spliced — with the
+panel gating on it the way it now gates on the preview. It belongs in `useHistory.ts` next to
+`undo()`, not in a panel. Until that exists the disabled button is the honest answer and no change
+is required.
+
+**Files.** `src/components/ToolbarsRight/Blur/Blur.tsx:59,118`,
+`src/components/ToolbarsRight/Colors/Color.tsx:87,186`,
+`src/components/ToolbarsRight/Levels/Levels.tsx:62,140`, `src/contexts/useLayer.ts:323,353,372-384,567-570,618`,
+`src/hooks/useApp.ts:157`, `src/components/DesktopHeader/DesktopHeader.tsx:168`,
+`src/components/HistoryControls/HistoryControls.tsx:9-14,21-22`, `src/contexts/useHistory.ts:22-24`

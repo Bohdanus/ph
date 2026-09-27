@@ -18,8 +18,17 @@ const mockUndo = vi.hoisted(() => vi.fn());
 
 const toolState = vi.hoisted(() => ({ isToolDirty: false }));
 
+// The discard is gated on a live preview for the active layer, so the store's
+// preview map has to be part of the mock. `commitDirtyTool` clears this map and
+// bakes the adjustment into the layer plus a `TOOL_ACTION` entry; the map is only
+// non-empty while an adjustment is still uncommitted.
+const store = vi.hoisted(() => ({
+  activeLayerId: 'layer-1' as string | null,
+  previewLayers: { current: {} as Record<string, unknown> },
+}));
+
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [{}],
+  useStore: () => [{ activeLayerId: store.activeLayerId, previewLayers: store.previewLayers }],
 }));
 
 vi.mock('../../../../contexts/useLayer.ts', () => ({
@@ -64,10 +73,19 @@ const changeSlider = (name: RegExp, value: string) => {
   fireEvent.change(getSlider(name), { target: { value } });
 };
 
+/** Stand in for a preview `tempUpdateLayer` has published and nothing has committed yet. */
+const seedLivePreview = (layerId: string | null = store.activeLayerId) => {
+  store.previewLayers.current = layerId ? { [layerId]: { layer: {} } } : {};
+};
+
+const getResetButton = () => screen.getByRole('button', { name: 'Reset' });
+
 describe('Color toolbar', () => {
   beforeEach(() => {
     Object.assign(toolArgs, { grayscale: 0, sepia: 0, saturation: 100, toolName: 'color' as const });
     toolState.isToolDirty = false;
+    store.activeLayerId = 'layer-1';
+    store.previewLayers.current = {};
     mockSetToolArgs.mockClear();
     mockTempUpdateLayer.mockClear();
     mockCancelLayerPreview.mockClear();
@@ -254,10 +272,46 @@ describe('Color toolbar', () => {
     }
   });
 
-  it('offers the Reset discard regardless of history, because discarding is not a history operation', () => {
+  it('offers the Reset discard only while a live preview exists, because that preview is the only thing it can remove', () => {
+    // History state is fixed here: `canUndo()` is `true` and `isToolDirty` is the
+    // value production can hold, so neither of them can be what the button reads.
+    seedLivePreview();
     render(<Color />);
 
-    expect(screen.getByRole('button', { name: 'Reset' })).toBeEnabled();
+    expect(getResetButton()).toBeEnabled();
+  });
+
+  it('leaves Reset disabled once the adjustment is committed, rather than claiming a reset it cannot perform', () => {
+    // `commitDirtyTool` runs on tool switch, on export and in this panel's own
+    // "Merge all": it empties the preview map and bakes the adjustment into a real
+    // layer plus a `TOOL_ACTION` entry. The panel can no longer cancel what is not
+    // a preview.
+    Object.assign(toolArgs, { grayscale: 60, sepia: 20, saturation: 40, toolName: 'color' as const });
+    render(<Color />);
+
+    const button = getResetButton();
+    expect(button).toBeDisabled();
+
+    fireEvent.click(button);
+
+    // The lie this pins: an always-enabled button reset all three sliders to 0 here
+    // while the canvas kept the committed adjustment.
+    expect(mockCancelLayerPreview).not.toHaveBeenCalled();
+    expect(mockSetToolArgs).not.toHaveBeenCalled();
+    expect(mockUndo).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['there is no active layer', null],
+    ['the active layer has no preview of its own', 'layer-2'],
+  ])('leaves Reset disabled when %s, so a preview on another layer cannot arm it', (_case, activeLayerId) => {
+    // `cancelLayerPreview()` only ever cancels the active layer's entry, so a preview
+    // belonging to any other layer leaves the click with nothing to remove.
+    store.activeLayerId = activeLayerId;
+    seedLivePreview('layer-1');
+    render(<Color />);
+
+    expect(getResetButton()).toBeDisabled();
   });
 
   it.each([false, true])(
@@ -265,9 +319,10 @@ describe('Color toolbar', () => {
     (isToolDirty) => {
       toolState.isToolDirty = isToolDirty;
       Object.assign(toolArgs, { grayscale: 60, sepia: 20, saturation: 40, toolName: 'color' as const });
+      seedLivePreview();
       render(<Color />);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+      fireEvent.click(getResetButton());
 
       expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
       // The baseline is `defaultSettings.color`, not the value the user just dragged to.

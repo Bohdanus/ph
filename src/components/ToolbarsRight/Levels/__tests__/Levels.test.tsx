@@ -12,6 +12,11 @@ const toolArgs = vi.hoisted(() => ({
 
 const activeLayerId = vi.hoisted(() => ({ current: 'layer-1' as string | null }));
 
+// The discard is gated on a live preview for the active layer. `commitDirtyTool`
+// empties this map and bakes the adjustment into the layer plus a `TOOL_ACTION`
+// entry, so it is only non-empty while an adjustment is still uncommitted.
+const previewLayers = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
+
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
 const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
@@ -49,9 +54,17 @@ vi.mock('../../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
     {
       activeLayerId: activeLayerId.current,
+      previewLayers,
     },
   ],
 }));
+
+/** Stand in for a preview `tempUpdateLayer` has published and nothing has committed yet. */
+function seedLivePreview(layerId: string | null = activeLayerId.current) {
+  previewLayers.current = layerId ? { [layerId]: { layer: {} } } : {};
+}
+
+const getResetButton = () => screen.getByRole('button', { name: 'Reset' });
 
 function resetToolArgs(overrides: Partial<typeof toolArgs> = {}) {
   Object.assign(toolArgs, {
@@ -78,6 +91,7 @@ describe('Levels toolbar', () => {
     // `SET_TOOL_DIRTY` with `true`.
     mockIsToolDirty.current = false;
     setActiveLayerId('layer-1');
+    previewLayers.current = {};
   });
 
   it('renders brightness and contrast sliders', () => {
@@ -87,10 +101,13 @@ describe('Levels toolbar', () => {
     expect(screen.getByLabelText(/Contrast/)).toBeInTheDocument();
   });
 
-  it('renders the panel-local discard button', () => {
+  it('offers the panel-local discard only while a live preview exists, because that preview is the only thing it can remove', () => {
+    // History state is fixed here: `canUndo()` is `true` and `isToolDirty` is the
+    // value production can hold, so neither of them can be what the button reads.
+    seedLivePreview();
     render(<Levels />);
 
-    expect(screen.getByRole('button', { name: 'Reset' })).toBeInTheDocument();
+    expect(getResetButton()).toBeEnabled();
   });
 
   it.each([false, true])(
@@ -98,9 +115,10 @@ describe('Levels toolbar', () => {
     (isToolDirty) => {
       mockIsToolDirty.current = isToolDirty;
       resetToolArgs({ brightness: 70, contrast: -20 });
+      seedLivePreview();
       render(<Levels />);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+      fireEvent.click(getResetButton());
 
       expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
       // The baseline is `defaultSettings.levels`, not the value the user just dragged to.
@@ -115,14 +133,40 @@ describe('Levels toolbar', () => {
     }
   );
 
-  it('keeps the discard available with no history and no unsaved changes', () => {
+  it('leaves the discard disabled once the adjustment is committed, rather than claiming a reset it cannot perform', () => {
+    // `commitDirtyTool` runs on tool switch, on export and in `mergeAllLayers`: it
+    // empties the preview map and bakes the adjustment into a real layer plus a
+    // `TOOL_ACTION` entry. The panel can no longer cancel what is not a preview.
+    resetToolArgs({ brightness: 70, contrast: -20 });
     render(<Levels />);
 
-    // Discarding an uncommitted adjustment is not a history operation, so it is never
-    // gated on `canUndo()`. It used to be, which left a mislabeled button that replayed
-    // the timeline one entry back whenever it was pressed.
-    expect(screen.getByRole('button', { name: 'Reset' })).toBeEnabled();
+    const button = getResetButton();
+    expect(button).toBeDisabled();
+
+    fireEvent.click(button);
+
+    // The lie this pins: an always-enabled button reset both sliders to 0 here while
+    // the canvas kept the committed adjustment.
+    expect(mockCancelLayerPreview).not.toHaveBeenCalled();
+    expect(mockSetToolArgs).not.toHaveBeenCalled();
+    expect(mockUndo).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['there is no active layer', null],
+    ['the active layer has no preview of its own', 'layer-2'],
+  ])(
+    'leaves the discard disabled when %s, so a preview on another layer cannot arm it',
+    (_case, activeLayerIdValue) => {
+      // `cancelLayerPreview()` only ever cancels the active layer's entry, so a preview
+      // belonging to any other layer leaves the click with nothing to remove.
+      setActiveLayerId(activeLayerIdValue);
+      seedLivePreview('layer-1');
+      render(<Levels />);
+
+      expect(getResetButton()).toBeDisabled();
+    }
+  );
 
   it('does not call tempUpdateLayer when activeLayerId is null', () => {
     setActiveLayerId(null);
@@ -333,6 +377,7 @@ describe('Levels toolbar', () => {
 
   describe('keyboard navigation', () => {
     it('all focusable elements are reachable and in correct tab order', () => {
+      seedLivePreview();
       render(<Levels />);
 
       const brightnessSlider = screen.getByLabelText(/Brightness/);
@@ -373,6 +418,7 @@ describe('Levels toolbar', () => {
     });
 
     it('runs the panel-local discard when the focused reset button is clicked', () => {
+      seedLivePreview();
       render(<Levels />);
       const resetButton = screen.getByRole('button', { name: 'Reset' });
 
@@ -392,6 +438,7 @@ describe('Levels toolbar', () => {
 
     it('reaches the sliders and the reset button by tabbing in DOM order', async () => {
       const user = userEvent.setup();
+      seedLivePreview();
       render(<Levels />);
 
       const brightnessSlider = screen.getByLabelText(/Brightness/);
@@ -411,6 +458,7 @@ describe('Levels toolbar', () => {
     it('discards the adjustment when the focused reset button is activated with Enter', async () => {
       const user = userEvent.setup();
       resetToolArgs({ brightness: 45, contrast: -60 });
+      seedLivePreview();
       render(<Levels />);
 
       const resetButton = screen.getByRole('button', { name: 'Reset' });

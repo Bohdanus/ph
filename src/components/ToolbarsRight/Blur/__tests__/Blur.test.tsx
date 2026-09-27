@@ -12,8 +12,17 @@ const mockUndo = vi.hoisted(() => vi.fn());
 
 const toolState = vi.hoisted(() => ({ isToolDirty: false }));
 
+// The discard is gated on a live preview for the active layer, so the store's
+// preview map has to be part of the mock. `commitDirtyTool` clears this map and
+// bakes the adjustment into the layer plus a `TOOL_ACTION` entry; the map is only
+// non-empty while an adjustment is still uncommitted.
+const store = vi.hoisted(() => ({
+  activeLayerId: 'layer-1' as string | null,
+  previewLayers: { current: {} as Record<string, unknown> },
+}));
+
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [{}],
+  useStore: () => [{ activeLayerId: store.activeLayerId, previewLayers: store.previewLayers }],
 }));
 
 vi.mock('../../../../contexts/useLayer.ts', () => ({
@@ -57,10 +66,19 @@ const changeRadius = (value: string) => {
   fireEvent.change(getRadiusSlider(), { target: { value } });
 };
 
+/** Stand in for a preview `tempUpdateLayer` has published and nothing has committed yet. */
+const seedLivePreview = (layerId: string | null = store.activeLayerId) => {
+  store.previewLayers.current = layerId ? { [layerId]: { layer: {} } } : {};
+};
+
+const getDiscardButton = () => screen.getByRole('button', { name: 'Undo Blur' });
+
 describe('Blur toolbar', () => {
   beforeEach(() => {
     Object.assign(toolArgs, { radius: 4, toolName: 'blur' as const });
     toolState.isToolDirty = false;
+    store.activeLayerId = 'layer-1';
+    store.previewLayers.current = {};
     mockSetToolArgs.mockClear();
     mockTempUpdateLayer.mockClear();
     mockCancelLayerPreview.mockClear();
@@ -146,10 +164,44 @@ describe('Blur toolbar', () => {
     expect(mockSetToolArgs).toHaveBeenLastCalledWith({ radius: 10, toolName: 'blur' });
   });
 
-  it('offers the discard regardless of history, because discarding is not a history operation', () => {
+  it('offers the discard only while a live preview exists, because that preview is the only thing it can remove', () => {
+    // History state is fixed here: `canUndo()` is `true` and `isToolDirty` is the
+    // value production can hold, so neither of them can be what the button reads.
+    seedLivePreview();
+    render(<Blur />);
+    expect(getDiscardButton()).toBeEnabled();
+  });
+
+  it('leaves the discard disabled once the adjustment is committed, rather than claiming a reset it cannot perform', () => {
+    // `commitDirtyTool` runs on tool switch, on export and in `mergeAllLayers`:
+    // it empties the preview map and bakes the blur into a real layer plus a
+    // `TOOL_ACTION` entry. The panel can no longer cancel what is not a preview.
+    Object.assign(toolArgs, { radius: 20, toolName: 'blur' as const });
     render(<Blur />);
 
-    expect(screen.getByRole('button', { name: 'Undo Blur' })).toBeEnabled();
+    const button = getDiscardButton();
+    expect(button).toBeDisabled();
+
+    fireEvent.click(button);
+
+    // The lie this pins: an always-enabled button reset the slider to 0 here while
+    // the canvas kept the committed blur at 20.
+    expect(mockCancelLayerPreview).not.toHaveBeenCalled();
+    expect(mockSetToolArgs).not.toHaveBeenCalled();
+    expect(mockUndo).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['there is no active layer', null],
+    ['the active layer has no preview of its own', 'layer-2'],
+  ])('leaves the discard disabled when %s, so a preview on another layer cannot arm it', (_case, activeLayerId) => {
+    // `cancelLayerPreview()` only ever cancels the active layer's entry, so a preview
+    // belonging to any other layer leaves the click with nothing to remove.
+    store.activeLayerId = activeLayerId;
+    seedLivePreview('layer-1');
+    render(<Blur />);
+
+    expect(getDiscardButton()).toBeDisabled();
   });
 
   it.each([false, true])(
@@ -157,9 +209,10 @@ describe('Blur toolbar', () => {
     (isToolDirty) => {
       toolState.isToolDirty = isToolDirty;
       Object.assign(toolArgs, { radius: 37, toolName: 'blur' as const });
+      seedLivePreview();
       render(<Blur />);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Undo Blur' }));
+      fireEvent.click(getDiscardButton());
 
       expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
       // The baseline is `defaultSettings.blur`, not the value the user just dragged to.
@@ -171,12 +224,13 @@ describe('Blur toolbar', () => {
   );
 
   it('drops a slider change still queued on the animation frame when the discard is clicked', () => {
+    seedLivePreview();
     render(<Blur />);
 
     changeRadius('17');
     expect(rafCallbacks).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Undo Blur' }));
+    fireEvent.click(getDiscardButton());
     flushRaf();
 
     // Only the discard reaches the store: the stale frame must not re-apply the radius.

@@ -8,7 +8,7 @@ import { SECONDARY_BUTTON } from '../buttonStyles.ts';
 
 const Levels: React.FC<{}> = () => {
   const { tempUpdateLayer, cancelLayerPreview } = useLayers();
-  const [{ activeLayerId }] = useStore();
+  const [{ activeLayerId, previewLayers }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as LevelsToolArgs;
@@ -50,6 +50,18 @@ const Levels: React.FC<{}> = () => {
   };
 
   /**
+   * A live preview for the active layer is the only thing this panel's discard can
+   * remove, so that preview is exactly what the button is gated on. `previewLayers`
+   * is a mutable ref rather than state, which makes this a render-time read: it is
+   * correct because every production path that fills or empties the map is followed
+   * by a dispatch that re-renders the panel — the sliders' own write calls
+   * `tempUpdateLayer` and then `setToolArgs` on the same frame, and `commitDirtyTool`
+   * dispatches the entry it baked — and `cancelLayerPreview` empties it only from
+   * the click handler below.
+   */
+  const hasLivePreview = Boolean(activeLayerId && previewLayers.current[activeLayerId]);
+
+  /**
    * Discards the uncommitted levels adjustment, and only that.
    *
    * This used to be the shared `<UndoButton />`, which routed to document-level
@@ -62,6 +74,13 @@ const Levels: React.FC<{}> = () => {
    * same tick and overwrites `lastSavedSettings.levels` with the value the user just
    * dragged to. A reset cloned from there restores the unapplied value and the
    * control goes on lying about it.
+   *
+   * `commitDirtyTool` bakes the preview into a real layer plus a `TOOL_ACTION`
+   * entry — on tool switch, on export and in `mergeAllLayers` — and by then there
+   * is no preview left to cancel. Un-gated, a click there cleared nothing while
+   * the two sliders dropped to 0 and the canvas kept the committed adjustment, so
+   * the button is disabled unless `hasLivePreview`. Removing a committed adjustment
+   * is a document operation, and that is `Cmd+Z`'s.
    */
   const discardAdjustment = () => {
     if (rafIdRef.current !== null) {
@@ -116,8 +135,9 @@ const Levels: React.FC<{}> = () => {
       </div>
 
       <button
-        className={`${SECONDARY_BUTTON} w-full focus:ring-2 focus:ring-blue-500`}
+        className={`${SECONDARY_BUTTON} w-full focus:ring-2 focus:ring-blue-500 disabled:opacity-50`}
         onClick={discardAdjustment}
+        disabled={!hasLivePreview}
         data-testid="undo-button-reset"
       >
         Reset
