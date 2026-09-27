@@ -37,7 +37,11 @@ const Crop: React.FC<{}> = () => {
           onChange={(e) => {
             const val = e.target.value;
             const newAspectRatio = val === '' ? null : Number(val);
-            onChange({ ...args, aspectRatio: newAspectRatio });
+            onChange({
+              ...args,
+              aspectRatio: newAspectRatio,
+              rect: newAspectRatio && rect ? refitRectToAspect(rect, newAspectRatio) : rect,
+            });
           }}
           className="rounded border border-gray-300 bg-white px-3 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         >
@@ -67,5 +71,19 @@ const Crop: React.FC<{}> = () => {
     </div>
   );
 };
+
+// A ratio change only reshapes the overlay's private `startRectRef`, so without publishing the
+// refit here `Apply` would hand the pre-ratio rect to `applyDocumentCrop` and the document would
+// be cropped to a region the user never saw. This is a pixel-exact mirror of the private
+// `adjustWidthRatio` in `useRect.ts` that the overlay refits with; the two must not drift.
+function refitRectToAspect(rect: NonNullable<CropToolArgs['rect']>, aspectRatio: number) {
+  const height = Math.abs(rect.y2 - rect.y1);
+  const currentWidth = Math.abs(rect.x2 - rect.x1);
+  const wantedWidth = height / aspectRatio;
+  const diff = (wantedWidth - currentWidth) / 2;
+  return rect.x1 < rect.x2
+    ? { ...rect, x1: rect.x1 - diff, x2: rect.x2 + diff }
+    : { ...rect, x1: rect.x1 + diff, x2: rect.x2 - diff };
+}
 
 export default Crop;
