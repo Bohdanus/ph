@@ -56,7 +56,12 @@ export type MigrationDiagnostic = Readonly<{
   historyId?: string;
   actionName?: ActionType;
   severity: 'warning' | 'error';
-  code: 'unsupported-history-feature' | 'document-replacement' | 'invalid-history-entry' | 'conversion-failed';
+  code:
+    | 'unsupported-history-feature'
+    | 'document-replacement'
+    | 'invalid-history-entry'
+    | 'conversion-failed'
+    | 'durable-append-mismatch';
   message: string;
 }>;
 
@@ -291,7 +296,7 @@ function diagnosticFromError(error: unknown, item?: HistoryItem): MigrationDiagn
   };
 }
 
-function isEntryEnabled(item: HistoryItem): boolean {
+export function isEntryEnabled(item: HistoryItem): boolean {
   const nested = item.args as { enabled?: unknown } | undefined;
   return !item.disabled && nested?.enabled !== false;
 }

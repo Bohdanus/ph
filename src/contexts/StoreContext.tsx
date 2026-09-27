@@ -16,12 +16,13 @@ import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
 import { cloneDocumentFrame, documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
-import { freezeDurableDocument, type DurableDocument } from './history-model.ts';
+import { freezeDurableDocument, type DurableDocument, type DurableHistoryEntry } from './history-model.ts';
 import {
   convertLegacyHistorySafely,
   type DurableConversionStatus,
   type MigrationDiagnostic,
 } from './history-adapter.ts';
+import { decideDurableAppend, durableAppendDiagnostic } from './history-append.ts';
 import { getAssetRegistry } from './asset-registry.ts';
 import {
   closePresentationBitmap,
@@ -154,6 +155,14 @@ type Action =
       payload: {
         updates?: StoreUpdates;
         historyItem: HistoryItem;
+        /**
+         * The durable entry the append boundary planned for this edit. When the
+         * store can publish it against its current durable document, the planned
+         * entry becomes the durable state instead of a full reconversion. It is
+         * never authoritative on its own: a disagreement falls back to the
+         * conversion and is reported as a diagnostic.
+         */
+        durableEntry?: DurableHistoryEntry | null;
         durableDocument?: DurableDocument | null;
         durableStatus?: DurableDocumentStatus;
         durableDiagnostics?: readonly MigrationDiagnostic[];
@@ -637,18 +646,43 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       );
       const updates = action.payload.updates ?? {};
       const nextFrame = updates.documentFrame;
-      const converted = buildDurableDocument(
-        nextFrame
-          ? {
-              ...currentState,
-              documentFrame: cloneDocumentFrame(nextFrame),
-              totalSize: documentFrameSize(nextFrame),
-            }
-          : currentState,
-        [...timeline.entries],
-        timeline.cursor,
-        timeline.branchRevision
-      );
+      // One append, one durable entry: the boundary's plan is published when the
+      // store's durable document still describes the timeline it was planned
+      // against, and the whole timeline is reconverted otherwise.
+      const planned = decideDurableAppend({
+        documentId: currentState.documentId,
+        base: currentState.durableStatus === 'current' ? currentState.durableDocument : null,
+        prior: {
+          entries: currentState.history,
+          cursor: currentState.historyIndex,
+          branchRevision: currentState.branchRevision,
+        },
+        next: timeline,
+        entry: action.payload.historyItem,
+        planned: action.payload.durableEntry,
+        documentRevision: currentState.documentRevision,
+      });
+      const converted =
+        planned.outcome === 'published'
+          ? { status: 'current' as const, document: planned.document, diagnostics: currentState.durableDiagnostics }
+          : buildDurableDocument(
+              nextFrame
+                ? {
+                    ...currentState,
+                    documentFrame: cloneDocumentFrame(nextFrame),
+                    totalSize: documentFrameSize(nextFrame),
+                  }
+                : currentState,
+              [...timeline.entries],
+              timeline.cursor,
+              timeline.branchRevision
+            );
+      if (planned.outcome === 'mismatch') {
+        converted.diagnostics = [
+          ...converted.diagnostics,
+          durableAppendDiagnostic(action.payload.historyItem, planned.reason),
+        ];
+      }
       latestStateRef.current = {
         ...currentState,
         ...updates,
@@ -672,7 +706,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return;
     }
     if (action.type === 'APPLY_HISTORY_REPLAY') {
-      const replayUpdates = action.payload.updates;
+      // The action type requires `updates`; defaulting it here keeps a malformed
+      // navigation a no-op instead of a dispatch that throws mid-reducer.
+      const replayUpdates = action.payload.updates ?? {};
       const replayFrame = replayUpdates.documentFrame;
       const converted = buildDurableDocument(
         replayFrame

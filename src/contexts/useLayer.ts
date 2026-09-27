@@ -565,7 +565,7 @@ export const useLayers = () => {
     // rebuilds its diagnostic shadow from the legacy timeline, and that shadow is
     // the only durable signal the UI reports, so the plan's own diagnostics are
     // deliberately not surfaced here.
-    const { entry } = planHistoryAppend({
+    const { entry, durableEntry } = planHistoryAppend({
       item: {
         layerId: 'document',
         actionName: SET_DOCUMENT_FRAME_ACTION,
@@ -579,6 +579,7 @@ export const useLayers = () => {
       payload: {
         updates: { documentFrame: nextFrame, totalSize: documentFrameSize(nextFrame) },
         historyItem: entry,
+        durableEntry,
       },
     });
     return true;

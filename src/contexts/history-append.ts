@@ -1,7 +1,12 @@
 import { SET_DOCUMENT_FRAME_ACTION } from '../util/constants.ts';
 import type { DocumentFrame } from './document-frame.ts';
-import { deriveSetDocumentFrameEntry, type MigrationDiagnostic } from './history-adapter.ts';
-import type { DurableHistoryEntry } from './history-model.ts';
+import { deriveSetDocumentFrameEntry, isEntryEnabled, type MigrationDiagnostic } from './history-adapter.ts';
+import {
+  DURABLE_SCHEMA_VERSION,
+  freezeDurableDocument,
+  type DurableDocument,
+  type DurableHistoryEntry,
+} from './history-model.ts';
 import type { HistoryTimeline } from './history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
@@ -132,5 +137,136 @@ export function planHistoryAppend({ item, timeline, currentFrame, id }: AppendBo
     entry: result.entry,
     durableEntry: result.durableEntry,
     diagnostics: [...result.diagnostics, timelineDiagnostic],
+  };
+}
+
+/**
+ * Single-writer publication of a planned durable entry.
+ *
+ * The planned entry is published only when the store's durable document still
+ * describes exactly the legacy timeline the append is based on. Anything else
+ * (a redo truncation, a replay, a document replacement, a revision that moved
+ * without a rebuild) falls back to the full conversion, so the shadow is never
+ * patched against a stale base.
+ */
+export type DurableAppendDecision =
+  | Readonly<{ outcome: 'published'; document: DurableDocument }>
+  | Readonly<{ outcome: 'preconditions'; reason: string }>
+  | Readonly<{ outcome: 'mismatch'; reason: string }>;
+
+export type DurableAppendInput = Readonly<{
+  documentId: string;
+  /** The durable document the store currently holds, or null when unavailable. */
+  base: DurableDocument | null;
+  /** The legacy timeline before the append. */
+  prior: HistoryTimeline;
+  /** The legacy timeline after the append. */
+  next: HistoryTimeline;
+  /** The entry the writer appended. */
+  entry: HistoryItem;
+  /** The entry the boundary planned for it, if any. */
+  planned?: DurableHistoryEntry | null;
+  documentRevision: number;
+}>;
+
+function sameFrame(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+  const leftFrame = left as Record<string, unknown>;
+  const rightFrame = right as Record<string, unknown>;
+  return (
+    leftFrame.x === rightFrame.x &&
+    leftFrame.y === rightFrame.y &&
+    leftFrame.width === rightFrame.width &&
+    leftFrame.height === rightFrame.height
+  );
+}
+
+/**
+ * Proves the planned entry is the entry this legacy item must produce. A
+ * disagreement is a defect in the writer, not a reason to reject the edit, so
+ * the caller still falls back to the conversion and reports it.
+ */
+export function validatePlannedDurableEntry(entry: HistoryItem, planned: DurableHistoryEntry): string | null {
+  if (planned.schemaVersion !== DURABLE_SCHEMA_VERSION) return `durable schema version ${planned.schemaVersion}`;
+  if (planned.id !== entry.id) return `durable entry id ${planned.id} does not match the legacy entry id ${entry.id}`;
+  if (planned.enabled !== isEntryEnabled(entry)) return 'the durable enabled state does not match the legacy entry';
+
+  if (entry.actionName !== SET_DOCUMENT_FRAME_ACTION) {
+    return `no durable translation is published for "${entry.actionName}" yet`;
+  }
+  if (planned.operation.kind !== 'set-document-frame') {
+    return `a document frame change produced a "${planned.operation.kind}" operation`;
+  }
+  const args = entry.args as { previousFrame?: DocumentFrame; nextFrame?: DocumentFrame } | undefined;
+  if (!args?.nextFrame) return 'a document frame change has no next frame';
+  if (!sameFrame(planned.operation.next, args.nextFrame))
+    return 'the durable next frame does not match the legacy entry';
+  if (args.previousFrame && !sameFrame(planned.operation.previous, args.previousFrame)) {
+    return 'the durable previous frame does not match the legacy entry';
+  }
+  return null;
+}
+
+export function decideDurableAppend({
+  documentId,
+  base,
+  prior,
+  next,
+  entry,
+  planned,
+  documentRevision,
+}: DurableAppendInput): DurableAppendDecision {
+  if (!planned) return { outcome: 'preconditions', reason: 'no durable entry was planned for this append' };
+  if (!base) return { outcome: 'preconditions', reason: 'the durable document is unavailable' };
+  if (base.documentId !== documentId) return { outcome: 'preconditions', reason: 'the durable document is stale' };
+  if (base.documentRevision !== documentRevision) {
+    return { outcome: 'preconditions', reason: 'the durable document was built for another document revision' };
+  }
+  if (base.branchRevision !== prior.branchRevision) {
+    return { outcome: 'preconditions', reason: 'the durable document was built for another branch' };
+  }
+  if (prior.cursor !== prior.entries.length - 1) {
+    return { outcome: 'preconditions', reason: 'the append is not at the tip of the legacy timeline' };
+  }
+  if (next.entries.length !== prior.entries.length + 1) {
+    return { outcome: 'preconditions', reason: 'the append truncated the legacy timeline' };
+  }
+  if (next.cursor !== next.entries.length - 1) {
+    return { outcome: 'preconditions', reason: 'the append is not the legacy cursor' };
+  }
+  if (next.entries[next.entries.length - 1] !== entry) {
+    return { outcome: 'preconditions', reason: 'the appended entry is not the one that was planned' };
+  }
+
+  const problem = validatePlannedDurableEntry(entry, planned);
+  if (problem) return { outcome: 'mismatch', reason: problem };
+
+  const cursor = base.history.length;
+  // The durable cursor is the legacy-to-durable map of the appended entry, and a
+  // skipped legacy entry can only make it lag. It can never lead.
+  if (cursor > next.cursor)
+    return { outcome: 'preconditions', reason: 'the durable cursor would lead the legacy cursor' };
+
+  return {
+    outcome: 'published',
+    document: freezeDurableDocument({
+      ...base,
+      documentRevision,
+      branchRevision: next.branchRevision,
+      durableRevision: base.durableRevision + 1,
+      history: [...base.history, planned],
+      cursor,
+    }),
+  };
+}
+
+export function durableAppendDiagnostic(entry: HistoryItem, reason: string): MigrationDiagnostic {
+  return {
+    historyId: entry.id,
+    actionName: entry.actionName,
+    severity: 'error',
+    code: 'durable-append-mismatch',
+    message: `The planned durable entry was not published: ${reason}. The durable state was rebuilt from the legacy timeline instead.`,
   };
 }
