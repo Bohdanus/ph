@@ -11,11 +11,12 @@ const toolArgs = vi.hoisted(() => ({
 
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
+const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
 const mockMergeAllLayers = vi.hoisted(() => vi.fn());
 const mockResetToLastSavedArgs = vi.hoisted(() => vi.fn());
 const mockUndo = vi.hoisted(() => vi.fn());
 
-const historyState = vi.hoisted(() => ({ canUndo: false, isToolDirty: false }));
+const toolState = vi.hoisted(() => ({ isToolDirty: false }));
 
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [{}],
@@ -24,6 +25,7 @@ vi.mock('../../../../contexts/StoreContext.tsx', () => ({
 vi.mock('../../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     tempUpdateLayer: mockTempUpdateLayer,
+    cancelLayerPreview: mockCancelLayerPreview,
     mergeAllLayers: mockMergeAllLayers,
   }),
 }));
@@ -32,14 +34,17 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs,
     setToolArgs: mockSetToolArgs,
-    isToolDirty: historyState.isToolDirty,
+    isToolDirty: toolState.isToolDirty,
     resetToLastSavedArgs: mockResetToLastSavedArgs,
   }),
 }));
 
+// The panel no longer reaches for history at all. The mock is kept deliberately: it
+// makes `undo` observable, so re-introducing the document-level fall-through — the
+// defect this suite used to pin as the contract — fails these tests again.
 vi.mock('../../../../contexts/useHistory.ts', () => ({
   useHistory: () => ({
-    canUndo: () => historyState.canUndo,
+    canUndo: () => true,
     undo: mockUndo,
   }),
 }));
@@ -62,9 +67,10 @@ const changeSlider = (name: RegExp, value: string) => {
 describe('Color toolbar', () => {
   beforeEach(() => {
     Object.assign(toolArgs, { grayscale: 0, sepia: 0, saturation: 100, toolName: 'color' as const });
-    Object.assign(historyState, { canUndo: false, isToolDirty: false });
+    toolState.isToolDirty = false;
     mockSetToolArgs.mockClear();
     mockTempUpdateLayer.mockClear();
+    mockCancelLayerPreview.mockClear();
     mockMergeAllLayers.mockClear();
     mockResetToLastSavedArgs.mockClear();
     mockUndo.mockClear();
@@ -209,29 +215,71 @@ describe('Color toolbar', () => {
     expect(mockSetToolArgs).not.toHaveBeenCalled();
   });
 
-  it('resets the tool args from the default Reset button when the tool is dirty', () => {
-    historyState.isToolDirty = true;
+  it('ignores a second merge click while the first merge is still pending', async () => {
+    let releaseMerge: (() => void) | undefined;
+    mockMergeAllLayers.mockReturnValueOnce(
+      new Promise((resolve) => {
+        releaseMerge = () => resolve(null);
+      })
+    );
     render(<Color />);
 
-    const resetButton = screen.getByRole('button', { name: 'Reset' });
-    expect(resetButton).toBeEnabled();
+    const mergeButton = screen.getByRole('button', { name: 'Merge all' });
+    fireEvent.click(mergeButton);
+    fireEvent.click(mergeButton);
 
-    fireEvent.click(resetButton);
+    // Every `mergeAllLayers` call commits the dirty tool and appends its own history
+    // entry, so the overlap is the defect — not a cosmetic double click.
+    expect(mockMergeAllLayers).toHaveBeenCalledTimes(1);
 
-    expect(mockResetToLastSavedArgs).toHaveBeenCalledTimes(1);
-    expect(mockUndo).not.toHaveBeenCalled();
+    await act(async () => {
+      releaseMerge?.();
+    });
   });
 
-  it('undoes history from the default Reset button when the tool is clean', () => {
-    historyState.canUndo = true;
+  it('reports a failed merge instead of leaking an unhandled rejection', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockMergeAllLayers.mockRejectedValueOnce(new Error('merge failed'));
+
+    try {
+      render(<Color />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Merge all' }));
+      });
+
+      expect(errorSpy).toHaveBeenCalledWith('Failed to merge all layers', expect.any(Error));
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('offers the Reset discard regardless of history, because discarding is not a history operation', () => {
     render(<Color />);
 
-    const resetButton = screen.getByRole('button', { name: 'Reset' });
-    expect(resetButton).toBeEnabled();
-
-    fireEvent.click(resetButton);
-
-    expect(mockUndo).toHaveBeenCalledTimes(1);
-    expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Reset' })).toBeEnabled();
   });
+
+  it.each([false, true])(
+    'clears the preview and writes the default colour args without touching history (isToolDirty=%s)',
+    (isToolDirty) => {
+      toolState.isToolDirty = isToolDirty;
+      Object.assign(toolArgs, { grayscale: 60, sepia: 20, saturation: 40, toolName: 'color' as const });
+      render(<Color />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+
+      expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
+      // The baseline is `defaultSettings.color`, not the value the user just dragged to.
+      // A `resetToLastSavedArgs` reset would publish those three values here.
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
+        grayscale: 0,
+        sepia: 0,
+        saturation: 0,
+        toolName: 'color',
+      });
+      expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
+      expect(mockUndo).not.toHaveBeenCalled();
+    }
+  );
 });

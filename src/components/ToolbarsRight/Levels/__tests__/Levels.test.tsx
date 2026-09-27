@@ -13,15 +13,16 @@ const toolArgs = vi.hoisted(() => ({
 const activeLayerId = vi.hoisted(() => ({ current: 'layer-1' as string | null }));
 
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
+const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
-const mockIsToolDirty = vi.hoisted(() => ({ current: true }));
+const mockIsToolDirty = vi.hoisted(() => ({ current: false }));
 const mockResetToLastSavedArgs = vi.hoisted(() => vi.fn());
-const mockCanUndo = vi.hoisted(() => vi.fn(() => false));
 const mockUndo = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     tempUpdateLayer: mockTempUpdateLayer,
+    cancelLayerPreview: mockCancelLayerPreview,
   }),
 }));
 
@@ -34,9 +35,12 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   }),
 }));
 
+// The panel no longer reaches for history at all. The mock is kept deliberately: it
+// makes `undo` observable, so re-introducing the document-level fall-through — the
+// defect this suite used to pin as the contract — fails these tests again.
 vi.mock('../../../../contexts/useHistory.ts', () => ({
   useHistory: () => ({
-    canUndo: mockCanUndo,
+    canUndo: () => true,
     undo: mockUndo,
   }),
 }));
@@ -66,12 +70,13 @@ describe('Levels toolbar', () => {
   beforeEach(() => {
     resetToolArgs();
     mockTempUpdateLayer.mockClear();
+    mockCancelLayerPreview.mockClear();
     mockSetToolArgs.mockClear();
     mockResetToLastSavedArgs.mockClear();
-    mockCanUndo.mockClear();
-    mockCanUndo.mockReturnValue(false);
     mockUndo.mockClear();
-    mockIsToolDirty.current = true;
+    // The only value `isToolDirty` can hold in production: nothing dispatches
+    // `SET_TOOL_DIRTY` with `true`.
+    mockIsToolDirty.current = false;
     setActiveLayerId('layer-1');
   });
 
@@ -82,32 +87,41 @@ describe('Levels toolbar', () => {
     expect(screen.getByLabelText(/Contrast/)).toBeInTheDocument();
   });
 
-  it('renders UndoButton', () => {
+  it('renders the panel-local discard button', () => {
     render(<Levels />);
 
     expect(screen.getByRole('button', { name: 'Reset' })).toBeInTheDocument();
   });
 
-  it('undoes the last history step instead of resetting when the tool has no unsaved changes', async () => {
-    mockIsToolDirty.current = false;
-    mockCanUndo.mockReturnValue(true);
-    const user = userEvent.setup();
+  it.each([false, true])(
+    'clears the preview and writes the default levels args without touching history (isToolDirty=%s)',
+    (isToolDirty) => {
+      mockIsToolDirty.current = isToolDirty;
+      resetToolArgs({ brightness: 70, contrast: -20 });
+      render(<Levels />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+
+      expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
+      // The baseline is `defaultSettings.levels`, not the value the user just dragged to.
+      // A `resetToLastSavedArgs` reset would publish 70/-20 here.
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
+        toolName: 'levels',
+        brightness: 0,
+        contrast: 0,
+      });
+      expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
+      expect(mockUndo).not.toHaveBeenCalled();
+    }
+  );
+
+  it('keeps the discard available with no history and no unsaved changes', () => {
     render(<Levels />);
 
-    const resetButton = screen.getByRole('button', { name: 'Reset' });
-    expect(resetButton).toBeEnabled();
-
-    await user.click(resetButton);
-
-    expect(mockUndo).toHaveBeenCalledTimes(1);
-    expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
-  });
-
-  it('disables the Reset button without history and without unsaved changes', () => {
-    mockIsToolDirty.current = false;
-    render(<Levels />);
-
-    expect(screen.getByRole('button', { name: 'Reset' })).toBeDisabled();
+    // Discarding an uncommitted adjustment is not a history operation, so it is never
+    // gated on `canUndo()`. It used to be, which left a mislabeled button that replayed
+    // the timeline one entry back whenever it was pressed.
+    expect(screen.getByRole('button', { name: 'Reset' })).toBeEnabled();
   });
 
   it('does not call tempUpdateLayer when activeLayerId is null', () => {
@@ -358,8 +372,7 @@ describe('Levels toolbar', () => {
       expect(contrastSlider).toHaveFocus();
     });
 
-    it('allows enter to trigger reset button when enabled', () => {
-      mockIsToolDirty.current = true;
+    it('runs the panel-local discard when the focused reset button is clicked', () => {
       render(<Levels />);
       const resetButton = screen.getByRole('button', { name: 'Reset' });
 
@@ -368,7 +381,13 @@ describe('Levels toolbar', () => {
       resetButton.focus();
       fireEvent.click(resetButton);
 
-      expect(mockResetToLastSavedArgs).toHaveBeenCalled();
+      expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
+        toolName: 'levels',
+        brightness: 0,
+        contrast: 0,
+      });
+      expect(mockUndo).not.toHaveBeenCalled();
     });
 
     it('reaches the sliders and the reset button by tabbing in DOM order', async () => {
@@ -389,8 +408,9 @@ describe('Levels toolbar', () => {
       expect(resetButton).toHaveFocus();
     });
 
-    it('resets to the last saved args when the focused reset button is activated with Enter', async () => {
+    it('discards the adjustment when the focused reset button is activated with Enter', async () => {
       const user = userEvent.setup();
+      resetToolArgs({ brightness: 45, contrast: -60 });
       render(<Levels />);
 
       const resetButton = screen.getByRole('button', { name: 'Reset' });
@@ -401,7 +421,13 @@ describe('Levels toolbar', () => {
 
       await user.keyboard('{Enter}');
 
-      expect(mockResetToLastSavedArgs).toHaveBeenCalledTimes(1);
+      expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
+        toolName: 'levels',
+        brightness: 0,
+        contrast: 0,
+      });
+      expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
       expect(mockUndo).not.toHaveBeenCalled();
     });
 

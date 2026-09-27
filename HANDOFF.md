@@ -995,3 +995,51 @@ field. Do not add a history field for presentation alone while the legacy timeli
 replay authority.
 
 **Files.** `src/contexts/useHistory.ts:15-29`, `src/components/SidebarRight/HistoryTab.tsx`
+
+---
+
+## 33. `isToolDirty` has no production writer, so every reader of it is on its dead branch
+
+**Problem.** `isToolDirty` has a type (`StoreContext.tsx:174`), a reducer arm (`:358-362`) and three
+readers — but **nothing dispatches `SET_TOOL_DIRTY` with `true`**. A grep for `SET_TOOL_DIRTY` alone
+is not sufficient proof: `BATCH_UPDATES`, `COMMIT_DOCUMENT_EDIT` and `REPLACE_DOCUMENT` all spread
+their payloads into state, so every production payload has to be checked. All of them send `false`,
+and `SET_TOOL_NAME` (`:357`) also clears it. The flag is therefore permanently `false`, and each
+reader's `isToolDirty` arm is unreachable:
+
+- `src/components/HistoryControls/HistoryControls.tsx:9-15,22` — the header undo button. It always
+  takes the `else` and calls `undo()`, and `:22` mis-gates the button on `canUndo()` alone. Correct
+  in effect, but the flag contributes nothing and the code implies otherwise.
+- `src/components/Common/AppKeyboardShortcuts.tsx:111-120` — `Cmd+Z`. Same shape.
+- `src/components/Common/UndoButton.tsx:11-22` — **no production caller left.** The Blur, Color and
+  Levels panels used it for a button labelled "Undo Blur" / "Reset" that discarded an _uncommitted_
+  adjustment; they now do that panel-locally. Only
+  `src/components/Common/__tests__/UndoControls.test.tsx` still renders it, so the component and its
+  `isToolDirty` arm are kept alive by a test alone.
+
+The flag's arm is also not a harmless no-op even if it were reachable: `resetToLastSavedArgs` clones
+`lastSavedSettings[toolName]`, and `_setToolArgs` calls `saveLastSettings(nextArgs)` on the same tick
+(`useCurrentTool.tsx:71`). Any write that marks the tool dirty immediately overwrites the baseline
+the reset would clone back, so wiring a `SET_TOOL_DIRTY` dispatcher alone would turn a wrong undo
+into a **silent no-op** that is harder to notice, not into a working reset.
+
+**Fix.** Pick one and make it explicit; do not leave the flag half-wired.
+
+- _Delete it._ Remove `isToolDirty` from the store, the `SET_TOOL_DIRTY` arm, and both readers' dead
+  branches, then delete `UndoButton.tsx` together with its now-orphaned
+  `UndoControls.test.tsx` case and the `isToolDirty` arms in
+  `HistoryControls.test.tsx` and `AppKeyboardShortcuts.test.tsx`. This is the smaller diff and it
+  matches production reality.
+- _Make it mean something._ Only worth it if there is a real uncommitted-adjustment concept. It needs
+  a dispatcher that marks dirty on the args write and clears on commit, **and** a baseline that
+  `saveLastSettings` does not clobber — a separate `committedArgs` slot, not `lastSavedSettings`. Two
+  files, and a state machine, for an affordance the panels now implement directly.
+
+Either way the header undo and `Cmd+Z` keep working: both already call `undo()` on the reachable
+branch, and the flag's deletion removes no live behaviour.
+
+**Files.** `src/contexts/StoreContext.tsx:110,174,357-362`, `src/contexts/useCurrentTool.tsx:12,16,53-59,71`,
+`src/components/HistoryControls/HistoryControls.tsx:7-22`, `src/components/Common/AppKeyboardShortcuts.tsx:25,111-120`,
+`src/components/Common/UndoButton.tsx`, `src/components/Common/__tests__/UndoControls.test.tsx`,
+`src/components/HistoryControls/__tests__/HistoryControls.test.tsx`,
+`src/components/Common/__tests__/AppKeyboardShortcuts.test.tsx`

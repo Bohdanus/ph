@@ -6,10 +6,11 @@ const toolArgs = vi.hoisted(() => ({ radius: 4, toolName: 'blur' as const }));
 
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
+const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
 const mockResetToLastSavedArgs = vi.hoisted(() => vi.fn());
 const mockUndo = vi.hoisted(() => vi.fn());
 
-const historyState = vi.hoisted(() => ({ canUndo: false, isToolDirty: false }));
+const toolState = vi.hoisted(() => ({ isToolDirty: false }));
 
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [{}],
@@ -18,6 +19,7 @@ vi.mock('../../../../contexts/StoreContext.tsx', () => ({
 vi.mock('../../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     tempUpdateLayer: mockTempUpdateLayer,
+    cancelLayerPreview: mockCancelLayerPreview,
   }),
 }));
 
@@ -25,14 +27,17 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs,
     setToolArgs: mockSetToolArgs,
-    isToolDirty: historyState.isToolDirty,
+    isToolDirty: toolState.isToolDirty,
     resetToLastSavedArgs: mockResetToLastSavedArgs,
   }),
 }));
 
+// The panel no longer reaches for history at all. The mock is kept deliberately: it
+// makes `undo` observable, so re-introducing the document-level fall-through — the
+// defect this suite used to pin as the contract — fails these tests again.
 vi.mock('../../../../contexts/useHistory.ts', () => ({
   useHistory: () => ({
-    canUndo: () => historyState.canUndo,
+    canUndo: () => true,
     undo: mockUndo,
   }),
 }));
@@ -55,9 +60,10 @@ const changeRadius = (value: string) => {
 describe('Blur toolbar', () => {
   beforeEach(() => {
     Object.assign(toolArgs, { radius: 4, toolName: 'blur' as const });
-    Object.assign(historyState, { canUndo: false, isToolDirty: false });
+    toolState.isToolDirty = false;
     mockSetToolArgs.mockClear();
     mockTempUpdateLayer.mockClear();
+    mockCancelLayerPreview.mockClear();
     mockResetToLastSavedArgs.mockClear();
     mockUndo.mockClear();
     rafCallbacks.length = 0;
@@ -140,35 +146,41 @@ describe('Blur toolbar', () => {
     expect(mockSetToolArgs).toHaveBeenLastCalledWith({ radius: 10, toolName: 'blur' });
   });
 
-  it('disables the undo button with no history and no dirty tool', () => {
+  it('offers the discard regardless of history, because discarding is not a history operation', () => {
     render(<Blur />);
 
-    expect(screen.getByRole('button', { name: 'Undo Blur' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Undo Blur' })).toBeEnabled();
   });
 
-  it('resets to the last saved args from the undo button when the tool is dirty', () => {
-    historyState.isToolDirty = true;
+  it.each([false, true])(
+    'clears the preview and writes the default radius without touching history (isToolDirty=%s)',
+    (isToolDirty) => {
+      toolState.isToolDirty = isToolDirty;
+      Object.assign(toolArgs, { radius: 37, toolName: 'blur' as const });
+      render(<Blur />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Undo Blur' }));
+
+      expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
+      // The baseline is `defaultSettings.blur`, not the value the user just dragged to.
+      // A `resetToLastSavedArgs` reset would publish 37 here and leave the slider lying.
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({ radius: 0, toolName: 'blur' });
+      expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
+      expect(mockUndo).not.toHaveBeenCalled();
+    }
+  );
+
+  it('drops a slider change still queued on the animation frame when the discard is clicked', () => {
     render(<Blur />);
 
-    const undoButton = screen.getByRole('button', { name: 'Undo Blur' });
-    expect(undoButton).toBeEnabled();
+    changeRadius('17');
+    expect(rafCallbacks).toHaveLength(1);
 
-    fireEvent.click(undoButton);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo Blur' }));
+    flushRaf();
 
-    expect(mockResetToLastSavedArgs).toHaveBeenCalledTimes(1);
-    expect(mockUndo).not.toHaveBeenCalled();
-  });
-
-  it('undoes the last history entry from the undo button when the tool is clean', () => {
-    historyState.canUndo = true;
-    render(<Blur />);
-
-    const undoButton = screen.getByRole('button', { name: 'Undo Blur' });
-    expect(undoButton).toBeEnabled();
-
-    fireEvent.click(undoButton);
-
-    expect(mockUndo).toHaveBeenCalledTimes(1);
-    expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
+    // Only the discard reaches the store: the stale frame must not re-apply the radius.
+    expect(mockTempUpdateLayer).not.toHaveBeenCalled();
+    expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({ radius: 0, toolName: 'blur' });
   });
 });

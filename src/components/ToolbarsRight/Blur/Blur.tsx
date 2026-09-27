@@ -1,12 +1,13 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 
-import UndoButton from '../../Common/UndoButton.tsx';
 import { type BlurToolArgs } from '../../../tools/blur.ts';
+import { defaultSettings } from '../../../tools/settings.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
+import { SECONDARY_BUTTON } from '../buttonStyles.ts';
 
 const Blur: React.FC<{}> = () => {
-  const { tempUpdateLayer } = useLayers();
+  const { tempUpdateLayer, cancelLayerPreview } = useLayers();
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as BlurToolArgs;
@@ -14,6 +15,15 @@ const Blur: React.FC<{}> = () => {
 
   const pendingUpdateRef = useRef<BlurToolArgs | null>(null);
   const rafIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+    };
+  }, []);
 
   const throttledOnChange = (newArgs: BlurToolArgs) => {
     pendingUpdateRef.current = newArgs;
@@ -32,6 +42,32 @@ const Blur: React.FC<{}> = () => {
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     throttledOnChange({ radius: Number(event.target.value), toolName: 'blur' });
+  };
+
+  /**
+   * Discards the uncommitted radius, and only that.
+   *
+   * This used to be the shared `<UndoButton text="Undo Blur" />`, which routed to
+   * document-level `undo()` on its `else` branch. `isToolDirty` is never true in
+   * production — nothing dispatches `SET_TOOL_DIRTY` with `true` — so every click
+   * replayed the timeline one entry back and silently reverted the user's last
+   * committed edit while the slider kept showing the unapplied radius.
+   *
+   * The baseline is `defaultSettings.blur`, not `resetToLastSavedArgs()`: the
+   * slider write goes through `setToolArgs`, which calls `saveLastSettings` on the
+   * same tick and overwrites `lastSavedSettings.blur` with the value the user just
+   * dragged to. A reset cloned from there restores the unapplied value and the
+   * control goes on lying about it.
+   */
+  const discardAdjustment = () => {
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    pendingUpdateRef.current = null;
+
+    cancelLayerPreview?.();
+    setToolArgs({ ...defaultSettings.blur });
   };
 
   return (
@@ -55,7 +91,13 @@ const Blur: React.FC<{}> = () => {
         />
       </div>
 
-      <UndoButton text="Undo Blur" />
+      <button
+        className={`${SECONDARY_BUTTON} w-full focus:ring-2 focus:ring-blue-500`}
+        onClick={discardAdjustment}
+        data-testid="undo-button-reset"
+      >
+        Undo Blur
+      </button>
     </div>
   );
 };

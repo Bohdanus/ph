@@ -1,18 +1,28 @@
-import React, { useRef } from 'react';
-import UndoButton from '../../Common/UndoButton.tsx';
+import React, { useEffect, useRef } from 'react';
 import { type LevelsToolArgs } from '../../../tools/levels.ts';
+import { defaultSettings } from '../../../tools/settings.ts';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../../contexts/StoreContext.tsx';
+import { SECONDARY_BUTTON } from '../buttonStyles.ts';
 
 const Levels: React.FC<{}> = () => {
-  const { tempUpdateLayer } = useLayers();
+  const { tempUpdateLayer, cancelLayerPreview } = useLayers();
   const [{ activeLayerId }] = useStore();
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as LevelsToolArgs;
   const pendingUpdateRef = useRef<LevelsToolArgs | null>(null);
   const rafIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
+      }
+    };
+  }, []);
 
   const throttledOnChange = (newArgs: LevelsToolArgs) => {
     pendingUpdateRef.current = newArgs;
@@ -37,6 +47,31 @@ const Levels: React.FC<{}> = () => {
   const handleContrastChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const contrast = Number(event.target.value);
     throttledOnChange({ ...args, contrast });
+  };
+
+  /**
+   * Discards the uncommitted levels adjustment, and only that.
+   *
+   * This used to be the shared `<UndoButton />`, which routed to document-level
+   * `undo()` on its `else` branch. `isToolDirty` is never true in production —
+   * nothing dispatches `SET_TOOL_DIRTY` with `true` — so every click replayed the
+   * timeline one entry back and silently reverted the user's last committed edit.
+   *
+   * The baseline is `defaultSettings.levels`, not `resetToLastSavedArgs()`: the
+   * slider write goes through `setToolArgs`, which calls `saveLastSettings` on the
+   * same tick and overwrites `lastSavedSettings.levels` with the value the user just
+   * dragged to. A reset cloned from there restores the unapplied value and the
+   * control goes on lying about it.
+   */
+  const discardAdjustment = () => {
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+      rafIdRef.current = null;
+    }
+    pendingUpdateRef.current = null;
+
+    cancelLayerPreview?.();
+    setToolArgs({ ...defaultSettings.levels });
   };
 
   const { brightness, contrast } = args;
@@ -80,7 +115,13 @@ const Levels: React.FC<{}> = () => {
         />
       </div>
 
-      <UndoButton />
+      <button
+        className={`${SECONDARY_BUTTON} w-full focus:ring-2 focus:ring-blue-500`}
+        onClick={discardAdjustment}
+        data-testid="undo-button-reset"
+      >
+        Reset
+      </button>
     </div>
   );
 };
