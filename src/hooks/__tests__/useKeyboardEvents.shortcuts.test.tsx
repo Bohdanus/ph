@@ -218,6 +218,118 @@ describe('useKeyboardEvents guards', () => {
   );
 });
 
+describe('useKeyboardEvents auto-repeat', () => {
+  it('fires a repeat:true registration on an auto-repeated keydown', () => {
+    const onKeyDown = vi.fn();
+    renderWithShortcut({ key: '=', repeat: true, onKeyDown });
+
+    fireEvent.keyDown(document, { key: '=', repeat: true });
+
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
+  });
+
+  it('fires a repeat:true registration on the initial press as well', () => {
+    const onKeyDown = vi.fn();
+    renderWithShortcut({ key: '=', repeat: true, onKeyDown });
+
+    fireEvent.keyDown(document, { key: '=', repeat: false });
+    fireEvent.keyDown(document, { key: '=', repeat: true });
+    fireEvent.keyDown(document, { key: '=', repeat: true });
+
+    expect(onKeyDown).toHaveBeenCalledTimes(3);
+  });
+
+  it('runs a default registration exactly once across a held key', () => {
+    const onKeyDown = vi.fn();
+    renderWithShortcut({ key: 'Backspace', onKeyDown });
+
+    fireEvent.keyDown(document, { key: 'Backspace', repeat: false });
+    fireEvent.keyDown(document, { key: 'Backspace', repeat: true });
+    fireEvent.keyDown(document, { key: 'Backspace', repeat: true });
+
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not prevent the default for a suppressed auto-repeat', () => {
+    const onKeyDown = vi.fn();
+    renderWithShortcut({ key: 'Backspace', preventDefault: true, onKeyDown });
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'Backspace',
+      repeat: true,
+      cancelable: true,
+      bubbles: true,
+    });
+    document.body.dispatchEvent(event);
+
+    expect(onKeyDown).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('still prevents the default for a repeat:true registration', () => {
+    const onKeyDown = vi.fn();
+    renderWithShortcut({ key: 'Backspace', preventDefault: true, repeat: true, onKeyDown });
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'Backspace',
+      repeat: true,
+      cancelable: true,
+      bubbles: true,
+    });
+    document.body.dispatchEvent(event);
+
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('never reaches a disabled shortcut, even one that opted into repeat', () => {
+    const onKeyDown = vi.fn();
+    renderWithShortcut({ key: 'a', enabled: false, repeat: true, onKeyDown });
+
+    fireEvent.keyDown(document, { key: 'a', repeat: true });
+
+    expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('suppresses every default registration that matches a held key', () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <ShortcutProbe shortcut={{ key: 'Backspace', onKeyDown: first }} />
+        <ShortcutProbe shortcut={{ key: 'Backspace', onKeyDown: second }} />
+      </KeyboardEventsProvider>
+    );
+
+    fireEvent.keyDown(document, { key: 'Backspace', repeat: true });
+
+    expect(second).not.toHaveBeenCalled();
+    expect(first).not.toHaveBeenCalled();
+  });
+
+  it('keeps looking for a lower-priority match after a repeat is suppressed, like the enabled guard', () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <ShortcutProbe shortcut={{ key: 'a', repeat: true, onKeyDown: first }} />
+        <ShortcutProbe shortcut={{ key: 'a', onKeyDown: second }} />
+      </KeyboardEventsProvider>
+    );
+
+    // The last registration wins on a normal press and suppresses the repeat.
+    fireEvent.keyDown(document, { key: 'a', repeat: false });
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(first).not.toHaveBeenCalled();
+
+    // The repeat gate is a guard, not a `break`: the loop continues, so an earlier
+    // registration that opted into repeat still sees the event.
+    fireEvent.keyDown(document, { key: 'a', repeat: true });
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(first).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('useKeyboardEvents registration', () => {
   it('runs only the last registered matching shortcut', () => {
     const first = vi.fn();

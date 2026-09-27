@@ -7,6 +7,7 @@ export type KeyboardShortcut = {
   preventDefault?: boolean;
   stopPropagation?: boolean;
   allowInInput?: boolean; // Default: false. Set to true for shortcuts that should work in input fields (tool commands, not text editing)
+  repeat?: boolean; // Default: false. Set to true for shortcuts that should re-fire while held (a zoom stepper, a scrub). The default is the safety property: one press is one intent.
   ctrl?: boolean;
   shift?: boolean;
   alt?: boolean;
@@ -99,6 +100,11 @@ export const KeyboardEventsProvider = ({ children }: { children: React.ReactNode
       for (let i = shortcuts.length - 1; i >= 0; i--) {
         const shortcut = shortcuts[i]();
         if (!shortcut || shortcut.enabled === false) continue;
+
+        // Suppress OS auto-repeat unless this registration opted in. Sits before the
+        // preventDefault branch: after it, a held Backspace prevents the first press and
+        // then stops preventing, which is an intermittent, hard-to-characterise field bug.
+        if (event.repeat && !shortcut.repeat) continue;
 
         if (!shortcut.allowInInput && isEditableTarget(event.target)) continue;
 
