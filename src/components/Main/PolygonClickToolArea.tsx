@@ -4,7 +4,6 @@ import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import type { Point, Selection } from '../../contexts/general-types.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
-import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
 import { useDoubleClick } from '../../hooks/useDoubleClick.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import {
@@ -147,8 +146,7 @@ function drawPolygonOverlay({
 }
 
 export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickToolProps) => {
-  const [{ containerRef, selections, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
-  const { clearSelections } = useSelectionHistory();
+  const [{ containerRef, selections, selectionDraft, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { toolArgs } = useCurrentTool();
 
@@ -515,18 +513,12 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   function removeLastAnchor() {
     if (isFreehand || selectionDragRef.current) return;
 
-    if (pointsRef.current.length === 0) {
-      // Routed through the single-writer hook rather than the raw
-      // `CLEAR_SELECTIONS` action, so a Backspace deselect appends the history
-      // entry that makes it undoable. Scope is unchanged — the hook clears every
-      // selection, exactly as the raw action's reducer arm did — and the draft
-      // is already empty here, so there is no draft reset to keep. The hook's own
-      // guard makes the "nothing selected" case dispatch nothing, which is
-      // stronger than the raw action: that used to bump the `selectionCleared`
-      // repaint marker over an already-empty selection.
-      clearSelections();
-      return;
-    }
+    // No draft means no anchor to remove. The registration is also gated off in
+    // that state, so this only guards the handler itself: a stray Backspace
+    // reaches the whole app, and clearing the document's committed selections
+    // from it appends a deselect the user never asked for. Matches the
+    // self-guard `cancelSelectionDraft` and `finishSelection` already have.
+    if (pointsRef.current.length === 0) return;
 
     pointsRef.current.pop();
     previewRef.current = null;
@@ -554,17 +546,22 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     onKeyDown: () => finishSelection(),
   });
 
+  // `enabled` gates the registration on a draft in progress — read from the
+  // store rather than `pointsRef`, so the key is not consumed at all when there
+  // is nothing to undo. `allowInInput` stays off: removing a vertex is text
+  // editing from the field's point of view, and `preventDefault` would cancel
+  // the character the field was asked to delete.
   useKeyDownShortcut({
     key: 'Backspace',
     preventDefault: true,
-    allowInInput: true,
+    enabled: selectionDraft.status === 'draft',
     onKeyDown: removeLastAnchor,
   });
 
   useKeyDownShortcut({
     key: 'Delete',
     preventDefault: true,
-    allowInInput: true,
+    enabled: selectionDraft.status === 'draft',
     onKeyDown: removeLastAnchor,
   });
 
