@@ -1,7 +1,7 @@
 import { type RefObject, useLayoutEffect, useRef } from 'react';
 import type { Pos } from '../contexts/general-types.ts';
 
-export function useResizeObserverRAF(ref: RefObject<HTMLElement | null>, onResize: (size: Pos) => void) {
+export function useResizeObserverRAF(ref: RefObject<HTMLElement | null>, onResize: (rect: Pos) => void) {
   const frameRef = useRef<number | null>(null);
   const onResizeRef = useRef(onResize);
 
@@ -25,8 +25,21 @@ export function useResizeObserverRAF(ref: RefObject<HTMLElement | null>, onResiz
         frameRef.current = null;
 
         const entry = entries[0];
+        // `x`/`y` are viewport-relative, and only `getBoundingClientRect()` can
+        // report them, so the size has to be the BORDER box as well. Reading
+        // `contentRect` here mixed the content box size with the border box
+        // origin, which disagree by the border and padding of the element. The
+        // entry size is in the element's own space, so a CSS transform on the
+        // observed element would break the pairing; the container this hook
+        // observes (`components/Main/Main.tsx`) is never transformed.
         const rect = el.getBoundingClientRect();
-        const size = { x: rect.left, y: rect.top, width: entry.contentRect.width, height: entry.contentRect.height };
+        const borderBox = entry.borderBoxSize[0];
+        const size = {
+          x: rect.left,
+          y: rect.top,
+          width: borderBox?.inlineSize ?? rect.width,
+          height: borderBox?.blockSize ?? rect.height,
+        };
 
         onResizeRef.current(size);
       });
