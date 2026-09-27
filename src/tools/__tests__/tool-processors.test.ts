@@ -5,6 +5,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { toolProcessors, type ToolProcessorDefinition } from '../toolProcessors.ts';
 import { toolsMap } from '../toolsMap.ts';
 import { defaultSettings } from '../settings.ts';
+import { blur } from '../blur.ts';
+import { colors } from '../colors.ts';
+import { crop } from '../crop.ts';
+import { draw } from '../draw.ts';
+import { featherMagneticLasso } from '../featherMagneticLasso.ts';
+import { levels } from '../levels.ts';
+import { magicWand } from '../magicWand.ts';
+import { rectangularSelection } from '../rectangularSelection.ts';
+import { reposition } from '../reposition.ts';
+import { selection } from '../selection.ts';
+import { shape } from '../shape.ts';
+import { text } from '../text.ts';
+import { transform } from '../transform.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import type { ToolName } from '../../contexts/tool-types.ts';
 import type { PaintToolArgs, PaintToolName } from '../draw.ts';
@@ -378,5 +391,437 @@ describe('toolsMap wiring', () => {
     render(React.createElement(NoBadge));
     expect(screen.queryByText('TODO')).not.toBeInTheDocument();
     expect(screen.getByText('Brush Tool')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Every registry entry that must reference a module-level processor *by identity*.
+ * A copy-paste slip (registering `blur` for `levels`) is invisible to the commit-kind
+ * table above, because both entries carry the same metadata.
+ */
+const directProcessorSources: readonly [ToolName, unknown][] = [
+  ['reposition', reposition],
+  ['blur', blur],
+  ['color', colors],
+  ['levels', levels],
+  ['transform', transform],
+  ['crop', crop],
+  ['draw', draw],
+  ['shape', shape],
+  ['text', text],
+  ['polygonal-lasso', selection],
+  ['freehand-lasso', selection],
+  ['feather-magnetic-lasso', featherMagneticLasso],
+  ['magic-wand', magicWand],
+  ['rectangular-selection', rectangularSelection],
+  ['rectangle', shape],
+  ['ellipse', shape],
+  ['triangle', shape],
+  ['polygon', shape],
+  ['line', shape],
+];
+
+const unimplementedTools: readonly ToolName[] = [
+  'pen',
+  'freeform-pen',
+  'curvature-pen',
+  'add-anchor-point',
+  'delete-anchor-point',
+  'convert-point',
+  'custom-shape',
+];
+
+const paintWrapperTools: readonly PaintToolName[] = ['brush', 'pencil', 'color-replacement'];
+
+describe('toolProcessors processor identity', () => {
+  it.each(directProcessorSources)('routes %s to its own module-level processor', (toolName, source) => {
+    expect(toolProcessors[toolName].imageProcessor).toBe(source);
+  });
+
+  it.each(unimplementedTools)('gives %s the shared unimplemented processor instance', (toolName) => {
+    expect(toolProcessors[toolName].imageProcessor).toBe(toolProcessors.pen.imageProcessor);
+  });
+
+  it.each(paintWrapperTools)('wraps %s in its own inline adapter instead of reusing draw', (toolName) => {
+    const { imageProcessor } = toolProcessors[toolName];
+
+    expect(imageProcessor).not.toBe(draw);
+    for (const other of paintWrapperTools) {
+      if (other === toolName) continue;
+      expect(imageProcessor, `${toolName} vs ${other}`).not.toBe(toolProcessors[other].imageProcessor);
+    }
+    // The adapter must still be a two-stage curried processor, not a direct alias.
+    expect(typeof imageProcessor({ size: { width: 4, height: 4 } })).toBe('function');
+  });
+
+  it('never lets two different tools share the same non-unimplemented processor by accident', () => {
+    const seen = new Map<unknown, ToolName[]>();
+
+    for (const toolName of toolNames) {
+      if (unimplementedTools.includes(toolName)) continue;
+      const { imageProcessor } = toolProcessors[toolName];
+      seen.set(imageProcessor, [...(seen.get(imageProcessor) ?? []), toolName]);
+    }
+
+    // The only legitimate sharing is the lasso pair and the shape/figure family,
+    // which are the same module export wired to several tool names on purpose.
+    const shared = [...seen.entries()]
+      .filter(([, names]) => names.length > 1)
+      .map(([processor, names]) => ({
+        names: names.sort(),
+        isIntentional: processor === selection || processor === shape,
+      }))
+      .sort((a, b) => a.names[0].localeCompare(b.names[0]));
+
+    expect(shared).toEqual([
+      { names: ['ellipse', 'line', 'polygon', 'rectangle', 'shape', 'triangle'], isIntentional: true },
+      { names: ['freehand-lasso', 'polygonal-lasso'], isIntentional: true },
+    ]);
+  });
+});
+
+/**
+ * Runtime proxy for the `@ts-expect-error` entries: a processor that publishes a
+ * `ToolArgs` type but is declared with zero parameters cannot be handed the
+ * registry's `ToolArgs` without a cast, and `fn.length` reports exactly that
+ * arity. The unimplemented processors are also zero-arity but need no cast,
+ * because a function with fewer parameters is assignable to a wider signature.
+ */
+describe('toolProcessors declared inner-processor arity', () => {
+  const params = { size: { width: 4, height: 4 }, bitmap: createMockImageBitmap(4, 4) };
+
+  it('accepts one params argument on every registry entry except the shared unimplemented stub', () => {
+    // `unimplemented` is declared `() => () => [null]`, which is still assignable to the
+    // registry signature because a function with fewer parameters is assignable to a
+    // wider one — so unlike the three type lies it needs no cast.
+    for (const toolName of toolNames) {
+      const expected = unimplementedTools.includes(toolName) ? 0 : 1;
+      expect(toolProcessors[toolName].imageProcessor.length, toolName).toBe(expected);
+    }
+  });
+
+  it('declares zero inner parameters only for the three type lies and the unimplemented set', () => {
+    const zeroArity = toolNames.filter((toolName) => toolProcessors[toolName].imageProcessor(params).length === 0);
+
+    expect(zeroArity.sort()).toEqual(
+      [...unimplementedTools, 'feather-magnetic-lasso', 'magic-wand', 'rectangular-selection'].sort()
+    );
+  });
+
+  it('makes the zero-arity non-unimplemented processors the exact set needing a registry cast', () => {
+    // These three are the entries the registry has to silence with @ts-expect-error
+    // (src/tools/toolProcessors.ts:146, :152, :159) because their published args type
+    // is not reachable from the generic `(args: ToolArgs) => ToolResult` signature.
+    const casted = toolNames.filter(
+      (toolName) =>
+        toolProcessors[toolName].commit !== 'unimplemented' &&
+        toolProcessors[toolName].imageProcessor(params).length === 0
+    );
+
+    expect(casted.sort()).toEqual(['feather-magnetic-lasso', 'magic-wand', 'rectangular-selection']);
+  });
+});
+
+describe('toolProcessors dispatch for every tool name', () => {
+  const size = { width: 40, height: 24 };
+  const bitmap = createMockImageBitmap(size.width, size.height);
+
+  const lassoTriangle: Point[] = [
+    { x: 2, y: 3 },
+    { x: 12, y: 3 },
+    { x: 12, y: 13 },
+  ];
+
+  /** Arguments a default cannot satisfy on its own (the crop default rect is `null`). */
+  const argOverrides: Partial<Record<ToolName, Record<string, unknown>>> = {
+    crop: { rect: { x1: 4, y1: 6, x2: 20, y2: 18 } },
+    'polygonal-lasso': { points: lassoTriangle },
+    'freehand-lasso': { points: lassoTriangle },
+  };
+
+  type Outcome = 'canvas' | 'canvas-with-pos-patch' | 'source-bitmap' | 'bitmap-and-move' | 'null';
+
+  const dispatchTable: readonly [ToolName, Outcome, number, number][] = [
+    ['reposition', 'bitmap-and-move', 0, 0],
+    ['blur', 'canvas', 40, 24],
+    ['color', 'canvas', 40, 24],
+    ['levels', 'canvas', 40, 24],
+    ['transform', 'canvas', 40, 24],
+    ['crop', 'canvas-with-pos-patch', 16, 12],
+    ['draw', 'canvas', 40, 24],
+    ['shape', 'canvas', 40, 24],
+    ['text', 'canvas', 40, 24],
+    ['polygonal-lasso', 'canvas', 10, 10],
+    ['freehand-lasso', 'canvas', 10, 10],
+    ['feather-magnetic-lasso', 'source-bitmap', 0, 0],
+    ['magic-wand', 'source-bitmap', 0, 0],
+    ['rectangular-selection', 'source-bitmap', 0, 0],
+    ['brush', 'canvas', 40, 24],
+    ['pencil', 'canvas', 40, 24],
+    ['color-replacement', 'canvas', 40, 24],
+    ['pen', 'null', 0, 0],
+    ['freeform-pen', 'null', 0, 0],
+    ['curvature-pen', 'null', 0, 0],
+    ['add-anchor-point', 'null', 0, 0],
+    ['delete-anchor-point', 'null', 0, 0],
+    ['convert-point', 'null', 0, 0],
+    ['rectangle', 'canvas', 40, 24],
+    ['ellipse', 'canvas', 40, 24],
+    ['triangle', 'canvas', 40, 24],
+    ['polygon', 'canvas', 40, 24],
+    ['line', 'canvas', 40, 24],
+    ['custom-shape', 'null', 0, 0],
+  ];
+
+  beforeEach(() => {
+    RecordingOffscreenCanvas.instances = [];
+    vi.stubGlobal('OffscreenCanvas', RecordingOffscreenCanvas as unknown as typeof OffscreenCanvas);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('covers every tool name exactly once', () => {
+    expect(dispatchTable.map(([toolName]) => toolName).sort()).toEqual([...toolNames].sort());
+  });
+
+  it.each(dispatchTable)(
+    'runs %s on its own default settings and returns the declared outcome',
+    (toolName, outcome, expectedWidth, expectedHeight) => {
+      const args = { ...defaultSettings[toolName], ...argOverrides[toolName] } as never;
+      const result = toolProcessors[toolName].imageProcessor({ size, bitmap })(args);
+
+      if (outcome === 'null') {
+        expect(result, toolName).toEqual([null]);
+        expect(RecordingOffscreenCanvas.instances, toolName).toHaveLength(0);
+        return;
+      }
+
+      if (outcome === 'source-bitmap') {
+        expect(result, toolName).toEqual([bitmap]);
+        expect(result[0], toolName).toBe(bitmap);
+        expect(RecordingOffscreenCanvas.instances, toolName).toHaveLength(0);
+        return;
+      }
+
+      if (outcome === 'bitmap-and-move') {
+        expect(result[0], toolName).toBe(bitmap);
+        expect(result[1], toolName).toEqual(defaultSettings.reposition.move);
+        expect(RecordingOffscreenCanvas.instances, toolName).toHaveLength(0);
+        return;
+      }
+
+      if (outcome === 'canvas-with-pos-patch') {
+        expect(result, toolName).toHaveLength(2);
+        expect(result[1], toolName).toEqual({ width: expectedWidth, height: expectedHeight });
+      } else {
+        expect(result, toolName).toHaveLength(1);
+      }
+
+      // `transform` allocates a second offscreen canvas for its source, so the returned
+      // canvas is not necessarily the last one allocated.
+      expect(RecordingOffscreenCanvas.instances, toolName).toContain(result[0]);
+      const canvas = result[0] as unknown as RecordingOffscreenCanvas;
+      expect(canvas.width, toolName).toBe(expectedWidth);
+      expect(canvas.height, toolName).toBe(expectedHeight);
+    }
+  );
+
+  it('consumes the unmodified seeded defaults for every tool except crop', () => {
+    for (const toolName of toolNames) {
+      if (toolName === 'crop') continue;
+
+      const result = toolProcessors[toolName].imageProcessor({ size, bitmap })({
+        ...defaultSettings[toolName],
+      } as never);
+
+      expect(result, toolName).toBeDefined();
+      expect(result[0], toolName).not.toBeUndefined();
+    }
+  });
+
+  it('cannot consume the seeded crop defaults at all (src/tools/crop.ts:17)', () => {
+    // Every other tool runs straight off its defaults; crop destructures `rect!` and the
+    // seeded rect is null, so the document-operation commit needs a real rect first.
+    expect(defaultSettings.crop.rect).toBeNull();
+    expect(() => toolProcessors.crop.imageProcessor({ size, bitmap })({ ...defaultSettings.crop } as never)).toThrow(
+      TypeError
+    );
+  });
+
+  it('collapses both lasso tools to a 1x1 canvas for the default empty point list', () => {
+    for (const toolName of ['polygonal-lasso', 'freehand-lasso'] as const) {
+      const result = toolProcessors[toolName].imageProcessor({ size, bitmap })({
+        ...defaultSettings[toolName],
+      } as never);
+      const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
+
+      expect(result[0], toolName).toBe(canvas as unknown as OffscreenCanvas);
+      expect(canvas.width, toolName).toBe(1);
+      expect(canvas.height, toolName).toBe(1);
+    }
+  });
+
+  it('hands a creator-param lasso call no source bitmap, because selection consumes one (src/tools/toolProcessors.ts:131,138)', () => {
+    // `materialization.ts:164` calls every `creator: true` processor with `{ size }` only.
+    // Both lasso tools are flagged creators, yet `selection` reads `bitmap` from
+    // `ProcessorToolParams`, so the polygon copy is handed `undefined` on that path.
+    // The behaviour is pinned here so the registry/param-type mismatch stays visible.
+    const result = toolProcessors['polygonal-lasso'].imageProcessor({ size })({
+      ...defaultSettings['polygonal-lasso'],
+      points: lassoTriangle,
+    } as never);
+    const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
+
+    expect(result[0]).toBe(canvas as unknown as OffscreenCanvas);
+    expect(canvas.ctx.drawImage).toHaveBeenCalledWith(undefined, -2, -3);
+  });
+});
+
+describe('toolProcessors classification invariants', () => {
+  const commitKinds = new Set(toolNames.map((toolName) => toolProcessors[toolName].commit));
+
+  it('uses every declared commit kind, so no classification is dead', () => {
+    expect([...commitKinds].sort()).toEqual([
+      'affine-operation',
+      'document-operation',
+      'geometry',
+      'layer-operation',
+      'raster',
+      'selection',
+      'source',
+      'unimplemented',
+    ]);
+  });
+
+  it.each(toolNames)('keeps the %s replay kind aligned with its commit kind', (toolName) => {
+    const { commit, replay } = toolProcessors[toolName];
+
+    if (commit === 'raster') {
+      expect(replay.kind).toBe('raster-processor');
+    } else if (commit === 'unimplemented') {
+      expect(replay.kind).toBe('unimplemented');
+    } else {
+      expect(replay.kind).toBe(commit);
+    }
+  });
+
+  it.each(toolNames)('derives the %s requiresRaster flag from its commit kind and creator status', (toolName) => {
+    const { commit, creator, replay } = toolProcessors[toolName];
+
+    expect(replay.requiresRaster).toBe(commit === 'raster' || (commit === 'selection' && !creator));
+  });
+
+  it('gives each tool a distinct replay descriptor that toolsMap reuses by reference', () => {
+    const descriptors = new Set<unknown>();
+
+    for (const toolName of toolNames) {
+      const { replay } = toolProcessors[toolName];
+
+      expect(toolsMap[toolName].replay, toolName).toBe(replay);
+      expect(Object.isFrozen(replay), toolName).toBe(true);
+      expect(Object.keys(replay).sort(), toolName).toEqual(['deterministic', 'kind', 'requiresRaster', 'version']);
+      descriptors.add(replay);
+    }
+
+    expect(descriptors.size).toBe(toolNames.length);
+  });
+
+  it('freezes only the replay descriptor, leaving the definition itself mutable metadata', () => {
+    expect(Object.isFrozen(toolProcessors.draw)).toBe(false);
+    expect(Object.isFrozen(toolProcessors.draw.replay)).toBe(true);
+  });
+});
+
+describe('toolsMap exhaustiveness', () => {
+  const icons: readonly [ToolName, string][] = [
+    ['reposition', 'reposition'],
+    ['blur', 'blur'],
+    ['color', 'color'],
+    ['levels', 'levels'],
+    ['transform', 'transform'],
+    ['crop', 'crop'],
+    ['draw', 'draw'],
+    ['shape', 'shape'],
+    ['text', 'text'],
+    ['polygonal-lasso', 'lasso'],
+    ['freehand-lasso', 'lasso'],
+    ['feather-magnetic-lasso', 'lasso'],
+    ['magic-wand', 'magic-wand'],
+    ['rectangular-selection', 'rectangular-selection'],
+    ['brush', 'brush'],
+    ['pencil', 'pencil'],
+    ['color-replacement', 'color-replacement'],
+    ['pen', 'pen'],
+    ['freeform-pen', 'freeform-pen'],
+    ['curvature-pen', 'curvature-pen'],
+    ['add-anchor-point', 'add-anchor-point'],
+    ['delete-anchor-point', 'delete-anchor-point'],
+    ['convert-point', 'convert-point'],
+    ['rectangle', 'rectangle'],
+    ['ellipse', 'ellipse'],
+    ['triangle', 'triangle'],
+    ['polygon', 'polygon'],
+    ['line', 'line'],
+    ['custom-shape', 'custom-shape'],
+  ];
+
+  it('exposes exactly the registered tool names, with no unprocessed or missing entries', () => {
+    expect(Object.keys(toolsMap).sort()).toEqual([...toolNames].sort());
+  });
+
+  it.each(icons)('maps %s to the %s icon', (toolName, icon) => {
+    expect(toolsMap[toolName].icon).toBe(icon);
+  });
+
+  it('covers every registered tool name in the icon table, so a new tool cannot skip the pin', () => {
+    expect(icons.map(([toolName]) => toolName).sort()).toEqual([...toolNames].sort());
+  });
+
+  it('shares one Shape toolbox component between the shape tool and every figure variant', () => {
+    const shapeTools = ['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line'] as const;
+    const component = toolsMap.shape.toolboxComponent;
+
+    for (const toolName of shapeTools) {
+      expect(toolsMap[toolName].toolboxComponent, toolName).toBe(component);
+    }
+  });
+
+  it('gives each lasso variant its own toolbar component', () => {
+    const components = [
+      toolsMap['polygonal-lasso'].toolboxComponent,
+      toolsMap['freehand-lasso'].toolboxComponent,
+      toolsMap['feather-magnetic-lasso'].toolboxComponent,
+    ];
+
+    expect(new Set(components).size).toBe(3);
+  });
+
+  it('builds a distinct placeholder component per unimplemented and paint-stub tool', () => {
+    const placeholderTools: readonly ToolName[] = ['brush', 'pencil', 'color-replacement', ...unimplementedTools];
+    const components = placeholderTools.map((toolName) => toolsMap[toolName].toolboxComponent);
+
+    // Six of them share the `pen` placeholder group, but each `placeholderTool(...)` call
+    // returns a fresh closure, so no two tool names can be wired to the same component.
+    expect(new Set(components).size).toBe(placeholderTools.length);
+    for (const toolName of placeholderTools) {
+      expect(toolsMap[toolName].toolboxComponent, toolName).not.toBe(toolsMap.shape.toolboxComponent);
+    }
+  });
+
+  it.each(['polygon-selection', 'lasso', 'Pen', 'colorpicker', 'polygonal-lasso '])(
+    'has no entry for the mistyped tool name %j',
+    (mistyped) => {
+      expect(asRecord[mistyped], mistyped).toBeUndefined();
+      expect((toolsMap as unknown as Record<string, unknown>)[mistyped], mistyped).toBeUndefined();
+    }
+  );
+
+  it('throws a TypeError when an unknown tool name is invoked without optional chaining', () => {
+    expect(() => asRecord['definitely-not-a-tool']!.imageProcessor).toThrow(TypeError);
+    expect(() => (toolsMap as unknown as Record<string, ToolProcessorDefinition>)['nope']!.imageProcessor).toThrow(
+      TypeError
+    );
   });
 });

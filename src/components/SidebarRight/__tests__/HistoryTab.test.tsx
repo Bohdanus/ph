@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import HistoryTab from '../HistoryTab.tsx';
 import type { HistoryItem } from '@/contexts/history-types.ts';
@@ -209,5 +209,122 @@ describe('HistoryTab', () => {
     render(<HistoryTab />);
     const items = screen.getAllByRole('listitem');
     expect(items[0]).toHaveAttribute('title', 'Click to go back to this state');
+  });
+});
+
+/**
+ * `mockHistory` is rendered newest-first, so the visible title doubles as a stable handle
+ * for asserting which store index a row maps to.
+ */
+function getItemByTitle(title: string): HTMLElement {
+  const item = screen.getByText(title).closest('li');
+  if (!item) throw new Error(`no history item titled ${title}`);
+  return item;
+}
+
+describe('HistoryTab row behaviour', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useStore.mockReturnValue([mockStore, vi.fn()]);
+    useHistory.mockReturnValue({ resetHistoryTo: vi.fn(), toggleDisabled: vi.fn() });
+  });
+
+  it.each([
+    ['Hide Layer', 2],
+    ['Tool: brush', 1],
+    ['Layer 1', 0],
+  ])('resets history to the original store index behind %s', (title, expectedIndex) => {
+    const resetHistoryTo = vi.fn();
+    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
+    render(<HistoryTab />);
+
+    fireEvent.click(getItemByTitle(title));
+
+    expect(resetHistoryTo).toHaveBeenCalledTimes(1);
+    expect(resetHistoryTo).toHaveBeenCalledWith(expectedIndex);
+  });
+
+  it('still resets history when the clicked item is disabled', () => {
+    const resetHistoryTo = vi.fn();
+    useStore.mockReturnValue([
+      { ...mockStore, history: [createMockHistoryItem({ id: 'hist-1', disabled: true })], historyIndex: 0 },
+      vi.fn(),
+    ]);
+    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
+    render(<HistoryTab />);
+
+    fireEvent.click(screen.getByRole('listitem'));
+
+    expect(resetHistoryTo).toHaveBeenCalledWith(0);
+  });
+
+  it.each([
+    ['an enabled item', false, 'Disable history item'],
+    ['a disabled item', true, 'Enable history item'],
+  ])('titles the eye control of %s', (_label, disabled, expectedTitle) => {
+    useStore.mockReturnValue([
+      { ...mockStore, history: [createMockHistoryItem({ id: 'hist-1', disabled })], historyIndex: 0 },
+      vi.fn(),
+    ]);
+    render(<HistoryTab />);
+
+    const eyeButton = within(screen.getByRole('listitem')).getByRole('button');
+    expect(eyeButton).toHaveAttribute('title', expectedTitle);
+  });
+
+  it('marks only the item at historyIndex as the current state', () => {
+    render(<HistoryTab />);
+
+    const currentMarkers = screen.getAllByTitle('Current state');
+    expect(currentMarkers).toHaveLength(1);
+    expect(getItemByTitle('Tool: brush')).toContainElement(currentMarkers[0]);
+    expect(getItemByTitle('Hide Layer')).not.toContainElement(currentMarkers[0]);
+  });
+
+  it('marks no item as current when historyIndex points past the end of the list', () => {
+    useStore.mockReturnValue([{ ...mockStore, historyIndex: 99 }, vi.fn()]);
+    render(<HistoryTab />);
+
+    expect(screen.queryByTitle('Current state')).toBeNull();
+    for (const item of screen.getAllByRole('listitem')) {
+      // every stored index is still `<= historyIndex`, so all of them count as reachable
+      expect(item).toHaveClass('opacity-100');
+    }
+  });
+
+  it('keeps a redoable future item inert-looking while older items stay active', () => {
+    useStore.mockReturnValue([{ ...mockStore, historyIndex: 0 }, vi.fn()]);
+    render(<HistoryTab />);
+
+    expect(getItemByTitle('Layer 1')).toHaveClass('opacity-100');
+    expect(getItemByTitle('Tool: brush')).toHaveClass('opacity-50');
+    expect(getItemByTitle('Hide Layer')).toHaveClass('opacity-50');
+  });
+
+  it('renders no list at all when history is empty', () => {
+    useStore.mockReturnValue([{ ...mockStore, history: [], historyIndex: -1 }, vi.fn()]);
+    render(<HistoryTab />);
+
+    expect(screen.queryByRole('list')).toBeNull();
+    expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+  });
+
+  // Accessibility gap — src/components/SidebarRight/HistoryTab.tsx:25-27.
+  // The history row is the only way to travel back in time, but it is a bare `<li>`
+  // with an `onClick`: it has no `tabIndex`, no `role` and no key handler, so the list is
+  // completely unreachable with the keyboard. The eye control inside it is focusable, but
+  // focusing it does not make the row activatable.
+  it.fails('lets a keyboard user travel to a history row and activate it with Enter', () => {
+    const resetHistoryTo = vi.fn();
+    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
+    render(<HistoryTab />);
+
+    const row = getItemByTitle('Tool: brush');
+    expect(row).toHaveAttribute('tabindex', '0');
+    expect(row).toHaveAttribute('role', 'button');
+
+    fireEvent.keyDown(row, { key: 'Enter' });
+
+    expect(resetHistoryTo).toHaveBeenCalledWith(1);
   });
 });

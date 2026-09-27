@@ -1,10 +1,12 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import FeatherMagneticLasso from '../FeatherMagneticLasso.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
 const patchToolArgsMock = vi.hoisted(() => vi.fn());
+/** `getToolArgs` returns `null` when the tool is not the active one (FeatherMagneticLasso.tsx:66,125). */
+const toolArgsAvailable = vi.hoisted(() => ({ current: true }));
 const clipboardMock = vi.hoisted(() => ({
   activeSelection: null as { id: string; geometry: string } | null,
   hasSelectionClipboard: false,
@@ -27,17 +29,20 @@ vi.mock('../../../../contexts/StoreContext.tsx', () => ({
 
 vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
-    getToolArgs: () => ({
-      antiAlias: true,
-      edgeContrast: 30,
-      featherRadius: 12,
-      frequency: 40,
-      magneticWidth: 18,
-      previewFeather: true,
-      smoothing: 1.5,
-      snapStrength: 0.85,
-      toolName: 'feather-magnetic-lasso',
-    }),
+    getToolArgs: () =>
+      toolArgsAvailable.current
+        ? {
+            antiAlias: true,
+            edgeContrast: 30,
+            featherRadius: 12,
+            frequency: 40,
+            magneticWidth: 18,
+            previewFeather: true,
+            smoothing: 1.5,
+            snapStrength: 0.85,
+            toolName: 'feather-magnetic-lasso',
+          }
+        : null,
     patchToolArgs: patchToolArgsMock,
   }),
 }));
@@ -88,6 +93,7 @@ describe('FeatherMagneticLasso toolbar', () => {
   beforeEach(() => {
     dispatchMock.mockClear();
     patchToolArgsMock.mockClear();
+    toolArgsAvailable.current = true;
     clipboardMock.copyActiveSelection.mockClear();
     clipboardMock.layerViaCopy.mockClear();
     clipboardMock.pasteSelectionClipboard.mockClear();
@@ -354,6 +360,180 @@ describe('FeatherMagneticLasso toolbar', () => {
       await waitOutTooltipCloseDelay();
 
       expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('tool args availability', () => {
+    it('renders nothing when the feather magnetic lasso is not the active tool', () => {
+      toolArgsAvailable.current = false;
+      const { container } = render(<FeatherMagneticLasso />);
+
+      expect(container).toBeEmptyDOMElement();
+      expect(screen.queryByRole('button', { name: INFO_BUTTON_NAME })).toBeNull();
+      expect(screen.queryByRole('slider', { name: /^Feather/ })).toBeNull();
+    });
+
+    it('renders the toolbar again as soon as the tool args come back', () => {
+      toolArgsAvailable.current = false;
+      const { container, rerender } = render(<FeatherMagneticLasso />);
+      expect(container).toBeEmptyDOMElement();
+
+      toolArgsAvailable.current = true;
+      rerender(<FeatherMagneticLasso />);
+
+      expect(getSlider(/^Feather/)).toBeInTheDocument();
+    });
+  });
+
+  describe('copy failure', () => {
+    it('logs and alerts when the copy throws, then restores the button', async () => {
+      const failure = new Error('clipboard exploded');
+      // `mockImplementationOnce` so the throwing behaviour cannot leak: the shared `beforeEach`
+      // only calls `mockClear()`, which does not reset implementations.
+      clipboardMock.copyActiveSelection.mockImplementationOnce(() => {
+        throw failure;
+      });
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+      setClipboardState({ activeSelection: { id: 'sel-1', geometry: 'lasso' }, hasClipboard: true });
+
+      try {
+        render(<FeatherMagneticLasso />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+        await waitFor(() => {
+          expect(alertSpy).toHaveBeenCalledWith('Failed to copy feathered selection');
+        });
+        expect(consoleErrorSpy).toHaveBeenCalledWith('Error copying feathered magnetic selection:', failure);
+
+        // `finally { setIsCopying(false) }` (FeatherMagneticLasso.tsx:174-176) is the only thing
+        // keeping the label from being stranded on 'Copying...'.
+        const copyButton = screen.getByRole('button', { name: 'Copy' });
+        expect(copyButton).toHaveTextContent('Copy');
+        expect(copyButton).toBeEnabled();
+      } finally {
+        consoleErrorSpy.mockRestore();
+        alertSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('tooltip placement', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    const stubButtonRect = (rect: Partial<DOMRect>) => {
+      const spy = vi.spyOn(getInfoButton(), 'getBoundingClientRect').mockReturnValue({
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: 0,
+        height: 0,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+        ...rect,
+      } as DOMRect);
+      return () => spy.mockRestore();
+    };
+
+    it('clamps the tooltip to the left padding when the button sits at the viewport origin', async () => {
+      render(<FeatherMagneticLasso />);
+      const restore = stubButtonRect({});
+
+      try {
+        fireEvent.mouseEnter(getInfoButton());
+
+        const tooltip = await screen.findByRole('tooltip');
+        // preferredLeft is -192 and preferredTop is 8, both inside a 1024x768 viewport.
+        expect(tooltip.style.left).toBe('8px');
+        expect(tooltip.style.top).toBe('8px');
+      } finally {
+        restore();
+      }
+    });
+
+    it('keeps the tooltip inside the right edge for a button near the far right', async () => {
+      render(<FeatherMagneticLasso />);
+      const restore = stubButtonRect({ left: 900, right: 920, width: 20, top: 100, bottom: 120 });
+
+      try {
+        fireEvent.mouseEnter(getInfoButton());
+
+        const tooltip = await screen.findByRole('tooltip');
+        // preferredLeft would be 718, past innerWidth (1024) - tooltip width (384) - padding.
+        expect(tooltip.style.left).toBe('632px');
+        expect(tooltip.style.top).toBe('128px');
+      } finally {
+        restore();
+      }
+    });
+
+    it('flips the tooltip above the button when it would not fit below it', async () => {
+      vi.stubGlobal('innerHeight', 200);
+      render(<FeatherMagneticLasso />);
+      const restore = stubButtonRect({ left: 400, right: 420, width: 20, top: 150, bottom: 170, height: 20 });
+
+      try {
+        fireEvent.mouseEnter(getInfoButton());
+
+        const tooltip = await screen.findByRole('tooltip');
+        // 170 + 8 + 330 > 200, so the tooltip is placed above the button and clamped to the
+        // top padding because 150 - 330 - 8 is off screen.
+        expect(tooltip.style.top).toBe('8px');
+      } finally {
+        restore();
+      }
+    });
+
+    it('re-positions the pinned tooltip when the window is resized', async () => {
+      render(<FeatherMagneticLasso />);
+      const restore = stubButtonRect({ left: 900, right: 920, width: 20, top: 100, bottom: 120 });
+
+      try {
+        fireEvent.click(getInfoButton());
+        const tooltip = await screen.findByRole('tooltip');
+        expect(tooltip.style.left).toBe('632px');
+
+        vi.stubGlobal('innerWidth', 1400);
+        act(() => {
+          window.dispatchEvent(new Event('resize'));
+        });
+
+        expect(tooltip.style.left).toBe('718px');
+      } finally {
+        restore();
+      }
+    });
+
+    it('stops re-positioning once the tooltip closes', async () => {
+      render(<FeatherMagneticLasso />);
+      const restore = stubButtonRect({ left: 900, right: 920, width: 20, top: 100, bottom: 120 });
+
+      try {
+        fireEvent.click(getInfoButton());
+        await screen.findByRole('tooltip');
+
+        // Unpin, then let the hover state drain so both halves of `isInfoOpen` go false.
+        fireEvent.mouseLeave(getInfoButton());
+        await waitOutTooltipCloseDelay();
+        fireEvent.click(getInfoButton());
+        fireEvent.mouseLeave(getInfoButton());
+        await waitOutTooltipCloseDelay();
+
+        expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+
+        act(() => {
+          window.dispatchEvent(new Event('resize'));
+        });
+
+        expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+      } finally {
+        restore();
+      }
     });
   });
 });

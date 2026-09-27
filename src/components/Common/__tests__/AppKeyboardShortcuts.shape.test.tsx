@@ -31,7 +31,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 }));
 
 vi.mock('../../../contexts/useHistory.ts', () => ({
-  useHistory: () => ({ canUndo: false, undo: vi.fn(), canRedo: false, redo: vi.fn() }),
+  useHistory: () => ({ canUndo: () => false, undo: vi.fn(), canRedo: () => false, redo: vi.fn() }),
 }));
 
 vi.mock('../../../hooks/useApp.ts', () => ({

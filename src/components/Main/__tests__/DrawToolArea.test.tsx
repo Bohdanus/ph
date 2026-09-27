@@ -5,12 +5,20 @@ import { drawLine } from '../../../util/draw.ts';
 
 const createLayerFromToolMock = vi.hoisted(() => vi.fn());
 const pointerState = vi.hoisted(() => ({ isMouseDown: { current: false } }));
+const storeState = vi.hoisted(
+  (): { documentFrame: { x: number; y: number; width: number; height: number } | null } => ({
+    documentFrame: null,
+  })
+);
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
     {
       containerRef: { current: document.createElement('div') },
       totalSize: { width: 300, height: 200 },
+      get documentFrame() {
+        return storeState.documentFrame;
+      },
     },
     vi.fn(),
   ],
@@ -99,6 +107,7 @@ describe('DrawToolArea', () => {
     createLayerFromToolMock.mockClear();
     vi.mocked(drawLine).mockClear();
     pointerState.isMouseDown.current = false;
+    storeState.documentFrame = null;
   });
 
   it('normalizes a finished stroke to its bounding box instead of snapping it to the origin', () => {
@@ -135,5 +144,87 @@ describe('DrawToolArea', () => {
     fireEvent.pointerMove(toolArea, { button: 0, clientX: 30, clientY: 50 });
 
     expect(drawLine).toHaveBeenCalled();
+  });
+
+  it('ignores a stroke that starts with a non-primary mouse button', () => {
+    const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+    const { container } = render(<DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />);
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 2, clientX: 10, clientY: 20 });
+    fireEvent.pointerMove(toolArea, { button: 2, clientX: 30, clientY: 50 });
+
+    expect(drawLine).not.toHaveBeenCalled();
+  });
+
+  it('ignores pointer movement before the button goes down', () => {
+    const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+    const { container } = render(<DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />);
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerMove(toolArea, { button: 0, clientX: 30, clientY: 50 });
+
+    expect(drawLine).not.toHaveBeenCalled();
+  });
+
+  it('shifts the committed bounding box by the document frame origin', () => {
+    storeState.documentFrame = { x: 12, y: 8, width: 300, height: 200 };
+    const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+    const { container } = render(<DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />);
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 40, clientY: 50 });
+    fireEvent.pointerMove(toolArea, { button: 0, clientX: 200, clientY: 110 });
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 200, clientY: 110 });
+
+    expect(createLayerFromToolMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pos: { x: 42, y: 48, width: 180, height: 80 },
+        args: expect.objectContaining({
+          points: [
+            { x: 10, y: 10 },
+            { x: 170, y: 70 },
+          ],
+        }),
+      })
+    );
+  });
+
+  it('clears the overlay once the stroke has been committed', () => {
+    const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+    const { container } = render(<DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />);
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+    fireEvent.pointerMove(toolArea, { button: 0, clientX: 30, clientY: 50 });
+    vi.mocked(overlayCtx.clearRect).mockClear();
+
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 30, clientY: 50 });
+
+    expect(overlayCtx.clearRect).toHaveBeenCalledWith(0, 0, 300, 200);
+  });
+
+  it('starts a fresh preview after a stroke was committed', () => {
+    const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+    const { container } = render(<DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />);
+    const toolArea = container.firstElementChild as HTMLDivElement;
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+    fireEvent.pointerMove(toolArea, { button: 0, clientX: 30, clientY: 50 });
+    fireEvent.pointerUp(toolArea, { button: 0, clientX: 30, clientY: 50 });
+
+    vi.mocked(drawLine).mockClear();
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
+
+    expect(drawLine).toHaveBeenCalledWith(
+      expect.objectContaining({ args: expect.objectContaining({ points: [{ x: 100, y: 100 }] }) })
+    );
+  });
+
+  it('renders a div carrying the supplied className and the draw cursor', () => {
+    const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+    const { container } = render(<DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />);
+
+    expect(container.firstElementChild).toHaveClass('test-draw-area', 'cursor-draw');
   });
 });

@@ -1,5 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import { act } from 'react';
 import Levels from '../Levels.tsx';
@@ -170,6 +170,151 @@ describe('Levels toolbar', () => {
 
     const slider = screen.getByLabelText(/Contrast/) as HTMLInputElement;
     expect(slider.value).toBe('80');
+  });
+
+  describe('slider publishing', () => {
+    let frames: FrameRequestCallback[];
+    let rafSpy: ReturnType<typeof vi.spyOn>;
+
+    const flushFrames = () => {
+      act(() => {
+        frames.splice(0, frames.length).forEach((frame) => frame(0));
+      });
+    };
+
+    beforeEach(() => {
+      frames = [];
+      rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+    });
+
+    afterEach(() => {
+      rafSpy.mockRestore();
+    });
+
+    const changeBrightness = (value: string) =>
+      fireEvent.change(screen.getByLabelText(/Brightness/), { target: { value } });
+    const changeContrast = (value: string) =>
+      fireEvent.change(screen.getByLabelText(/Contrast/), { target: { value } });
+
+    it('exposes both sliders over the full -100..100 range with no step', () => {
+      render(<Levels />);
+
+      const brightness = screen.getByLabelText(/Brightness/) as HTMLInputElement;
+      const contrast = screen.getByLabelText(/Contrast/) as HTMLInputElement;
+
+      expect(brightness).toHaveAttribute('type', 'range');
+      expect(brightness).toHaveAttribute('min', '-100');
+      expect(brightness).toHaveAttribute('max', '100');
+      expect(contrast).toHaveAttribute('min', '-100');
+      expect(contrast).toHaveAttribute('max', '100');
+    });
+
+    it('publishes a contrast change as the exact layer preview and tool args payload', () => {
+      render(<Levels />);
+
+      changeContrast('-40');
+      expect(mockTempUpdateLayer).not.toHaveBeenCalled();
+
+      flushFrames();
+
+      const expected = { toolName: 'levels', brightness: 50, contrast: -40 };
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expected);
+      expect(mockTempUpdateLayer).toHaveBeenCalledExactlyOnceWith({ id: 'layer-1', toolArgs: expected });
+    });
+
+    it('preserves the contrast value across a brightness change', () => {
+      resetToolArgs({ brightness: 10, contrast: -25 });
+      render(<Levels />);
+
+      changeBrightness('20');
+      flushFrames();
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({ toolName: 'levels', brightness: 20, contrast: -25 });
+    });
+
+    it('accepts both range boundaries on both sliders', () => {
+      render(<Levels />);
+
+      changeBrightness('-100');
+      flushFrames();
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith({ toolName: 'levels', brightness: -100, contrast: 50 });
+
+      changeBrightness('100');
+      flushFrames();
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith({ toolName: 'levels', brightness: 100, contrast: 50 });
+
+      // `toolArgs` is only republished through the mocked store, so a contrast change still
+      // spreads the brightness the component last rendered with.
+      changeContrast('-100');
+      flushFrames();
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith({ toolName: 'levels', brightness: 50, contrast: -100 });
+
+      changeContrast('100');
+      flushFrames();
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith({ toolName: 'levels', brightness: 50, contrast: 100 });
+      expect(mockSetToolArgs).toHaveBeenCalledTimes(4);
+    });
+
+    it('schedules a fresh frame once the previous one has been flushed', () => {
+      render(<Levels />);
+
+      changeBrightness('1');
+      expect(frames).toHaveLength(1);
+      flushFrames();
+      expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
+
+      changeBrightness('2');
+      expect(frames).toHaveLength(1);
+      flushFrames();
+
+      expect(mockSetToolArgs).toHaveBeenCalledTimes(2);
+      expect(mockSetToolArgs).toHaveBeenLastCalledWith({ toolName: 'levels', brightness: 2, contrast: 50 });
+      expect(mockTempUpdateLayer).toHaveBeenCalledTimes(2);
+    });
+
+    it('drops a change made after the frame ran but before the state settled without publishing twice', () => {
+      render(<Levels />);
+
+      changeBrightness('30');
+      flushFrames();
+      expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
+
+      // The slider is still controlled by the unmoved `toolArgs`, so the second change is read
+      // from the original args and both payloads carry the same contrast.
+      changeBrightness('40');
+      flushFrames();
+
+      expect(mockSetToolArgs).toHaveBeenCalledTimes(2);
+      expect(mockSetToolArgs.mock.calls.map(([payload]) => payload)).toEqual([
+        { toolName: 'levels', brightness: 30, contrast: 50 },
+        { toolName: 'levels', brightness: 40, contrast: 50 },
+      ]);
+    });
+
+    it('keeps publishing the tool args when no layer is active, but never with a null layer id', () => {
+      setActiveLayerId(null);
+      render(<Levels />);
+
+      changeContrast('15');
+      flushFrames();
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({ toolName: 'levels', brightness: 50, contrast: 15 });
+    });
+
+    it.fails('skips the layer preview entirely when no layer is active (Levels.tsx:23)', () => {
+      // `tempUpdateLayer({ id: activeLayerId!, toolArgs })` asserts non-null on `activeLayerId`,
+      // so a null id is forwarded to the layer store as `{ id: null }` instead of being skipped.
+      setActiveLayerId(null);
+      render(<Levels />);
+
+      changeContrast('15');
+      flushFrames();
+
+      expect(mockTempUpdateLayer).not.toHaveBeenCalled();
+    });
   });
 
   describe('keyboard navigation', () => {

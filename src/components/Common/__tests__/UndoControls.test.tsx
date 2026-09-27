@@ -14,11 +14,12 @@ const history = vi.hoisted(() => ({
 }));
 const resetToLastSavedArgs = vi.hoisted(() => vi.fn());
 
+const dispatch = vi.hoisted(() => vi.fn());
 vi.mock('../../../contexts/useHistory.ts', () => ({ useHistory: () => history }));
 vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({ isToolDirty: state.isToolDirty, resetToLastSavedArgs }),
 }));
-vi.mock('../../../contexts/StoreContext.tsx', () => ({ useStore: () => [state] }));
+vi.mock('../../../contexts/StoreContext.tsx', () => ({ useStore: () => [state, dispatch] }));
 vi.mock('../../../hooks/useApp.ts', () => ({ useApp: () => ({ goToTool: vi.fn() }) }));
 vi.mock('../../../contexts/useSelectionClipboard.ts', () => ({
   useSelectionClipboard: () => ({ copyActiveSelection: vi.fn(), pasteSelectionClipboard: vi.fn() }),

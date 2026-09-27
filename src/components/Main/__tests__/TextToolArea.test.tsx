@@ -1,38 +1,70 @@
-import { act, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { TextToolArea } from '../TextToolArea.tsx';
 import type { UseRectProps } from '../../../hooks/useRect.ts';
+import { TextToolArea } from '../TextToolArea.tsx';
+import { renderText } from '../../../tools/text.ts';
+import { calculateNewRect } from '../../../util/rect.ts';
 
-const createSetToolArgs = vi.hoisted(() => vi.fn);
-const createTextareaRef = vi.hoisted(() => () => ({ current: null as HTMLTextAreaElement | null }));
-const createToolOverlayRef = vi.hoisted(() => () => ({ current: document.createElement('canvas') }));
-const createContainerRef = vi.hoisted(() => () => ({ current: document.createElement('div') }));
-const createToolArgs = vi.hoisted(() => () => ({ toolName: 'draw' as 'draw' | 'text', text: undefined, rect: null }));
-const createLatestUseRectProps = vi.hoisted(() => () => null as UseRectProps | null);
+type TextArgs = {
+  align: 'left' | 'center' | 'right';
+  bold: boolean;
+  color: string;
+  fontFamily: string;
+  fontSize: number;
+  italic: boolean;
+  lineHeight: number;
+  text?: string;
+  rect: { x1: number; y1: number; x2: number; y2: number } | null;
+  toolName: 'text' | 'draw';
+};
 
-let setToolArgs: ReturnType<typeof createSetToolArgs>;
-let textareaRef: ReturnType<typeof createTextareaRef>;
-let toolOverlayRef: ReturnType<typeof createToolOverlayRef>;
-let containerRef: ReturnType<typeof createContainerRef>;
-let toolArgs: ReturnType<typeof createToolArgs>;
-let latestUseRectProps: ReturnType<typeof createLatestUseRectProps>;
+const h = vi.hoisted(() => ({
+  setToolArgs: vi.fn(),
+  dispatch: vi.fn(),
+  color: '#000000',
+  redraw: vi.fn(),
+  pointerDown: vi.fn(),
+  pointerMove: vi.fn(),
+  pointerUp: vi.fn(),
+  useRectProps: { current: null as UseRectProps | null },
+  textarea: { current: null as HTMLTextAreaElement | null },
+  containerRef: { current: document.createElement('div') },
+  toolOverlayRef: { current: document.createElement('canvas') },
+}));
+
+const makeTextArgs = (overrides: Partial<TextArgs> = {}): TextArgs => ({
+  align: 'left',
+  bold: false,
+  color: '#000000',
+  fontFamily: 'Arial',
+  fontSize: 16,
+  italic: false,
+  lineHeight: 1.2,
+  rect: null,
+  toolName: 'text',
+  ...overrides,
+});
+
+let toolArgs: TextArgs = makeTextArgs();
 
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
     {
       get containerRef() {
-        return containerRef;
+        return h.containerRef;
       },
       get textareaRef() {
-        return textareaRef;
+        return h.textarea;
       },
       get toolOverlayRef() {
-        return toolOverlayRef;
+        return h.toolOverlayRef;
       },
-      color: '#000000',
+      get color() {
+        return h.color;
+      },
       totalSize: { width: 100, height: 100 },
     },
-    vi.fn(),
+    h.dispatch,
   ],
 }));
 
@@ -42,46 +74,72 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
       return toolArgs;
     },
     get setToolArgs() {
-      return setToolArgs;
+      return h.setToolArgs;
     },
   }),
 }));
 
 vi.mock('../../../hooks/useRect.ts', () => ({
-  useRect: (props: typeof latestUseRectProps) => {
-    latestUseRectProps = props;
-    return {};
+  useRect: (props: UseRectProps) => {
+    h.useRectProps.current = props;
+    return {
+      redraw: h.redraw,
+      onPointerDown: h.pointerDown,
+      onPointerMove: h.pointerMove,
+      onPointerUp: h.pointerUp,
+    };
   },
 }));
 
-vi.mock('../../../util/rect.ts', () => ({
-  calculateNewRect: vi.fn(() => null),
-}));
+vi.mock('../../../util/rect.ts', async () => {
+  const actual = await vi.importActual<typeof import('../../../util/rect.ts')>('../../../util/rect.ts');
+  return {
+    ...actual,
+    calculateNewRect: vi.fn(() => null),
+  };
+});
+
+vi.mock('../../../tools/text.ts', async () => {
+  const actual = await vi.importActual<typeof import('../../../tools/text.ts')>('../../../tools/text.ts');
+  return {
+    ...actual,
+    renderText: vi.fn(),
+  };
+});
+
+const renderArea = (overlayCtxRef: { current: CanvasRenderingContext2D | null } = { current: null }) =>
+  render(<TextToolArea canvasCtxRef={{ current: null }} overlayCtxRef={overlayCtxRef} />);
 
 describe('TextToolArea', () => {
   beforeEach(() => {
-    setToolArgs = createSetToolArgs();
-    textareaRef = createTextareaRef();
-    toolOverlayRef = createToolOverlayRef();
-    containerRef = createContainerRef();
-    toolArgs = createToolArgs();
-    latestUseRectProps = createLatestUseRectProps();
+    h.setToolArgs.mockReset();
+    h.dispatch.mockReset();
+    h.redraw.mockReset();
+    h.pointerDown.mockReset();
+    h.pointerMove.mockReset();
+    h.pointerUp.mockReset();
+    h.useRectProps.current = null;
+    h.textarea = { current: null };
+    h.color = '#000000';
+    toolArgs = makeTextArgs();
+    vi.mocked(calculateNewRect).mockReset();
+    vi.mocked(calculateNewRect).mockReturnValue(null);
+    vi.mocked(renderText).mockReset();
   });
 
   it('does not crash when the textarea ref is not attached yet', () => {
-    expect(() =>
-      render(<TextToolArea canvasCtxRef={{ current: null }} overlayCtxRef={{ current: null }} />)
-    ).not.toThrow();
+    expect(() => renderArea()).not.toThrow();
   });
 
   it('focuses the textarea after text arguments become active', () => {
-    const { rerender } = render(<TextToolArea canvasCtxRef={{ current: null }} overlayCtxRef={{ current: null }} />);
+    toolArgs = makeTextArgs({ toolName: 'draw' });
+    const { rerender } = renderArea();
     const textarea = document.createElement('textarea');
     const focus = vi.spyOn(textarea, 'focus');
-    textareaRef.current = textarea;
+    h.textarea.current = textarea;
 
     act(() => {
-      toolArgs.toolName = 'text';
+      toolArgs = makeTextArgs({ toolName: 'text' });
       rerender(<TextToolArea canvasCtxRef={{ current: null }} overlayCtxRef={{ current: null }} />);
     });
 
@@ -89,8 +147,150 @@ describe('TextToolArea', () => {
   });
 
   it('does not crash when a rectangle finishes while the textarea is unavailable', () => {
-    render(<TextToolArea canvasCtxRef={{ current: null }} overlayCtxRef={{ current: null }} />);
+    renderArea();
 
-    expect(() => act(() => latestUseRectProps?.onChangeEnd?.({ x1: 0, y1: 0, x2: 10, y2: 10 }))).not.toThrow();
+    expect(() => act(() => h.useRectProps.current?.onChangeEnd?.({ x1: 0, y1: 0, x2: 10, y2: 10 }))).not.toThrow();
+  });
+
+  it('renders a div carrying the supplied className and the text cursor', () => {
+    const { container } = render(
+      <TextToolArea className="my-text" canvasCtxRef={{ current: null }} overlayCtxRef={{ current: null }} />
+    );
+    const el = container.firstElementChild as HTMLElement;
+
+    expect(el).toBeInTheDocument();
+    expect(el.className).toBe('my-text cursor-text');
+  });
+
+  describe('useRect wiring', () => {
+    it('passes the document size, container, tool overlay and text rect to useRect', () => {
+      toolArgs = makeTextArgs({ rect: { x1: 10, y1: 20, x2: 90, y2: 60 } });
+
+      renderArea();
+
+      expect(h.useRectProps.current).toMatchObject({
+        imageSize: { width: 100, height: 100 },
+        containerRef: h.containerRef,
+        overlayRef: h.toolOverlayRef,
+        initialRect: { x1: 10, y1: 20, x2: 90, y2: 60 },
+      });
+    });
+
+    it('repaints through redrawText on every rect repaint', () => {
+      renderArea();
+
+      expect(h.useRectProps.current!.onRepaint).toEqual(expect.any(Function));
+    });
+
+    it('spreads the useRect pointer handlers onto the surface', () => {
+      const { container } = renderArea();
+      const el = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(el, { button: 0, clientX: 5, clientY: 5 });
+      fireEvent.pointerMove(el, { clientX: 6, clientY: 6 });
+      fireEvent.pointerUp(el, { button: 0, clientX: 6, clientY: 6 });
+
+      expect(h.pointerDown).toHaveBeenCalledTimes(1);
+      expect(h.pointerMove).toHaveBeenCalledTimes(1);
+      expect(h.pointerUp).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('onChangeEnd', () => {
+    it('commits the recalculated rect together with the current store color', () => {
+      h.color = '#ff0000';
+      toolArgs = makeTextArgs({ text: 'hi', rect: { x1: 0, y1: 0, x2: 40, y2: 20 } });
+      const newRect = { x1: 0, y1: 0, x2: 55, y2: 20 };
+      vi.mocked(calculateNewRect).mockReturnValue(newRect);
+
+      renderArea();
+      act(() => h.useRectProps.current!.onChangeEnd({ x1: 0, y1: 0, x2: 40, y2: 20 }));
+
+      expect(calculateNewRect).toHaveBeenCalledWith(
+        expect.objectContaining({ text: 'hi', rect: { x1: 0, y1: 0, x2: 40, y2: 20 } }),
+        h.toolOverlayRef,
+        { width: 100, height: 100 }
+      );
+      expect(h.setToolArgs).toHaveBeenCalledWith({ ...toolArgs, color: '#ff0000', rect: newRect });
+    });
+
+    it('focuses the textarea after a successful change end', () => {
+      renderArea();
+      const textarea = document.createElement('textarea');
+      const focus = vi.spyOn(textarea, 'focus');
+      h.textarea.current = textarea;
+      vi.mocked(calculateNewRect).mockReturnValue({ x1: 0, y1: 0, x2: 10, y2: 10 });
+
+      act(() => h.useRectProps.current!.onChangeEnd({ x1: 0, y1: 0, x2: 10, y2: 10 }));
+
+      expect(h.setToolArgs).toHaveBeenCalledTimes(1);
+      expect(focus).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops the commit and the focus when no rect can be calculated', () => {
+      renderArea();
+      const textarea = document.createElement('textarea');
+      const focus = vi.spyOn(textarea, 'focus');
+      h.textarea.current = textarea;
+      vi.mocked(calculateNewRect).mockReturnValue(null);
+
+      act(() => h.useRectProps.current!.onChangeEnd({ x1: 0, y1: 0, x2: 10, y2: 10 }));
+
+      expect(h.setToolArgs).not.toHaveBeenCalled();
+      expect(focus).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('text preview', () => {
+    it('repaints once the text becomes non-empty', () => {
+      const { rerender } = renderArea();
+      h.redraw.mockClear();
+
+      toolArgs = makeTextArgs({ text: 'hi' });
+      act(() => {
+        rerender(<TextToolArea canvasCtxRef={{ current: null }} overlayCtxRef={{ current: null }} />);
+      });
+
+      expect(h.redraw).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not repaint while the text is still empty', () => {
+      renderArea();
+
+      expect(h.redraw).not.toHaveBeenCalled();
+    });
+
+    it('renders the text onto the overlay context on repaint', () => {
+      const ctx = document.createElement('canvas').getContext('2d');
+      h.color = '#00ff00';
+      toolArgs = makeTextArgs({ text: 'hello', rect: { x1: 5, y1: 6, x2: 50, y2: 30 } });
+
+      renderArea({ current: ctx });
+      act(() => h.useRectProps.current!.onRepaint!({ x1: 5, y1: 6, x2: 50, y2: 30 }));
+
+      expect(renderText).toHaveBeenCalledWith(
+        ctx,
+        expect.objectContaining({ text: 'hello', color: '#00ff00', rect: { x1: 5, y1: 6, x2: 50, y2: 30 } })
+      );
+    });
+
+    it('skips the text render when there is nothing to draw', () => {
+      const ctx = document.createElement('canvas').getContext('2d');
+      toolArgs = makeTextArgs({ text: undefined });
+
+      renderArea({ current: ctx });
+      act(() => h.useRectProps.current!.onRepaint!({ x1: 0, y1: 0, x2: 10, y2: 10 }));
+
+      expect(renderText).not.toHaveBeenCalled();
+    });
+
+    it('skips the text render when the overlay context is unavailable', () => {
+      toolArgs = makeTextArgs({ text: 'hello' });
+
+      renderArea({ current: null });
+      act(() => h.useRectProps.current!.onRepaint!({ x1: 0, y1: 0, x2: 10, y2: 10 }));
+
+      expect(renderText).not.toHaveBeenCalled();
+    });
   });
 });

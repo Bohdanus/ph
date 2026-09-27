@@ -137,6 +137,75 @@ describe('RectangularSelection toolbar', () => {
     expect(dispatchMock).toHaveBeenCalledWith({ type: 'CLEAR_SELECTIONS' });
   });
 
+  describe('active selection resolution', () => {
+    const POLYGON_SELECTION: Selection = {
+      id: 'selection-polygon-1',
+      geometry: 'polygon',
+      sourceTool: 'polygonal-lasso',
+      lifecycle: 'committed',
+      isActive: true,
+      pos: { x: 0, y: 0, width: 10, height: 10 },
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+      ],
+    };
+
+    it('disables Copy and Clear when the active selection is not a rectangle', () => {
+      resetStoreState({ activeSelectionId: POLYGON_SELECTION.id, selections: [POLYGON_SELECTION] });
+      render(<RectangularSelection />);
+
+      // `getActiveRectangularSelection` (src/util/selection.ts:111-118) returns null for any
+      // non-rectangle geometry, so a lasso selection cannot be copied from this toolbar.
+      expect(screen.getByRole('button', { name: 'Copy' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
+    });
+
+    it('falls back to the flagged selection when the active id is null', () => {
+      resetStoreState({ activeSelectionId: null, selections: storeState.selections });
+      render(<RectangularSelection />);
+
+      // `getActiveSelection` falls back to the first `isActive` selection.
+      expect(screen.getByRole('button', { name: 'Copy' })).toBeEnabled();
+    });
+
+    it('ignores an active id that no longer resolves', () => {
+      resetStoreState({ activeSelectionId: 'deleted', selections: [] });
+      render(<RectangularSelection />);
+
+      expect(screen.getByRole('button', { name: 'Copy' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Clear' })).toBeDisabled();
+    });
+
+    it('treats a rectangle without a lifecycle flag as copyable (RectangularSelection.tsx:11-13)', () => {
+      // `Selection.lifecycle` is optional and only ever set to `'committed'`
+      // (src/contexts/general-types.ts:66), and `getActiveRectangularSelection` filters on
+      // geometry alone, so a selection that has not been committed yet still enables Copy.
+      // Documented rather than fixed: the toolbar has no lifecycle input of its own.
+      const uncommitted = { ...(storeState.selections[0] as Selection) } as Selection;
+      delete uncommitted.lifecycle;
+      resetStoreState({ activeSelectionId: uncommitted.id, selections: [uncommitted] });
+      render(<RectangularSelection />);
+
+      expect(uncommitted.lifecycle).toBeUndefined();
+      expect(screen.getByRole('button', { name: 'Copy' })).toBeEnabled();
+    });
+
+    it('treats a zero-area rectangle as copyable (RectangularSelection.tsx:12-13)', () => {
+      const degenerate: Selection = {
+        ...(storeState.selections[0] as Selection),
+        pos: { x: 5, y: 5, width: 0, height: 0 },
+      };
+      resetStoreState({ activeSelectionId: degenerate.id, selections: [degenerate] });
+      render(<RectangularSelection />);
+
+      // `hasRect` is a truthiness check on the rect object, not on its area.
+      expect(screen.getByRole('button', { name: 'Copy' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Clear' })).toBeEnabled();
+    });
+  });
+
   describe('keyboard navigation', () => {
     it('allows tab navigation through all focusable elements', async () => {
       const user = userEvent.setup();

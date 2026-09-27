@@ -641,4 +641,185 @@ describe('FileProvider openLoadImageDialog edge cases', () => {
     }
     expect(loadDocumentFile).toHaveBeenCalledTimes(3);
   });
+
+  it('resolves null without loading when a change event carries no file at all', async () => {
+    const { container } = render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const resolved = vi.fn();
+    act(() => {
+      void filesRef.current!.openLoadImageDialog().then(resolved);
+    });
+    const input = container.querySelector('input[type=file]')!;
+    // An emptied FileList is what a dismissed picker produces on some engines;
+    // it must behave exactly like the `cancel` event rather than throwing.
+    fireEvent.change(input, { target: { files: [] } });
+
+    await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
+    expect(loadDocumentFile).not.toHaveBeenCalled();
+    expect(window.alert).not.toHaveBeenCalled();
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it('ignores a change event with no file when no dialog promise is waiting', () => {
+    const { container } = render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const input = container.querySelector('input[type=file]')!;
+
+    expect(() => fireEvent.change(input, { target: { files: [] } })).not.toThrow();
+    expect(loadDocumentFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('useFile outside its provider', () => {
+  it('throws a named error when the hook is used without a FileProvider', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const Orphan = () => {
+        useFile();
+        return null;
+      };
+
+      expect(() => render(<Orphan />)).toThrow('useFile must be used within a FileProvider');
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+});
+
+describe('FileProvider document frame and non-Error failures', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('passes the document frame through to the PSD encoder when one is supplied', async () => {
+    vi.mocked(savePsd).mockResolvedValue(new ArrayBuffer(8));
+    render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const documentFrame = { x: 10, y: 20, width: 30, height: 40 };
+    const input = {
+      canvas: document.createElement('canvas'),
+      fileName: 'drawing.psd',
+      layers: {},
+      size: { width: 30, height: 40 },
+      documentFrame,
+    };
+    const resolved = vi.fn();
+    act(() => {
+      void filesRef.current!.openSaveImageDialog(input).then(resolved);
+    });
+    fireEvent.change(screen.getByTestId('save-dialog-format-select'), { target: { value: 'psd' } });
+    fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
+
+    await waitFor(() => expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'psd' }));
+    expect(savePsd).toHaveBeenCalledWith(input.layers, input.size, documentFrame);
+  });
+
+  it('falls back to the two-argument encoder when no document frame is supplied', async () => {
+    vi.mocked(savePsd).mockResolvedValue(new ArrayBuffer(8));
+    render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const input = {
+      canvas: document.createElement('canvas'),
+      fileName: 'drawing.psd',
+      layers: {},
+      size: { width: 10, height: 8 },
+    };
+    const resolved = vi.fn();
+    act(() => {
+      void filesRef.current!.openSaveImageDialog(input).then(resolved);
+    });
+    fireEvent.change(screen.getByTestId('save-dialog-format-select'), { target: { value: 'psd' } });
+    fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
+
+    await waitFor(() => expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)', format: 'psd' }));
+    expect(savePsd).toHaveBeenCalledWith(input.layers, input.size);
+    expect(vi.mocked(savePsd).mock.calls[0]).toHaveLength(2);
+  });
+
+  it('stringifies a non-Error load failure into the alert message', async () => {
+    vi.mocked(loadDocumentFile).mockRejectedValue('decoder exploded');
+    const { container } = render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const resolved = vi.fn();
+    act(() => {
+      void filesRef.current!.openLoadImageDialog().then(resolved);
+    });
+    fireEvent.change(container.querySelector('input[type=file]')!, {
+      target: { files: [new File(['x'], 'broken.png')] },
+    });
+
+    await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
+    expect(window.alert).toHaveBeenCalledWith('Failed to open file: decoder exploded');
+  });
+
+  it('stringifies a non-Error save failure into the alert message', async () => {
+    vi.mocked(saveImageToDisk).mockRejectedValue('encoder exploded');
+    render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const resolved = vi.fn();
+    act(() => {
+      void filesRef
+        .current!.openSaveImageDialog({
+          canvas: document.createElement('canvas'),
+          fileName: 'test.png',
+          layers: {},
+          size: { width: 10, height: 10 },
+        })
+        .then(resolved);
+    });
+    fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
+
+    await waitFor(() => expect(resolved).toHaveBeenCalledWith(null));
+    expect(window.alert).toHaveBeenCalledWith('Failed to save file: encoder exploded');
+  });
+
+  it('proposes a bare copy name when the requested file name is empty', async () => {
+    vi.mocked(saveImageToDisk).mockResolvedValue(undefined);
+    render(
+      <FileProvider>
+        <Consumer />
+      </FileProvider>
+    );
+    const resolved = vi.fn();
+    act(() => {
+      void filesRef
+        .current!.openSaveImageDialog({
+          canvas: document.createElement('canvas'),
+          fileName: '',
+          layers: {},
+          size: { width: 10, height: 10 },
+        })
+        .then(resolved);
+    });
+
+    fireEvent.change(screen.getByTestId('save-dialog-format-select'), { target: { value: 'image/png' } });
+    fireEvent.click(screen.getByTestId('save-dialog-submit-button'));
+
+    await waitFor(() => expect(resolved).toHaveBeenCalledWith({ fileName: ' (copy)', format: 'image/png' }));
+    expect(saveImageToDisk).toHaveBeenCalledWith(expect.any(HTMLCanvasElement), ' (copy)', 'image/png', undefined);
+  });
 });

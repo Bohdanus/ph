@@ -9,9 +9,10 @@ import { documentFrameFromSize } from '../document-frame.ts';
 import { NEW_LAYER_ACTION } from '../../util/constants.ts';
 import { createLayerSource } from '../layer-utils.ts';
 
-// Isolate the double-commit guard from canvas rasterisation: the fix lives in
-// createLayerFromTool's idempotency check, so we stub the layer factory and
-// assert that both commit paths yield exactly one layer.
+// The cross-hook idempotency boundary is the DRAFT, not a hook-local guard: the
+// text tool clears `text` and `rect` synchronously on Apply, and `commitDirtyTool`
+// short-circuits on the cleared draft. The layer factory is stubbed so both commit
+// paths can be counted without rasterising anything.
 vi.mock('../layer-utils.ts', async (importActual) => {
   const actual = await importActual<typeof import('../layer-utils.ts')>();
   let counter = 0;
@@ -72,7 +73,7 @@ function setupTextTool() {
   return result;
 }
 
-describe('useLayers text double-commit deduplication', () => {
+describe('useLayers text commit idempotency boundary', () => {
   beforeEach(() => {
     vi.mocked(createLayerSource).mockClear();
   });
@@ -93,10 +94,9 @@ describe('useLayers text double-commit deduplication', () => {
     });
     expect((result.current.store.currentArgs.current as TextToolArgs).text).toBe('');
 
-    // Path 1 (Apply button) would call createLayerFromTool, but the idempotency
-    // guard lives in commitDirtyTool (createLayerFromTool's check was removed due
-    // to infinite recursion). Simulate the Apply path by calling commitDirtyTool
-    // again — it sees the cleared ref and short-circuits.
+    // Path 1 (Apply button) would call createLayerFromTool, but the draft it
+    // reads was cleared synchronously, so it short-circuits. Simulate the Apply
+    // path by calling commitDirtyTool again — it sees the cleared draft.
     act(() => {
       result.current.layers.commitDirtyTool();
     });
@@ -123,8 +123,8 @@ describe('useLayers text double-commit deduplication', () => {
       result.current.store.currentArgs.current = { ...args, text: '', rect: null } as ToolArgs;
     });
 
-    // Path 2: a deferred commit runs afterwards — ref is already cleared, so it
-    // must short-circuit without creating a second layer.
+    // Path 2: a deferred commit runs afterwards — the draft is already cleared,
+    // so it must short-circuit without creating a second layer.
     act(() => {
       result.current.layers.commitDirtyTool();
     });
@@ -155,5 +155,71 @@ describe('useLayers text double-commit deduplication', () => {
 
     expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(2);
     expect(Object.keys(result.current.store.layers)).toHaveLength(2);
+  });
+
+  it('repeats the same text verbatim as a new layer, because only the cleared draft suppresses a commit', () => {
+    const result = setupTextTool();
+    const args = makeTextArgs();
+
+    act(() => {
+      result.current.store.currentArgs.current = args;
+    });
+    act(() => {
+      result.current.layers.commitDirtyTool();
+    });
+
+    // The first commit cleared `text` but left the rect in place. Re-arming the
+    // exact same args is a new commit, not a duplicate: the boundary is the
+    // draft state, not a hook-local comparison against the last committed args.
+    act(() => {
+      result.current.store.currentArgs.current = args;
+    });
+    act(() => {
+      result.current.layers.commitDirtyTool();
+    });
+
+    expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(2);
+    expect(Object.keys(result.current.store.layers)).toHaveLength(2);
+    expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(2);
+  });
+
+  it('commits nothing while the draft rect is cleared even if the text survives', () => {
+    const result = setupTextTool();
+
+    act(() => {
+      result.current.store.currentArgs.current = {
+        ...makeTextArgs(),
+        rect: null,
+      } as ToolArgs;
+    });
+    act(() => {
+      result.current.layers.commitDirtyTool();
+    });
+
+    expect(vi.mocked(createLayerSource)).not.toHaveBeenCalled();
+    expect(Object.keys(result.current.store.layers)).toHaveLength(0);
+    expect(result.current.store.history).toEqual([]);
+  });
+
+  it('leaves the text tool draft alone when the tool is not text', () => {
+    const result = setupTextTool();
+    const args = makeTextArgs();
+
+    act(() => {
+      result.current.dispatch({ type: 'SET_TOOL_NAME', payload: 'shape' });
+    });
+    act(() => {
+      result.current.store.currentArgs.current = args;
+    });
+
+    act(() => {
+      result.current.layers.commitDirtyTool();
+    });
+
+    // The text branch is keyed on the active tool, so switching away leaves the
+    // shared draft completely untouched.
+    expect(vi.mocked(createLayerSource)).not.toHaveBeenCalled();
+    expect(result.current.store.currentArgs.current).toBe(args);
+    expect(result.current.store.history).toEqual([]);
   });
 });

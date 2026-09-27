@@ -19,12 +19,14 @@ const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
 const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
 const mockCommitDirtyTool = vi.hoisted(() => vi.fn());
+/** `cancelLayerPreview` and `commitDirtyTool` are optional on the layer context (Transform.tsx:31,303). */
+const layerApi = vi.hoisted(() => ({ cancelLayerPreview: true, commitDirtyTool: true }));
 
 vi.mock('../../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     tempUpdateLayer: mockTempUpdateLayer,
-    cancelLayerPreview: mockCancelLayerPreview,
-    commitDirtyTool: mockCommitDirtyTool,
+    cancelLayerPreview: layerApi.cancelLayerPreview ? mockCancelLayerPreview : undefined,
+    commitDirtyTool: layerApi.commitDirtyTool ? mockCommitDirtyTool : undefined,
   }),
 }));
 
@@ -50,9 +52,14 @@ function resetToolArgs(overrides: Partial<typeof toolArgs> = {}) {
   });
 }
 
+/** The last transient preview payload published to the layer store. */
+const previewArgs = () => mockTempUpdateLayer.mock.lastCall?.[0] as { toolArgs: Record<string, unknown> };
+
 describe('Transform toolbar', () => {
   beforeEach(() => {
     resetToolArgs();
+    layerApi.cancelLayerPreview = true;
+    layerApi.commitDirtyTool = true;
     mockTempUpdateLayer.mockClear();
     mockSetToolArgs.mockClear();
     mockCancelLayerPreview.mockClear();
@@ -106,6 +113,266 @@ describe('Transform toolbar', () => {
     fireEvent.click(screen.getByText('Reset All'));
   });
 
+  describe('accessible names of the icon buttons', () => {
+    it('falls back to the icon glyph as the accessible name, with the tooltip only as title', () => {
+      render(<Transform />);
+
+      const rotateLeft = screen.getByTitle('Rotate 90° Left');
+      // The buttons carry a `title` but no `aria-label`, so a screen reader announces the glyph
+      // ("-90°") rather than the intent ("Rotate 90° Left"). Documented rather than fixed here
+      // because Transform.tsx is production code.
+      expect(rotateLeft).toHaveAccessibleName('-90°');
+      expect(rotateLeft).toHaveAttribute('title', 'Rotate 90° Left');
+      expect(rotateLeft).not.toHaveAttribute('aria-label');
+
+      expect(screen.getByTitle('Rotate 180°')).toHaveAccessibleName('180°');
+      expect(screen.getByTitle('Rotate 90° Right')).toHaveAccessibleName('+90°');
+      expect(screen.getByTitle('Mirror Horizontal')).toHaveAccessibleName('↔');
+      expect(screen.getByTitle('Mirror Vertical')).toHaveAccessibleName('↕');
+    });
+
+    it.fails('names the rotate and mirror icon buttons after their action (Transform.tsx:159-178, 281-298)', () => {
+      render(<Transform />);
+
+      expect(screen.getByRole('button', { name: 'Rotate 90° Left' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Mirror Horizontal' })).toBeInTheDocument();
+    });
+  });
+
+  describe('argument defaults', () => {
+    it('falls back to the documented defaults when the args omit every field (Transform.tsx:52)', () => {
+      for (const key of Object.keys(toolArgs)) delete (toolArgs as Record<string, unknown>)[key];
+      render(<Transform />);
+
+      const value = (id: string) => (document.getElementById(id) as HTMLInputElement).value;
+      expect(value('rotate-slider')).toBe('0');
+      expect(value('skew-x-slider')).toBe('0');
+      expect(value('skew-y-slider')).toBe('0');
+      expect(value('trapezoid-slider')).toBe('0');
+      expect(value('resize-x-slider')).toBe('100');
+      expect(value('resize-y-slider')).toBe('100');
+
+      // rotate, skew x and skew y all render `0°`; only the trapezoid renders `0%`.
+      expect(screen.getAllByText('0°')).toHaveLength(3);
+      expect(screen.getAllByText('0%')).toHaveLength(1);
+      expect(screen.getAllByText('100%')).toHaveLength(2);
+    });
+
+    it('exposes the documented slider bounds', () => {
+      render(<Transform />);
+
+      const bounds = (id: string) => {
+        const input = document.getElementById(id) as HTMLInputElement;
+        return [input.min, input.max];
+      };
+
+      expect(bounds('rotate-slider')).toEqual(['-90', '90']);
+      expect(bounds('skew-x-slider')).toEqual(['-45', '45']);
+      expect(bounds('skew-y-slider')).toEqual(['-45', '45']);
+      expect(bounds('trapezoid-slider')).toEqual(['-85', '85']);
+      expect(bounds('resize-x-slider')).toEqual(['10', '300']);
+      expect(bounds('resize-y-slider')).toEqual(['10', '300']);
+    });
+
+    it('accepts both boundaries of every slider and republishes the exact payload', () => {
+      render(<Transform />);
+
+      const setTo = (id: string, value: string) =>
+        fireEvent.change(document.getElementById(id) as HTMLInputElement, { target: { value } });
+
+      setTo('rotate-slider', '-90');
+      expect(previewArgs().toolArgs).toEqual({ ...toolArgs, rotate: -90, trapezoid: 0 });
+
+      setTo('rotate-slider', '90');
+      expect(previewArgs().toolArgs).toEqual({ ...toolArgs, rotate: 90, trapezoid: 0 });
+
+      setTo('skew-x-slider', '-45');
+      expect(previewArgs().toolArgs).toEqual({ ...toolArgs, skewX: -45, trapezoid: 0 });
+
+      setTo('trapezoid-slider', '-85');
+      expect(previewArgs().toolArgs).toEqual({ ...toolArgs, trapezoid: -85 });
+
+      setTo('resize-x-slider', '10');
+      expect(previewArgs().toolArgs).toEqual({ ...toolArgs, resizeX: 10, trapezoid: 0 });
+
+      setTo('resize-y-slider', '300');
+      expect(previewArgs().toolArgs).toEqual({ ...toolArgs, resizeY: 300, trapezoid: 0 });
+    });
+  });
+
+  describe('trapezoid exclusivity', () => {
+    it('resets every other transform field when the trapezoid slider moves (Transform.tsx:128-141)', () => {
+      resetToolArgs({
+        rotate: 45,
+        mirrorH: true,
+        mirrorV: true,
+        skewX: 20,
+        skewY: -20,
+        resizeX: 150,
+        resizeY: 80,
+        trapezoid: 0,
+      });
+      render(<Transform />);
+
+      fireEvent.change(document.getElementById('trapezoid-slider') as HTMLInputElement, { target: { value: '30' } });
+
+      expect(mockTempUpdateLayer).toHaveBeenCalledExactlyOnceWith({
+        toolArgs: {
+          toolName: 'transform',
+          rotate: 0,
+          mirrorH: false,
+          mirrorV: false,
+          skewX: 0,
+          skewY: 0,
+          resizeX: 100,
+          resizeY: 100,
+          trapezoid: 30,
+        },
+      });
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(mockTempUpdateLayer.mock.lastCall![0].toolArgs);
+    });
+
+    it('clears the trapezoid whenever a rotate or mirror action is taken', () => {
+      resetToolArgs({ rotate: 30, trapezoid: 25 });
+      render(<Transform />);
+
+      fireEvent.click(screen.getByTitle('Rotate 90° Right'));
+      expect(previewArgs().toolArgs).toMatchObject({ rotate: 120, trapezoid: 0 });
+
+      fireEvent.click(screen.getByTitle('Mirror Horizontal'));
+      expect(previewArgs().toolArgs).toMatchObject({ mirrorH: true, trapezoid: 0 });
+    });
+  });
+
+  describe('rotation wrap-around', () => {
+    it('wraps a left rotation past zero into 360 (Transform.tsx:95-99)', () => {
+      resetToolArgs({ rotate: 10 });
+      render(<Transform />);
+
+      fireEvent.click(screen.getByTitle('Rotate 90° Left'));
+
+      expect(previewArgs().toolArgs).toMatchObject({ rotate: 280, trapezoid: 0 });
+    });
+
+    it('wraps a right rotation past 360 back below it (Transform.tsx:101-105)', () => {
+      resetToolArgs({ rotate: 350 });
+      render(<Transform />);
+
+      fireEvent.click(screen.getByTitle('Rotate 90° Right'));
+
+      expect(previewArgs().toolArgs).toMatchObject({ rotate: 80, trapezoid: 0 });
+    });
+
+    it('leaves a left rotation that stays above zero untouched (Transform.tsx:97)', () => {
+      resetToolArgs({ rotate: 350 });
+      render(<Transform />);
+
+      fireEvent.click(screen.getByTitle('Rotate 90° Left'));
+
+      expect(previewArgs().toolArgs).toMatchObject({ rotate: 260 });
+    });
+
+    it('normalises the 180 toggle into 0..359', () => {
+      resetToolArgs({ rotate: 180 });
+      render(<Transform />);
+
+      fireEvent.click(screen.getByTitle('Rotate 180°'));
+
+      expect(previewArgs().toolArgs).toMatchObject({ rotate: 0, trapezoid: 0 });
+    });
+  });
+
+  describe('mirror toggles', () => {
+    it('turns the horizontal mirror on without touching the vertical one', () => {
+      resetToolArgs({ mirrorH: false, mirrorV: false });
+      render(<Transform />);
+
+      fireEvent.click(screen.getByTitle('Mirror Horizontal'));
+
+      expect(previewArgs().toolArgs).toMatchObject({ mirrorH: true, mirrorV: false, trapezoid: 0 });
+    });
+
+    it('turns the vertical mirror on while keeping an already mirrored horizontal axis', () => {
+      resetToolArgs({ mirrorH: true, mirrorV: false });
+      render(<Transform />);
+
+      fireEvent.click(screen.getByTitle('Mirror Vertical'));
+
+      expect(previewArgs().toolArgs).toMatchObject({ mirrorH: true, mirrorV: true });
+    });
+
+    it('turns a mirror back off', () => {
+      resetToolArgs({ mirrorH: true });
+      render(<Transform />);
+
+      fireEvent.click(screen.getByTitle('Mirror Horizontal'));
+
+      expect(previewArgs().toolArgs).toMatchObject({ mirrorH: false });
+    });
+
+    it.fails('lets consecutive mirror toggles accumulate in one session (Transform.tsx:112-118)', () => {
+      // Each handler reads the args object published by the store. The mocked store never
+      // hands a new one back within a single mount, so the second click is computed from the
+      // first click's starting state and the first mirror is lost. Asserting the intended
+      // accumulate behaviour documents the gap without touching the component.
+      render(<Transform />);
+
+      fireEvent.click(screen.getByTitle('Mirror Horizontal'));
+      fireEvent.click(screen.getByTitle('Mirror Vertical'));
+
+      expect(previewArgs().toolArgs).toMatchObject({ mirrorH: true, mirrorV: true });
+    });
+  });
+
+  describe('optional layer actions', () => {
+    it('still resets the tool args when the layer context has no cancelLayerPreview (Transform.tsx:31)', () => {
+      layerApi.cancelLayerPreview = false;
+      render(<Transform />);
+
+      fireEvent.click(screen.getByText('Reset All'));
+
+      expect(mockCancelLayerPreview).not.toHaveBeenCalled();
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
+        rotate: 0,
+        mirrorH: false,
+        mirrorV: false,
+        skewX: 0,
+        skewY: 0,
+        trapezoid: 0,
+        resizeX: 100,
+        resizeY: 100,
+        toolName: 'transform',
+      });
+    });
+
+    it('applies without a commitDirtyTool implementation (Transform.tsx:303)', () => {
+      layerApi.commitDirtyTool = false;
+      render(<Transform />);
+
+      expect(() => fireEvent.click(screen.getByText('Apply'))).not.toThrow();
+      expect(mockCommitDirtyTool).not.toHaveBeenCalled();
+    });
+
+    it('removes the escape listener on unmount (Transform.tsx:35-43)', () => {
+      const { unmount } = render(<Transform />);
+      unmount();
+
+      fireEvent.keyDown(window, { key: 'Escape' });
+
+      expect(mockCancelLayerPreview).not.toHaveBeenCalled();
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+    });
+
+    it('ignores every other key', () => {
+      render(<Transform />);
+
+      fireEvent.keyDown(window, { key: 'Enter' });
+      fireEvent.keyDown(window, { key: 'e' });
+
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+    });
+  });
+
   describe('keyboard navigation', () => {
     const pressArrowOnRange = (range: HTMLInputElement, key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight') => {
       if (key === 'ArrowUp' || key === 'ArrowRight') {
@@ -115,8 +382,6 @@ describe('Transform toolbar', () => {
       }
       fireEvent.input(range);
     };
-
-    const lastPreviewArgs = () => mockTempUpdateLayer.mock.lastCall?.[0] as { toolArgs: Record<string, unknown> };
 
     const resetArgs = {
       rotate: 0,
@@ -207,11 +472,11 @@ describe('Transform toolbar', () => {
       expect(Number(rotateSlider.value)).toBe(0);
 
       pressArrowOnRange(rotateSlider, 'ArrowRight');
-      expect(lastPreviewArgs().toolArgs.rotate).toBe(1);
-      expect(lastPreviewArgs().toolArgs.trapezoid).toBe(0);
+      expect(previewArgs().toolArgs.rotate).toBe(1);
+      expect(previewArgs().toolArgs.trapezoid).toBe(0);
 
       pressArrowOnRange(rotateSlider, 'ArrowLeft');
-      expect(lastPreviewArgs().toolArgs.rotate).toBe(-1);
+      expect(previewArgs().toolArgs.rotate).toBe(-1);
     });
 
     it('allows arrow key navigation on skew sliders', () => {
@@ -224,20 +489,20 @@ describe('Transform toolbar', () => {
       expect(Number(skewXSlider.value)).toBe(0);
 
       pressArrowOnRange(skewXSlider, 'ArrowRight');
-      expect(lastPreviewArgs().toolArgs.skewX).toBe(1);
+      expect(previewArgs().toolArgs.skewX).toBe(1);
 
       pressArrowOnRange(skewXSlider, 'ArrowLeft');
-      expect(lastPreviewArgs().toolArgs.skewX).toBe(-1);
+      expect(previewArgs().toolArgs.skewX).toBe(-1);
 
       skewYSlider.focus();
       expect(skewYSlider).toHaveFocus();
       expect(Number(skewYSlider.value)).toBe(0);
 
       pressArrowOnRange(skewYSlider, 'ArrowUp');
-      expect(lastPreviewArgs().toolArgs.skewY).toBe(1);
+      expect(previewArgs().toolArgs.skewY).toBe(1);
 
       pressArrowOnRange(skewYSlider, 'ArrowDown');
-      expect(lastPreviewArgs().toolArgs.skewY).toBe(-1);
+      expect(previewArgs().toolArgs.skewY).toBe(-1);
     });
 
     it('allows arrow key navigation on trapezoid slider', () => {
@@ -249,10 +514,10 @@ describe('Transform toolbar', () => {
       expect(Number(trapezoidSlider.value)).toBe(0);
 
       pressArrowOnRange(trapezoidSlider, 'ArrowRight');
-      expect(lastPreviewArgs().toolArgs).toEqual(expect.objectContaining({ trapezoid: 1 }));
+      expect(previewArgs().toolArgs).toEqual(expect.objectContaining({ trapezoid: 1 }));
 
       pressArrowOnRange(trapezoidSlider, 'ArrowLeft');
-      expect(lastPreviewArgs().toolArgs.trapezoid).toBe(-1);
+      expect(previewArgs().toolArgs.trapezoid).toBe(-1);
     });
 
     it('allows arrow key navigation on resize sliders', () => {
@@ -265,20 +530,20 @@ describe('Transform toolbar', () => {
       expect(Number(resizeXSlider.value)).toBe(100);
 
       pressArrowOnRange(resizeXSlider, 'ArrowRight');
-      expect(lastPreviewArgs().toolArgs.resizeX).toBe(101);
+      expect(previewArgs().toolArgs.resizeX).toBe(101);
 
       pressArrowOnRange(resizeXSlider, 'ArrowLeft');
-      expect(lastPreviewArgs().toolArgs.resizeX).toBe(99);
+      expect(previewArgs().toolArgs.resizeX).toBe(99);
 
       resizeYSlider.focus();
       expect(resizeYSlider).toHaveFocus();
       expect(Number(resizeYSlider.value)).toBe(100);
 
       pressArrowOnRange(resizeYSlider, 'ArrowUp');
-      expect(lastPreviewArgs().toolArgs.resizeY).toBe(101);
+      expect(previewArgs().toolArgs.resizeY).toBe(101);
 
       pressArrowOnRange(resizeYSlider, 'ArrowDown');
-      expect(lastPreviewArgs().toolArgs.resizeY).toBe(99);
+      expect(previewArgs().toolArgs.resizeY).toBe(99);
     });
 
     it('allows enter/space to trigger rotate buttons', async () => {
@@ -290,15 +555,15 @@ describe('Transform toolbar', () => {
 
       rotateLeftButton.focus();
       await user.keyboard('{Enter}');
-      expect(lastPreviewArgs().toolArgs.rotate).toBe(270);
+      expect(previewArgs().toolArgs.rotate).toBe(270);
 
       rotate180Button.focus();
       await user.keyboard(' ');
-      expect(lastPreviewArgs().toolArgs.rotate).toBe(180);
+      expect(previewArgs().toolArgs.rotate).toBe(180);
 
       rotateRightButton.focus();
       await user.keyboard('{Enter}');
-      expect(lastPreviewArgs().toolArgs.rotate).toBe(90);
+      expect(previewArgs().toolArgs.rotate).toBe(90);
 
       expect(mockTempUpdateLayer).toHaveBeenCalledTimes(3);
       expect(mockSetToolArgs).toHaveBeenCalledTimes(3);
@@ -312,12 +577,12 @@ describe('Transform toolbar', () => {
 
       mirrorHButton.focus();
       await user.keyboard('{Enter}');
-      expect(lastPreviewArgs().toolArgs.mirrorH).toBe(true);
-      expect(lastPreviewArgs().toolArgs.mirrorV).toBe(false);
+      expect(previewArgs().toolArgs.mirrorH).toBe(true);
+      expect(previewArgs().toolArgs.mirrorV).toBe(false);
 
       mirrorVButton.focus();
       await user.keyboard(' ');
-      expect(lastPreviewArgs().toolArgs.mirrorV).toBe(true);
+      expect(previewArgs().toolArgs.mirrorV).toBe(true);
 
       expect(mockTempUpdateLayer).toHaveBeenCalledTimes(2);
     });

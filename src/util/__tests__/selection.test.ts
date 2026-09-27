@@ -822,6 +822,25 @@ describe('canvas snapshot helpers', () => {
       expect(alphaAt(3, 8)).toBe(0);
       expect(alphaAt(0, 0)).toBe(0);
     });
+
+    it('returns null when the padded bounds collapse against the image size', () => {
+      // The origin is clamped to zero and the far edge to the image size, but the
+      // origin itself is only clamped from below, so a polygon entirely outside the
+      // image produces a negative extent and no destination canvas at all.
+      const result = copyFeatheredPolygonSelectionToCanvas(
+        makeMockCanvas(20, 20),
+        [
+          { x: 50, y: 50 },
+          { x: 60, y: 50 },
+          { x: 60, y: 60 },
+        ],
+        { featherRadius: 2, imageSize: { width: 10, height: 10 } }
+      );
+
+      expect(result).toBeNull();
+      // No destination canvas is allocated at all, so nothing is ever drawn.
+      expect(constructed).toHaveLength(0);
+    });
   });
 
   describe('copySelectionToCanvas dispatch', () => {
@@ -1099,5 +1118,20 @@ describe('selection geometry helpers used by the copy path', () => {
     const pos: Pos = created.pos;
     expect(pos).toEqual({ x: 2, y: 2, width: 8, height: 8 });
     expect(getSelectionAbsolutePoints(created)).toEqual(triangle(1));
+  });
+});
+
+describe('moveSelectionByDelta metadata defaults', () => {
+  it('starts movedAtVersion at 1 when the selection carries no metadata at all', () => {
+    const moved = moveSelectionByDelta(selection({ metadata: undefined }), { x: 1, y: 1 });
+
+    expect(moved.metadata).toEqual({ movedAtVersion: 1 });
+    expect(moved.pos).toEqual({ x: 6, y: 6, width: 10, height: 10 });
+  });
+
+  it('preserves unrelated metadata keys while bumping the version', () => {
+    const moved = moveSelectionByDelta(selection({ metadata: { featherRadius: 8 } }), { x: 0, y: 0 });
+
+    expect(moved.metadata).toEqual({ featherRadius: 8, movedAtVersion: 1 });
   });
 });

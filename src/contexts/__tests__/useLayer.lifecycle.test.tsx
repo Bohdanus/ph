@@ -403,7 +403,9 @@ describe('useLayers tempUpdateLayer tool boundaries', () => {
     const rasterized = new OffscreenCanvas(40, 20) as unknown as Layer['tmpCanvas'];
     const processor = vi
       .spyOn(toolProcessors.transform, 'imageProcessor')
-      .mockReturnValue(((_args: ToolArgs) => [rasterized]) as unknown as (args: ToolArgs) => ToolResult);
+      // The rasterized preview canvas is the observable outcome, so the returned
+      // processor ignores its args instead of declaring an unused parameter.
+      .mockReturnValue((() => [rasterized]) as unknown as (args: ToolArgs) => ToolResult);
     const { result } = setup({ layers: { edited: makeLayer('edited', 0) }, activeLayerId: 'edited' });
 
     act(() => {

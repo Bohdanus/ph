@@ -299,4 +299,113 @@ describe('LayersTab against a live layer store', () => {
     expect(getRowByName('Background').querySelector('button[aria-label="Show layer"]')).toBeInTheDocument();
     expect(layerActions.toggleVisibility).not.toHaveBeenCalled();
   });
+
+  it('renders a layer that the store adds after the first render', () => {
+    const { container } = render(<LayersTab />);
+    expect(container.querySelectorAll('span.truncate')).toHaveLength(3);
+
+    act(() => {
+      updateStore((prev) => ({
+        ...prev,
+        layers: {
+          ...(prev.layers as LayersRecord),
+          'layer-4': createMockLayer({ id: 'layer-4', name: 'Newest', order: 3 }),
+        },
+      }));
+    });
+
+    expect(Array.from(container.querySelectorAll('span.truncate')).map((span) => span.textContent)).toEqual([
+      'Newest',
+      'Top Layer',
+      'Layer 2',
+      'Background',
+    ]);
+    expect(getRowByName('Newest')).toHaveClass('bg-transparent');
+  });
+
+  it('keeps the store untouched when a rename is reverted with Escape', () => {
+    render(<LayersTab />);
+    const span = getNameSpan(getRowByName('Top Layer'));
+
+    act(() => {
+      fireEvent.mouseDown(span);
+    });
+    act(() => {
+      span.textContent = 'Discarded';
+    });
+    act(() => {
+      fireEvent.keyDown(span, { key: 'Escape' });
+    });
+
+    expect(layerActions.updateLayer).not.toHaveBeenCalled();
+    expect(screen.getByText('Top Layer')).toBeInTheDocument();
+    expect(screen.queryByText('Discarded')).toBeNull();
+  });
+
+  it.each([
+    ['a whitespace-only name', '   '],
+    ['an empty name', ''],
+  ])('keeps the stored name for %s', (_label, nextName) => {
+    const { container } = render(<LayersTab />);
+    const row = getRowByName('Top Layer');
+    const span = getNameSpan(row);
+
+    act(() => {
+      fireEvent.mouseDown(span);
+    });
+    act(() => {
+      span.textContent = nextName;
+      fireEvent.blur(span);
+    });
+
+    expect(layerActions.updateLayer).not.toHaveBeenCalled();
+    // the store still holds the old name, so a later store-driven render restores it
+    // (the blank label surviving until then is documented in LayersTab.test.tsx)
+    expect(row).toBeInTheDocument();
+    expect(container.querySelectorAll('span.truncate')).toHaveLength(3);
+  });
+
+  it('leaves the stacking order untouched when a drop is refused', () => {
+    vi.useFakeTimers();
+    const { container } = render(<LayersTab />);
+    const dataTransfer = createDataTransfer();
+    const orderBefore = Array.from(container.querySelectorAll('span.truncate')).map((span) => span.textContent);
+
+    // 'Layer 2' sits directly below the dragged 'Top Layer', which the component refuses as a target
+    act(() => {
+      fireEvent.dragStart(getRowByName('Top Layer'), { dataTransfer });
+    });
+    act(() => {
+      fireEvent.dragOver(getRowByName('Layer 2'), { dataTransfer });
+    });
+    act(() => {
+      fireEvent.drop(getRowByName('Layer 2'), { dataTransfer });
+    });
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+
+    expect(layerActions.moveLayerAfter).not.toHaveBeenCalled();
+    expect(Array.from(container.querySelectorAll('span.truncate')).map((span) => span.textContent)).toEqual(
+      orderBefore
+    );
+  });
+
+  it('leaves the stacking order untouched when the drag is abandoned', () => {
+    const { container } = render(<LayersTab />);
+    const dataTransfer = createDataTransfer();
+    const orderBefore = Array.from(container.querySelectorAll('span.truncate')).map((span) => span.textContent);
+
+    act(() => {
+      fireEvent.dragStart(getRowByName('Top Layer'), { dataTransfer });
+    });
+    act(() => {
+      fireEvent.dragEnd(getRowByName('Top Layer'), { dataTransfer });
+    });
+
+    expect(layerActions.moveLayerAfter).not.toHaveBeenCalled();
+    expect(Array.from(container.querySelectorAll('span.truncate')).map((span) => span.textContent)).toEqual(
+      orderBefore
+    );
+  });
 });

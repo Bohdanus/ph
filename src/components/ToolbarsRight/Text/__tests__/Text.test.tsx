@@ -22,6 +22,10 @@ const toolArgs = vi.hoisted(() => ({
   italic: false,
   fontFamily: 'Arial',
   align: 'left',
+  // `defaultSettings.text` carries a colour (src/tools/settings.ts:69-80), so the fixture must
+  // too. Without it `Text.tsx:17` sees `toolArgs.color === undefined`, republishes the args on
+  // every mount and every one of the call-count assertions below is off by one.
+  color: '#000000',
 }));
 
 const mockCreateLayerFromTool = vi.hoisted(() => vi.fn());
@@ -66,6 +70,7 @@ function resetToolArgs(overrides: Partial<typeof toolArgs> = {}) {
     italic: false,
     fontFamily: 'Arial',
     align: 'left',
+    color: '#000000',
     ...overrides,
   });
 }
@@ -104,6 +109,28 @@ describe('Text toolbar', () => {
 
     expect(screen.getByRole('button', { name: 'B' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'I' })).toBeInTheDocument();
+  });
+
+  it('starts from the bold and italic state carried by the tool args', () => {
+    resetToolArgs({ bold: true, italic: true });
+    renderWithProvider(<Text />);
+
+    const boldButton = screen.getByRole('button', { name: 'B' });
+    const italicButton = screen.getByRole('button', { name: 'I' });
+
+    expect(boldButton.className).toContain('bg-blue-600');
+    expect(italicButton.className).toContain('bg-blue-600');
+
+    // Toggling back publishes the inverse of the state the toolbar actually rendered.
+    fireEvent.click(boldButton);
+    expect(mockSetToolArgs).toHaveBeenLastCalledWith(expect.objectContaining({ bold: false, italic: true }));
+  });
+
+  it.fails('exposes the bold and italic toggle state through aria-pressed (Text.tsx:189-206)', () => {
+    renderWithProvider(<Text />);
+
+    expect(screen.getByRole('button', { name: 'B' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'I' })).toHaveAttribute('aria-pressed', 'false');
   });
 
   it('renders null when toolArgs is not text tool', () => {
@@ -152,6 +179,104 @@ describe('Text toolbar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
 
     expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+  });
+
+  describe('font family', () => {
+    const lastToolArgs = () => mockSetToolArgs.mock.lastCall?.[0] as Record<string, unknown>;
+
+    it('opens the font list from the toolbar trigger', () => {
+      renderWithProvider(<Text />);
+
+      expect(screen.queryByRole('button', { name: 'Impact' })).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByLabelText('Font'));
+
+      expect(screen.getByRole('button', { name: 'Impact' })).toBeInTheDocument();
+    });
+
+    it('publishes the chosen family and recomputes the text rect (Text.tsx:58-62)', () => {
+      renderWithProvider(<Text />);
+
+      fireEvent.click(screen.getByLabelText('Font'));
+      fireEvent.click(screen.getByRole('button', { name: 'Impact' }));
+
+      expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
+      expect(lastToolArgs()).toMatchObject({ fontFamily: 'Impact', text: 'Hello', fontSize: 64, lineHeight: 1.1 });
+      // `handleFontFamilyChange` recomputes the rect through `calculateNewRect` instead of
+      // publishing the args unchanged, otherwise the layer would keep the old metrics.
+      expect(lastToolArgs().rect).toEqual(expect.objectContaining({ x1: expect.any(Number), y2: expect.any(Number) }));
+    });
+
+    it('keeps the align choice when the family changes', () => {
+      resetToolArgs({ align: 'right' });
+      renderWithProvider(<Text />);
+
+      fireEvent.click(screen.getByLabelText('Font'));
+      fireEvent.click(screen.getByRole('button', { name: 'Georgia' }));
+
+      expect(lastToolArgs()).toMatchObject({ align: 'right', fontFamily: 'Georgia' });
+    });
+
+    it('recomputes a non-null rect for an empty draft', () => {
+      resetToolArgs({ text: '', rect: { x: 0, y: 0, width: 10, height: 10 } });
+      renderWithProvider(<Text />);
+
+      fireEvent.click(screen.getByLabelText('Font'));
+      fireEvent.click(screen.getByRole('button', { name: 'Georgia' }));
+
+      // `calculateNewRect` widens a zero-text rect rather than collapsing it, so Apply can
+      // still become reachable once the user types.
+      expect(lastToolArgs().rect).toEqual(expect.objectContaining({ x1: expect.any(Number), y2: expect.any(Number) }));
+    });
+  });
+
+  describe('colour synchronisation', () => {
+    const lastToolArgs = () => mockSetToolArgs.mock.lastCall?.[0] as Record<string, unknown>;
+
+    it('adopts the store colour when it diverges from the tool args colour', () => {
+      resetStoreState({ color: '#ff0000' });
+      renderWithProvider(<Text />);
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ color: '#ff0000', text: 'Hello' })
+      );
+      expect(lastToolArgs().color).toBe('#ff0000');
+    });
+
+    it('does not publish anything when the tool args already match the store colour', () => {
+      renderWithProvider(<Text />);
+
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('apply idempotency', () => {
+    it('commits the same tool args only once, however often Apply is activated (Text.tsx:84)', () => {
+      renderWithProvider(<Text />);
+
+      const applyButton = screen.getByRole('button', { name: 'Apply' });
+      fireEvent.click(applyButton);
+      fireEvent.click(applyButton);
+      fireEvent.click(applyButton);
+
+      // The guard compares the args object identity, and the mocked store hands back the same
+      // object until something else republishes it.
+      expect(mockCreateLayerFromTool).toHaveBeenCalledTimes(1);
+      expect(mockSetToolArgs).toHaveBeenCalledTimes(1);
+      expect(mockSetToolArgs).toHaveBeenCalledWith(expect.objectContaining({ text: '', rect: null }));
+    });
+
+    it('keeps the guard armed while the store hands back the same args object', () => {
+      // The guard is an identity check, so it only re-arms once the store publishes a *new*
+      // object. Mutating the args in place, as this mock does, must not create a second layer.
+      renderWithProvider(<Text />);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+      resetToolArgs({ text: 'Second' });
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+      expect(mockCreateLayerFromTool).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('keyboard navigation', () => {

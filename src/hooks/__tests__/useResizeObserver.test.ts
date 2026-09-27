@@ -3,6 +3,7 @@ import { renderHook } from '@testing-library/react';
 import type { RefObject } from 'react';
 import { usePointerPosition } from '../usePointerPosition.ts';
 import { useResizeObserverRAF } from '../useResizeObserver.ts';
+import type { Pos } from '../../contexts/general-types.ts';
 
 type MockResizeObserverInstance = {
   callback: ResizeObserverCallback;
@@ -76,7 +77,7 @@ describe('useResizeObserverRAF', () => {
     vi.useFakeTimers();
     const { MockResizeObserver, getInstance: getInst } = createMockResizeObserver();
     getInstance = getInst;
-    vi.spyOn(globalThis, 'ResizeObserver').mockImplementation(MockResizeObserver as any);
+    vi.spyOn(globalThis, 'ResizeObserver').mockImplementation(MockResizeObserver as unknown as typeof ResizeObserver);
   });
 
   afterEach(() => {
@@ -188,7 +189,7 @@ describe('useResizeObserverRAF', () => {
   });
 
   it('does not set up an observer when ResizeObserver is undefined', () => {
-    vi.spyOn(globalThis, 'ResizeObserver').mockImplementation(undefined as any);
+    vi.spyOn(globalThis, 'ResizeObserver').mockImplementation(undefined as unknown as typeof ResizeObserver);
     const el = makeElement();
     const ref = { current: el } as RefObject<HTMLElement | null>;
     const onResize = vi.fn();
@@ -207,6 +208,57 @@ describe('useResizeObserverRAF', () => {
     unmount();
 
     expect(getInstance()!.disconnect).toHaveBeenCalled();
+  });
+
+  it('reports a collapsed element as a zero-size rect', () => {
+    const el = makeElement({ left: 7, top: 8 });
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const onResize = vi.fn();
+
+    renderHook(() => useResizeObserverRAF(ref, onResize));
+
+    const instance = getInstance();
+    instance!.callback([makeEntry(0, 0)], instance! as unknown as ResizeObserver);
+
+    vi.advanceTimersByTime(16);
+
+    expect(onResize).toHaveBeenCalledExactlyOnceWith({ x: 7, y: 8, width: 0, height: 0 });
+  });
+
+  it('ignores an empty entries batch', () => {
+    const el = makeElement();
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const onResize = vi.fn();
+
+    renderHook(() => useResizeObserverRAF(ref, onResize));
+
+    const instance = getInstance();
+    instance!.callback([], instance! as unknown as ResizeObserver);
+
+    vi.advanceTimersByTime(16);
+
+    expect(onResize).not.toHaveBeenCalled();
+  });
+
+  it('notifies the latest onResize callback after a re-render', () => {
+    const el = makeElement({ left: 1, top: 2 });
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const first = vi.fn();
+    const second = vi.fn();
+
+    const { rerender } = renderHook(
+      ({ onResize }: { onResize: (size: Pos) => void }) => useResizeObserverRAF(ref, onResize),
+      { initialProps: { onResize: first } }
+    );
+
+    rerender({ onResize: second });
+
+    const instance = getInstance();
+    instance!.callback([makeEntry(10, 20)], instance! as unknown as ResizeObserver);
+    vi.advanceTimersByTime(16);
+
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledExactlyOnceWith({ x: 1, y: 2, width: 10, height: 20 });
   });
 
   it('cancels a pending animation frame on unmount', () => {

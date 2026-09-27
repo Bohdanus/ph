@@ -523,6 +523,42 @@ describe('AppKeyboardShortcuts tool cycling', () => {
   });
 });
 
+describe('AppKeyboardShortcuts group fallbacks', () => {
+  it.each([
+    ['l', 'freehand-lasso'],
+    ['p', 'pen'],
+  ] as const)('falls back to the group anchor %s -> %s for a bare key from a non-member tool', (key, anchor) => {
+    storeState.toolName = 'text';
+    renderShortcuts();
+
+    press(key);
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith(anchor);
+  });
+
+  it('keeps the current marquee member for a bare M', () => {
+    storeState.toolName = 'magic-wand';
+    renderShortcuts();
+
+    press('m');
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith('magic-wand');
+  });
+
+  it.each([
+    ['b', 'pencil'],
+    ['m', 'magic-wand'],
+    ['p', 'freeform-pen'],
+  ] as const)('starts the Shift+%s cycle at the group anchor and advances once', (key, expected) => {
+    storeState.toolName = 'text';
+    renderShortcuts();
+
+    press(key, { shiftKey: true });
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith(expected);
+  });
+});
+
 describe('AppKeyboardShortcuts failure isolation', () => {
   it('surfaces a throwing tool selection to the window error handler instead of swallowing it', () => {
     const seen: string[] = [];

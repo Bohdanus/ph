@@ -239,6 +239,32 @@ describe('usePointerPosition', () => {
       expect(result.current.getLocalCoords(pointerEvent(el, { clientX: -20, clientY: -6 }))).toEqual({ x: -10, y: -3 });
     });
 
+    it('does not compensate for scrolling twice', () => {
+      // `getLocalCoords` reads viewport coordinates, and `getBoundingClientRect()`
+      // is already expressed in the scrolled viewport, so a scrolled page must not
+      // shift the mapping by another scrollX/scrollY. This pins that contract:
+      // adding scroll compensation here would break every scrolled document.
+      const { el } = createContainer({ left: 50, top: 40, width: 200, height: 200 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      const originalX = window.scrollX;
+      const originalY = window.scrollY;
+      Object.defineProperty(window, 'scrollX', { value: 30, configurable: true });
+      Object.defineProperty(window, 'scrollY', { value: 20, configurable: true });
+      try {
+        // scale 2, offsets 0 => x = (clientX - 50) / 2
+        expect(result.current.getLocalCoords(pointerEvent(el, { clientX: 50 + 2 * 10, clientY: 40 + 2 * 20 }))).toEqual(
+          {
+            x: 10,
+            y: 20,
+          }
+        );
+      } finally {
+        Object.defineProperty(window, 'scrollX', { value: originalX, configurable: true });
+        Object.defineProperty(window, 'scrollY', { value: originalY, configurable: true });
+      }
+    });
+
     it('re-measures the container on every call instead of using stale dimensions', () => {
       const rect: Rect = { left: 0, top: 0, width: 200, height: 200 };
       const { el, getBoundingClientRect } = createContainer(rect);

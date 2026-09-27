@@ -4,6 +4,7 @@ import { cloneDeep } from 'lodash-es';
 import { defaultSettings, lastSavedSettings, savedArgsPerFigure, savedDrawPerPen } from '../settings.ts';
 import { toolProcessors } from '../toolProcessors.ts';
 import { saveLastSettings } from '../../util/settings.ts';
+import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import type { ToolArgs, ToolName } from '../../contexts/tool-types.ts';
 import type { RectXYSorted } from '../../contexts/general-types.ts';
 import type { FigureType } from '../shape.ts';
@@ -292,5 +293,166 @@ describe('saveLastSettings tool-name coverage', () => {
 
   it('rejects args without a tool name', () => {
     expect(() => saveLastSettings({} as ToolArgs)).toThrow('Tool name required');
+  });
+});
+
+const penPresets: readonly [PenType, Record<string, unknown>][] = [
+  ['pen', { alpha: 0.9, lineWidth: 10 }],
+  ['pen-dashed', { alpha: 0.9, lineWidth: 10, lineDash: [5, 30] }],
+  ['spray', { alpha: 0.5, lineWidth: 100 }],
+];
+
+const figurePresets: readonly [FigureType, Record<string, unknown>][] = [
+  ['line', { alpha: 1, lineWidth: 5, lineCap: 'butt', toolMode: 'shape' }],
+  ['rectangle', { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' }],
+  ['oval', { alpha: 1, lineWidth: 5, cornerRadius: 0, toolMode: 'shape' }],
+  ['triangle', { alpha: 1, lineWidth: 5, toolMode: 'shape' }],
+  ['polygon', { alpha: 1, lineWidth: 5, toolMode: 'shape' }],
+];
+
+/** Walks nested settings values (e.g. `reposition.move`) looking for non-finite numbers. */
+const nonFiniteNumbers = (value: unknown, path: string): [string, number][] => {
+  if (typeof value === 'number') return Number.isFinite(value) ? [] : [[path, value]];
+  if (!value || typeof value !== 'object') return [];
+
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, nested]) =>
+    nonFiniteNumbers(nested, `${path}.${key}`)
+  );
+};
+
+describe('defaultSettings preset tables', () => {
+  it.each(penPresets)('pins the %s pen preset exactly', (penType, preset) => {
+    expect(savedDrawPerPen[penType]).toEqual(preset);
+  });
+
+  it.each(figurePresets)('pins the %s figure preset exactly', (figure, preset) => {
+    expect(savedArgsPerFigure[figure]).toEqual(preset);
+  });
+
+  it('covers every pen and figure union member with exactly one preset', () => {
+    expect(Object.keys(savedDrawPerPen).sort()).toEqual(penPresets.map(([penType]) => penType).sort());
+    expect(Object.keys(savedArgsPerFigure).sort()).toEqual(figurePresets.map(([figure]) => figure).sort());
+  });
+
+  it('seeds the draw tool from the plain-pen preset', () => {
+    expect(defaultSettings.draw).toMatchObject({ ...savedDrawPerPen.pen, penType: 'pen', toolName: 'draw' });
+    expect(defaultSettings.draw.points).toEqual([]);
+  });
+});
+
+describe('defaultSettings value sanity', () => {
+  it('seeds every number with a finite value, so no filter or geometry can be poisoned at the source', () => {
+    const bad: [string, number][] = [];
+
+    for (const toolName of toolNames) {
+      bad.push(...nonFiniteNumbers(defaultSettings[toolName], toolName));
+    }
+
+    expect(bad).toEqual([]);
+  });
+
+  it('keeps every declared alpha inside the 0..1 range a canvas globalAlpha accepts', () => {
+    const alphas = toolNames
+      .filter((toolName) => 'alpha' in defaultSettings[toolName])
+      .map((toolName) => [toolName, (defaultSettings[toolName] as { alpha: number }).alpha] as const);
+
+    expect(alphas.length).toBeGreaterThan(0);
+    for (const [toolName, alpha] of alphas) {
+      expect(alpha, toolName).toBeGreaterThanOrEqual(0);
+      expect(alpha, toolName).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('seeds every non-null colour as a six-digit hex string', () => {
+    for (const toolName of toolNames) {
+      const settings = defaultSettings[toolName] as { color?: unknown; backgroundColor?: unknown };
+      for (const key of ['color', 'backgroundColor'] as const) {
+        const value = settings[key];
+        if (value === undefined || value === null) continue;
+        expect(value, `${toolName}.${key}`).toMatch(/^#[0-9A-Fa-f]{6}$/);
+      }
+    }
+  });
+
+  it('leaves only the rect-bearing tools with a null rect', () => {
+    const withNullRect = toolNames.filter((toolName) => {
+      const settings = defaultSettings[toolName] as { rect?: unknown };
+      return settings.rect === null;
+    });
+
+    expect(withNullRect.sort()).toEqual(['crop', 'text']);
+  });
+
+  it('reduces every unimplemented tool to a bare tool name, matching its null result', () => {
+    for (const toolName of toolNames) {
+      if (toolProcessors[toolName].commit !== 'unimplemented') continue;
+
+      expect(defaultSettings[toolName], toolName).toEqual({ toolName });
+    }
+  });
+});
+
+describe('defaultSettings assumptions baked into the registry', () => {
+  it('seeds each paint tool with the penType its registry adapter forces', () => {
+    // toolProcessors.ts forces `pen` for brush (:166) and pencil (:174) and `spray` for
+    // color replacement (:184). If a default disagreed, the forced value would silently
+    // override the user's own setting instead of confirming it.
+    expect(defaultSettings.brush.penType).toBe('pen');
+    expect(defaultSettings.pencil.penType).toBe('pen');
+    expect(defaultSettings['color-replacement'].penType).toBe('spray');
+  });
+
+  it('seeds the pencil width with the same fallback the adapter applies when it is absent', () => {
+    // toolProcessors.ts:175 does `Math.max(1, Number(lineWidth ?? 3))`; a default other
+    // than 3 would make the fallback reachable only for hand-built args.
+    expect(defaultSettings.pencil.lineWidth).toBe(3);
+    expect(defaultSettings.brush.lineWidth).toBe(10);
+    expect(defaultSettings['color-replacement'].lineWidth).toBe(18);
+  });
+
+  it('turns the transform defaults into a pure no-op through the registry', () => {
+    const size = { width: 40, height: 24 };
+    const result = toolProcessors.transform.imageProcessor({ size, bitmap: createMockImageBitmap(40, 24) })(
+      defaultSettings.transform as never
+    );
+
+    // No position patch at all: the identity affine leaves the bounding box untouched.
+    expect(result).toHaveLength(1);
+    expect(result[0].width).toBe(size.width);
+    expect(result[0].height).toBe(size.height);
+  });
+
+  it('is the one default set the crop processor cannot consume as-is (src/tools/crop.ts:17)', () => {
+    // Every other tool runs on its seeded defaults; crop destructures `rect!` and the
+    // seeded rect is null, so the document-operation commit needs a real rect first.
+    expect(defaultSettings.crop.rect).toBeNull();
+    expect(() =>
+      toolProcessors.crop.imageProcessor({ size: { width: 40, height: 24 }, bitmap: createMockImageBitmap(40, 24) })(
+        defaultSettings.crop as never
+      )
+    ).toThrow(TypeError);
+  });
+
+  it('feeds the remaining settings straight into the composed CSS filters', () => {
+    // The adjustment defaults must be the identity of their own filter strings, otherwise
+    // a freshly selected tool would visibly alter the layer before the user touches it.
+    expect(defaultSettings.blur.radius).toBe(0);
+    expect(defaultSettings.color).toMatchObject({ grayscale: 0, sepia: 0, saturation: 0 });
+    expect(defaultSettings.levels).toMatchObject({ brightness: 0, contrast: 0 });
+  });
+});
+
+describe('lastSavedSettings shape', () => {
+  it('mirrors the default key set, with each entry stamped by its own key', () => {
+    expect(Object.keys(lastSavedSettings).sort()).toEqual([...toolNames].sort());
+
+    for (const toolName of toolNames) {
+      expect(lastSavedSettings[toolName].toolName, toolName).toBe(toolName);
+    }
+  });
+
+  it('does not share nested object references with the defaults it was cloned from', () => {
+    expect(lastSavedSettings.reposition.move).not.toBe(defaultSettings.reposition.move);
+    expect(lastSavedSettings.reposition.move).toEqual(defaultSettings.reposition.move);
   });
 });

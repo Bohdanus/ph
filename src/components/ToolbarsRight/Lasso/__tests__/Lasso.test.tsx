@@ -358,6 +358,53 @@ describe('Lasso toolbar', () => {
     });
   });
 
+  describe('slider bounds', () => {
+    it('exposes the documented ranges and current values', () => {
+      render(<Lasso />);
+
+      const size = sizeSlider();
+      expect(size).toHaveAttribute('min', '1');
+      expect(size).toHaveAttribute('max', '100');
+      expect(size).toHaveAttribute('step', '1');
+      expect(size).toHaveValue('5');
+
+      const opacity = opacitySlider();
+      expect(opacity).toHaveAttribute('min', '0');
+      expect(opacity).toHaveAttribute('max', '1');
+      expect(opacity).toHaveAttribute('step', '0.01');
+      expect(opacity).toHaveValue('1');
+    });
+
+    it('accepts both range boundaries on both sliders', () => {
+      render(<Lasso />);
+
+      fireEvent.change(sizeSlider(), { target: { value: '1' } });
+      expect(lastToolArgs().lineWidth).toBe(1);
+      expect(screen.getByText('1px')).toBeInTheDocument();
+
+      fireEvent.change(sizeSlider(), { target: { value: '100' } });
+      expect(lastToolArgs().lineWidth).toBe(100);
+
+      fireEvent.change(opacitySlider(), { target: { value: '0' } });
+      expect(lastToolArgs().alpha).toBe(0);
+      expect(screen.getByText('0%')).toBeInTheDocument();
+
+      fireEvent.change(opacitySlider(), { target: { value: '1' } });
+      expect(lastToolArgs().alpha).toBe(1);
+    });
+
+    it('hides the size slider in fill mode but still republishes the alpha', () => {
+      resetToolArgs({ fill: true });
+      render(<Lasso />);
+
+      expect(screen.queryByLabelText(/Size/)).toBeNull();
+
+      fireEvent.change(opacitySlider(), { target: { value: '0.2' } });
+
+      expect(lastToolArgs()).toMatchObject({ alpha: 0.2, fill: true, toolName: 'polygonal-lasso' });
+    });
+  });
+
   describe('paste', () => {
     it('is disabled with an explanatory title when the in-app clipboard is empty', () => {
       render(<Lasso />);

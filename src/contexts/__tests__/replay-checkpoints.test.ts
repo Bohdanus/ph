@@ -203,6 +203,39 @@ describe('ReplayCheckpointCache', () => {
     });
   });
 
+  describe('degenerate cache limits', () => {
+    it('stops evicting on an empty cache instead of looping forever', () => {
+      // A non-positive entry ceiling keeps the eviction guard armed even with
+      // nothing cached. The cache must bail out rather than spin.
+      const cache = new ReplayCheckpointCache<string>({ maxEntries: -1 });
+
+      expect(() => cache.set({ key: key(), value: 'v', byteSize: 1 })).not.toThrow();
+      expect(cache.size).toBe(0);
+      expect(cache.byteSize).toBe(0);
+    });
+
+    it('evicts down to an empty cache when the entry ceiling is zero', () => {
+      const cache = new ReplayCheckpointCache<string>({ maxEntries: 0 });
+      const release = releaseSpy();
+
+      cache.set({ key: key({ historyIndex: 0 }), value: 'v', byteSize: 4, release });
+
+      expect(cache.size).toBe(0);
+      expect(cache.byteSize).toBe(0);
+      expect(release).toHaveBeenCalledOnce();
+    });
+
+    it('keeps a checkpoint without a release callback evictable', () => {
+      const cache = new ReplayCheckpointCache<string>({ maxEntries: 1 });
+
+      cache.set({ key: key({ historyIndex: 0 }), value: 'a', byteSize: 4 });
+      expect(() => cache.set({ key: key({ historyIndex: 1 }), value: 'b', byteSize: 4 })).not.toThrow();
+
+      expect(cache.get(key({ historyIndex: 1 }))).toBe('b');
+      expect(cache.get(key({ historyIndex: 0 }))).toBeUndefined();
+    });
+  });
+
   describe('default options', () => {
     it('uses default maxEntries (8) and maxBytes (32 MB) when no options given', () => {
       const cache = new ReplayCheckpointCache<string>();

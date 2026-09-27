@@ -29,7 +29,9 @@ const rectUtilsMock = vi.hoisted(() => ({
   trimRect: vi.fn((rect) => rect),
 }));
 
-vi.mock('../../../util/rect.ts', () => rectUtilsMock);
+// The path has to resolve from this test file: `../../../util/...` pointed
+// outside the repo, so the mock never applied and the real rect helpers ran.
+vi.mock('../../util/rect.ts', () => rectUtilsMock);
 
 const constantsMock = vi.hoisted(() => {
   const CURSOR_MAP = {
@@ -50,7 +52,7 @@ const constantsMock = vi.hoisted(() => {
   };
 });
 
-vi.mock('../../../util/constants.ts', () => constantsMock);
+vi.mock('../../util/constants.ts', () => constantsMock);
 
 function createMockLayer(pos = { x: 100, y: 100, width: 200, height: 150 }) {
   return {
@@ -182,6 +184,10 @@ describe('useRect', () => {
         const res = result.current.onPointerDown(event, layer);
         expect(typeof res).toBe('boolean');
       });
+
+      // Proves the rect-helper mock is live and the layer position was converted.
+      expect(rectUtilsMock.posToSortedRect).toHaveBeenCalledWith(layer.pos);
+      expect(result.current.onPointerUp).toBeDefined();
     });
 
     it('respects aspect ratio modifier keys on drag start', () => {

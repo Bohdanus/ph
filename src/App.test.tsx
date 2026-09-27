@@ -1,23 +1,23 @@
-import { render, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 
-const setBlankImage = vi.fn();
-const useStoreMock = vi.fn(() => [
-  {
-    canvasRef: { current: null },
-    containerRef: { current: null },
-    toolOverlayRef: { current: null },
-    rectOverlayRef: { current: null },
-    hasImage: false,
-    hasUnsavedChanges: false,
-    currentArgs: { current: {} },
-    layers: {},
-    toolName: 'reposition',
-    totalSize: { width: 800, height: 600 },
-  },
-  vi.fn(),
-]);
+const setBlankImage = vi.hoisted(() => vi.fn());
+const dispatch = vi.hoisted(() => vi.fn());
+const storeState = vi.hoisted(() => ({
+  canvasRef: { current: null },
+  containerRef: { current: null },
+  toolOverlayRef: { current: null },
+  rectOverlayRef: { current: null },
+  hasImage: false,
+  hasUnsavedChanges: false,
+  currentArgs: { current: {} },
+  layers: {},
+  toolName: 'reposition',
+  totalSize: { width: 800, height: 600 },
+}));
+
+const useStoreMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./components/Menu/Menu', () => ({ default: () => <div>Menu</div> }));
 vi.mock('./components/Footer/Footer', () => ({ default: () => <div>Footer</div> }));
@@ -49,7 +49,10 @@ vi.mock('./hooks/useApp.ts', () => ({
 describe('App', () => {
   beforeEach(() => {
     setBlankImage.mockClear();
+    dispatch.mockClear();
     useStoreMock.mockClear();
+    storeState.hasImage = false;
+    useStoreMock.mockImplementation(() => [storeState, dispatch]);
     localStorage.clear();
   });
 
@@ -64,5 +67,74 @@ describe('App', () => {
         isBedrock: true,
       });
     });
+  });
+
+  it('never starts a blank image when a document is already open', async () => {
+    storeState.hasImage = true;
+    render(<App />);
+
+    await waitFor(() => {
+      expect(useStoreMock).toHaveBeenCalled();
+    });
+
+    expect(setBlankImage).not.toHaveBeenCalled();
+  });
+
+  it('starts the blank image exactly once even when the tree re-renders', async () => {
+    const { rerender } = render(<App />);
+
+    await waitFor(() => {
+      expect(setBlankImage).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(<App />);
+    rerender(<App />);
+
+    await waitFor(() => {
+      expect(useStoreMock.mock.calls.length).toBeGreaterThan(1);
+    });
+    expect(setBlankImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start a second blank image after the store reports an image', async () => {
+    const { rerender } = render(<App />);
+    await waitFor(() => {
+      expect(setBlankImage).toHaveBeenCalledTimes(1);
+    });
+
+    storeState.hasImage = true;
+    rerender(<App />);
+
+    expect(setBlankImage).toHaveBeenCalledTimes(1);
+  });
+
+  it('composes every application region exactly once', () => {
+    render(<App />);
+
+    for (const region of ['Menu', 'Footer', 'SidebarLeft', 'SidebarRight', 'Main', 'Shortcuts']) {
+      expect(screen.getByText(region)).toBeInTheDocument();
+    }
+    expect(screen.getAllByText('Main')).toHaveLength(1);
+  });
+
+  it('reads the store as a [state, dispatch] tuple', () => {
+    render(<App />);
+
+    const [state, storeDispatch] = useStoreMock.mock.results[0].value as [typeof storeState, typeof dispatch];
+    expect(state).toBe(storeState);
+    expect(storeDispatch).toBe(dispatch);
+  });
+
+  it('does not create a blank image after unmount', async () => {
+    const { unmount } = render(<App />);
+    await waitFor(() => {
+      expect(setBlankImage).toHaveBeenCalledTimes(1);
+    });
+
+    unmount();
+    storeState.hasImage = false;
+    useStoreMock.mockImplementation(() => [storeState, dispatch]);
+
+    expect(setBlankImage).toHaveBeenCalledTimes(1);
   });
 });
