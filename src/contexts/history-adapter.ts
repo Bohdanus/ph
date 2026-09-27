@@ -581,10 +581,18 @@ export function legacyHistoryToDurable(
           // reads `next?.selections ?? []`, so the shadow must clear here too.
           // The append boundary has no second authority to stay equal to and
           // reports a diagnostic instead of clearing — see deriveSetSelectionEntry.
+          // Both sides are re-cloned from the legacy args rather than adopted, so
+          // the operation and every `before` that follows it hold no reference into
+          // the history timeline. The twin derivation does the same for the valid
+          // case, so neither arm depends on the document's later deep freeze to
+          // keep an aliased snapshot out of the operation.
           const args = item.args as { previousSelectionState?: SelectionSnapshot } | undefined;
+          const previous = args?.previousSelectionState;
           operation = Object.freeze({
             kind: 'set-selection',
-            before: args?.previousSelectionState ?? currentSelections,
+            before: previous
+              ? selectionSnapshot(previous.selections, previous.activeSelectionId)
+              : selectionSnapshot(currentSelections.selections, currentSelections.activeSelectionId),
             after: selectionSnapshot(),
           });
           if (enabled) currentSelections = operation.after;

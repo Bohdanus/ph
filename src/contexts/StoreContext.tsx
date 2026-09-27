@@ -55,9 +55,9 @@ import {
  *    `DurableBaseline.activeLayerId` is derived from the FIRST history entry
  *    (`history-adapter.ts` `snapshotFromDocumentSource`), never from
  *    `state.activeLayerId`, and `DurableBaseline.selections` is derived from the
- *    history timeline — currently the empty `selectionSnapshot()`, and under the
- *    shared selection-baseline rule the first enabled `SELECTION_ACTION`
- *    entry's `previousSelectionState` — never from live store state. A selection
+ *    history timeline by the shared rule in `selection-baseline.ts` — the first
+ *    enabled `SELECTION_ACTION` entry's `previousSelectionState` — never from live
+ *    store state. A selection
  *    can therefore only enter the document through a `SELECTION_ACTION` history
  *    entry, and a layer operation only through a history entry. This holds
  *    whichever rule seeds the baseline, because both read the timeline.
