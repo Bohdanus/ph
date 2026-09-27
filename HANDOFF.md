@@ -893,41 +893,6 @@ actually honours the wildcard. Nothing in the repo exercises it.
 
 ---
 
-## 30. Dragging a committed polygon's anchor or body still writes no selection history, once per pointer move
-
-**Problem.** This is the last selection gesture that bypasses the writer. Selection _creation_ is
-recorded (`commitSelection(selection, 'create')` at `PolygonClickToolArea.tsx:227` and
-`FeatherMagneticLassoToolArea.tsx:407`, one per completed gesture); the polygon's anchor/body drag is
-not.
-
-`PolygonClickToolArea.tsx:295` still dispatches `updateSelection`, which is
-`dispatch({ type: 'UPDATE_SELECTION', payload: selection })`, from `handlePointerMove`'s drag branch.
-That arm returns `updateCommittedSelection(state, …)` (`StoreContext.tsx:315-334`, dispatched at
-`:517-519`), a `{ ...state, … }` return that never names `history` or `historyIndex`, so:
-
-1. moving or reshaping a committed selection appends **no** history entry, and
-2. it dispatches **once per pointer move**, not once per gesture — so it cannot simply be swapped for
-   `commitSelection` in place without also introducing a gesture-end commit, the way
-   `RectangularSelectionToolArea.tsx:83` does with `isEditingCommittedSelectionRef` plus `useRect`'s
-   `onChangeEnd`.
-
-**Fix.** Mirror the rectangle. Keep the per-move `UPDATE_SELECTION` dispatches if the live drag needs
-the store (the anchor drag reads nothing back, but verify before assuming), track whether the drag
-began on an already-committed selection, and call `commitSelection(selection, 'move')` exactly once at
-gesture end — pointer up, or pointer leave/cancel for an abandoned drag. Note the anchor drag
-rebuilds `points`/`pos` and bumps `metadata.movedAtVersion`, so `'move'` is the correct mode and the
-hook's deep-equal guard will not suppress a genuine reshape.
-
-Then delete the two comments in `useSelectionHistory.ts` that are now false: `:36-42` says the raw
-arms "keep their own derivation for the polygon and lasso gestures, which are a later slice" (no
-component dispatches `COMMIT_SELECTION` any more), and `:180-185` says the polygon, freehand and
-feathered magnetic lasso gesture paths "still dispatch the raw action" (only the move path does).
-
-**Files.** `src/components/Main/PolygonClickToolArea.tsx`,
-`src/contexts/useSelectionHistory.ts` (comments only)
-
----
-
 ## 31. The selection baseline lookup must stay unbounded over the whole timeline
 
 **Problem.** `deriveSelectionBaseline` (`selection-baseline.ts:56`) is deliberately unbounded: it
@@ -987,19 +952,29 @@ them:**
 name** (`:28`). `HistoryTab.tsx:22` renders that string, so a `SELECTION_ACTION` entry is labelled
 with the constant's own value.
 
-That was invisible while selections wrote no history. It is not any more: the Clear/Deselect
-controls, the magic-wand click and the rectangle drag end each now append one real entry through
-`commitSelection` / `clearSelections`, so every selection change in a session adds a row. Each row
-is also a navigation target (`resetHistoryTo(originalIndex)` at `HistoryTab.tsx:27`) and carries a
-disable toggle (`:45`), so a user can step onto or disable a row whose label says nothing about
-what it did — and there is no way to tell a creation from a clear, since both carry the same
-`layerId: 'selection'` and the same action name.
+That was invisible while selections wrote no history. It is not any more. Every one of these appends
+one real entry through `commitSelection` / `clearSelections` / `appendSelectionClear`:
+
+| gesture                                                          | append site                                                                 |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Clear/Deselect control, and the tool switch                      | `useSelectionHistory.ts:212`, `useSelectionHistory.ts:95` (`useApp.ts:172`) |
+| magic-wand click                                                 | `MagicWandToolArea.tsx:93`                                                  |
+| rectangle drag end                                               | `RectangularSelectionToolArea.tsx:83`                                       |
+| polygonal / freehand lasso close, feathered magnetic lasso close | `PolygonClickToolArea.tsx:251`, `FeatherMagneticLassoToolArea.tsx:407`      |
+| polygon's committed anchor or body drag                          | `PolygonClickToolArea.tsx:559`                                              |
+
+So every selection change in a session adds a row, and **one gesture can add more than one kind**: a
+lasso gesture appends a creation and a later drag appends a separate move, both labelled identically.
+Each row is also a navigation target (`resetHistoryTo(originalIndex)` at `HistoryTab.tsx:27`) and
+carries a disable toggle (`:45`), so a user can step onto or disable a row whose label says nothing
+about what it did — and there is no way to tell a creation from a move from a clear, since all three
+carry the same `layerId: 'selection'` and the same action name.
 
 **This is a UX decision, not a defect with one right answer.** The operator chooses between hiding
 selection entries from the panel, grouping consecutive ones into a single row, and relabelling them
-distinguishably (create / clear / resize). Whichever is chosen, the label has to come from
+distinguishably (create / move / clear). Whichever is chosen, the label has to come from
 something the entry actually carries; `nextSelectionState` and `previousSelectionState` are already
-on the item (`useSelectionHistory.ts:214-224`), so a relabel is derivable without a new history
+on the item (`useSelectionHistory.ts:263-273`), so a relabel is derivable without a new history
 field. Do not add a history field for presentation alone while the legacy timeline is still the
 replay authority.
 
@@ -1062,3 +1037,78 @@ publish decision is downstream.
 `src/components/ToolbarsRight/RectangularSelection/__tests__/RectangularSelection.test.tsx:14-29,59`,
 `src/components/ToolbarsRight/Lasso/__tests__/FeatherMagneticLasso.test.tsx:20-25,101`,
 `src/components/ToolbarsRight/Lasso/__tests__/FreehandLasso.test.tsx:14-17,86`
+
+---
+
+## 34. A polygon selection drag released outside the surface is discarded, unlike the rectangle's
+
+**Problem.** `handlePointerLeave` (`PolygonClickToolArea.tsx:569`) calls `abortSelectionDrag()` and
+returns, so a committed selection the user dragged out of the surface loses the move with **no history
+entry at all** — not an entry describing a discard, simply nothing. The rectangle behaves the opposite
+way: `usePointerPosition.isPointerDownValid` takes a capture (`usePointerPosition.ts:130`), so the
+`pointerup` reaches `useRect`'s handler (`useRect.ts:383`) even when the pointer is released well
+outside the surface, and `onChangeEnd` commits normally
+(`RectangularSelectionToolArea.tsx:46-84`). Two selection tools, same gesture, opposite outcomes, and
+nothing in the code says which is intended.
+
+**This is an operator decision, not a defect with one right answer.** Dragging a selection to a new
+position and releasing outside the window is a completed, intended move in the rectangle, and
+discarding it in the polygon loses work the user can see they did. The reason the polygon discards is
+real too: it takes no capture for a selection drag, so `pointerleave` is genuinely terminal — there is
+no later `up` to tell "let go here" apart from "left the surface", and the only event that currently
+means "this move happened" is release (`PolygonClickToolArea.tsx:528`). The operator chooses between
+parity (commit when the drag leaves and is released outside) and the current behaviour (discard).
+
+**Fix, if parity is chosen.** Take a capture on `handlePointerDown`'s selection/anchor branches only,
+the way the freehand branch already does at `PolygonClickToolArea.tsx:284`, and make
+`handlePointerLeave` commit rather than abort. **That is not a one-line change**: the freehand
+gesture is finished on `pointerleave` _by design_ (`PolygonClickToolArea.tsx:577-579`, and the
+`LassoToolArea`/`FreehandLasso` tests pin it), and the same `handlePointerLeave` serves both modes,
+so capturing the selection drag has to be scoped to a branch that knows whether a selection drag is
+running — not added to the surface wholesale. Then add the parity test to
+`src/components/Main/__tests__/PolygonClickToolArea.test.tsx` next to
+`abandons a moved anchor drag on %s without committing or touching the store`, which pins the discard
+and would have to be changed in the same change. `usePointerPosition`'s first-pointer-wins guard
+(`usePointerPosition.ts:126`) is the model for the "one pointer owns this drag" rule.
+
+**Files.** `src/components/Main/PolygonClickToolArea.tsx:284,456,528,569-580`,
+`src/components/Main/RectangularSelectionToolArea.tsx:46-84`,
+`src/hooks/usePointerPosition.ts:122-133`, `src/hooks/useRect.ts:383-403`
+
+---
+
+## 35. `resetInteractionState` clears the overlay and only repaints when a drag happened to be running
+
+**Problem.** `resetInteractionState` (`PolygonClickToolArea.tsx:442-454`) calls `clearOverlay()`
+(`:448`) and then `abortSelectionDrag()` (`:453`), which returns `null` and repaints nothing when no
+drag was running (`:433-440`). The only unconditional repaint in the component is the effect at
+`PolygonClickToolArea.tsx:732-734`, keyed on `redrawOverlay`, whose identity depends on `selections`
+(`:403-418`) — and the dispatch that usually accompanies a reset does not change it:
+`CANCEL_SELECTION_DRAFT` returns the **same `selections` array reference**
+(`StoreContext.tsx:532-537`, which touches `selectionDraft` alone), so the effect provably cannot
+re-run. The committed outlines `clearOverlay` just wiped therefore have no path back to the canvas
+until something unrelated repaints.
+
+**Currently unreachable with a visible effect, and for two compounding reasons.** A draft can only be
+opened when no selection is active: `handlePointerDown` returns early on
+`selections.some((selection) => selection.isActive)` (`PolygonClickToolArea.tsx:503-505`), so by the
+time `resetInteractionState` runs with a draft open every stored selection has `isActive: false`, and
+`drawSelectionOutline` returns immediately for those (`selection.ts:142`). And the one route that
+does leave an active selection in the store — `finishSelection`, which commits the new polygon before
+resetting (`:251`) — changes `selections`, so the effect does re-run and puts the outline back.
+
+**It becomes live the moment a committed selection can be active during a draft-free reset** — if that
+`handlePointerDown` guard is relaxed, if a second selection is activated without a re-render, or if a
+reset route is added that clears the overlay while a selection is active. Then the committed outlines
+disappear with no state change to bring them back.
+
+**Fix.** Make the reset unconditional rather than drag-conditional: have `resetInteractionState` call
+`redrawOverlay()` after `clearOverlay()` (or drop `clearOverlay` entirely, since `redrawOverlay` →
+`drawPolygonOverlay` already clears the canvas at `PolygonClickToolArea.tsx:77`). Then
+`abortSelectionDrag`'s repaint at `:437` is redundant on this path and can be narrowed to the routes
+that actually need it (`handlePointerLeave`, `handlePointerCancel`, `handlePointerDown`). The
+`// After the clear, never before` comment at `:449-452` currently reads as a guarantee that the
+outlines are always restored; it is not one, and the fix is what makes it true.
+
+**Files.** `src/components/Main/PolygonClickToolArea.tsx:77,403-418,433-454,503-505,732-734`,
+`src/contexts/StoreContext.tsx:532-537`, `src/util/selection.ts:142`

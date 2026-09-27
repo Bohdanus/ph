@@ -41,7 +41,12 @@ vi.mock('../../../hooks/useKeyboardEvents.tsx', () => ({
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
     {
-      activeSelectionId: null,
+      // Derived from the selections rather than hardcoded, because the store keeps
+      // the two in step: a selection is `isActive` exactly when it is the active
+      // one. A `null` next to an active selection is a state the store cannot hold,
+      // and it made a click that moved nothing look like an activation — a real
+      // post-state change the writer's deep-equal guard then had to commit.
+      activeSelectionId: storeState.selections.find((selection) => selection.isActive)?.id ?? null,
       containerRef: { current: document.createElement('div') },
       selections: storeState.selections,
       totalSize: { width: 800, height: 600 },
@@ -141,6 +146,18 @@ const selectionEdits = (): SelectionEdit[] =>
   (dispatchMock.mock.calls as unknown[][])
     .map(([action]) => action as SelectionEdit)
     .filter((action) => action.type === 'COMMIT_DOCUMENT_EDIT');
+
+/**
+ * Every action type the mocked dispatch has seen, in order.
+ *
+ * Used to pin a whole gesture's dispatch set, so reading the types rather than
+ * matching one action keeps the pin honest if an action is renamed or re-wrapped
+ * — and comparing the whole list against `['COMMIT_DOCUMENT_EDIT']` fails on an
+ * extra dispatch of any name, which a `not.toContain` on a single alias cannot
+ * do.
+ */
+const dispatchedActionTypes = (): string[] =>
+  (dispatchMock.mock.calls as unknown[][]).map(([action]) => (action as { type: string }).type);
 
 /** The single selection a `COMMIT_DOCUMENT_EDIT` published, which is the drawn polygon. */
 const committedSelection = (): Selection => selectionEdits()[0].payload.updates.selections[0];
@@ -400,46 +417,280 @@ describe('PolygonClickToolArea', () => {
       fireEvent.pointerMove(toolArea, { clientX: 90, clientY: 55 });
       fireEvent.pointerMove(toolArea, { clientX: 95, clientY: 60 });
 
-      const updates = dispatchMock.mock.calls.filter(
-        ([action]) => (action as { type: string }).type === 'UPDATE_SELECTION'
-      );
-      expect(updates).toHaveLength(2);
+      // The whole drag is one gesture, so the store is untouched until it ends.
+      expect(selectionEdits()).toHaveLength(0);
+
+      fireEvent.pointerUp(toolArea, { clientX: 95, clientY: 60 });
+
+      expect(selectionEdits()).toHaveLength(1);
       // First move: +10/+15 from the press origin. Second move: +5/+5 from the
-      // previous position, so the selection has travelled +15/+20 in total.
-      expect(updates[1][0]).toMatchObject({
-        payload: {
-          pos: { x: 24, y: 29, width: 92, height: 92 },
-          points: [
-            { x: 1, y: 1 },
-            { x: 91, y: 1 },
-            { x: 91, y: 91 },
-          ],
-        },
+      // previous position, so the selection has travelled +15/+20 in total, and
+      // `movedAtVersion` has been bumped once per move.
+      expect(selectionEdits()[0].payload.updates.selections[0]).toMatchObject({
+        id: 'selection-1',
+        pos: { x: 24, y: 29, width: 92, height: 92 },
+        points: [
+          { x: 1, y: 1 },
+          { x: 91, y: 1 },
+          { x: 91, y: 91 },
+        ],
+        metadata: { movedAtVersion: 2 },
       });
     });
 
-    it('abandons an anchor drag when the pointer leaves the surface', () => {
-      storeState.selections = [committedTriangle()];
-      const ctx = createMockContext();
-      const toolArea = renderArea({ current: ctx }).ctx;
-
-      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
-      fireEvent.pointerLeave(toolArea, { clientX: 10, clientY: 10 });
-      fireEvent.pointerMove(toolArea, { clientX: 40, clientY: 40 });
-
-      expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'UPDATE_SELECTION' }));
-    });
-
-    it('abandons a selection drag when the pointer is released', () => {
+    it('appends one history entry for a drag of any length and dispatches nothing until the release', () => {
       storeState.selections = [committedTriangle()];
       const ctx = createMockContext();
       const toolArea = renderArea({ current: ctx }).ctx;
 
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 40 });
-      fireEvent.pointerUp(toolArea, { button: 0, clientX: 80, clientY: 40 });
-      fireEvent.pointerMove(toolArea, { clientX: 95, clientY: 60 });
+      for (let step = 1; step <= 5; step += 1) {
+        fireEvent.pointerMove(toolArea, { clientX: 80 + step * 3, clientY: 40 + step * 2 });
+        // The tripwire. A per-move dispatch is what made this gesture write
+        // history once per pointer event, so its return must fail this test — and
+        // naming an action type is not enough, because `StoreContext` maps both
+        // `UPDATE_SELECTION` and `MOVE_SELECTION` to the same reducer arm
+        // (`StoreContext.tsx:517-519`), so the per-move write can return under
+        // either name with the suite green. Asserting the dispatch received
+        // nothing at all is alias-immune and strictly stronger.
+        expect(dispatchMock).not.toHaveBeenCalled();
+        expect(selectionEdits()).toHaveLength(0);
+      }
+      fireEvent.pointerUp(toolArea, { clientX: 95, clientY: 50 });
 
-      expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'UPDATE_SELECTION' }));
+      expect(selectionEdits()).toHaveLength(1);
+      // The whole gesture dispatched exactly this, so the commit is the single
+      // write and nothing rode along with it.
+      expect(dispatchedActionTypes()).toEqual(['COMMIT_DOCUMENT_EDIT']);
+      expect(selectionEdits()[0].payload.historyItem).toMatchObject({
+        actionName: SELECTION_ACTION,
+        id: expect.any(String),
+      });
+    });
+
+    it('commits an anchor drag as a move that keeps the selection it reshaped', () => {
+      storeState.selections = [committedTriangle()];
+      const ctx = createMockContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      // Anchor 0 sits at (10,10) in canvas space; dragging it to (60,40) re-bounds
+      // the selection, which is what makes this a reshape and not a translation.
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { clientX: 60, clientY: 40 });
+      fireEvent.pointerUp(toolArea, { clientX: 60, clientY: 40 });
+
+      expect(selectionEdits()).toHaveLength(1);
+      const { updates } = selectionEdits()[0].payload;
+      // The id is the committed selection's own, which is what makes this a `'move'`
+      // rather than a `'create'`: a creation would mint a second selection instead of
+      // replacing this one's geometry.
+      expect(updates.selections).toHaveLength(1);
+      expect(updates.selections[0]).toMatchObject({
+        id: 'selection-1',
+        isActive: true,
+        pos: { x: 59, y: 9, width: 42, height: 92 },
+        points: [
+          { x: 1, y: 31 },
+          { x: 41, y: 1 },
+          { x: 41, y: 91 },
+        ],
+        metadata: { movedAtVersion: 1 },
+      });
+      expect(updates.activeSelectionId).toBe('selection-1');
+      // A move leaves the `selectionCleared` repaint marker alone, exactly as the
+      // reducer's `updateCommittedSelection` did. A `'create'` would clear it.
+      expect(updates).not.toHaveProperty('selectionCleared');
+    });
+
+    it('commits nothing when a drag ends without a movement', () => {
+      storeState.selections = [committedTriangle()];
+      const ctx = createMockContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 40 });
+      fireEvent.pointerUp(toolArea, { clientX: 80, clientY: 40 });
+
+      // The dragged selection is value-identical to the stored one, so the
+      // component's displacement gate drops the commit before the writer sees it.
+      // This is deliberately asymmetric with the rectangle, whose `onChangeEnd`
+      // bumps `movedAtVersion` itself and therefore appends a no-op.
+      expect(selectionEdits()).toHaveLength(0);
+      expect(dispatchMock).not.toHaveBeenCalled();
+    });
+
+    it('commits nothing when the only pointer moves a committed selection by zero', () => {
+      storeState.selections = [committedTriangle()];
+      const ctx = createMockContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      // The case above fires no pointer move at all; a real click fires one or
+      // more, and every one of them rebuilds the selection through a builder that
+      // bumps `metadata.movedAtVersion`. So the writer's deep-equal guard cannot
+      // suppress this one, which is why the gate is on GEOMETRY in the component
+      // rather than on metadata in the writer.
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 40 });
+      fireEvent.pointerMove(toolArea, { clientX: 80, clientY: 40 });
+      fireEvent.pointerMove(toolArea, { clientX: 80, clientY: 40 });
+      fireEvent.pointerUp(toolArea, { clientX: 80, clientY: 40 });
+
+      expect(selectionEdits()).toHaveLength(0);
+      // `COMMIT_DOCUMENT_EDIT` is the only action that flags unsaved changes, so
+      // "no dispatch at all" is what "the document is not dirtied" means here:
+      // clicking a selection to select it must not add an undo step or raise the
+      // discard-unsaved-changes prompt.
+      expect(dispatchMock).not.toHaveBeenCalled();
+    });
+
+    it('commits nothing when a drag is released where it started', () => {
+      storeState.selections = [committedTriangle()];
+      const ctx = createMockContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 40 });
+      fireEvent.pointerMove(toolArea, { clientX: 95, clientY: 60 });
+      // The preview tracked the drag...
+      expect(ctx.moveTo).toHaveBeenCalledWith(25, 30);
+      // ...and the drag came back to the origin, so the geometry is the state the
+      // store never left. An entry here would describe a change that did not
+      // happen, and `COMMIT_DOCUMENT_EDIT` always flags unsaved changes.
+      fireEvent.pointerMove(toolArea, { clientX: 80, clientY: 40 });
+      fireEvent.pointerUp(toolArea, { clientX: 80, clientY: 40 });
+
+      expect(selectionEdits()).toHaveLength(0);
+      expect(dispatchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        'a pointer leave',
+        (toolArea: HTMLElement) => {
+          fireEvent.pointerLeave(toolArea, { clientX: 40, clientY: 40 });
+        },
+      ],
+      [
+        'a pointer cancel',
+        (toolArea: HTMLElement) => {
+          fireEvent.pointerCancel(toolArea, { clientX: 40, clientY: 40 });
+        },
+      ],
+      [
+        'Escape',
+        () => {
+          shortcutHandlers.get('Escape')?.();
+        },
+      ],
+    ])('abandons a moved anchor drag on %s without committing or touching the store', (_label, endDrag) => {
+      storeState.selections = [committedTriangle()];
+      const ctx = createMockContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { clientX: 40, clientY: 40 });
+
+      // Everything drawn so far is the preview, so the repaint that follows the
+      // abort can only be read against a cleared mock.
+      vi.mocked(ctx.moveTo).mockClear();
+      vi.mocked(ctx.clearRect).mockClear();
+
+      endDrag(toolArea);
+
+      expect(selectionEdits()).toHaveLength(0);
+      // The store is only ever written through dispatch, so this is the
+      // assertion that can actually fail about the store having been left alone:
+      // the abort writes nothing at all, and the one action any of the three
+      // routes may emit is the draft cancel, which touches `selectionDraft`
+      // alone. Comparing the mocked store object to itself proved nothing — the
+      // component only ever reads it.
+      expect(dispatchedActionTypes().filter((type) => type !== 'CANCEL_SELECTION_DRAFT')).toEqual([]);
+      // A clear alone would leave the committed outline wiped with nothing to put
+      // it back, because an abort changes no store state. The repaint is what
+      // makes the dropped drag snap back instead of taking the outline with it.
+      expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, 800, 600);
+      expect(ctx.moveTo).toHaveBeenCalledWith(10, 10);
+      expect(ctx.lineTo).toHaveBeenCalledWith(100, 10);
+      expect(ctx.lineTo).toHaveBeenCalledWith(100, 100);
+
+      // The drag is over: a later move and release belong to no gesture.
+      vi.mocked(ctx.moveTo).mockClear();
+      fireEvent.pointerMove(toolArea, { clientX: 60, clientY: 60 });
+      fireEvent.pointerUp(toolArea, { clientX: 60, clientY: 60 });
+      expect(selectionEdits()).toHaveLength(0);
+    });
+
+    it('discards a displaced drag, and lets only the pointer that replaced it commit', () => {
+      storeState.selections = [committedTriangle()];
+      const ctx = createMockContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      // Pointer 1 starts a drag on the selection and previews a move.
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 80, clientY: 40 });
+      fireEvent.pointerMove(toolArea, { pointerId: 1, clientX: 90, clientY: 55 });
+
+      // Pointer 2 then presses inside the same selection. The press ends the
+      // running drag rather than overwriting the ref with no commit, and it
+      // hit-tests against the geometry the store is still showing — which the
+      // first drag never touched — so this drag's origin is (90,55).
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 2, clientX: 90, clientY: 55 });
+      vi.mocked(ctx.moveTo).mockClear();
+      fireEvent.pointerMove(toolArea, { pointerId: 1, clientX: 130, clientY: 95 });
+
+      // Pointer 1's release belongs to a drag that no longer exists, so it must
+      // not commit pointer 2's gesture — and it must not consume it either.
+      fireEvent.pointerUp(toolArea, { pointerId: 1, clientX: 130, clientY: 95 });
+      expect(selectionEdits()).toHaveLength(0);
+
+      // The displaced geometry is gone: the preview followed pointer 2's own
+      // origin, +10/+15, and never the foreign move to (130,95).
+      fireEvent.pointerMove(toolArea, { pointerId: 2, clientX: 100, clientY: 70 });
+      expect(ctx.moveTo).toHaveBeenCalledWith(20, 25);
+
+      fireEvent.pointerUp(toolArea, { pointerId: 2, clientX: 100, clientY: 70 });
+
+      expect(selectionEdits()).toHaveLength(1);
+      expect(selectionEdits()[0].payload.updates.selections[0]).toMatchObject({
+        id: 'selection-1',
+        pos: { x: 19, y: 24, width: 92, height: 92 },
+      });
+    });
+
+    it('repaints the dragged geometry on every pointer move, not once', () => {
+      storeState.selections = [committedTriangle()];
+      const ctx = createMockContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 40 });
+
+      vi.mocked(ctx.moveTo).mockClear();
+      fireEvent.pointerMove(toolArea, { clientX: 90, clientY: 55 });
+      // The dragged selection, not the stored one: its first anchor is at
+      // (1,1) + pos (19,24) after a +10/+15 move.
+      expect(ctx.moveTo).toHaveBeenCalledWith(20, 25);
+      expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, 800, 600);
+
+      vi.mocked(ctx.moveTo).mockClear();
+      fireEvent.pointerMove(toolArea, { clientX: 95, clientY: 60 });
+      // A further +5/+5, so the repaint tracked the second move too. A single
+      // repaint at gesture start would leave this at (10,10).
+      expect(ctx.moveTo).toHaveBeenCalledWith(25, 30);
+    });
+
+    it('commits the drag as a move when the pointer is released', () => {
+      storeState.selections = [committedTriangle()];
+      const ctx = createMockContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 40 });
+      fireEvent.pointerMove(toolArea, { clientX: 95, clientY: 60 });
+      fireEvent.pointerUp(toolArea, { clientX: 95, clientY: 60 });
+
+      // Release is the commit route, so this is a `'move'` and not the abandon the
+      // old test name claimed. One move, one entry.
+      expect(selectionEdits()).toHaveLength(1);
+      expect(selectionEdits()[0].payload.updates.selections[0]).toMatchObject({
+        id: 'selection-1',
+        pos: { x: 24, y: 29, width: 92, height: 92 },
+        metadata: { movedAtVersion: 1 },
+      });
     });
   });
 

@@ -22,6 +22,7 @@ import {
   getSelectionAbsolutePoints,
   getSelectionAtPoint,
   getSelectionRect,
+  hasSameSelectionGeometry,
   isPointInPolygon,
   moveSelectionAnchor,
   moveSelectionByDelta,
@@ -1247,5 +1248,78 @@ describe('moveSelectionByDelta metadata defaults', () => {
     const moved = moveSelectionByDelta(selection({ metadata: { featherRadius: 8 } }), { x: 0, y: 0 });
 
     expect(moved.metadata).toEqual({ featherRadius: 8, movedAtVersion: 1 });
+  });
+});
+
+describe('hasSameSelectionGeometry', () => {
+  it('reports a zero-delta move as the same geometry even though the builders bumped metadata', () => {
+    const base = selection({ metadata: { movedAtVersion: 4 } });
+
+    // The property the drag commit depends on: the move builders bump
+    // `movedAtVersion` on every call, so a deep comparison — and therefore the
+    // selection writers' own deep-equal guard — cannot tell this from a real move.
+    expect(moveSelectionByDelta(base, { x: 0, y: 0 })).not.toEqual(base);
+    expect(hasSameSelectionGeometry(base, moveSelectionByDelta(base, { x: 0, y: 0 }))).toBe(true);
+  });
+
+  it('reports an anchor dragged back onto itself as the same geometry', () => {
+    // Built through the committing constructor, because re-normalization is only
+    // a fixed point for a selection that is already in normalized form — which is
+    // what every committed polygon in production is, and what the hand-built
+    // `selection()` fixture above is not.
+    const base = createCommittedPolygonSelection({
+      id: 'sel-1',
+      points: triangle(),
+      sourceTool: 'polygonal-lasso',
+    })!;
+    const [firstAnchor] = getSelectionAbsolutePoints(base);
+
+    expect(moveSelectionAnchor(base, 0, firstAnchor)).not.toEqual(base);
+    expect(hasSameSelectionGeometry(base, moveSelectionAnchor(base, 0, firstAnchor))).toBe(true);
+    // A genuinely reshaped anchor is still reported as a change, which is the
+    // property the commit gate must not lose.
+    expect(hasSameSelectionGeometry(base, moveSelectionAnchor(base, 0, { x: 0, y: 40 }))).toBe(false);
+  });
+
+  it('is true for one object compared with itself', () => {
+    const base = selection();
+
+    expect(hasSameSelectionGeometry(base, base)).toBe(true);
+  });
+
+  it.each([
+    ['a moved pos', { pos: { x: 6, y: 5, width: 10, height: 10 } }],
+    ['a resized pos', { pos: { x: 5, y: 5, width: 11, height: 10 } }],
+    [
+      'a moved anchor',
+      {
+        points: [
+          { x: 1, y: 0 },
+          { x: 10, y: 0 },
+          { x: 10, y: 10 },
+        ],
+      },
+    ],
+    [
+      'a different point count',
+      {
+        points: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+        ],
+      },
+    ],
+    [
+      'a moved point',
+      {
+        points: [
+          { x: 0, y: 0 },
+          { x: 10, y: 1 },
+          { x: 10, y: 10 },
+        ],
+      },
+    ],
+  ])('is false for %s', (_label, overrides) => {
+    expect(hasSameSelectionGeometry(selection(), selection(overrides as Partial<Selection>))).toBe(false);
   });
 });
