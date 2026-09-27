@@ -122,6 +122,23 @@ export function getAffineBounds(transform: AffineTransform, size: Size): Pos {
   return { x, y, width, height };
 }
 
+export function rasterizeBounds(bounds: Pos): Size {
+  const width = Math.round(bounds.width);
+  const height = Math.round(bounds.height);
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width < 1 ||
+    height < 1 ||
+    width > MAX_AFFINE_COORDINATE ||
+    height > MAX_AFFINE_COORDINATE ||
+    width * height > MAX_AFFINE_PIXELS
+  ) {
+    throw new Error('Raster transform exceeds supported bounds');
+  }
+  return { width, height };
+}
+
 export function validateAffineTransform(transform: AffineTransform, size?: Size): AffineTransform {
   const values = [transform.a, transform.b, transform.c, transform.d, transform.e, transform.f];
   if (!values.every(Number.isFinite) || values.some((value) => Math.abs(value) > MAX_AFFINE_COORDINATE)) {

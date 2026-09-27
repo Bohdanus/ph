@@ -1,4 +1,14 @@
-import type { ProcessorToolParams } from './toolProcessors.ts';
+import type { AffineTransform } from '../contexts/affine-transform.ts';
+import {
+  getAffineBounds,
+  isTrapezoidOnlyTransform,
+  rasterizeBounds,
+  transformToolArgsToAffine,
+} from '../contexts/affine-transform.ts';
+import type { BitmapSource, Point, Pos, Size } from '../contexts/general-types.ts';
+import { invertHomography, solveHomography } from '../util/homography.ts';
+import { resampleThroughHomographyRowByRow } from '../util/homography-resample.ts';
+import type { ProcessorToolParams, ToolResult } from './toolProcessors.ts';
 
 export type TransformToolArgs = {
   rotate: number;
@@ -13,6 +23,99 @@ export type TransformToolArgs = {
   toolName: 'transform';
 };
 
+export function getTransformDrawMatrix(transform: AffineTransform, bounds: Pos): AffineTransform {
+  return Object.freeze({
+    a: transform.a,
+    b: transform.b,
+    c: transform.c,
+    d: transform.d,
+    e: transform.e - bounds.x,
+    f: transform.f - bounds.y,
+  });
+}
+
+function sourceRectCorners(size: Size): Point[] {
+  return [
+    { x: 0, y: 0 },
+    { x: size.width, y: 0 },
+    { x: size.width, y: size.height },
+    { x: 0, y: size.height },
+  ];
+}
+
+export function getTrapezoidQuad(size: Size, trapezoid: number): Point[] {
+  const factor = trapezoid / 100;
+
+  return sourceRectCorners(size).map((corner) => {
+    const progress = corner.y / size.height;
+    const rowScale = factor > 0 ? 1 - factor * progress : 1 + factor * (1 - progress);
+    return {
+      x: corner.x * rowScale + (size.width - size.width * rowScale) / 2,
+      y: corner.y,
+    };
+  });
+}
+
+function boundsOfPoints(points: readonly Point[]): Pos {
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+}
+
+function renderAffine(bitmap: BitmapSource, size: Size, args: TransformToolArgs): ToolResult {
+  const transform = transformToolArgsToAffine(args, size);
+  if (!transform) throw new Error('Trapezoid cannot be combined with retained affine transforms');
+
+  const bounds = getAffineBounds(transform, size);
+  const { width, height } = rasterizeBounds(bounds);
+
+  const canvas = new OffscreenCanvas(width, height);
+  const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
+  const draw = getTransformDrawMatrix(transform, bounds);
+  ctx.setTransform(draw.a, draw.b, draw.c, draw.d, draw.e, draw.f);
+  ctx.drawImage(bitmap, 0, 0, size.width, size.height);
+
+  if (width === size.width && height === size.height) return [canvas];
+  return [canvas, { width, height }];
+}
+
+function readSourcePixels(bitmap: BitmapSource, size: Size): ImageData {
+  const sourceCanvas = new OffscreenCanvas(size.width, size.height);
+  const context = sourceCanvas.getContext('2d')!;
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(bitmap, 0, 0, size.width, size.height);
+  return context.getImageData(0, 0, size.width, size.height);
+}
+
+function renderTrapezoid(bitmap: BitmapSource, size: Size, trapezoid: number): ToolResult {
+  if (Math.abs(trapezoid) >= 100) throw new Error('Trapezoid taper must stay within 100 percent');
+
+  const absoluteQuad = getTrapezoidQuad(size, trapezoid);
+  const bounds = boundsOfPoints(absoluteQuad);
+  const { width, height } = rasterizeBounds(bounds);
+  const quad = absoluteQuad.map((corner) => ({ x: corner.x - bounds.x, y: corner.y - bounds.y }));
+
+  const forward = solveHomography(sourceRectCorners(size), quad);
+  if (!forward) throw new Error('Trapezoid geometry is not invertible');
+  const inverse = invertHomography(forward);
+  if (!inverse) throw new Error('Trapezoid geometry is not invertible');
+
+  const sourceImage = readSourcePixels(bitmap, size);
+
+  const canvas = new OffscreenCanvas(width, height);
+  const ctx = canvas.getContext('2d')!;
+  resampleThroughHomographyRowByRow(sourceImage, ctx, width, height, inverse);
+
+  if (width === size.width && height === size.height) return [canvas];
+  return [canvas, { width, height }];
+}
+
 export const transform =
   ({ bitmap, size }: ProcessorToolParams) =>
   ({
@@ -24,127 +127,31 @@ export const transform =
     trapezoid = 0,
     resizeX = 100,
     resizeY = 100,
-  }: TransformToolArgs) => {
-    const initialWidth = size.width;
-    const initialHeight = size.height;
-
+  }: TransformToolArgs): ToolResult => {
     if (
-      ![initialWidth, initialHeight, rotate, mirrorH, mirrorV, skewX, skewY, trapezoid, resizeX, resizeY].every(
+      ![size.width, size.height, rotate, mirrorH, mirrorV, skewX, skewY, trapezoid, resizeX, resizeY].every(
         (value) => typeof value === 'boolean' || Number.isFinite(value)
       ) ||
-      initialWidth < 1 ||
-      initialHeight < 1
+      size.width < 1 ||
+      size.height < 1
     ) {
       throw new Error('Invalid raster transform dimensions or values');
     }
-    if (
-      trapezoid !== 0 &&
-      (rotate !== 0 || mirrorH || mirrorV || skewX !== 0 || skewY !== 0 || resizeX !== 100 || resizeY !== 100)
-    ) {
+    const args: TransformToolArgs = {
+      rotate,
+      mirrorH,
+      mirrorV,
+      skewX,
+      skewY,
+      trapezoid,
+      resizeX,
+      resizeY,
+      toolName: 'transform',
+    };
+
+    if (trapezoid === 0) return renderAffine(bitmap, size, args);
+    if (!isTrapezoidOnlyTransform(args)) {
       throw new Error('Trapezoid cannot be combined with retained affine transforms');
     }
-
-    const angle = (rotate * Math.PI) / 180;
-    const sX = (skewX * Math.PI) / 180;
-    const sY = (skewY * Math.PI) / 180;
-    const scaleX = resizeX / 100;
-    const scaleY = resizeY / 100;
-
-    // Calculate bounding box after rotation and skew
-    // We can use transform matrix to find corners
-    const corners = [
-      { x: 0, y: 0 },
-      { x: initialWidth, y: 0 },
-      { x: initialWidth, y: initialHeight },
-      { x: 0, y: initialHeight },
-    ];
-
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    const tanX = Math.tan(sX);
-    const tanY = Math.tan(sY);
-    const factor = trapezoid / 100;
-
-    const transformedCorners = corners.map((p) => {
-      // Apply trapezoid first (non-affine)
-      // symmetry: if factor > 0, bottom narrows. if factor < 0, top narrows.
-      // we can use: scale = 1 - factor * (progress - offset)
-      // where offset is 0 if factor > 0 and 1 if factor < 0
-      const progress = p.y / initialHeight;
-      const scale = factor > 0 ? 1 - factor * progress : 1 + factor * (1 - progress);
-
-      const trapX = p.x * scale + (initialWidth - initialWidth * scale) / 2;
-      const trapY = p.y;
-
-      // Apply resize scaling before other transforms
-      const x = (trapX - initialWidth / 2) * scaleX;
-      const y = (trapY - initialHeight / 2) * scaleY;
-
-      // Apply rotation
-      const rx = x * cos - y * sin;
-      const ry = x * sin + y * cos;
-
-      // Apply skew
-      const sx = rx + ry * tanX;
-      const sy = ry + rx * tanY;
-
-      return { x: sx, y: sy };
-    });
-
-    const minX = Math.min(...transformedCorners.map((p) => p.x));
-    const maxX = Math.max(...transformedCorners.map((p) => p.x));
-    const minY = Math.min(...transformedCorners.map((p) => p.y));
-    const maxY = Math.max(...transformedCorners.map((p) => p.y));
-
-    const newWidth = Math.round(maxX - minX);
-    const newHeight = Math.round(maxY - minY);
-
-    if (
-      !Number.isInteger(newWidth) ||
-      !Number.isInteger(newHeight) ||
-      newWidth < 1 ||
-      newHeight < 1 ||
-      newWidth > 1000000 ||
-      newHeight > 1000000 ||
-      newWidth * newHeight > 64 * 1024 * 1024
-    ) {
-      throw new Error('Raster transform exceeds supported bounds');
-    }
-
-    const canvas = new OffscreenCanvas(newWidth, newHeight);
-    const ctx = canvas.getContext('2d')!;
-    ctx.imageSmoothingEnabled = true;
-
-    // Create a temporary canvas for the trapezoid effect
-    // This is because we need to apply trapezoid to the source before other transforms
-    // or at least in a way that doesn't mess up the bounding box calculation
-    // For simplicity, we'll draw to an offscreen canvas and then apply rotation/skew
-    const offscreen = new OffscreenCanvas(initialWidth, initialHeight);
-    const offCtx = offscreen.getContext('2d')!;
-
-    if (trapezoid === 0) {
-      offCtx.drawImage(bitmap, 0, 0);
-    } else {
-      // Apply trapezoid effect by drawing thin strips
-      // trapezoid value is from -100 to 100, representing percentage of narrowing
-      for (let i = 0; i < initialHeight; i++) {
-        const progress = i / initialHeight;
-        // if factor > 0, bottom is narrower. if factor < 0, top is narrower.
-        const scale = factor > 0 ? 1 - factor * progress : 1 + factor * (1 - progress);
-        const xOffset = (initialWidth - initialWidth * scale) / 2;
-        offCtx.drawImage(bitmap, 0, i, initialWidth, 1, xOffset, i, initialWidth * scale, 1);
-      }
-    }
-
-    ctx.translate(newWidth / 2, newHeight / 2);
-    ctx.rotate(angle);
-    ctx.transform(1, tanY, tanX, 1, 0, 0);
-    ctx.scale(mirrorH ? -scaleX : scaleX, mirrorV ? -scaleY : scaleY);
-    ctx.drawImage(offscreen, -initialWidth / 2, -initialHeight / 2);
-
-    if (initialWidth !== newWidth || initialHeight !== newHeight) {
-      return [canvas, { width: newWidth, height: newHeight }];
-    }
-
-    return [canvas];
+    return renderTrapezoid(bitmap, size, trapezoid);
   };
