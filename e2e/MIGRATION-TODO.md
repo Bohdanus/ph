@@ -111,12 +111,6 @@ specifics worth calling out:
   `viewport-drawing.spec.ts`), carried over verbatim. Everything else in the repo
   is English. Not translated, because editing ported test comments is churn
   without functional value — but it is inconsistent.
-- **`expectCanvasToMatch` is dead code** (`image-comparison.ts:99`) with a P1 defect
-  in its defaults: a trailing `...options` spread overwrites the `??` defaults, so a
-  caller passing `maxDiffPixels: undefined` gets Playwright's default of `0`. Zero
-  call sites outside its own unit test, so the failure cannot occur today. Delete it
-  or fix it; `compareScreenshots` is what the visual-regression spec actually uses
-  and does not have the bug.
 - **10 orphaned committed baselines, ~2.1 MB** (8 raw exports, plus
   `drawing-icon.ico.png` and `source-baseline.png`). Nothing reads them. Left in
   place because deleting committed baselines was not authorized. `drawing.bmp`
