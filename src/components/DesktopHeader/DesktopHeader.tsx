@@ -111,12 +111,12 @@ const DesktopHeader = () => {
                   onClick={async () => {
                     try {
                       if (
-                        hasUnsavedChanges ||
-                        confirm('All unsaved changes to current image will be lost. Continue?.')
-                      ) {
-                        const data = await openNewImageDialog();
-                        if (data) setBlankImage(data);
-                      }
+                        (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
+                        !confirm('Discard unsaved changes and start a new image?')
+                      )
+                        return;
+                      const data = await openNewImageDialog();
+                      if (data) setBlankImage(data);
                       setOpenMenu(null);
                     } catch (error) {
                       console.error('Unable to create document', error);
