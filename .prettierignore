@@ -1,1 +1,12 @@
 index.html
+
+# Generated output. These are gitignored, but `npm run lint:check` runs
+# `prettier --check .` over the whole tree, and Playwright writes a markdown
+# `error-context.md` next to every failure. Without these entries, one failing
+# e2e run makes `npm run lint:check` and `npm run format` start reading and
+# rewriting generated snapshots.
+coverage
+coverage-e2e
+test-results
+playwright-report
+blob-report

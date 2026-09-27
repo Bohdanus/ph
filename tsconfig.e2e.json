@@ -1,0 +1,51 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.e2e.tsbuildinfo",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    // NOT "vitest/globals": every e2e unit file imports describe/it/expect from
+    // 'vitest' explicitly. Listing the global types would let an unimported
+    // `describe` typecheck here and then fail at runtime under the Node-environment
+    // e2e project, which does not set `globals: true`.
+    "types": ["@playwright/test", "node"],
+    // Same as tsconfig.app.json / tsconfig.node.json. Without it, a dependency `.d.ts`
+    // change in a `@types/node` / `@playwright/test` / `vitest` minor bump can turn
+    // `tsc -b` — and therefore the husky pre-commit hook — red through no repo change.
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    /* Linting */
+    "strict": true,
+    "noImplicitAny": true,
+    "noUnusedLocals": true,
+    // OFF, unlike tsconfig.app.json / tsconfig.node.json, and unlike the standalone
+    // package these specs came from (which left it off by omission).
+    //
+    // Two e2e helpers take a parameter that they deliberately do not read:
+    // `exportAndVerify`'s `testInfo` and `expectCanvasToMatch`'s `page`. Both are
+    // documented defects in e2e/OPEN_PROBLEMS.md, and every call site already
+    // threads the argument. Deleting the parameter to satisfy the compiler would
+    // erase the evidence of the defect and churn every call site; the fix is to
+    // start using the argument. Unused *locals* stay an error, and ESLint still
+    // reports both as `no-unused-vars` warnings, so neither is silent.
+    "noUnusedParameters": false,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true
+  },
+  // The specs and the `__tests__` unit files are included on purpose: type-checking the
+  // tests is the point of wiring this project into `tsc -b`.
+  "include": ["e2e/**/*.ts", "playwright.config.ts", "vitest.e2e.config.ts"],
+  // `e2e/**/*.spec.ts-snapshots/**` holds the committed visual-regression baselines
+  // (PNG/ICO/BMP/GIF/AVIF/WebP/JPEG/SVG) and no TypeScript, so nothing in it would be
+  // picked up by the glob above. It is listed to document that the directory is image
+  // data, not source, and to keep it out if a stray `.ts` ever lands beside it.
+  "exclude": ["node_modules", "e2e/**/*.spec.ts-snapshots/**"]
+}

@@ -30,6 +30,8 @@ jobs:
         run: npm audit --audit-level=high
 
       - name: Type-check
+        # `tsc -b` builds tsconfig.app.json, tsconfig.node.json and tsconfig.e2e.json,
+        # so this also type-checks the Playwright specs and their helper unit tests.
         run: npm run tsc
 
       - name: Test
@@ -37,3 +39,99 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # The blocking gate for everything under e2e/.
+  #
+  # A separate job rather than a step in `ci`, so that a break anywhere in the app
+  # pipeline cannot silently remove the only gate on this code: within one job a
+  # failed step aborts the rest, and a step ordered after a failing one simply never
+  # runs while the workflow still reads as if it were covered.
+  #
+  # It also builds only tsconfig.e2e.json, so an app-project type error cannot take
+  # the e2e type-check down with it. Needs no browser and no application instance.
+  e2e-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit test the e2e helpers
+        run: npm run test:e2e:unit
+
+      - name: Type-check the e2e project
+        # `tsc -b` would also build the app project; scoping to tsconfig.e2e.json keeps
+        # an app type error from being reported as an e2e failure.
+        run: npx tsc -b tsconfig.e2e.json
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # INFORMATIONAL, NOT A GATE.
+    #
+    # The blocking coverage for the e2e code is the `e2e-unit` job, not this one: it
+    # runs `npm run test:e2e:unit` and `tsc -b tsconfig.e2e.json` in isolation from the
+    # app pipeline's pre-existing failures. See the note on that job.
+    #
+    # This job is not blocking because 5 of the 97 tests fail for reasons documented in
+    # e2e/OPEN_PROBLEMS.md: 2 CDP specs, 2 Levels specs, and a race in the sidebar
+    # keyboard specs that fails intermittently in any mode. The CDP capture multiplier
+    # is a deterministic function of the browser mode rather than of the emulated
+    # devicePixelRatio — forcing the emulation to match the host changes which tests
+    # fail instead of fixing them — so until that is understood, a blocking job here
+    # would be either permanently red or silently excluding real failures.
+    #
+    # Flip this to `false` once the specs are green, and drop nothing else.
+    #
+    # The suite runs headless here, and that is not incidental: `playwright.config.ts`
+    # defaults to headless so that no operator's mouse, keyboard or focus can reach
+    # the page mid-run. A CI runner has no such input, but keeping the same default
+    # locally is what stops that class of failure from being misread as flakiness.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chrome
+        # playwright.config.ts defaults to `channel: 'chrome'` (the system browser),
+        # so install that rather than Playwright's bundled Chromium.
+        run: npx playwright install --with-deps chrome
+
+      - name: Run Playwright specs
+        # playwright.config.ts declares a `webServer` running `npm run dev` on :5173.
+        # `CI` is set by the runner, so `reuseExistingServer` is false and the job
+        # always starts its own server instead of trusting the port.
+        #
+        # No --grep-invert: this job reports the true state of the suite, including the
+        # known failures. Filtering them out here would hide them, and the blocking
+        # coverage is the helper unit tests in the `e2e-unit` job anyway.
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore

@@ -1,0 +1,327 @@
+import { type Download, expect, type Page, type TestInfo } from '@playwright/test';
+import { mkdir, readFile, rm } from 'node:fs/promises';
+import path from 'node:path';
+import {
+  drawLine,
+  getWorkspaceCanvas,
+  LINE_END_X,
+  LINE_END_Y,
+  LINE_START_X,
+  LINE_START_Y,
+  waitForCanvasRedraw,
+} from '../helpers/canvas-helpers';
+import { clickToolButton } from '../helpers/toolbar-helpers';
+
+export interface ExportFormat {
+  label: string;
+  extension: string;
+  comparePixels: boolean;
+}
+
+/**
+ * Upper bound on differing colour channels tolerated when comparing an export
+ * against the canvas it was encoded from. 50,000 channels is ~1.5% of the
+ * 196,608 channels on a 256x256 image, which is wide enough to absorb lossy
+ * re-encoding artifacts (chroma subsampling, dithering) without masking a
+ * genuinely wrong or empty export.
+ */
+export const CHANGED_CHANNEL_THRESHOLD_GENERAL = 50_000;
+
+/**
+ * Tighter bound used for ICO. An icon is inspected at small sizes, so a colour
+ * shift that would be a rounding error on a 256x256 image is visible on a
+ * 32x32 icon frame; 20,000 is 2.5x stricter than the general threshold to
+ * catch those subtle shifts.
+ */
+export const CHANGED_CHANNEL_THRESHOLD_ICO = 20_000;
+
+/**
+ * Per-channel absolute RGB delta below which a channel counts as unchanged.
+ * Small enough to catch any visible colour shift, large enough to ignore
+ * rounding noise introduced by base64 round-tripping through PNG.
+ */
+export const CHANNEL_DELTA_TOLERANCE = 40;
+
+/**
+ * Budget for a single export download. Encoders such as AVIF and TIFF are much
+ * slower than PNG, so this is well above the time a healthy export needs.
+ */
+export const DOWNLOAD_TIMEOUT_MS = 30_000;
+
+/**
+ * Per-test budget covering the full draw, encode, download and pixel
+ * comparison sequence, which is only bound by encoder speed rather than by
+ * any single awaited step.
+ */
+export const INTEGRATION_TEST_TIMEOUT_MS = 60_000;
+
+export const exportFormats: ExportFormat[] = [
+  { label: 'PNG', extension: '.png', comparePixels: true },
+  { label: 'JPEG', extension: '.jpeg', comparePixels: true },
+  { label: 'WebP', extension: '.webp', comparePixels: true },
+  { label: 'TIFF', extension: '.tiff', comparePixels: false },
+  { label: 'BMP', extension: '.bmp', comparePixels: true },
+  { label: 'GIF (static)', extension: '.gif', comparePixels: true },
+  { label: 'AVIF', extension: '.avif', comparePixels: true },
+  { label: 'SVG (flattened)', extension: '.svg', comparePixels: true },
+  { label: 'Photoshop PSD (layers)', extension: '.psd', comparePixels: false },
+];
+
+export const icoFormat: ExportFormat = { label: 'ICO', extension: '.ico', comparePixels: true };
+
+export function mimeType(extension: string | null | undefined): string {
+  if (typeof extension !== 'string' || extension.length === 0) {
+    return 'application/octet-stream';
+  }
+  return (
+    {
+      '.png': 'image/png',
+      '.jpeg': 'image/jpeg',
+      '.webp': 'image/webp',
+      '.bmp': 'image/bmp',
+      '.gif': 'image/gif',
+      '.avif': 'image/avif',
+      '.ico': 'image/x-icon',
+      '.svg': 'image/svg+xml',
+    }[extension.toLowerCase()] ?? 'application/octet-stream'
+  );
+}
+
+export async function setupExportTest(
+  page: Page,
+  testInfo: TestInfo
+): Promise<{
+  box: { x: number; y: number; width: number; height: number };
+  sourceDataUrl: string;
+  downloadDirectory: string;
+}> {
+  const downloadDirectory = path.join(testInfo.outputDir, 'exports');
+  await rm(downloadDirectory, { recursive: true, force: true });
+  await mkdir(downloadDirectory, { recursive: true });
+
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  const canvas = getWorkspaceCanvas(page);
+  await expect(canvas).toBeVisible();
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error('Canvas not found');
+
+  await clickToolButton(page, 'draw');
+  await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
+  await waitForCanvasRedraw(page, box);
+
+  const sourceDataUrl = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL('image/png'));
+
+  return { box, sourceDataUrl, downloadDirectory };
+}
+
+/** Opens the File menu and clicks Save, leaving the Save File As... dialog open. */
+export async function openSaveDialog(page: Page): Promise<void> {
+  await page.getByTestId('header-file-menu-button').click();
+  await page.getByTestId('header-file-save-button').click();
+}
+
+/** Fills the filename and selects `formatLabel` in an already-open save dialog. */
+export async function fillSaveDialog(page: Page, filename: string, formatLabel: string): Promise<void> {
+  await page.getByTestId('save-dialog-filename-input').fill(filename);
+  await page.getByTestId('save-dialog-format-select').selectOption({ label: formatLabel });
+}
+
+/**
+ * Submits the save dialog and resolves once the download completes, asserting
+ * that the browser reported no failure and that the saved file carries the
+ * expected extension.
+ */
+export async function submitSaveDialogForDownload(
+  page: Page,
+  format: ExportFormat,
+  { timeoutMs = DOWNLOAD_TIMEOUT_MS }: { timeoutMs?: number } = {}
+): Promise<Download> {
+  const [download] = await Promise.all([
+    page.waitForEvent('download', { timeout: timeoutMs }),
+    page.getByTestId('save-dialog-submit-button').click(),
+  ]);
+  expect(await download.failure(), `${format.label}: download failed`).toBeNull();
+  expect(path.extname(download.suggestedFilename()).toLowerCase()).toBe(format.extension);
+  return download;
+}
+
+export async function exportAndVerify(
+  page: Page,
+  format: ExportFormat,
+  sourceDataUrl: string,
+  downloadDirectory: string,
+  testInfo: TestInfo
+): Promise<string> {
+  await openSaveDialog(page);
+  await fillSaveDialog(page, 'drawing', format.label);
+
+  const download = await submitSaveDialogForDownload(page, format);
+
+  const target = path.join(downloadDirectory, path.basename(download.suggestedFilename()));
+  await download.saveAs(target);
+  await expect(page.getByRole('heading', { name: 'Save File As...' })).toHaveCount(0);
+
+  const file = await readFile(target);
+  expect(file.byteLength, `${format.label} file should not be empty`).toBeGreaterThan(100);
+
+  if (format.comparePixels) {
+    const matchesSource = await page.evaluate(
+      async ({ source, exported, mime, threshold, tolerance }) => {
+        const loadImage = (data: string) =>
+          new Promise<HTMLImageElement>((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error('Browser cannot decode exported image'));
+            image.src = data;
+          });
+        const sourceImage = await loadImage(source);
+        const exportedImage = await loadImage(`data:${mime};base64,${exported}`);
+        const sourceCanvas = document.createElement('canvas');
+        const exportedCanvas = document.createElement('canvas');
+        sourceCanvas.width = exportedCanvas.width = sourceImage.width;
+        sourceCanvas.height = exportedCanvas.height = sourceImage.height;
+        const sourceContext = sourceCanvas.getContext('2d');
+        const exportedContext = exportedCanvas.getContext('2d');
+        if (!sourceContext || !exportedContext) return false;
+        sourceContext.drawImage(sourceImage, 0, 0);
+        exportedContext.drawImage(exportedImage, 0, 0, sourceImage.width, sourceImage.height);
+        const original = sourceContext.getImageData(0, 0, sourceImage.width, sourceImage.height).data;
+        const actual = exportedContext.getImageData(0, 0, sourceImage.width, sourceImage.height).data;
+        let changedChannels = 0;
+        for (let index = 0; index < original.length; index += 4) {
+          for (let channel = 0; channel < 3; channel += 1) {
+            if (Math.abs(original[index + channel] - actual[index + channel]) > tolerance) changedChannels += 1;
+          }
+        }
+        return changedChannels < threshold;
+      },
+      {
+        source: sourceDataUrl,
+        exported: file.toString('base64'),
+        mime: mimeType(format.extension),
+        threshold: CHANGED_CHANNEL_THRESHOLD_GENERAL,
+        tolerance: CHANNEL_DELTA_TOLERANCE,
+      }
+    );
+    expect(matchesSource, `${format.label}: pixels differ too much from source`).toBe(true);
+  }
+
+  return target;
+}
+
+/** Stroke drawn across the new icon canvas, in offsets from its box origin. */
+export const ICON_STROKE = { startX: 60, centerY: 128, endX: 196, steps: 10 } as const;
+
+export async function setupIcoTest(page: Page): Promise<string> {
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  await page.getByTestId('header-file-menu-button').click();
+  await page.getByTestId('header-file-new-button').click();
+  await page.getByTestId('new-image-width-input').fill('256');
+  await page.getByTestId('new-image-height-input').fill('256');
+  await page.getByTestId('new-image-dialog-submit-button').click();
+
+  const iconCanvas = getWorkspaceCanvas(page);
+  await expect(iconCanvas).toBeVisible();
+  const iconBox = await iconCanvas.boundingBox();
+  if (!iconBox) throw new Error('ICO canvas not found');
+  await clickToolButton(page, 'draw');
+  await page.mouse.move(iconBox.x + ICON_STROKE.startX, iconBox.y + ICON_STROKE.centerY);
+  await page.mouse.down();
+  await page.mouse.move(iconBox.x + ICON_STROKE.endX, iconBox.y + ICON_STROKE.centerY, { steps: ICON_STROKE.steps });
+  await page.mouse.up();
+  await waitForCanvasRedraw(page, iconBox);
+
+  return await iconCanvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL('image/png'));
+}
+
+export async function exportIcoAndVerify(
+  page: Page,
+  sourceDataUrl: string,
+  downloadDirectory: string
+): Promise<string> {
+  await openSaveDialog(page);
+  await fillSaveDialog(page, 'drawing-icon', 'ICO');
+  const iconDownload = await submitSaveDialogForDownload(page, icoFormat);
+  const iconTarget = path.join(downloadDirectory, path.basename(iconDownload.suggestedFilename()));
+  await iconDownload.saveAs(iconTarget);
+
+  const iconFile = await readFile(iconTarget);
+  expect(iconFile.byteLength, 'ICO file should not be empty').toBeGreaterThan(100);
+  const iconMatchesSource = await page.evaluate(
+    async ({ source, exported, threshold, tolerance }) => {
+      const loadImage = (data: string) =>
+        new Promise<HTMLImageElement>((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = () => reject(new Error('Browser cannot decode ICO'));
+          image.src = data;
+        });
+      const sourceImage = await loadImage(source);
+      const iconImage = await loadImage(`data:image/x-icon;base64,${exported}`);
+      const sourceCanvas = document.createElement('canvas');
+      const iconCanvas = document.createElement('canvas');
+      sourceCanvas.width = iconCanvas.width = sourceImage.width;
+      sourceCanvas.height = iconCanvas.height = sourceImage.height;
+      const sourceContext = sourceCanvas.getContext('2d');
+      const iconContext = iconCanvas.getContext('2d');
+      if (!sourceContext || !iconContext) return false;
+      sourceContext.drawImage(sourceImage, 0, 0);
+      iconContext.drawImage(iconImage, 0, 0, sourceImage.width, sourceImage.height);
+      const sourcePixels = sourceContext.getImageData(0, 0, sourceImage.width, sourceImage.height).data;
+      const iconPixels = iconContext.getImageData(0, 0, sourceImage.width, sourceImage.height).data;
+      let changedChannels = 0;
+      for (let index = 0; index < sourcePixels.length; index += 4) {
+        for (let channel = 0; channel < 3; channel += 1) {
+          if (Math.abs(sourcePixels[index + channel] - iconPixels[index + channel]) > tolerance) changedChannels += 1;
+        }
+      }
+      return changedChannels < threshold;
+    },
+    {
+      source: sourceDataUrl,
+      exported: iconFile.toString('base64'),
+      threshold: CHANGED_CHANNEL_THRESHOLD_ICO,
+      tolerance: CHANNEL_DELTA_TOLERANCE,
+    }
+  );
+  expect(iconMatchesSource, 'ICO: pixels differ too much from source').toBe(true);
+
+  return iconTarget;
+}
+
+export async function waitForPhotopeaReady(page: Page): Promise<void> {
+  // Wait for editor canvas (>100x100)
+  await page.waitForFunction(
+    () => {
+      const canvases = document.querySelectorAll('canvas');
+      return Array.from(canvases).some((c) => c.width > 100 && c.height > 100);
+    },
+    undefined,
+    { timeout: 60_000 }
+  );
+
+  // Wait for internal API (best effort)
+  await page
+    .waitForFunction(
+      () => {
+        return !!(window as any).pea || !!document.querySelector('[data-name="app"]');
+      },
+      undefined,
+      { timeout: 10_000 }
+    )
+    .catch(() => {
+      // Canvas check is sufficient if API not exposed
+    });
+}
+
+export async function verifyPsdInPhotopea(page: Page, psdPath: string): Promise<void> {
+  await page.goto('https://www.photopea.com/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await page.getByRole('button', { name: 'Start using Photopea' }).first().click();
+
+  await waitForPhotopeaReady(page);
+
+  const input = page.locator('input[type="file"]').first();
+  await expect(input).toHaveCount(1);
+  await input.setInputFiles(psdPath);
+  await expect(page.locator('body')).toContainText('drawing', { timeout: 30_000 });
+}

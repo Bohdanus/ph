@@ -1,0 +1,183 @@
+import { vi, type Mock } from 'vitest';
+import sharp from 'sharp';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import type { Locator, Mouse, Page, TestInfo } from '@playwright/test';
+import { loadImageData, type ImageDataResult } from '../canvas-helpers';
+
+export interface Color {
+  red: number;
+  green: number;
+  blue: number;
+}
+
+export const RED: Color = { red: 255, green: 0, blue: 0 };
+export const GREEN: Color = { red: 0, green: 255, blue: 0 };
+export const BLUE: Color = { red: 0, green: 0, blue: 255 };
+export const BLACK: Color = { red: 0, green: 0, blue: 0 };
+export const WHITE: Color = { red: 255, green: 255, blue: 255 };
+export const DARK_GRAY: Color = { red: 10, green: 10, blue: 10 };
+export const CYAN: Color = { red: 0, green: 255, blue: 255 };
+export const SPRAY_GRAY: Color = { red: 210, green: 210, blue: 210 };
+
+export const OPAQUE = 255;
+export const TRANSPARENT = 0;
+
+/** Single-flat-colour PNG; the only place sharp image creation happens in these tests. */
+export async function createTestImage(color: Color, width = 50, height = 50, alpha = 1): Promise<Buffer> {
+  return sharp({
+    create: {
+      width,
+      height,
+      channels: 4,
+      background: { r: color.red, g: color.green, b: color.blue, alpha },
+    },
+  })
+    .png()
+    .toBuffer();
+}
+
+export async function createTestImageData(color: Color, width = 50, height = 50, alpha = 1): Promise<ImageDataResult> {
+  return loadImageData(await createTestImage(color, width, height, alpha));
+}
+
+/** Fully transparent RGBA buffer: every channel zero, which the helpers read as "no pixel". */
+export function createImageData(width: number, height: number): ImageDataResult {
+  return { width, height, data: new Uint8ClampedArray(width * height * 4) };
+}
+
+export function setPixel(image: ImageDataResult, x: number, y: number, color: Color, alpha = OPAQUE): void {
+  const index = (y * image.width + x) * 4;
+  image.data[index] = color.red;
+  image.data[index + 1] = color.green;
+  image.data[index + 2] = color.blue;
+  image.data[index + 3] = alpha;
+}
+
+export interface Rect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+export function fillRect(image: ImageDataResult, rect: Rect, color: Color, alpha = OPAQUE): void {
+  for (let y = rect.top; y <= rect.bottom; y++) {
+    for (let x = rect.left; x <= rect.right; x++) {
+      setPixel(image, x, y, color, alpha);
+    }
+  }
+}
+
+export function fillAll(image: ImageDataResult, color: Color, alpha = OPAQUE): void {
+  fillRect(image, { left: 0, top: 0, right: image.width - 1, bottom: image.height - 1 }, color, alpha);
+}
+
+export type MoveSpy = Mock<(x: number, y: number, options?: { steps?: number }) => Promise<void>>;
+export type ButtonSpy = Mock<() => Promise<void>>;
+
+export interface MouseMock {
+  mouse: Mouse;
+  move: MoveSpy;
+  down: ButtonSpy;
+  up: ButtonSpy;
+}
+
+export function createMouseMock(): MouseMock {
+  const move: MoveSpy = vi.fn().mockResolvedValue(undefined);
+  const down: ButtonSpy = vi.fn().mockResolvedValue(undefined);
+  const up: ButtonSpy = vi.fn().mockResolvedValue(undefined);
+  // The `Partial<T>` annotation is the real type check here (it rejects keys the real
+  // interface does not have); the `as T` cast below it is unchecked, so keep both.
+  const double: Partial<Mouse> = { move, down, up };
+  return { mouse: double as Mouse, move, down, up };
+}
+
+export function createPageMock(overrides: Partial<Page> = {}): Page {
+  const double: Partial<Page> = { ...overrides };
+  return double as Page;
+}
+
+export type ScreenshotOptions = { path: string; clip: { x: number; y: number; width: number; height: number } };
+export type ScreenshotSpy = Mock<(options: ScreenshotOptions) => Promise<Buffer>>;
+
+export function createScreenshotSpy(result: Buffer): ScreenshotSpy {
+  return vi.fn<(options: ScreenshotOptions) => Promise<Buffer>>().mockResolvedValue(result);
+}
+
+export interface AttachOptions {
+  path?: string;
+  body?: string | Buffer;
+  contentType?: string;
+}
+export type AttachSpy = Mock<(name: string, options: AttachOptions) => Promise<void>>;
+
+export interface TestInfoMock {
+  testInfo: TestInfo;
+  attach: AttachSpy;
+}
+
+export function createTestInfoMock(outputDir?: string): TestInfoMock {
+  const attach: AttachSpy = vi
+    .fn<(name: string, options: AttachOptions) => Promise<void>>()
+    .mockResolvedValue(undefined);
+  const double: Partial<TestInfo> = { attach };
+  if (outputDir !== undefined) double.outputDir = outputDir;
+  return { testInfo: double as TestInfo, attach };
+}
+
+let tempRoot: string | undefined;
+
+export async function makeOutputDir(name: string): Promise<string> {
+  tempRoot ??= await fs.mkdtemp(path.join(os.tmpdir(), 'canvas-helpers-'));
+  return path.join(tempRoot, name);
+}
+
+export async function cleanupTempDirs(): Promise<void> {
+  if (tempRoot === undefined) return;
+  const root = tempRoot;
+  tempRoot = undefined;
+  await fs.rm(root, { recursive: true, force: true });
+}
+
+export interface FakeElement {
+  selector: string;
+  testId?: string;
+}
+
+export function canvasElement(testId?: string): FakeElement {
+  return testId === undefined ? { selector: 'canvas' } : { selector: 'canvas', testId };
+}
+
+const locatorCandidates = new WeakMap<Locator, () => FakeElement[]>();
+
+/**
+ * Minimal locator model over a fixed element list: `getByTestId`/`locator` filter,
+ * `nth` selects one candidate, `or` appends the other locator's candidates after its own.
+ */
+function fakeLocator(candidates: () => FakeElement[]): Locator {
+  const double: Partial<Locator> = {
+    getByTestId: (id: string) => fakeLocator(() => candidates().filter((el) => el.testId === id)),
+    locator: (selector: string) => fakeLocator(() => candidates().filter((el) => el.selector === selector)),
+    nth: (index: number) => fakeLocator(() => candidates().slice(index, index + 1)),
+    or: (other: Locator) => {
+      const otherCandidates = locatorCandidates.get(other);
+      return fakeLocator(() => [...candidates(), ...(otherCandidates ? otherCandidates() : [])]);
+    },
+  };
+  const locator = double as Locator;
+  locatorCandidates.set(locator, candidates);
+  return locator;
+}
+
+export function createFakePage(dom: FakeElement[]): Page {
+  return createPageMock({
+    getByTestId: (id: string) => fakeLocator(() => dom.filter((el) => el.testId === id)),
+    locator: (selector: string) => fakeLocator(() => dom.filter((el) => el.selector === selector)),
+  });
+}
+
+export function resolveFakeLocator(locator: Locator): FakeElement | undefined {
+  return locatorCandidates.get(locator)?.()[0];
+}

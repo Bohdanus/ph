@@ -1,2 +1,19 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# The visual-regression baselines under e2e/ are real binary image files and are
+# tracked in git, so they must be excluded from `text=auto` explicitly. Git's own
+# binary sniffing already catches most of these, but it works by looking for NUL
+# bytes. That sniff is exactly what must not be trusted here: a baseline whose
+# header is damaged could be classified as text, and `text=auto` would then rewrite
+# its line endings on checkout, silently corrupting the very pixels the comparison
+# asserts on. Naming the formats removes the guesswork.
+#
+# Scoped to the snapshot directory rather than declared as `*.png` etc. so that adding
+# a real SVG or PNG source asset to `src/` later keeps normal text handling.
+e2e/export/visual-regression.spec.ts-snapshots/** binary
+
+# Playwright HTML reports embed large base64 blobs on few lines; normalizing them is
+# pure churn. They are gitignored, so this only affects locally generated files.
+playwright-report/** -text
+blob-report/** -text
