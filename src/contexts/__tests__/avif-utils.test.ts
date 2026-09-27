@@ -176,6 +176,22 @@ describe('AVIF decoding', () => {
     await expect(loadAvifFile(file)).rejects.toThrow('Image has invalid dimensions');
   });
 
+  it('rejects a decoded image beyond the pixel budget rather than downscaling it', async () => {
+    installImageHarness();
+    decode.mockResolvedValue({
+      data: new Uint8ClampedArray(0),
+      width: 10000,
+      height: 8001,
+      colorSpace: 'srgb',
+    });
+    const file = new Blob([new Uint8Array([0])], { type: 'image/avif' });
+
+    await expect(loadAvifFile(file)).rejects.toThrow(
+      'AVIF image is too large to open (10000×8001). Maximum is 80000000 pixels.'
+    );
+    expect(putImageData).not.toHaveBeenCalled();
+  });
+
   it('rejects when the canvas for the decoded image cannot be created', async () => {
     installImageHarness();
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);

@@ -160,7 +160,7 @@ describe('TIFF encoding and decoding', () => {
 
     const blob = await encodeTiff(canvas);
 
-    expect(encodeImage).toHaveBeenCalledExactlyOnceWith(pixels, 1, 1);
+    expect(encodeImage).toHaveBeenCalledExactlyOnceWith(pixels, 1, 1, { t338: [2] });
     expect(blob.type).toBe('image/tiff');
     expect(blob.size).toBe(4);
   });
@@ -176,8 +176,29 @@ describe('TIFF encoding and decoding', () => {
     const blob = await encodeTiff(canvas);
 
     expect(getImageData).toHaveBeenCalledExactlyOnceWith(0, 0, 4, 3);
-    expect(encodeImage).toHaveBeenCalledExactlyOnceWith(expect.any(Uint8ClampedArray), 4, 3);
+    expect(encodeImage).toHaveBeenCalledExactlyOnceWith(expect.any(Uint8ClampedArray), 4, 3, { t338: [2] });
     expect(new Uint8Array(await blob.arrayBuffer())).toHaveLength(48);
+  });
+
+  it('declares the straight alpha it is given as unassociated, never premultiplied', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    vi.spyOn(canvas, 'getContext').mockReturnValue({
+      getImageData: vi.fn(() => ({ data: new Uint8ClampedArray([255, 0, 0, 128]) })),
+    } as unknown as CanvasRenderingContext2D);
+    encodeImage.mockReturnValue(new ArrayBuffer(4));
+
+    await encodeTiff(canvas);
+
+    // UTIF's default IFD sets ExtraSamples (tag 338) to 1 = associated, which tells every
+    // reader that multiplies by alpha to do it a second time. `getImageData` is straight
+    // alpha, so the file must say 2. The pixels are handed over untouched: it is the
+    // declaration that was wrong, not the data.
+    const [pixels, , , metadata] = encodeImage.mock.calls[0] as [Uint8ClampedArray, number, number, { t338: number[] }];
+    expect(metadata).toEqual({ t338: [2] });
+    expect(metadata.t338).not.toEqual([1]);
+    expect(Array.from(pixels)).toEqual([255, 0, 0, 128]);
   });
 
   it('wraps the encoder output verbatim', async () => {
@@ -214,6 +235,9 @@ describe('TIFF error paths', () => {
   beforeEach(() => {
     decode.mockReset();
     decodeImage.mockReset();
+    // Reset here too, so the `not.toHaveBeenCalled()` assertions below do not depend on
+    // which tests in this describe happened to reach the converter first.
+    toRGBA8.mockReset();
   });
 
   it('rejects files whose first decoded page is missing', async () => {
@@ -254,5 +278,93 @@ describe('TIFF error paths', () => {
 
     await expect(encodeTiff(canvas)).rejects.toThrow('Unable to read canvas pixels for TIFF encoding');
     expect(encodeImage).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A TIFF is a 4-byte signature plus one IFD, so a ~200-byte file can declare 65535×65535.
+ * `UTIF.decodeImage` then allocates `height * bytesPerRow` from those tags and `UTIF.toRGBA8`
+ * allocates `width * height * 4` — 17.2 GB for that header, with no bound anywhere in the
+ * path. These pin that the budget is consulted before either allocating call, and that it
+ * rejects rather than silently downscaling.
+ */
+describe('TIFF decode pixel budget', () => {
+  beforeEach(() => {
+    decode.mockReset();
+    decodeImage.mockReset();
+    toRGBA8.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('refuses a 65535×65535 header before decodeImage reaches its own allocation', async () => {
+    decode.mockReturnValue([{ t256: [65535], t257: [65535] }]);
+
+    await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+      'TIFF image is too large to open (65535×65535). Maximum is 80000000 pixels.'
+    );
+    expect(decodeImage).not.toHaveBeenCalled();
+    expect(toRGBA8).not.toHaveBeenCalled();
+  });
+
+  it('refuses a header whose dimensions only materialise after decodeImage', async () => {
+    // utif leaves `width`/`height` unset until `decodeImage` copies them off the IFD, so the
+    // IFD is the only place a budget can catch this before the allocation.
+    const page: { width?: number; height?: number } = {};
+    decode.mockReturnValue([page]);
+    decodeImage.mockImplementation(() => {
+      page.width = 40000;
+      page.height = 40000;
+    });
+
+    await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+      'TIFF image is too large to open (40000×40000). Maximum is 80000000 pixels.'
+    );
+    expect(toRGBA8).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['just over the cap', 10001, 8000],
+    ['a single absurdly wide page', 1_000_000, 1000],
+  ])('rejects %s rather than clamping it to fit', async (_label, width, height) => {
+    decode.mockReturnValue([{ t256: [width], t257: [height] }]);
+
+    await expect(loadTiffFile(new Blob(['tiff'], { type: 'image/tiff' }))).rejects.toThrow(
+      /TIFF image is too large to open/
+    );
+    expect(toRGBA8).not.toHaveBeenCalled();
+  });
+
+  it('still decodes a large page that sits exactly on the cap', async () => {
+    installImageHarness();
+    const page = { width: 10000, height: 8000, t256: [10000], t257: [8000] };
+    decode.mockReturnValue([page]);
+    toRGBA8.mockReturnValue(new Uint8Array(4));
+
+    const pending = loadTiffFile(new Blob(['tiff']));
+    await vi.waitFor(() => expect(imageStub).not.toBeNull());
+    imageStub!.onload!.call(imageStub!, new Event('load'));
+
+    await expect(pending).resolves.toBe(imageStub);
+    expect(decodeImage).toHaveBeenCalledExactlyOnceWith(expect.any(ArrayBuffer), page);
+    expect(toRGBA8).toHaveBeenCalledExactlyOnceWith(page);
+  });
+
+  it('leaves an IFD without usable geometry tags to the post-decode guard', async () => {
+    // `UTIF.decode` always writes t256/t257, but a page the mock hands over without them
+    // must not be rejected for the budget — only for the dimensions.
+    installImageHarness();
+    decode.mockReturnValue([{ width: 2, height: 1 }]);
+    toRGBA8.mockReturnValue(new Uint8Array(8));
+
+    const pending = loadTiffFile(new Blob(['tiff']));
+    await vi.waitFor(() => expect(imageStub).not.toBeNull());
+    imageStub!.onload!.call(imageStub!, new Event('load'));
+
+    await expect(pending).resolves.toBe(imageStub);
+    expect(toRGBA8).toHaveBeenCalledExactlyOnceWith({ width: 2, height: 1 });
   });
 });
