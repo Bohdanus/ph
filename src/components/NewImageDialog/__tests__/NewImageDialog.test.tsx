@@ -562,4 +562,116 @@ describe('NewImageDialog focus ownership', () => {
 
     expect(onKeyDown).toHaveBeenCalledTimes(1);
   });
+
+  it('recovers the focus a click on its own non-interactive text drops on <body>', () => {
+    renderDialog();
+    const panel = screen.getByTestId('new-image-dialog');
+    const width = widthInput();
+    width.focus();
+    expect(document.activeElement).toBe(width);
+
+    // Clicking the "New Image" title or the "Opacity:" label focuses nothing, so the
+    // browser blurs the control and leaves focus on <body> without firing focusin.
+    (document.activeElement as HTMLElement).blur();
+
+    expect(document.activeElement).not.toBe(document.body);
+    expect(panel.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(width);
+  });
+
+  it('recovers the mount focus rather than the first control when focus is dropped on <body>', () => {
+    renderDialog();
+    const panel = screen.getByTestId('new-image-dialog');
+    expect(document.activeElement).toBe(presetSelect());
+
+    (document.activeElement as HTMLElement).blur();
+
+    expect(panel.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(presetSelect());
+  });
+
+  it('keeps Tab and the app shortcut layer inside the panel after focus is driven outside it', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <button type="button" data-testid="outside-control">
+          outside
+        </button>
+        <UndoProbe onKeyDown={onKeyDown} />
+        <NewImageDialog onClose={vi.fn()} onCreate={vi.fn()} />
+      </KeyboardEventsProvider>
+    );
+    const panel = screen.getByTestId('new-image-dialog');
+
+    (document.activeElement as HTMLElement).blur();
+    expect(panel.contains(document.activeElement)).toBe(true);
+
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Tab' });
+
+    expect(panel.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'z', metaKey: true });
+    expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('refuses the tab and the shortcut layer when the focused control is removed and no focus event fires', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <UndoProbe onKeyDown={onKeyDown} />
+        <NewImageDialog onClose={vi.fn()} onCreate={vi.fn()} />
+      </KeyboardEventsProvider>
+    );
+    const panel = screen.getByTestId('new-image-dialog');
+
+    // A re-render can unmount the focused control, which drops focus on <body> without
+    // dispatching focusout or focusin, so no containment guard can see it coming.
+    (document.activeElement as HTMLElement).remove();
+    expect(document.activeElement).toBe(document.body);
+
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    document.body.dispatchEvent(tab);
+
+    expect(tab.defaultPrevented).toBe(true);
+    expect(panel.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.body, { key: 'z', metaKey: true });
+    expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('brings focus back when a tab arrives at the panel itself while focus is on <body>', () => {
+    renderDialog();
+    const panel = screen.getByTestId('new-image-dialog');
+
+    (document.activeElement as HTMLElement).remove();
+    expect(document.activeElement).toBe(document.body);
+
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    panel.dispatchEvent(tab);
+
+    expect(tab.defaultPrevented).toBe(true);
+    expect(panel.contains(document.activeElement)).toBe(true);
+  });
+
+  it('takes focus back when something outside the dialog focuses itself', () => {
+    render(
+      <>
+        <button type="button" data-testid="outside-control">
+          outside
+        </button>
+        <NewImageDialog onClose={vi.fn()} onCreate={vi.fn()} />
+      </>
+    );
+    const panel = screen.getByTestId('new-image-dialog');
+
+    screen.getByTestId('outside-control').focus();
+
+    expect(panel.contains(document.activeElement)).toBe(true);
+  });
+
+  it('is announced as a modal dialog labelled by its title', () => {
+    renderDialog();
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAccessibleName('New Image');
+  });
 });

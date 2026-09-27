@@ -13,7 +13,10 @@ interface NewImageDialogProps {
 // The whole app's shortcut layer is one document-level keydown listener whose only
 // suppression test is isEditableTarget, which is true for textarea, contenteditable,
 // text-like inputs and select. The dialog therefore has to own its keyboard: focus must
-// start on a text-like control, and no keydown from inside it may reach document.
+// start on a text-like control, no keydown from inside it may reach document, and focus
+// must never end up outside the panel — a keydown from outside is invisible to the
+// overlay's own handler, and isEditableTarget is false for body, so both Tab and Cmd+Z
+// would escape while the dialog is still up.
 const TEXT_LIKE_FOCUSABLE = 'select, textarea, input[type="number"], input[type="text"], input:not([type])';
 const ANY_FOCUSABLE = 'select, input, textarea, button, [tabindex]:not([tabindex="-1"])';
 
@@ -43,20 +46,92 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
   }, []);
 
   const panelRef = useRef<HTMLDivElement>(null);
+  const lastFocusedRef = useRef<HTMLElement | null>(null);
+
+  // Focus has to land back on a real control inside the panel, so try the control the
+  // user had and fall back to the first that actually accepts focus (the background
+  // colour input is disabled at zero opacity and would swallow the call silently).
+  const pullFocusIntoPanel = (panel: HTMLElement) => {
+    const restoreTo = lastFocusedRef.current;
+    if (restoreTo && panel.contains(restoreTo)) {
+      restoreTo.focus();
+      if (panel.contains(document.activeElement)) return;
+    }
+    for (const candidate of panel.querySelectorAll<HTMLElement>(ANY_FOCUSABLE)) {
+      candidate.focus();
+      if (panel.contains(document.activeElement)) return;
+    }
+  };
 
   useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null;
     const panel = panelRef.current;
-    const textLike = panel?.querySelector<HTMLElement>(TEXT_LIKE_FOCUSABLE);
-    (textLike ?? panel?.querySelector<HTMLElement>(ANY_FOCUSABLE))?.focus();
-    return () => previouslyFocused?.focus?.();
+    if (!panel) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
+    // Containment, leg 1: a click on the panel's own non-interactive text (the title,
+    // the "Opacity:" label, which has no htmlFor) blurs the focused control and leaves
+    // focus on <body>. It dispatches focusout with a null relatedTarget and no focusin
+    // at all, so it is this arm, not leg 2, that has to catch it.
+    const onFocusOut = (event: FocusEvent) => {
+      const next = event.relatedTarget;
+      if (next instanceof Node && panel.contains(next)) return;
+      pullFocusIntoPanel(panel);
+    };
+    // Containment, leg 2: anything that focuses an element outside the panel, whether
+    // a programmatic focus steal or a browser restoring focus, is a containment failure.
+    // This is also what records the control the user was on, so a recovery lands back
+    // where they were instead of on the first focusable.
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (target instanceof Node && panel.contains(target)) {
+        if (target instanceof HTMLElement) lastFocusedRef.current = target;
+        return;
+      }
+      pullFocusIntoPanel(panel);
+    };
+    // Containment, leg 3: removing the focused control leaves focus on <body> and fires
+    // no focus event at all, and a keydown whose target is outside the panel never
+    // reaches the overlay's React handler. So the last line is at the document capture
+    // phase, above the app's own document and window listeners, which is also where
+    // their keydowns have to die for the same reason they die inside the panel.
+    const onDocumentKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof Node && panel.contains(target)) return;
+      event.stopPropagation();
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        pullFocusIntoPanel(panel);
+      }
+    };
+
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('keydown', onDocumentKeyDown, true);
+    panel.addEventListener('focusout', onFocusOut);
+
+    // Taken last, so leg 2 is already watching and the mount focus becomes the
+    // recovery target.
+    const textLike = panel.querySelector<HTMLElement>(TEXT_LIKE_FOCUSABLE);
+    (textLike ?? panel.querySelector<HTMLElement>(ANY_FOCUSABLE))?.focus();
+
+    return () => {
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('keydown', onDocumentKeyDown, true);
+      panel.removeEventListener('focusout', onFocusOut);
+      previouslyFocused?.focus?.();
+    };
   }, []);
 
   const handleTab = (e: React.KeyboardEvent<HTMLDivElement>, forward: boolean) => {
-    const focusables = panelRef.current?.querySelectorAll<HTMLElement>(ANY_FOCUSABLE);
-    if (!focusables || focusables.length === 0) return;
+    const panel = panelRef.current;
+    const focusables = panel?.querySelectorAll<HTMLElement>(ANY_FOCUSABLE);
+    if (!panel || !focusables || focusables.length === 0) return;
     const first = focusables[0];
     const last = focusables[focusables.length - 1];
+    if (!panel.contains(document.activeElement)) {
+      e.preventDefault();
+      pullFocusIntoPanel(panel);
+      return;
+    }
     if (!forward && document.activeElement === first) {
       e.preventDefault();
       last.focus();
@@ -67,11 +142,13 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    // Safe here and only here: every app-level keydown listener (document in
+    // Safe here because every app-level keydown listener (document in
     // useKeyboardEvents, window in SidebarLeft, ShapeToolArea and Transform) is an
     // ancestor in the bubble phase, and the dialog is their descendant. Stopping here
     // is what makes the buttons inside the dialog safe too, since a button is not a
-    // text-like control and would otherwise re-open the shortcut hole.
+    // text-like control and would otherwise re-open the shortcut hole. The only other
+    // place a keydown is stopped is onDocumentKeyDown above, for a target that never
+    // reaches this handler.
     e.stopPropagation();
     if (e.key === 'Escape') {
       onClose();
@@ -87,13 +164,18 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
       ref={panelRef}
       onKeyDown={handleKeyDown}
       className="fixed inset-0 z-[1050] flex items-center justify-center overflow-y-auto overflow-x-hidden outline-none focus:outline-none"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="new-image-dialog-title"
       data-testid="new-image-dialog"
     >
       <div className="fixed inset-0 bg-black bg-opacity-25 transition-opacity" onClick={onClose} />
       <div className="relative mx-auto my-6 w-full max-w-lg px-4">
         <div className="relative flex w-full flex-col rounded-lg border-0 bg-white shadow-lg outline-none focus:outline-none dark:bg-gray-800 dark:text-gray-100">
           <div className="flex items-center justify-between rounded-t border-b border-solid border-gray-200 p-4 dark:border-gray-700">
-            <h3 className="m-0 text-xl font-semibold">New Image</h3>
+            <h3 id="new-image-dialog-title" className="m-0 text-xl font-semibold">
+              New Image
+            </h3>
             <button
               className="ml-auto border-0 bg-transparent p-1 text-3xl font-semibold leading-none text-black opacity-50 outline-none hover:opacity-100 focus:outline-none dark:text-white"
               onClick={onClose}

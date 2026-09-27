@@ -998,7 +998,7 @@ replay authority.
 
 ---
 
-## 33. `SaveDialog` has the same unowned keyboard as `NewImageDialog` had
+## 40. `SaveDialog` has the same unowned keyboard as `NewImageDialog` had, and no dialog in the app is marked as one
 
 **Problem.** `NewImageDialog` no longer has this defect, but its sibling never had the fix.
 `SaveDialog.tsx:32` is the same `fixed inset-0 z-[1050]` overlay with `outline-none
@@ -1013,11 +1013,34 @@ which is true for textarea, contenteditable, text-like inputs and select — nev
 a document open, `Cmd+Z`, `Cmd+C`, `Cmd+V` and every tool key fire behind the open save dialog.
 
 **Do not copy the old approach.** `SaveDialog`'s first focusable control is the header close button
-(`:45`), which precedes both inputs (`:60`, `:72`) in document order. A
+(`:44`), which precedes both inputs (`:58`, `:71`) in document order. A
 `querySelector('select, input, button')` autofocus therefore lands on that **button**, and a button
 is not text-like, so `isEditableTarget` stays false and the shortcut hole re-opens. Port the
-selector and the `stopPropagation` scope from `NewImageDialog.tsx:17-18` and `:69-83` instead, and
-note that there is no `<select>` here, so the text-like branch resolves to the name input at `:60`.
+selector and the `stopPropagation` scope from `NewImageDialog.tsx:20-21` and `:137-153` instead. The
+`<select>` at `:71` does not save you either way: the filename input at `:58` precedes it, so the
+text-like branch resolves there.
 
-**Files.** `src/components/SaveDialog/SaveDialog.tsx:32-45`,
-`src/components/SaveDialog/__tests__/SaveDialog.test.tsx` (asserts nothing about focus today)
+**A focus trap that does not contain focus is the same defect twice.** `NewImageDialog`'s first
+version wrapped Tab from the last control to the first and nothing more, and the keydown handler sat
+on the overlay, so a keydown whose target was outside the panel was never seen. Clicking the dialog's
+own title, or its `Opacity:` label (`NewImageDialog.tsx:259-261`, no `htmlFor`), blurs the focused
+control and leaves `document.activeElement` on `<body>`; from there Tab walks out of the modal and
+`Cmd+Z` reaches the shortcut layer again, because `isEditableTarget(<body>)` is false. Port the
+containment too — the `focusout`/`focusin`/`keydown` capture guards at
+`NewImageDialog.tsx:66-115`, the `!panel.contains(document.activeElement)` arm at `:123-127`, and the
+test at `NewImageDialog.test.tsx` named "keeps Tab and the app shortcut layer inside the
+panel after focus is driven outside it". Two arms are not optional: a click on non-interactive text fires
+`focusout` with a null `relatedTarget` and **no** `focusin`, while removing the focused control fires
+no focus event at all, so a `focusin`-only guard still leaks.
+
+**No dialog in the app is announced as one.** `grep -rn 'role="dialog"\|aria-modal' src/` matches
+`NewImageDialog.tsx:160-161` and nothing else, so a screen reader is told nothing when
+`SaveDialog`'s overlay appears: no dialog role, no modality, and the `Save File As...` heading at
+`SaveDialog.tsx:43` is not wired to it with `aria-labelledby`. Add `role="dialog"`,
+`aria-modal="true"` and an `aria-labelledby` pointing at that heading to the `SaveDialog` overlay,
+following `NewImageDialog.tsx:160-162` and `:169`, and add the assertion the
+`NewImageDialog` suite carries ("is announced as a modal dialog labelled by its title") so the
+attributes are pinned rather than assumed.
+
+**Files.** `src/components/SaveDialog/SaveDialog.tsx:32-51`,
+`src/components/SaveDialog/__tests__/SaveDialog.test.tsx` (asserts nothing about focus or role today)
