@@ -78,6 +78,11 @@ changes reach the page as real input — producing failures that belong to you, 
 the code, and that look like flakiness. `npm run test:e2e:headed` is the deliberate
 opt-in for watching a visual issue.
 
+It is enforced, not just documented: `e2e/global-setup.ts` refuses `--headed`,
+`--ui` and `--debug` before a browser is created, and `kilo.jsonc` denies the
+window-opening commands at the agent permission layer. `AGENTS.md` states the rule
+for coding agents.
+
 ## Linting & Formatting
 
 ```bash
@@ -131,28 +136,28 @@ e2e/                  # Playwright end-to-end specs + their helper unit tests
 
 ## Scripts
 
-| Script                      | Description                                         |
-| --------------------------- | --------------------------------------------------- |
-| `dev`                       | Start development server                            |
-| `build`                     | Build for production                                |
-| `preview`                   | Preview production build                            |
-| `test`                      | Run unit tests                                      |
-| `test:integration`          | Run integration tests                               |
-| `test:e2e`                  | Run Playwright end-to-end specs                     |
-| `test:e2e:unit`             | Run e2e helper unit tests                           |
-| `test:e2e:unit:coverage`    | e2e helper unit tests + coverage                    |
-| `test:e2e:ui`               | Playwright UI mode                                  |
-| `test:e2e:debug`            | Playwright inspector                                |
-| `test:e2e:headed`           | Opt in to a visible window (warns; do not touch it) |
-| `test:e2e:install`          | Install the Chrome browser Playwright uses          |
-| `test:e2e:update-baselines` | Rewrite visual-regression baselines                 |
-| `test:e2e:report`           | Open the last Playwright HTML report                |
-| `test:e2e:clean`            | Remove generated run output                         |
-| `tsc`                       | TypeScript type checking                            |
-| `lint`                      | Lint with ESLint                                    |
-| `lint:check`                | Lint + format check                                 |
-| `lint:fix`                  | Auto-fix lint issues                                |
-| `format`                    | Format with Prettier                                |
+| Script                      | Description                                           |
+| --------------------------- | ----------------------------------------------------- |
+| `dev`                       | Start development server                              |
+| `build`                     | Build for production                                  |
+| `preview`                   | Preview production build                              |
+| `test`                      | Run unit tests                                        |
+| `test:integration`          | Run integration tests                                 |
+| `test:e2e`                  | Run Playwright end-to-end specs                       |
+| `test:e2e:unit`             | Run e2e helper unit tests                             |
+| `test:e2e:unit:coverage`    | e2e helper unit tests + coverage                      |
+| `test:e2e:ui`               | Playwright UI mode (opens a window)                   |
+| `test:e2e:debug`            | Playwright inspector (opens a window)                 |
+| `test:e2e:headed`           | Opt in to a visible window (warns; do not touch it)   |
+| `test:e2e:install`          | Install the Chrome browser Playwright uses            |
+| `test:e2e:update-baselines` | Rewrite visual-regression baselines                   |
+| `test:e2e:report`           | Open the last Playwright HTML report (opens a window) |
+| `test:e2e:clean`            | Remove generated run output                           |
+| `tsc`                       | TypeScript type checking                              |
+| `lint`                      | Lint with ESLint                                      |
+| `lint:check`                | Lint + format check                                   |
+| `lint:fix`                  | Auto-fix lint issues                                  |
+| `format`                    | Format with Prettier                                  |
 
 ## License
 

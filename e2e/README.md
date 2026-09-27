@@ -9,6 +9,7 @@ e2e/
 │                        #   levels, pen types, select/move, sidebar flyout /
 │                        #   keyboard / layout, viewport drawing, DPR
 ├── export/              # 6 export-format specs + committed visual-regression baselines
+├── global-setup.ts      # refuses --headed / --ui / --debug before a window exists
 └── helpers/             # 7 shared helper modules
     └── __tests__/       # Node-environment unit tests for those helpers
 ```
@@ -52,8 +53,15 @@ for the one thing headless cannot do: watching a canvas or WebGL interaction tha
 only reproduces visually. It prints a warning first — while it runs, leave the mouse
 and keyboard alone.
 
-Note that `--headed`, `--ui` and `--debug` bypass the config's headless setting by
-design, so they all open a real window.
+`--headed`, `--ui` and `--debug` override the config's `headless` setting after the
+config has been read, and `show-report` / `show-trace` / `codegen` never read it at
+all. So the headless default alone is a convention with five ways around it.
+`e2e/global-setup.ts` closes the first three: it runs before any browser is created
+and throws, naming the flag that asked for a window. `kilo.jsonc` denies all of them
+at the agent permission layer, including the npm script spellings. The escape hatch
+for all of it is `PLAYWRIGHT_ALLOW_HEADED=1`, which `test:e2e:headed` sets and which
+the guard also honours, so the config and the guard can never disagree about whether
+a run was authorised. `AGENTS.md` states the rule for coding agents.
 
 ## Running the e2e suite
 
@@ -283,10 +291,16 @@ npm run test:e2e:unit
 npm run test:e2e:unit:coverage
 
 # output
-npm run test:e2e:report              # open the last HTML report
+npm run test:e2e:report              # open the last HTML report (opens a window, and blocks)
 npm run test:e2e:clean               # delete generated run output (test-results/)
 npm run test:e2e:update-baselines    # rewrite the visual-regression baselines
 ```
+
+`test:e2e:headed`, `test:e2e:ui` and `test:e2e:debug` all put a window on your screen,
+and `test:e2e:report` does too — it also serves until you close the tab, so an agent
+that runs it blocks. They are not interchangeable ways of reading a result: the
+`list` reporter on stdout, the screenshot under `test-results/` and the
+`test-results/results.json` written in CI are all readable without a window.
 
 ### Local vs CI behaviour
 
@@ -298,10 +312,12 @@ default `workers` to full parallelism. Locally you get `workers: 1` and a
 
 **Both local and CI runs are headless.** The old `headless: !!process.env.CI` meant a
 local run was _headed_ — the trap this file opens on. It is now
-`headless: process.env.PLAYWRIGHT_HEADED !== '1'`, so the only way to get a window is
-to ask for one explicitly. `PLAYWRIGHT_HEADED=1` is that switch, and
+`headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1'`, so the only way to get a
+window is to ask for one explicitly. `PLAYWRIGHT_ALLOW_HEADED=1` is that switch, and
 `test:e2e:headed` is the script wrapping it. The previous `PLAYWRIGHT_HEADLESS`
-variable is gone and setting it now does nothing.
+variable is gone and setting it now does nothing, and so is `PLAYWRIGHT_HEADED` —
+renamed, because it is the name a model reaches for first when it wants a window, and
+that must not be sufficient on its own.
 
 To use a browser other than Chrome, set `PLAYWRIGHT_CHANNEL` yourself:
 

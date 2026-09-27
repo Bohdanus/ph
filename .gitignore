@@ -32,6 +32,7 @@ playwright/.auth
 .eslintcache
 
 .kilo
+.serena
 
 # Editor directories and files
 .vscode/*

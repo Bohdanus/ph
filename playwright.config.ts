@@ -22,9 +22,14 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
-  // local runs stay sequential so a headed/debug run remains readable and so that
-  // two runs cannot fight over the same app instance on :5173.
+  // local runs stay sequential so two runs cannot fight over the same app instance
+  // on :5173. The readability argument for `workers: 1` is gone with headed mode: the
+  // local report is the same `list` output either way.
   workers: process.env.CI ? undefined : 1,
+  // Refuses --headed, --debug and --ui before a window exists. This is the layer
+  // that makes the headless default below enforceable rather than advisory - the
+  // flags bypass `use.headless` entirely. See e2e/global-setup.ts.
+  globalSetup: './e2e/global-setup.ts',
   reporter: process.env.CI
     ? [['github'], ['html', { open: 'never' }], ['json', { outputFile: 'test-results/results.json' }]]
     : [['list'], ['html', { open: 'never' }]],
@@ -49,11 +54,19 @@ export default defineConfig({
     // those 5. They are not a regression and they are not what CI will report.
     // Measurements and the underlying defect: e2e/OPEN_PROBLEMS.md.
     //
-    // PLAYWRIGHT_HEADED=1 is the deliberate opt-in, for watching a canvas or WebGL
-    // interaction that only reproduces visually. It replaces the old
-    // PLAYWRIGHT_HEADLESS escape hatch, which is gone and now does nothing. Note
-    // that --headed, --ui and --debug bypass this setting entirely, by design.
-    headless: process.env.PLAYWRIGHT_HEADED !== '1',
+    // PLAYWRIGHT_ALLOW_HEADED=1 is the deliberate opt-in, for watching a canvas or
+    // WebGL interaction that only reproduces visually. Both earlier names are gone
+    // and setting either now does nothing. The one before that,
+    // PLAYWRIGHT_HEADLESS, is also gone; PLAYWRIGHT_HEADED is the name a model
+    // reaches for first when it wants a visible browser, and a variable that is also
+    // the guard's acknowledgement of a human-authorised run cannot be that name. It
+    // is the one value e2e/global-setup.ts accepts, so the config and the guard can
+    // never disagree about whether this run was authorised.
+    //
+    // The variable is not enough on its own: --headed, --ui and --debug override
+    // this value after the config is read, so the globalSetup guard above refuses
+    // them.
+    headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1',
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
