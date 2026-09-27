@@ -32,8 +32,6 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
     {
       containerRef: { current: document.createElement('div') },
-      // The Backspace/Delete registrations are gated on this field.
-      selectionDraft: { status: 'idle' as const },
       selections: storeState.selections,
       totalSize: { width: 800, height: 600 },
       documentFrame: storeState.documentFrame,

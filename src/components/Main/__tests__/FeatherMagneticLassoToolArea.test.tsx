@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import type { Selection } from '../../../contexts/general-types.ts';
 import type { FeatherMagneticLassoToolArgs } from '../../../tools/featherMagneticLasso.ts';
 import type { PointerEvent as ReactPointerEvent } from 'react';
@@ -35,10 +35,11 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
 vi.mock('../../../hooks/useKeyboardEvents.tsx', () => ({
   useKeyDownShortcut: (shortcut: { key: string; enabled?: boolean; onKeyDown: () => void }) => {
     // `rawShortcuts` keeps the registration object so a test can assert what the
-    // hook was handed. `shortcutHandlers` stays a direct call into `onKeyDown`:
-    // the mocked store never re-renders this component, so a render-time
-    // `enabled` here can only ever describe the initial render, and reproducing
-    // the hook's gate on top of that would make the draft cases unreachable.
+    // hook was handed, and the mock runs on every render, so it tracks the live
+    // gate as the draft's anchor mirror re-renders this component. The mocked
+    // store never re-renders it on its own, so a test that needs one stands in
+    // an interaction that does. `shortcutHandlers` stays a direct call into
+    // `onKeyDown` so the handler itself can be exercised on its own.
     h.rawShortcuts.set(shortcut.key, shortcut);
     h.shortcutHandlers.set(shortcut.key, shortcut.onKeyDown);
   },
@@ -52,8 +53,9 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       containerRef: { current: document.createElement('div') },
       history: [],
       historyIndex: -1,
-      // The Backspace/Delete registrations are gated on this field, and a test
-      // that wants a live one sets it before rendering.
+      // The Backspace/Delete registrations no longer gate on this field, but a
+      // test still sets it to model what the sidebar deselect leaves in the
+      // store.
       selectionDraft: h.selectionDraft,
       selections: h.selections,
       totalSize: { width: 200, height: 120 },
@@ -228,10 +230,16 @@ describe('FeatherMagneticLassoToolArea', () => {
   };
 
   const renderArea = (overlayCtxRef: { current: CanvasRenderingContext2D | null }) => {
-    const { container, unmount } = render(
+    const { container, rerender, unmount } = render(
       <FeatherMagneticLassoToolArea overlayCtxRef={overlayCtxRef} className="test-feather-lasso-area" />
     );
-    return { ctx: container.firstElementChild as HTMLDivElement, unmount };
+    return {
+      ctx: container.firstElementChild as HTMLDivElement,
+      // Stands in for the render the mocked store cannot perform on a dispatch.
+      rerenderStore: () =>
+        rerender(<FeatherMagneticLassoToolArea overlayCtxRef={overlayCtxRef} className="test-feather-lasso-area" />),
+      unmount,
+    };
   };
 
   it('commits a feathered magnetic lasso selection with metadata on Enter', () => {
@@ -453,14 +461,60 @@ describe('FeatherMagneticLassoToolArea', () => {
     });
 
     it('registers Backspace and Delete only while a draft is in progress', () => {
-      h.selectionDraft = { status: 'draft' };
       const mockCtx = createMockContext();
-      renderArea({ current: mockCtx });
+      const toolArea = renderArea({ current: mockCtx }).ctx;
+
+      // No draft, so no anchor to pop and the keys are not even consumed.
+      expect(h.rawShortcuts.get('Backspace')?.enabled).toBe(false);
+      expect(h.rawShortcuts.get('Delete')?.enabled).toBe(false);
+
+      // One click is the draft's first anchor, which is all the gate needs: the
+      // handler pops while there is anything left to pop.
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
 
       // The other half of the gate: with a draft there is an anchor to pop, so
       // the keys have to be live — see the anchor cases above.
       expect(h.rawShortcuts.get('Backspace')?.enabled).toBe(true);
       expect(h.rawShortcuts.get('Delete')?.enabled).toBe(true);
+    });
+
+    it('keeps Backspace and Delete live when the store draft is cleared mid-draft', () => {
+      const mockCtx = createMockContext();
+      const { ctx: toolArea, rerenderStore } = renderArea({ current: mockCtx });
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 10 });
+      // `START_SELECTION_DRAFT` is what sets the store flag in production.
+      h.selectionDraft = { status: 'draft' };
+
+      expect(h.rawShortcuts.get('Backspace')?.enabled).toBe(true);
+
+      // The sidebar Deselect button runs `clearSelections()`, whose update
+      // carries `selectionDraft: { status: 'idle' }` without touching the draft's
+      // anchors, which are still on the overlay. The mock store cannot re-render
+      // on a dispatch, so `rerenderStore` stands in for the render the real store
+      // performs once the deselect lands.
+      h.selectionDraft = { status: 'idle' };
+      rerenderStore();
+
+      // The gate follows the draft's own anchors, so the store field cannot take
+      // it away while the draft is live.
+      expect(h.rawShortcuts.get('Backspace')?.enabled).toBe(true);
+      expect(h.rawShortcuts.get('Delete')?.enabled).toBe(true);
+
+      h.dispatch.mockClear();
+      act(() => {
+        h.shortcutHandlers.get('Backspace')?.();
+      });
+      act(() => {
+        h.shortcutHandlers.get('Backspace')?.();
+      });
+
+      // The first press popped the last segment, the second found no segment
+      // left and cancelled the draft — only reachable if the key was live.
+      expect(h.dispatch).toHaveBeenCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+      // And the gate closes again with the draft, so the mirror is not stuck on.
+      expect(h.rawShortcuts.get('Backspace')?.enabled).toBe(false);
     });
 
     it('dispatches nothing with Backspace when there is neither a draft nor a selection', () => {

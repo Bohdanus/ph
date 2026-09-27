@@ -1,4 +1,4 @@
-import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
+import { type PointerEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -146,7 +146,7 @@ function drawPolygonOverlay({
 }
 
 export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickToolProps) => {
-  const [{ containerRef, selections, selectionDraft, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
+  const [{ containerRef, selections, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { toolArgs } = useCurrentTool();
 
@@ -159,6 +159,21 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   const freehandDrawingRef = useRef(false);
   const freehandPointerIdRef = useRef<number | null>(null);
   const doubleClickResetRef = useRef<() => void>(() => {});
+
+  // The draft's anchors live in `pointsRef`, and a render may not read a ref
+  // (`react-hooks/refs`), so the `Backspace`/`Delete` registrations cannot gate
+  // on the list itself. This mirrors "the draft has an anchor to pop" into
+  // state, written by the same handlers that mutate the list, and it is the
+  // draft's own value: nothing outside this component can clear it, so the
+  // registrations cannot close while the anchors are still on the overlay.
+  // The store's `selectionDraft` could — `UPDATE_SELECTION` during a selection
+  // drag and the sidebar deselect both write `idle` to it without touching the
+  // draft — which left `Backspace` silently doing nothing.
+  const [hasDraftAnchors, setHasDraftAnchors] = useState(false);
+
+  function syncDraftAnchorGate() {
+    setHasDraftAnchors(pointsRef.current.length > 0);
+  }
 
   const { getLocalCoords } = usePointerPosition({
     ref: containerRef,
@@ -174,6 +189,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
 
   function resetInteractionState() {
     pointsRef.current = [];
+    syncDraftAnchorGate();
     previewRef.current = null;
     freehandPointerIdRef.current = null;
     freehandDrawingRef.current = false;
@@ -295,6 +311,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     const lastPoint = points[points.length - 1];
     if (!lastPoint) {
       points.push(point);
+      syncDraftAnchorGate();
       return true;
     }
 
@@ -303,11 +320,13 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     }
 
     points.push(point);
+    syncDraftAnchorGate();
     return true;
   }
 
   function startFreehandSelection(event: PointerEvent<HTMLDivElement>, coords: Point) {
     pointsRef.current = [coords];
+    syncDraftAnchorGate();
     previewRef.current = null;
     captureFreehandPointer(event);
     dispatch({ type: 'START_SELECTION_DRAFT', payload: { sourceTool: 'freehand-lasso' } });
@@ -328,6 +347,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     releaseFreehandPointer(event);
     const hadDraft = pointsRef.current.length > 0;
     pointsRef.current = [];
+    syncDraftAnchorGate();
     previewRef.current = null;
     clearOverlay();
 
@@ -397,6 +417,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     }
 
     pointsRef.current.push(coords);
+    syncDraftAnchorGate();
     previewRef.current = null;
 
     redrawOverlay();
@@ -521,6 +542,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     if (pointsRef.current.length === 0) return;
 
     pointsRef.current.pop();
+    syncDraftAnchorGate();
     previewRef.current = null;
 
     if (pointsRef.current.length === 0) {
@@ -546,22 +568,23 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     onKeyDown: () => finishSelection(),
   });
 
-  // `enabled` gates the registration on a draft in progress — read from the
-  // store rather than `pointsRef`, so the key is not consumed at all when there
-  // is nothing to undo. `allowInInput` stays off: removing a vertex is text
-  // editing from the field's point of view, and `preventDefault` would cancel
-  // the character the field was asked to delete.
+  // `enabled` gates the registration on the draft itself: there is an anchor to
+  // pop or there is not, and the mirror above is the draft's own count, so no
+  // reducer or sidebar action that clears `selectionDraft` can close the key
+  // while the anchors are still on the overlay. `allowInInput` stays off:
+  // removing a vertex is text editing from the field's point of view, and
+  // `preventDefault` would cancel the character the field was asked to delete.
   useKeyDownShortcut({
     key: 'Backspace',
     preventDefault: true,
-    enabled: selectionDraft.status === 'draft',
+    enabled: hasDraftAnchors,
     onKeyDown: removeLastAnchor,
   });
 
   useKeyDownShortcut({
     key: 'Delete',
     preventDefault: true,
-    enabled: selectionDraft.status === 'draft',
+    enabled: hasDraftAnchors,
     onKeyDown: removeLastAnchor,
   });
 
