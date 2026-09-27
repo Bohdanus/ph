@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { Mouse } from '@playwright/test';
 import {
   DEFAULT_LINE_CLIP,
   drawLine,
@@ -238,6 +239,66 @@ describe('takeLineScreenshot', () => {
   });
 });
 
+/**
+ * Bounds the modelled interpolation loop. This model transcribes the SERVER `Mouse.move` and
+ * nothing above it, so it has no client validator to reject a `steps: Infinity` — the real
+ * client refuses that one, but here the bound is simply never reached. The cap turns that into
+ * a red assertion instead of a dead worker, and so into a usable before/after measurement.
+ */
+const MOVE_LIMIT = 64;
+
+interface RecordedPointerEvent {
+  type: 'mousemove' | 'mousedown' | 'mouseup';
+  x: number;
+  y: number;
+}
+
+interface PointerRecorder {
+  mouse: Mouse;
+  events: RecordedPointerEvent[];
+}
+
+/**
+ * Playwright's server `Mouse.move`, transcribed: `const { steps = 1 } = options` followed by
+ * `for (let i = 1; i <= steps; i++)`, emitting one event per iteration at the interpolated
+ * point. A double that only records what was forwarded to it cannot tell `steps: 0` from no
+ * `steps` at all - both read as "a move to the endpoint" - because the loop that decides how
+ * many events the page receives runs inside Playwright. This model puts that loop in the test,
+ * so a test can assert the gesture the page would actually see.
+ */
+function createPointerRecorder(): PointerRecorder {
+  const events: RecordedPointerEvent[] = [];
+  let x = 0;
+  let y = 0;
+  // The `Partial<T>` annotation is the real type check (it rejects keys the real interface
+  // does not have); the `as T` cast below it is unchecked. Same idiom as the fixtures module.
+  const double: Partial<Mouse> = {
+    move: async (nextX, nextY, options = {}) => {
+      const { steps = 1 } = options;
+      const fromX = x;
+      const fromY = y;
+      x = nextX;
+      y = nextY;
+      // Truncates a `steps` that never reaches its bound, so an unfixed helper reports a red
+      // test here rather than taking the whole run down. See `MOVE_LIMIT`.
+      for (let i = 1; i <= steps && i <= MOVE_LIMIT; i++) {
+        events.push({
+          type: 'mousemove',
+          x: fromX + (nextX - fromX) * (i / steps),
+          y: fromY + (nextY - fromY) * (i / steps),
+        });
+      }
+    },
+    down: async () => {
+      events.push({ type: 'mousedown', x, y });
+    },
+    up: async () => {
+      events.push({ type: 'mouseup', x, y });
+    },
+  };
+  return { mouse: double as Mouse, events };
+}
+
 describe('drawLine', () => {
   it('presses, drags between the box-relative endpoints and releases', async () => {
     const input = createMouseMock();
@@ -267,17 +328,67 @@ describe('drawLine', () => {
     expect(input.move.mock.calls[1]).toEqual([BOX.x + 100, BOX.y + 100, { steps: 5 }]);
   });
 
-  it('forwards an explicit steps of zero rather than dropping the options object', async () => {
-    // `if (options.steps)` used to be a truthy check, so `steps: 0` took the no-options
-    // branch and Playwright never saw it. `0` is a real instruction — do not interpolate —
-    // so the presence of the field is what decides, not its value.
+  it('draws the line for an explicit steps of zero rather than dispatching no move', async () => {
+    // Playwright's server `Mouse.move` interpolates with `for (let i = 1; i <= steps; i++)`, so
+    // a forwarded `steps: 0` iterates zero times: the page receives `mousedown` and `mouseup`
+    // at the same point and the stroke has zero length. `0` means "do not interpolate", which
+    // is one move, so the gesture a caller asks for with `steps: 0` is the gesture it gets
+    // with no options at all. Asserting the recorded event sequence is what makes this a
+    // statement about the line that gets drawn; asserting the forwarded argument would pass
+    // just as happily against the no-op.
+    const explicitZero = createPointerRecorder();
+    await drawLine(createPageMock({ mouse: explicitZero.mouse }), BOX, 0, 0, 100, 100, { steps: 0 });
+
+    const omitted = createPointerRecorder();
+    await drawLine(createPageMock({ mouse: omitted.mouse }), BOX, 0, 0, 100, 100);
+
+    expect(explicitZero.events).toEqual([
+      { type: 'mousemove', x: BOX.x, y: BOX.y },
+      { type: 'mousedown', x: BOX.x, y: BOX.y },
+      { type: 'mousemove', x: BOX.x + 100, y: BOX.y + 100 },
+      { type: 'mouseup', x: BOX.x + 100, y: BOX.y + 100 },
+    ]);
+    expect(explicitZero.events).toEqual(omitted.events);
+  });
+
+  it('forwards an explicit steps of zero as the single move Playwright defaults to', async () => {
+    // The forwarding half of the contract above: `0` is normalised to 1 rather than dropped
+    // and rather than passed through, so the call still carries an explicit `steps`.
     const input = createMouseMock();
 
     await drawLine(createPageMock({ mouse: input.mouse }), BOX, 0, 0, 100, 100, { steps: 0 });
 
     expect(input.move).toHaveBeenCalledTimes(2);
     expect(input.move.mock.calls[0]).toEqual([BOX.x, BOX.y]);
-    expect(input.move.mock.calls[1]).toEqual([BOX.x + 100, BOX.y + 100, { steps: 0 }]);
+    expect(input.move.mock.calls[1]).toEqual([BOX.x + 100, BOX.y + 100, { steps: 1 }]);
+  });
+
+  it('draws the line for a negative steps instead of collapsing the stroke', async () => {
+    // `-5` was truthy, so it reached Playwright before the normalisation existed and had the
+    // same zero-length outcome as `0`: the loop bound is never reached. Latent - no call site
+    // passes a negative count - but the clamp covers it, so it is pinned.
+    const input = createPointerRecorder();
+
+    await drawLine(createPageMock({ mouse: input.mouse }), BOX, 0, 0, 100, 100, { steps: -5 });
+
+    expect(input.events.at(-1)).toEqual({ type: 'mouseup', x: BOX.x + 100, y: BOX.y + 100 });
+    expect(input.events.filter((event) => event.type === 'mousemove')).toHaveLength(2);
+  });
+
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['a fractional count', 2.5],
+  ])('falls back to the single move for %s, which Playwright rejects outright', async (_label, steps) => {
+    // The client validator is `steps: expected integer, got float <value>`, so forwarding one
+    // of these throws between `mousedown` and `mouseup` and leaves the button down. A count the
+    // helper cannot use has to mean one move, not a broken gesture.
+    const input = createPointerRecorder();
+
+    await drawLine(createPageMock({ mouse: input.mouse }), BOX, 0, 0, 100, 100, { steps });
+
+    expect(input.events.at(-1)).toEqual({ type: 'mouseup', x: BOX.x + 100, y: BOX.y + 100 });
+    expect(input.events.filter((event) => event.type === 'mousemove')).toHaveLength(2);
   });
 
   it('passes negative box-relative coordinates through untouched', async () => {

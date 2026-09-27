@@ -18,11 +18,13 @@ interface DrawingSpec {
 }
 
 /**
- * The serialised argument of `page.evaluate`. It is passed as a single object rather than
- * destructured in the callback: the callback runs in the browser, where those names do not
- * exist, so `page.evaluate` would be injecting three implicit parameters. Naming the shape
- * once here also keeps the callback free of the outer `width` / `height` / `drawSpec`, which
- * `no-shadow` correctly reports as redeclarations.
+ * The serialised argument of `page.evaluate`, named once so the callback reads its fields off
+ * a single parameter. Destructuring them in the parameter list was equally correct at runtime -
+ * `page.evaluate` passes exactly one argument, and destructuring that argument binds locals
+ * rather than free variables - so the callback has no free names for the browser to miss. The
+ * change was for the linter: `no-shadow` reported `width` / `height` / `drawSpec` as
+ * redeclarations of `createTestImage`'s own parameters, three warnings. Reading the same three
+ * values through `args.` removes them.
  */
 interface CanvasDrawArgs {
   width: number;
