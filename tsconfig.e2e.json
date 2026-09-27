@@ -26,14 +26,11 @@
     "noImplicitAny": true,
     "noUnusedLocals": true,
     // ON, matching tsconfig.app.json / tsconfig.node.json. It was off here only to
-    // accommodate two unread parameters, and both are gone:
-    // `exportAndVerify`'s `testInfo` now attaches the exported bytes to the report when
-    // the pixel comparison fails, and `expectCanvasToMatch`'s `page` was removed from the
-    // signature (`e2e/helpers/image-comparison.ts:106`) because the assertion it wraps,
-    // `expect(locator).toHaveScreenshot(...)`, captures through the locator's own frame
-    // and never touches the Page. An earlier version of this comment claimed the dead
-    // parameter was "a documented defect in e2e/OPEN_PROBLEMS.md"; it was not, and the
-    // parameter was not missing a step.
+    // accommodate unread parameters, and there are now none: `exportAndVerify`'s
+    // `testInfo` attaches the exported bytes to the report when the pixel comparison
+    // fails (`e2e/export/helpers.ts:230`). An earlier version of this comment claimed a
+    // dead parameter was "a documented defect in e2e/OPEN_PROBLEMS.md"; it was not, and
+    // the parameter was not missing a step.
     //
     // The e2e ESLint block also sets `args: 'all'`, so an unread parameter is reported by
     // both tools rather than by one and hidden by the other.
