@@ -64,9 +64,16 @@ test.describe('Export visual regression', () => {
       const exportedBuffer = Buffer.from(exportedScreenshot, 'base64');
       const baselineFilePath = baselineFile(testInfo, `drawing${format.extension}.png`);
 
-      if (testInfo.config.updateSnapshots) {
+      // `updateSnapshots` is a string union ('all' | 'changed' | 'missing' | 'none')
+      // whose DEFAULT is 'missing', which is truthy. A bare truthiness check therefore
+      // always took this branch: every run rewrote the committed baseline and returned
+      // before comparing, so `compareScreenshots` and the assertion below it were
+      // unreachable and the committed oracle was disposable. Only an explicit
+      // --update-snapshots ('all') may re-record a baseline.
+      if (testInfo.config.updateSnapshots === 'all') {
         await mkdir(path.dirname(baselineFilePath), { recursive: true });
         await writeFile(baselineFilePath, exportedBuffer);
+        testInfo.annotations.push({ type: 'baseline-recorded', description: baselineFilePath });
         return;
       }
 
