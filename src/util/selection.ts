@@ -295,9 +295,62 @@ function getSelectionCanvasContext(canvas: ClipboardCanvas): Ctx2D | null {
   return canvas.getContext('2d') as Ctx2D | null;
 }
 
-function drawPolygonPath(ctx: Ctx2D, points: Point[]): void {
-  if (points.length === 0) return;
+/**
+ * A canvas this module must draw into handed back no 2D context.
+ *
+ * `getSelectionCanvasContext` admits null, so every call site has to decide what a
+ * context-less canvas means. Naming the condition here keeps the failure readable
+ * from a stack trace instead of arriving as a `TypeError` from deep inside a canvas
+ * internals call, which names neither the operation nor the real cause.
+ */
+export class SelectionCanvasContextError extends Error {
+  readonly operation: string;
 
+  constructor(operation: string, width: number, height: number) {
+    super(
+      `${operation}: the ${width}x${height} selection canvas returned no 2D context ` +
+        `(getContext('2d') was null), so this copy cannot be produced`
+    );
+    this.name = 'SelectionCanvasContextError';
+    this.operation = operation;
+  }
+}
+
+/**
+ * For the copy paths that have no in-band failure channel.
+ *
+ * `cloneBitmapToCanvas` returns a `ClipboardCanvas`, so there is no `null` to hand
+ * back, and both production callers already wrap it in a `try`/`catch` that logs and
+ * returns `false` (`src/contexts/useSelectionClipboard.ts:76-84` and `:96-105`). A
+ * named throw is therefore recoverable there, while returning a stand-in canvas would
+ * paste a layer of silently wrong pixels.
+ */
+function requireSelectionCanvasContext(canvas: ClipboardCanvas, operation: string): Ctx2D {
+  const ctx = getSelectionCanvasContext(canvas);
+  if (!ctx) throw new SelectionCanvasContextError(operation, canvas.width, canvas.height);
+
+  return ctx;
+}
+
+/**
+ * For the snapshot-returning copy paths, which degrade instead of throwing.
+ *
+ * `copyPolygonSelectionToCanvas`, `copyFeatheredPolygonSelectionToCanvas` and
+ * `copyRectSelectionToCanvas` already return `null` for every other "no snapshot is
+ * possible" case, and their callers — `copySelectionToCanvas`, and the
+ * `copyPolygonToCanvas` / `copyFeatheredPolygonToCanvas` wrappers — already turn that
+ * `null` into a reported failure or an empty 1x1 bitmap. Their outermost callers
+ * (`copySelection` / `layerViaCopy` in `src/contexts/useSelectionClipboard.ts`, then the
+ * selection toolbars) consume a boolean return and render their own failure message, so
+ * a throw here would bypass that channel and escape into a React event handler. The
+ * named error is logged so the cause stays readable.
+ */
+function unavailableSelectionCanvasContext(operation: string, canvas: ClipboardCanvas): null {
+  console.error(new SelectionCanvasContextError(operation, canvas.width, canvas.height));
+  return null;
+}
+
+function drawPolygonPath(ctx: Ctx2D, points: Point[]): void {
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);
   for (let i = 1; i < points.length; i++) {
@@ -307,8 +360,6 @@ function drawPolygonPath(ctx: Ctx2D, points: Point[]): void {
 }
 
 function getSelectionCanvasBounds(points: Point[], padding = 0, imageSize?: Size): Pos | null {
-  if (points.length === 0) return null;
-
   const bounds = pointsBoundingPos({ points, lineWidth: padding });
   let minX = Math.floor(bounds.x);
   let minY = Math.floor(bounds.y);
@@ -331,7 +382,7 @@ function getSelectionCanvasBounds(points: Point[], padding = 0, imageSize?: Size
 
 export function cloneBitmapToCanvas(source: BitmapSource): ClipboardCanvas {
   const destCanvas = createSelectionCanvas(source.width, source.height);
-  const ctx = getSelectionCanvasContext(destCanvas)!;
+  const ctx = requireSelectionCanvasContext(destCanvas, 'cloneBitmapToCanvas');
 
   ctx.drawImage(source as CanvasImageSource, 0, 0);
 
@@ -351,7 +402,9 @@ export function copyPolygonSelectionToCanvas(
   const destCanvas = createSelectionCanvas(bounds.width, bounds.height);
   const { x: minX, y: minY } = bounds;
 
-  const ctx = getSelectionCanvasContext(destCanvas)!;
+  const ctx = getSelectionCanvasContext(destCanvas);
+  if (!ctx) return unavailableSelectionCanvasContext('copyPolygonSelectionToCanvas', destCanvas);
+
   ctx.save();
 
   // Build polygon path relative to new canvas
@@ -542,7 +595,8 @@ export function copyFeatheredPolygonSelectionToCanvas(
   const { x, y, width, height } = bounds;
   const relativePoints = points.map((point) => ({ x: point.x - x, y: point.y - y }));
   const destCanvas = createSelectionCanvas(width, height);
-  const ctx = getSelectionCanvasContext(destCanvas)!;
+  const ctx = getSelectionCanvasContext(destCanvas);
+  if (!ctx) return unavailableSelectionCanvasContext('copyFeatheredPolygonSelectionToCanvas', destCanvas);
 
   ctx.drawImage(sourceCanvas as CanvasImageSource, x, y, width, height, 0, 0, width, height);
 
@@ -569,7 +623,9 @@ export function copyRectSelectionToCanvas(
   if (width <= 0 || height <= 0) return null;
 
   const destCanvas = createSelectionCanvas(width, height);
-  const ctx = getSelectionCanvasContext(destCanvas)!;
+  const ctx = getSelectionCanvasContext(destCanvas);
+  if (!ctx) return unavailableSelectionCanvasContext('copyRectSelectionToCanvas', destCanvas);
+
   ctx.drawImage(sourceCanvas as CanvasImageSource, x, y, width, height, 0, 0, width, height);
 
   return { bitmap: destCanvas, pos: { x, y, width, height } };
