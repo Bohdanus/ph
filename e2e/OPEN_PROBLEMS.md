@@ -305,21 +305,6 @@ Fix if kept: spread first, default second, and read the defaults from
 `getContext('2d')` reaches the developer as a colour problem. Fix: return a
 discriminated `{ ok, reason }` and assert on the reason.
 
-## P1 — unescaped tool name in a RegExp selector
-
-`e2e/helpers/toolbar-helpers.ts:67`
-
-`new RegExp(name.replace(/&/g, 'and'), 'i')` builds a pattern from an
-unescaped name. Verified against the real function: `'Brush (B)'`,
-`'Levels[beta]'` and `'C:\Tool'` each produce a regex that does **not** match
-their own literal accessible name, so the button is silently not found and the
-error below it names a name that was never searched. `'a|b'` matches the wrong
-button.
-
-Latent today — no call site passes a name containing `()[]+|?*^\$`. Fix:
-`new RegExp(escapeRegExp(name.replace(/&/g, 'and')), 'i')`. Needs sign-off
-because it changes selector behaviour.
-
 ## P2 — `hexToRgb` rejects valid CSS-4 hex
 
 `e2e/helpers/color-helpers.ts:12` **[pinned]**
@@ -448,17 +433,6 @@ opaque. Callers must reject empty images first.
 
 `if (options.steps)` is a truthy check, so `steps: 0` drops the whole options
 object rather than being forwarded. Unreachable from current call sites.
-
-## P3 — `TOOL_NAME_MAP` lookup is case-sensitive
-
-`e2e/helpers/toolbar-helpers.ts:13`, `:25`, `:37`
-
-`resolveToolName('SELECT & MOVE')` returns `'select-and-move'`, not
-`'reposition'`. Harmless today only because the role fallback regex is
-case-insensitive — two weaknesses cancelling out.
-
-Separately, `generateSlug` does not expand `&` while `normalizeToolName` does,
-so the two produce different slugs for the same label.
 
 ## P3 — verification asserts a hardcoded filename
 

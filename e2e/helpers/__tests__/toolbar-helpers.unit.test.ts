@@ -25,9 +25,12 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks } = vi.hois
   type Target = { __elements: Array<{ visible: boolean; focused: boolean; testId: string | null; text: string }> };
   type Check = { target: Target; options?: { timeout?: number } };
 
-  const visibilityChecks: Check[] = [];
-  const hiddenChecks: Check[] = [];
-  const textChecks: Array<{ target: Target; expected: string }> = [];
+  // The bindings below are returned to names declared on the outer scope, so the
+  // locals are spelled differently: shadowing them would make every recorded check
+  // ambiguous about which array it lands in.
+  const recordedVisibilityChecks: Check[] = [];
+  const recordedHiddenChecks: Check[] = [];
+  const recordedTextChecks: Array<{ target: Target; expected: string }> = [];
 
   const locatorLabel = (target: Target): string => {
     const testId = target.__elements[0]?.testId;
@@ -37,21 +40,21 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks } = vi.hois
   const timedOut = (matcher: string, target: Target, timeout?: number): Error =>
     new Error(`Timed out ${timeout ?? 0}ms waiting for expect(locator${locatorLabel(target)}).${matcher}()`);
 
-  const playwrightExpect = vi.fn((target: Target) => ({
+  const hoistedExpect = vi.fn((target: Target) => ({
     toBeVisible: vi.fn(async (options?: { timeout?: number }) => {
-      visibilityChecks.push({ target, options });
+      recordedVisibilityChecks.push({ target, options });
       if (!target.__elements.some((element) => element.visible)) {
         throw timedOut('toBeVisible', target, options?.timeout);
       }
     }),
     toBeHidden: vi.fn(async (options?: { timeout?: number }) => {
-      hiddenChecks.push({ target, options });
+      recordedHiddenChecks.push({ target, options });
       if (target.__elements.some((element) => element.visible)) {
         throw timedOut('toBeHidden', target, options?.timeout);
       }
     }),
     toContainText: vi.fn(async (expected: string) => {
-      textChecks.push({ target, expected });
+      recordedTextChecks.push({ target, expected });
       if (!target.__elements.some((element) => element.text.includes(expected))) {
         throw timedOut('toContainText', target);
       }
@@ -65,7 +68,12 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks } = vi.hois
     }),
   }));
 
-  return { playwrightExpect, visibilityChecks, hiddenChecks, textChecks };
+  return {
+    playwrightExpect: hoistedExpect,
+    visibilityChecks: recordedVisibilityChecks,
+    hiddenChecks: recordedHiddenChecks,
+    textChecks: recordedTextChecks,
+  };
 });
 
 vi.mock('@playwright/test', () => ({
@@ -409,6 +417,30 @@ const INHERITED_NAME_CASES: Array<{ input: string; expected: string }> = [
 
 const INHERITED_NAME_KEYS = INHERITED_NAME_CASES.map(({ input }) => input);
 
+// Tool names whose regex metacharacters used to be interpolated straight into the
+// role fallback's `new RegExp(...)`. Each `decoy` is a button that the *unescaped*
+// pattern does match, which is why the old selector resolved to the wrong element
+// rather than to no element at all. `'C:\\Tool'` is the two-character escape for the
+// name the button really carries, `C:\Tool`.
+const REGEX_METACHARACTER_CASES: Array<{ name: string; decoy: string }> = [
+  { name: 'Brush (B)', decoy: 'Brush B' },
+  { name: 'Levels[beta]', decoy: 'Levelsbeta' },
+  { name: 'Crop.v2', decoy: 'Crop-v2' },
+  { name: 'Zoom+', decoy: 'Zoom' },
+  { name: 'Paint|Fill', decoy: 'Paint' },
+  { name: 'C:\\Tool', decoy: 'C:Tool' },
+];
+
+// The `slugify` in `src/components/SidebarLeft/SidebarLeft.tsx:18`, which is what
+// mints `tool-flyout-item-${tool.name}-${slugify(tool.label)}` (`:303`). It is
+// reproduced here rather than imported: nothing under `e2e/` may reach into app
+// source (see the note in `vitest.e2e.config.ts`).
+const appSlugify = (value: string): string => value.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-');
+
+// The only labels the suite passes to the slug-consuming helpers:
+// `e2e/levels.spec.ts:86,128` and `e2e/sidebar-flyout.spec.ts:73,86`.
+const SUITE_FLYOUT_LABELS = ['Levels', 'Pencil Tool', 'Ellipse Tool'];
+
 const KEYBOARD_CASES: Array<{
   requested: 'ArrowDown' | 'ArrowUp' | 'Enter' | ' ';
   expected: string;
@@ -525,14 +557,35 @@ describe('Toolbar Helpers', () => {
         }
       });
 
-      it('only matches mapped display names case-sensitively', () => {
-        expect(resolveToolName('SELECT & MOVE')).toBe('select-and-move');
-        expect(resolveToolName('select and move')).toBe('select-and-move');
+      it('matches a mapped display name case-insensitively', () => {
         expect(resolveToolName('Select & Move')).toBe('reposition');
+        expect(resolveToolName('SELECT & MOVE')).toBe('reposition');
+        expect(resolveToolName('select & move')).toBe('reposition');
+        expect(resolveToolName('SeLeCt & MoVe')).toBe('reposition');
       });
 
-      it('still resolves legitimate mapped and unmapped tool names', () => {
-        expect(resolveToolName('Select & Move')).toBe('reposition');
+      it('matches a map entry added after module load, case-insensitively', () => {
+        // A lowercased index would have been built at module load and would miss this,
+        // so the lookup scans the map's own keys instead of caching them.
+        TOOL_NAME_MAP['Crop & Slice'] = 'Crop Tool';
+        try {
+          expect(resolveToolName('crop & SLICE')).toBe('crop-tool');
+        } finally {
+          delete TOOL_NAME_MAP['Crop & Slice'];
+        }
+      });
+
+      it('does not let the case-insensitive lookup reach an inherited member', () => {
+        expect(resolveToolName('CONSTRUCTOR')).toBe('constructor');
+        expect(resolveToolName('__PROTO__')).toBe('proto');
+        expect(resolveToolName('TOSTRING')).toBe('tostring');
+      });
+
+      it('passes through a differently cased name that is not a mapped key', () => {
+        // 'select and move' spells the word out, so it is not the key 'Select & Move':
+        // the whole key is compared, not a normalized form of it.
+        expect(resolveToolName('select and move')).toBe('select-and-move');
+        expect(resolveToolName('BRUSH TOOL')).toBe('brush-tool');
         expect(resolveToolName('brush')).toBe('brush');
       });
     });
@@ -584,6 +637,19 @@ describe('Toolbar Helpers', () => {
 
       it('returns an empty string for an empty label', () => {
         expect(generateSlug('')).toBe('');
+      });
+
+      it('expands ampersands the same way normalizeToolName does', () => {
+        expect(generateSlug('Color & Tone')).toBe('color-and-tone');
+        expect(generateSlug('Color & Tone')).toBe(normalizeToolName('Color & Tone'));
+      });
+
+      it.each(SUITE_FLYOUT_LABELS)('reproduces the app slugify for the suite label %j', (label) => {
+        expect(generateSlug(label)).toBe(appSlugify(label));
+      });
+
+      it.each(SUITE_FLYOUT_LABELS)('agrees with normalizeToolName for the suite label %j', (label) => {
+        expect(generateSlug(label)).toBe(normalizeToolName(label));
       });
 
       it('FlyoutItem interface has toolName and label string fields', () => {
@@ -660,6 +726,43 @@ describe('Toolbar Helpers', () => {
 
       expect(dom.clicked).toEqual([legacyButton]);
     });
+
+    it('resolves a differently cased display name to the mapped testid', async () => {
+      const dom = createFakeDom();
+      const button = dom.add({ testId: 'tool-button-reposition' });
+
+      await clickToolButton(dom.page, 'select & move');
+
+      expect(dom.mocks.getByTestId).toHaveBeenCalledWith('tool-button-reposition');
+      expect(dom.clicked).toEqual([button]);
+    });
+
+    it.each(REGEX_METACHARACTER_CASES)(
+      'treats the accessible name %j as data, not as a pattern',
+      async ({ name, decoy }) => {
+        const dom = createFakeDom();
+        // The decoy is added first, so an unescaped pattern that matched it would
+        // click it and leave the real button untouched.
+        const decoyButton = dom.add({ testId: 'legacy-decoy', name: decoy });
+        const target = dom.add({ testId: 'legacy-target', name });
+
+        await clickToolButton(dom.page, name);
+
+        // Asserted on the pattern itself, not only on the element that ended up
+        // clicked, so a regression is attributed to the selector instead of to the
+        // order of the fallback candidates.
+        const options = dom.mocks.getByRole.mock.calls[0][1];
+        expect(options?.name).toBeInstanceOf(RegExp);
+        const pattern = options?.name as RegExp;
+        expect(pattern.test(name)).toBe(true);
+        expect(pattern.test(decoy)).toBe(false);
+        // Control: the unescaped form is what the defect searched for, so this decoy
+        // is a real tripwire rather than a name the old pattern also ignored.
+        expect(new RegExp(name).test(decoy)).toBe(true);
+        expect(dom.clicked).toEqual([target]);
+        expect(dom.clicked).not.toContain(decoyButton);
+      }
+    );
 
     it('clicks only the first of several testid matches', async () => {
       const dom = createFakeDom();

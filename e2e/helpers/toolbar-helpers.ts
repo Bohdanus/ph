@@ -30,15 +30,62 @@ export function normalizeToolName(name: string): string {
     .replace(/[^a-z0-9]+/g, '-');
 }
 
-export function resolveToolName(toolName: string): string {
-  return normalizeToolName(TOOL_NAME_MAP[toolName] ?? toolName);
+/**
+ * Looks a label up in `TOOL_NAME_MAP` regardless of how the caller cased it.
+ *
+ * The exact-key lookup runs first, then an own-key scan. A scan is used instead of
+ * a lowercased index because the maps are rebuilt by tests, and a second index would
+ * go stale the moment an entry is added; the scan is over `Object.keys`, so it can
+ * only ever see own entries and can never answer with an `Object.prototype` member.
+ */
+function lookupMappedToolName(toolName: string): string | undefined {
+  const exact = TOOL_NAME_MAP[toolName];
+  if (typeof exact === 'string') return exact;
+
+  const wanted = toolName.toLowerCase();
+  const display = Object.keys(TOOL_NAME_MAP).find((key) => key.toLowerCase() === wanted);
+  if (display === undefined) return undefined;
+
+  const internal = TOOL_NAME_MAP[display];
+  return typeof internal === 'string' ? internal : undefined;
 }
 
+export function resolveToolName(toolName: string): string {
+  return normalizeToolName(lookupMappedToolName(toolName) ?? toolName);
+}
+
+/**
+ * The label half of the `tool-flyout-item-${tool.name}-${slug}` test id.
+ *
+ * The application mints that id in `SidebarLeft.tsx:303` with its own `slugify`
+ * (`SidebarLeft.tsx:18`), so anything that shifts the output here moves the helper off
+ * the element it asserts on. `normalizeToolName` is the one normalization both halves
+ * of this module use, and for every label the suite passes it is byte-identical to that
+ * `slugify` — the unit test pins that for `Levels`, `Pencil Tool` and `Ellipse Tool`, so
+ * a future divergence fails there instead of silently re-targeting a flyout item.
+ *
+ * Known residual, unreachable with the current toolbar: the app's `slugify` collapses
+ * `&` into the surrounding separator run, and the `&`-to-`and` expansion here does not.
+ * For a label like `Color & Tone` the two agree, because the ampersand is surrounded by
+ * spaces; for `R&B` they do not (`r-b` versus `randb`). No label in `toolbar-mapping.ts`
+ * contains an ampersand, and the app is the authority on its own test ids, so the helper
+ * follows the module's normalization rather than forking a second one.
+ */
 export function generateSlug(label: string): string {
-  return label
-    .toLowerCase()
-    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '')
-    .replace(/[^a-z0-9]+/g, '-');
+  return normalizeToolName(label);
+}
+
+/**
+ * Escapes a tool's accessible name for use inside a `RegExp`.
+ *
+ * The role fallback below matches by name, and a name is data, not a pattern: an
+ * unescaped one makes `Brush (B)` fail to match itself, `Levels[beta]` match a
+ * different tool, and `C:\Tool` throw on construction. The repository has no shared
+ * `escapeRegExp`, and this module is the only place that builds a regex out of a tool
+ * name, so the helper stays local rather than introducing a shared util for one caller.
+ */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export async function clickToolButton(page: Page, toolName: string): Promise<void> {
@@ -64,7 +111,9 @@ export async function clickToolButton(page: Page, toolName: string): Promise<voi
 
   const attempted: string[] = [];
   for (const name of fallbackNames) {
-    const roleTool = page.getByRole('button', { name: new RegExp(name.replace(/&/g, 'and'), 'i') });
+    // `&` expands to "and" because the legacy labels spell the word out while the
+    // map keys do not; the expansion is part of the data, so it is escaped too.
+    const roleTool = page.getByRole('button', { name: new RegExp(escapeRegExp(name.replace(/&/g, 'and')), 'i') });
     if (await roleTool.count()) {
       await roleTool.first().click();
       return;
