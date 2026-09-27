@@ -335,9 +335,9 @@ deselect, which builds its `SELECTION_ACTION` at `:165-174` without planning), a
 the fifteenth site and has no production caller at all (item 14). `APPLY_HISTORY_REPLAY` and
 `REPLACE_DOCUMENT` remain legacy-only.
 
-The selection pair covers three gestures, not the whole selection surface: the polygon, freehand
-and feathered magnetic lasso paths still write no selection history (item 30), so a selection they
-create still reaches the timeline only as a later entry's `previousSelectionState`.
+The selection pair covers every selection-creating gesture, so no selection now reaches the timeline
+only as a later entry's `previousSelectionState`. The one remaining gap is the polygon's anchor/body
+drag (item 30), which appends nothing rather than reconverting.
 
 The next slices are already named in the readiness docs: `set-layer-properties` and
 `reorder-layers`.
@@ -893,46 +893,38 @@ actually honours the wildcard. Nothing in the repo exercises it.
 
 ---
 
-## 30. The polygon, freehand and feathered magnetic lasso gestures still write no selection history
+## 30. Dragging a committed polygon's anchor or body still writes no selection history, once per pointer move
 
-**Problem.** `commitSelection` in `src/contexts/useSelectionHistory.ts:195` is the single writer for
-selection-creation history, and only two gestures use it: `MagicWandToolArea.tsx:23, 93` and
-`RectangularSelectionToolArea.tsx:27, 83`. The two remaining selection-creating paths still dispatch
-the raw actions:
+**Problem.** This is the last selection gesture that bypasses the writer. Selection _creation_ is
+recorded (`commitSelection(selection, 'create')` at `PolygonClickToolArea.tsx:227` and
+`FeatherMagneticLassoToolArea.tsx:407`, one per completed gesture); the polygon's anchor/body drag is
+not.
 
-- `FeatherMagneticLassoToolArea.tsx:376` — `dispatch({ type: 'COMMIT_SELECTION', payload: selection })`
-- `PolygonClickToolArea.tsx:204` — `dispatch({ type: 'COMMIT_SELECTION', payload: selection })`
-- `PolygonClickToolArea.tsx:274` — `dispatch({ type: 'UPDATE_SELECTION', payload: selection })`, the
-  redraw of an already-committed polygon
+`PolygonClickToolArea.tsx:295` still dispatches `updateSelection`, which is
+`dispatch({ type: 'UPDATE_SELECTION', payload: selection })`, from `handlePointerMove`'s drag branch.
+That arm returns `updateCommittedSelection(state, …)` (`StoreContext.tsx:315-334`, dispatched at
+`:517-519`), a `{ ...state, … }` return that never names `history` or `historyIndex`, so:
 
-None of those reducer arms append to `history` or move `historyIndex`: `COMMIT_SELECTION` returns
-`commitSelection(state, …)` (`StoreContext.tsx:295-313`, dispatched at `:515-516`) and
-`UPDATE_SELECTION` returns `updateCommittedSelection(state, …)` (`:315-334`, dispatched at
-`:517-519`). Both are `{ ...state, … }` returns that never name `history` or `historyIndex`, so a
-selection these gestures create is recorded nowhere. It survives on the timeline only as the
-`previousSelectionState` of whatever clear entry happens to come later, and the panel
-disable-toggle, `resetHistoryTo` navigation and the durable conversion all treat that later entry
-as the event that created it.
+1. moving or reshaping a committed selection appends **no** history entry, and
+2. it dispatches **once per pointer move**, not once per gesture — so it cannot simply be swapped for
+   `commitSelection` in place without also introducing a gesture-end commit, the way
+   `RectangularSelectionToolArea.tsx:83` does with `isEditingCommittedSelectionRef` plus `useRect`'s
+   `onChangeEnd`.
 
-Both files also clear selections through the raw action rather than the writer —
-`FeatherMagneticLassoToolArea.tsx:304` and `PolygonClickToolArea.tsx:517` in `removeLastAnchor` when
-the last anchor is popped. The Clear/Deselect control path already goes through
-`useSelectionHistory.clearSelections`, so those two sites are the remaining un-routed clears on
-these components.
+**Fix.** Mirror the rectangle. Keep the per-move `UPDATE_SELECTION` dispatches if the live drag needs
+the store (the anchor drag reads nothing back, but verify before assuming), track whether the drag
+began on an already-committed selection, and call `commitSelection(selection, 'move')` exactly once at
+gesture end — pointer up, or pointer leave/cancel for an abandoned drag. Note the anchor drag
+rebuilds `points`/`pos` and bumps `metadata.movedAtVersion`, so `'move'` is the correct mode and the
+hook's deep-equal guard will not suppress a genuine reshape.
 
-**Fix.** Route each gesture-end commit through `commitSelection(selection, 'create')` — and
-`('…', 'move')` for the committed-polygon redraw at `PolygonClickToolArea.tsx:274` — exactly as the
-magic wand and rectangle already do. Capture the before-snapshot at gesture start: the polygon
-builds its points anchor by anchor across many clicks, so its `previousSelectionState` must be the
-state before the first anchor was placed, not the state at double-click. Keep every pointer-move
-preview transient, as the rectangle does — its whole drag is canvas overlay and the store is
-untouched until `onChangeEnd` (`RectangularSelectionToolArea.tsx:76-83`) — so the commit belongs at
-gesture end and nowhere else, or the gesture writes one history entry per pointer move. The same
-change should route `:304` / `:517` through `clearSelections`, and delete the now-dead comment in
-`useSelectionHistory.ts:36-42` that claims the raw arms are kept for the polygon and lasso gestures.
+Then delete the two comments in `useSelectionHistory.ts` that are now false: `:36-42` says the raw
+arms "keep their own derivation for the polygon and lasso gestures, which are a later slice" (no
+component dispatches `COMMIT_SELECTION` any more), and `:180-185` says the polygon, freehand and
+feathered magnetic lasso gesture paths "still dispatch the raw action" (only the move path does).
 
-**Files.** `src/components/Main/FeatherMagneticLassoToolArea.tsx`,
-`src/components/Main/PolygonClickToolArea.tsx`, `src/contexts/useSelectionHistory.ts`
+**Files.** `src/components/Main/PolygonClickToolArea.tsx`,
+`src/contexts/useSelectionHistory.ts` (comments only)
 
 ---
 
@@ -945,9 +937,10 @@ timeline wholesale — `history-replay.ts:68` and `history-adapter.ts:465` — s
 and the legacy replay start from the same snapshot, which is the parity property `0659ce9`
 extracted this rule to own.
 
-Bounding the lookup by replay target looks like a correctness fix and is a data-loss bug **until
-item 30 is done**, and that ordering is the whole content of this entry. Two tests pin the
-unbounded behaviour as load-bearing, not stale:
+Bounding the lookup by replay target looks like a correctness fix, and it was a data-loss bug until
+every selection-creating gesture recorded its own entry. That precondition now holds, so **this entry
+is actionable: the bound is safe to make.** Two tests still pin the unbounded behaviour as
+load-bearing, not stale:
 
 - `src/contexts/__tests__/useHistory.test.tsx:439` — "restores a cleared selection when undoing the
   tool-switch history entry". The fixture is a rename entry at index 0 and a selection-clear entry
@@ -958,16 +951,32 @@ unbounded behaviour as load-bearing, not stale:
   before it and its next state at or after it". `replayHistory(history, 0, …)` at `:117` expects the
   baseline, with the `SELECTION_ACTION` at index 1, again after the target index.
 
-**Fix.** Do not bound it yet. The precondition is that **every** selection-creating gesture records
-its own entry, so the first `SELECTION_ACTION` on the timeline is the one that created the state
-rather than a later entry that merely cleared it — i.e. item 30, plus the two raw clears it names.
-Once that holds, bound the lookup at the replay target and change those two tests **in the same
-change**: they must be re-derived to assert a creation entry that precedes the target, not deleted
-to make the bound pass. The unbounded behaviour is a live feature, so a fix that makes one of them
-fail has removed a user-visible capability, not corrected a pin.
+**Fix.** Bound the lookup at the replay target, and change those two tests **in the same change**:
+they must be re-derived to assert a creation entry that precedes the target, not deleted to make the
+bound pass. The unbounded behaviour was a live feature, so a fix that makes one of them fail without
+re-deriving it has removed a user-visible capability, not corrected a pin.
 
-**Files.** `src/contexts/selection-baseline.ts`, `src/contexts/history-replay.ts`,
-`src/contexts/__tests__/useHistory.test.tsx`, `src/contexts/__tests__/history-replay.test.ts`
+Both consumers take the timeline wholesale, so the bound has to reach `deriveSelectionBaseline` (add a
+cursor argument) and be threaded through `history-replay.ts:68` and `history-adapter.ts:465`
+together — bounding one and not the other re-opens the parity divergence that `selection-baseline.ts`
+exists to close.
+
+**Two comments carry the stale rationale, so both must be rewritten in the same change — not one of
+them:**
+
+- `selection-baseline.ts:46-55` — the doc comment above `deriveSelectionBaseline`. The claim is at
+  `:50-51`, "the first non-disabled `SELECTION_ACTION` entry's `previousSelectionState` is the only
+  record that the selection ever existed", with `:52-54` restating it for the durable baseline.
+- `history-adapter.ts:460-464` — the comment above the `deriveSelectionBaseline(legacyHistory)` call
+  at `:465` repeats it in the adapter's own voice: "It cannot be narrowed to the pre-first-entry state
+  **while a selection is created outside history**: the tool-switch clear's `previousSelectionState` is
+  the only record that the selection existed." Rewriting only the first leaves the rule's owner
+  corrected and its caller still advertising the reason it must not be bounded, so the next reader
+  takes the call site as exempt from the bound being introduced at the signature.
+
+**Files.** `src/contexts/selection-baseline.ts:46-59`, `src/contexts/history-replay.ts:68`,
+`src/contexts/history-adapter.ts:460-465`, `src/contexts/__tests__/useHistory.test.tsx:439`,
+`src/contexts/__tests__/history-replay.test.ts:90,117`
 
 ---
 
@@ -995,3 +1004,61 @@ field. Do not add a history field for presentation alone while the legacy timeli
 replay authority.
 
 **Files.** `src/contexts/useHistory.ts:15-29`, `src/components/SidebarRight/HistoryTab.tsx`
+
+---
+
+## 33. Four `ToolbarsRight` Clear pins run the writer's failure fallback, not the append boundary
+
+**Problem.** Four toolbar tests build a `useStore` mock that omits `history` and `historyIndex`, so
+the Clear control's writer never reaches the append boundary's success branch:
+
+| test file                                                      | store mock | the shared expectation        | its Clear assertion(s)         |
+| -------------------------------------------------------------- | ---------- | ----------------------------- | ------------------------------ |
+| `MagicWand/__tests__/MagicWand.test.tsx`                       | `:52-58`   | `CLEAR_SELECTION_EDIT` `:120` | `:303-311`, `:520`             |
+| `RectangularSelection/__tests__/RectangularSelection.test.tsx` | `:14-29`   | `CLEAR_SELECTION_EDIT` `:59`  | `:125-131`, `:163-169`, `:292` |
+| `Lasso/__tests__/FeatherMagneticLasso.test.tsx`                | `:20-25`   | `CLEAR_SELECTION_EDIT` `:101` | `:330`                         |
+| `Lasso/__tests__/FreehandLasso.test.tsx`                       | `:14-17`   | `CLEAR_SELECTION_EDIT` `:86`  | `:254`                         |
+
+The chain, all confirmed by reading the files:
+
+- `appendSelectionClear` (`useSelectionHistory.ts:95`) passes `history` and `historyIndex` straight
+  into the planner's `timeline` (`:133-142`). The hook's destructure gives a default to
+  `branchRevision` only (`:194`), so both of those arrive as `undefined`.
+- `planHistoryAppend` runs `translate` first, which succeeds, then `validateTimeline`
+  (`history-append.ts:160`), which evaluates `timeline.entries.some(...)` at `:161` on `undefined` and
+  throws.
+- The writer's `catch` (`:144-150`) converts that into the fallback dispatch at `:149`, which
+  re-creates the same `HistoryItem` and omits `durableEntry` entirely.
+
+The two dispatches are therefore byte-identical apart from `durableEntry`: `:143` sends the plan the
+translator produced, `:149` sends the same `type`, the same `payload.updates` and an equivalent
+`payload.historyItem` (`createHistoryItem(item, id)` is what `planHistoryAppend` itself calls at
+`:189`). Each `CLEAR_SELECTION_EDIT` matches `type`, `payload.historyItem` and `payload.updates` and
+deliberately never matches `durableEntry` — a choice its own doc comment defends (`MagicWand.test.tsx:114-118`,
+`RectangularSelection.test.tsx:53-57`, `FeatherMagneticLasso.test.tsx:95-99`, `FreehandLasso.test.tsx:80-84`).
+The pins therefore pass on the failure path while reading as success-path pins, and a regression that
+made the planner throw would leave all four files green.
+
+**Fix.** Add `history: []` and `historyIndex: -1` to each of the four store mocks, plus `branchRevision: 0`
+for shape parity with the hook's default. With those, `validateTimeline` returns the diagnostic at
+`history-append.ts:171-178` instead of throwing, `planHistoryAppend` still returns the translated entry
+(`:192-197`), and the `try` branch dispatches — the success path.
+
+Then assert `durableEntry` in at least one file, `FreehandLasso.test.tsx` being the smallest (a single
+use of the constant, `:254`). The shape is
+`expect.objectContaining({ id: expect.any(String), operation: expect.objectContaining({ kind: 'set-selection' }) })`
+(`DurableHistoryEntry` at `history-model.ts:115-120`, built by `deriveSetSelectionEntry` at
+`history-adapter.ts:311-328`). Without it the success path is assumed, and one assertion is what makes
+the other three files' silence mean something.
+
+Finally, the doc comment above each `CLEAR_SELECTION_EDIT` has to change with the mock. Its current
+wording — "the store publishes the planned entry only when its durable document still describes the
+timeline the plan was made against … both are correct" — describes a decision a component test with a
+mocked store cannot reach: publication is the store's (`StoreContext.tsx:731`), and the component only
+emits the plan. The comment should say the component's contract is to plan and dispatch, and that the
+publish decision is downstream.
+
+**Files.** `src/components/ToolbarsRight/MagicWand/__tests__/MagicWand.test.tsx:52-58,120`,
+`src/components/ToolbarsRight/RectangularSelection/__tests__/RectangularSelection.test.tsx:14-29,59`,
+`src/components/ToolbarsRight/Lasso/__tests__/FeatherMagneticLasso.test.tsx:20-25,101`,
+`src/components/ToolbarsRight/Lasso/__tests__/FreehandLasso.test.tsx:14-17,86`

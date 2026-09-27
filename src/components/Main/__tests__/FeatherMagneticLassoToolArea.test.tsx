@@ -51,6 +51,9 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       historyIndex: -1,
       selections: h.selections,
       totalSize: { width: 200, height: 120 },
+      // Explicit, so the hook derives the same frame the tool area does rather
+      // than relying on an absent key.
+      documentFrame: null,
     },
     h.dispatch,
   ],
@@ -197,8 +200,38 @@ describe('FeatherMagneticLassoToolArea', () => {
     return canvas;
   };
 
-  const committed = () =>
-    h.dispatch.mock.calls.filter(([action]) => (action as { type: string }).type === 'COMMIT_SELECTION');
+  /**
+   * A lasso commit is no longer a raw `COMMIT_SELECTION`: it is a document edit
+   * that appends to history, so a drawn selection is undoable on its own instead
+   * of surviving only as the `previousSelectionState` of whatever clears it later.
+   * The contract is ONE `COMMIT_DOCUMENT_EDIT` carrying both the history item and
+   * the resulting selection state, which is what the hook's
+   * `committedSelectionUpdate` derived — the raw action is no longer dispatched,
+   * so `updates.selections` IS the store state.
+   *
+   * `durableEntry` is deliberately not part of the pin, and `id` is a fresh uuid
+   * per call; the reasons are the same as `CLEAR_SELECTION_EDIT` above.
+   */
+  type SelectionEdit = {
+    type: string;
+    payload: {
+      historyItem: { actionName: string; id: string };
+      updates: {
+        activeSelectionId: string | null;
+        selections: Selection[];
+        selectionCleared: null;
+        selectionDraft: { status: string };
+      };
+    };
+  };
+
+  const selectionEdits = (): SelectionEdit[] =>
+    (h.dispatch.mock.calls as unknown[][])
+      .map(([action]) => action as SelectionEdit)
+      .filter((action) => action.type === 'COMMIT_DOCUMENT_EDIT');
+
+  /** The single selection a `COMMIT_DOCUMENT_EDIT` published, which is the drawn lasso. */
+  const committedSelection = (): Selection => selectionEdits()[0].payload.updates.selections[0];
 
   const LASSO_SELECTION: Selection = {
     id: 'sel-1',
@@ -281,24 +314,77 @@ describe('FeatherMagneticLassoToolArea', () => {
       type: 'START_SELECTION_DRAFT',
       payload: { sourceTool: 'feather-magnetic-lasso' },
     });
-    expect(h.dispatch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'COMMIT_SELECTION',
-        payload: expect.objectContaining({
-          geometry: 'polygon',
-          lifecycle: 'committed',
-          metadata: expect.objectContaining({
-            featherRadius: 8,
-            magneticLasso: expect.objectContaining({
-              antiAlias: true,
-              contrast: 100,
-              width: 10,
+    expect(selectionEdits()).toHaveLength(1);
+    expect(selectionEdits()[0]).toMatchObject({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        historyItem: { actionName: SELECTION_ACTION, id: expect.any(String) },
+        // The visible half of the same transition. `selectionDraft` and
+        // `selectionCleared` are asserted because they are the other two fields
+        // the raw `COMMIT_SELECTION` reducer arm moved, so leaving them out
+        // would let the hook silently stop resetting the draft or repainting the
+        // overlay.
+        updates: {
+          selectionCleared: null,
+          selectionDraft: { status: 'idle' },
+          selections: [
+            expect.objectContaining({
+              geometry: 'polygon',
+              lifecycle: 'committed',
+              isActive: true,
+              metadata: expect.objectContaining({
+                featherRadius: 8,
+                magneticLasso: expect.objectContaining({
+                  antiAlias: true,
+                  contrast: 100,
+                  width: 10,
+                }),
+              }),
+              sourceTool: 'feather-magnetic-lasso',
             }),
-          }),
-          sourceTool: 'feather-magnetic-lasso',
-        }),
-      })
+          ],
+        },
+      },
+    });
+    // The pointer maps to exactly the appended selection, which is what activates
+    // it: the two uuids cannot be pinned literally, their equality can.
+    expect(selectionEdits()[0].payload.updates.activeSelectionId).toBe(
+      selectionEdits()[0].payload.updates.selections[0].id
     );
+  });
+
+  it('appends exactly one history entry for a multi-click, multi-pointermove lasso gesture', () => {
+    installManualRaf();
+    const mockCtx = createMockContext();
+    const toolArea = renderArea({ current: mockCtx }).ctx;
+
+    // Three anchors, each with several pointer moves behind it. Every click and
+    // every pointer move is one step of the SAME gesture, and none of them may
+    // append: they only mutate refs and the overlay.
+    for (const [x, y] of [
+      [10, 10],
+      [60, 10],
+      [60, 60],
+    ]) {
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: x, clientY: y });
+      for (let step = 1; step <= 3; step++) {
+        fireEvent.pointerMove(toolArea, { clientX: x + step, clientY: y + step });
+        rafCallbacks[rafCallbacks.length - 1]?.(performance.now());
+        expect(selectionEdits()).toHaveLength(0);
+      }
+    }
+
+    h.shortcutHandlers.get('Enter')?.();
+
+    expect(selectionEdits()).toHaveLength(1);
+    expect(selectionEdits()[0].payload.historyItem).toMatchObject({
+      actionName: SELECTION_ACTION,
+      id: expect.any(String),
+    });
+    expect(committedSelection()).toMatchObject({
+      sourceTool: 'feather-magnetic-lasso',
+      isActive: true,
+    });
   });
 
   it('removes the previous anchor with Backspace before finishing', () => {
@@ -313,7 +399,10 @@ describe('FeatherMagneticLassoToolArea', () => {
     h.shortcutHandlers.get('Backspace')?.();
     h.shortcutHandlers.get('Enter')?.();
 
-    expect(h.dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'COMMIT_SELECTION' }));
+    // Dropping an anchor leaves one click's worth of geometry, below the
+    // three-point minimum, so the gesture never reaches the commit point and
+    // appends nothing.
+    expect(selectionEdits()).toHaveLength(0);
   });
 
   it('cancels the current draft with Escape', () => {
@@ -388,7 +477,7 @@ describe('FeatherMagneticLassoToolArea', () => {
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 60, clientY: 60 });
       fireEvent.contextMenu(toolArea);
 
-      expect(committed()).toHaveLength(1);
+      expect(selectionEdits()).toHaveLength(1);
     });
 
     it('closes the selection when a click lands back on the first anchor', () => {
@@ -400,7 +489,7 @@ describe('FeatherMagneticLassoToolArea', () => {
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 60, clientY: 60 });
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 12, clientY: 11 });
 
-      expect(committed()).toHaveLength(1);
+      expect(selectionEdits()).toHaveLength(1);
     });
 
     it('closes the selection on a double click', () => {
@@ -413,7 +502,7 @@ describe('FeatherMagneticLassoToolArea', () => {
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 90, clientY: 90 });
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 90, clientY: 90 });
 
-      expect(committed()).toHaveLength(1);
+      expect(selectionEdits()).toHaveLength(1);
     });
 
     it('does nothing on Enter or Escape without an active draft', () => {
@@ -424,7 +513,7 @@ describe('FeatherMagneticLassoToolArea', () => {
       h.shortcutHandlers.get('Escape')?.();
 
       expect(h.dispatch).not.toHaveBeenCalled();
-      expect(committed()).toHaveLength(0);
+      expect(selectionEdits()).toHaveLength(0);
     });
 
     it('commits a selection even when no overlay context is mounted', () => {
@@ -437,7 +526,7 @@ describe('FeatherMagneticLassoToolArea', () => {
         h.shortcutHandlers.get('Enter')?.();
       }).not.toThrow();
 
-      expect(committed()).toHaveLength(1);
+      expect(selectionEdits()).toHaveLength(1);
     });
   });
 
@@ -501,7 +590,7 @@ describe('FeatherMagneticLassoToolArea', () => {
       h.shortcutHandlers.get('Delete')?.();
       h.shortcutHandlers.get('Enter')?.();
 
-      expect(committed()).toHaveLength(0);
+      expect(selectionEdits()).toHaveLength(0);
     });
   });
 
