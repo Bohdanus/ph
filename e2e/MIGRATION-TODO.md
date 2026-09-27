@@ -75,21 +75,9 @@ it had never been established by any run.
   are only ever compared against a Vite dev server. Serving `dist/` via
   `npm run preview` would need a `webServer.command` switch, and would be a
   possible baseline-affecting change.
-- **Pre-commit does not run the e2e unit tests.** `.husky/pre-commit` runs
-  `lint-staged` then `npm run tsc`. An e2e helper change gets type-checked but no
-  local test feedback; only the `e2e-unit` CI job catches it. The suite runs in
-  ~660 ms, so adding `npm run test:e2e:unit` is cheap. Left alone deliberately:
-  it changes the local commit path, which is a workflow decision.
-- **lint-staged only covers `*.{ts,tsx}`.** The e2e docs, root `README.md` and the
-  workflow YAML are not formatted or linted at commit time. CI's
-  `prettier --check .` does catch them, but only in CI. Adding
-  `"*.{md,yml,yaml,json}"` to `lint-staged` would match what `lint:check` enforces.
 - **No Playwright browser cache in the `e2e` job.** `playwright install --with-deps
 chrome` runs on every build. `actions/cache` on `~/.cache/ms-playwright` would
   cut a few minutes per run.
-- **e2e helper coverage is never produced in CI.** `test:e2e:unit:coverage` exists
-  as a script but no job calls it. Note it covers 6 of the 7 helper modules:
-  `cdp-helpers.ts` has no vitest tests, only the Playwright spec.
 - **`concurrency` and `permissions: contents: read` were added to the workflow in
   this cleanup.** They were not present before; no job needs write access.
 
@@ -136,10 +124,6 @@ specifics worth calling out:
   actually run in CI against this tree.
 - **`HANDOFF.md`** sits untracked in the repo root and is not gitignored, so a
   plain `git add -A` would commit it. Either gitignore it or move it.
-- **Husky v9 deprecation.** `.husky/pre-commit` still uses the two-line
-  `husky.sh` preamble, which prints a warning on every commit and **will fail in
-  husky v10**. Pre-existing, unrelated to this migration, but it is a dated
-  breakage that will block commits on upgrade.
 
 ## 6. Explicitly not attempted
 

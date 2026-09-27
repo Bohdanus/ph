@@ -84,6 +84,30 @@ jobs:
         # an app type error from being reported as an e2e failure.
         run: npx tsc -b tsconfig.e2e.json
 
+      - name: Cover the e2e helpers
+        # LAST, and deliberately still a gate. `test:e2e:unit:coverage` re-runs the
+        # same suite with v8 instrumentation and reports into ./coverage-e2e. Ordered
+        # after the two real gates so that neither of them can be skipped or obscured
+        # by it: a failure here is reported against a job whose tests and type-check
+        # already passed, and a failure in either gate above aborts this step rather
+        # than letting coverage output stand in for them. It is not
+        # `continue-on-error` — an untested change to these helpers would otherwise
+        # ship the moment the coverage run broke for an unrelated reason.
+        #
+        # There are no coverage thresholds in vitest.e2e.config.ts, so this step
+        # cannot go red on a percentage; it fails only if a test fails.
+        run: npm run test:e2e:unit:coverage
+
+      - name: Upload e2e helper coverage
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-helper-coverage
+          path: |
+            coverage-e2e/
+          retention-days: 7
+          if-no-files-found: error
+
   e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30
