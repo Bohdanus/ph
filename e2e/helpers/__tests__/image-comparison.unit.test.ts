@@ -722,7 +722,6 @@ describe('Image Comparison Helpers', () => {
 
   describe('expectCanvasToMatch', () => {
     const snapshotName = 'canvas-snapshot.png';
-    const page = createMockPage(noOpScreenshot());
     const canvas = createMockLocator();
 
     interface HelperDefaults {
@@ -734,7 +733,7 @@ describe('Image Comparison Helpers', () => {
     let helperDefaults: HelperDefaults;
 
     beforeAll(async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName);
+      await expectCanvasToMatch(canvas, snapshotName);
       const options = recordedCanvasOptions();
       helperDefaults = {
         threshold: requireNumeric(options.threshold, 'threshold'),
@@ -749,20 +748,20 @@ describe('Image Comparison Helpers', () => {
     });
 
     it('forwards the canvas it was given to the visual assertion', async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName);
+      await expectCanvasToMatch(canvas, snapshotName);
 
       expect(expectMock).toHaveBeenCalledTimes(1);
       expect(recordedCanvas()).toBe(canvas);
     });
 
     it('forwards the snapshot name unchanged', async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName);
+      await expectCanvasToMatch(canvas, snapshotName);
 
       expect(recordedSnapshot()).toBe(snapshotName);
     });
 
     it('forwards the helper defaults plus the fixed visual options', async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName);
+      await expectCanvasToMatch(canvas, snapshotName);
 
       expect(recordedCanvasOptions()).toEqual({
         ...helperDefaults,
@@ -778,13 +777,13 @@ describe('Image Comparison Helpers', () => {
     });
 
     it('keeps the default threshold in sync with the exported DEFAULT_THRESHOLD', async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName);
+      await expectCanvasToMatch(canvas, snapshotName);
 
       expect(helperDefaults.threshold).toBe(DEFAULT_THRESHOLD);
     });
 
     it('keeps its diff-pixel budget and ratio in sync with the exported defaults', async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName);
+      await expectCanvasToMatch(canvas, snapshotName);
 
       expect(helperDefaults.maxDiffPixels).toBe(DEFAULT_MAX_DIFF_PIXELS);
       expect(helperDefaults.maxDiffPixelRatio).toBe(DEFAULT_MAX_DIFF_PIXEL_RATIO);
@@ -794,7 +793,7 @@ describe('Image Comparison Helpers', () => {
       const threshold = helperDefaults.threshold / 2;
       const maxDiffPixels = helperDefaults.maxDiffPixels / 2;
 
-      await expectCanvasToMatch(page, canvas, snapshotName, { threshold, maxDiffPixels });
+      await expectCanvasToMatch(canvas, snapshotName, { threshold, maxDiffPixels });
 
       expect(recordedCanvasOptions()).toEqual({
         ...helperDefaults,
@@ -809,7 +808,7 @@ describe('Image Comparison Helpers', () => {
     it('forwards a mask list through to the visual assertion', async () => {
       const mask = [createMockLocator(), createMockLocator()];
 
-      await expectCanvasToMatch(page, canvas, snapshotName, { mask });
+      await expectCanvasToMatch(canvas, snapshotName, { mask });
 
       expect(recordedCanvasOptions().mask).toBe(mask);
       expect(recordedCanvasOptions().threshold).toBe(helperDefaults.threshold);
@@ -822,7 +821,7 @@ describe('Image Comparison Helpers', () => {
         resolved = true;
       });
 
-      await expectCanvasToMatch(page, canvas, snapshotName);
+      await expectCanvasToMatch(canvas, snapshotName);
 
       expect(resolved).toBe(true);
     });
@@ -831,11 +830,11 @@ describe('Image Comparison Helpers', () => {
       const failure = new Error('toHaveScreenshot failed');
       toHaveScreenshotMock.mockRejectedValueOnce(failure);
 
-      await expect(expectCanvasToMatch(page, canvas, snapshotName)).rejects.toThrow(failure);
+      await expect(expectCanvasToMatch(canvas, snapshotName)).rejects.toThrow(failure);
     });
 
     it('tolerates an explicit undefined mask without replacing the other defaults', async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName, { mask: undefined });
+      await expectCanvasToMatch(canvas, snapshotName, { mask: undefined });
 
       const options = recordedCanvasOptions();
       expect(options.mask).toBeUndefined();
@@ -845,13 +844,13 @@ describe('Image Comparison Helpers', () => {
     });
 
     it('reapplies the default threshold when the caller passes an explicit undefined threshold', async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName, { threshold: undefined });
+      await expectCanvasToMatch(canvas, snapshotName, { threshold: undefined });
 
       expect(requireNumeric(recordedCanvasOptions().threshold, 'threshold')).toBe(DEFAULT_THRESHOLD);
     });
 
     it('reapplies the default diff-pixel budget when the caller passes an explicit undefined budget', async () => {
-      await expectCanvasToMatch(page, canvas, snapshotName, { maxDiffPixels: undefined });
+      await expectCanvasToMatch(canvas, snapshotName, { maxDiffPixels: undefined });
 
       expect(requireNumeric(recordedCanvasOptions().maxDiffPixels, 'maxDiffPixels')).toBe(helperDefaults.maxDiffPixels);
     });
@@ -867,7 +866,7 @@ describe('Image Comparison Helpers', () => {
     it.each(invalidCanvases)(
       'hands an invalid canvas (%s) to the visual assertion instead of silently skipping it',
       async (_label, invalidCanvas) => {
-        await expectCanvasToMatch(page, invalidCanvas as Locator, snapshotName);
+        await expectCanvasToMatch(invalidCanvas as Locator, snapshotName);
 
         expect(expectMock).toHaveBeenCalledTimes(1);
         expect(recordedCanvas()).toBe(invalidCanvas);
@@ -881,7 +880,7 @@ describe('Image Comparison Helpers', () => {
         throw failure;
       });
 
-      await expect(expectCanvasToMatch(page, canvas, snapshotName)).rejects.toThrow(failure);
+      await expect(expectCanvasToMatch(canvas, snapshotName)).rejects.toThrow(failure);
       expect(toHaveScreenshotMock).not.toHaveBeenCalled();
     });
   });

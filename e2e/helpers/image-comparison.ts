@@ -104,7 +104,6 @@ export async function compareScreenshots(
  * This is the recommended approach for visual regression.
  */
 export async function expectCanvasToMatch(
-  page: Page,
   canvas: ReturnType<Page['getByTestId']>,
   snapshotName: string,
   options: {
