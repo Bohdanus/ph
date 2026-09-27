@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { KeyboardEventsProvider, useKeyDownShortcut } from '../../../hooks/useKeyboardEvents.tsx';
 import NewImageDialog from '../NewImageDialog.tsx';
 
 afterEach(() => {
@@ -408,5 +410,156 @@ describe('NewImageDialog close paths', () => {
 
     expect(onCreate).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+const FOCUSABLE = 'select, input, textarea, button, [tabindex]:not([tabindex="-1"])';
+
+function dialogFocusables() {
+  return Array.from(screen.getByTestId('new-image-dialog').querySelectorAll<HTMLElement>(FOCUSABLE));
+}
+
+const UndoProbe = ({ onKeyDown }: { onKeyDown: () => void }) => {
+  useKeyDownShortcut({ key: 'z', mod: true, preventDefault: true, onKeyDown });
+  return null;
+};
+
+function DialogHarness() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" data-testid="file-new-trigger" onClick={() => setOpen(true)}>
+        New
+      </button>
+      {open && <NewImageDialog onClose={() => setOpen(false)} onCreate={vi.fn()} />}
+    </>
+  );
+}
+
+describe('NewImageDialog focus ownership', () => {
+  it('focuses the preset select on mount, because a button would leave the shortcut layer live', () => {
+    renderDialog();
+
+    expect(document.activeElement).toBe(presetSelect());
+  });
+
+  it('wraps Tab from the last control back to the first', () => {
+    renderDialog();
+    const focusables = dialogFocusables();
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    expect(first).toBe(screen.getByTestId('new-image-dialog-close-button'));
+    expect(last).toBe(screen.getByTestId('new-image-dialog-submit-button'));
+
+    last.focus();
+    fireEvent.keyDown(last, { key: 'Tab' });
+
+    expect(document.activeElement).toBe(first);
+  });
+
+  it('wraps Shift+Tab from the first control to the last', () => {
+    renderDialog();
+    const focusables = dialogFocusables();
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+
+    first.focus();
+    fireEvent.keyDown(first, { key: 'Tab', shiftKey: true });
+
+    expect(document.activeElement).toBe(last);
+  });
+
+  it('leaves a Tab in the middle of the order to the browser', () => {
+    renderDialog();
+    const focusables = dialogFocusables();
+    const middle = focusables[1];
+
+    middle.focus();
+    fireEvent.keyDown(middle, { key: 'Tab' });
+
+    expect(document.activeElement).toBe(middle);
+  });
+
+  it('closes on Escape without letting the keydown reach document', () => {
+    const { onClose } = renderDialog();
+    const documentListener = vi.fn();
+    document.addEventListener('keydown', documentListener);
+
+    try {
+      fireEvent.keyDown(presetSelect(), { key: 'Escape' });
+    } finally {
+      document.removeEventListener('keydown', documentListener);
+    }
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(documentListener).not.toHaveBeenCalled();
+  });
+
+  it('does not preventDefault Escape, so nothing else is starved of the key', () => {
+    renderDialog();
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+
+    presetSelect().dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('restores focus to the element that opened it once it closes', () => {
+    render(<DialogHarness />);
+    const trigger = screen.getByTestId('file-new-trigger');
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+
+    fireEvent.click(trigger);
+    expect(document.activeElement).toBe(presetSelect());
+
+    fireEvent.click(screen.getByTestId('new-image-dialog-cancel-button'));
+
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('never lets the app shortcut layer fire from a text-like control inside the dialog', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <UndoProbe onKeyDown={onKeyDown} />
+        <NewImageDialog onClose={vi.fn()} onCreate={vi.fn()} />
+      </KeyboardEventsProvider>
+    );
+
+    fireEvent.keyDown(presetSelect(), { key: 'z', metaKey: true });
+    fireEvent.keyDown(widthInput(), { key: 'z', metaKey: true });
+
+    expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('never lets the app shortcut layer fire from a button inside the dialog either', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <UndoProbe onKeyDown={onKeyDown} />
+        <NewImageDialog onClose={vi.fn()} onCreate={vi.fn()} />
+      </KeyboardEventsProvider>
+    );
+
+    fireEvent.keyDown(screen.getByTestId('new-image-dialog-cancel-button'), { key: 'z', metaKey: true });
+
+    expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('still delivers the app shortcut layer from outside the dialog, so the probe is not vacuous', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <button type="button" data-testid="outside-control">
+          outside
+        </button>
+        <UndoProbe onKeyDown={onKeyDown} />
+      </KeyboardEventsProvider>
+    );
+
+    fireEvent.keyDown(screen.getByTestId('outside-control'), { key: 'z', metaKey: true });
+
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
   });
 });

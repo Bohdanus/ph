@@ -10,6 +10,13 @@ interface NewImageDialogProps {
   onCreate: (params: BlankImageParams) => void;
 }
 
+// The whole app's shortcut layer is one document-level keydown listener whose only
+// suppression test is isEditableTarget, which is true for textarea, contenteditable,
+// text-like inputs and select. The dialog therefore has to own its keyboard: focus must
+// start on a text-like control, and no keydown from inside it may reach document.
+const TEXT_LIKE_FOCUSABLE = 'select, textarea, input[type="number"], input[type="text"], input:not([type])';
+const ANY_FOCUSABLE = 'select, input, textarea, button, [tabindex]:not([tabindex="-1"])';
+
 const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
   const [width, setWidth] = useState(800);
   const [height, setHeight] = useState(600);
@@ -35,8 +42,50 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
     };
   }, []);
 
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const panel = panelRef.current;
+    const textLike = panel?.querySelector<HTMLElement>(TEXT_LIKE_FOCUSABLE);
+    (textLike ?? panel?.querySelector<HTMLElement>(ANY_FOCUSABLE))?.focus();
+    return () => previouslyFocused?.focus?.();
+  }, []);
+
+  const handleTab = (e: React.KeyboardEvent<HTMLDivElement>, forward: boolean) => {
+    const focusables = panelRef.current?.querySelectorAll<HTMLElement>(ANY_FOCUSABLE);
+    if (!focusables || focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (!forward && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (forward && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    // Safe here and only here: every app-level keydown listener (document in
+    // useKeyboardEvents, window in SidebarLeft, ShapeToolArea and Transform) is an
+    // ancestor in the bubble phase, and the dialog is their descendant. Stopping here
+    // is what makes the buttons inside the dialog safe too, since a button is not a
+    // text-like control and would otherwise re-open the shortcut hole.
+    e.stopPropagation();
+    if (e.key === 'Escape') {
+      onClose();
+      return;
+    }
+    if (e.key === 'Tab') {
+      handleTab(e, !e.shiftKey);
+    }
+  };
+
   return (
     <div
+      ref={panelRef}
+      onKeyDown={handleKeyDown}
       className="fixed inset-0 z-[1050] flex items-center justify-center overflow-y-auto overflow-x-hidden outline-none focus:outline-none"
       data-testid="new-image-dialog"
     >

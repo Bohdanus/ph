@@ -995,3 +995,29 @@ field. Do not add a history field for presentation alone while the legacy timeli
 replay authority.
 
 **Files.** `src/contexts/useHistory.ts:15-29`, `src/components/SidebarRight/HistoryTab.tsx`
+
+---
+
+## 33. `SaveDialog` has the same unowned keyboard as `NewImageDialog` had
+
+**Problem.** `NewImageDialog` no longer has this defect, but its sibling never had the fix.
+`SaveDialog.tsx:32` is the same `fixed inset-0 z-[1050]` overlay with `outline-none
+focus:outline-none` and nothing else: no `autoFocus`, no `tabIndex`, no `onKeyDown`, so no Escape
+handler, no key interception and no focus trap (`grep -n 'autoFocus\|onKeyDown\|tabIndex'
+src/components/SaveDialog/SaveDialog.tsx` matches only the Tailwind outline classes).
+
+The consequence is the one `NewImageDialog` just had. Focus stays on the `File ▸ Save As` menu
+`<button>`, and the app's whole shortcut layer is one `document`-level keydown listener
+(`useKeyboardEvents.tsx:120`) suppressed only by `isEditableTarget` (`useKeyboardEvents.tsx:29-54`),
+which is true for textarea, contenteditable, text-like inputs and select — never a `<button>`. With
+a document open, `Cmd+Z`, `Cmd+C`, `Cmd+V` and every tool key fire behind the open save dialog.
+
+**Do not copy the old approach.** `SaveDialog`'s first focusable control is the header close button
+(`:45`), which precedes both inputs (`:60`, `:72`) in document order. A
+`querySelector('select, input, button')` autofocus therefore lands on that **button**, and a button
+is not text-like, so `isEditableTarget` stays false and the shortcut hole re-opens. Port the
+selector and the `stopPropagation` scope from `NewImageDialog.tsx:17-18` and `:69-83` instead, and
+note that there is no `<select>` here, so the text-like branch resolves to the name input at `:60`.
+
+**Files.** `src/components/SaveDialog/SaveDialog.tsx:32-45`,
+`src/components/SaveDialog/__tests__/SaveDialog.test.tsx` (asserts nothing about focus today)
