@@ -268,93 +268,6 @@ testing, not inspection.
 
 ---
 
-## P1 — a failed canvas context is reported as a pixel mismatch
-
-`e2e/export/helpers.ts:185`
-
-`if (!sourceContext || !exportedContext) return false;` then
-`expect(..., '...: pixels differ too much from source').toBe(true)`. A failed
-`getContext('2d')` reaches the developer as a colour problem. Fix: return a
-discriminated `{ ok, reason }` and assert on the reason.
-
-## P1 — unescaped tool name in a RegExp selector
-
-`e2e/helpers/toolbar-helpers.ts:67`
-
-`new RegExp(name.replace(/&/g, 'and'), 'i')` builds a pattern from an
-unescaped name. Verified against the real function: `'Brush (B)'`,
-`'Levels[beta]'` and `'C:\Tool'` each produce a regex that does **not** match
-their own literal accessible name, so the button is silently not found and the
-error below it names a name that was never searched. `'a|b'` matches the wrong
-button.
-
-Latent today — no call site passes a name containing `()[]+|?*^\$`. Fix:
-`new RegExp(escapeRegExp(name.replace(/&/g, 'and')), 'i')`. Needs sign-off
-because it changes selector behaviour.
-
-## P2 — `hexToRgb` rejects valid CSS-4 hex
-
-`e2e/helpers/color-helpers.ts:12` **[pinned]**
-
-The 3-character expansion runs before the length guard, so 4-digit `#rgba` and
-8-digit `#rrggbbaa` fall into the error branch:
-
-```
-hexToRgb('#ff0000ff') -> expected 3 or 6 hex digits, got "ff0000ff"
-hexToRgb('#f00a')     -> expected 3 or 6 hex digits, got "f00a"
-```
-
-Both are valid CSS and should yield `{r:255,g:0,b:0}`. Consequence:
-`setForegroundColor(page, '#ff0000ff', true)` rejects a colour the application
-itself accepts.
-
-## P2 — `setForegroundColor` can succeed without setting the colour
-
-`e2e/helpers/color-helpers.ts:24-27` **[pinned]**
-
-Two independent ways to get a green result with nothing changed:
-
-1. No validation before the DOM is touched. `hexToRgb` is only called when
-   `verifySwatch` is true, so `setForegroundColor(page, 'red')` writes `red`
-   into a `<input type="color">` and resolves successfully.
-2. `if (input) {` (`:26`) makes a missing or renamed testid a silent no-op.
-
-Combined, a test that sets a colour can pass having changed nothing. The specs
-that set a colour now pass `verifySwatch: true`, which closes the loop from
-the call side, but the helper itself is still permissive.
-
-## P2 — swatch verification compares an exact CSS string
-
-`e2e/helpers/color-helpers.ts` **[pinned]**
-
-The check compares the computed value against a literal
-`` `rgb(${r}, ${g}, ${b})` ``. Any legitimately non-opaque computed value —
-`opacity`, `color(srgb ...)`, a gradient or animation in flight — fails even
-though the colour is correct. Not reproduced; flagged as fragility.
-
-## P2 — an unsound source-side cast
-
-`e2e/helpers/color-helpers.ts:25`
-
-`document.querySelector(...) as HTMLInputElement` asserts an element type
-`querySelector` cannot guarantee. A non-`input` element published under that
-testid reaches `descriptor.set.call(input, color)` and throws an opaque
-`TypeError: Illegal invocation`. This is the mirror image of the
-`as unknown as` casts removed from the test files.
-
-## P2 — `exportAndVerify` ignores its `testInfo` argument
-
-`e2e/export/helpers.ts:153`
-
-The parameter is never referenced in the body, so every caller threads a
-`TestInfo` for nothing. `setupExportTest` does use its own.
-
-`tsconfig.e2e.json` sets `noUnusedParameters: false` specifically so this and
-`expectCanvasToMatch`'s unread `page` survive `npm run tsc`; deleting a parameter
-to satisfy the compiler would erase the evidence of the defect and churn every
-call site. ESLint reports both as warnings — the e2e block sets `args: 'all'`,
-which is what makes them visible at all.
-
 ## P3 — zero-sized image yields `NaN` edges
 
 `screenshotBoundsToCss` (`e2e/helpers/canvas-helpers.ts:29`) and
@@ -363,26 +276,6 @@ divide by the image or box dimension, so a zero-sized input produces `NaN` or
 `Infinity` instead of throwing. Deliberate — the modules stay branch-free and
 total, and it is pinned — but a `NaN` coordinate reaching `page.mouse.click` is
 opaque. Callers must reject empty images first.
-
-## P3 — `TOOL_NAME_MAP` lookup is case-sensitive
-
-`e2e/helpers/toolbar-helpers.ts:13`, `:25`, `:37`
-
-`resolveToolName('SELECT & MOVE')` returns `'select-and-move'`, not
-`'reposition'`. Harmless today only because the role fallback regex is
-case-insensitive — two weaknesses cancelling out.
-
-Separately, `generateSlug` does not expand `&` while `normalizeToolName` does,
-so the two produce different slugs for the same label.
-
-## P3 — verification asserts a hardcoded filename
-
-`e2e/export/helpers.ts:326`
-
-Verification asserts `toContainText('drawing')` instead of deriving the expected
-name from its own `psdPath` argument, coupling it to the hardcoded
-`'drawing'` / `'drawing-icon'` filled at `:156` and `:243`. A renamed export
-silently verifies the wrong file.
 
 ## P3 — transparent pixels weighted as fully opaque (low confidence)
 
