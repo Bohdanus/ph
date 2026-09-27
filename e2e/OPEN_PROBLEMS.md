@@ -268,34 +268,6 @@ testing, not inspection.
 
 ---
 
-## P2 — `expectCanvasToMatch` ignores its own defaults (currently unreachable)
-
-`e2e/helpers/image-comparison.ts:111` **[pinned by 2 `it.fails`]**
-
-The `??` defaults are computed and then unconditionally overwritten by a
-trailing `...options` spread. A caller spreading a partial options object with
-an explicit `undefined` key silently reverts to **Playwright's** defaults.
-
-`maxDiffPixels` is the damaging one: Playwright's default is `0`, so a caller
-passing `maxDiffPixels: undefined` gets a **zero** pixel budget instead of the
-intended `100` — false visual-regression failures, with a cause invisible at
-the call site because `?? 100` looks correct.
-
-**Downgraded from P1 to P2 because the function has no call sites.** A
-repo-wide search finds `expectCanvasToMatch` only in its own unit test, so the
-failure mode above cannot occur today. It is a live landmine rather than a live
-bug: the first spec that calls it with a spread options object gets a zero pixel
-budget and a misleading failure. Either fix the defaults or delete the function —
-the exported `compareScreenshots` is what `visual-regression.spec.ts` actually
-uses, and it does not have this defect.
-
-The two `it.fails` tripwires (`image-comparison.unit.test.ts:838, 844`) will
-start failing the moment the defaults are fixed. That is intentional; remove them
-in the same change.
-
-Fix if kept: spread first, default second, and read the defaults from
-`DEFAULT_THRESHOLD`.
-
 ## P1 — a failed canvas context is reported as a pixel mismatch
 
 `e2e/export/helpers.ts:185`
@@ -350,14 +322,6 @@ Two independent ways to get a green result with nothing changed:
 Combined, a test that sets a colour can pass having changed nothing. The specs
 that set a colour now pass `verifySwatch: true`, which closes the loop from
 the call side, but the helper itself is still permissive.
-
-## P2 — duplicated default threshold literals
-
-`e2e/helpers/image-comparison.ts:22` vs `:111` **[pinned]**
-
-`compareScreenshots` uses the exported `DEFAULT_THRESHOLD`; `expectCanvasToMatch`
-re-inlines `0.2`, `100`, `0.01`. Currently equal, so latent rather than
-observable. A test fails if the two drift apart.
 
 ## P2 — swatch verification compares an exact CSS string
 

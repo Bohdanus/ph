@@ -5,6 +5,8 @@ import path from 'node:path';
 import sharp from 'sharp';
 import type { Locator, Page, TestInfo } from '@playwright/test';
 import {
+  DEFAULT_MAX_DIFF_PIXELS,
+  DEFAULT_MAX_DIFF_PIXEL_RATIO,
   DEFAULT_THRESHOLD,
   compareScreenshots,
   expectCanvasToMatch,
@@ -28,9 +30,9 @@ type CanvasScreenshotOptions = {
 };
 
 const { expectMock, toHaveScreenshotMock } = vi.hoisted(() => {
-  const toHaveScreenshotMock = vi.fn<(name: string, options?: CanvasScreenshotOptions) => Promise<void>>();
-  const expectMock = vi.fn((_actual: unknown) => ({ toHaveScreenshot: toHaveScreenshotMock }));
-  return { expectMock, toHaveScreenshotMock };
+  const hoistedToHaveScreenshot = vi.fn<(name: string, options?: CanvasScreenshotOptions) => Promise<void>>();
+  const hoistedExpect = vi.fn((_actual: unknown) => ({ toHaveScreenshot: hoistedToHaveScreenshot }));
+  return { expectMock: hoistedExpect, toHaveScreenshotMock: hoistedToHaveScreenshot };
 });
 
 vi.mock('@playwright/test', async (importOriginal) => ({
@@ -781,6 +783,13 @@ describe('Image Comparison Helpers', () => {
       expect(helperDefaults.threshold).toBe(DEFAULT_THRESHOLD);
     });
 
+    it('keeps its diff-pixel budget and ratio in sync with the exported defaults', async () => {
+      await expectCanvasToMatch(page, canvas, snapshotName);
+
+      expect(helperDefaults.maxDiffPixels).toBe(DEFAULT_MAX_DIFF_PIXELS);
+      expect(helperDefaults.maxDiffPixelRatio).toBe(DEFAULT_MAX_DIFF_PIXEL_RATIO);
+    });
+
     it('applies partial overrides while retaining the untouched defaults', async () => {
       const threshold = helperDefaults.threshold / 2;
       const maxDiffPixels = helperDefaults.maxDiffPixels / 2;
@@ -835,22 +844,17 @@ describe('Image Comparison Helpers', () => {
       expect(options.animations).toBe('disabled');
     });
 
-    it.fails('reapplies the default threshold when the caller passes an explicit undefined threshold', async () => {
+    it('reapplies the default threshold when the caller passes an explicit undefined threshold', async () => {
       await expectCanvasToMatch(page, canvas, snapshotName, { threshold: undefined });
 
       expect(requireNumeric(recordedCanvasOptions().threshold, 'threshold')).toBe(DEFAULT_THRESHOLD);
     });
 
-    it.fails(
-      'reapplies the default diff-pixel budget when the caller passes an explicit undefined budget',
-      async () => {
-        await expectCanvasToMatch(page, canvas, snapshotName, { maxDiffPixels: undefined });
+    it('reapplies the default diff-pixel budget when the caller passes an explicit undefined budget', async () => {
+      await expectCanvasToMatch(page, canvas, snapshotName, { maxDiffPixels: undefined });
 
-        expect(requireNumeric(recordedCanvasOptions().maxDiffPixels, 'maxDiffPixels')).toBe(
-          helperDefaults.maxDiffPixels
-        );
-      }
-    );
+      expect(requireNumeric(recordedCanvasOptions().maxDiffPixels, 'maxDiffPixels')).toBe(helperDefaults.maxDiffPixels);
+    });
 
     const invalidCanvases: [string, unknown][] = [
       ['undefined', undefined],
