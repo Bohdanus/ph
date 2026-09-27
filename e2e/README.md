@@ -67,11 +67,13 @@ and keyboard alone.
 config has been read, and `show-report` / `show-trace` / `codegen` never read it at
 all. So the headless default alone is a convention with several ways around it.
 `e2e/global-setup.ts` closes the first three: it runs before any browser is created
-and throws, naming the flag that asked for a window. `kilo.jsonc` denies all of them
-at the agent permission layer, including the npm script spellings. The escape hatch
-for all of it is `PLAYWRIGHT_ALLOW_HEADED=1`, which `test:e2e:headed` sets and which
-the guard also honours, so the config and the guard can never disagree about whether
-a run was authorised. `AGENTS.md` states the rule for coding agents.
+and throws, naming the flag that asked for a window. `kilo.jsonc` denies them at
+the agent permission layer, including the npm script spellings, with one deliberate
+exception: `--debug` and `test:e2e:debug` are `ask`, not `deny`, so a wrong guess
+reaches a prompt instead of a silent block. The escape hatch for all of it is
+`PLAYWRIGHT_ALLOW_HEADED=1`, which `test:e2e:headed` sets and which the guard also
+honours, so the config and the guard can never disagree about whether a run was
+authorised. `AGENTS.md` states the rule for coding agents.
 
 ## Running the e2e suite
 
@@ -81,17 +83,40 @@ npm run test:e2e
 
 Nothing needs to be started by hand. `playwright.config.ts` declares a
 `webServer` running `npm run dev`, so Playwright starts the Vite dev server on
-<http://localhost:5173> and tears it down afterwards.
+<http://localhost:5173> and tears it down afterwards. 5173 is a default, not a
+constant: `PLAYWRIGHT_PORT` moves the dev server, the `baseURL` the tests use, and
+the port that is probed, in one step.
 
-If you already have a dev server on that port, Playwright reuses it. Point the
-suite somewhere else with `PLAYWRIGHT_BASE_URL`:
+```bash
+PLAYWRIGHT_PORT=5391 npm run test:e2e
+```
+
+Set it in a second worktree. Every worktree serves its own checkout, so a run that
+attaches to a :5173 server it did not start is testing the other checkout's code,
+which reads exactly like "my change did nothing". An explicit `PLAYWRIGHT_PORT`
+also turns server reuse off by itself — it is a request to test _this_ checkout, so
+a server already on that port is this run's own stale process rather than someone
+else's to share.
+
+With nothing set, a dev server you already have on :5173 is reused, which is
+convenient when it is the only thing on the port. `PLAYWRIGHT_REUSE_EXISTING_SERVER=false`
+turns that off and forces Playwright to start its own server:
+
+```bash
+PLAYWRIGHT_REUSE_EXISTING_SERVER=false npm run test:e2e
+```
+
+That is now a loud failure rather than a workaround: with the port occupied, the
+reuse check refuses before it would launch anything, and the dev server is started
+with `--strictPort` so it cannot silently hop to the next free port. On a port
+somebody else is serving, reach for `PLAYWRIGHT_PORT` instead.
+
+Point the suite at a server you did not start with `PLAYWRIGHT_BASE_URL`. It wins
+navigation, so keep it and `PLAYWRIGHT_PORT` consistent:
 
 ```bash
 PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e
 ```
-
-Set `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` to force Playwright to start its own
-server instead of attaching to whatever is already listening.
 
 The project defaults to the system Chrome channel (`channel: 'chrome'`), so
 install it once with:
@@ -160,10 +185,11 @@ Settings that differ from `tsconfig.app.json`, and why:
   `describe`/`it`/`expect` from `vitest` explicitly, and the e2e Vitest project does
   not set `globals: true`, so implicit globals would typecheck and then fail at
   runtime.
-- `noUnusedParameters: false` — see `tsconfig.e2e.json` for why. Unused _locals_
-  are still an error, and the e2e ESLint block uses `args: 'all'` so the one
-  deliberately-unread parameter (`expectCanvasToMatch`'s `page`) is reported as a
-  warning rather than staying silent.
+- `noUnusedParameters: true`, as in the app and node configs. It was off here only to
+  accommodate two unread parameters, and `tsconfig.e2e.json` records what happened to
+  both. No e2e parameter is deliberately unread, so an unused one is a type error
+  rather than a warning nobody has to read; the e2e ESLint block's `args: 'all'`
+  reports the same thing a second way, so neither tool can hide it from the other.
 - No `paths` alias and no `jsx`: nothing under `e2e/` imports app source. The e2e
   suite drives the real application through a browser, so reaching into `src/` from
   here would duplicate what the app's own unit tests already cover.
@@ -196,15 +222,13 @@ npm run test:e2e:update-baselines
   (`sharp` + `pixelmatch`, entirely in Node — no browser round-trip).
 - Comparison must satisfy **both** a per-pixel threshold and a cap on differing
   pixels. `visual-regression.spec.ts` passes `threshold: 0.01` and
-  `maxDiffPixels: 100` explicitly. The shared budgets live in one place —
+  `maxDiffPixels: 100` explicitly. The budgets live in one place —
   `DEFAULT_THRESHOLD = 0.2`, `DEFAULT_MAX_DIFF_PIXELS = 100`,
   `DEFAULT_MAX_DIFF_PIXEL_RATIO = 0.01` in `e2e/helpers/image-comparison.ts` — and
-  both `compareScreenshots` and `expectCanvasToMatch` read them from there through
-  `options.x ?? DEFAULT_X`. `expectCanvasToMatch` spreads `...options` **before**
-  those defaults, so an explicitly-passed `undefined` falls back to the default
-  instead of overwriting it. Read the call site rather than assuming a budget: the
-  number that ran is whatever the call site passed, or the default when it passed
-  nothing.
+  `compareScreenshots` reads them through `options.x ?? DEFAULT_X`, so an
+  explicitly-passed `undefined` falls back to the default instead of overwriting it.
+  Read the call site rather than assuming a budget: the number that ran is whatever
+  the call site passed, or the default when it passed nothing.
 - The ICO test is a different comparison: it allows at most
   `CHANGED_CHANNEL_THRESHOLD_ICO` (20,000) colour channels to drift by more than
   `CHANNEL_DELTA_TOLERANCE` (40) from the source canvas.
@@ -250,8 +274,8 @@ committed pixels can never be rewritten by line-ending normalisation.
 ## Current status
 
 Nothing fails on the default headless run, and that is stable across repeated full
-runs. Counts are deliberately absent: they move every time a test is added, and the
-three commands below are the only place they belong.
+runs. The numbers move every time a test is added, so the three commands below are
+where to read them.
 
 | Suite             | Command                 |
 | ----------------- | ----------------------- |
@@ -265,7 +289,7 @@ an assertion or a wait rather than by loosening a threshold:
 | formerly failing tests            | was                                     | now                                                               |
 | --------------------------------- | --------------------------------------- | ----------------------------------------------------------------- |
 | `cdp-helpers.spec.ts`             | 2 headless, 5 headed, disjoint per mode | capture scale is no longer asserted; mode-independent             |
-| `sidebar-keyboard.spec.ts:77, 89` | 0–2, 5 of 12 measured headless runs     | root-caused to a `requestAnimationFrame` focus race, then awaited |
+| `sidebar-keyboard.spec.ts:76, 88` | 0–2, 5 of 12 measured headless runs     | root-caused to a `requestAnimationFrame` focus race, then awaited |
 | `levels.spec.ts:64, 109`          | 2, both modes                           | canvas located by test id, not document order                     |
 
 - The CDP group derived its expected capture size from `window.devicePixelRatio`, but

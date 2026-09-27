@@ -10,14 +10,18 @@ Gates: `npm run tsc` exits 0, `npm run lint:check` reports no errors, and
 `npm run test:e2e:unit` passes. The app's own gates are green too: `npm run tsc`
 and `npm run test`.
 
-No counts are recorded here, deliberately. Every number this file used to open
-with — tests passed, expected-fail pins, files, mode-specific failure sets — was a
-snapshot of one tree, and each has been wrong since it was written while the number
-beside it stayed silent. Read the counts off the commands.
+The numbers this file used to open with — tests passed, expected-fail pins,
+files, mode-specific failure sets — were each a snapshot of one tree, and each has
+been wrong since it was written while the number beside it stayed silent. A count
+that does appear here is a count somebody measured; read the current one off the
+command.
 
-**Headed has never been measured in this repository, and `AGENTS.md` forbids it.**
-Every statement below about a headed run is an inference from the shape of the
-assertions, never a measurement, and it is labelled as such where it appears.
+**A full headed run of the suite as it stands has never been measured, and
+`AGENTS.md` forbids an agent from running one.** The headed observations quoted
+below are real measurements, but they predate headless becoming the default and
+they describe code that has since changed. What a headed run of the suite as it
+stands would do is an inference from the shape of the assertions, and it is
+labelled as such where it appears.
 
 Many entries below are **pinned** — a unit test asserts the current, incorrect
 behavior on purpose. A pin is a tripwire: it passes today and fails the moment the
@@ -44,7 +48,7 @@ must not drift back into:
 | was failing                           | was                                     | now                                            |
 | ------------------------------------- | --------------------------------------- | ---------------------------------------------- |
 | `e2e/helpers/cdp-helpers.spec.ts`     | 2 headless, 5 headed, disjoint per mode | scale-agnostic contract; mode-independent      |
-| `e2e/sidebar-keyboard.spec.ts:77, 89` | 0–2, ~42% of headless runs              | root-caused to an rAF focus race, then awaited |
+| `e2e/sidebar-keyboard.spec.ts:76, 88` | 0–2, ~42% of headless runs              | root-caused to an rAF focus race, then awaited |
 | `e2e/levels.spec.ts:64, 109`          | 2, both modes                           | canvas found by test id, not document order    |
 
 All of these were introduced with the specs and were independent of how they were
@@ -74,7 +78,7 @@ then get recorded as "flaky" and neither gets fixed.
 **This is a preventive rule, and it is worth being precise about the evidence.** No
 operator-input-caused failure has been reproduced in this suite: the one
 intermittent failure on record before headless became the default
-(`sidebar-keyboard.spec.ts:89`) turned out to be a real race that fires in headless
+(`sidebar-keyboard.spec.ts:88`) turned out to be a real race that fires in headless
 runs with no operator input at all — see the Enter entry below. The hazard is
 reported as recurring across this project's test work generally, which is why the
 default is structural rather than procedural: it removes the failure class instead
@@ -126,8 +130,8 @@ dpr=1  actual=480x320  css=240x160  ratio=2
 
 The emulated ratio says 1, the capture is 2x, and the five assertions above are off
 by exactly the host's backing scale. The helper's own comment
-(`e2e/helpers/cdp-helpers.ts:35-40`) asserts the opposite, that the result is
-`clip_size x clip.scale x deviceScaleFactor`.
+(`e2e/helpers/cdp-helpers.ts:39-51`) used to assert the opposite, that the result
+is `clip_size x clip.scale x deviceScaleFactor`.
 
 **The multiplier is not a function of the emulated ratio.** Forcing the emulation to
 match the host does not fix the specs; it changes which ones fail. Sweeping the
@@ -154,7 +158,7 @@ Fix direction: assert against the decoded image's own dimensions instead of
 `window.devicePixelRatio`, which makes the specs independent of host scale and of
 mode entirely. `screenshotBoundsToCss` and `screenshot-scale.ts` already derive
 scale from the decoded dimensions, so this also makes the specs consistent with the
-rest of the suite. The helper's comment at `cdp-helpers.ts:35-40` needs correcting
+rest of the suite. The helper's comment at `cdp-helpers.ts:39-51` needed correcting
 either way.
 
 **How it was fixed.** The contract `imageWidth === rect.width * devicePixelRatio` was
@@ -203,7 +207,7 @@ native device pixels and that the scale must not be assumed.
 - **The locator test double collapsed the union** (was P2). `resolveFakeLocator` took
   `?.[0]`, so a correctly built union read as a clean single-element hit and the
   intended-priority pins passed against semantics Playwright does not provide - which
-  is how the defect above survived a 694-test suite. It is replaced by
+  is how the defect above survived the e2e helper unit suite. It is replaced by
   `resolveFakeMatches`, which returns the whole match list; the five pins were
   rewritten to the real contract and a sixth pins `.or()` as a union.
 
@@ -276,49 +280,11 @@ testing, not inspection.
   wired, and a positive control proves the threshold is real.
 - `waitForCanvasRedraw` — a 28-line poll loop with 4 direct call sites across 3 spec
   files (`e2e/example.spec.ts:26`, `e2e/viewport-drawing.spec.ts:33`,
-  `e2e/select-move.spec.ts:39` and `:74`) plus 2 indirect ones in
-  `e2e/export/helpers.ts:110` and `:232`, had zero unit coverage. Now 32 tests,
+  `e2e/select-move.spec.ts:39` and `:72`) plus 2 indirect ones in
+  `e2e/export/helpers.ts:110` and `:263`, had zero unit coverage. Now 32 tests,
   and it delegates to a single shared implementation.
 
 ---
-
-## P3 — zero-sized image yields `NaN` edges
-
-`screenshotBoundsToCss` (`e2e/helpers/canvas-helpers.ts:29`) and
-`imagePointToCss` / `cssPointToImage` (`e2e/helpers/screenshot-scale.ts`)
-divide by the image or box dimension, so a zero-sized input produces `NaN` or
-`Infinity` instead of throwing. Deliberate — the modules stay branch-free and
-total, and it is pinned — but a `NaN` coordinate reaching `page.mouse.click` is
-opaque. Callers must reject empty images first.
-
-## P3 — transparent pixels weighted as fully opaque (low confidence)
-
-`e2e/helpers/canvas-helpers.ts:214`, `:475` **[pinned]**
-
-`dominantRed` and `getColorAtPoint` skip only `alpha === 0`, so a nearly
-invisible pixel counts at full weight. A weighting concern rather than a
-correctness bug, and the only helper that reports the colour back to the caller.
-Every other helper in the file uses `a !== 0` as a filter, so these are the only
-two places the distinction is observable.
-
-## P3 — 10 orphaned committed baselines (2.1 MB)
-
-`e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`
-
-The directory holds 17 files. Seven are read — the formats with
-`comparePixels: true` in `e2e/export/helpers.ts`, each read through
-`baselineFile()` by `visual-regression.spec.ts`. The other 10 are orphaned:
-
-- the 8 raw export files (`drawing.png`, `.jpeg`, `.webp`, `.svg`, `.bmp`, `.gif`,
-  `.avif`, and `drawing-icon.ico`) — no code writes or reads them any more, and
-  `drawing.bmp` alone is most of the 2.1 MB
-- `drawing-icon.ico.png` (256x256) — the ICO spec compares the export against the
-  source canvas in-browser via `CHANGED_CHANNEL_THRESHOLD_ICO` and never calls
-  `baselineFile()`
-- `source-baseline.png` (300x100, exactly `CANVAS_REDRAW_CLIP`)
-
-A repo-wide grep finds no reference to any of the 10. All are safe to delete; they
-were left in place because deleting committed baselines was not authorized.
 
 ## P2 — an empty CDP capture is reported as a successful capture
 
@@ -369,10 +335,11 @@ the same change.
 
 A `Page.captureScreenshot` response that omits `data` reaches
 `Buffer.from(undefined, 'base64')`, which throws `The first argument must be of
-type string. Received undefined`. The message names neither CDP, nor this helper,
-nor the test, so the reader has to find the call site before they can tell what
-failed. The sibling helper in the same directory checks its inputs and names itself
-(`canvas-helpers.ts:207-209`); this one does not.
+type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like
+Object. Received undefined` (Node 24). The message names neither CDP, nor this
+helper, nor the test, so the reader has to find the call site before they can tell
+what failed. The sibling helper in the same directory checks its inputs and names
+itself (`canvas-helpers.ts:207-209`); this one does not.
 
 Fix: validate the response before decoding — `typeof data === 'string'`, and
 non-empty — with an error that names `captureCanvasScreenshot` and the CDP request
@@ -382,6 +349,48 @@ guard on the same two lines.
 Pinned by `rejects with a raw TypeError when the CDP response omits data, and
 detaches` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:322`. A fix removes
 that pin in the same change.
+
+## P3 — zero-sized image yields `NaN` edges
+
+`screenshotBoundsToCss` (`e2e/helpers/canvas-helpers.ts:30`) and
+`imagePointToCss` / `cssPointToImage` (`e2e/helpers/screenshot-scale.ts`)
+divide by the image or box dimension, so a zero-sized input produces `NaN` or
+`Infinity` instead of throwing. Deliberate — the modules stay branch-free and
+total, and it is pinned — but a `NaN` coordinate reaching `page.mouse.click` is
+opaque. Callers must reject empty images first.
+
+## P3 — transparent pixels weighted as fully opaque (low confidence)
+
+`e2e/helpers/canvas-helpers.ts:231` and `:507` **[pinned]**
+
+`dominantRed` and `getColorAtPoint` skip only `alpha === 0`, so a nearly
+invisible pixel counts at full weight. A weighting concern rather than a
+correctness bug, and the only helper that reports the colour back to the caller.
+They are the two places the distinction bites hardest, because the other two
+`alpha === 0` filters, in `hasDarkPixels` (`:254`) and `hasRedPixels` (`:274`),
+answer a yes/no question where one nearly-invisible pixel is the same as one
+opaque one. The other half of the file, `getDarkPixelBounds` (`:401`) and
+`getSelectionBounds` (`:457`), filters on `a !== 0` instead — a different question
+asked with a boolean rather than a weight.
+
+## P3 — 10 orphaned committed baselines (2.1 MB)
+
+`e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`
+
+The directory holds 17 files. Seven are read — the formats with
+`comparePixels: true` in `e2e/export/helpers.ts`, each read through
+`baselineFile()` by `visual-regression.spec.ts`. The other 10 are orphaned:
+
+- the 8 raw export files (`drawing.png`, `.jpeg`, `.webp`, `.svg`, `.bmp`, `.gif`,
+  `.avif`, and `drawing-icon.ico`) — no code writes or reads them any more, and
+  `drawing.bmp` alone is most of the 2.1 MB
+- `drawing-icon.ico.png` (256x256) — the ICO spec compares the export against the
+  source canvas in-browser via `CHANGED_CHANNEL_THRESHOLD_ICO` and never calls
+  `baselineFile()`
+- `source-baseline.png` (300x100, exactly `CANVAS_REDRAW_CLIP`)
+
+A repo-wide grep finds no reference to any of the 10. All are safe to delete; they
+were left in place because deleting committed baselines was not authorized.
 
 ## P3 — the artifact name is interpolated into a path unsanitised
 
@@ -426,7 +435,7 @@ optional, so the double needs no change.
 
 ## Fixed — Enter did not reliably close the flyout (was P2, a real race)
 
-`e2e/sidebar-keyboard.spec.ts:77` and `:89`
+`e2e/sidebar-keyboard.spec.ts:76` and `:88`
 
 `expect(locator).toBeHidden() failed — waiting for getByRole('menu')`, at the
 assertion that follows `page.keyboard.press('Enter')`.

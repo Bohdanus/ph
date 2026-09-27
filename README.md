@@ -25,7 +25,7 @@ A web-based photo editor built with React 19, TypeScript, Vite, and Tailwind CSS
 
 ### Prerequisites
 
-- Node.js 22+
+- Node.js 24+ (`.nvmrc`, and the version CI pins)
 - npm 10+
 
 ### Installation

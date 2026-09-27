@@ -28,7 +28,7 @@ fixes, is in `OPEN_PROBLEMS.md`.
 | formerly failing tests            | was                                     | now                                                |
 | --------------------------------- | --------------------------------------- | -------------------------------------------------- |
 | `cdp-helpers.spec.ts`             | 2 headless, 5 headed, disjoint per mode | capture scale no longer asserted; mode-independent |
-| `sidebar-keyboard.spec.ts:77, 89` | 0–2, 5 of 12 measured headless runs     | root-caused to an rAF focus race, then awaited     |
+| `sidebar-keyboard.spec.ts:76, 88` | 0–2, 5 of 12 measured headless runs     | root-caused to an rAF focus race, then awaited     |
 | `levels.spec.ts:64, 109`          | 2, both modes                           | canvas located by test id, not document order      |
 
 **Done since the migration — `getWorkspaceCanvas` (previously item 2 here).** All
@@ -75,11 +75,9 @@ it had never been established by any run.
   are only ever compared against a Vite dev server. Serving `dist/` via
   `npm run preview` would need a `webServer.command` switch, and would be a
   possible baseline-affecting change.
-- **No Playwright browser cache in the `e2e` job.** `playwright install --with-deps
-chrome` runs on every build. `actions/cache` on `~/.cache/ms-playwright` would
-  cut a few minutes per run.
-- **`concurrency` and `permissions: contents: read` were added to the workflow in
-  this cleanup.** They were not present before; no job needs write access.
+- **No Playwright browser cache in the `e2e` job.** `npx playwright install
+--with-deps chrome` runs on every build. `actions/cache` on
+  `~/.cache/ms-playwright` would cut a few minutes per run.
 
 ## 4. Carried-over debt in the imported code
 
