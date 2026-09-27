@@ -8,7 +8,7 @@ import {
   shapeGeometryBounds,
   type ShapeToolArgs,
 } from '../shape.ts';
-import type { Ctx2D } from '../../contexts/general-types.ts';
+import type { Ctx2D, Point } from '../../contexts/general-types.ts';
 
 const baseArgs: ShapeToolArgs = {
   toolName: 'shape',
@@ -36,6 +36,41 @@ const createCtx = () =>
     save: vi.fn(),
     restore: vi.fn(),
   }) as unknown as Ctx2D & Record<string, ReturnType<typeof vi.fn>>;
+
+type PathMethod =
+  'beginPath' | 'moveTo' | 'lineTo' | 'quadraticCurveTo' | 'closePath' | 'fill' | 'stroke' | 'fillRect' | 'strokeRect';
+type PathCall = { method: PathMethod; args: number[] };
+
+/**
+ * Records the ordered canvas calls so a whole path can be compared as one
+ * sequence. Asserting call-by-call with `toHaveBeenCalledWith` cannot tell a
+ * mirrored path from the one it should equal, because the same arguments recur.
+ */
+const createRecordingCtx = () => {
+  const calls: PathCall[] = [];
+  const record = (method: PathMethod) => vi.fn((...args: number[]) => void calls.push({ method, args }));
+  const ctx = {
+    beginPath: record('beginPath'),
+    moveTo: record('moveTo'),
+    lineTo: record('lineTo'),
+    quadraticCurveTo: record('quadraticCurveTo'),
+    closePath: record('closePath'),
+    ellipse: vi.fn(),
+    fill: record('fill'),
+    stroke: record('stroke'),
+    fillRect: record('fillRect'),
+    strokeRect: record('strokeRect'),
+    clearRect: vi.fn(),
+    setLineDash: vi.fn(),
+    save: vi.fn(),
+    restore: vi.fn(),
+  };
+  return { ctx: ctx as unknown as Ctx2D, calls };
+};
+
+/** The geometry of a path, without the beginPath/closePath/fill/stroke wrapper. */
+const pathCalls = (calls: PathCall[]) =>
+  calls.filter(({ method }) => method === 'moveTo' || method === 'lineTo' || method === 'quadraticCurveTo');
 
 const noModifiers = { shiftKey: false, altKey: false };
 
@@ -285,6 +320,114 @@ describe('drawShape', () => {
     });
     expect(ctx.quadraticCurveTo).toHaveBeenCalledTimes(4);
     expect(ctx.strokeRect).not.toHaveBeenCalled();
+  });
+
+  // 50x25 from (10,20) to (60,45). r = min(50/2, 25/2, 10) = 10, so the
+  // corners start and end 10px in from each box corner.
+  const roundedBox50x25: PathCall[] = [
+    { method: 'moveTo', args: [20, 20] },
+    { method: 'lineTo', args: [50, 20] },
+    { method: 'quadraticCurveTo', args: [60, 20, 60, 30] },
+    { method: 'lineTo', args: [60, 35] },
+    { method: 'quadraticCurveTo', args: [60, 45, 50, 45] },
+    { method: 'lineTo', args: [20, 45] },
+    { method: 'quadraticCurveTo', args: [10, 45, 10, 35] },
+    { method: 'lineTo', args: [10, 30] },
+    { method: 'quadraticCurveTo', args: [10, 20, 20, 20] },
+  ];
+
+  const drawRoundedRect = (start: Point, end: Point, cornerRadius: number) => {
+    const { ctx, calls } = createRecordingCtx();
+    drawShape(ctx, { ...baseArgs, figure: 'rectangle', cornerRadius, start, end });
+    return calls;
+  };
+
+  it('draws a rounded rectangle dragged up-and-left as the mirrored positive box', () => {
+    // normalizeShapeGeometry keeps the drag quadrant, so an ordinary
+    // up-and-left drag arrives here with end < start on both axes.
+    const positive = drawRoundedRect({ x: 10, y: 20 }, { x: 60, y: 45 }, 10);
+    const mirrored = drawRoundedRect({ x: 60, y: 45 }, { x: 10, y: 20 }, 10);
+
+    expect(pathCalls(mirrored)).toEqual(pathCalls(positive));
+    expect(pathCalls(mirrored)).toEqual(roundedBox50x25);
+  });
+
+  it('mirrors a plain rectangle stroked up-and-left into the positive box', () => {
+    const ctx = createCtx();
+    drawShape(ctx, { ...baseArgs, figure: 'rectangle', start: { x: 60, y: 45 }, end: { x: 10, y: 20 } });
+    expect(ctx.strokeRect).toHaveBeenCalledWith(10, 20, 50, 25);
+  });
+
+  it('clamps the corner radius to the extent the layer allocation can hold', () => {
+    // 250px is the radius slider's maximum, five times the 25px height of the
+    // box, so the clamp is what keeps the path inside the allocation.
+    const geometry = { start: { x: 60, y: 45 }, end: { x: 10, y: 20 } };
+    const calls = drawRoundedRect(geometry.start, geometry.end, 250);
+    const bounds = shapeGeometryBounds(geometry, baseArgs.lineWidth);
+
+    // w = 50, h = 25 → min(25, 12.5) = 12.5, and the 29px tall box has 14.5px
+    // of half-height to give.
+    const expectedRadius = Math.min(
+      Math.abs(geometry.end.x - geometry.start.x) / 2,
+      Math.abs(geometry.end.y - geometry.start.y) / 2
+    );
+    expect(expectedRadius).toBe(12.5);
+    expect(expectedRadius).toBeLessThanOrEqual(bounds.height / 2);
+    expect(bounds).toEqual({ x: 8, y: 18, width: 54, height: 29 });
+
+    expect(calls).toContainEqual({ method: 'moveTo', args: [10 + expectedRadius, 20] });
+    expect(calls).toContainEqual({ method: 'quadraticCurveTo', args: [60, 45, 60 - expectedRadius, 45] });
+
+    // Every coordinate the path touches is inside the box the bounds allocated,
+    // so a commit cannot clip the shape it just drew.
+    for (const { args } of pathCalls(calls)) {
+      for (let index = 0; index < args.length; index += 2) {
+        expect(args[index]).toBeGreaterThanOrEqual(bounds.x);
+        expect(args[index + 1]).toBeGreaterThanOrEqual(bounds.y);
+        expect(args[index]).toBeLessThanOrEqual(bounds.x + bounds.width);
+        expect(args[index + 1]).toBeLessThanOrEqual(bounds.y + bounds.height);
+      }
+    }
+  });
+
+  it('collapses a zero-extent drag to the drag point', () => {
+    // r clamps to 0 against a zero extent, so the path degenerates to a point
+    // at the drag rather than inverting.
+    const calls = drawRoundedRect({ x: 30, y: 40 }, { x: 30, y: 40 }, 10);
+    expect(pathCalls(calls)).toEqual([
+      { method: 'moveTo', args: [30, 40] },
+      { method: 'lineTo', args: [30, 40] },
+      { method: 'quadraticCurveTo', args: [30, 40, 30, 40] },
+      { method: 'lineTo', args: [30, 40] },
+      { method: 'quadraticCurveTo', args: [30, 40, 30, 40] },
+      { method: 'lineTo', args: [30, 40] },
+      { method: 'quadraticCurveTo', args: [30, 40, 30, 40] },
+      { method: 'lineTo', args: [30, 40] },
+      { method: 'quadraticCurveTo', args: [30, 40, 30, 40] },
+    ]);
+  });
+
+  it('keeps a zero-height drag flat and box-ordered in either direction', () => {
+    // A zero extent is its own absolute value, so Math.abs cannot rescue a
+    // negative one on its own: the origin has to be normalised too.
+    expect(pathCalls(drawRoundedRect({ x: 10, y: 20 }, { x: 60, y: 20 }, 10))).toEqual(
+      pathCalls(drawRoundedRect({ x: 60, y: 20 }, { x: 10, y: 20 }, 10))
+    );
+    expect(pathCalls(drawRoundedRect({ x: 60, y: 20 }, { x: 10, y: 20 }, 10))).toEqual([
+      { method: 'moveTo', args: [10, 20] },
+      { method: 'lineTo', args: [60, 20] },
+      { method: 'quadraticCurveTo', args: [60, 20, 60, 20] },
+      { method: 'lineTo', args: [60, 20] },
+      { method: 'quadraticCurveTo', args: [60, 20, 60, 20] },
+      { method: 'lineTo', args: [10, 20] },
+      { method: 'quadraticCurveTo', args: [10, 20, 10, 20] },
+      { method: 'lineTo', args: [10, 20] },
+      { method: 'quadraticCurveTo', args: [10, 20, 10, 20] },
+    ]);
+  });
+
+  it('pins the positive-extent rounded path so the normalisation cannot drift it', () => {
+    expect(pathCalls(drawRoundedRect({ x: 10, y: 20 }, { x: 60, y: 45 }, 10))).toEqual(roundedBox50x25);
   });
 
   it('draws an oval with independent radii', () => {

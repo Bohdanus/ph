@@ -578,3 +578,39 @@ warps trapezoids through a homography; review it before deleting, it is adjacent
 raster-boundary work) and `ps-integration` (`a0f66c4`, 3 ahead).
 
 `main` is 10 ahead of `origin/main` and nothing is pushed.
+
+---
+
+## 23. A shape layer's declared extent is fractional while its bitmap is integral
+
+Outside this file's stated scope (tool geometry, not migration-caused), recorded here because it is
+in the same commit path as the rounded-rectangle quadrant fix and is a real, unfixed defect.
+
+**Problem.** `shapeGeometryBounds` (`src/tools/shape.ts:107-118`) returns a fractional box whenever
+the drag is fractional, which is every drag at a non-100% zoom. Nothing rounds it before the layer
+canvas is allocated: `ShapeToolArea.tsx:141` passes `pos` straight through, `useLayer.ts:242` only
+adds the frame offset (`canvasToDocumentPos` does not touch `width`/`height` —
+`document-frame.ts:44-46`), and `layer-utils.ts:204-213` hands `pos` to the tool processor, which
+allocates `new OffscreenCanvas(size.width, size.height)` (`shape.ts:223`). The constructor yields an
+integer bitmap, but the layer keeps the fractional `pos`.
+
+So a drag from `(10.4, 20.6)` to `(50.2, 80.9)` with `lineWidth` 2 produces a layer declaring
+`{ width: 43.8, height: 64.3 }` around a 44×64 (or 43×64) bitmap. The declared extent and the raster
+disagree by up to a pixel, so the right or bottom edge — including half the stroke the bounds
+deliberately padded for — is clipped or rescaled by that fraction on composite. `document-frame.ts:11-12`
+`Math.ceil`s the _frame_, which makes this reachable for any non-integer frame too.
+
+`src/tools/__tests__/shape.test.ts:258-274` currently asserts the fractional box as current
+behaviour ("The box is the raw padded extent, so it stays fractional too"), so it documents the
+mismatch instead of catching it. That test is a declaration, not a pin: no `it.fails`, so it will
+keep passing after a fix and should be re-derived rather than deleted.
+
+**Fix.** Decide the rounding policy once and apply it at both ends. Cheapest correct option: have
+`shapeGeometryBounds` return an integral box (round the origin down, the extent up, so no stroke is
+clipped) — `Math.floor(x)`, `Math.ceil(x + width)` — which also makes the box a valid `OffscreenCanvas`
+size and keeps `ShapeToolArea`'s rebase exact. Alternatively round inside the `shape` processor and
+write the rounded `pos` back onto the layer, so the declared extent and the bitmap agree by
+construction. Do not round in only one place: the bug is precisely that the two ends disagree.
+
+**Files.** `src/tools/shape.ts`, `src/tools/__tests__/shape.test.ts`,
+`src/components/Main/ShapeToolArea.tsx`, `src/contexts/layer-utils.ts`
