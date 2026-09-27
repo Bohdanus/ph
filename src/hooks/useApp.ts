@@ -5,11 +5,12 @@ import type { BlankImageParams, ToolName } from '../contexts/tool-types.ts';
 import { useLayers } from '../contexts/useLayer.ts';
 import type { ImageSaveResponse, ImageUploadResponse } from '../contexts/useFile.tsx';
 import { v4 as uuidv4 } from 'uuid';
-import { OPEN_DOCUMENT_ACTION, SELECTION_ACTION } from '../util/constants.ts';
+import { OPEN_DOCUMENT_ACTION } from '../util/constants.ts';
 import { resizeCanvas } from '../util/canvas.ts';
 import { setRefValue } from '../util/ref.ts';
 import { createHistoryItem } from '../contexts/history-utils.ts';
 import { documentFrameFromSize } from '../contexts/document-frame.ts';
+import { appendSelectionClear } from '../contexts/useSelectionHistory.ts';
 
 export interface UseAppType {
   setBlankImage: (data: BlankImageParams) => void;
@@ -45,11 +46,17 @@ export const useApp = (): UseAppType => {
       activeSelectionId,
       selections,
       selectionCleared,
+      totalSize,
+      documentFrame: currentFrame,
+      history,
+      historyIndex,
+      branchRevision = 0,
       clearPreviewLayers,
     },
     dispatch,
   ] = useStore();
   const { createBlankLayer, createLayerFromBitmap, commitDirtyTool } = useLayers();
+  const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
 
   function handleImageCreate(size: Size) {
     if (canvasRef.current) {
@@ -150,29 +157,27 @@ export const useApp = (): UseAppType => {
     commitDirtyTool();
 
     if (nextToolName !== toolName && activeSelectionId) {
-      const previousSelectionState = {
+      // The same single writer the Clear/Deselect controls use, so this deselect
+      // gains the durable `set-selection` plan and the shadow-failure fallback
+      // instead of appending a hand-built entry with no `durableEntry` — which
+      // left the store reconverting the whole timeline on every tool switch.
+      // `appendSelectionClear` rather than `useSelectionHistory`'s
+      // `clearSelections`, because `goToTool` runs from a click handler and a
+      // keyboard shortcut through a plain function, and that hook's
+      // `useCallback` throws outside a component render.
+      //
+      // The predicate above is deliberately unchanged: a switch to the tool
+      // already active, or a switch with no active selection, still appends
+      // nothing and still leaves the document clean.
+      appendSelectionClear({
         selections,
         activeSelectionId,
-      };
-
-      dispatch({
-        type: 'COMMIT_DOCUMENT_EDIT',
-        payload: {
-          updates: {
-            selections: [],
-            activeSelectionId: null,
-            selectionDraft: { status: 'idle' },
-            selectionCleared: { status: 'cleared', version: (selectionCleared?.version ?? 0) + 1 },
-          },
-          historyItem: createHistoryItem({
-            actionName: SELECTION_ACTION,
-            layerId: 'selection',
-            args: {
-              previousSelectionState,
-              nextSelectionState: { selections: [], activeSelectionId: null },
-            },
-          }),
-        },
+        selectionCleared,
+        history,
+        historyIndex,
+        branchRevision,
+        documentFrame,
+        dispatch,
       });
     }
 

@@ -1,10 +1,10 @@
 import { useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { isEqual } from 'lodash-es';
-import { useStore } from './StoreContext.tsx';
+import { useStore, type StoreData, type StoreDispatch } from './StoreContext.tsx';
 import { SELECTION_ACTION } from '../util/constants.ts';
 import { planHistoryAppend } from './history-append.ts';
-import { documentFrameFromSize } from './document-frame.ts';
+import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 import type { Selection } from './general-types.ts';
 import type { SelectionSnapshot } from './history-model.ts';
 import type { NewHistoryItem } from './history-types.ts';
@@ -68,6 +68,90 @@ function committedSelectionUpdate(
   };
 }
 
+export type SelectionClearInput = Readonly<
+  Pick<
+    StoreData,
+    'selections' | 'activeSelectionId' | 'selectionCleared' | 'history' | 'historyIndex' | 'branchRevision'
+  > & {
+    documentFrame: DocumentFrame;
+    dispatch: StoreDispatch;
+  }
+>;
+
+/**
+ * Clear every selection as one undoable document edit, without being a hook.
+ *
+ * This is the writer `clearSelections` below is bound to, exported so a caller
+ * outside a component render can run the same append. `goToTool`
+ * (`hooks/useApp.ts`) is that caller: it is invoked from a click handler and a
+ * keyboard shortcut through a plain function, so it cannot call
+ * `useSelectionHistory()` — that hook's `useCallback` throws outside a render.
+ * Calling the writer directly is what keeps a tool switch from drifting back
+ * into an unconverted hand-rolled `SELECTION_ACTION`, which appended no
+ * `durableEntry` and therefore forced a whole-timeline reconversion on every
+ * tool switch.
+ *
+ * It takes the store fields it reads rather than the whole state, so a
+ * `useCallback` caller keeps a dependency list it can account for.
+ */
+export function appendSelectionClear({
+  selections,
+  activeSelectionId,
+  selectionCleared,
+  history,
+  historyIndex,
+  branchRevision,
+  documentFrame,
+  dispatch,
+}: SelectionClearInput): void {
+  // The store always carries an array, so this only normalises a state shape
+  // that cannot occur in production. It keeps the guard — and therefore this
+  // writer — total, so a malformed snapshot is a no-op instead of an exception
+  // thrown out of a click handler ahead of the fallback below.
+  const existing = Array.isArray(selections) ? selections : [];
+  if (existing.length === 0 && !activeSelectionId) return;
+
+  // Captured before any dispatch, so the durable `before` baseline is the state
+  // the user actually had, never a value read back after the store moved.
+  const previousSelectionState: SelectionSnapshot = { selections: existing, activeSelectionId };
+  const nextSelectionState: SelectionSnapshot = { selections: [], activeSelectionId: null };
+
+  const item: NewHistoryItem = {
+    actionName: SELECTION_ACTION,
+    layerId: 'selection',
+    args: { previousSelectionState, nextSelectionState },
+  };
+  // One id for both paths, so the planned entry and the fallback entry are the
+  // same history entry rather than two candidates that differ only by identity.
+  const id = uuidv4();
+  const updates = {
+    selections: [] as Selection[],
+    activeSelectionId: null,
+    selectionDraft: { status: 'idle' as const },
+    selectionCleared: { status: 'cleared' as const, version: (selectionCleared?.version ?? 0) + 1 },
+  };
+
+  try {
+    const { entry, durableEntry } = planHistoryAppend({
+      item,
+      id,
+      timeline: { entries: history, cursor: historyIndex, branchRevision },
+      currentFrame: documentFrame,
+      // Passed explicitly: `planHistoryAppend` otherwise defaults the durable
+      // `before` to an empty snapshot, which would be a wrong baseline rather
+      // than a harmless one, because the item does carry a previous state.
+      currentSelections: previousSelectionState,
+    });
+    dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: entry, durableEntry } });
+  } catch {
+    // The plan never published, so nothing was appended and nothing was
+    // cleared. Re-dispatch the same edit with no durable plan rather than
+    // letting a shadow-projection failure reject a valid deselect; the store
+    // rebuilds durable state from the legacy timeline instead.
+    dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: createHistoryItem(item, id) } });
+  }
+}
+
 /**
  * The single writer for selection history.
  *
@@ -96,7 +180,9 @@ function committedSelectionUpdate(
  * Scope note: the Clear/Deselect *controls* and the two creating gestures below
  * (magic wand, rectangle) are routed here. The polygon, freehand and feathered
  * magnetic lasso gesture paths still dispatch the raw action, because those
- * gestures are a later slice of the same migration.
+ * gestures are a later slice of the same migration. The tool switch in `goToTool`
+ * is routed here too, through `appendSelectionClear` rather than through this
+ * hook, because `useApp` is called outside a component render.
  */
 export const useSelectionHistory = () => {
   const [
@@ -126,54 +212,20 @@ export const useSelectionHistory = () => {
    * no-op branch skips the dispatch entirely rather than dispatching a
    * marker-only bump.
    */
-  const clearSelections = useCallback(() => {
-    // The store always carries an array, so this only normalises a state shape
-    // that cannot occur in production. It keeps the guard — and therefore this
-    // callback — total, so a malformed snapshot is a no-op instead of an
-    // exception thrown out of a click handler ahead of the fallback below.
-    const existing = Array.isArray(selections) ? selections : [];
-    if (existing.length === 0 && !activeSelectionId) return;
-
-    // Captured before any dispatch, so the durable `before` baseline is the state
-    // the user actually had, never a value read back after the store moved.
-    const previousSelectionState: SelectionSnapshot = { selections: existing, activeSelectionId };
-    const nextSelectionState: SelectionSnapshot = { selections: [], activeSelectionId: null };
-
-    const item: NewHistoryItem = {
-      actionName: SELECTION_ACTION,
-      layerId: 'selection',
-      args: { previousSelectionState, nextSelectionState },
-    };
-    // One id for both paths, so the planned entry and the fallback entry are the
-    // same history entry rather than two candidates that differ only by identity.
-    const id = uuidv4();
-    const updates = {
-      selections: [] as Selection[],
-      activeSelectionId: null,
-      selectionDraft: { status: 'idle' as const },
-      selectionCleared: { status: 'cleared' as const, version: (selectionCleared?.version ?? 0) + 1 },
-    };
-
-    try {
-      const { entry, durableEntry } = planHistoryAppend({
-        item,
-        id,
-        timeline: { entries: history, cursor: historyIndex, branchRevision },
-        currentFrame: documentFrame,
-        // Passed explicitly: `planHistoryAppend` otherwise defaults the durable
-        // `before` to an empty snapshot, which would be a wrong baseline rather
-        // than a harmless one, because the item does carry a previous state.
-        currentSelections: previousSelectionState,
-      });
-      dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: entry, durableEntry } });
-    } catch {
-      // The plan never published, so nothing was appended and nothing was
-      // cleared. Re-dispatch the same edit with no durable plan rather than
-      // letting a shadow-projection failure reject a valid deselect; the store
-      // rebuilds durable state from the legacy timeline instead.
-      dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: createHistoryItem(item, id) } });
-    }
-  }, [activeSelectionId, dispatch, documentFrame, history, historyIndex, branchRevision, selectionCleared, selections]);
+  const clearSelections = useCallback(
+    () =>
+      appendSelectionClear({
+        selections,
+        activeSelectionId,
+        selectionCleared,
+        history,
+        historyIndex,
+        branchRevision,
+        documentFrame,
+        dispatch,
+      }),
+    [activeSelectionId, dispatch, documentFrame, history, historyIndex, branchRevision, selectionCleared, selections]
+  );
 
   /**
    * Commit a drawn or moved selection as one undoable document edit.
