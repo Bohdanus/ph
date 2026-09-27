@@ -132,7 +132,21 @@ function drawFeatherMagneticOverlay({
 }
 
 export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: FeatherMagneticLassoToolAreaProps) => {
-  const [{ canvasRef, containerRef, selections, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
+  const [
+    {
+      branchRevision,
+      canvasRef,
+      containerRef,
+      documentId,
+      documentRevision,
+      history,
+      historyIndex,
+      selections,
+      totalSize,
+      documentFrame: currentFrame,
+    },
+    dispatch,
+  ] = useStore();
   const { clearSelections } = useSelectionHistory();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { toolArgs } = useCurrentTool();
@@ -143,6 +157,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   const pointsRef = useRef<Point[]>([]);
   const previewRef = useRef<MagneticSegmentResult | null>(null);
   const edgeMapRef = useRef<EdgeMap | null>(null);
+  const edgeMapCacheRef = useRef<{ canvas: HTMLCanvasElement; key: string; map: EdgeMap } | null>(null);
   const lastClickRef = useRef<LastClickState | null>(null);
   const lastAutoAnchorTimeRef = useRef(0);
   const pendingPointerMoveRef = useRef<PendingPointerMove | null>(null);
@@ -211,6 +226,10 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     segmentsRef.current = [];
     pointsRef.current = [];
     previewRef.current = null;
+    // Only the working reference is dropped: `resetInteractionState` runs after
+    // every commit and every cancel, so clearing the edge-map cache here would
+    // put the whole-frame read back on the critical path of the next click. The
+    // cache is keyed on the document, so it revalidates itself on its own.
     edgeMapRef.current = null;
     lastClickRef.current = null;
     lastAutoAnchorTimeRef.current = 0;
@@ -403,8 +422,48 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     lastClickRef.current = { point: coords, time: Date.now() };
   }
 
+  /**
+   * An edge map is a whole-canvas read plus two synchronous full-frame passes, so
+   * it is reused across drafts on an unchanged document instead of rebuilt on
+   * every pointer-down that begins one.
+   *
+   * The key is the composited document's history timeline position, not the
+   * canvas size. Size alone is the trap: it would serve a map computed before
+   * the last edit, which produces a *wrong* selection rather than a slow one.
+   * `documentRevision` is the identity term, not the edit term — it moves only
+   * on `REPLACE_DOCUMENT`, so a pixel edit has to be detected through
+   * `historyIndex`/`history.length`/`branchRevision` instead. The canvas is
+   * compared by reference as well, so a different element can never match.
+   */
+  function resolveEdgeMap(): EdgeMap | null {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+
+    const key = [
+      canvas.width,
+      canvas.height,
+      documentId,
+      documentRevision,
+      historyIndex,
+      history.length,
+      branchRevision,
+    ].join(':');
+    const cached = edgeMapCacheRef.current;
+    if (cached && cached.canvas === canvas && cached.key === key) {
+      edgeMapRef.current = cached.map;
+      return cached.map;
+    }
+
+    const map = createEdgeMapFromCanvas(canvas);
+    // A null map means the read was refused, and the key has already moved, so
+    // whatever the cache held is stale and must not outlive it.
+    edgeMapCacheRef.current = map ? { canvas, key, map } : null;
+    edgeMapRef.current = map;
+    return map;
+  }
+
   function startDraft(coords: Point, event: PointerEvent<HTMLDivElement>) {
-    edgeMapRef.current = createEdgeMapFromCanvas(canvasRef.current);
+    edgeMapRef.current = resolveEdgeMap();
 
     const segment = createMagneticSegment({
       cursor: coords,
@@ -530,6 +589,9 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
       pointsRef.current = [];
       previewRef.current = null;
       edgeMapRef.current = null;
+      // Drop the cache with the component, so a stale full-frame map is not
+      // retained for the rest of the session once the tool area is gone.
+      edgeMapCacheRef.current = null;
       lastClickRef.current = null;
       lastAutoAnchorTimeRef.current = 0;
 

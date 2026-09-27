@@ -2,6 +2,7 @@ import { describe, expect, it, vi, type Mock } from 'vitest';
 import { makeMockCanvas } from '@/__tests__/canvas-mock.ts';
 import {
   clampPointToEdgeMap,
+  computeLuma,
   createEdgeMapFromCanvas,
   createEdgeMapFromImageData,
   createMagneticSegment,
@@ -156,12 +157,17 @@ describe('createEdgeMapFromImageData', () => {
     expect(Array.from(edgeMap.gradientMagnitude).every((value) => value === 0)).toBe(true);
   });
 
-  it('allocates one luma, magnitude and direction sample per pixel', () => {
+  it('retains one gradient-magnitude sample per pixel and nothing else', () => {
     const edgeMap = createEdgeMapFromImageData(createVerticalEdgeImageData(12, 9, 5));
 
-    expect(edgeMap.luma).toHaveLength(12 * 9);
     expect(edgeMap.gradientMagnitude).toHaveLength(12 * 9);
-    expect(edgeMap.gradientDirection).toHaveLength(12 * 9);
+    // The luma plane and the gradient direction are still computed, but they are
+    // not returned: the Sobel pass consumes the luma plane while it runs and no
+    // consumer anywhere reads the direction, so returning either would retain 4
+    // more bytes per pixel for the whole draft. This is the exact key set, so
+    // the assertion fails the moment one of them comes back — and also if a new
+    // field is added to the map without a test saying so.
+    expect(Object.keys(edgeMap).sort()).toEqual(['gradientMagnitude', 'height', 'maxGradient', 'width']);
   });
 
   it('leaves the outermost ring of the gradient field at zero', () => {
@@ -178,6 +184,8 @@ describe('createEdgeMapFromImageData', () => {
   it('composites a fully transparent pixel toward white rather than toward black', () => {
     // `luma = rgbLuma * alpha + 255 * (1 - alpha)`, so a transparent black pixel has the
     // same luma as an opaque white one and cannot be told apart from the background.
+    // The rule lives in `computeLuma` rather than on a field of the map, because
+    // the luma plane is a local of the build and is not returned.
     const transparent = createEdgeMapFromImageData({
       colorSpace: 'srgb',
       data: new Uint8ClampedArray(16),
@@ -185,13 +193,18 @@ describe('createEdgeMapFromImageData', () => {
       width: 2,
     } as ImageData);
 
-    expect(transparent.luma[0]).toBe(255);
+    expect(computeLuma(0, 0, 0, 0)).toBe(255);
+    // The consequence on the map itself: an all-transparent frame composites to
+    // a uniform white one, which differentiates to no gradient at all.
+    expect(transparent.maxGradient).toBe(0);
   });
 
   it('scales a fully opaque pixel by its own luminance', () => {
     const edgeMap = createEdgeMapFromImageData(createUniformImageData(3, 3, 128));
 
-    expect(edgeMap.luma[0]).toBeCloseTo(128, 6);
+    expect(computeLuma(128, 128, 128, 255)).toBeCloseTo(128, 6);
+    // A uniform frame is a uniform luma plane, so the Sobel pass finds no edge.
+    expect(edgeMap.maxGradient).toBe(0);
   });
 });
 

@@ -8,7 +8,12 @@ import { FeatherMagneticLassoToolArea } from '../FeatherMagneticLassoToolArea.ts
 
 const h = vi.hoisted(() => ({
   activeSelectionId: null as string | null,
+  branchRevision: 0,
   dispatch: vi.fn(),
+  documentId: 'doc-1',
+  documentRevision: 1,
+  history: [] as unknown[],
+  historyIndex: -1,
   shortcutHandlers: new Map<string, () => void>(),
   selections: [] as Selection[],
   canvas: null as HTMLCanvasElement | null,
@@ -41,14 +46,20 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
     {
       activeSelectionId: h.activeSelectionId,
+      // The edge map is cached against the document, and the cache key is built
+      // from the history timeline position plus the document identity — not from
+      // the canvas size, which would serve a map computed before the last edit.
+      branchRevision: h.branchRevision,
       canvasRef: { current: h.canvas },
       containerRef: { current: document.createElement('div') },
+      documentId: h.documentId,
+      documentRevision: h.documentRevision,
       // The single-writer hook reads the legacy timeline so it can plan the
       // append. An empty timeline at cursor -1 is what a store with nothing
       // appended yet actually looks like, and `planHistoryAppend` reports the
       // out-of-range cursor as a diagnostic rather than refusing the edit.
-      history: [],
-      historyIndex: -1,
+      history: h.history,
+      historyIndex: h.historyIndex,
       selections: h.selections,
       totalSize: { width: 200, height: 120 },
     },
@@ -72,7 +83,12 @@ describe('FeatherMagneticLassoToolArea', () => {
 
   beforeEach(() => {
     h.activeSelectionId = null;
+    h.branchRevision = 0;
     h.dispatch.mockClear();
+    h.documentId = 'doc-1';
+    h.documentRevision = 1;
+    h.history = [];
+    h.historyIndex = -1;
     h.shortcutHandlers.clear();
     h.selections = [];
     h.canvas = null;
@@ -189,12 +205,15 @@ describe('FeatherMagneticLassoToolArea', () => {
       }
     }
 
-    getContextSpy = vi.spyOn(canvas, 'getContext').mockReturnValue({
-      getImageData: vi.fn(() => ({ data, width: 100, height: 100, colorSpace: 'srgb' })),
-    } as unknown as CanvasRenderingContext2D);
+    // Returned so a test can count the whole-canvas reads, which is the cost the
+    // edge map cache exists to avoid.
+    const getImageData = vi.fn(() => ({ data, width: 100, height: 100, colorSpace: 'srgb' }));
+    getContextSpy = vi
+      .spyOn(canvas, 'getContext')
+      .mockReturnValue({ getImageData } as unknown as CanvasRenderingContext2D);
     h.canvas = canvas;
 
-    return canvas;
+    return getImageData;
   };
 
   const committed = () =>
@@ -259,10 +278,21 @@ describe('FeatherMagneticLassoToolArea', () => {
   });
 
   const renderArea = (overlayCtxRef: { current: CanvasRenderingContext2D | null }) => {
-    const { container, unmount } = render(
+    // A fresh element per call: React skips a re-render whose props are
+    // referentially identical, and the mocked `useStore` is a plain function
+    // rather than a context read, so nothing else would force one.
+    const area = () => (
       <FeatherMagneticLassoToolArea overlayCtxRef={overlayCtxRef} className="test-feather-lasso-area" />
     );
-    return { ctx: container.firstElementChild as HTMLDivElement, unmount };
+    const { container, rerender, unmount } = render(area());
+    return {
+      ctx: container.firstElementChild as HTMLDivElement,
+      // The cache key is read out of the store during render, so a test that
+      // moves the store has to re-render before the next event — which is what
+      // a real store transition does.
+      rerender: () => rerender(area()),
+      unmount,
+    };
   };
 
   it('commits a feathered magnetic lasso selection with metadata on Enter', () => {
@@ -552,6 +582,74 @@ describe('FeatherMagneticLassoToolArea', () => {
       previewNearEdge(toolArea);
 
       expect(strokeStyles).toContain('rgba(230,130,0,0.95)');
+    });
+  });
+
+  describe('edge map caching', () => {
+    const startAndFinishDraft = (toolArea: HTMLElement) => {
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 60, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 60, clientY: 60 });
+      h.shortcutHandlers.get('Enter')?.();
+    };
+
+    it('reads the canvas once for a second draft on an unchanged document', () => {
+      const getImageData = installEdgeMapCanvas();
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+
+      startAndFinishDraft(toolArea);
+      expect(getImageData).toHaveBeenCalledTimes(1);
+
+      // A commit empties the draft and would previously have thrown the whole
+      // map away. The canvas, the document and the timeline have not moved, so
+      // the second draft reuses it.
+      startAndFinishDraft(toolArea);
+
+      expect(getImageData).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-reads the canvas after the document timeline moves', () => {
+      const getImageData = installEdgeMapCanvas();
+      const { ctx: toolArea, rerender } = renderArea({ current: createMockContext() });
+
+      startAndFinishDraft(toolArea);
+
+      // A committed edit appends and moves the cursor. The cache is keyed on the
+      // timeline precisely so this happens: serving the previous map here would
+      // snap to edges the edit just removed.
+      h.history = [{}, {}];
+      h.historyIndex = 1;
+      rerender();
+      startAndFinishDraft(toolArea);
+
+      expect(getImageData).toHaveBeenCalledTimes(2);
+    });
+
+    it('re-reads the canvas after a new document replaces the old one', () => {
+      const getImageData = installEdgeMapCanvas();
+      const { ctx: toolArea, rerender } = renderArea({ current: createMockContext() });
+
+      startAndFinishDraft(toolArea);
+
+      h.documentId = 'doc-2';
+      h.documentRevision = 2;
+      h.history = [{}];
+      h.historyIndex = 0;
+      rerender();
+      startAndFinishDraft(toolArea);
+
+      expect(getImageData).toHaveBeenCalledTimes(2);
+    });
+
+    it('re-reads the canvas when the same canvas is resized', () => {
+      const getImageData = installEdgeMapCanvas();
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+
+      startAndFinishDraft(toolArea);
+      h.canvas!.height = 200;
+      startAndFinishDraft(toolArea);
+
+      expect(getImageData).toHaveBeenCalledTimes(2);
     });
   });
 
