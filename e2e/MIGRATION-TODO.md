@@ -88,8 +88,7 @@ it had never been established by any run.
 chrome` runs on every build. `actions/cache` on `~/.cache/ms-playwright` would
   cut a few minutes per run.
 - **e2e helper coverage is never produced in CI.** `test:e2e:unit:coverage` exists
-  as a script but no job calls it. Note it covers 6 of the 7 helper modules:
-  `cdp-helpers.ts` has no vitest tests, only the Playwright spec.
+  as a script but no job calls it.
 - **`concurrency` and `permissions: contents: read` were added to the workflow in
   this cleanup.** They were not present before; no job needs write access.
 
