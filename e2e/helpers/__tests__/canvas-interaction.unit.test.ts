@@ -50,13 +50,19 @@ describe('getWorkspaceCanvas', () => {
 
   it('is unaffected by canvases appearing or disappearing elsewhere in the document', () => {
     // Opening a different tool unmounts the Draw preview canvas, which is what shifted
-    // the old positional fallback onto a hidden overlay. Resolution is by identity, so
-    // the same element is matched before and after the DOM around it changes.
+    // the old positional fallback onto a hidden overlay. Reference identity, not
+    // toEqual: the positional implementation also returned elements of the same shape,
+    // so a structural comparison would have passed it and pinned nothing.
     const before = [canvasElement(), canvasElement('workspace-canvas'), canvasElement()];
     const after = [canvasElement('workspace-canvas'), canvasElement(), canvasElement()];
-    expect(resolveFakeMatches(getWorkspaceCanvas(createFakePage(before)))).toEqual(
-      resolveFakeMatches(getWorkspaceCanvas(createFakePage(after)))
-    );
+
+    const beforeMatches = resolveFakeMatches(getWorkspaceCanvas(createFakePage(before)));
+    const afterMatches = resolveFakeMatches(getWorkspaceCanvas(createFakePage(after)));
+
+    expect(beforeMatches).toHaveLength(1);
+    expect(afterMatches).toHaveLength(1);
+    expect(beforeMatches[0]).toBe(before[1]);
+    expect(afterMatches[0]).toBe(after[0]);
   });
 
   it('ignores a non-canvas element in the document', () => {
