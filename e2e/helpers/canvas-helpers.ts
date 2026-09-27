@@ -285,10 +285,28 @@ export async function hasRedPixels(screenshot: Buffer | ImageDataResult): Promis
 export interface DrawLineOptions {
   /**
    * Interpolated mouse moves between the endpoints. Omit for a single jump.
-   * Forwarded verbatim whenever it is present, so an explicit `0` reaches
-   * `page.mouse.move` rather than being read as "not supplied".
+   *
+   * `0` is a real instruction meaning "do not interpolate", so `drawLine` acts on it - but
+   * it does not forward it, because Playwright reads a `steps` below 1 as "no move at all".
+   * See `interpolationSteps` below. Anything larger than 1 reaches `page.mouse.move` as given.
    */
   steps?: number;
+}
+
+/**
+ * The `steps` value `drawLine` actually hands to Playwright.
+ *
+ * Playwright's server `Mouse.move` is `const { steps = 1 } = options` followed by
+ * `for (let i = 1; i <= steps; i++)`, so forwarding a `steps` below 1 dispatches zero moves:
+ * the endpoint is never reached and the press/release pair collapses into a zero-length
+ * stroke. Its client validator answers a non-integer with
+ * `steps: expected integer, got float <value>`, so a miscomputed `NaN`, `Infinity` or
+ * fractional count throws between `mousedown` and `mouseup`, leaving the button down.
+ * Both collapse to 1, which is Playwright's own default and the one move that lands on the
+ * endpoint.
+ */
+function interpolationSteps(steps: number): number {
+  return Number.isInteger(steps) && steps > 1 ? steps : 1;
 }
 
 /**
@@ -306,10 +324,10 @@ export async function drawLine(
 ): Promise<void> {
   await page.mouse.move(box.x + startX, box.y + startY);
   await page.mouse.down();
-  if (options.steps !== undefined) {
-    await page.mouse.move(box.x + endX, box.y + endY, { steps: options.steps });
-  } else {
+  if (options.steps === undefined) {
     await page.mouse.move(box.x + endX, box.y + endY);
+  } else {
+    await page.mouse.move(box.x + endX, box.y + endY, { steps: interpolationSteps(options.steps) });
   }
   await page.mouse.up();
 }
