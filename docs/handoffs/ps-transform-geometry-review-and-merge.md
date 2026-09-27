@@ -217,11 +217,32 @@ On the branch, before merge:
   The single `transform.ts` failure is the expected result, not a gap: the other three changes there are provably behaviour-preserving refactors of `a3f9050`'s own behaviour (the shared guard is equivalent for every validated input, and the quad translation is a no-op because a trapezoid's AABB origin is always 0), so no test can distinguish them.
 
 - **Adversarial check on the new singularity gate** — 6 singular matrices including ones with 1e6-scale translations are all still rejected (0 leaks); 3 invertible matrices with large translations are all accepted; the horizon guard is scale-invariant across 10 orders of magnitude.
+- **Randomized differential fuzz, 400 cases** (random homographies incl. non-zero `g`/`h`, random sources up to 12×12, random destinations up to 16×16): `resampleThroughHomography` and `resampleThroughHomographyRowByRow` agree **byte for byte** on every case, 0 exceptions, 0 out-of-bounds destination writes.
+- **Solver fuzz, 3000 cases** (random tapers up to ±0.99, random sizes 1–200 px): every matrix the solver returned mapped all four correspondences within relative 1e-4, and **no solved matrix was subsequently rejected** by the invertibility gate. 0 violations.
 - Merge into `main` clean; gate re-run on `main` — see §8
 
 ## 8. Post-merge state
 
-Merged into `main` with `git merge --no-ff ps-transform-geometry`. The branch commit is preserved in history. `ps-integration` remains unmerged and **dirty** (34 modified files, uncommitted, from a different session) — it was not touched by this merge and should be reconciled by its owner.
+Merged into `main` as `67a7fc4` with `git merge --no-ff`, so the branch commits `a3f9050` and `ee8b360` are preserved in history. No conflict: `homography.ts` had no dependents. The merge plan's warning that the new CTM-order test might newly _fail_ on `photoshop-fidelity`'s render path **did not materialise** — the full suite is green on `main`.
+
+Gate re-run on `main` after the merge:
+
+| check                                                           | result                                                                                                                                                         |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npx tsc -b --force`                                            | clean                                                                                                                                                          |
+| `npx prettier --check src/ docs/`                               | clean                                                                                                                                                          |
+| `npx eslint .`                                                  | 0 errors **from this merge**; 1 pre-existing error in `e2e/helpers/cdp-helpers.spec.ts` from another session's uncommitted work, which the merge did not touch |
+| `npm run test`                                                  | **176 files, 3881 passed, 42 expected fail, 0 failed** (branch had 106/1361 — file count increased, none deleted)                                              |
+| test files deleted by the merge                                 | 0                                                                                                                                                              |
+| `package.json` / `package-lock.json` / tsconfig / eslint config | unchanged                                                                                                                                                      |
+| new runtime dependencies                                        | none                                                                                                                                                           |
+| new comments in `src/`                                          | 0                                                                                                                                                              |
+
+`npx prettier --check .` still reports `.copilot-instructions.md` and `.skills/broad-test-improvement.md`. Both are pre-existing and fail identically before this merge.
+
+**The Playwright suite was deliberately not run.** `main`'s working tree carries another session's in-flight, uncommitted e2e edits (6 files, 189 insertions), so a run would measure their work rather than this merge and could not be attributed. The merge plan's gate is `tsc -b --force` + `eslint`/`prettier` + `npm run test`, and all three are green. If you want e2e confidence on this code, the honest way is a clean checkout of `67a7fc4`.
+
+`ps-integration` remains unmerged and **dirty** (34 modified files, uncommitted, from a different session). It was not touched by this merge.
 
 ## 9. If you are picking this up next
 
