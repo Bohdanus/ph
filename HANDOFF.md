@@ -11,11 +11,10 @@ visual fidelity are out of scope unless a defect is caused by this work.
 
 ## 0. Branch state — read before the problem list
 
-Everything below was verified on `cleanup/residue-handoff-docs` at `6f93c38` — the merge of the
-`cleanup/*` branches into `cleanup/integration`, 51 commits ahead of `origin/main` and 31 ahead of
-`main`. `main` is `8effced`, **21 commits ahead of `origin/main`, unpushed**, and 1 commit behind
-this branch, so the claims below describe `cleanup/residue-handoff-docs` and not `main`. `git status`
-is clean apart from this file.
+Everything below was verified on `cleanup/integration` at `ec70662` — the merge of the `cleanup/*`
+branches, 56 commits ahead of `origin/main` and 36 ahead of `main`. `main` is `8effced`, **21 commits
+ahead of `origin/main`, unpushed**, and 1 commit behind this branch, so the claims below describe
+`cleanup/integration` and not `main`. `git status` is clean apart from this file.
 
 **`fix/unit-tests` is `b027de3` (+ `5da9f82`), 2 commits ahead of `main`, unmerged into this
 branch.** Merge it first. It is 16 files, +1272/−189, of which 6 are production: `StoreContext.tsx`
@@ -81,7 +80,7 @@ user-visible behaviour. The migration's deliverable is unwired.
 first time that code executes against real state.
 
 **Also wrong at the boundary.** The runtime path feeds an _untransformed_ bitmap to a pixel
-processor (`useLayer.ts:516-536`); the durable path materializes the retained presentation first
+processor (`useLayer.ts:526-533`); the durable path materializes the retained presentation first
 (`materialization.ts:263-269`). Wiring the durable path without reconciling these changes pixel-tool
 results.
 
@@ -124,7 +123,7 @@ outcome; `preconditions` is by design a silent fallback, and the boundary's own 
 discarded at the only call site (`useLayer.ts:568-576`).
 
 The tests miss it because they exercise the published path through `UPDATE_LAYERS`, which has no
-production caller (item 14).
+production caller (item 13).
 
 **Fix.** Do **not** weaken the gate — it is what makes publishing safe. Decouple the two concerns
 that one status field is conflating: a _selection_ is not a reason to invalidate the _durable
@@ -214,7 +213,7 @@ symptom, because nothing reads the flag on those paths. It is the same class of 
 `PUBLISH_DURABLE_REPLAY` (added `323d664`, deleted `2f051a0`): a second, parallel state path that
 looks correct in isolation.
 
-`UPDATE_LAYERS` (item 14) is the same shape: a public action with a hand-written reducer branch
+`UPDATE_LAYERS` (item 13) is the same shape: a public action with a hand-written reducer branch
 and zero production callers.
 
 **Fix.** Extract the shared post-commit projection into one function that both the reducer and the
@@ -233,9 +232,9 @@ in a test that dispatches through the hook and compares against the reducer resu
 **Problem.** `DocumentPresentationScope` (`src/contexts/layer-presentation.ts:133`) keeps every
 bitmap it publishes in `published: Map<documentId, Set<BitmapSource>>`. `retire()` has exactly one
 call site — `src/contexts/StoreContext.tsx:622` — and fires only for the bitmap a promotion
-_replaces_. Layer removal (`src/contexts/useLayer.ts:380-411` → `COMMIT_DOCUMENT_EDIT` →
+_replaces_. Layer removal (`src/contexts/useLayer.ts:390-424` → `COMMIT_DOCUMENT_EDIT` →
 `src/contexts/StoreContext.tsx:638-707`) never calls it; the `deletedLayers` record it keeps
-(`src/contexts/useLayer.ts:385`) nulls both caches, so the store drops the only other reference and
+(`src/contexts/useLayer.ts:395`) nulls both caches, so the store drops the only other reference and
 the scope's `Set` becomes the sole owner. Nothing ever closes it.
 
 The retention is unbounded per document. A stranded bitmap can never be reclaimed by a later
@@ -258,7 +257,7 @@ GC-reclaimed.
 
 ## 8. The save/merge path bypasses the presentation scope entirely
 
-**Problem.** `useLayer.ts:593` calls `createImageBitmap(canvasRef.current)` bare — no scope
+**Problem.** `useLayer.ts:603` calls `createImageBitmap(canvasRef.current)` bare — no scope
 tracking, no lease, no `retire()` candidate. Every save and every flatten therefore creates a
 bitmap that the scope never learns about, so the scope's completeness guarantee (item 7) does not
 cover them even once item 7 is fixed.
@@ -427,7 +426,7 @@ document-frame change.
 On the append path the omission is also undiagnosed: a null planned entry yields
 `outcome: 'preconditions'` (`history-append.ts:220`), not `'mismatch'`, so no
 `durable-append-mismatch` is appended either. The boundary does warn (`history-append.ts:96-98`)
-but `useLayer.ts:568-576` discards it.
+but `useLayer.ts:578-586` destructures only `entry` and `durableEntry` and discards the rest.
 
 Two clarifications that bound the severity, both verified: the tightening is **correct**
 (`history-replay.ts:96-102` has always used the identical predicate; `durable-replay.ts:129-131`
@@ -435,9 +434,10 @@ has no validation at all, so the change removes a shadow/legacy divergence rathe
 one), and the repeated cursor index is **not** a defect (`-1` is a defined baseline sentinel).
 
 Not reachable from production: the only writer, `applyDocumentCrop`, rejects `width/height <= 0`
-(`useLayer.ts:558`) and `!isValidDocumentFrame` (`:561`) before dispatching. There is no history
+(`useLayer.ts:568`) and `!isValidDocumentFrame` (`:571`) before dispatching. There is no history
 persistence and document load creates a single `OPEN_DOCUMENT_ACTION` (`useApp.ts:113-119`). This
-is a latent robustness gap, not a live bug. Coverage is thin: `branches.test.ts:312` covers only a
+is a latent robustness gap, not a live bug. Coverage is thin: `history-adapter.branches.test.ts:312`
+covers only a
 _missing_ `nextFrame`.
 
 **Fix.** Push a `warning` diagnostic when a `SET_DOCUMENT_FRAME_ACTION` entry yields no durable
@@ -484,11 +484,11 @@ diagnostic, so the store takes the reconversion fallback. Adjust
 > **Fixed on `fix/unit-tests` (`b027de3`).** Open on `main`; delete after the merge. See §0.
 
 **Problem.** `PUBLISH_RUNTIME_PRESENTATION` replaced `UPDATE_LAYERS` as the carrier for the
-`hasPreviewLayers && !pendingToolEdits.length` branch (`useLayer.ts:355`). The dispatcher runs
+`hasPreviewLayers && !pendingToolEdits.length` branch (`useLayer.ts:366`). The dispatcher runs
 `layersDifferOnlyByPresentation` (`StoreContext.tsx:625-634`, guard at
 `layer-presentation.ts:96-112`) and on failure discards the payload entirely with
 `console.debug('Ignored a runtime presentation publication that also changes durable layer state')`
-at `StoreContext.tsx:630`.
+at `StoreContext.tsx:631`.
 
 Today the guard always passes, so this is not a live bug — the failure direction is the problem.
 The old `UPDATE_LAYERS` applied whatever payload it was given and set `hasUnsavedChanges: true` plus
@@ -499,7 +499,7 @@ edit invisibly, which is strictly worse than the over-conservative flag it repla
 The hook-level path is unasserted. `useLayer.commit.test.tsx:152-172` exercises exactly this branch
 and asserts only `previewLayers`, `tmpCanvas`, `bitmap` and `history`; `hasUnsavedChanges` appears
 zero times in that file. The flag is asserted one level down at the reducer
-(`StoreContext.presentation.test.ts:108,268`), but those dispatch the action directly, so they prove
+(`StoreContext.presentation.test.tsx:108,268`), but those dispatch the action directly, so they prove
 the reducer does not set the flag rather than guarding the hook path that reaches it.
 
 **Fix.** Raise the refusal to `console.error` (it is an invariant violation, not an identity
@@ -531,7 +531,7 @@ coverage 98.99% → 98.99%). Two corrections to the obvious framing:
   for any non-mutating implementation — they also held under the old mutating implementation.
 
 **Fix.** Delete `saveLayerCanvas` and its six call sites, plus the now-unused
-`import { materializePresentationBitmap }` at `layer-utils.ts:8` (`tsconfig.app.json:27` sets
+`import { materializePresentationBitmap }` at `layer-utils.ts:7` (`tsconfig.app.json:32` sets
 `noUnusedLocals`, so `npm run tsc` fails without it). Delete the stale `useHistory.test.tsx:502-515`
 block rather than porting it.
 
@@ -545,8 +545,9 @@ block rather than porting it.
 **Problem.** `history-adapter.ts:185` maps all six of `shape`, `rectangle`, `ellipse`, `triangle`,
 `polygon`, `line` to `kind: 'vector'`, and `materialization.ts:161` then throws
 `Source tool ${toolName} is not a deterministic creator` for any of them whose registry entry lacks
-`creator: true`. The registry now flags all six (`toolProcessors.ts:216-220`), but the only durable
-test that pushes a vector source through `materializeLayer` uses `toolName: 'shape'`
+`creator: true`. The registry now flags all six (`toolProcessors.ts:124, 220-224`), but the only
+durable test that _successfully_ pushes a vector source through `materializeLayer` uses
+`toolName: 'shape'`
 (`materialization.assets.test.ts:406-425`) — so the `rectangle`/`ellipse`/`line` entries were never
 exercised end to end, and nothing in `src/contexts/__tests__` would have caught them missing the
 flag. `history-adapter.tool-conversion.test.ts:76-80` pins only the adapter half.
@@ -591,27 +592,86 @@ failure is not a gate and the mode must not be flipped to make one go away.
 
 ## Worktree hygiene
 
-`git worktree list` shows 35 worktrees. Six are parked at `f11f7e7` (09-24 22:40) and are dead
-weight: `fix-history-adapter-safety-tests`, `fix-layerstab-tests`, `fix-replay-coordinator-tests`,
-`fix-useapp-psd-tests`, `fix-usehistory-tests` and `fix-userect-tests`. `polished-ironclad` is a
-seventh dead one: a detached worktree at `50bb2b8` with no branch of its own.
+`git worktree remove` discards a worktree's working tree and index unconditionally, and a file that
+is uncommitted or untracked exists in no commit and no ref. **"0 commits ahead of `main`" is not a
+safety test.** A worktree whose work was never committed is 0 ahead _because_ nothing was committed
+— which is exactly the state that loses it. A worktree is removable only when all three of these
+hold:
 
-`photoshop-fidelity`, `ps-shape-geometry` and `ps-ux-chrome` (all `50bb2b8`), `history-migration-08`
-(`92028a7`) and `ps-transform-geometry` (`ee8b360`) are each 0 commits ahead of `main` and safe to
-delete.
+1. **No unmerged commits** — `git rev-list --count main..HEAD` is 0 _and_
+   `git merge-base --is-ancestor HEAD main` exits 0. For a branch, add
+   `git branch --contains <tip>`: if the only ref holding the tip is the branch itself,
+   `git branch -D` loses it where `git worktree remove` would not.
+2. **A clean tree** — `git status --porcelain` is empty. Untracked files count: they are the largest
+   share of what is lost and are invisible to `git log` by construction.
+3. **No stash to apply** — check `git stash list`. All worktrees share one `refs/stash`
+   (`48768ea6`, 3 entries; `stash@{0}` alone is 89 files, +14,168/−2,696, and `stash@{2}` holds a
+   315-line `VECTOR_SHAPES_REFACTOR_PLAN.md` that is on no branch and no commit), so this is a
+   repo-level check rather than a per-worktree one, and `git worktree remove` does not touch it.
+   `git stash clear` is the one destructive command that does.
 
-One branch still holds unmerged work: `ps-integration` (`a0f66c4`, 2 ahead of `main`, 12 ahead of
-`origin/main`).
+`git worktree remove` refuses a dirty or untracked worktree unless `--force` is passed, so an
+unforced removal cannot lose anything. The exposure is exactly `--force`, or `rm -rf`.
 
-Every `cleanup/*` branch except `cleanup/integration` itself is merged into `cleanup/integration`, so
-its worktree is removable once the work in it has landed: `app-dead-code`, `app-pointer-position`,
-`app-savedialog-toolprocessors`, `app-selection-null-guards`, `app-settings-exhaustiveness`,
-`app-shape-negative-size`, `cdp-helpers-tests`, `e2e-canvas-helpers`, `e2e-color-helpers`,
-`e2e-export-helpers`, `e2e-image-comparison`, `e2e-port-isolation`, `e2e-spec-comments-lint`,
-`e2e-toolbar-helpers`, `precommit-pipeline` and `tsconfig-coverage`. The three `cleanup/residue-*`
-worktrees are this work in progress — do not remove them.
+Measured 2026-09-27 23:31Z, `git worktree list` returns **59** worktrees. That count is a checkout
+fact, not a commit fact, and it moved twice during the session that wrote this section, so use the
+three tests above — not the count, and not any enumeration. What they currently accept:
 
-`main` is 21 ahead of `origin/main` and nothing is pushed.
+- `fix-usehistory-tests` (`f11f7e7`), `ps-transform-geometry` (`ee8b360`), `history-migration-08`
+  (`92028a7`), `fix-unit-tests` (`b027de3`): clean, 0 ahead, and their HEADs are ancestors of
+  `main`. `fix-unit-tests`' **worktree** passes; its **branch** does not —
+  `git branch --contains b027de3` returns `fix/unit-tests` and nothing else, so `git branch -D
+fix/unit-tests` loses 2 commits that `git worktree remove` keeps.
+- `cleanup/*`: 27 branches, every one an ancestor of `cleanup/integration`, so those worktrees are
+  removable once `cleanup/integration` has landed on `main`. The three `cleanup/residue-*` worktrees
+  have already landed and are removable like the rest; an earlier revision of this section told the
+  next session the opposite.
+- The `50bb2b8` park — `history-architecture-sol`, `history-asset-lifecycle-review`,
+  `history-cutover-readiness-review`, `history-operation-coverage-review`,
+  `history-persistence-boundary-review`, `history-replay-presentation-review`,
+  `history-selection-design`, `history-selection-writer-plan`, `history-tool-command-audit`, `noop`,
+  plus the repo's one detached worktree. All are ancestors of `main`, so none holds a commit of its
+  own. Ten of the eleven report exactly one untracked path, `.serena/`, which is a tool cache rather
+  than work: a naive `git status --porcelain` emptiness test calls them dirty and test 2 then
+  refuses them. Delete `.serena/` or judge it as noise, then re-run. The detached worktree's **name
+  is not stable** — it has been `cheddar-slime` and `small-output` within one session — so find it
+  with `git worktree list | grep '(detached HEAD)'` and check it is at `50bb2b8` rather than
+  matching a name. `polished-ironclad`, named here in an earlier revision, does not exist: no
+  directory, branch, ref or worktree entry.
+- Branches holding unmerged commits that are neither ancestors of `main` nor of
+  `cleanup/integration`: `fix/unit-tests` (`b027de3`, 2 ahead), `ps-integration` (`a0f66c4`, 2
+  ahead), `layers` (`3610413`, 29 ahead, no worktree), and the `wip/*` set below. Deleting any of
+  these with `git branch -D` loses work.
+- The `8effced` worktrees: `main` plus the in-flight history/migration set
+  (`history-append-readiness`, `history-presentation-lifecycle`, `history-selection-*` and
+  siblings). All are 0 ahead, but several carry 2–11 uncommitted paths, so test 2 refuses them.
+  They are live work, not park.
+
+**The `wip/*` branches are preservation, not a review.** Nine worktrees that were previously
+described here as "0 commits ahead of `main` and safe to delete" held 23 and 42 files of
+uncommitted, untracked source on no ref. Each now sits on a `wip/*` branch with one
+`wip(preservation)` commit and a clean working tree:
+
+| worktree                           | preservation branch                                | files captured |
+| ---------------------------------- | -------------------------------------------------- | -------------- |
+| `ps-ux-chrome`                     | `wip/ps-ux-chrome` (`57aced8`)                     | 42             |
+| `ps-integration`                   | `wip/ps-integration` (`eb832f3`)                   | 34             |
+| `photoshop-fidelity`               | `wip/photoshop-fidelity` (`9394c99`)               | 23             |
+| `fix-userect-tests`                | `wip/fix-userect-tests` (`6a625ed`)                | 10             |
+| `fix-layerstab-tests`              | `wip/fix-layerstab-tests` (`4528e17`)              | 7              |
+| `ps-shape-geometry`                | `wip/ps-shape-geometry` (`c43df1a`)                | 2              |
+| `fix-history-adapter-safety-tests` | `wip/fix-history-adapter-safety-tests` (`0d88c91`) | 1              |
+| `fix-replay-coordinator-tests`     | `wip/fix-replay-coordinator-tests` (`4ff7217`)     | 1              |
+| `fix-useapp-psd-tests`             | `wip/fix-useapp-psd-tests` (`5108707`)             | 1              |
+
+Do not land any of them as if captured equals reviewed. `wip/photoshop-fidelity` carries 12 modified
+production files on the history/durable-replay path; `wip/ps-integration` carries an `e2e/` half
+that reads `process.env.E2E_PORT` where all 19 `cleanup/*` branches use `PLAYWRIGHT_PORT`, so
+merging it as written would break the other 19. Review before merging, and do not remove the
+worktrees until each branch has been decided.
+
+`main` is 21 ahead of `origin/main` and nothing is pushed, so no number above has been produced by
+CI.
 
 ---
 
@@ -743,12 +803,12 @@ carries several `pointermove` messages per display frame repaints several times 
 event rate. The file carries no `frameRequested` ref and no `cancelAnimationFrame` guard, so the
 synchronous path is the only path.
 
-**Fix.** Batch the repaint: keep a `frameRequested` ref, and in `handlePointerMove` return early when
-a frame is already pending, scheduling `flushDrawingFrame` via `requestAnimationFrame` instead of
-calling it directly. `handlePointerUp` must cancel any pending frame **and null the ref** before
-committing, or the last preview is dropped (this is exactly the defect §26 records in
-`ShapeToolArea`). Add a test that fires N `pointermove` events in one `act()` and asserts the
-overlay was stroked once.
+**Fix.** Batch the repaint: **add** a `frameRequested` ref (the file carries none today), and in
+`handlePointerMove` return early when a frame is already pending, scheduling `flushDrawingFrame` via
+`requestAnimationFrame` instead of calling it directly. `handlePointerUp` must cancel any pending
+frame **and null the ref** before committing, or the last preview is dropped (this is exactly the
+defect §26 records in `ShapeToolArea`). Add a test that fires N `pointermove` events in one `act()`
+and asserts the overlay was stroked once.
 
 **Files.** `src/components/Main/DrawToolArea.tsx`, `src/components/Main/__tests__/DrawToolArea.test.tsx`.
 
@@ -808,30 +868,88 @@ it — but then the branch needs a real caller, not a test-only flag.
 ## 28. `tempUpdateLayer`'s live raster path calls `imageProcessor` with no try/catch
 
 **Problem.** `useLayer.ts:532-533` calls
-`processor.imageProcessor({ bitmap, size: layer.pos })(toolArgs)` unguarded, in the path every
-non-transform, non-layer-operation, non-geometry tool takes on each pointer move. A throw here escapes
+`processor.imageProcessor({ bitmap, size: layer.pos })(toolArgs)` unguarded. `isTransformArgs` is
+`args.toolName === 'transform'` (`useLayer.ts:68-70`), so this is the path every non-transform,
+non-layer-operation, non-geometry tool takes on each pointer move. A throw here escapes
 `tempUpdateLayer` into the React event handler and leaves `previewLayersRef` half-written. The two
 transform branches directly above it (`:479-484`, `:488-502`) are guarded, so the asymmetry is
 local to this one call.
 
-The six throw sites in `src/tools/transform.ts` (`:69, :97, :105, :107, :138, :154`) are **not**
-reachable from here: `isTransformArgs` is `args.toolName === 'transform'` (`useLayer.ts:68-70`), and
-the two guarded branches partition that tool name exhaustively — `trapezoid !== 0` returns at `:480`,
-and `undefined`/`NaN` trapezoid values also take the `!== 0` branch, so every transform-args call
-returns before `:532`. The `commit: 'unimplemented'` processors return `[null]` without throwing.
+The six throw sites in `src/tools/transform.ts` (`:69, :97, :105, :107, :138, :154`) are **not** all
+out of reach from here. A trapezoid-only transform reaches `:532-533`, and a throw inside it escapes
+into the React event handler: `useLayer.ts:478` opens the first branch, but its body is
+`if (!isTrapezoidOnlyTransform(toolArgs)) return;` (`:480`), and `isTrapezoidOnlyTransform`
+(`affine-transform.ts:216-227`) returns **true** for a finite non-zero `trapezoid` with no rotate,
+mirror or skew and `resizeX`/`resizeY` at 100 — so the `try` block falls out at `:484` without
+returning. `:487` is then skipped because `trapezoid !== 0`, and `processor.commit` for `transform`
+is `'affine-operation'` (`toolProcessors.ts:106`), so neither `:505` nor `:516` returns either.
+Control reaches the unguarded call. Inside `transform`, `trapezoid === 0` is false at `:152` and
+`isTrapezoidOnlyTransform(args)` is true at `:153`, so the `throw` at `:154` is skipped and
+`renderTrapezoid` runs, which throws at `transform.ts:97` (`Math.abs(trapezoid) >= 100`) or at
+`:105`/`:107` when the homography is not invertible. The `commit: 'unimplemented'` processors return
+`[null]` without throwing.
 
-That leaves `shape.ts:219-221` (`throw new Error('Tool "…" does not provide shape arguments')` when
-`!('figure' in args)`) as the only candidate reachable in principle, via the `shape` processor
-registered for `shape`, `rectangle`, `ellipse`, `triangle`, `polygon` and `line`. **I could not
-demonstrate a production-reachable throw**: `src/util/settings.ts:17-18` normalises with
-`({ ...args, figure: normalizeFigure(args.figure) })`, which always materialises the `figure` key, so
-the guard appears to hold for every tool-args path reachable from the UI. The `!('figure' in args)`
+What bounds that is the UI, not the guard. `Transform.tsx:238-239` sets `min={-85}` / `max={85}` on
+the only slider that writes `trapezoid`, so `transform.ts:97` is not slider-reachable. Every other
+writer is untraced: stored tool args restored from `lastSavedSettings`, and any direct
+`patchToolArgs`/`throttledOnChange` call. A `trapezoid` of `|100|` or more arriving by one of those
+routes lands on the unguarded `:532-533`.
+
+The other candidate is `shape.ts:219-221` (`throw new Error('Tool "…" does not provide shape
+arguments')` when `!('figure' in args)`), reached through the `shape` processor registered for
+`shape`, `rectangle`, `ellipse`, `triangle`, `polygon` and `line`. **I could not demonstrate a
+production-reachable throw there**: `src/util/settings.ts:17-18` normalises with
+`({ ...args, figure: normalizeFigure(args.figure) })`, which always materialises the `figure` key,
+so the guard appears to hold for every tool-args path reachable from the UI. The `!('figure' in args)`
 guard is a runtime shape assertion on a type the compiler already narrows, and it is the only thing
 between a malformed args object and an unhandled throw on the live path.
 
 **Fix.** Wrap `:532-533` in the same `try { … } catch (error) { console.error(error); return; }` used
 at `:479-484` and `:488-502`, so a throwing processor degrades to a logged no-op instead of escaping
-into the event handler. If the `figure` key can be proven absent by some path, fix that path instead
-and add the case to the test that covers `tempUpdateLayer`'s raster preview.
+into the event handler. That covers the trapezoid path as well as `shape`, and it is the only fix
+that does not depend on tracing every writer of `trapezoid`. If the `figure` key can be proven absent
+by some path, fix that path instead and add the case to the test that covers `tempUpdateLayer`'s
+raster preview.
 
-**Files.** `src/contexts/useLayer.ts:532-533`, `src/tools/shape.ts:219-221`.
+**Files.** `src/contexts/useLayer.ts:532-533`, `src/tools/transform.ts:96-107`,
+`src/tools/shape.ts:219-221`.
+
+---
+
+## 29. A `tsc` that type-checks nothing is auto-approved by an untracked, globally gitignored file
+
+**Problem.** The root `tsconfig.json` is a solution stub: `"files": []` at `:9`, no `include`, and
+only three `references` (`:10-14`). So `npx tsc` and `npx tsc --noEmit` at the repo root resolve zero
+input files and always exit 0. Verified in the root checkout: `npx tsc --showConfig -p tsconfig.json`
+prints `{"compilerOptions": {}}` and the three references, with no `files` array. The behaviour is by
+design and `tsconfig.json:2-8` says so; the hazard is that it is indistinguishable from a pass.
+
+Every file that actually runs a type-check uses the safe form — `package.json:13`
+(`"tsc": "tsc -b"`), `.husky/pre-commit:2` (`npm run tsc`) and `.github/workflows/ci.yml:46`
+(`run: npm run tsc`) — and tracked `kilo.jsonc` has no `tsc` entry that would deny the command. The
+only tracked prose about the bare form warns against it (`tsconfig.json:3`, `AGENTS.md:103`,
+`MIGRATION_NEXT_STEPS_SUNDAY.md:1060`), and `MIGRATION_NEXT_STEPS_SUNDAY.md:817-820` also still
+carries a copy of this hazard. The one live hazard is
+`/Users/bkalynovskyi/ph/.claude/settings.local.json:3`, whose `"allow": ["Bash(npx tsc:*)"]`
+wildcard auto-approves exactly the bare form. The file exists in the operator's root checkout
+(60 bytes, mtime 2026-09-26 16:57, so actively maintained, not a leftover).
+
+It is invisible from the repository by construction: `git ls-files .claude` is empty, and
+`git check-ignore -v .claude/settings.local.json` run in the root checkout resolves to
+`/Users/bkalynovskyi/.config/git/ignore:1`, `**/.claude/settings.local.json`. So no worktree, no
+`git status` and no `git ls-files` can see it, and a review that finds it absent from its own
+worktree has not established that it is gone — it has established that the review was not looking in
+the root checkout. That is the same trap `AGENTS.md` documents for `node_modules` and `:5173`.
+
+**Fix.** Narrow or drop the `Bash(npx tsc:*)` wildcard in that file, and record the three facts in
+`AGENTS.md` next to the existing `npx tsc --noEmit` warning at `:103`: (a) the bare form type-checks
+zero files and always exits 0; (b) a `Bash(npx tsc:*)` allow-wildcard in `.claude/settings.local.json`
+auto-approves exactly that command; (c) the file is untracked and globally gitignored, so its
+absence from a worktree is not its absence from the machine. `AGENTS.md` is where the record belongs
+— the auto-approved command never causes anyone to open a `tsconfig.json`, and `tsconfig.json:2-8`
+cannot carry the reason it is invisible. `MIGRATION_NEXT_STEPS_SUNDAY.md:817-820` is a tracked copy
+nobody reads before acting. Unproven either way: whether the installed build's permission matcher
+actually honours the wildcard. Nothing in the repo exercises it.
+
+**Files.** `/Users/bkalynovskyi/ph/.claude/settings.local.json` (untracked, outside the repository),
+`AGENTS.md`, `tsconfig.json`, `package.json`
