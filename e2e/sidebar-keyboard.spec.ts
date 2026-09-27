@@ -2,13 +2,13 @@ import { expect, test } from '@playwright/test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { openToolFlyoutViaKeyboard, verifyPrimaryTool } from './helpers/toolbar-helpers';
 
-// FLAKY — see e2e/OPEN_PROBLEMS.md, "Enter does not reliably close the flyout".
-//
-// Both tests marked FLaky below race on `expect(page.getByRole('menu')).toBeHidden()`
-// after pressing Enter: the flyout closes asynchronously and the assertion can still
-// see it open. Observed in 4 of 5 headless runs with no operator input, so this is a
-// real defect in the flyout-close path and NOT a headed-run artifact. Running headless
-// does not fix it; the fix is a readiness assertion between the keypress and the check.
+// The Enter tests below used to race on `expect(page.getByRole('menu')).toBeHidden()`.
+// Root cause, since fixed: the app focuses the first flyout item from a
+// `requestAnimationFrame` callback, while the opener waited only for the menu to
+// become visible. A keypress landing in that one-frame gap is handled by the tool
+// button again, which re-opens the flyout instead of activating an item - so Enter
+// left it open. `openToolFlyoutViaKeyboard` now waits for the focus to land, which is
+// what makes these deterministic. See e2e/OPEN_PROBLEMS.md.
 test.describe('SidebarLeft - Keyboard Navigation', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
@@ -66,7 +66,6 @@ test.describe('SidebarLeft - Keyboard Navigation', () => {
     await expect(items.nth(count - 1)).toBeFocused();
   });
 
-  // FLaky: see the note at the top of this file.
   test('Enter activates focused flyout item', async ({ page }) => {
     await openToolFlyoutViaKeyboard(page, 'brush');
 
@@ -78,7 +77,6 @@ test.describe('SidebarLeft - Keyboard Navigation', () => {
     await verifyPrimaryTool(page, 'pencil', 'Pencil Tool');
   });
 
-  // FLaky: see the note at the top of this file.
   test('full keyboard flow: open, navigate, select', async ({ page }) => {
     // Open flyout with keyboard
     await openToolFlyoutViaKeyboard(page, 'color', 'ArrowDown');

@@ -184,7 +184,39 @@ export async function verifyHoverDoesNotOpenFlyout(page: Page, toolName: string)
 }
 
 /**
+ * Waits until an open flyout has actually taken keyboard focus, and that it is the
+ * item the app promises for `key`.
+ *
+ * The app focuses a flyout item from a `requestAnimationFrame` callback in the tool
+ * button's keydown handler (`SidebarLeft.tsx`), not in the React commit that mounts
+ * the menu. So "the menu is visible" and "an item is focused" are two different
+ * moments, one animation frame apart, and waiting on visibility alone returns early.
+ *
+ * That gap is a real race for a caller. With focus still on the tool button, the next
+ * ArrowDown or Enter is handled by the *tool button* handler again, which re-opens the
+ * flyout instead of navigating or activating it - so Enter leaves the flyout open. The
+ * only right-click path never focuses an item at all, which is why this is not folded
+ * into `waitForFlyout`.
+ *
+ * Which item is expected follows the app's own rule rather than an assumption:
+ * `ArrowUp` focuses the **last** item and every other opener key focuses the first
+ * (`SidebarLeft.tsx`: `event.key === 'ArrowUp' ? items.length - 1 : ...`). Asserting
+ * the specific item keeps this a real readiness signal instead of a "something is
+ * focused" smoke test, and pins ArrowUp-wraps-to-last in passing.
+ */
+export async function waitForFlyoutFocus(
+  page: Page,
+  key: 'ArrowDown' | 'ArrowUp' | 'Enter' | ' ' = 'ArrowDown'
+): Promise<void> {
+  const items = page.getByRole('menuitemradio');
+  await expect(key === 'ArrowUp' ? items.last() : items.first()).toBeFocused({ timeout: 2000 });
+}
+
+/**
  * Opens a tool flyout via keyboard (ArrowDown/Enter/Space) for grouped tools.
+ *
+ * Returns only once the promised item holds focus, so a caller can navigate or
+ * activate immediately without racing the app's rAF focus callback.
  */
 export async function openToolFlyoutViaKeyboard(
   page: Page,
@@ -199,6 +231,7 @@ export async function openToolFlyoutViaKeyboard(
   await button.focus();
   await button.press(key);
   await waitForFlyout(page);
+  await waitForFlyoutFocus(page, key);
 }
 
 /**

@@ -22,7 +22,7 @@ import {
 } from '../toolbar-helpers';
 
 const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks } = vi.hoisted(() => {
-  type Target = { __elements: Array<{ visible: boolean; testId: string | null; text: string }> };
+  type Target = { __elements: Array<{ visible: boolean; focused: boolean; testId: string | null; text: string }> };
   type Check = { target: Target; options?: { timeout?: number } };
 
   const visibilityChecks: Check[] = [];
@@ -56,6 +56,13 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks } = vi.hois
         throw timedOut('toContainText', target);
       }
     }),
+    toBeFocused: vi.fn(async (options?: { timeout?: number }) => {
+      // Models browser focus as at most one element, so a stale `focused` flag on a
+      // sibling cannot make a stale locator look focused.
+      if (!target.__elements.some((element) => element.focused)) {
+        throw timedOut('toBeFocused', target, options?.timeout);
+      }
+    }),
   }));
 
   return { playwrightExpect, visibilityChecks, hiddenChecks, textChecks };
@@ -83,6 +90,7 @@ interface FakeElement {
   name: string;
   text: string;
   visible: boolean;
+  focused: boolean;
   children: FakeElement[];
   parent: FakeElement | null;
   onActivate: (() => void) | null;
@@ -98,6 +106,7 @@ interface FakeElementSpec {
   name?: string;
   text?: string;
   visible?: boolean;
+  focused?: boolean;
   onActivate?: () => void;
   onContextMenu?: () => void;
   onKey?: (key: string) => void;
@@ -111,6 +120,7 @@ type MockLocator = {
   count: Mock<() => Promise<number>>;
   dispatchEvent: Mock<(type: string, options?: Record<string, unknown>) => Promise<void>>;
   first: Mock<() => MockLocator>;
+  last: Mock<() => MockLocator>;
   focus: Mock<() => Promise<void>>;
   getAttribute: Mock<(name: string) => Promise<string | null>>;
   getByRole: Mock<(role: string) => MockLocator>;
@@ -134,6 +144,7 @@ interface FakeDom {
   activated: FakeElement[];
   dispatched: Array<{ element: FakeElement; type: string; options?: Record<string, unknown> }>;
   focused: FakeElement[];
+  focusElement: (element: FakeElement) => void;
   hovers: FakeElement[];
 }
 
@@ -159,6 +170,7 @@ function createFakeDom(): FakeDom {
     name: spec.name ?? spec.text ?? '',
     text: spec.text ?? '',
     visible: spec.visible ?? true,
+    focused: spec.focused ?? false,
     children: [],
     parent: null,
     onActivate: spec.onActivate ?? null,
@@ -214,6 +226,13 @@ function createFakeDom(): FakeDom {
   }
 
   function focusElement(element: FakeElement): void {
+    // Browser focus is single-valued: drop the flag anywhere before setting the new
+    // one, otherwise a locator that still points at the previously focused element
+    // would keep reporting it as focused.
+    elementsMatching(() => true).forEach((candidate) => {
+      candidate.focused = false;
+    });
+    element.focused = true;
     active = element;
     focused.push(element);
   }
@@ -260,6 +279,7 @@ function createFakeDom(): FakeDom {
         if (element) dispatchEvent(element, type, options);
       }),
       first: vi.fn(() => locator),
+      last: vi.fn(() => locatorFor(matches.length ? [matches[matches.length - 1]] : [])),
       focus: vi.fn(async () => {
         const element = primary();
         if (element) focusElement(element);
@@ -315,7 +335,7 @@ function createFakeDom(): FakeDom {
   // fake is materialized from a bare object and the declared type stays authoritative.
   const page: MockPage & Page = Object.assign(Object.create(null), mocks);
 
-  return { page, mocks, add, clicked, activated, dispatched, focused, hovers };
+  return { page, mocks, add, clicked, activated, dispatched, focused, focusElement, hovers };
 }
 
 interface FakeFlyoutItem {
@@ -389,11 +409,16 @@ const INHERITED_NAME_CASES: Array<{ input: string; expected: string }> = [
 
 const INHERITED_NAME_KEYS = INHERITED_NAME_CASES.map(({ input }) => input);
 
-const KEYBOARD_CASES: Array<{ requested: 'ArrowDown' | 'ArrowUp' | 'Enter' | ' '; expected: string }> = [
-  { requested: 'ArrowDown', expected: 'ArrowDown' },
-  { requested: 'ArrowUp', expected: 'ArrowUp' },
-  { requested: 'Enter', expected: 'Enter' },
-  { requested: ' ', expected: ' ' },
+const KEYBOARD_CASES: Array<{
+  requested: 'ArrowDown' | 'ArrowUp' | 'Enter' | ' ';
+  expected: string;
+  /** Index of the item the app focuses for this key: last for ArrowUp, else first. */
+  focusedIndex: number;
+}> = [
+  { requested: 'ArrowDown', expected: 'ArrowDown', focusedIndex: 0 },
+  { requested: 'ArrowUp', expected: 'ArrowUp', focusedIndex: 1 },
+  { requested: 'Enter', expected: 'Enter', focusedIndex: 0 },
+  { requested: ' ', expected: ' ', focusedIndex: 0 },
 ];
 
 describe('Toolbar Helpers', () => {
@@ -927,36 +952,57 @@ describe('Toolbar Helpers', () => {
   });
 
   describe('openToolFlyoutViaKeyboard', () => {
-    it.each(KEYBOARD_CASES)('opens the flyout with the "$requested" key', async ({ requested, expected }) => {
+    it.each(KEYBOARD_CASES)(
+      'opens the flyout and waits for $requested to land focus, not just visibility',
+      async ({ requested, expected, focusedIndex }) => {
+        const dom = createFakeDom();
+        // Two items, so "first" and "last" are distinguishable: a helper that asserted
+        // the wrong end for ArrowUp would pass against a single-item flyout.
+        const { menu, items } = addFlyout(
+          dom,
+          [{ testId: flyoutItemTestId('levels', 'Levels') }, { testId: flyoutItemTestId('curves', 'Curves') }],
+          { visible: false }
+        );
+        const pressed: string[] = [];
+        dom.add({
+          testId: 'tool-button-reposition',
+          onKey: (key) => {
+            pressed.push(key);
+            // Models the app's handler: open the flyout, then - from its rAF callback -
+            // focus the last item for ArrowUp and the first otherwise.
+            menu.visible = true;
+            const target = key === 'ArrowUp' ? items[items.length - 1] : items[0];
+            dom.focusElement(target);
+          },
+        });
+
+        await openToolFlyoutViaKeyboard(dom.page, 'Select & Move', requested);
+
+        expect(pressed).toEqual([expected]);
+        expect(menu.visible).toBe(true);
+        expect(visibilityCheckFor(menu)?.options).toEqual({ timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
+        // The contract that makes this safe to navigate from: the promised item holds
+        // focus by the time the helper returns. Without it a caller can send the next
+        // key while the tool button still has focus, which re-opens the flyout.
+        expect(items[focusedIndex].focused).toBe(true);
+        expect(items.filter((item) => item.focused)).toHaveLength(1);
+      }
+    );
+
+    it('defaults to ArrowDown and waits for the first item to be focused', async () => {
       const dom = createFakeDom();
-      const { menu } = addFlyout(dom, [{ testId: flyoutItemTestId('levels', 'Levels') }], { visible: false });
+      const { menu, items } = addFlyout(
+        dom,
+        [{ testId: flyoutItemTestId('levels', 'Levels') }, { testId: flyoutItemTestId('curves', 'Curves') }],
+        { visible: false }
+      );
       const pressed: string[] = [];
-      // No binding: `dom.add` registers the button (which is what installs the
-      // `onKey` handler under test); nothing here reads the element back.
       dom.add({
         testId: 'tool-button-reposition',
         onKey: (key) => {
           pressed.push(key);
           menu.visible = true;
-        },
-      });
-
-      await openToolFlyoutViaKeyboard(dom.page, 'Select & Move', requested);
-
-      expect(pressed).toEqual([expected]);
-      expect(menu.visible).toBe(true);
-      expect(visibilityCheckFor(menu)?.options).toEqual({ timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
-    });
-
-    it('defaults to ArrowDown when no key is given', async () => {
-      const dom = createFakeDom();
-      const { menu } = addFlyout(dom, [], { visible: false });
-      const pressed: string[] = [];
-      dom.add({
-        testId: 'tool-button-reposition',
-        onKey: (key) => {
-          pressed.push(key);
-          menu.visible = true;
+          dom.focusElement(items[0]);
         },
       });
 
@@ -964,6 +1010,22 @@ describe('Toolbar Helpers', () => {
 
       expect(pressed).toEqual(['ArrowDown']);
       expect(menu.visible).toBe(true);
+      expect(items[0].focused).toBe(true);
+    });
+
+    it('rejects when the flyout opens but no item ever takes focus', async () => {
+      const dom = createFakeDom();
+      const { menu } = addFlyout(dom, [{ testId: flyoutItemTestId('levels', 'Levels') }], { visible: false });
+      dom.add({
+        testId: 'tool-button-reposition',
+        // Visibility without focus is exactly the rAF gap that made Enter leave the
+        // flyout open in 5 of 12 measured runs. The helper must not return here.
+        onKey: () => {
+          menu.visible = true;
+        },
+      });
+
+      await expect(openToolFlyoutViaKeyboard(dom.page, 'Select & Move')).rejects.toThrow(/toBeFocused\(\)/);
     });
   });
 
