@@ -69,8 +69,8 @@ npm run test:e2e:unit
 ```
 
 See [`e2e/README.md`](e2e/README.md) for the end-to-end suite,
-[`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md) for its known defects — 4–6 of the
-97 e2e tests currently fail — and
+[`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md) for the latent defects in its test
+code — none of them fails a current run — and
 [`e2e/MIGRATION-TODO.md`](e2e/MIGRATION-TODO.md) for what the migration left
 undone.
 
@@ -108,13 +108,17 @@ npm run tsc
 
 The project uses GitHub Actions for continuous integration:
 
-- **Check Job**: ESLint + Prettier, `npm audit --audit-level=high`, TypeScript,
-  unit tests, and the production build, on every push/PR.
+- **Check Job**: ESLint + Prettier, `npm audit --audit-level=high`, TypeScript
+  (`tsc -b`, which also builds `tsconfig.e2e.json`), an assertion that every
+  tracked `.ts`/`.tsx` is inside some project's `include`, unit tests, and the
+  production build, on every push/PR.
 - **Integration Tests**: `npm run test:integration` (PSD/file handling), a subset of
   the Check Job rather than a separate job
-- **E2E Unit Job**: unit tests for the e2e helpers plus a scoped type-check. This is
-  the **blocking** gate for `e2e/`, kept as a separate job so a break in the app
-  pipeline cannot silently skip the only coverage of that code.
+- **E2E Unit Job**: unit tests for the e2e helpers, then a coverage run, with
+  `coverage-e2e/` uploaded as an artifact. It repeats no type-check: the Check
+  Job's `tsc -b` already builds `tsconfig.e2e.json`. This is the **blocking** gate
+  for `e2e/`, kept as a separate job so a break in the app pipeline cannot
+  silently skip the only coverage of that code.
 - **E2E Job**: Playwright specs in Chrome. Currently **informational**
   (`continue-on-error`). That was justified by documented failures, and those are now
   fixed — the suite is green headless — so the job is eligible to become a real gate;
