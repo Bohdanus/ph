@@ -13,14 +13,14 @@ HiDPI macOS host; re-verify before acting on any rate quoted here.
 ## 1. Blocking now
 
 Nothing. The blocking gates are green: `lint:check`, `tsc -b` (all three
-projects), the app suite (176/176 files), and the e2e helper unit tests (694 pass,
-2 expected-fail). Nothing in this section should block other work.
+projects), `npm run test`, and `npm run test:e2e:unit`. Nothing in this section
+should block other work.
 
 ## 2. The e2e suite is now green
 
-**97 pass, 0 fail, 2 skipped** on the default headless run, reproduced across
-repeated full runs. Both items this section used to list as open are fixed, and so is
-the `levels.spec.ts` pair. Each was fixed by changing an assertion or a wait, never by
+**Nothing fails** on the default headless run, reproduced across repeated full
+runs. Both items this section used to list as open are fixed, and so is the
+`levels.spec.ts` pair. Each was fixed by changing an assertion or a wait, never by
 loosening a threshold, adding a skip, or re-recording a baseline. Evidence, including
 the measurements that established each defect and the mutation tests that prove the
 fixes, is in `OPEN_PROBLEMS.md`.
@@ -86,9 +86,6 @@ chrome` runs on every build. `actions/cache` on `~/.cache/ms-playwright` would
 `OPEN_PROBLEMS.md` is the authoritative list with line numbers. The migration
 specifics worth calling out:
 
-- **~18 `no-shadow` / `no-explicit-any` eslint warnings** in the imported specs.
-  `src/` has zero, so this is a regression against the repo's own bar. They are
-  warnings, not errors, and were left rather than churning ported test code.
 - **Reformatted to this repo's Prettier style.** The source repo had no
   `.prettierrc`, so its code used Prettier defaults (double quotes, 80 columns).
   Everything under `e2e/` was reformatted to the repo's config (single quotes, 120
@@ -104,11 +101,12 @@ specifics worth calling out:
 - **The source repository still exists** at `/Users/bkalynovskyi/ps-playwright`
   and is untouched. It is now redundant. Archive or delete it, once someone has
   confirmed nothing is still being pulled from it.
-- **`main` is unpushed** — 8 commits ahead of `origin/main`, including the whole
-  e2e migration. `npm audit`, the `Test` step and the `e2e` job have therefore never
-  actually run in CI against this tree.
-- **`HANDOFF.md`** sits untracked in the repo root and is not gitignored, so a
-  plain `git add -A` would commit it. Either gitignore it or move it.
+- **`main` is unpushed** — `origin/main` is behind it, so `npm audit`, the `Test`
+  step and the `e2e` job have therefore never actually run in CI against this tree.
+  Push it and read the first CI run before treating any gate here as proven.
+- **`HANDOFF.md`** is tracked in the repo root, so it ships with the code. Keep it
+  that way, and keep it problem-focused: an entry that has been fixed and verified
+  is deleted rather than reworded into a closed note.
 
 ## 6. Explicitly not attempted
 
@@ -122,7 +120,7 @@ specifics worth calling out:
   removed, and one `cause` added to satisfy `preserve-caught-error`. Behaviour is
   unchanged — except for the `getWorkspaceCanvas` selector, which is a deliberate
   behaviour change recorded in §2.
-- **No baseline regeneration.** The 8 visual-regression specs pass against the
+- **No baseline regeneration.** The visual-regression specs pass against the
   committed baselines, so there was no need, and rewriting committed image data was
   not authorized. That claim rested on the void `updateSnapshots` check described in
   §2 — the spec was re-recording rather than comparing, so "passes against the
