@@ -6,7 +6,7 @@ import ToolTooltip from './ToolTooltip.tsx';
 import { toolIcons } from './toolIcons.tsx';
 import { slugifyToolLabel, toolbarMap, type ToolbarTool, type ToolbarToolGroup } from '../../../toolbar-mapping.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
-import { useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
+import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
 
 const TOOL_BUTTON_BASE_CLASS =
   'group relative flex h-11 w-11 items-center justify-center rounded-md border text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 focus:ring-offset-gray-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:focus:ring-offset-gray-800';
@@ -39,6 +39,7 @@ const SidebarLeft = () => {
   // itself scrolls — which it now can, and which two columns mostly avoids.
   const [isSingleColumn, setIsSingleColumn] = useState(false);
   const isTablet = useIsTabletViewport();
+  const isMobile = useIsMobileViewport();
   const longPressFlyoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressLongPressRef = useRef(false);
   const longPressOpenedRef = useRef(false);
@@ -55,6 +56,33 @@ const SidebarLeft = () => {
   // React re-invokes on every commit — the updater returns the same object when nothing
   // changed, which is what stops that from re-rendering forever.
   const [flyoutAnchor, setFlyoutAnchor] = useState<{ groupIndex: string; element: HTMLLIElement } | null>(null);
+
+  // Both breakpoints are watched, and for DIFFERENT reasons — a shared one would be wrong
+  // about whichever boundary it did not describe.
+  //
+  // Across `lg` the group keys change, from `two-column-N` above it to `N-M` below, because
+  // the tablet layout is one column. A crossing therefore leaves `openGroup` matching nothing
+  // and the flyout vanishes unclosed — then matches again on the way back and reopens by
+  // itself, with nothing the user did to open it.
+  //
+  // Across `md` the keys do NOT change: `isSingleColumnMode` is `isTablet || isSingleColumn`
+  // and knows nothing of `isMobile`, so at 767px the rail is still the two-column layout with
+  // the same keys. What changes is that the rail stops being rendered — it is `display: none`
+  // and the portal escapes that, so nothing about the menu's own placement stops it. Its
+  // anchor's box is zeroed by the hiding, which the clamp turns into the viewport's top-left
+  // corner, leaving a menu painted and clickable over a mobile shell with no tile under it.
+  //
+  // Adjusted during render rather than in an effect, because this state is derived from
+  // props, which is what React's own guidance says to handle this way. `set-state-in-effect`
+  // rejects the effect form, and an effect would also leave a commit in which the stale group
+  // is still open.
+  const railLayout = isMobile ? 'mobile' : isTablet ? 'tablet' : 'desktop';
+  const [lastRailLayout, setLastRailLayout] = useState(railLayout);
+  if (lastRailLayout !== railLayout) {
+    setLastRailLayout(railLayout);
+    setOpenGroup(null);
+    setFlyoutAnchor(null);
+  }
 
   const handleColorClick = (e: React.MouseEvent<HTMLDivElement>, inputRef: RefObject<HTMLInputElement | null>) => {
     if (!inputRef.current) return;
@@ -102,10 +130,31 @@ const SidebarLeft = () => {
    * the two-column keys with the one-column ones, so the guard below can match a group
    * whose tile is detached, and the overlay would measure a detached box.
    */
-  const closeFlyout = useCallback(() => {
-    setOpenGroup(null);
-    setFlyoutAnchor(null);
-  }, []);
+  /**
+   * `restoreFocus` is for the closes a KEYBOARD performed, and only those. The menu lives in
+   * `document.body`, so unmounting it takes the focused element with it: measured in Chrome,
+   * Escape and Tab both dropped focus where no user asked to be — `document.body`, or the
+   * document's first tabbable, 16 tab stops before the rail. A menu pattern has to hand focus
+   * back to the button that opened it.
+   *
+   * It is deliberately not done on the closes a POINTER performed, including the one that
+   * matters most. An outside click or a click on the tile has already put focus where the
+   * user asked for it, and a mouse pick of a flyout item has focused that item; taking it back
+   * to the tile would undo their click, and focusing the tile arms `ToolTooltip`'s 250ms focus
+   * timer, so a tooltip would appear over a selection the mouse user never asked to see. The
+   * keyboard's own Enter path restores focus from its keydown instead, where the gesture is
+   * known to be the keyboard's.
+   */
+  const closeFlyout = useCallback(
+    (restoreFocus = false) => {
+      if (restoreFocus) {
+        flyoutAnchor?.element.querySelector<HTMLButtonElement>('button')?.focus();
+      }
+      setOpenGroup(null);
+      setFlyoutAnchor(null);
+    },
+    [flyoutAnchor]
+  );
 
   const scheduleFlyoutOpen = (groupIndex: string) => {
     clearLongPressFlyout();
@@ -127,7 +176,7 @@ const SidebarLeft = () => {
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        closeFlyout();
+        closeFlyout(true);
       }
     };
 
@@ -308,7 +357,7 @@ const SidebarLeft = () => {
                 // what a `role="menu"` is supposed to do. Closing here stops the menu
                 // outliving the focus that opened it.
                 if (event.key === 'Tab') {
-                  closeFlyout();
+                  closeFlyout(true);
                   return;
                 }
 
@@ -329,7 +378,18 @@ const SidebarLeft = () => {
 
                 if (event.key === 'Enter' && document.activeElement instanceof HTMLButtonElement) {
                   event.preventDefault();
+                  // The trigger is read BEFORE the click, because that click closes the flyout
+                  // and clears the anchor this would otherwise be read from. The item that
+                  // chose the tool does not restore focus itself: a mouse pick reaches the
+                  // same `onClick`, and taking focus back to the tile there would arm
+                  // `ToolTooltip`'s 250ms focus timer, so a tooltip would paint over a
+                  // selection the mouse user never asked to see.
+                  const trigger = flyoutAnchor?.element.querySelector<HTMLButtonElement>('button') ?? null;
                   document.activeElement.click();
+                  // Choosing a tool is the menu's primary action, and the unmount takes the
+                  // focused item with it: measured in Chrome, without this the user lands on
+                  // `document.body`, 16 tab stops from the rail they were choosing from.
+                  trigger?.focus();
                 }
               }}
               role="menu"
@@ -352,6 +412,9 @@ const SidebarLeft = () => {
                       onClick={() => {
                         setPrimaryTools((current) => ({ ...current, [groupIndex]: tool }));
                         selectTool(tool);
+                        // No focus restore: a click here may be a mouse pick, which has
+                        // already put focus where the user aimed. The keyboard's Enter path
+                        // restores it above, from the keydown, where the gesture is known.
                         closeFlyout();
                       }}
                       role="menuitemradio"
