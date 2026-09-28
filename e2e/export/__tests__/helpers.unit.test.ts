@@ -28,6 +28,8 @@ import {
   CANVAS_REDRAW_CLIP,
   CANVAS_REDRAW_POLL_INTERVAL_MS,
   canvasRedrawClip,
+  DEFAULT_DOCUMENT_HEIGHT,
+  DEFAULT_DOCUMENT_WIDTH,
   documentToCanvasOffset,
 } from '../../helpers/canvas-helpers';
 
@@ -265,7 +267,7 @@ interface LocatorSurface {
   isVisible: Mock<() => Promise<boolean>>;
   textContent: Mock<() => Promise<string | null>>;
   boundingBox: Mock<() => Promise<Box | null>>;
-  evaluate: Mock<(readPixels: (element: unknown) => string) => Promise<string>>;
+  evaluate: Mock<(read: (element: unknown) => unknown) => Promise<unknown>>;
   setInputFiles: Mock<(file: string) => Promise<void>>;
   or: Mock<(locator: LocatorSurface) => LocatorSurface>;
   nth: Mock<(index: number) => LocatorSurface>;
@@ -314,6 +316,23 @@ function asPlaywright<T extends object>(surface: object): T {
   return new Proxy({} as T, { get: (_target, property) => Reflect.get(surface, property) });
 }
 
+/**
+ * The canvas the default `evaluate` mock hands to a page function.
+ *
+ * `setupExportTest` reads the element twice, and the two reads want different shapes: the
+ * document size comes off the backing store (`width`/`height`) and the source image off
+ * `toDataURL()`. A single canned return cannot answer both — the mock used to answer
+ * `SOURCE_DATA_URL` for every call, so the backing-store read destructured a string,
+ * `documentSize` became `{ width: undefined, height: undefined }`, and every offset derived
+ * from it was `NaN`. Running the page function against a duck-typed element answers whichever
+ * shape it asks for, and fails loudly if a helper starts reading a property this does not have.
+ */
+const FAKE_CANVAS_ELEMENT = {
+  width: DEFAULT_DOCUMENT_WIDTH,
+  height: DEFAULT_DOCUMENT_HEIGHT,
+  toDataURL: () => SOURCE_DATA_URL,
+};
+
 function createLocatorMock(overrides: Partial<LocatorSurface> = {}): LocatorSurface {
   const surface: LocatorSurface = {
     click: vi.fn().mockResolvedValue(undefined),
@@ -324,7 +343,7 @@ function createLocatorMock(overrides: Partial<LocatorSurface> = {}): LocatorSurf
     isVisible: vi.fn().mockResolvedValue(true),
     textContent: vi.fn().mockResolvedValue(''),
     boundingBox: vi.fn().mockResolvedValue(null),
-    evaluate: vi.fn().mockResolvedValue(SOURCE_DATA_URL),
+    evaluate: vi.fn(async (read: (element: unknown) => unknown) => read(FAKE_CANVAS_ELEMENT)),
     setInputFiles: vi.fn().mockResolvedValue(undefined),
     or: vi.fn(),
     nth: vi.fn(),
@@ -618,45 +637,9 @@ describe('Export Helpers', () => {
   });
 
   describe('setupExportTest', () => {
-    /**
-     * The document's own resolution, as the canvas reports it in its backing store.
-     *
-     * `setupExportTest` READS this rather than assuming 800x600, so that a document opened at
-     * any other size is stroked where the app will actually look. A mock whose `evaluate`
-     * returns the data url instead — which is what the shared default does, for the pixel
-     * helpers — hands back a string, and destructuring `{ width, height }` off a string
-     * yields `undefined` for both, so every mapped coordinate came out `NaN`. Three tests
-     * failed on that and the failure pointed at the mapping rather than at the mock.
-     */
-    const BACKING_STORE = { width: 800, height: 600 };
-
-    /**
-     * The canvas answers TWO different `evaluate` calls, so one mock cannot answer both
-     * with a single value: one reads the backing store, the other calls `toDataURL`.
-     * Returning one value whichever was asked for put the backing store into
-     * `sourceDataUrl`, and the failure pointed at the return value rather than at the mock.
-     *
-     * The fix is to RUN the caller's function rather than guess which value it wanted. A
-     * fake canvas element carries both the resolution and a `toDataURL`, so each caller
-     * extracts what it actually asked for and the mock cannot be wrong about it. Matching on
-     * the function's source text would have worked today and rotted at the first
-     * transpilation, so it is deliberately not what is here.
-     */
-    const canvasEvaluate = () =>
-      vi.fn().mockImplementation((read: (element: unknown) => unknown) =>
-        read({
-          width: BACKING_STORE.width,
-          height: BACKING_STORE.height,
-          toDataURL: () => SOURCE_DATA_URL,
-        })
-      );
-
     it('prepares the download directory, strokes the canvas and returns the source data url', async () => {
       const box: Box = { x: 64, y: 48, width: 512, height: 384 };
-      const canvas = createLocatorMock({
-        boundingBox: vi.fn().mockResolvedValue(box),
-        evaluate: canvasEvaluate(),
-      });
+      const canvas = createLocatorMock({ boundingBox: vi.fn().mockResolvedValue(box) });
       const drawTool = createLocatorMock();
       const { surface, page } = createPageMock({
         getByTestId: byKey({ 'workspace-canvas': canvas, 'tool-button-draw': drawTool }, canvas),
@@ -687,14 +670,19 @@ describe('Export Helpers', () => {
       expect(surface.mouse.up).toHaveBeenCalled();
       expect(surface.screenshot).toHaveBeenCalledWith({ clip: redrawClip(box) });
       expect(canvas.evaluate).toHaveBeenCalled();
+      // The document size is READ off the backing store, not assumed to be the seeded 800x600:
+      // `documentToCanvasOffset` used to divide by a hardcoded size, so a document opened at
+      // any other resolution was drawn somewhere the app never looks and the export stopped
+      // being the line the constants describe. One of the two `evaluate` calls on the canvas
+      // is that read, and its result is handed back so a spec can assert on it.
+      const backingStoreRead = canvas.evaluate.mock.calls.map(([read]) => read(FAKE_CANVAS_ELEMENT));
+      expect(backingStoreRead).toContainEqual({
+        width: DEFAULT_DOCUMENT_WIDTH,
+        height: DEFAULT_DOCUMENT_HEIGHT,
+      });
       expect(result).toEqual({
         box,
-        // The document size is returned because it was READ, not assumed: the stroke is
-        // mapped with the resolution the canvas reports in its backing store, so a document
-        // opened at some other size is stroked where the app will actually look. Asserting
-        // it here is what makes the read observable — without it, a helper that quietly
-        // reverted to a hardcoded 800x600 would still pass every other assertion.
-        documentSize: { width: 800, height: 600 },
+        documentSize: { width: DEFAULT_DOCUMENT_WIDTH, height: DEFAULT_DOCUMENT_HEIGHT },
         sourceDataUrl: SOURCE_DATA_URL,
         downloadDirectory: DOWNLOAD_DIRECTORY,
       });
@@ -702,10 +690,7 @@ describe('Export Helpers', () => {
 
     it('offsets the stroke by the canvas box origin instead of fixed viewport coordinates', async () => {
       const box: Box = { x: 311, y: 197, width: 640, height: 480 };
-      const canvas = createLocatorMock({
-        boundingBox: vi.fn().mockResolvedValue(box),
-        evaluate: canvasEvaluate(),
-      });
+      const canvas = createLocatorMock({ boundingBox: vi.fn().mockResolvedValue(box) });
       const drawTool = createLocatorMock();
       const { surface, page } = createPageMock({
         getByTestId: byKey({ 'workspace-canvas': canvas, 'tool-button-draw': drawTool }, canvas),
@@ -731,10 +716,7 @@ describe('Export Helpers', () => {
 
     it('polls the box-relative redraw region until the stroke reaches the backing store', async () => {
       const box: Box = { x: 12, y: 8, width: 500, height: 500 };
-      const canvas = createLocatorMock({
-        boundingBox: vi.fn().mockResolvedValue(box),
-        evaluate: canvasEvaluate(),
-      });
+      const canvas = createLocatorMock({ boundingBox: vi.fn().mockResolvedValue(box) });
       const drawTool = createLocatorMock();
       const { surface, page } = createPageMock({
         getByTestId: byKey({ 'workspace-canvas': canvas, 'tool-button-draw': drawTool }, canvas),

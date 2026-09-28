@@ -208,10 +208,21 @@ test.describe('Export visual regression', () => {
       await page.setViewportSize({ width, height });
       await page.goto('/', { waitUntil: 'domcontentloaded' });
       const container = page.getByTestId('workspace-container');
+      // The test id is on `<main>`, which is mounted for every tool, so this asserts the
+      // element exists and is laid out before any tool is chosen. Only the `data-fit-*`
+      // VALUES need a tool that calls `usePointerPosition`.
       await expect(container).toBeVisible();
       // The fit is published by the tool areas, so a tool that mounts one has to be active
       // for the attributes to exist at all. `DummyToolArea` uses no `usePointerPosition`.
       await clickToolButton(page, 'draw');
+
+      // The app publishes the nine attributes in one synchronous block from the tool area's
+      // mount effect, which React schedules rather than runs inside the click, so reading them
+      // once straight after the click is a race with the scheduler. Waiting for one of them
+      // removes the race without adding a sleep: all nine are set together, so the first to
+      // exist implies the rest do, and the `read` below still throws naming any that is
+      // missing or non-numeric.
+      await expect(container).toHaveAttribute('data-fit-scale', /.+/);
 
       const canvas = getWorkspaceCanvas(page);
       const canvasBox = await canvas.boundingBox();
@@ -261,6 +272,18 @@ test.describe('Export visual regression', () => {
       // And the round trip that used to be tautological, now with the app's own numbers on
       // one side: a document point goes out as a client coordinate and the app's `scale` and
       // `offsetX`/`offsetY` bring it back to the document point it started as.
+      //
+      // `toBeCloseTo(…, 9)` and NOT `toBe`, because this round trip cannot be exact and never
+      // was: the leg is `x -> (box.x + offsetX + x*scale) -> (that - offsetX - box.x)/scale`,
+      // and both the multiply and the cancelling subtractions are floating point. At the
+      // 6-decimal document point this file was already pinned to, `123.203285` is not a
+      // representable double, so the trip back lands on `123.20328499999997` - about 2 ULP,
+      // and a difference `toBe` reports as a failure of the app's mapping when nothing moved.
+      // `9` digits is ~5e-10 document pixels: four orders of magnitude above the rounding this
+      // leg actually produces, and seven orders below the tightest threshold the export oracle
+      // itself resolves (a 0.01-document-pixel vertical shift already passes pixelmatch), so a
+      // real drift in the fit - which would be O(1) document pixels - still fails loudly. It
+      // is the same tolerance `screenshot-scale.unit.test.ts:272-280` uses for its round trip.
       for (const point of [
         { x: 0, y: 0 },
         { x: 123.203285, y: 78.234086 },
@@ -272,11 +295,11 @@ test.describe('Export visual regression', () => {
         expect(
           (clientX - published.offsetX - canvasBox.x) / published.scale,
           'document x survives the round trip'
-        ).toBe(point.x);
+        ).toBeCloseTo(point.x, 9);
         expect(
           (clientY - published.offsetY - canvasBox.y) / published.scale,
           'document y survives the round trip'
-        ).toBe(point.y);
+        ).toBeCloseTo(point.y, 9);
       }
 
       return { canvasBox, published };
