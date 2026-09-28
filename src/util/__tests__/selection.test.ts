@@ -14,8 +14,7 @@ import {
   createCommittedPolygonSelection,
   createCommittedRectangleSelection,
   distanceBetweenPoints,
-  drawClosedSelectionPath,
-  drawSelectionOutline,
+  drawSelectionAnchors,
   findSelectionAnchorAtPoint,
   getActiveRectangularSelection,
   getActiveSelection,
@@ -167,6 +166,39 @@ const selection = (overrides: Partial<Selection> = {}): Selection => ({
   sourceTool: 'polygonal-lasso',
   ...overrides,
 });
+
+type StyleProperty = 'fillStyle' | 'strokeStyle';
+
+const STYLE_PROPERTIES: StyleProperty[] = ['fillStyle', 'strokeStyle'];
+
+/**
+ * `makeMockCtx` exposes `fillStyle`/`strokeStyle` as plain data properties, so the
+ * last assignment wins and every earlier one is unrecoverable — which is exactly
+ * what a per-anchor colour rule needs. Replacing both with recording accessors is
+ * what lets a test pin WHICH anchor carried which colour, not just the one the
+ * loop happened to finish on.
+ */
+const recordStyleAssignments = (ctx: CanvasRenderingContext2D) => {
+  const assignments: [StyleProperty, string][] = [];
+
+  STYLE_PROPERTIES.forEach((property) => {
+    let value = ctx[property] as string;
+
+    Object.defineProperty(ctx, property, {
+      configurable: true,
+      get: () => value,
+      set: (next: string) => {
+        value = next;
+        assignments.push([property, next]);
+      },
+    });
+  });
+
+  return {
+    /** Every value assigned to one property, in assignment order. */
+    for: (property: StyleProperty) => assignments.filter(([of]) => of === property).map(([, value]) => value),
+  };
+};
 
 describe('normalizeSelectionPoints', () => {
   it('returns null for fewer than three points', () => {
@@ -353,73 +385,79 @@ describe('getSelectionAbsolutePoints', () => {
   });
 });
 
-describe('drawClosedSelectionPath', () => {
-  it('strokes a closed path through every point', () => {
+describe('drawSelectionAnchors', () => {
+  it('draws one filled anchor per vertex, the first one stroked blue and the rest in the default grey', () => {
     const ctx = makeMockCtx();
-    drawClosedSelectionPath(ctx, triangle());
+    const styles = recordStyleAssignments(ctx);
+    drawSelectionAnchors(ctx, selection());
 
-    expect(ctx.beginPath).toHaveBeenCalledTimes(1);
-    expect(ctx.moveTo).toHaveBeenCalledWith(2, 2);
-    expect(ctx.lineTo).toHaveBeenCalledTimes(2);
-    expect(ctx.lineTo).toHaveBeenNthCalledWith(1, 8, 2);
-    expect(ctx.lineTo).toHaveBeenNthCalledWith(2, 8, 8);
-    expect(ctx.closePath).toHaveBeenCalledTimes(1);
-    expect(ctx.stroke).toHaveBeenCalledTimes(1);
-  });
-
-  it('draws nothing for fewer than two points', () => {
-    const ctx = makeMockCtx();
-    drawClosedSelectionPath(ctx, []);
-    drawClosedSelectionPath(ctx, [{ x: 1, y: 1 }]);
-
-    expect(ctx.beginPath).not.toHaveBeenCalled();
-    expect(ctx.stroke).not.toHaveBeenCalled();
-  });
-});
-
-describe('drawSelectionOutline', () => {
-  it('draws the dashed path and one anchor per vertex for interactive tools', () => {
-    const ctx = makeMockCtx();
-    drawSelectionOutline(ctx, selection());
-
-    expect(ctx.setLineDash).toHaveBeenNthCalledWith(1, [6, 4]);
-    expect(ctx.setLineDash).toHaveBeenNthCalledWith(2, []);
+    expect(ctx.beginPath).toHaveBeenCalledTimes(3);
     expect(ctx.arc).toHaveBeenCalledTimes(3);
-    expect(ctx.arc).toHaveBeenCalledWith(5, 5, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    // `selection()`'s `pos` is not the origin, so the first anchor is (1,1)+(5,5)
+    // rather than the normalized first point — and it is the one that gets the
+    // blue start-handle stroke.
+    expect(ctx.arc).toHaveBeenNthCalledWith(1, 5, 5, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    expect(ctx.arc).toHaveBeenNthCalledWith(2, 15, 5, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    expect(ctx.arc).toHaveBeenNthCalledWith(3, 15, 15, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    expect(ctx.fill).toHaveBeenCalledTimes(3);
+    expect(styles.for('strokeStyle')).toEqual(['rgba(0,123,255,1)', 'rgba(0,0,0,0.65)', 'rgba(0,0,0,0.65)']);
+    expect(styles.for('fillStyle')).toEqual(['white', 'white', 'white']);
+    // Solid handles, and the `[6, 4]` march that came with the border is gone: the
+    // dash pattern now belongs to the marching-ants canvas.
+    expect(ctx.setLineDash).toHaveBeenCalledTimes(1);
+    expect(ctx.setLineDash).toHaveBeenCalledWith([]);
+    expect(ctx.save).toHaveBeenCalledTimes(1);
     expect(ctx.restore).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['freehand-lasso', 'magic-wand'] as const)('omits anchors for %s', (sourceTool) => {
+  it('never strokes the polygon path itself', () => {
     const ctx = makeMockCtx();
-    drawSelectionOutline(ctx, selection({ sourceTool }));
+    drawSelectionAnchors(ctx, selection());
 
-    expect(ctx.stroke).toHaveBeenCalledTimes(1);
+    // The border is the animated marching-ants outline on its own canvas, so a
+    // path here would double-draw it. The only strokes are the three anchor rims.
+    expect(ctx.moveTo).not.toHaveBeenCalled();
+    expect(ctx.lineTo).not.toHaveBeenCalled();
+    expect(ctx.closePath).not.toHaveBeenCalled();
+    expect(ctx.stroke).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(['freehand-lasso', 'magic-wand'] as const)('draws nothing at all for %s', (sourceTool) => {
+    const ctx = makeMockCtx();
+    drawSelectionAnchors(ctx, selection({ sourceTool }));
+
+    // A traced boundary can carry hundreds of sampled points, so these two get
+    // no handles — and with the border on its own canvas, that leaves the tool
+    // overlay with nothing to draw for them at all.
+    expect(ctx.save).not.toHaveBeenCalled();
+    expect(ctx.beginPath).not.toHaveBeenCalled();
     expect(ctx.arc).not.toHaveBeenCalled();
-    expect(ctx.setLineDash).toHaveBeenCalledTimes(1);
+    expect(ctx.stroke).not.toHaveBeenCalled();
   });
 
   it('skips inactive selections entirely', () => {
     const ctx = makeMockCtx();
-    drawSelectionOutline(ctx, selection({ isActive: false }));
+    drawSelectionAnchors(ctx, selection({ isActive: false }));
 
     expect(ctx.beginPath).not.toHaveBeenCalled();
     expect(ctx.save).not.toHaveBeenCalled();
+    expect(ctx.arc).not.toHaveBeenCalled();
   });
 
   it('skips degenerate selections with fewer than three points', () => {
     const ctx = makeMockCtx();
-    drawSelectionOutline(ctx, selection({ points: [{ x: 0, y: 0 }] }));
+    drawSelectionAnchors(ctx, selection({ points: [{ x: 0, y: 0 }] }));
 
     expect(ctx.save).not.toHaveBeenCalled();
+    expect(ctx.arc).not.toHaveBeenCalled();
   });
 
   it('converts document points to canvas coordinates when a frame is supplied', () => {
     const ctx = makeMockCtx();
     const frame: DocumentFrame = { x: 100, y: 50, width: 500, height: 400 };
-    drawSelectionOutline(ctx, selection(), frame);
+    drawSelectionAnchors(ctx, selection(), frame);
 
-    expect(ctx.moveTo).toHaveBeenCalledWith(-95, -45);
-    expect(ctx.arc).toHaveBeenCalledWith(-95, -45, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    expect(ctx.arc).toHaveBeenNthCalledWith(1, -95, -45, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
   });
 });
 

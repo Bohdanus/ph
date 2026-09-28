@@ -18,6 +18,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       hasUnsavedChanges: false,
       currentArgs: { current: null },
       layers: {},
+      selections: [],
       toolName: 'zoom',
       totalSize: { width: 800, height: 600 },
     },

@@ -3,6 +3,7 @@ import { fireEvent, render } from '@testing-library/react';
 import type { Selection } from '../../../contexts/general-types.ts';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { SELECTION_ACTION } from '../../../util/constants.ts';
+import { SELECTION_ANCHOR_RADIUS } from '../../../util/selection.ts';
 import { MagicWandToolArea } from '../MagicWandToolArea.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -172,6 +173,8 @@ describe('MagicWandToolArea', () => {
     );
     const toolArea = container.firstElementChild as HTMLDivElement;
 
+    // Read the commit's own repaint, not the mount effect's clear.
+    vi.mocked(mockCtx.clearRect).mockClear();
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 2, clientY: 2 });
 
     expect(dispatchMock).toHaveBeenNthCalledWith(1, {
@@ -220,7 +223,11 @@ describe('MagicWandToolArea', () => {
     expect(singleSelectionEdit().payload.updates.activeSelectionId).toBe(
       singleSelectionEdit().payload.updates.selections[0].id
     );
-    expect(mockCtx.closePath).toHaveBeenCalled();
+    // A wand selection has no anchors and its border belongs to the marching-ants
+    // canvas, so the tool overlay's whole contribution to a commit is the clear.
+    expect(mockCtx.clearRect).toHaveBeenCalledWith(0, 0, 6, 6);
+    expect(mockCtx.arc).not.toHaveBeenCalled();
+    expect(mockCtx.moveTo).not.toHaveBeenCalled();
   });
 
   it('ignores clicks outside image bounds', () => {
@@ -324,13 +331,15 @@ describe('MagicWandToolArea', () => {
     );
   });
 
-  it('repaints committed selections from the store on mount', () => {
+  it("repaints an interactive committed selection's anchors from the store on mount", () => {
+    // A wand selection has no anchors, so the only thing a tool area can repaint is
+    // a selection another tool made: its border is the marching-ants canvas's job.
     storeState.selections = [
       {
         id: 'selection-1',
         isActive: true,
         geometry: 'polygon',
-        sourceTool: 'freehand-lasso',
+        sourceTool: 'polygonal-lasso',
         lifecycle: 'committed',
         pos: { x: 0, y: 0, width: 4, height: 4 },
         points: [
@@ -344,9 +353,13 @@ describe('MagicWandToolArea', () => {
 
     render(<MagicWandToolArea overlayCtxRef={{ current: mockCtx }} className="test-magic-wand-area" />);
 
-    expect(mockCtx.moveTo).toHaveBeenCalledWith(0, 0);
-    expect(mockCtx.lineTo).toHaveBeenCalledWith(4, 0);
-    expect(mockCtx.closePath).toHaveBeenCalled();
+    expect(mockCtx.clearRect).toHaveBeenCalledWith(0, 0, 6, 6);
+    expect(mockCtx.arc).toHaveBeenNthCalledWith(1, 0, 0, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    expect(mockCtx.arc).toHaveBeenNthCalledWith(2, 4, 0, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    expect(mockCtx.arc).toHaveBeenNthCalledWith(3, 4, 4, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    // The handles are the whole picture the tool overlay paints of a committed
+    // selection: no path, so no double-drawn border.
+    expect(mockCtx.moveTo).not.toHaveBeenCalled();
   });
 
   it('clears the overlay on unmount', () => {

@@ -17,9 +17,15 @@ import { useApp } from '../../hooks/useApp.ts';
 import { useFile } from '../../contexts/useFile.tsx';
 import { loadDocumentFile } from '../../contexts/image-load-save-utils.ts';
 import { MoveToolArea } from './MoveToolArea.tsx';
+import { SelectionMarchingAnts } from './SelectionMarchingAnts.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { hasPendingText } from '../../util/typeGuards.ts';
 import { resizeCanvas } from '../../util/canvas.ts';
+
+// The tools that commit a polygon selection, and so the only modes with a border
+// to march. The rectangular selection tool is absent on purpose: `useRect` strokes
+// its own rect, with handles, and marching it as well would double the outline.
+const POLYGON_SELECTION_MODES: string[] = ['lasso', 'feather-magnetic-lasso', 'magic-wand'];
 
 const Main = () => {
   const [
@@ -46,6 +52,7 @@ const Main = () => {
 
   const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const toolCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const selectionAntsOverlayRef = useRef<HTMLCanvasElement | null>(null);
 
   let interactionMode = 'zoom';
   if (toolName === 'reposition') {
@@ -93,6 +100,10 @@ const Main = () => {
       resizeCanvas(rectOverlayRef.current, width, height);
       const rectCtx = rectOverlayRef.current.getContext('2d')!;
       rectCtx.imageSmoothingEnabled = false;
+    }
+
+    if (selectionAntsOverlayRef.current) {
+      resizeCanvas(selectionAntsOverlayRef.current, width, height);
     }
 
     if (canvasCtxRef.current) {
@@ -202,6 +213,23 @@ const Main = () => {
           style={{
             display: ['reposition'].includes(interactionMode) ? 'block' : 'none',
           }}
+        />
+        {/*
+          Last in the stack on purpose: the tool overlay and the rect overlay are
+          addressed by index in `Main.toolAreas.test.tsx`, and the ants belong
+          above both so a border is never half-covered by a draft outline.
+        */}
+        <canvas
+          ref={selectionAntsOverlayRef}
+          data-testid="selection-ants-canvas"
+          className="h-full w-full object-contain absolute pointer-events-none"
+          style={{
+            display: POLYGON_SELECTION_MODES.includes(interactionMode) ? 'block' : 'none',
+          }}
+        />
+        <SelectionMarchingAnts
+          overlayRef={selectionAntsOverlayRef}
+          enabled={POLYGON_SELECTION_MODES.includes(interactionMode)}
         />
         <EventHandler
           className="absolute inset-0 h-full w-full"

@@ -7,7 +7,7 @@ import type { Point, Selection } from '../../contexts/general-types.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import type { FeatherMagneticLassoToolArgs } from '../../tools/featherMagneticLasso.ts';
-import { createCommittedPolygonSelection, distanceBetweenPoints, drawSelectionOutline } from '../../util/selection.ts';
+import { createCommittedPolygonSelection, distanceBetweenPoints, drawSelectionAnchors } from '../../util/selection.ts';
 import {
   createEdgeMapFromCanvas,
   createMagneticSegment,
@@ -75,7 +75,7 @@ function drawFeatherMagneticOverlay({
   }
 
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
+  selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame));
   if (draftPoints.length === 0) return;
 
   ctx.save();

@@ -30,6 +30,7 @@ const storeState = vi.hoisted(
       hasUnsavedChanges: false,
       currentArgs: { current: { toolName: 'brush' } as ToolArgs },
       layers: {},
+      selections: [],
       toolName: 'reposition' as ToolName,
       totalSize: { width: 640, height: 480 },
       documentFrame: { x: 0, y: 0, width: 640, height: 480 },
@@ -183,15 +184,40 @@ describe('Main tool-area routing', () => {
     expect(canvases(container)[2].style.display).toBe('none');
   });
 
-  it('sizes both overlays to the document and enables smoothing on the main canvas', () => {
+  it('sizes every overlay to the document and enables smoothing on the main canvas', () => {
     render(<Main />);
 
-    const [canvas, toolOverlay, rectOverlay] = canvases(document.body);
-    expect([canvas, toolOverlay, rectOverlay].map((el) => [el.width, el.height])).toEqual([
+    const [canvas, toolOverlay, rectOverlay, selectionAnts] = canvases(document.body);
+    expect([canvas, toolOverlay, rectOverlay, selectionAnts].map((el) => [el.width, el.height])).toEqual([
       [300, 150],
       [640, 480],
       [640, 480],
+      [640, 480],
     ]);
+  });
+
+  it('shows the selection ants overlay for every polygon selection tool and hides it otherwise', () => {
+    storeState.toolName = 'polygonal-lasso';
+    const { container, rerender } = render(<Main />);
+    const ants = () => container.querySelector('[data-testid="selection-ants-canvas"]') as HTMLCanvasElement;
+
+    expect(ants().style.display).toBe('block');
+
+    for (const toolName of ['freehand-lasso', 'feather-magnetic-lasso', 'magic-wand'] as const) {
+      storeState.toolName = toolName;
+      rerender(<Main />);
+
+      expect(ants().style.display).toBe('block');
+    }
+
+    // `rectangular-selection` is the one selection tool excluded: `useRect` already
+    // strokes that border, with handles, on the tool overlay.
+    for (const toolName of ['rectangular-selection', 'reposition', 'brush', 'zoom'] as const) {
+      storeState.toolName = toolName;
+      rerender(<Main />);
+
+      expect(ants().style.display).toBe('none');
+    }
   });
 
   it('repaints every layer when the document frame changes', () => {

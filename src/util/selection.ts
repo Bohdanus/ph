@@ -124,22 +124,18 @@ export function getSelectionAbsolutePoints(selection: Selection): Point[] {
   }));
 }
 
-export function drawClosedSelectionPath(ctx: CanvasRenderingContext2D, points: Point[]): void {
-  if (points.length < 2) return;
-
-  ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-
-  for (let i = 1; i < points.length; i++) {
-    ctx.lineTo(points[i].x, points[i].y);
-  }
-
-  ctx.closePath();
-  ctx.stroke();
-}
-
-export function drawSelectionOutline(ctx: CanvasRenderingContext2D, selection: Selection, frame?: DocumentFrame): void {
+/**
+ * The draggable vertices of a committed selection, drawn on the tool overlay.
+ *
+ * Only the anchors. The border itself is the animated marching-ants outline owned
+ * by `useSelectionMarchingAnts` on its own canvas, so painting a second static
+ * stroke here would show both.
+ */
+export function drawSelectionAnchors(ctx: CanvasRenderingContext2D, selection: Selection, frame?: DocumentFrame): void {
   if (!selection.isActive) return;
+  // A traced boundary can carry hundreds of sampled points, so freehand and the
+  // magic wand get a border and no handles.
+  if (selection.sourceTool === 'freehand-lasso' || selection.sourceTool === 'magic-wand') return;
 
   const points = getSelectionAbsolutePoints(selection).map((point) =>
     frame ? documentToCanvasPoint(point, frame) : point
@@ -147,23 +143,17 @@ export function drawSelectionOutline(ctx: CanvasRenderingContext2D, selection: S
   if (points.length < 3) return;
 
   ctx.save();
-  ctx.strokeStyle = 'rgba(0,123,255,0.95)';
-  ctx.lineWidth = 2;
-  ctx.setLineDash([6, 4]);
-  drawClosedSelectionPath(ctx, points);
+  ctx.setLineDash([]);
 
-  if (selection.sourceTool !== 'freehand-lasso' && selection.sourceTool !== 'magic-wand') {
-    ctx.setLineDash([]);
-    points.forEach((point, index) => {
-      ctx.beginPath();
-      ctx.fillStyle = 'white';
-      ctx.strokeStyle = index === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.65)';
-      ctx.lineWidth = 2;
-      ctx.arc(point.x, point.y, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    });
-  }
+  points.forEach((point, index) => {
+    ctx.beginPath();
+    ctx.fillStyle = 'white';
+    ctx.strokeStyle = index === 0 ? 'rgba(0,123,255,1)' : 'rgba(0,0,0,0.65)';
+    ctx.lineWidth = 2;
+    ctx.arc(point.x, point.y, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
 
   ctx.restore();
 }

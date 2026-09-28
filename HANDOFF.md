@@ -1093,7 +1093,7 @@ until something unrelated repaints.
 opened when no selection is active: `handlePointerDown` returns early on
 `selections.some((selection) => selection.isActive)` (`PolygonClickToolArea.tsx:503-505`), so by the
 time `resetInteractionState` runs with a draft open every stored selection has `isActive: false`, and
-`drawSelectionOutline` returns immediately for those (`selection.ts:142`). And the one route that
+`drawSelectionAnchors` returns immediately for those (`selection.ts:135`). And the one route that
 does leave an active selection in the store — `finishSelection`, which commits the new polygon before
 resetting (`:251`) — changes `selections`, so the effect does re-run and puts the outline back.
 
@@ -1110,5 +1110,52 @@ that actually need it (`handlePointerLeave`, `handlePointerCancel`, `handlePoint
 `// After the clear, never before` comment at `:449-452` currently reads as a guarantee that the
 outlines are always restored; it is not one, and the fix is what makes it true.
 
+Note that the selection **border** is no longer at risk here: it is painted on its own canvas by
+`useSelectionMarchingAnts`, which no tool area clears, so `clearOverlay` can no longer erase it. What
+`clearOverlay` still erases is the selection's **anchors**, and those are what the fix above restores.
+
 **Files.** `src/components/Main/PolygonClickToolArea.tsx:77,403-418,433-454,503-505,732-734`,
-`src/contexts/StoreContext.tsx:532-537`, `src/util/selection.ts:142`
+`src/contexts/StoreContext.tsx:532-537`, `src/util/selection.ts:135`
+
+---
+
+## 36. No `useRect` border animates, so the crop, move, text and rectangular-selection rects all sit still
+
+**Problem.** `useRect` strokes its border with a fixed dash pattern and never advances it:
+`ctx.setLineDash([5 / scale, 5 / scale]); ctx.strokeRect(x, y, width, height);`
+(`src/hooks/useRect.ts:167-168`). There is no `lineDashOffset` assignment and no `requestAnimationFrame`
+loop in the file. It looks alive during a drag only because the drag is RAF-throttled
+(`useRect.ts:370-378`), so the line is redrawn at pointer rate — the dashes never move.
+
+**This is the only animated border in the app, and it is not a selection.** `useMarchingAnts`
+(`src/hooks/useAnts.ts:47-73`) is the real marching-ants loop, and its only production consumer is
+`MoveToolArea.tsx:30`, which paints the outline of a **hovered layer** in `reposition` mode. So
+"marching ants on a rectangle" is the Move tool's layer outline; the selection borders are static. A
+polygon selection now animates (`useSelectionMarchingAnts`), which leaves the rectangle as the only
+selection border that does not — and the two no longer match each other in colour or weight
+(`#007bff` at 2px, plus four square handles, versus black/white ants at 1px).
+
+**It affects four tools, not one.** `useRect` is shared by `MoveToolArea.tsx:80`, `CropToolArea.tsx:22`,
+`RectangularSelectionToolArea.tsx:41` and `TextToolArea.tsx:25`, so the crop rectangle, the move
+rectangle, the text frame and the rectangular selection all have the same still border.
+
+**Fix.** Two shapes, and the choice is a recording decision rather than a mechanical one:
+
+- Animate inside `useRect` — advance a `lineDashOffset` ref by a few pixels per frame inside the
+  existing draw path, keeping the current colour and the four handles. Cheapest, and the only option
+  that covers all four callers at once. It needs its own loop, because `drawMask` is only called while
+  something is changing.
+- Or give the rect the ants treatment the polygon got: stop `useRect` stroking the border, drop
+  `rectangular-selection` from `Main.tsx`'s `POLYGON_SELECTION_MODES` exclusion
+  (`useSelectionAnts.ts:66-68` currently skips rectangles on the assumption that `useRect` still paints
+  one), and let the ants canvas own the rect. Note the constraint this has to respect: `useRect` also
+  draws the dim-out scrim and the corner handles (`:155-178`), so the border and the handles have to
+  end up on different canvases or the scrim will wipe the ants mid-drag.
+
+Whichever is chosen, `useRect.drag.test.ts:136,252` pins the current `setLineDash` values and has to be
+updated in the same change.
+
+**Files.** `src/hooks/useRect.ts:155-178,370-378`, `src/hooks/useAnts.ts:47-73`,
+`src/components/Main/MoveToolArea.tsx:30,80`, `src/components/Main/CropToolArea.tsx:22`,
+`src/components/Main/RectangularSelectionToolArea.tsx:41`, `src/components/Main/TextToolArea.tsx:25`,
+`src/hooks/useSelectionAnts.ts:66-68`, `src/hooks/__tests__/useRect.drag.test.ts:136,252`

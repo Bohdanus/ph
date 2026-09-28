@@ -10,7 +10,7 @@ import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import {
   createCommittedPolygonSelection,
   distanceBetweenPoints,
-  drawSelectionOutline,
+  drawSelectionAnchors,
   findSelectionAnchorAtPoint,
   getSelectionAtPoint,
   hasSameSelectionGeometry,
@@ -75,7 +75,7 @@ function drawPolygonOverlay({
 }) {
   const canvas = ctx.canvas;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
+  selections.forEach((selection) => drawSelectionAnchors(ctx, selection, documentFrame));
 
   if (points.length === 0) return;
 
