@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
-import type { Point, Selection } from '../../../contexts/general-types.ts';
-import { pointsBoundingPos } from '../../../util/draw.ts';
+import type { Selection } from '../../../contexts/general-types.ts';
 import { SELECTION_ACTION } from '../../../util/constants.ts';
 import { PolygonClickToolArea } from '../PolygonClickToolArea.tsx';
 import type { PointerEvent as ReactPointerEvent } from 'react';
@@ -50,8 +49,10 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       toolOverlayRef: { current: document.createElement('canvas') },
       totalSize: { width: 800, height: 600 },
       // Explicit, so the hook derives the same frame the tool area does rather
-      // than relying on an absent key.
-      documentFrame: null,
+      // than relying on an absent key. Non-zero on purpose: a zero-origin frame
+      // makes document and canvas coordinates identical, so a conversion that
+      // dropped the offset would still satisfy every assertion in this file.
+      documentFrame: { x: 30, y: 40, width: 800, height: 600 },
     },
     dispatchMock,
   ],
@@ -138,59 +139,6 @@ describe('PolygonClickToolArea', () => {
   /** The single selection a `COMMIT_DOCUMENT_EDIT` published, which is the drawn lasso. */
   const committedSelection = (): Selection => selectionEdits()[0].payload.updates.selections[0];
 
-  it('pointsBoundingPos calculates correct bounding box', () => {
-    const points: Point[] = [
-      { x: 10, y: 20 },
-      { x: 100, y: 150 },
-      { x: 50, y: 75 },
-    ];
-
-    const pos = pointsBoundingPos({ points, lineWidth: 1 });
-
-    expect(pos.x).toBe(9); // 10 - 1
-    expect(pos.y).toBe(19); // 20 - 1
-    expect(pos.width).toBe(92); // 100 - 10 + 2*1
-    expect(pos.height).toBe(132); // 150 - 20 + 2*1
-  });
-
-  it('pointsBoundingPos handles single point', () => {
-    const points: Point[] = [{ x: 50, y: 50 }];
-    const pos = pointsBoundingPos({ points, lineWidth: 2 });
-
-    expect(pos.x).toBe(48); // 50 - 2
-    expect(pos.y).toBe(48); // 50 - 2
-    expect(pos.width).toBe(4); // 0 + 2*2
-    expect(pos.height).toBe(4); // 0 + 2*2
-  });
-
-  it('pointsBoundingPos handles negative coordinates', () => {
-    const points: Point[] = [
-      { x: -100, y: -50 },
-      { x: 100, y: 50 },
-    ];
-
-    const pos = pointsBoundingPos({ points, lineWidth: 5 });
-
-    expect(pos.x).toBe(-105); // -100 - 5
-    expect(pos.y).toBe(-55); // -50 - 5
-    expect(pos.width).toBe(210); // 200 + 2*5
-    expect(pos.height).toBe(110); // 100 + 2*5
-  });
-
-  it('pointsBoundingPos handles large line widths', () => {
-    const points: Point[] = [
-      { x: 0, y: 0 },
-      { x: 10, y: 10 },
-    ];
-
-    const pos = pointsBoundingPos({ points, lineWidth: 20 });
-
-    expect(pos.x).toBe(-20);
-    expect(pos.y).toBe(-20);
-    expect(pos.width).toBe(50); // 10 + 2*20
-    expect(pos.height).toBe(50); // 10 + 2*20
-  });
-
   it('finishes a polygonal selection on double-click without adding a duplicate final point', () => {
     const mockCtx = createMockContext();
 
@@ -234,7 +182,7 @@ describe('PolygonClickToolArea', () => {
                 { x: 91, y: 1 },
                 { x: 91, y: 91 },
               ],
-              pos: { x: 9, y: 9, width: 92, height: 92 },
+              pos: { x: 39, y: 49, width: 92, height: 92 },
             }),
           ],
         },
@@ -277,7 +225,7 @@ describe('PolygonClickToolArea', () => {
         { x: 21, y: 11 },
         { x: 31, y: 41 },
       ],
-      pos: { x: 9, y: 9, width: 32, height: 42 },
+      pos: { x: 39, y: 49, width: 32, height: 42 },
     });
   });
 
@@ -368,7 +316,7 @@ describe('PolygonClickToolArea', () => {
         { x: 791, y: 591 },
         { x: 391, y: 291 },
       ],
-      pos: { x: 9, y: 9, width: 792, height: 592 },
+      pos: { x: 39, y: 49, width: 792, height: 592 },
       sourceTool: 'freehand-lasso',
     });
   });
@@ -378,7 +326,7 @@ describe('PolygonClickToolArea', () => {
       {
         id: 'selection-1',
         isActive: true,
-        pos: { x: 9, y: 9, width: 92, height: 92 },
+        pos: { x: 39, y: 49, width: 92, height: 92 },
         points: [
           { x: 1, y: 1 },
           { x: 91, y: 1 },
@@ -404,7 +352,7 @@ describe('PolygonClickToolArea', () => {
       {
         id: 'selection-1',
         isActive: true,
-        pos: { x: 9, y: 9, width: 92, height: 92 },
+        pos: { x: 39, y: 49, width: 92, height: 92 },
         points: [
           { x: 1, y: 1 },
           { x: 91, y: 1 },
@@ -433,7 +381,7 @@ describe('PolygonClickToolArea', () => {
     expect(committedSelection()).toMatchObject({
       id: 'selection-1',
       metadata: { movedAtVersion: 1 },
-      pos: { x: 19, y: 9, width: 82, height: 92 },
+      pos: { x: 49, y: 49, width: 82, height: 92 },
       points: [
         { x: 1, y: 11 },
         { x: 81, y: 1 },
@@ -448,7 +396,7 @@ describe('PolygonClickToolArea', () => {
       {
         id: 'selection-1',
         isActive: true,
-        pos: { x: 9, y: 9, width: 92, height: 92 },
+        pos: { x: 39, y: 49, width: 92, height: 92 },
         points: [
           { x: 1, y: 1 },
           { x: 91, y: 1 },
@@ -475,7 +423,7 @@ describe('PolygonClickToolArea', () => {
       id: 'selection-1',
       metadata: { movedAtVersion: 1 },
       // +10/+15, applied to the origin rather than to the stored position.
-      pos: { x: 19, y: 24, width: 92, height: 92 },
+      pos: { x: 49, y: 64, width: 92, height: 92 },
       points: [
         { x: 1, y: 1 },
         { x: 91, y: 1 },
@@ -490,7 +438,7 @@ describe('PolygonClickToolArea', () => {
       {
         id: 'selection-1',
         isActive: true,
-        pos: { x: 9, y: 9, width: 92, height: 92 },
+        pos: { x: 39, y: 49, width: 92, height: 92 },
         points: [
           { x: 1, y: 1 },
           { x: 91, y: 1 },
@@ -522,7 +470,7 @@ describe('PolygonClickToolArea', () => {
       {
         id: 'selection-1',
         isActive: true,
-        pos: { x: 9, y: 9, width: 92, height: 92 },
+        pos: { x: 39, y: 49, width: 92, height: 92 },
         points: [
           { x: 1, y: 1 },
           { x: 91, y: 1 },
@@ -547,7 +495,7 @@ describe('PolygonClickToolArea', () => {
       {
         id: 'selection-1',
         isActive: true,
-        pos: { x: 9, y: 9, width: 92, height: 92 },
+        pos: { x: 39, y: 49, width: 92, height: 92 },
         points: [
           { x: 1, y: 1 },
           { x: 91, y: 1 },

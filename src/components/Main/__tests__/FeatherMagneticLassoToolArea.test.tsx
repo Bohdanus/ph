@@ -52,8 +52,10 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       selections: h.selections,
       totalSize: { width: 200, height: 120 },
       // Explicit, so the hook derives the same frame the tool area does rather
-      // than relying on an absent key.
-      documentFrame: null,
+      // than relying on an absent key. Non-zero on purpose: a zero-origin frame
+      // makes document and canvas coordinates identical, so a conversion that
+      // dropped the offset would still satisfy every assertion in this file.
+      documentFrame: { x: 30, y: 40, width: 200, height: 120 },
     },
     h.dispatch,
   ],
@@ -340,6 +342,18 @@ describe('FeatherMagneticLassoToolArea', () => {
                   width: 10,
                 }),
               }),
+              // `pos` is the only field where `documentFrame` is observable, since
+              // `points` are stored relative to it: the three clicks are canvas
+              // (10,10), (60,10), (60,60), `canvasToDocumentPoint` adds the frame
+              // origin (30, 40) making them (40,50)-(90,100), and
+              // `pointsBoundingPos` insets that box by its default `lineWidth` of
+              // 1. A conversion that dropped the frame reports (9, 9) instead.
+              pos: { x: 39, y: 49, width: 52, height: 52 },
+              points: expect.arrayContaining([
+                { x: 1, y: 1 },
+                { x: 51, y: 1 },
+                { x: 51, y: 51 },
+              ]),
               sourceTool: 'feather-magnetic-lasso',
             }),
           ],

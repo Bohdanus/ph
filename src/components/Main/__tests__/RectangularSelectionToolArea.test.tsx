@@ -29,6 +29,10 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       activeSelectionId: storeState.activeSelectionId,
       history: [],
       historyIndex: 0,
+      // Non-zero on purpose: a zero-origin frame makes document and canvas
+      // coordinates identical, so a conversion that dropped the offset would
+      // still satisfy every assertion in this file.
+      documentFrame: { x: 30, y: 40, width: 800, height: 600 },
     },
     dispatchMock,
   ],
@@ -125,7 +129,9 @@ describe('RectangularSelectionToolArea', () => {
                 lifecycle: 'committed',
                 isActive: true,
                 sourceTool: 'rectangular-selection',
-                pos: { x: 20, y: 10, width: 80, height: 50 },
+                // 20,10 -> 100,60 in canvas space is 50,50 -> 130,100 in
+                // document space once the frame origin is added.
+                pos: { x: 50, y: 50, width: 80, height: 50 },
                 points: [
                   { x: 0, y: 0 },
                   { x: 80, y: 0 },
@@ -165,7 +171,9 @@ describe('RectangularSelectionToolArea', () => {
 
     render(<RectangularSelectionToolArea className="test-rectangular-selection-area" />);
 
-    expect(useRectProps.current!.initialRect).toEqual({ x1: 10, y1: 20, x2: 40, y2: 60 });
+    // The stored selection is in document space and the rect handle is in canvas
+    // space, so the 10,20 origin sits 30,40 further along the canvas axis.
+    expect(useRectProps.current!.initialRect).toEqual({ x1: -20, y1: -20, x2: 10, y2: 20 });
   });
 
   it('updates an active committed rectangle instead of storing moved geometry in tool args', () => {
@@ -220,7 +228,9 @@ describe('RectangularSelectionToolArea', () => {
                 lifecycle: 'committed',
                 isActive: true,
                 sourceTool: 'rectangular-selection',
-                pos: { x: 20, y: 30, width: 30, height: 40 },
+                // 20,30 -> 50,70 in canvas space is 50,70 -> 80,110 in
+                // document space once the frame origin is added.
+                pos: { x: 50, y: 70, width: 30, height: 40 },
                 points: [
                   { x: 0, y: 0 },
                   { x: 30, y: 0 },
