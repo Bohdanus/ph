@@ -161,11 +161,20 @@ export class DocumentPresentationScope {
    * layer, and the `layerSource`/`args` reference a history entry retains, which
    * `history-replay` reads back on undo. Closing one of those is a
    * use-after-close on the production replay authority, not a leak.
+   *
+   * It is a THUNK, and it has to stay one. Answering that question walks the whole
+   * unbounded history and every alias in it, so as a value it would be computed on
+   * every commit, undo, redo and layer mutation — while a document the scope has
+   * published nothing for cannot retire anything, whatever the answer says. The
+   * early-out below is the only thing that makes the walk affordable, so the walk
+   * stays behind it: a caller that passes an eagerly built set reintroduces the
+   * cost on the path this early-out exists to skip, and no signature can catch it.
    */
-  retireUnreferenced(documentId: string, live: ReadonlySet<BitmapSource>): void {
+  retireUnreferenced(documentId: string, live: () => ReadonlySet<BitmapSource>): void {
     const owned = this.published.get(documentId);
     if (!owned) return;
-    const departed = [...owned].filter((bitmap) => !live.has(bitmap));
+    const reachable = live();
+    const departed = [...owned].filter((bitmap) => !reachable.has(bitmap));
     if (!departed.length) return;
     for (const bitmap of departed) owned.delete(bitmap);
     if (!owned.size) this.published.delete(documentId);

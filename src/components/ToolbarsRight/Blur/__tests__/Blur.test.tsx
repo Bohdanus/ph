@@ -7,7 +7,6 @@ const toolArgs = vi.hoisted(() => ({ radius: 4, toolName: 'blur' as const }));
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
 const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
-const mockResetToLastSavedArgs = vi.hoisted(() => vi.fn());
 const mockUndo = vi.hoisted(() => vi.fn());
 
 // The discard is gated on a live preview for the active layer, so the store's
@@ -34,7 +33,6 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs,
     setToolArgs: mockSetToolArgs,
-    resetToLastSavedArgs: mockResetToLastSavedArgs,
   }),
 }));
 
@@ -78,7 +76,6 @@ describe('Blur toolbar', () => {
     mockSetToolArgs.mockClear();
     mockTempUpdateLayer.mockClear();
     mockCancelLayerPreview.mockClear();
-    mockResetToLastSavedArgs.mockClear();
     mockUndo.mockClear();
     rafCallbacks.length = 0;
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -210,9 +207,9 @@ describe('Blur toolbar', () => {
 
     expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
     // The baseline is `defaultSettings.blur`, not the value the user just dragged to.
-    // A `resetToLastSavedArgs` reset would publish 37 here and leave the slider lying.
+    // A baseline read from the stored settings would publish 37 here: the slider
+    // write overwrites that copy on the same tick.
     expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({ radius: 0, toolName: 'blur' });
-    expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
     // The click removes an uncommitted preview. A committed blur is a document
     // operation, and `undo()` — which the panel does not call — is the route out
     // of one, so a fall-through to document-level undo stays pinned here.

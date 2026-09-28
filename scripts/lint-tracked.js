@@ -33,6 +33,14 @@
  * images, the one `.txt`, the dotfiles — are not linted, and that is intended,
  * not a gap.
  *
+ * `.husky/pre-commit` and `.husky/pre-push` are in that set for a reason worth
+ * writing down, because they are the two files that ARE the gate and their
+ * absence from the linted list otherwise reads as an oversight. They are
+ * extensionless `sh`, and Prettier cannot infer a parser for a file with no
+ * extension — it exits non-zero with "No parser could be inferred" rather than
+ * skipping it, so adding a glob for them would break `lint:check` outright. They
+ * are hand-maintained shell; keep their lines short and their comments true.
+ *
  * @example node scripts/lint-tracked.js                 check everything
  * @example node scripts/lint-tracked.js --write         prettier --write only
  * @example node scripts/lint-tracked.js --eslint-only   eslint only, cached

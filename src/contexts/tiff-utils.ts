@@ -5,8 +5,9 @@ type IfdTags = Record<string, unknown>;
 
 /**
  * The largest document this app can create, not a round number: `NewImageDialog` clamps each
- * axis to 10000 px (`NewImageDialog.tsx:208-209`, and `max="10000"` on both inputs at `:289`
- * and `:308`), so every preset at every DPI the dialog offers lands at or below
+ * axis to 10000 px (`NewImageDialog.tsx:96-97` when a preset is chosen and `:129-130` when the
+ * DPI changes, with `max="10000"` on both inputs at `:177` and `:196`), so every preset at
+ * every DPI the dialog offers lands at or below
  * 10000 × 10000. A budget under that number makes the app refuse files it just wrote.
  */
 const MAX_CREATABLE_DOCUMENT_PIXELS = 100_000_000;
