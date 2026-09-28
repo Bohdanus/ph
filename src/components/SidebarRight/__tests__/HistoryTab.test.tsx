@@ -2,8 +2,10 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import HistoryTab from '../HistoryTab.tsx';
 import type { HistoryItem } from '@/contexts/history-types.ts';
+import { getHistoryItemTitle } from '@/contexts/useHistory.ts';
 import { NEW_LAYER_ACTION, RENAME_LAYER_ACTION, TOOL_ACTION, HIDE_LAYER_ACTION } from '@/util/constants.ts';
 import { createMockHistoryItem } from '@/__tests__/fixtures/history.ts';
+import { claimDocumentGesture, isDocumentGestureOpen, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 vi.mock('../../Icons/EyeIcon.tsx', () => ({
   EyeIcon: ({ open }: { open: boolean }) => <span data-testid="eye-icon" data-open={open} />,
@@ -51,16 +53,29 @@ vi.mock('@/contexts/StoreContext.tsx', () => ({
   useStore,
 }));
 
-vi.mock('@/contexts/useHistory.ts', () => ({
-  useHistory,
-  getHistoryItemTitle: (item: HistoryItem) => {
-    if (item.actionName === RENAME_LAYER_ACTION) return (item.args as { name?: string })?.name || 'Rename';
-    if (item.actionName === TOOL_ACTION) return `Tool: ${(item.args as { toolName?: string })?.toolName || 'unknown'}`;
-    if (item.actionName === HIDE_LAYER_ACTION) return 'Hide Layer';
-    if (item.actionName === NEW_LAYER_ACTION) return (item.args as { name?: string })?.name || 'New Layer';
-    return item.actionName;
-  },
-}));
+vi.mock('@/contexts/useHistory.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/contexts/useHistory.ts')>();
+  return {
+    ...actual,
+    useHistory,
+  };
+});
+
+const renameTitle = getHistoryItemTitle(mockHistory[0]);
+const toolTitle = getHistoryItemTitle(mockHistory[1]);
+const hideTitle = getHistoryItemTitle(mockHistory[2]);
+
+// The gesture slot is module-level and outlives every mount, so a case that
+// leaked a claim would refuse every later click in this file, and one failure
+// would read as a failure in all of them. Cleared on the way in AND on the way
+// out; the gate suite below pins that the reset actually does it.
+beforeEach(() => {
+  resetDocumentGestures();
+});
+
+afterEach(() => {
+  resetDocumentGestures();
+});
 
 describe('HistoryTab', () => {
   beforeEach(() => {
@@ -82,9 +97,10 @@ describe('HistoryTab', () => {
     render(<HistoryTab />);
     const items = screen.getAllByRole('listitem');
     expect(items).toHaveLength(3);
-    expect(items[0]).toHaveTextContent('Hide Layer');
-    expect(items[1]).toHaveTextContent('Tool: brush');
-    expect(items[2]).toHaveTextContent('Layer 1');
+    expect([renameTitle, toolTitle, hideTitle]).toEqual([RENAME_LAYER_ACTION, 'brush', HIDE_LAYER_ACTION]);
+    expect(items[0]).toHaveTextContent(hideTitle);
+    expect(items[1]).toHaveTextContent(toolTitle);
+    expect(items[2]).toHaveTextContent(renameTitle);
   });
 
   it('highlights current history item', () => {
@@ -202,7 +218,7 @@ describe('HistoryTab', () => {
     render(<HistoryTab />);
     const items = screen.getAllByRole('listitem');
     expect(items).toHaveLength(1);
-    expect(items[0]).toHaveTextContent('Layer 1');
+    expect(items[0]).toHaveTextContent(NEW_LAYER_ACTION);
   });
 
   it('shows tooltip on list items', () => {
@@ -230,9 +246,9 @@ describe('HistoryTab row behaviour', () => {
   });
 
   it.each([
-    ['Hide Layer', 2],
-    ['Tool: brush', 1],
-    ['Layer 1', 0],
+    [hideTitle, 2],
+    [toolTitle, 1],
+    [renameTitle, 0],
   ])('resets history to the original store index behind %s', (title, expectedIndex) => {
     const resetHistoryTo = vi.fn();
     useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
@@ -277,8 +293,8 @@ describe('HistoryTab row behaviour', () => {
 
     const currentMarkers = screen.getAllByTitle('Current state');
     expect(currentMarkers).toHaveLength(1);
-    expect(getItemByTitle('Tool: brush')).toContainElement(currentMarkers[0]);
-    expect(getItemByTitle('Hide Layer')).not.toContainElement(currentMarkers[0]);
+    expect(getItemByTitle(toolTitle)).toContainElement(currentMarkers[0]);
+    expect(getItemByTitle(hideTitle)).not.toContainElement(currentMarkers[0]);
   });
 
   it('marks no item as current when historyIndex points past the end of the list', () => {
@@ -296,9 +312,9 @@ describe('HistoryTab row behaviour', () => {
     useStore.mockReturnValue([{ ...mockStore, historyIndex: 0 }, vi.fn()]);
     render(<HistoryTab />);
 
-    expect(getItemByTitle('Layer 1')).toHaveClass('opacity-100');
-    expect(getItemByTitle('Tool: brush')).toHaveClass('opacity-50');
-    expect(getItemByTitle('Hide Layer')).toHaveClass('opacity-50');
+    expect(getItemByTitle(renameTitle)).toHaveClass('opacity-100');
+    expect(getItemByTitle(toolTitle)).toHaveClass('opacity-50');
+    expect(getItemByTitle(hideTitle)).toHaveClass('opacity-50');
   });
 
   it('renders no list at all when history is empty', () => {
@@ -309,7 +325,7 @@ describe('HistoryTab row behaviour', () => {
     expect(screen.queryAllByRole('listitem')).toHaveLength(0);
   });
 
-  // Accessibility gap — src/components/SidebarRight/HistoryTab.tsx:25-27.
+  // Accessibility gap — src/components/SidebarRight/HistoryTab.tsx:72-74.
   // The history row is the only way to travel back in time, but it is a bare `<li>`
   // with an `onClick`: it has no `tabIndex`, no `role` and no key handler, so the list is
   // completely unreachable with the keyboard. The eye control inside it is focusable, but
@@ -319,12 +335,127 @@ describe('HistoryTab row behaviour', () => {
     useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
     render(<HistoryTab />);
 
-    const row = getItemByTitle('Tool: brush');
+    const row = getItemByTitle(toolTitle);
     expect(row).toHaveAttribute('tabindex', '0');
     expect(row).toHaveAttribute('role', 'button');
 
     fireEvent.keyDown(row, { key: 'Enter' });
 
+    expect(resetHistoryTo).toHaveBeenCalledWith(1);
+  });
+});
+
+/**
+ * The keyboard gate (`useKeyboardEvents.tsx:134`) refuses document-mutating
+ * shortcuts while a pointer gesture owns the document, and the Undo/Redo buttons
+ * were closed off in the same change class afterwards (`HistoryControls.tsx`,
+ * `MobileHeader.tsx`). The history tab is the third way into the same
+ * `APPLY_HISTORY_REPLAY`, and BOTH of its controls reached it ungated.
+ *
+ * Inside a gesture's window the replay is destructive. `resetHistoryTo` replays
+ * `selections` from the SAME `history` array, so `history.length` never moves and
+ * the pending commit's `entries.slice(0, cursor + 1)` truncates the redo tail
+ * with no other symptom; `toggleDisabled` loses the same tail and takes a
+ * visibility flag with it. A single pointer cannot reach it — the pointer is
+ * captured by the tool area — so the window is reachable only by a second pointer.
+ *
+ * The refusal belongs in these handlers, at the input layer: no dispatch, so
+ * nothing appends, so nothing truncates. It deliberately does NOT come from a
+ * `disabled` attribute either way — every case below claims the gesture AFTER
+ * render, and `disabled` is read at render time, so a render-time read could not
+ * see the claim at all, and a control disabled by a mid-gesture render would stay
+ * disabled after the release. The "is still enabled" assertions are there so a
+ * `disabled` solution cannot pass these cases.
+ */
+describe('HistoryTab document gesture gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useStore.mockReturnValue([mockStore, vi.fn()]);
+  });
+
+  /** The row's own enable/disable control, which is a real `<button>`. */
+  const eyeControl = (row: HTMLElement) => within(row).getByRole('button');
+
+  it('refuses to rewind to a history entry while a document gesture is open, because the release-time commit would truncate the redo tail', () => {
+    const resetHistoryTo = vi.fn();
+    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
+    render(<HistoryTab />);
+
+    // Claimed after render, which is the whole point: the slot raises no re-render,
+    // so a `disabled` expression would not have seen this.
+    claimDocumentGesture('rectangular-selection', 1);
+    expect(isDocumentGestureOpen()).toBe(true);
+
+    fireEvent.click(getItemByTitle(hideTitle));
+
+    expect(resetHistoryTo).not.toHaveBeenCalled();
+  });
+
+  it('refuses to toggle a history entry enabled state while a document gesture is open, for the same reason', () => {
+    const resetHistoryTo = vi.fn();
+    const toggleDisabled = vi.fn();
+    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled });
+    render(<HistoryTab />);
+
+    claimDocumentGesture('layer-transform', 2);
+    fireEvent.click(eyeControl(getItemByTitle(hideTitle)));
+
+    expect(toggleDisabled).not.toHaveBeenCalled();
+    // `stopPropagation` runs before the gate, so a refused eye click still does not
+    // travel to the row and rewind behind it.
+    expect(resetHistoryTo).not.toHaveBeenCalled();
+  });
+
+  it('leaves the row and its enable control enabled while a gesture is open, so the refusal is the handler and not an attribute', () => {
+    useHistory.mockReturnValue({ resetHistoryTo: vi.fn(), toggleDisabled: vi.fn() });
+    render(<HistoryTab />);
+
+    const row = getItemByTitle(hideTitle);
+    claimDocumentGesture('brush-stroke', 3);
+
+    expect(eyeControl(row)).toBeEnabled();
+    expect(row).not.toHaveAttribute('disabled');
+    expect(row).not.toHaveAttribute('aria-disabled');
+  });
+
+  it('rewinds with no gesture open, so the gate refuses only while a gesture owns the document', () => {
+    const resetHistoryTo = vi.fn();
+    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
+    render(<HistoryTab />);
+    expect(isDocumentGestureOpen()).toBe(false);
+
+    fireEvent.click(getItemByTitle(toolTitle));
+
+    expect(resetHistoryTo).toHaveBeenCalledTimes(1);
+    expect(resetHistoryTo).toHaveBeenCalledWith(1);
+  });
+
+  it('toggles with no gesture open, so the gate refuses only while a gesture owns the document', () => {
+    const toggleDisabled = vi.fn();
+    useHistory.mockReturnValue({ resetHistoryTo: vi.fn(), toggleDisabled });
+    render(<HistoryTab />);
+    expect(isDocumentGestureOpen()).toBe(false);
+
+    fireEvent.click(eyeControl(getItemByTitle(hideTitle)));
+
+    expect(toggleDisabled).toHaveBeenCalledTimes(1);
+    expect(toggleDisabled).toHaveBeenCalledWith('hist-3');
+  });
+
+  it('rewinds again once resetDocumentGestures drops the claim, so the gate is a window and not a latch', () => {
+    const resetHistoryTo = vi.fn();
+    useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
+    render(<HistoryTab />);
+
+    claimDocumentGesture('polygon-selection', 4);
+    fireEvent.click(getItemByTitle(toolTitle));
+    expect(resetHistoryTo).not.toHaveBeenCalled();
+
+    resetDocumentGestures();
+    expect(isDocumentGestureOpen()).toBe(false);
+    fireEvent.click(getItemByTitle(toolTitle));
+
+    expect(resetHistoryTo).toHaveBeenCalledTimes(1);
     expect(resetHistoryTo).toHaveBeenCalledWith(1);
   });
 });

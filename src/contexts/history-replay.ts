@@ -10,7 +10,7 @@ import {
 import { createAffineLayerOperation, createLayerOperation, reorderLayers } from './layer-utils.ts';
 import type { Layer, LayerId, LayerOperationArgs, LayerSource, LayersRecord } from './layer-types.ts';
 import type { NewBedrockSize, ToolArgs } from './tool-types.ts';
-import { toolProcessors } from '../tools/toolProcessors.ts';
+import { findToolProcessor } from '../tools/toolProcessors.ts';
 import type { RepositionToolArgs } from '../tools/reposition.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform } from './affine-transform.ts';
 import { deriveSelectionBaseline, type SelectionHistoryArgs } from './selection-baseline.ts';
@@ -144,7 +144,10 @@ export function replayHistory(
     const layer = layers[layerId];
     const toolArgs = args as ToolArgs;
     if (!layer || !toolArgs?.toolName) continue;
-    const processor = toolProcessors[toolArgs.toolName];
+    const processor = findToolProcessor(toolArgs.toolName);
+    // A tool with no processor (see `PIXEL_FREE_TOOLS`) rasterizes nothing, so there is nothing to
+    // replay for it. Unreachable today, because such a tool never writes a history item.
+    if (!processor) continue;
 
     if (processor.commit === 'layer-operation') {
       layers = {

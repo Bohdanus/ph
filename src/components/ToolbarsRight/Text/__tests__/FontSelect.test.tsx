@@ -46,8 +46,14 @@ function renderFontSelect(initial: string, onChange = vi.fn()) {
 /** The trigger is identified by its production `id`, never by accessible name. */
 const trigger = () => document.getElementById('font-family-select') as HTMLButtonElement;
 
-/** Popup options are siblings of the trigger, so they are scoped to the popup list. */
-const options = () => Array.from(document.querySelectorAll<HTMLButtonElement>('#font-family-select ~ div > button'));
+/**
+ * Popup options live in a list portalled to `document.body`, so they are addressed by that
+ * list's own id rather than as siblings of the trigger. The list is `position: fixed` and
+ * rendered outside the toolbar precisely so the toolbar's `overflow` cannot clip it.
+ */
+const popupList = () => document.getElementById('font-family-list');
+
+const options = () => Array.from(document.querySelectorAll<HTMLButtonElement>('#font-family-list > button'));
 
 const hasOption = (font: string) => options().some((el) => el.textContent === font);
 
@@ -89,13 +95,22 @@ describe('FontSelect closed state', () => {
     expect(trigger()).toHaveStyle({ fontFamily: 'Impact' });
   });
 
-  it.fails('reports the open/closed state through aria-expanded (FontSelect.tsx:76-92)', () => {
+  // This was an `it.fails` tripwire. The pin is removed in the same change that adds the
+  // attribute, rather than left to fail loudly at some later, unrelated edit.
+  it('reports the open/closed state through aria-expanded', () => {
     renderFontSelect('Arial');
 
     expect(trigger()).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger()).toHaveAttribute('aria-haspopup', 'true');
+    expect(trigger()).not.toHaveAttribute('aria-controls');
+
+    fireEvent.click(trigger());
+
+    expect(trigger()).toHaveAttribute('aria-expanded', 'true');
+    expect(trigger()).toHaveAttribute('aria-controls', 'font-family-list');
   });
 
-  it.fails('exposes the popup as a listbox (FontSelect.tsx:94-113)', () => {
+  it.fails('exposes the popup as a listbox (FontSelect.tsx, the portalled popup)', () => {
     renderFontSelect('Arial');
     fireEvent.click(trigger());
 
@@ -139,7 +154,7 @@ describe('FontSelect popup rendering', () => {
     expect(trigger().querySelector('svg')).toHaveClass('rotate-180');
   });
 
-  it.fails('marks the active font with aria-selected (FontSelect.tsx:100-104)', () => {
+  it.fails('marks the active font with aria-selected (the portalled popup options)', () => {
     renderFontSelect('Georgia');
     fireEvent.click(trigger());
 
@@ -307,7 +322,7 @@ describe('FontSelect dismissals', () => {
 });
 
 describe('FontSelect keyboard interaction', () => {
-  it('does not move the selection with arrow keys (no roving focus in FontSelect.tsx:94-113)', () => {
+  it('does not move the selection with arrow keys (no roving focus in the portalled popup)', () => {
     const { onChange } = renderFontSelect('Arial');
     fireEvent.click(trigger());
 
@@ -335,7 +350,7 @@ describe('FontSelect keyboard interaction', () => {
     expect(hasOption('Impact')).toBe(true);
   });
 
-  it.fails('closes the popup and commits the highlighted font on Enter (FontSelect.tsx:94-113)', () => {
+  it.fails('closes the popup and commits the highlighted font on Enter (the portalled popup)', () => {
     const { onChange } = renderFontSelect('Arial');
     fireEvent.click(trigger());
     fireEvent.mouseEnter(option('Tahoma'));
@@ -345,5 +360,198 @@ describe('FontSelect keyboard interaction', () => {
 
     expect(onChange).not.toHaveBeenCalled();
     expect(hasOption('Tahoma')).toBe(false);
+  });
+});
+
+describe('FontSelect popup portal', () => {
+  /** jsdom reports a zero rect for everything, so the trigger's geometry is stubbed. */
+  function stubTriggerRect(rect: Partial<DOMRect>) {
+    const full = { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, ...rect } as DOMRect;
+    vi.spyOn(HTMLButtonElement.prototype, 'getBoundingClientRect').mockReturnValue(full);
+    return full;
+  }
+
+  it('renders the popup outside the toolbar so no ancestor can clip it', () => {
+    renderFontSelect('Arial');
+    fireEvent.click(trigger());
+
+    const list = popupList();
+    expect(list).not.toBeNull();
+    // The list is a child of <body>, not a descendant of the trigger's wrapper. A popup
+    // anchored `absolute` inside the toolbar renders as an 8px sliver the moment the
+    // toolbar becomes a scroll container, which is what the tablet band does.
+    expect(list?.parentElement).toBe(document.body);
+    expect(trigger().contains(list as Node)).toBe(false);
+  });
+
+  it('anchors the popup just below the trigger, matching its width', () => {
+    stubTriggerRect({ top: 120, left: 300, bottom: 156, width: 220 });
+    renderFontSelect('Arial');
+    fireEvent.click(trigger());
+
+    const list = popupList() as HTMLElement;
+    // `fixed` is a Tailwind class, so jsdom has no computed style for it; only the
+    // coordinates are inline, and those are what the anchor is actually made of.
+    expect(list).toHaveClass('fixed');
+    expect(list.style.left).toBe('300px');
+    expect(list.style.width).toBe('220px');
+    expect(list.style.top).toBe('160px');
+    expect(list.style.bottom).toBe('');
+  });
+
+  it('flips above the trigger when the list would not fit below it', () => {
+    // A trigger near the bottom of a short window: 700px tall, trigger bottom at 680.
+    // The list wants 240px, so it opens upward instead of off-screen.
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, 'innerHeight', { value: 700, configurable: true, writable: true });
+    stubTriggerRect({ top: 644, left: 40, bottom: 680, width: 200 });
+
+    try {
+      renderFontSelect('Arial');
+      fireEvent.click(trigger());
+
+      const list = popupList() as HTMLElement;
+      // The list's bottom edge sits one gutter (4px) above the trigger's TOP edge
+      // (700 - 644 + 4), not above its bottom edge.
+      expect(list.style.bottom).toBe('60px');
+      expect(list.style.top).toBe('');
+    } finally {
+      Object.defineProperty(window, 'innerHeight', {
+        value: originalInnerHeight,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
+  it('keeps the popup inside the right edge on a narrow window', () => {
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { value: 300, configurable: true, writable: true });
+    // A trigger that would place the list 20px from a 300px-wide window.
+    stubTriggerRect({ top: 40, left: 200, bottom: 76, width: 180 });
+
+    try {
+      renderFontSelect('Arial');
+      fireEvent.click(trigger());
+
+      const list = popupList() as HTMLElement;
+      const left = Number.parseFloat(list.style.left);
+      expect(left + 180).toBeLessThanOrEqual(300);
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        value: originalInnerWidth,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
+  it('repositions on window resize while open, and stops once closed', () => {
+    stubTriggerRect({ top: 100, left: 50, bottom: 136, width: 200 });
+    renderFontSelect('Arial');
+    fireEvent.click(trigger());
+    expect((popupList() as HTMLElement).style.top).toBe('140px');
+
+    // Move the trigger, then resize: the portal must follow its anchor.
+    stubTriggerRect({ top: 300, left: 50, bottom: 336, width: 200 });
+    fireEvent(window, new Event('resize'));
+    expect((popupList() as HTMLElement).style.top).toBe('340px');
+
+    fireEvent.click(trigger());
+    stubTriggerRect({ top: 500, left: 50, bottom: 536, width: 200 });
+    fireEvent(window, new Event('resize'));
+    expect(popupList()).toBeNull();
+  });
+
+  it('removes its resize and scroll listeners on close', () => {
+    const removeEventListener = vi.spyOn(window, 'removeEventListener');
+    renderFontSelect('Arial');
+    fireEvent.click(trigger());
+
+    fireEvent.click(trigger());
+
+    const removed = removeEventListener.mock.calls.map((call) => call[0]);
+    expect(removed).toContain('resize');
+    expect(removed).toContain('scroll');
+  });
+});
+
+describe('FontSelect viewport fit', () => {
+  /** jsdom reports a zero rect for everything, so the trigger's geometry is stubbed. */
+  function stubTriggerRect(rect: Partial<DOMRect>) {
+    const full = { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, ...rect } as DOMRect;
+    vi.spyOn(HTMLButtonElement.prototype, 'getBoundingClientRect').mockReturnValue(full);
+  }
+
+  const withInnerHeight = (height: number, run: () => void) => {
+    const original = window.innerHeight;
+    Object.defineProperty(window, 'innerHeight', { value: height, configurable: true, writable: true });
+    try {
+      run();
+    } finally {
+      Object.defineProperty(window, 'innerHeight', { value: original, configurable: true, writable: true });
+    }
+  };
+
+  it('caps the list to the room below when neither side fits', () => {
+    // A 300px window with the trigger at y=100 leaves 200px below and 100px above — neither
+    // is the 240px the list wants. The old rule opened downward at a fixed `top` and let the
+    // tail run below the fold, unreachable.
+    withInnerHeight(300, () => {
+      stubTriggerRect({ top: 100, left: 40, bottom: 136, width: 200 });
+      renderFontSelect('Arial');
+      fireEvent.click(trigger());
+
+      const list = popupList() as HTMLElement;
+      const maxHeight = Number.parseFloat(list.style.maxHeight);
+      // Room below is innerHeight - bottom - GUTTER = 300 - 136 - 4 = 160; room above is
+      // top - GUTTER - margin = 100 - 4 - 8 = 88. The side with more room wins.
+      expect(maxHeight).toBe(160);
+      expect(maxHeight, 'the list must fit the space it opens into').toBeLessThanOrEqual(160);
+    });
+  });
+
+  it('flips upward and caps to the room above when the room above is larger', () => {
+    // Trigger near the bottom: 80px below, 300px above. Flipped, and the 240px cap applies.
+    withInnerHeight(400, () => {
+      stubTriggerRect({ top: 300, left: 40, bottom: 320, width: 200 });
+      renderFontSelect('Arial');
+      fireEvent.click(trigger());
+
+      const list = popupList() as HTMLElement;
+      expect(list.style.bottom).not.toBe('');
+      expect(list.style.top).toBe('');
+      expect(Number.parseFloat(list.style.maxHeight)).toBe(240);
+    });
+  });
+
+  it('never positions the list further from an edge than the room available', () => {
+    // The general property: whatever the geometry, the list's height cannot exceed the space
+    // on the side it opens into, or part of it is off-viewport with no way to scroll it in.
+    for (const [height, top, bottom] of [
+      [300, 100, 136],
+      [400, 300, 320],
+      [800, 700, 716],
+      [200, 20, 60],
+    ] as const) {
+      withInnerHeight(height, () => {
+        vi.restoreAllMocks();
+        stubTriggerRect({ top, left: 40, bottom, width: 200 });
+        renderFontSelect('Arial');
+        fireEvent.click(trigger());
+
+        const list = popupList() as HTMLElement;
+        const maxHeight = Number.parseFloat(list.style.maxHeight);
+        const openedUp = list.style.top === '';
+
+        expect(maxHeight, `height ${height}, trigger at ${top}`).toBeGreaterThan(0);
+        expect(maxHeight).toBeLessThanOrEqual(240);
+        const room = openedUp ? top - 12 : height - bottom - 4;
+        expect(maxHeight, `list must fit the ${openedUp ? 'above' : 'below'} space`).toBeLessThanOrEqual(
+          Math.max(0, room)
+        );
+        cleanup();
+      });
+    }
   });
 });

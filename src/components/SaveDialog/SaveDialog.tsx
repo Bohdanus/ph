@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ImageSaveResponse } from '../../contexts/useFile.tsx';
 import { PRIMARY_BUTTON, DIALOG_SECONDARY_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 import { DEFAULT_JPEG_QUALITY, IMAGE_FORMATS, PSD_FORMAT } from '../../constants/imageFormats.ts';
+import { useDialogFocusContainment } from '../../hooks/useDialogFocusContainment.ts';
 
 interface SaveDialogProps {
   proposedName: string;
@@ -27,9 +28,19 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
     }
   };
 
+  // Focus ownership — mount focus, the three containment arms, the Tab wrap and the
+  // restore on unmount — lives in one shared hook; see its module comment for why the
+  // dialog has to own its keyboard at all.
+  const { panelRef, handleKeyDown } = useDialogFocusContainment({ onEscape: onClose });
+
   return (
     <div
+      ref={panelRef}
+      onKeyDown={handleKeyDown}
       className="fixed inset-0 z-[1050] flex items-center justify-center overflow-y-auto overflow-x-hidden outline-none focus:outline-none"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="save-dialog-title"
       data-testid="save-dialog"
     >
       <div
@@ -40,7 +51,9 @@ const SaveDialog = ({ proposedName, onClose, onSave }: SaveDialogProps) => {
       <div className="relative mx-auto my-6 w-full max-w-lg px-4">
         <div className="relative flex w-full flex-col rounded-lg border-0 bg-white shadow-lg outline-none focus:outline-none dark:bg-gray-800 dark:text-gray-100">
           <div className="flex items-center justify-between rounded-t border-b border-solid border-gray-200 p-4 dark:border-gray-700">
-            <h3 className="m-0 text-xl font-semibold">Save File As...</h3>
+            <h3 id="save-dialog-title" className="m-0 text-xl font-semibold">
+              Save File As...
+            </h3>
             <button
               className="ml-auto border-0 bg-transparent p-1 text-3xl font-semibold leading-none text-black opacity-50 outline-none hover:opacity-100 focus:outline-none dark:text-white"
               onClick={onClose}

@@ -76,6 +76,96 @@ function createTwoStepImageData(): ImageData {
   return imageData;
 }
 
+/**
+ * A frame that varies in BOTH axes, from a fixed seed so it is identical on every run.
+ *
+ * Every other fixture here is either uniform or invariant along one axis: the vertical edge
+ * repeats row for row, the uniform field is constant, the two-step frame is a function of `x`
+ * alone. Each of those leaves `gy` (or `gx`) at zero across the whole frame, so a Sobel pass
+ * that read a shifted row or a shifted column would produce exactly the same numbers and
+ * every assertion built on them would stay green. A pseudo-random frame has no such
+ * symmetry: no two rows repeat, no two columns repeat, and the alpha channel varies too, so
+ * the compositing in `computeLuma` is exercised rather than bypassed.
+ */
+function createNoisyImageData(width: number, height: number): ImageData {
+  const imageData = {
+    colorSpace: 'srgb',
+    data: new Uint8ClampedArray(width * height * 4),
+    height,
+    width,
+  } as ImageData;
+
+  let state = 0x9e3779b9;
+  const nextByte = () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) & 0xff;
+  };
+
+  for (let index = 0; index < width * height; index++) {
+    const dataIndex = index * 4;
+    imageData.data[dataIndex] = nextByte();
+    imageData.data[dataIndex + 1] = nextByte();
+    imageData.data[dataIndex + 2] = nextByte();
+    imageData.data[dataIndex + 3] = nextByte();
+  }
+
+  return imageData;
+}
+
+/**
+ * The two-pass algorithm `createEdgeMapFromImageData` used before the luma plane became a
+ * three-row ring, kept here verbatim as the oracle: fill a full-frame `Float32Array` with
+ * `computeLuma`, then run the Sobel pass over the strict interior reading rows `y - 1`, `y`
+ * and `y + 1`.
+ *
+ * It exists because the fused sweep it is compared against has no other observable
+ * difference. The sweep is allowed to allocate three rows instead of a frame and to fuse the
+ * two passes into one, and it is allowed to change nothing else: the same operands in the
+ * same order, stored at the same precision, accumulated at the same precision. A window that
+ * moved by a row, an operand order that changed, or a value rounded one step earlier all
+ * produce a different `gradientMagnitude` here, which is the whole point — the path search
+ * reads that array, so a silent difference moves every magnetised path the user draws.
+ */
+function createTwoPassEdgeMapReference(imageData: ImageData) {
+  const { width, height, data } = imageData;
+  const luma = new Float32Array(width * height);
+  const gradientMagnitude = new Float32Array(width * height);
+  let maxGradient = 0;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const pixelIndex = y * width + x;
+      const dataIndex = pixelIndex * 4;
+      luma[pixelIndex] = computeLuma(data[dataIndex], data[dataIndex + 1], data[dataIndex + 2], data[dataIndex + 3]);
+    }
+  }
+
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const topLeft = luma[(y - 1) * width + (x - 1)];
+      const top = luma[(y - 1) * width + x];
+      const topRight = luma[(y - 1) * width + (x + 1)];
+      const left = luma[y * width + (x - 1)];
+      const right = luma[y * width + (x + 1)];
+      const bottomLeft = luma[(y + 1) * width + (x - 1)];
+      const bottom = luma[(y + 1) * width + x];
+      const bottomRight = luma[(y + 1) * width + (x + 1)];
+
+      const gx = -topLeft + topRight - 2 * left + 2 * right - bottomLeft + bottomRight;
+      const gy = -topLeft - 2 * top - topRight + bottomLeft + 2 * bottom + bottomRight;
+      const magnitude = Math.sqrt(gx * gx + gy * gy);
+      const index = y * width + x;
+
+      gradientMagnitude[index] = magnitude;
+      maxGradient = Math.max(maxGradient, magnitude);
+    }
+  }
+
+  return { width, height, gradientMagnitude, maxGradient };
+}
+
 describe('magnetic lasso utilities', () => {
   it('builds a gradient map from merged canvas pixels and snaps near the strongest edge', () => {
     const edgeMap = createEdgeMapFromImageData(createVerticalEdgeImageData(24, 16, 10));
@@ -205,6 +295,133 @@ describe('createEdgeMapFromImageData', () => {
     expect(computeLuma(128, 128, 128, 255)).toBeCloseTo(128, 6);
     // A uniform frame is a uniform luma plane, so the Sobel pass finds no edge.
     expect(edgeMap.maxGradient).toBe(0);
+  });
+
+  it('holds the luma plane to three rows rather than a second full-frame buffer', () => {
+    // The gradient field the map returns is the one full-frame buffer it is allowed to have.
+    // The luma plane beside it is a three-row ring, so a second full-frame allocation — the
+    // shape this replaced — is what fails here rather than a difference in the output.
+    const width = 64;
+    const height = 48;
+    const allocations: number[] = [];
+
+    class TrackedFloat32Array extends Float32Array {
+      constructor(size: number) {
+        super(size);
+        allocations.push(size);
+      }
+    }
+
+    vi.stubGlobal('Float32Array', TrackedFloat32Array);
+    try {
+      createEdgeMapFromImageData(createNoisyImageData(width, height));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(allocations.filter((size) => size === width * height)).toHaveLength(1);
+    expect(allocations.reduce((total, size) => total + size, 0)).toBeLessThanOrEqual(width * height + 3 * width);
+  });
+
+  it('pins the smallest window that has an interior, and the float32/double split inside it', () => {
+    // Nine pixels of differing colour AND differing alpha, so the frame has a non-zero `gy`
+    // as well as a non-zero `gx`: a row-only or column-only fixture would pin half the
+    // expression and leave the other half free to move.
+    const pixels: [number, number, number, number][] = [
+      [12, 40, 200, 255],
+      [90, 17, 10, 128],
+      [233, 201, 77, 200],
+      [5, 120, 64, 255],
+      [160, 33, 190, 90],
+      [77, 250, 8, 255],
+      [240, 90, 120, 170],
+      [31, 5, 210, 255],
+      [150, 199, 44, 120],
+    ];
+    const imageData = {
+      colorSpace: 'srgb',
+      data: new Uint8ClampedArray(9 * 4),
+      height: 3,
+      width: 3,
+    } as ImageData;
+
+    pixels.forEach(([red, green, blue, alpha], index) => {
+      const dataIndex = index * 4;
+      imageData.data[dataIndex] = red;
+      imageData.data[dataIndex + 1] = green;
+      imageData.data[dataIndex + 2] = blue;
+      imageData.data[dataIndex + 3] = alpha;
+    });
+
+    // The luma plane is float32 whatever the arithmetic is not: `computeLuma` returns a
+    // double and the plane rounds it once, on the way in. The expected values come from
+    // `computeLuma` rather than from hand arithmetic because `255` is not
+    // `255 * (0.2126 + 0.7152 + 0.0722)` in binary floating point, and a hand-written
+    // expectation would pin a different number from the one the module computes.
+    const luma = pixels.map((pixel) => Math.fround(computeLuma(pixel[0], pixel[1], pixel[2], pixel[3])));
+    const topLeft = luma[0];
+    const top = luma[1];
+    const topRight = luma[2];
+    const left = luma[3];
+    const right = luma[5];
+    const bottomLeft = luma[6];
+    const bottom = luma[7];
+    const bottomRight = luma[8];
+
+    const gx = -topLeft + topRight - 2 * left + 2 * right - bottomLeft + bottomRight;
+    const gy = -topLeft - 2 * top - topRight + bottomLeft + 2 * bottom + bottomRight;
+    const magnitude = Math.sqrt(gx * gx + gy * gy);
+
+    // The fixture is chosen so the magnitude is not representable in float32, which is what
+    // makes the next two assertions say something: the stored sample is the rounded one and
+    // the maximum the path search normalises against is not. That asymmetry is the easiest
+    // thing in this pass to lose, and it is invisible to a fixture whose magnitudes all
+    // happen to round exactly.
+    expect(gy).not.toBe(0);
+    expect(magnitude).not.toBe(Math.fround(magnitude));
+
+    const edgeMap = createEdgeMapFromImageData(imageData);
+
+    expect(edgeMap.gradientMagnitude[4]).toBe(Math.fround(magnitude));
+    expect(edgeMap.maxGradient).toBe(magnitude);
+    // A 3x3 frame has exactly one interior pixel, so the window pinned above is the whole
+    // frame and the outer ring is still never written.
+    expect([0, 1, 2, 3, 5, 6, 7, 8].map((index) => edgeMap.gradientMagnitude[index])).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+  });
+
+  it.each([
+    ['a single pixel', 1, 1],
+    ['a single row', 1, 7],
+    ['a single column', 7, 1],
+    ['a two-pixel square', 2, 2],
+    ['a frame with no interior width', 2, 9],
+    ['a frame with no interior height', 9, 2],
+    ['exactly three rows', 3, 9],
+    ['exactly three columns', 9, 3],
+    ['a frame one row past the ring', 4, 9],
+    ['a frame one column past the ring', 9, 4],
+    ['a four-pixel square', 4, 4],
+    ['a portrait frame', 9, 13],
+    ['a landscape frame', 13, 9],
+    ['a wide frame', 21, 7],
+    ['a tall frame', 7, 21],
+    ['an asymmetric frame', 11, 6],
+    ['a frame whose height wraps the ring twice', 8, 9],
+  ])('is element-for-element the two-pass reference on %s', (_label, width, height) => {
+    // The strict interior of these frames is empty or one pixel tall, which is exactly where
+    // an off-by-one in a ring refill or in the last-row guard shows up and nowhere else.
+    const imageData = createNoisyImageData(width, height);
+    const expected = createTwoPassEdgeMapReference(imageData);
+    const actual = createEdgeMapFromImageData(imageData);
+
+    expect(actual.width).toBe(expected.width);
+    expect(actual.height).toBe(expected.height);
+    // `toEqual` over a typed array compares element by element, and float32 has no two
+    // representations of a value to hide behind: this is a bit-for-bit comparison.
+    expect(actual.gradientMagnitude).toEqual(expected.gradientMagnitude);
+    // `maxGradient` is a double accumulated before the store, so it is compared exactly
+    // rather than approximately: a pass that rounded it would be a different pass.
+    expect(actual.maxGradient).toBe(expected.maxGradient);
   });
 });
 
@@ -350,7 +567,7 @@ describe('findStrongestGradientPoint', () => {
   });
 
   it.fails(
-    'PROD src/util/magneticLasso.ts:215 reports a magnetic snap with zero gradient and zero confidence over a featureless neighbourhood at edgeContrast 0',
+    'PROD src/util/magneticLasso.ts:260 reports a magnetic snap with zero gradient and zero confidence over a featureless neighbourhood at edgeContrast 0',
     () => {
       // The cursor sits in the flat half of the image, so every gradient in the search
       // radius is 0 and the contrast threshold is 0 too. `bestGradient < contrastThreshold`

@@ -147,18 +147,38 @@ export class DocumentPresentationScope {
   }
 
   /**
-   * Closes a cache the store is replacing, but only when this boundary created
-   * it. A borrowed raster from an import or replay is left alone.
+   * Closes every cache this scope published for `documentId` that nothing names.
+   *
+   * Candidacy is the scope's own published set, NOT the previous layer record.
+   * A raster can leave the store's reach without ever having been
+   * `previous[].bitmap` in the transition that drops it — an import whose layer
+   * is replaced, or a merge whose history entry the next append truncates — and
+   * deriving candidates from a record misses exactly those, leaking a
+   * full-document `ImageBitmap` until the document changes.
+   *
+   * `live` is the caller's, because only the store knows every alias a raster
+   * has: the layer's own `bitmap`, the `source` object stored verbatim on the
+   * layer, and the `layerSource`/`args` reference a history entry retains, which
+   * `history-replay` reads back on undo. Closing one of those is a
+   * use-after-close on the production replay authority, not a leak.
+   *
+   * It is a THUNK, and it has to stay one. Answering that question walks the whole
+   * unbounded history and every alias in it, so as a value it would be computed on
+   * every commit, undo, redo and layer mutation — while a document the scope has
+   * published nothing for cannot retire anything, whatever the answer says. The
+   * early-out below is the only thing that makes the walk affordable, so the walk
+   * stays behind it: a caller that passes an eagerly built set reintroduces the
+   * cost on the path this early-out exists to skip, and no signature can catch it.
    */
-  retire(bitmap: BitmapSource | null | undefined): void {
-    if (!bitmap) return;
-    for (const [documentId, owned] of this.published) {
-      if (owned.delete(bitmap)) {
-        if (!owned.size) this.published.delete(documentId);
-        closePresentationBitmap(bitmap);
-        return;
-      }
-    }
+  retireUnreferenced(documentId: string, live: () => ReadonlySet<BitmapSource>): void {
+    const owned = this.published.get(documentId);
+    if (!owned) return;
+    const reachable = live();
+    const departed = [...owned].filter((bitmap) => !reachable.has(bitmap));
+    if (!departed.length) return;
+    for (const bitmap of departed) owned.delete(bitmap);
+    if (!owned.size) this.published.delete(documentId);
+    for (const bitmap of departed) closePresentationBitmap(bitmap);
   }
 
   /** Closes every published cache of a document that is being replaced. */

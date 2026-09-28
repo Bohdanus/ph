@@ -20,8 +20,6 @@ const previewLayers = vi.hoisted(() => ({ current: {} as Record<string, unknown>
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
 const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
-const mockIsToolDirty = vi.hoisted(() => ({ current: false }));
-const mockResetToLastSavedArgs = vi.hoisted(() => vi.fn());
 const mockUndo = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../../contexts/useLayer.ts', () => ({
@@ -35,8 +33,6 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs,
     setToolArgs: mockSetToolArgs,
-    isToolDirty: mockIsToolDirty.current,
-    resetToLastSavedArgs: mockResetToLastSavedArgs,
   }),
 }));
 
@@ -85,11 +81,7 @@ describe('Levels toolbar', () => {
     mockTempUpdateLayer.mockClear();
     mockCancelLayerPreview.mockClear();
     mockSetToolArgs.mockClear();
-    mockResetToLastSavedArgs.mockClear();
     mockUndo.mockClear();
-    // The only value `isToolDirty` can hold in production: nothing dispatches
-    // `SET_TOOL_DIRTY` with `true`.
-    mockIsToolDirty.current = false;
     setActiveLayerId('layer-1');
     previewLayers.current = {};
   });
@@ -102,36 +94,36 @@ describe('Levels toolbar', () => {
   });
 
   it('offers the panel-local discard only while a live preview exists, because that preview is the only thing it can remove', () => {
-    // History state is fixed here: `canUndo()` is `true` and `isToolDirty` is the
-    // value production can hold, so neither of them can be what the button reads.
+    // The panel reads exactly one thing to arm the button: the store's preview map
+    // for the active layer. History state is fixed here (`canUndo()` is `true`),
+    // so nothing else this render can see is what the gate turns on.
     seedLivePreview();
     render(<Levels />);
 
     expect(getResetButton()).toBeEnabled();
   });
 
-  it.each([false, true])(
-    'clears the preview and writes the default levels args without touching history (isToolDirty=%s)',
-    (isToolDirty) => {
-      mockIsToolDirty.current = isToolDirty;
-      resetToolArgs({ brightness: 70, contrast: -20 });
-      seedLivePreview();
-      render(<Levels />);
+  it('clears the preview and writes the default levels args without touching history', () => {
+    resetToolArgs({ brightness: 70, contrast: -20 });
+    seedLivePreview();
+    render(<Levels />);
 
-      fireEvent.click(getResetButton());
+    fireEvent.click(getResetButton());
 
-      expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
-      // The baseline is `defaultSettings.levels`, not the value the user just dragged to.
-      // A `resetToLastSavedArgs` reset would publish 70/-20 here.
-      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
-        toolName: 'levels',
-        brightness: 0,
-        contrast: 0,
-      });
-      expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
-      expect(mockUndo).not.toHaveBeenCalled();
-    }
-  );
+    expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
+    // The baseline is `defaultSettings.levels`, not the value the user just dragged to.
+    // A baseline read from the stored settings would publish 70/-20 here: the slider
+    // write overwrites that copy on the same tick.
+    expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
+      toolName: 'levels',
+      brightness: 0,
+      contrast: 0,
+    });
+    // The click removes an uncommitted preview. A committed adjustment is a
+    // document operation, and `undo()` — which the panel does not call — is the
+    // route out of one, so a fall-through to document-level undo stays pinned here.
+    expect(mockUndo).not.toHaveBeenCalled();
+  });
 
   it('leaves the discard disabled once the adjustment is committed, rather than claiming a reset it cannot perform', () => {
     // `commitDirtyTool` runs on tool switch, on export and in `mergeAllLayers`: it
@@ -352,19 +344,19 @@ describe('Levels toolbar', () => {
       ]);
     });
 
-    it('keeps publishing the tool args when no layer is active, but never with a null layer id', () => {
-      setActiveLayerId(null);
+    it('publishes both slider changes that land in the same animation frame', () => {
       render(<Levels />);
 
-      changeContrast('15');
+      changeBrightness('-15');
+      changeContrast('80');
       flushFrames();
 
-      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({ toolName: 'levels', brightness: 50, contrast: 15 });
+      const expected = { toolName: 'levels', brightness: -15, contrast: 80 };
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expected);
+      expect(mockTempUpdateLayer).toHaveBeenCalledExactlyOnceWith({ id: 'layer-1', toolArgs: expected });
     });
 
-    it.fails('skips the layer preview entirely when no layer is active (Levels.tsx:23)', () => {
-      // `tempUpdateLayer({ id: activeLayerId!, toolArgs })` asserts non-null on `activeLayerId`,
-      // so a null id is forwarded to the layer store as `{ id: null }` instead of being skipped.
+    it('skips publishing entirely when no layer is active (Levels.tsx:23)', () => {
       setActiveLayerId(null);
       render(<Levels />);
 
@@ -372,6 +364,29 @@ describe('Levels toolbar', () => {
       flushFrames();
 
       expect(mockTempUpdateLayer).not.toHaveBeenCalled();
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+    });
+
+    it('re-arms a frame on the next change after discarding a change made with no active layer', () => {
+      setActiveLayerId(null);
+      const { rerender } = render(<Levels />);
+
+      changeContrast('15');
+      flushFrames();
+      expect(mockTempUpdateLayer).not.toHaveBeenCalled();
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+
+      setActiveLayerId('layer-1');
+      rerender(<Levels />);
+      changeContrast('15');
+      expect(frames).toHaveLength(1);
+      flushFrames();
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({ toolName: 'levels', brightness: 50, contrast: 15 });
+      expect(mockTempUpdateLayer).toHaveBeenCalledExactlyOnceWith({
+        id: 'layer-1',
+        toolArgs: { toolName: 'levels', brightness: 50, contrast: 15 },
+      });
     });
   });
 
@@ -475,7 +490,6 @@ describe('Levels toolbar', () => {
         brightness: 0,
         contrast: 0,
       });
-      expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
       expect(mockUndo).not.toHaveBeenCalled();
     });
 

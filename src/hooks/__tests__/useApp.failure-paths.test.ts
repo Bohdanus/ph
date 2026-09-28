@@ -132,7 +132,7 @@ describe('useApp failure paths', () => {
     expect([rectOverlay.width, rectOverlay.height]).toEqual([20, 30]);
     expect(harness.state.currentArgs.current).toEqual({});
     expect(harness.state.clearPreviewLayers).toHaveBeenCalledOnce();
-    expect(harness.dispatch).toHaveBeenCalledExactlyOnceWith(
+    expect(harness.dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'REPLACE_DOCUMENT',
         payload: expect.objectContaining({
@@ -146,6 +146,13 @@ describe('useApp failure paths', () => {
         }),
       })
     );
+    // The rasters the import built are adopted AFTER the replacement that names them: the
+    // presentation scope is keyed by the owning document, so a registration published before
+    // the replacement would be filed under the outgoing document id and closed by its release.
+    expect(harness.dispatch.mock.calls.map((call) => call[0].type)).toEqual([
+      'REPLACE_DOCUMENT',
+      'ADOPT_LAYER_BITMAPS',
+    ]);
   });
 
   it('marks the document as saved through a batched update', () => {

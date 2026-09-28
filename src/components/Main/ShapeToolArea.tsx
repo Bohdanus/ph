@@ -1,5 +1,6 @@
 import { type PointerEvent, type RefObject, useEffect, useRef } from 'react';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
+import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
 import {
   drawShape,
   normalizeShapeGeometry,
@@ -34,6 +35,17 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
   const originalShapeRef = useRef<{ start: Point; end: Point } | null>(null);
   const anchorRef = useRef<Point | null>(null);
   const fromCenterRef = useRef(false);
+  /**
+   * The pointer id this component's own claim was taken with. The cancel handler and the unmount
+   * cleanup never see a pointer event, so the id is kept here for every release route to name the
+   * claim it is releasing.
+   */
+  const claimedPointerIdRef = useRef<number | null>(null);
+
+  function releaseDocumentClaim() {
+    releaseDocumentGesture('shape-draw', claimedPointerIdRef.current);
+    claimedPointerIdRef.current = null;
+  }
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -63,14 +75,33 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
 
     const shape = { start: startRef.current!, end: endRef.current! };
     const newArgs = { ...args, ...shape };
-    drawShape(ctx, newArgs);
+    // `setShapeCtx` writes stroke, fill, alpha and the dash onto the SHARED overlay context and
+    // leaves them, so the bracket is what stops this tool from dictating the alpha every later tool
+    // paints at. It cannot live inside `setShapeCtx`: `drawShape` reads what it wrote, and this
+    // runs once per frame. See `DrawToolArea.flushDrawingFrame` for the same bracket.
+    ctx.save();
+    try {
+      setShapeCtx(ctx, newArgs);
+      drawShape(ctx, newArgs);
+    } finally {
+      ctx.restore();
+    }
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (!isPointerDownValid(event)) return;
 
-    const ctx = overlayCtxRef.current!;
-    setShapeCtx(ctx, args);
+    if (!overlayCtxRef.current) return;
+
+    // The shape commits from `handlePointerUp`, so the press-to-release window is exactly the window
+    // a document-mutating shortcut would corrupt: an undo there replaces `selections` from the SAME
+    // history array, so `history.length` never moves and the pending commit's
+    // `entries.slice(0, cursor + 1)` truncates the redo tail with no other symptom. Claimed after
+    // `isPointerDownValid`, so a refused press claims nothing, and only when the claim succeeded, so
+    // a loser never records an id it does not own.
+    if (claimDocumentGesture('shape-draw', event.pointerId)) {
+      claimedPointerIdRef.current = event.pointerId;
+    }
 
     const point = getLocalCoords(event);
     startRef.current = point;
@@ -109,11 +140,22 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
     if (!isPointerUpValid(event)) return;
 
+    // First, and inside the branch: a release the validator refuses — a foreign pointer — must not
+    // hand the document back on the first pointer's behalf, and this runs before every early return
+    // in the commit path below, the dismissed size prompt among them.
+    releaseDocumentClaim();
+
     const point = getLocalCoords(event);
-    const movedBySpace =
-      originalShapeRef.current &&
-      (startRef.current!.x !== anchorRef.current!.x || startRef.current!.y !== anchorRef.current!.y);
-    if (!movedBySpace) {
+    // Re-derive the geometry only when there is NO preview to commit — a bare press-and-release
+    // with no move, which would otherwise commit a zero-size shape and prompt for a size.
+    //
+    // The old gate was `if (!movedBySpace)`, which conflated "the user space-panned" with "every
+    // ordinary drag", because `startRef` only leaves `anchorRef` when a pan has moved it. So for an
+    // ordinary previewed drag the recompute ran and overwrote the previewed `startRef`/`endRef`
+    // with the RELEASE event's `event.shiftKey`: releasing Shift before the mouse committed an
+    // unconstrained rectangle for a square the user watched being previewed, and the committed
+    // layer is the one that lands.
+    if (originalShapeRef.current === null) {
       const shape = normalizeShapeGeometry(anchorRef.current!, point, args.figure, {
         shiftKey: event.shiftKey,
         altKey: fromCenterRef.current,
@@ -122,10 +164,15 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
       endRef.current = shape.end;
     }
 
+    // Cancel AND null, and then paint what the cancelled frame would have painted. Cancelling
+    // without nulling left `frameRequested` non-null for the component's lifetime, and
+    // `handlePointerMove` short-circuits on exactly that, so every drag after the first showed
+    // nothing until release.
     if (frameRequested.current !== null) {
       cancelAnimationFrame(frameRequested.current);
+      frameRequested.current = null;
+      flushDrawingFrame();
     }
-    // flushDrawingFrame();
 
     const start = canvasToDocumentPoint({ ...startRef.current! }, documentFrame);
     const end = canvasToDocumentPoint({ ...endRef.current! }, documentFrame);
@@ -153,12 +200,37 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
     createLayerFromTool(fullArgs);
   };
 
+  const handlePointerCancel = () => {
+    // Paired with the abort the hook already performs: a cancel is a gesture that will never commit,
+    // so a claim left open here would gate every later keystroke for a shape that does not exist.
+    releaseDocumentClaim();
+  };
+
+  useEffect(() => {
+    // An unmount between claim and commit is an abort like any other — switching tools mid-drag is
+    // exactly how it happens. Paired with the provider-level `resetDocumentGestures`, this is what
+    // bounds a leaked claim to the mount that leaked it.
+    return () => {
+      releaseDocumentClaim();
+
+      // A frame left pending across an unmount would paint into the overlay, which is ONE context
+      // for the whole session and is handed to the next tool, so a shape from an area that no
+      // longer owns it lands on the next tool's canvas. Cancelled and nulled, as `EraserToolArea`
+      // does.
+      if (frameRequested.current !== null) {
+        cancelAnimationFrame(frameRequested.current);
+        frameRequested.current = null;
+      }
+    };
+  }, []);
+
   return (
     <div
       className={`${className} cursor-draw`}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
     ></div>
   );
 };

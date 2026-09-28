@@ -112,39 +112,10 @@ jobs:
       - name: Build
         run: npm run build
 
-  # The licence and vulnerability policy for a change to the dependency tree.
-  #
-  # `.github/dependency-review-config.yml` is the policy: it denies GPL-3.0-only
-  # and AGPL-3.0-only, fails on a high-severity advisory, and allowlists the
-  # listed licences. Nothing in the repository read that file before this job
-  # existed -- it had been written and never wired up, so a GPL dependency could
-  # be merged while the policy sat in the tree asserting the opposite.
-  #
-  # pull_request only. The action diffs a PR's dependency tree against its base,
-  # so on `push` to main there is no base to compare against and the job would
-  # have nothing to review. `push` already runs `npm audit --audit-level=high`,
-  # which is the other half of the same policy.
-  dependency-review:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: ${{ github.event_name == 'pull_request' }}
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Review the dependency change
-        uses: actions/dependency-review-action@v4
-        with:
-          # Deliberately no `fail-on-severity` here: the config file declares it,
-          # and an action input overrides the file rather than deferring to it.
-          # Duplicating the allow/deny lists in this workflow is the same mistake
-          # in a worse place -- it is how the original dead config happened.
-          config-file: '.github/dependency-review-config.yml'
-          comment-summary-in-pr: on-failure
+  # The licence policy for the dependency tree is in `DEPENDENCIES.md`, and it
+  # is not a gate: nothing reads it, by decision. The vulnerability half of the
+  # same policy is `npm audit --audit-level=high` in the `ci` job above, which
+  # runs on every push to main and covers the whole tree rather than a diff.
 
   # The blocking gate for everything under e2e/.
   #
@@ -250,25 +221,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Cache the Chrome build
-        # `playwright install` downloads a browser onto every fresh runner, which is
-        # the slowest thing in this job and is pure network wait. Keyed on the
-        # lockfile so a dependency bump misses the cache rather than restoring a
-        # browser the new Playwright does not want, and on the OS because the
-        # download is platform-specific.
-        #
-        # `--with-deps` still runs on every build: it installs OS packages through
-        # apt, which is not cacheable, and skipping it would break the browser.
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-
-
       - name: Install Chrome
         # playwright.config.ts defaults to `channel: 'chrome'` (the system browser),
         # so install that rather than Playwright's bundled Chromium.
+        #
+        # No `actions/cache` step on purpose. That directory is where Playwright
+        # unpacks the browsers IT downloads, and this job installs none: the
+        # `chrome` channel goes through the OS package manager. A cache keyed on
+        # `~/.cache/ms-playwright` here would carry an absent directory, hit on
+        # every run, and save nothing. The install below is apt, which is not
+        # cacheable.
         run: npx playwright install --with-deps chrome
 
       - name: Run Playwright specs

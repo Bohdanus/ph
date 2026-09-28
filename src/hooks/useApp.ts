@@ -133,7 +133,6 @@ export const useApp = (): UseAppType => {
             deletedLayers: {},
             hasImage: true,
             hasUnsavedChanges: false,
-            isToolDirty: false,
             toolName: 'reposition',
             selections: [],
             activeSelectionId: null,
@@ -141,6 +140,19 @@ export const useApp = (): UseAppType => {
             selectionCleared: null,
             selectionClipboard: null,
           },
+        },
+      });
+      // Every raster this import produced is adopted into the store's presentation
+      // scope, exactly as `useLayers().createLayerFromBitmap` does for a single-image
+      // import. Dispatched AFTER `REPLACE_DOCUMENT`: the scope is keyed by the owning
+      // document, so a registration published before the replacement would be filed
+      // under the outgoing document id and closed by its release.
+      dispatch({
+        type: 'ADOPT_LAYER_BITMAPS',
+        payload: {
+          bitmaps: Object.values(immutableLayers)
+            .map((layer) => (layer.source?.kind === 'image' ? layer.source.bitmap : null))
+            .filter((bitmap): bitmap is BitmapSource => bitmap !== null),
         },
       });
       return;

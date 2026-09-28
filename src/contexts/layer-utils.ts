@@ -1,12 +1,13 @@
 import { v4 as uuidv4 } from 'uuid';
 
 import type { Layer, LayerId, LayerOperation, LayerOperationArgs, LayerSource, LayersRecord } from './layer-types.ts';
-import { type CreatorToolParams, toolProcessors } from '../tools/toolProcessors.ts';
-import type { BitmapSource, Point, Pos } from './general-types.ts';
+import { type CreatorToolParams, findToolProcessor } from '../tools/toolProcessors.ts';
+import { isPaintBlendMode } from '../tools/brush.ts';
+import type { Point, Pos } from './general-types.ts';
 import { ellipsify } from '../util/string.ts';
-import { materializePresentationBitmap } from './layer-presentation.ts';
 import type { AffineTransform } from './affine-transform.ts';
 import { isPointInLayer } from './affine-transform.ts';
+import type { ToolArgs } from './tool-types.ts';
 
 /**
  * Converts a Record of layers into a sorted array ordered by layer order (ascending).
@@ -104,19 +105,6 @@ export const maxLayerOrder = (layers: LayersRecord) => {
 //   return { bitmap: canvas, historyLength, size: newSize };
 // }
 
-/**
- * Materializes a layer's disposable presentation canvas into an ImageBitmap.
- *
- * The bitmap is returned to the caller and is never written into `Layer`. A
- * published runtime layer is owned by the store, so promoting a cache into it is
- * a reducer publication rather than a late mutation of a record the caller
- * already dispatched.
- */
-export function saveLayerCanvas(layer: Layer): Promise<BitmapSource | undefined> | undefined {
-  if (!layer.tmpCanvas) return undefined;
-  return materializePresentationBitmap(layer.tmpCanvas);
-}
-
 export function createLayerOperation(args: LayerOperationArgs, id = uuidv4()): LayerOperation {
   // Keep the legacy filter shape readable; the optional `kind: 'filter'`
   // remains accepted when loading newer serialized documents.
@@ -137,6 +125,32 @@ type LayerSourceParams = {
   layers: LayersRecord;
   source: LayerSource;
 };
+
+/**
+ * The blend mode a stroke's layer composites with, read off the tool args.
+ *
+ * The layer is created before the stroke is rasterized, so the options bar's `Mode`
+ * has to be resolved here rather than while drawing. Replay re-enters this function
+ * with the same history entry's args (`src/contexts/useHistory.ts:97`), which is
+ * what keeps undo, redo and the durable shadow in agreement: the mode rides in
+ * `layerSource.args`, so it is already carried by both
+ * (`src/contexts/history-adapter.ts:199`).
+ *
+ * Gated on the paint tool names on purpose. `kind: 'tool'` covers every creator
+ * tool, and no other one of them exposes a `Mode` control, so an unrecognised value
+ * must not be able to reach the renderer as an operation the canvas silently
+ * ignores — nor should a stray `blendMode` key on a text or shape args object
+ * decide how that layer composites. A mode this build does not recognise, from a
+ * document written by one that offered it, falls back to Normal.
+ */
+function toolLayerBlendMode(args: ToolArgs): Layer['blendMode'] {
+  const paintArgs = args as { toolName?: unknown; blendMode?: unknown };
+  if (paintArgs.toolName !== 'brush' && paintArgs.toolName !== 'pencil' && paintArgs.toolName !== 'color-replacement') {
+    return 'source-over';
+  }
+
+  return isPaintBlendMode(paintArgs.blendMode) ? paintArgs.blendMode : 'source-over';
+}
 
 function getNameFromSource(source: LayerSource) {
   switch (source.kind) {
@@ -203,13 +217,17 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     layer.tmpCanvas = canvas;
   } else if (kind === 'tool') {
     // and this is a creator tool
-    const [canvas, patch] = toolProcessors[source.args.toolName].imageProcessor({ size: pos } as CreatorToolParams)(
-      source.args
-    );
+    const processor = findToolProcessor(source.args.toolName);
+    // Unreachable: only a creator tool produces a `tool` source, and a tool with no processor
+    // (`PIXEL_FREE_TOOLS`) is never a creator. Named rather than left as a `TypeError` on
+    // `undefined.imageProcessor`, so the violation says what it is.
+    if (!processor) throw new Error(`Tool ${source.args.toolName} has no processor to create a layer from`);
+    const [canvas, patch] = processor.imageProcessor({ size: pos } as CreatorToolParams)(source.args);
     if (patch) {
       layer.pos = { ...layer.pos, ...patch };
     }
 
+    layer.blendMode = toolLayerBlendMode(source.args);
     layer.tmpCanvas = canvas;
   }
 

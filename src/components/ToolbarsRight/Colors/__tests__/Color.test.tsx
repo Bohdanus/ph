@@ -13,10 +13,7 @@ const mockSetToolArgs = vi.hoisted(() => vi.fn());
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
 const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
 const mockMergeAllLayers = vi.hoisted(() => vi.fn());
-const mockResetToLastSavedArgs = vi.hoisted(() => vi.fn());
 const mockUndo = vi.hoisted(() => vi.fn());
-
-const toolState = vi.hoisted(() => ({ isToolDirty: false }));
 
 // The discard is gated on a live preview for the active layer, so the store's
 // preview map has to be part of the mock. `commitDirtyTool` clears this map and
@@ -43,8 +40,6 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs,
     setToolArgs: mockSetToolArgs,
-    isToolDirty: toolState.isToolDirty,
-    resetToLastSavedArgs: mockResetToLastSavedArgs,
   }),
 }));
 
@@ -83,14 +78,12 @@ const getResetButton = () => screen.getByRole('button', { name: 'Reset' });
 describe('Color toolbar', () => {
   beforeEach(() => {
     Object.assign(toolArgs, { grayscale: 0, sepia: 0, saturation: 100, toolName: 'color' as const });
-    toolState.isToolDirty = false;
     store.activeLayerId = 'layer-1';
     store.previewLayers.current = {};
     mockSetToolArgs.mockClear();
     mockTempUpdateLayer.mockClear();
     mockCancelLayerPreview.mockClear();
     mockMergeAllLayers.mockClear();
-    mockResetToLastSavedArgs.mockClear();
     mockUndo.mockClear();
     rafCallbacks.length = 0;
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -293,8 +286,9 @@ describe('Color toolbar', () => {
   });
 
   it('offers the Reset discard only while a live preview exists, because that preview is the only thing it can remove', () => {
-    // History state is fixed here: `canUndo()` is `true` and `isToolDirty` is the
-    // value production can hold, so neither of them can be what the button reads.
+    // The panel reads exactly one thing to arm the button: the store's preview map
+    // for the active layer. History state is fixed here (`canUndo()` is `true`),
+    // so nothing else this render can see is what the gate turns on.
     seedLivePreview();
     render(<Color />);
 
@@ -334,27 +328,26 @@ describe('Color toolbar', () => {
     expect(getResetButton()).toBeDisabled();
   });
 
-  it.each([false, true])(
-    'clears the preview and writes the default colour args without touching history (isToolDirty=%s)',
-    (isToolDirty) => {
-      toolState.isToolDirty = isToolDirty;
-      Object.assign(toolArgs, { grayscale: 60, sepia: 20, saturation: 40, toolName: 'color' as const });
-      seedLivePreview();
-      render(<Color />);
+  it('clears the preview and writes the default colour args without touching history', () => {
+    Object.assign(toolArgs, { grayscale: 60, sepia: 20, saturation: 40, toolName: 'color' as const });
+    seedLivePreview();
+    render(<Color />);
 
-      fireEvent.click(getResetButton());
+    fireEvent.click(getResetButton());
 
-      expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
-      // The baseline is `defaultSettings.color`, not the value the user just dragged to.
-      // A `resetToLastSavedArgs` reset would publish those three values here.
-      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
-        grayscale: 0,
-        sepia: 0,
-        saturation: 0,
-        toolName: 'color',
-      });
-      expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
-      expect(mockUndo).not.toHaveBeenCalled();
-    }
-  );
+    expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
+    // The baseline is `defaultSettings.color`, not the value the user just dragged to.
+    // A baseline read from the stored settings would publish those three values here:
+    // the slider write overwrites that copy on the same tick.
+    expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
+      grayscale: 0,
+      sepia: 0,
+      saturation: 0,
+      toolName: 'color',
+    });
+    // The click removes an uncommitted preview. A committed adjustment is a
+    // document operation, and `undo()` — which the panel does not call — is the
+    // route out of one, so a fall-through to document-level undo stays pinned here.
+    expect(mockUndo).not.toHaveBeenCalled();
+  });
 });
