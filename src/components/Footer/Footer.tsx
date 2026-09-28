@@ -1,4 +1,5 @@
 import { useStore } from '../../contexts/StoreContext.tsx';
+import DevStatusStrip from '../DevStatusStrip/DevStatusStrip.tsx';
 
 const Footer = () => {
   const [{ hasImage, totalSize }] = useStore();
@@ -13,6 +14,7 @@ const Footer = () => {
               Dimensions: {width} × {height} px
             </span>
           )}
+          <DevStatusStrip />
         </div>
         <span className="text-sm text-gray-500 dark:text-gray-400">© 2025 Photo App</span>
       </div>

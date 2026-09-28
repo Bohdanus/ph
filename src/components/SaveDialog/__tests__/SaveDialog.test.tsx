@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { KeyboardEventsProvider, useKeyDownShortcut } from '../../../hooks/useKeyboardEvents.tsx';
 import SaveDialog from '../SaveDialog.tsx';
 
 afterEach(cleanup);
@@ -353,5 +355,436 @@ describe('SaveDialog rejected save', () => {
     expect(alertSpy).not.toHaveBeenCalled();
     expect(consoleErrorSpy).not.toHaveBeenCalled();
     expect(rejections).toEqual([]);
+  });
+});
+
+const FOCUSABLE = 'select, input, textarea, button, [tabindex]:not([tabindex="-1"])';
+
+function dialogFocusables() {
+  return Array.from(screen.getByTestId('save-dialog').querySelectorAll<HTMLElement>(FOCUSABLE));
+}
+
+const closeButton = () => screen.getByTestId('save-dialog-close-button') as HTMLButtonElement;
+const cancelButton = () => screen.getByTestId('save-dialog-cancel-button') as HTMLButtonElement;
+const submitButton = () => screen.getByTestId('save-dialog-submit-button') as HTMLButtonElement;
+const jpegQuality = () => screen.getByTestId('save-dialog-jpeg-quality') as HTMLInputElement;
+
+function renderDialog({ proposedName = 'design' }: { proposedName?: string } = {}) {
+  const onClose = vi.fn();
+  const onSave = vi.fn(() => Promise.resolve());
+  const view = render(<SaveDialog proposedName={proposedName} onSave={onSave} onClose={onClose} />);
+  return { onClose, onSave, ...view };
+}
+
+const UndoProbe = ({ onKeyDown }: { onKeyDown: () => void }) => {
+  useKeyDownShortcut({ key: 'z', mod: true, preventDefault: true, onKeyDown });
+  return null;
+};
+
+function SaveDialogHarness() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" data-testid="file-save-trigger" onClick={() => setOpen(true)}>
+        Save As
+      </button>
+      {open && (
+        <SaveDialog proposedName="design" onSave={vi.fn(() => Promise.resolve())} onClose={() => setOpen(false)} />
+      )}
+    </>
+  );
+}
+
+describe('SaveDialog focus ownership', () => {
+  it('focuses the filename input on mount, because the close button would leave the shortcut layer live', () => {
+    renderDialog();
+
+    expect(document.activeElement).toBe(filenameInput());
+    // The first focusable in document order is the header close button, so the naive
+    // "focus the first control" selector lands on a button, which is not text-like and
+    // therefore re-opens the shortcut hole the focus move was meant to close.
+    expect(dialogFocusables()[0]).toBe(closeButton());
+  });
+
+  it('keeps the close button first and the submit button last in the focus order', () => {
+    renderDialog();
+
+    expect(dialogFocusables().map((element) => element.getAttribute('data-testid'))).toEqual([
+      'save-dialog-close-button',
+      'save-dialog-filename-input',
+      'save-dialog-format-select',
+      'save-dialog-cancel-button',
+      'save-dialog-submit-button',
+    ]);
+  });
+
+  it('wraps Tab from the last control back to the first', () => {
+    renderDialog();
+    const focusables = dialogFocusables();
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+
+    last.focus();
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    last.dispatchEvent(tab);
+
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(first);
+  });
+
+  it('wraps Shift+Tab from the first control to the last', () => {
+    renderDialog();
+    const focusables = dialogFocusables();
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+
+    first.focus();
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true, cancelable: true });
+    first.dispatchEvent(tab);
+
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(last);
+  });
+
+  it('leaves a Tab in the middle of the order to the browser', () => {
+    renderDialog();
+    const middle = dialogFocusables()[1];
+    expect(middle).toBe(filenameInput());
+
+    middle.focus();
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    middle.dispatchEvent(tab);
+
+    // jsdom never moves focus on Tab by itself, so an unchanged activeElement is what
+    // proves the dialog declined to intercept rather than what proves focus stayed.
+    expect(tab.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(middle);
+  });
+
+  it('closes on Escape without letting the keydown reach document', () => {
+    const { onClose } = renderDialog();
+    const documentListener = vi.fn();
+    document.addEventListener('keydown', documentListener);
+
+    try {
+      fireEvent.keyDown(filenameInput(), { key: 'Escape' });
+    } finally {
+      document.removeEventListener('keydown', documentListener);
+    }
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(documentListener).not.toHaveBeenCalled();
+  });
+
+  it('does not preventDefault Escape, so nothing else is starved of the key', () => {
+    renderDialog();
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+
+    filenameInput().dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('restores focus to the element that opened it once it closes', () => {
+    render(<SaveDialogHarness />);
+    const trigger = screen.getByTestId('file-save-trigger');
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+
+    fireEvent.click(trigger);
+    expect(document.activeElement).toBe(filenameInput());
+
+    fireEvent.click(cancelButton());
+
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it('never lets the app shortcut layer fire from a text-like control inside the dialog', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <UndoProbe onKeyDown={onKeyDown} />
+        <SaveDialog proposedName="design" onSave={vi.fn(() => Promise.resolve())} onClose={vi.fn()} />
+      </KeyboardEventsProvider>
+    );
+
+    fireEvent.keyDown(filenameInput(), { key: 'z', metaKey: true });
+    fireEvent.keyDown(formatSelect(), { key: 'z', metaKey: true });
+    expect(onKeyDown).not.toHaveBeenCalled();
+
+    // A range input is not text-like, so isEditableTarget would let this one through
+    // and the dialog's own stopPropagation is the only thing that can stop it. Without
+    // the control above, the two text-like assertions would pass on isEditableTarget
+    // alone and would prove nothing about the dialog owning its keyboard.
+    act(() => {
+      fireEvent.change(formatSelect(), { target: { value: 'image/jpeg' } });
+    });
+    fireEvent.keyDown(jpegQuality(), { key: 'z', metaKey: true });
+    expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('never lets the app shortcut layer fire from a button inside the dialog either', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <UndoProbe onKeyDown={onKeyDown} />
+        <SaveDialog proposedName="design" onSave={vi.fn(() => Promise.resolve())} onClose={vi.fn()} />
+      </KeyboardEventsProvider>
+    );
+
+    fireEvent.keyDown(closeButton(), { key: 'z', metaKey: true });
+    fireEvent.keyDown(cancelButton(), { key: 'z', metaKey: true });
+    fireEvent.keyDown(submitButton(), { key: 'z', metaKey: true });
+
+    expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('still delivers the app shortcut layer from outside the dialog, so the probe is not vacuous', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <button type="button" data-testid="outside-control">
+          outside
+        </button>
+        <UndoProbe onKeyDown={onKeyDown} />
+      </KeyboardEventsProvider>
+    );
+
+    fireEvent.keyDown(screen.getByTestId('outside-control'), { key: 'z', metaKey: true });
+
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers the focus a click on its own non-interactive text drops on <body>', () => {
+    renderDialog();
+    const panel = screen.getByTestId('save-dialog');
+    formatSelect().focus();
+    expect(document.activeElement).toBe(formatSelect());
+
+    // Clicking the "Save File As..." title focuses nothing, so the browser blurs the
+    // control and leaves focus on <body> with a null relatedTarget and no focusin.
+    (document.activeElement as HTMLElement).blur();
+
+    expect(document.activeElement).not.toBe(document.body);
+    expect(panel.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(formatSelect());
+  });
+
+  it('recovers the mount focus rather than the first control when focus is dropped on <body>', () => {
+    renderDialog();
+    const panel = screen.getByTestId('save-dialog');
+    expect(document.activeElement).toBe(filenameInput());
+
+    (document.activeElement as HTMLElement).blur();
+
+    expect(panel.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(filenameInput());
+    expect(document.activeElement).not.toBe(closeButton());
+  });
+
+  it('keeps Tab and the app shortcut layer inside the panel after focus is driven outside it', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <button type="button" data-testid="outside-control">
+          outside
+        </button>
+        <UndoProbe onKeyDown={onKeyDown} />
+        <SaveDialog proposedName="design" onSave={vi.fn(() => Promise.resolve())} onClose={vi.fn()} />
+      </KeyboardEventsProvider>
+    );
+    const panel = screen.getByTestId('save-dialog');
+
+    (document.activeElement as HTMLElement).blur();
+    expect(panel.contains(document.activeElement)).toBe(true);
+
+    const focusables = dialogFocusables();
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    last.focus();
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    last.dispatchEvent(tab);
+
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'z', metaKey: true });
+    expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('refuses the tab and the shortcut layer when the focused control is removed and no focus event fires', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <KeyboardEventsProvider>
+        <UndoProbe onKeyDown={onKeyDown} />
+        <SaveDialog proposedName="design" onSave={vi.fn(() => Promise.resolve())} onClose={vi.fn()} />
+      </KeyboardEventsProvider>
+    );
+    const panel = screen.getByTestId('save-dialog');
+
+    // A re-render can unmount the focused control, which drops focus on <body> without
+    // dispatching focusout or focusin, so no focus containment guard can see it coming.
+    expect(document.activeElement).toBe(filenameInput());
+    (document.activeElement as HTMLElement).remove();
+    expect(document.activeElement).toBe(document.body);
+
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    document.body.dispatchEvent(tab);
+
+    expect(tab.defaultPrevented).toBe(true);
+    expect(panel.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.body, { key: 'z', metaKey: true });
+    expect(onKeyDown).not.toHaveBeenCalled();
+  });
+
+  it('brings focus back when a tab arrives at the panel itself while focus is on <body>', () => {
+    renderDialog();
+    const panel = screen.getByTestId('save-dialog');
+
+    expect(document.activeElement).toBe(filenameInput());
+    (document.activeElement as HTMLElement).remove();
+    expect(document.activeElement).toBe(document.body);
+
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    panel.dispatchEvent(tab);
+
+    expect(tab.defaultPrevented).toBe(true);
+    expect(panel.contains(document.activeElement)).toBe(true);
+  });
+
+  it('takes focus back when something outside the dialog focuses itself', () => {
+    render(
+      <>
+        <button type="button" data-testid="outside-control">
+          outside
+        </button>
+        <SaveDialog proposedName="design" onSave={vi.fn(() => Promise.resolve())} onClose={vi.fn()} />
+      </>
+    );
+    const panel = screen.getByTestId('save-dialog');
+
+    screen.getByTestId('outside-control').focus();
+
+    expect(panel.contains(document.activeElement)).toBe(true);
+  });
+
+  it('stays contained after the format select is replaced by the JPEG quality slider', () => {
+    render(
+      <>
+        <button type="button" data-testid="outside-control">
+          outside
+        </button>
+        <SaveDialog proposedName="design" onSave={vi.fn(() => Promise.resolve())} onClose={vi.fn()} />
+      </>
+    );
+    const panel = screen.getByTestId('save-dialog');
+
+    act(() => {
+      fireEvent.change(formatSelect(), { target: { value: 'image/jpeg' } });
+    });
+    jpegQuality().focus();
+    expect(document.activeElement).toBe(jpegQuality());
+
+    // The focus order grew a control in the middle, so both wrap points have to be
+    // recomputed from the live DOM rather than read once at mount.
+    const focusables = dialogFocusables();
+    expect(focusables).toContain(jpegQuality());
+    expect(focusables[0]).toBe(closeButton());
+    const last = focusables[focusables.length - 1];
+    expect(last).toBe(submitButton());
+
+    last.focus();
+    const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+    last.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(focusables[0]);
+
+    screen.getByTestId('outside-control').focus();
+
+    expect(panel.contains(document.activeElement)).toBe(true);
+  });
+
+  it('recovers focus to a control that accepts it while the Save controls are disabled', async () => {
+    let finish!: () => void;
+    const onSave = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        })
+    );
+    render(
+      <>
+        <button type="button" data-testid="outside-control">
+          outside
+        </button>
+        <SaveDialog proposedName="design" onSave={onSave} onClose={vi.fn()} />
+      </>
+    );
+    const panel = screen.getByTestId('save-dialog');
+
+    submitButton().focus();
+    expect(document.activeElement).toBe(submitButton());
+
+    await act(async () => {
+      fireEvent.click(submitButton());
+    });
+    expect(closeButton().disabled).toBe(true);
+    expect(cancelButton().disabled).toBe(true);
+    expect(submitButton().disabled).toBe(true);
+
+    // The control the user was on is now disabled, and so is the first focusable, so
+    // both the restore candidate and the head of the walk refuse focus. A recovery that
+    // focused the first candidate and returned unconditionally would strand the dialog
+    // on a control that cannot be typed into or activated; this one has to walk on to
+    // the filename. jsdom never blurs a control a render just disabled, so the recovery
+    // is driven from outside instead of by the blur the browser would perform.
+    screen.getByTestId('outside-control').focus();
+
+    expect(panel.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(filenameInput());
+    expect(document.activeElement).not.toBe(submitButton());
+
+    await act(async () => {
+      finish();
+    });
+  });
+
+  it('wraps Shift+Tab to a control that accepts focus, not to a disabled Save', () => {
+    // The regression: the wrap endpoints came from the unfiltered focusable list, so the
+    // last one was the Save button. With the filename blank the Save button is disabled,
+    // and `focus()` on a disabled control is a no-op — so Shift+Tab from the close button
+    // ate the keystroke AND left focus where it was. Forward Tab then had a different
+    // failure: the default was not prevented, the browser left the panel, and the
+    // containment arm pulled straight back. The user could not reach the filename field,
+    // the format select or Cancel by keyboard at all. Only Escape and the close button
+    // worked, and this dialog used to have no trap at all.
+    renderDialog({ proposedName: '' });
+
+    expect(submitButton().disabled).toBe(true);
+
+    closeButton().focus();
+    fireEvent.keyDown(closeButton(), { key: 'Tab', shiftKey: true });
+
+    expect(document.activeElement).toBe(cancelButton());
+    expect(document.activeElement).not.toBe(submitButton());
+  });
+
+  it('wraps Tab forward from the last enabled control to the first', () => {
+    renderDialog({ proposedName: '' });
+
+    expect(submitButton().disabled).toBe(true);
+
+    // Cancel is now the last control that can take focus, because Save is off.
+    cancelButton().focus();
+    fireEvent.keyDown(cancelButton(), { key: 'Tab' });
+
+    expect(document.activeElement).toBe(closeButton());
+  });
+
+  it('is announced as a modal dialog labelled by its title', () => {
+    renderDialog();
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAccessibleName('Save File As...');
   });
 });

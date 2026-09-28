@@ -129,6 +129,37 @@ describe('AVIF encoding', () => {
 
     expect(encode.mock.calls[0][0]).toMatchObject({ width: 1, height: 1 });
   });
+
+  it('refuses a canvas beyond the pixel budget rather than writing a file it cannot reopen', async () => {
+    const canvas = canvasOf(10000, 8001, new Uint8ClampedArray(0));
+
+    await expect(encodeAvif(canvas)).rejects.toThrow(
+      'AVIF image is too large to save (10000×8001). Maximum is 80000000 pixels.'
+    );
+    expect(encode).not.toHaveBeenCalled();
+  });
+
+  it('refuses an over-budget canvas before it reads a single pixel back out of it', async () => {
+    const getImageData = vi.fn(() => ({ data: new Uint8ClampedArray(0), width: 10000, height: 8001 }));
+    const canvas = document.createElement('canvas');
+    canvas.width = 10000;
+    canvas.height = 8001;
+    vi.spyOn(canvas, 'getContext').mockReturnValue({ getImageData } as unknown as CanvasRenderingContext2D);
+
+    await expect(encodeAvif(canvas)).rejects.toThrow('AVIF image is too large to save');
+    expect(getImageData).not.toHaveBeenCalled();
+  });
+
+  it('encodes a canvas sitting exactly on the pixel budget, because the check is strictly greater-than', async () => {
+    const canvas = canvasOf(10000, 8000, new Uint8ClampedArray(0));
+    encode.mockResolvedValue(new ArrayBuffer(1));
+
+    await expect(encodeAvif(canvas)).resolves.toBeInstanceOf(Blob);
+    expect(encode).toHaveBeenCalledExactlyOnceWith(
+      { data: expect.any(Uint8ClampedArray), width: 10000, height: 8000 },
+      { quality: 80 }
+    );
+  });
 });
 
 describe('AVIF decoding', () => {

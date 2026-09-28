@@ -1,5 +1,6 @@
 import type { Page, Locator } from '@playwright/test';
 import { expect } from '@playwright/test';
+import { getPageScroll } from './canvas-helpers';
 
 /**
  * The left toolbar has drifted between legacy role-based labels and the newer
@@ -95,12 +96,36 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Runs a toolbar interaction and puts the window back where it was afterwards.
+ *
+ * Playwright scrolls a target into view before it clicks, and the left toolbar is 1177px
+ * tall inside Playwright's 720px window, so every click on a tool near the bottom of it
+ * drags the page 440px down. That scroll is invisible to the caller and fatal to the specs:
+ * a canvas box measured after the click reports `y: -340` where it reported `y: 100`, so
+ * the stroke is drawn and read 440px away from where the geometry says, and 19 specs that
+ * passed on the parent commit fail here. Restoring the offset is what makes a tool click
+ * mean "this tool is now active" and nothing else.
+ *
+ * It is deliberately not "scroll to the top": a caller that has scrolled for its own
+ * reasons must get its own position back, not a hardcoded one. The restore is
+ * unconditional, so it also undoes a scroll the APP caused by selecting the tool — not
+ * only the one Playwright caused to reach the button — and `window.scrollTo` to the
+ * position the window is already at fires no scroll event, so the common short-toolbar
+ * case costs one read and one no-op write.
+ */
+async function preservingScroll(page: Page, action: () => Promise<void>): Promise<void> {
+  const before = await getPageScroll(page);
+  await action();
+  await page.evaluate(({ x, y }) => window.scrollTo(x, y), before);
+}
+
 export async function clickToolButton(page: Page, toolName: string): Promise<void> {
   const normalizedName = resolveToolName(toolName);
 
   const testIdTool = page.getByTestId(`tool-button-${normalizedName}`);
   if (await testIdTool.count()) {
-    await testIdTool.first().click();
+    await preservingScroll(page, () => testIdTool.first().click());
     return;
   }
 
@@ -122,7 +147,7 @@ export async function clickToolButton(page: Page, toolName: string): Promise<voi
     // map keys do not; the expansion is part of the data, so it is escaped too.
     const roleTool = page.getByRole('button', { name: new RegExp(escapeRegExp(name.replace(/&/g, 'and')), 'i') });
     if (await roleTool.count()) {
-      await roleTool.first().click();
+      await preservingScroll(page, () => roleTool.first().click());
       return;
     }
     attempted.push(name);
@@ -136,9 +161,44 @@ export async function clickToolButton(page: Page, toolName: string): Promise<voi
 }
 
 /**
+ * How long to wait for a flyout to be open.
+ *
+ * This is a budget for a CONDITION wait, not a deadline the app has to beat. The long-press
+ * timer in `SidebarLeft` fires 300ms after pointerdown, and the rest of this budget absorbs
+ * scheduler jitter on a loaded machine. It is deliberately far larger than the 300ms it is
+ * waiting on: the old helper raced a hard 350ms sleep against that same timer, leaving 50ms
+ * of margin, which is the defect `openToolFlyout` documents.
+ *
+ * Exported so the unit test pins this number instead of restating it — two literals for one
+ * timeout is how the delay came to be 300 in one place and 350 in another while only
+ * `300 + 50 === 350` kept them compatible.
+ */
+export const FLYOUT_VISIBLE_TIMEOUT_MS = 2000;
+
+/**
  * Opens a tool flyout via long-press (300ms) for grouped tools.
  * Use this instead of clickToolButton when you need to select a non-primary
  * tool from a flyout group (e.g., Lasso, Colors, Brush, Pen, Shape).
+ *
+ * The gesture is press, wait for the menu, lift — in that order, because that is what the
+ * app's own handler requires. `SidebarLeft` arms a 300ms timer on pointerdown and opens the
+ * flyout when it fires, while its pointerup handler calls `clearLongPressFlyout()`
+ * unconditionally. So a pointerup that arrives before the timer fires CANCELS the pending
+ * open: the menu is not merely late, it never appears, and no amount of waiting afterwards
+ * recovers it.
+ *
+ * The previous version therefore had to win a race — sleep a fixed 350ms, then lift, so that
+ * the 300ms timer had 50ms of margin — and it lost whenever the renderer's main thread was
+ * busy enough to deliver that timer late. The losing path destroys the state the following
+ * assertion was waiting for, so it surfaced as an unexplained `toBeVisible()` timeout rather
+ * than as a missed press. Waiting for the condition instead of sleeping removes the margin
+ * entirely: the timer may fire early, late, or on time.
+ *
+ * Lifting afterwards is faithful to the gesture and safe: `onPointerUp` only touches refs
+ * (`suppressLongPressRef`, `longPressOpenedRef`, `ignoreNextClickRef`) and never clears
+ * `openGroup`, so it cannot close a flyout that is already open. The one ref it does set,
+ * `ignoreNextClickRef`, is cleared again by the next pointerdown on that button, so a later
+ * `clickToolButton` on the same tile is not swallowed.
  */
 export async function openToolFlyout(page: Page, toolName: string): Promise<void> {
   const normalizedName = resolveToolName(toolName);
@@ -146,22 +206,41 @@ export async function openToolFlyout(page: Page, toolName: string): Promise<void
   const button = page.getByTestId(`tool-button-${normalizedName}`);
   await expect(button).toBeVisible();
 
-  // Long-press: dispatch pointerdown on the button element, wait 350ms, then pointerup
-  // This matches SidebarLeft.tsx's onPointerDown/onPointerUp handlers (lines 222-241)
+  // Press.
   await button.dispatchEvent('pointerdown', { button: 0 });
-  await page.waitForTimeout(350); // 300ms long-press delay + buffer
+
+  // Wait for THIS tile's flyout to be open before lifting.
+  //
+  // `aria-expanded` is set from `openGroup === groupIndex` on the pressed tile, so it is
+  // true only once this group is the open one. Waiting on a bare `role="menu"` — what
+  // `waitForFlyout` does — is NOT interchangeable here: callers legitimately long-press a
+  // second tile while the first flyout is still open (see the "switches flyout" spec), and a
+  // generic menu assertion would be satisfied instantly by the still-open first menu. The
+  // helper would then lift while the second timer was still pending, cancelling the second
+  // open, and return with the wrong flyout on screen. Sharing one helper between the two
+  // would reintroduce exactly that.
+  await expect(button).toHaveAttribute('aria-expanded', 'true', { timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
+
+  // Lift. The flyout stays open; see the note on `onPointerUp` above.
   await button.dispatchEvent('pointerup', { button: 0 });
 
-  // Wait for flyout to appear (all flyouts have role="menu")
-  await expect(page.getByRole('menu')).toBeVisible({ timeout: 2000 });
+  // `aria-expanded` and the portal are not set in the same commit: the overlay is gated on the
+  // ref callback having published the anchor, so the attribute is true one commit before the
+  // menu exists. Asserting the menu is still what makes "returned" mean "usable", and it costs
+  // nothing on the path that just opened it.
+  await expect(page.getByRole('menu')).toBeVisible({ timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
 }
 
 /**
  * Waits for a flyout menu to become visible after long-press, right-click, or keyboard.
  * All flyouts have role="menu" (SidebarLeft.tsx line 285).
+ *
+ * Unlike `openToolFlyout` this accepts ANY open flyout, which is correct for its callers:
+ * they open exactly one flyout by right-click or keyboard, so there is never an earlier one
+ * for the assertion to latch onto.
  */
 export async function waitForFlyout(page: Page): Promise<void> {
-  await expect(page.getByRole('menu')).toBeVisible({ timeout: 2000 });
+  await expect(page.getByRole('menu')).toBeVisible({ timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
 }
 
 export interface FlyoutItem {
@@ -178,7 +257,9 @@ export async function selectFromFlyout(page: Page, item: FlyoutItem): Promise<vo
   const slug = generateSlug(item.label);
   const flyoutItem = page.getByTestId(`tool-flyout-item-${item.toolName}-${slug}`);
   await expect(flyoutItem).toBeVisible();
-  await flyoutItem.click();
+  // The flyout hangs off a toolbar button near the bottom of a window-height-taller
+  // page, so clicking one scrolls just as a tool button click does.
+  await preservingScroll(page, () => flyoutItem.click());
 
   // Wait for flyout to close
   await expect(page.getByRole('menu')).toBeHidden({ timeout: 1000 });
@@ -198,7 +279,7 @@ export function getToolButton(page: Page, toolName: string): Locator {
 export async function toggleToolbarLayout(page: Page): Promise<void> {
   const toggle = page.getByTestId('toolbar-layout-toggle');
   await expect(toggle).toBeVisible();
-  await toggle.click();
+  await preservingScroll(page, () => toggle.click());
 }
 
 /**
@@ -218,10 +299,9 @@ export async function openToolFlyoutViaRightClick(page: Page, toolName: string):
   const button = page.getByTestId(`tool-button-${normalizedName}`);
   await expect(button).toBeVisible();
 
-  await button.click({ button: 'right' });
+  await preservingScroll(page, () => button.click({ button: 'right' }));
   await waitForFlyout(page);
 }
-
 /**
  * Verifies that hover does NOT open a flyout (Photoshop-style behavior).
  * Hover the grouped tool button and confirm no flyout appears.

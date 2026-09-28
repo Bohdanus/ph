@@ -1,13 +1,26 @@
 import { act, renderHook } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { StoreProvider, useStore } from '../StoreContext.tsx';
+import { deriveSetLayerPropertiesEntry } from '../history-adapter.ts';
 import { useLayers } from '../useLayer.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
+import type { DurableHistoryEntry } from '../history-model.ts';
+import type { HistoryItem } from '../history-types.ts';
 import type { ToolArgs } from '../tool-types.ts';
 import { documentFrameFromSize, type DocumentFrame } from '../document-frame.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
-import { NEW_LAYER_ACTION, REORDER_ACTION, REMOVE_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import {
+  HIDE_LAYER_ACTION,
+  NEW_LAYER_ACTION,
+  OPEN_DOCUMENT_ACTION,
+  REORDER_ACTION,
+  REMOVE_ACTION,
+  RENAME_LAYER_ACTION,
+  SHOW_LAYER_ACTION,
+  TOOL_ACTION,
+} from '../../util/constants.ts';
+import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
 
 type DrawLayersToCanvas = (canvas: HTMLCanvasElement, layers: readonly Layer[], frame: DocumentFrame) => boolean;
 
@@ -17,6 +30,22 @@ vi.mock('../layer-renderer.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../layer-renderer.ts')>();
   return { ...actual, drawLayersToCanvas };
 });
+
+/**
+ * The append boundary is the only thing that can turn a layer-property update
+ * into a durable entry, so the writer's routing is observed by counting the
+ * plans it asks for and reading the entry each plan produced. The spy delegates
+ * to the real boundary so every durable assertion below is about production
+ * behaviour, not about a stubbed return value.
+ */
+const planHistoryAppend = vi.hoisted(() => vi.fn());
+
+vi.mock('../history-append.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../history-append.ts')>();
+  return { ...actual, planHistoryAppend };
+});
+
+let realPlanHistoryAppend: typeof import('../history-append.ts').planHistoryAppend;
 
 const layer: Layer = {
   id: 'layer-1',
@@ -62,8 +91,66 @@ function makeLayer(id: string, order: number): Layer {
   return { ...layer, id, name: id, order };
 }
 
+const documentSize = { width: 800, height: 600 };
+
+/** A layer the durable model can convert, so an append is decided against a real shadow. */
+function documentLayer(id: string, order: number): Layer {
+  return {
+    ...createMockLayer({
+      id,
+      name: id,
+      order,
+      isBedrock: true,
+      pos: { x: 0, y: 0, width: 800, height: 600 },
+    }),
+    source: {
+      kind: 'blank',
+      color: '#ffffff',
+      opacity: 1,
+      isBedrock: true,
+      size: { width: 800, height: 600 },
+    },
+  } as Layer;
+}
+
+/**
+ * An open document with a baseline entry, which is the only state where the
+ * append gate has a durable document it could extend: an empty timeline is
+ * never at its tip, so nothing published from one.
+ */
+function setupWithDocument(layers: LayersRecord = { [documentLayer('layer-1', 0).id]: documentLayer('layer-1', 0) }) {
+  const result = setup(layers);
+  const documentFrame = documentFrameFromSize(documentSize);
+  act(() => {
+    result.current.dispatch({
+      type: 'REPLACE_DOCUMENT',
+      payload: {
+        documentId: 'doc-layer-props',
+        history: [
+          {
+            id: 'baseline',
+            actionName: OPEN_DOCUMENT_ACTION,
+            layerId: Object.keys(layers)[0]!,
+            documentSource: { layers, size: documentSize, frame: documentFrame },
+          },
+        ],
+        historyIndex: 0,
+        updates: { layers, totalSize: documentSize, documentFrame, hasImage: true },
+      },
+    });
+  });
+  return result;
+}
+
+beforeAll(async () => {
+  ({ planHistoryAppend: realPlanHistoryAppend } =
+    await vi.importActual<typeof import('../history-append.ts')>('../history-append.ts'));
+});
+
 beforeEach(() => {
   drawLayersToCanvas.mockClear();
+  planHistoryAppend.mockClear();
+  planHistoryAppend.mockImplementation(realPlanHistoryAppend);
 });
 
 afterEach(() => {
@@ -123,7 +210,7 @@ describe('useLayers retained history commits', () => {
     expect(store.previewLayers.current).toEqual({});
   });
 
-  it('records a reorder as its own history entry against a detached copy of the record', () => {
+  it('records a reorder as its own history entry through the store-owned action', () => {
     const result = setup({ bottom: makeLayer('bottom', 0), top: makeLayer('top', 1) });
     const before = result.current.store.layers;
 
@@ -188,5 +275,236 @@ describe('useLayers retained history commits', () => {
       y2: 20,
     });
     processor.mockRestore();
+  });
+});
+
+describe('useLayers layer-property writers', () => {
+  it('routes a rename through the append boundary and publishes one entry under the legacy id', () => {
+    const result = setupWithDocument();
+    const id = Object.keys(result.current.store.layers)[0]!;
+
+    act(() => {
+      result.current.layers.updateLayer(id, { name: 'Renamed' }, RENAME_LAYER_ACTION);
+    });
+
+    expect(planHistoryAppend).toHaveBeenCalledTimes(1);
+    expect(planHistoryAppend.mock.calls[0]![0]).toMatchObject({
+      item: { layerId: id, actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' } },
+      timeline: { cursor: 0, branchRevision: 0 },
+    });
+
+    const store = result.current.store;
+    expect(store.layers[id].name).toBe('Renamed');
+    expect(store.history).toHaveLength(2);
+    expect(store.history[1]).toMatchObject({ actionName: RENAME_LAYER_ACTION, layerId: id, args: { name: 'Renamed' } });
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDiagnostics).toEqual([]);
+    // One append mints one id: the durable entry is the one the boundary derived
+    // from the same legacy entry, not a second id the store invented.
+    expect(store.durableDocument!.history).toHaveLength(1);
+    expect(store.durableDocument!.history[0]).toMatchObject({
+      id: store.history[1]!.id,
+      operation: { kind: 'set-layer-properties', layerId: id, patch: { name: 'Renamed' } },
+    });
+    expect(store.durableDocument!.cursor).toBe(0);
+  });
+
+  it('toggles visibility through the boundary and flips the canonical patch both ways', () => {
+    const result = setupWithDocument();
+    const id = Object.keys(result.current.store.layers)[0]!;
+
+    act(() => {
+      result.current.layers.toggleVisibility(id);
+    });
+
+    expect(planHistoryAppend).toHaveBeenCalledTimes(1);
+    expect(planHistoryAppend.mock.calls[0]![0]).toMatchObject({
+      item: { layerId: id, actionName: HIDE_LAYER_ACTION, args: { visible: false } },
+    });
+    let store = result.current.store;
+    expect(store.layers[id].visible).toBe(false);
+    expect(store.history[1]).toMatchObject({ actionName: HIDE_LAYER_ACTION, layerId: id, args: { visible: false } });
+    expect(store.durableDocument!.history[0]).toMatchObject({
+      id: store.history[1]!.id,
+      operation: { kind: 'set-layer-properties', layerId: id, patch: { visible: false } },
+    });
+
+    act(() => {
+      result.current.layers.toggleVisibility(id);
+    });
+
+    expect(planHistoryAppend).toHaveBeenCalledTimes(2);
+    expect(planHistoryAppend.mock.calls[1]![0]).toMatchObject({
+      item: { layerId: id, actionName: SHOW_LAYER_ACTION, args: { visible: true } },
+    });
+    store = result.current.store;
+    expect(store.layers[id].visible).toBe(true);
+    // The second append published onto the first, so both survive and the
+    // durable cursor tracks the legacy one.
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDiagnostics).toEqual([]);
+    expect(store.durableDocument!.history.map((entry) => entry.id)).toEqual([
+      result.current.store.history[1]!.id,
+      result.current.store.history[2]!.id,
+    ]);
+    expect(store.durableDocument!.history[1]).toMatchObject({
+      operation: { kind: 'set-layer-properties', layerId: id, patch: { visible: true } },
+    });
+    expect(store.durableDocument!.cursor).toBe(1);
+    // The document baseline is not a durable entry, so the cursor lags the
+    // legacy one and must never lead it.
+    expect(store.durableDocument!.cursor).toBeLessThan(store.historyIndex);
+  });
+
+  it('applies only the derived property to the runtime layer, not every field the caller passed', () => {
+    const result = setupWithDocument();
+    const id = Object.keys(result.current.store.layers)[0]!;
+
+    act(() => {
+      result.current.layers.updateLayer(
+        id,
+        { name: 'Renamed', visible: false, opacity: 0.5 } as Partial<Layer>,
+        RENAME_LAYER_ACTION
+      );
+    });
+
+    const store = result.current.store;
+    // A rename's durable operation is the name and nothing else, so the runtime
+    // record is patched with the derived property rather than the caller's
+    // `Partial<Layer>`. Otherwise an unrelated field in the patch would reach
+    // the layer with no durable entry to replay it from.
+    expect(store.layers[id].name).toBe('Renamed');
+    expect(store.layers[id].visible).toBe(true);
+    expect(store.layers[id].opacity).toBe(1);
+    // The legacy record keeps the caller's arguments verbatim: the timeline stays
+    // the replay authority, and only the runtime layer and the shadow are
+    // narrowed to the derived property.
+    expect(store.history[1]!.args).toEqual({ name: 'Renamed', visible: false, opacity: 0.5 });
+    expect(store.durableDocument!.history[0]).toMatchObject({
+      operation: { kind: 'set-layer-properties', layerId: id, patch: { name: 'Renamed' } },
+    });
+  });
+
+  it('keeps the caller patch and drops the durable branch when the rename value is unreadable', () => {
+    const result = setupWithDocument();
+    const id = Object.keys(result.current.store.layers)[0]!;
+
+    act(() => {
+      result.current.layers.updateLayer(id, { name: 42 as unknown as string }, RENAME_LAYER_ACTION);
+    });
+
+    const store = result.current.store;
+    // A boundary that cannot read the value plans no entry, so the writer keeps
+    // the caller's patch: refusing the durable branch never rejects the edit.
+    expect(store.layers[id].name).toBe(42);
+    expect(store.history).toHaveLength(2);
+    expect(store.history[1]).toMatchObject({ actionName: RENAME_LAYER_ACTION, layerId: id, args: { name: 42 } });
+    // Nothing is manufactured to satisfy the cursor: the shadow stays on the
+    // baseline while the legacy timeline keeps the entry.
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDocument!.history).toHaveLength(0);
+    expect(store.durableDocument!.cursor).toBe(-1);
+  });
+
+  it('publishes the boundary plan instead of letting the store reconvert it', () => {
+    const result = setupWithDocument();
+    const id = Object.keys(result.current.store.layers)[0]!;
+
+    // A publication carries the store's current diagnostics forward and a
+    // whole-timeline reconversion replaces the list, so a diagnostic that
+    // survives the next commit is a direct read of which path that commit took.
+    const planted: HistoryItem = {
+      id: 'planted-mismatch',
+      actionName: RENAME_LAYER_ACTION,
+      layerId: id,
+      args: { name: 'Renamed' },
+    };
+    act(() => {
+      result.current.dispatch({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { [id]: { ...result.current.store.layers[id], name: 'Renamed' } } },
+          historyItem: planted,
+          durableEntry: {
+            ...(deriveSetLayerPropertiesEntry(planted) as DurableHistoryEntry),
+            operation: { kind: 'set-layer-properties', layerId: id, patch: { name: 'Somewhere else' } },
+          },
+        },
+      });
+    });
+    expect(result.current.store.durableDiagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      'durable-append-mismatch',
+    ]);
+
+    act(() => {
+      result.current.layers.updateLayer(id, { name: 'Renamed twice' }, RENAME_LAYER_ACTION);
+    });
+
+    const store = result.current.store;
+    // The writer handed the boundary's entry to the store and the store
+    // published it onto its own document, so the shadow grew by exactly one
+    // entry and the previous diagnostic was carried rather than recomputed.
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDiagnostics.map((diagnostic) => diagnostic.code)).toEqual(['durable-append-mismatch']);
+    expect(store.durableDocument!.history.map((entry) => entry.id)).toEqual([planted.id, store.history[2]!.id]);
+    expect(store.durableDocument!.cursor).toBe(1);
+  });
+
+  it('publishes a reorder through the store and carries the diagnostics a publication carries', () => {
+    const bottom = documentLayer('bottom', 0);
+    const top = documentLayer('top', 1);
+    const result = setupWithDocument({ bottom, top });
+    expect(planHistoryAppend).not.toHaveBeenCalled();
+
+    // A commit whose plan disagrees with its own legacy entry reports a
+    // mismatch, and a publication carries that diagnostic into the next append.
+    // Whether the next append publishes or reconverts is therefore readable off
+    // the list: a publication preserves it, a reconversion replaces it.
+    const rename: HistoryItem = {
+      id: 'rename-1',
+      actionName: RENAME_LAYER_ACTION,
+      layerId: 'bottom',
+      args: { name: 'Renamed' },
+    };
+    act(() => {
+      result.current.dispatch({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { bottom: { ...bottom, name: 'Renamed' }, top } },
+          historyItem: rename,
+          durableEntry: {
+            ...(deriveSetLayerPropertiesEntry(rename) as DurableHistoryEntry),
+            operation: { kind: 'set-layer-properties', layerId: 'bottom', patch: { name: 'Somewhere else' } },
+          },
+        },
+      });
+    });
+    expect(result.current.store.durableDiagnostics.map((diagnostic) => diagnostic.code)).toEqual([
+      'durable-append-mismatch',
+    ]);
+
+    act(() => {
+      result.current.layers.moveLayerAfter('bottom', 'top');
+    });
+
+    // The writer still asks the hook boundary for nothing, because a reorder's
+    // durable operation names the order of every layer and only the store can see
+    // the record it must describe. The store plans it from that record instead.
+    expect(planHistoryAppend).not.toHaveBeenCalled();
+    const store = result.current.store;
+    expect(store.history.at(-1)).toMatchObject({
+      actionName: REORDER_ACTION,
+      layerId: 'bottom',
+      args: { layerToMoveId: 'bottom', afterWhichLayerId: 'top' },
+    });
+    // The carried diagnostic is the proof the append published rather than
+    // reconverting: a reconversion would have replaced the list with its own.
+    expect(store.durableDiagnostics.map((diagnostic) => diagnostic.code)).toEqual(['durable-append-mismatch']);
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDocument!.history.map((entry) => entry.operation.kind)).toEqual([
+      'set-layer-properties',
+      'reorder-layers',
+    ]);
+    expect(store.durableDocument!.cursor).toBe(1);
   });
 });

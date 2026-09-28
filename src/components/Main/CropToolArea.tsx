@@ -8,7 +8,6 @@ import type { RectXYSorted } from '../../contexts/general-types.ts';
 
 type cropToolAreaProps = {
   className?: string;
-  canvasCtxRef: RefObject<CanvasRenderingContext2D | null>;
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
 };
 
@@ -28,11 +27,15 @@ export const CropToolArea = ({ className }: cropToolAreaProps) => {
     onChangeEnd: (newRect: RectXYSorted) => {
       const newRectTrimmed = trimRect(newRect, totalSize);
 
+      // `preRatioRect` is cleared on both paths. The panel clears it on its own writes, and this
+      // writer is the one a drag goes through: a drag while a ratio is set refits the rect, so the
+      // framing recorded before that ratio is no longer what the next `Free`/`Original` should
+      // restore. Left in place, it survives into the next ratio change as a stale framing.
       if (newRectTrimmed.width === 0 || newRectTrimmed.height === 0) {
         // return null if nothing selected or if selection is outside
-        setToolArgs({ ...args, rect: null });
+        setToolArgs({ ...args, rect: null, preRatioRect: null });
       } else {
-        setToolArgs({ ...args, rect: newRect });
+        setToolArgs({ ...args, rect: newRect, preRatioRect: null });
       }
     },
   });

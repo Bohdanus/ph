@@ -7,7 +7,7 @@ import { documentFrameFromSize, type DocumentFrame } from '../document-frame.ts'
 import type { Layer, LayersRecord } from '../layer-types.ts';
 import type { ToolArgs } from '../tool-types.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
-import { TOOL_ACTION } from '../../util/constants.ts';
+import { RENAME_LAYER_ACTION, TOOL_ACTION } from '../../util/constants.ts';
 
 type DrawLayersToCanvas = (canvas: HTMLCanvasElement, layers: readonly Layer[], frame: DocumentFrame) => boolean;
 
@@ -181,6 +181,84 @@ describe('useLayers commitDirtyTool presentation promotion', () => {
     expect(result.current.store.history).toEqual([]);
     expect(result.current.store.previewLayers.current).toEqual({});
     expect(result.current.store.layers.clean!.tmpCanvas).toBeNull();
+  });
+
+  it('preserves hasUnsavedChanges and the durable shadow across a presentation-only commit', async () => {
+    // A real document edit first, so both the dirty flag and a `current` durable
+    // shadow exist before the promotion. `commitDirtyTool` on a layer that only
+    // carries a staged canvas publishes through `PUBLISH_RUNTIME_PRESENTATION`,
+    // which is the hook-level path to the presentation boundary.
+    const staged = new OffscreenCanvas(40, 20);
+    const { result } = setup({
+      layers: { edited: makeLayer('edited', 0, { tmpCanvas: staged as unknown as Layer['tmpCanvas'] }) },
+      activeLayerId: 'edited',
+    });
+
+    act(() => {
+      result.current.dispatch({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { edited: { ...result.current.store.layers.edited!, name: 'Renamed' } } },
+          historyItem: { id: 'edit-1', actionName: RENAME_LAYER_ACTION, layerId: 'edited', args: {} },
+        },
+      });
+    });
+    const before = result.current.store;
+    expect(before.hasUnsavedChanges).toBe(true);
+    expect(before.durableStatus).toBe('current');
+
+    act(() => {
+      result.current.layers.commitDirtyTool();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const after = result.current.store;
+    // The promotion did land — this is a publication, not a no-op.
+    expect(after).not.toBe(before);
+    expect(after.layers.edited!.tmpCanvas).toBeNull();
+    expect(after.layers.edited!.bitmap).not.toBeNull();
+    // A swap of a disposable cache is not an edit: it neither dirties the document
+    // nor invalidates the durable shadow, and it appends nothing.
+    expect(after.hasUnsavedChanges).toBe(before.hasUnsavedChanges);
+    expect(after.durableStatus).toBe(before.durableStatus);
+    expect(after.durableStatus).toBe('current');
+    expect(after.durableDocument).toBe(before.durableDocument);
+    expect(after.history).toEqual(before.history);
+  });
+
+  it('refuses a presentation publication that also moves durable layer state', () => {
+    const cache = { width: 40, height: 20, close: vi.fn() } as unknown as ImageBitmap;
+    const { result } = setup({ layers: { edited: makeLayer('edited', 0) }, activeLayerId: 'edited' });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const before = result.current.store.layers;
+
+    // Dispatched through the store's own dispatch, the same function `useLayers`
+    // commits with, so this is the hook path and not a direct reducer call.
+    act(() => {
+      result.current.dispatch({
+        type: 'PUBLISH_RUNTIME_PRESENTATION',
+        payload: {
+          layers: {
+            edited: { ...before.edited!, name: 'Renamed by a refused publication', bitmap: cache, tmpCanvas: null },
+          },
+        },
+      });
+    });
+
+    const store = result.current.store;
+    // Refused, not applied: the very same record object is still the live one, so
+    // the rename never reaches the document.
+    expect(store.layers).toBe(before);
+    expect(store.layers.edited!.name).toBe('edited');
+    expect(store.layers.edited!.bitmap).not.toBe(cache);
+    // Two refusals share one outcome and mean different things, so only the one
+    // that would drop a user edit is reported — with the offending layer ids.
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const reported = consoleError.mock.calls[0][0] as string;
+    expect(reported).toContain('PUBLISH_RUNTIME_PRESENTATION carries presentation caches only');
+    expect(reported).toContain('Offending layer ids: edited');
   });
 });
 

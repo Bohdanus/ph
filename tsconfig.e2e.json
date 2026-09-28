@@ -11,7 +11,7 @@
     "types": ["@playwright/test", "node"],
     // Same as tsconfig.app.json / tsconfig.node.json. Without it, a dependency `.d.ts`
     // change in a `@types/node` / `@playwright/test` / `vitest` minor bump can turn
-    // `tsc -b` — and therefore the husky pre-commit hook — red through no repo change.
+    // `tsc -b` — and therefore the pre-commit gate — red through no repo change.
     "skipLibCheck": true,
 
     /* Bundler mode */

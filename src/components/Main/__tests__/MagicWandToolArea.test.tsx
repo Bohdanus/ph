@@ -102,6 +102,9 @@ function createMockContext() {
     strokeStyle: '',
     fillStyle: '',
     lineWidth: 1,
+    // The leaked value: the tool overlay is one 2D context for the whole session, and the brush
+    // default is 0.9. 0.2 is the worst case worth naming — the Opacity slider at its floor.
+    globalAlpha: 0.2,
   } as unknown as CanvasRenderingContext2D;
 }
 
@@ -347,6 +350,36 @@ describe('MagicWandToolArea', () => {
     expect(mockCtx.moveTo).toHaveBeenCalledWith(0, 0);
     expect(mockCtx.lineTo).toHaveBeenCalledWith(4, 0);
     expect(mockCtx.closePath).toHaveBeenCalled();
+  });
+
+  it('strokes the selection outline at full opacity, whatever alpha a previous tool left', () => {
+    // The reset lives inside `drawSelectionOutline` rather than in each caller, because the
+    // per-caller version had to be added one tool at a time and the magic wand's two loops were
+    // the ones that never got it. 0.95 x 0.2 is an outline you cannot see.
+    storeState.selections = [
+      {
+        id: 'selection-1',
+        isActive: true,
+        geometry: 'polygon',
+        sourceTool: 'magic-wand',
+        lifecycle: 'committed',
+        pos: { x: 0, y: 0, width: 4, height: 4 },
+        points: [
+          { x: 0, y: 0 },
+          { x: 4, y: 0 },
+          { x: 4, y: 4 },
+        ],
+      },
+    ];
+    const mockCtx = createMockContext();
+    const alphaAtStroke: number[] = [];
+    vi.mocked(mockCtx.stroke).mockImplementation(() => {
+      alphaAtStroke.push(mockCtx.globalAlpha);
+    });
+
+    render(<MagicWandToolArea overlayCtxRef={{ current: mockCtx }} className="test-magic-wand-area" />);
+
+    expect(alphaAtStroke).toEqual([1]);
   });
 
   it('clears the overlay on unmount', () => {

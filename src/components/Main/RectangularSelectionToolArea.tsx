@@ -1,8 +1,9 @@
-import { type PointerEvent, type RefObject, useMemo, useRef } from 'react';
+import { type PointerEvent, type RefObject, useEffect, useMemo, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useRect } from '../../hooks/useRect.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useSelectionHistory } from '../../contexts/useSelectionHistory.ts';
+import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
 import type { RectXYSorted } from '../../contexts/general-types.ts';
 import {
   createCommittedRectangleSelection,
@@ -13,7 +14,6 @@ import { documentFrameFromSize, documentToCanvasPos } from '../../contexts/docum
 
 type rectangularSelectionToolAreaProps = {
   className?: string;
-  canvasCtxRef?: RefObject<CanvasRenderingContext2D | null>;
   overlayCtxRef?: RefObject<CanvasRenderingContext2D | null>;
 };
 
@@ -24,7 +24,31 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
   ] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const isEditingCommittedSelectionRef = useRef(false);
+  /**
+   * The pointer id this component's own claim was taken with, so the release
+   * can prove it owns the claim. `onChangeEnd` receives only the rect, so the id
+   * cannot be recovered there; the ref is what lets every release route name the
+   * claim it is releasing.
+   */
+  const claimedPointerIdRef = useRef<number | null>(null);
   const { commitSelection } = useSelectionHistory();
+
+  function getPointerId(event: PointerEvent<HTMLDivElement>): number | null {
+    return typeof event.pointerId === 'number' ? event.pointerId : null;
+  }
+
+  /**
+   * Give up this component's claim, and only this one.
+   *
+   * `releaseDocumentGesture` ignores a release that names no open claim, a
+   * different kind or a different pointer, so every abort route can call this
+   * unconditionally — including the unmount cleanup, which is what bounds a
+   * leaked claim to the mount that leaked it.
+   */
+  function releaseDocumentClaim() {
+    releaseDocumentGesture('rectangular-selection', claimedPointerIdRef.current);
+    claimedPointerIdRef.current = null;
+  }
 
   const activeRectangleSelection = getActiveRectangularSelection(selections, activeSelectionId);
   const activeRectangleRect = useMemo(
@@ -44,6 +68,13 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
     containerRef,
     overlayRef: toolOverlayRef,
     onChangeEnd: (rect: RectXYSorted) => {
+      // FIRST, before anything can return. `onChangeEnd` is the single function
+      // whose body covers BOTH exits — the early return below and the commit at
+      // the end — so releasing here rather than at the commit statement is what
+      // keeps a zero-size drag, whose `createCommittedRectangleSelection` returns
+      // null, from leaving the claim set forever and the keyboard dead.
+      releaseDocumentClaim();
+
       const existingSelection = isEditingCommittedSelectionRef.current ? activeRectangleSelection : null;
       const metadata = existingSelection
         ? {
@@ -85,13 +116,58 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
   });
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    // Whether this press will start a gesture at all, read BEFORE the delegation.
+    // `useRect` refuses a non-primary button and a second pointer, and a press it
+    // refused starts nothing, so the claim is taken under the same rule rather
+    // than under the return value — that return cannot tell "refused" apart from
+    // "started a new rectangle", both of which are `false`. It also has to be
+    // read first because `isPointerDownValid` flips `isMouseDown` on the way in,
+    // after which the flag can no longer tell the two apart either. A right-click
+    // that claimed the document would refuse every shortcut until some later
+    // drag happened to release it.
+    const startsGesture = event.button === 0 && !pointerEvents.isMouseDown.current;
+    const pointerId = getPointerId(event);
+
     const isEditingCommittedSelection = pointerEvents.onPointerDown(event);
     isEditingCommittedSelectionRef.current = isEditingCommittedSelection;
 
     if (!isEditingCommittedSelection) {
       dispatch({ type: 'START_SELECTION_DRAFT', payload: { sourceTool: 'rectangular-selection' } });
     }
+
+    // The claim, not the draft dispatch: a rectangle is the one gesture whose
+    // write lands on release, so the window between this press and the
+    // `onChangeEnd` above is exactly the window where a document-mutating
+    // shortcut would mutate the document the pending commit then truncates.
+    if (startsGesture && claimDocumentGesture('rectangular-selection', pointerId)) {
+      claimedPointerIdRef.current = pointerId;
+    }
   };
 
-  return <div className={`${className} cursor-crosshair`} {...pointerEvents} onPointerDown={handlePointerDown}></div>;
+  /**
+   * A cancel is genuinely terminal even under `useRect`'s capture: `useRect` does
+   * not surface its internal `onPointerCancel`, so no `onChangeEnd` follows and
+   * the claim has to be dropped here or it would outlive the gesture.
+   */
+  const handlePointerCancel = () => {
+    releaseDocumentClaim();
+  };
+
+  useEffect(() => {
+    return () => {
+      // An unmount between claim and commit is an abort like any other. Paired
+      // with the provider-level `resetDocumentGestures`, this is what bounds a
+      // leaked claim to the mount that leaked it.
+      releaseDocumentClaim();
+    };
+  }, []);
+
+  return (
+    <div
+      className={`${className} cursor-crosshair`}
+      {...pointerEvents}
+      onPointerDown={handlePointerDown}
+      onPointerCancel={handlePointerCancel}
+    ></div>
+  );
 };

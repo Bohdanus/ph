@@ -6,12 +6,24 @@ import { SELECTION_ACTION } from '../../../util/constants.ts';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { FeatherMagneticLassoToolArea } from '../FeatherMagneticLassoToolArea.tsx';
 
+/**
+ * The registration shape `useKeyDownShortcut` is handed. `mutatesDocument` is
+ * the flag `useKeyboardEvents` gates on while a pointer gesture owns the
+ * document, so it has to survive into the captured object for a test to pin it.
+ */
+type MockShortcut = {
+  key: string;
+  enabled?: boolean;
+  mutatesDocument?: boolean;
+  onKeyDown: () => void;
+};
+
 const h = vi.hoisted(() => ({
   activeSelectionId: null as string | null,
   dispatch: vi.fn(),
   selectionDraft: { status: 'idle' as 'idle' | 'draft' },
   shortcutHandlers: new Map<string, () => void>(),
-  rawShortcuts: new Map<string, { key: string; enabled?: boolean; onKeyDown: () => void }>(),
+  rawShortcuts: new Map<string, MockShortcut>(),
   selections: [] as Selection[],
   canvas: null as HTMLCanvasElement | null,
   toolArgs: {
@@ -34,7 +46,7 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
 }));
 
 vi.mock('../../../hooks/useKeyboardEvents.tsx', () => ({
-  useKeyDownShortcut: (shortcut: { key: string; enabled?: boolean; onKeyDown: () => void }) => {
+  useKeyDownShortcut: (shortcut: MockShortcut) => {
     // `rawShortcuts` keeps the registration object so a test can assert what the
     // hook was handed, and the mock runs on every render, so it tracks the live
     // gate as the draft's anchor mirror re-renders this component. The mocked
@@ -61,8 +73,10 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       selections: h.selections,
       totalSize: { width: 200, height: 120 },
       // Explicit, so the hook derives the same frame the tool area does rather
-      // than relying on an absent key.
-      documentFrame: null,
+      // than relying on an absent key. Non-zero on purpose: a zero-origin frame
+      // makes document and canvas coordinates identical, so a conversion that
+      // dropped the offset would still satisfy every assertion in this file.
+      documentFrame: { x: 30, y: 40, width: 200, height: 120 },
     },
     h.dispatch,
   ],
@@ -318,6 +332,18 @@ describe('FeatherMagneticLassoToolArea', () => {
                   width: 10,
                 }),
               }),
+              // `pos` is the only field where `documentFrame` is observable, since
+              // `points` are stored relative to it: the three clicks are canvas
+              // (10,10), (60,10), (60,60), `canvasToDocumentPoint` adds the frame
+              // origin (30, 40) making them (40,50)-(90,100), and
+              // `pointsBoundingPos` insets that box by its default `lineWidth` of
+              // 1. A conversion that dropped the frame reports (9, 9) instead.
+              pos: { x: 39, y: 49, width: 52, height: 52 },
+              points: expect.arrayContaining([
+                { x: 1, y: 1 },
+                { x: 51, y: 1 },
+                { x: 51, y: 51 },
+              ]),
               sourceTool: 'feather-magnetic-lasso',
             }),
           ],
@@ -422,6 +448,40 @@ describe('FeatherMagneticLassoToolArea', () => {
     fireEvent.pointerMove(toolArea, { clientX: 50, clientY: 10 });
 
     expect(requestAnimationFrameSpy).toHaveBeenCalledTimes(2);
+  });
+
+  describe('shortcut registration', () => {
+    it('exempts all four of its own-gesture shortcuts from the document-mutation gate', () => {
+      const mockCtx = createMockContext();
+      renderArea({ current: mockCtx });
+
+      // `useKeyboardEvents` refuses a `mutatesDocument` shortcut while a pointer
+      // gesture owns the document, and a lasso is built click by click with its
+      // anchors on the overlay: gating these four would leave no way to cancel the
+      // draft, finish it, or remove a vertex placed against the wrong edge. The
+      // exemption is only sound because this component claims no gesture of its
+      // own — every step before `finishSelection` mutates refs and the overlay
+      // and dispatches nothing — so there is no window for a shortcut to corrupt.
+      expect([...h.rawShortcuts.keys()].sort()).toEqual(['Backspace', 'Delete', 'Enter', 'Escape']);
+      for (const [key, shortcut] of h.rawShortcuts) {
+        expect(shortcut.mutatesDocument, `${key} must claim the document-gate exemption`).toBe(false);
+      }
+    });
+
+    it('keeps the exemption on Backspace and Delete while a draft is in progress', () => {
+      const mockCtx = createMockContext();
+      const toolArea = renderArea({ current: mockCtx }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 10 });
+
+      // The `enabled` gate and the `mutatesDocument` flag are independent: a
+      // gated-off Backspace is no shortcut at all, and a live one must still be
+      // exempt.
+      expect(h.rawShortcuts.get('Backspace')?.enabled).toBe(true);
+      expect(h.rawShortcuts.get('Backspace')?.mutatesDocument).toBe(false);
+      expect(h.rawShortcuts.get('Delete')?.mutatesDocument).toBe(false);
+    });
   });
 
   describe('pointer guards', () => {
