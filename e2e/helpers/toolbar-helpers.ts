@@ -161,27 +161,37 @@ export async function clickToolButton(page: Page, toolName: string): Promise<voi
 }
 
 /**
+/**
  * The app's long-press threshold, in milliseconds.
  *
- * Mirrored from `scheduleFlyoutOpen` in `src/components/SidebarLeft/SidebarLeft.tsx:83-90`,
- * which opens a group's flyout from `setTimeout(() => openFlyout(groupIndex), 300)`. The app
- * exports no constant for it, so 300 is duplicated here and the app is the only authority on
- * the value: every wait below is expressed against this, never against a second literal, so
- * raising the app's threshold cannot quietly leave a wait behind it.
+ * Mirrored from `scheduleFlyoutOpen` in `src/components/SidebarLeft/SidebarLeft.tsx`, which
+ * opens a group's flyout from `setTimeout(() => openFlyout(groupIndex), 300)`. The app exports
+ * no constant for it, so 300 is duplicated here and the app is the only authority on the
+ * value: the waits below are expressed against this, never against a second literal, so raising
+ * the app's threshold cannot quietly leave a wait behind it.
  */
 export const LONG_PRESS_DELAY_MS = 300;
 
 /**
- * Slack added to {@link LONG_PRESS_DELAY_MS} before `pointerup`, so the release cannot land
- * in the same millisecond the app's timer fires and turn a long press into a plain click.
+ * How long to wait for a flyout to be open.
+ *
+ * A budget for a CONDITION wait, not a deadline the app has to beat: the long-press timer in
+ * `SidebarLeft` fires 300ms after pointerdown, and the rest of this budget absorbs scheduler
+ * jitter on a loaded machine. It is deliberately much larger than the 300ms it waits on — the
+ * helper used to race a hard 350ms sleep against that same 300ms timer, leaving 50ms of margin,
+ * which is the defect `openToolFlyout` documents.
+ *
+ * Exported so the unit test pins this number instead of restating it: two literals for one
+ * timeout is how `LONG_PRESS_DELAY_MS` came to be 300 in one place and 350 in another while only
+ * `300 + 50 === 350` kept them compatible.
  */
-const LONG_PRESS_BUFFER_MS = 50;
+export const FLYOUT_VISIBLE_TIMEOUT_MS = 2000;
 
 /**
  * Slack for the settle wait in {@link verifyHoverDoesNotOpenFlyout}, whose assertion is
- * negative. Hover dispatches no `pointerdown`, so nothing ever schedules a flyout and the
- * wait is defensive only; it is still expressed against the app's delay rather than as a
- * second hardcoded number.
+ * negative. Hover dispatches no `pointerdown`, so nothing ever schedules a flyout and the wait
+ * is defensive only; it is still expressed against the app's delay rather than as a second
+ * hardcoded number.
  */
 const HOVER_SETTLE_BUFFER_MS = 100;
 
@@ -189,6 +199,26 @@ const HOVER_SETTLE_BUFFER_MS = 100;
  * Opens a tool flyout via long-press (300ms) for grouped tools.
  * Use this instead of clickToolButton when you need to select a non-primary
  * tool from a flyout group (e.g., Lasso, Colors, Brush, Pen, Shape).
+ *
+ * The gesture is press, wait for the menu, lift — in that order, because that is what
+ * the app's own handler requires. `SidebarLeft` arms a 300ms timer on pointerdown and
+ * opens the flyout when it fires, while its pointerup handler calls
+ * `clearLongPressFlyout()` unconditionally. So a pointerup that arrives before the timer
+ * fires CANCELS the pending open: the menu is not merely late, it never appears, and no
+ * amount of waiting afterwards can recover it.
+ *
+ * The previous version therefore had to win a race — sleep a fixed 350ms, then lift, so
+ * that the 300ms timer had 50ms of margin — and it lost whenever the renderer's main
+ * thread was busy enough to deliver that timer late. Because the losing path destroys the
+ * state the following assertion was waiting for, the failure surfaced as an unexplained
+ * `toBeVisible()` timeout rather than as a missed press. Waiting for the menu instead of
+ * sleeping removes the margin entirely: the timer may fire early, late, or on time.
+ *
+ * Lifting afterwards is faithful to the gesture and safe: `onPointerUp` only touches refs
+ * (`suppressLongPressRef`, `longPressOpenedRef`, `ignoreNextClickRef`) and never clears
+ * `openGroup`, so it cannot close a flyout that is already open. The one ref it does set,
+ * `ignoreNextClickRef`, is cleared again by the next pointerdown on that button, so a
+ * later `clickToolButton` on the same tile is not swallowed.
  */
 export async function openToolFlyout(page: Page, toolName: string): Promise<void> {
   const normalizedName = resolveToolName(toolName);
@@ -196,23 +226,40 @@ export async function openToolFlyout(page: Page, toolName: string): Promise<void
   const button = page.getByTestId(`tool-button-${normalizedName}`);
   await expect(button).toBeVisible();
 
-  // Long-press: dispatch pointerdown on the button element, hold past the app's delay,
-  // then pointerup. This matches SidebarLeft.tsx's onPointerDown/onPointerUp handlers
-  // (lines 212-231).
+  // Press, and do NOT wait a fixed interval before lifting. The wait below is the
+  // condition that the press actually opened this group; a timer here can only ever
+  // guess at when the app's own 300ms timer fired, and a guess that loses the race is
+  // indistinguishable from a gesture the app rejected.
   await button.dispatchEvent('pointerdown', { button: 0 });
-  await page.waitForTimeout(LONG_PRESS_DELAY_MS + LONG_PRESS_BUFFER_MS);
-  await button.dispatchEvent('pointerup', { button: 0 });
 
-  // Wait for flyout to appear (all flyouts have role="menu")
-  await expect(page.getByRole('menu')).toBeVisible({ timeout: 2000 });
+  // Wait for THIS tile's flyout to be open before lifting.
+  //
+  // `aria-expanded` is set from `openGroup === groupIndex` on the pressed tile, so it
+  // is true only once this group is the open one. Waiting on a bare `role="menu"` — what
+  // `waitForFlyout` does — is NOT interchangeable here: callers legitimately long-press a
+  // second tile while the first flyout is still open (see the "switches flyout" spec), and
+  // a generic menu assertion would be satisfied instantly by the still-open first menu.
+  // The helper would then lift while that timer was still pending, cancelling the second
+  // open, and return with the wrong flyout on screen. Sharing one helper between the two
+  // would reintroduce exactly that.
+  await expect(button).toHaveAttribute('aria-expanded', 'true', { timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
+
+  // Lift. The flyout stays open; see the note on `onPointerUp` above.
+  await button.dispatchEvent('pointerup', { button: 0 });
 }
 
 /**
  * Waits for a flyout menu to become visible after long-press, right-click, or keyboard.
- * All flyouts have role="menu" (SidebarLeft.tsx line 285).
+ * All flyouts have role="menu" - the `<ul>` in `renderToolGroup`, `SidebarLeft.tsx:335`.
+ * Named as well as numbered, because the flyout portal work moves this file often and a
+ * bare line number would rot into pointing at the wrong element.
+ *
+ * Unlike `openToolFlyout` this accepts ANY open flyout, which is correct for its callers:
+ * they open exactly one flyout by right-click or keyboard, so there is never an earlier
+ * one for the assertion to latch onto.
  */
 export async function waitForFlyout(page: Page): Promise<void> {
-  await expect(page.getByRole('menu')).toBeVisible({ timeout: 2000 });
+  await expect(page.getByRole('menu')).toBeVisible({ timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
 }
 
 export interface FlyoutItem {
