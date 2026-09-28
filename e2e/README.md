@@ -175,8 +175,11 @@ at runtime.
 `e2e/` is a TypeScript project reference off the root `tsconfig.json`, so
 `npm run tsc` (`tsc -b`) type-checks the specs, the helpers and the unit tests
 alongside the app and node projects. It is green. `.husky/pre-commit` runs
-`lint-staged`, `npm run tsc` and `npm run test:e2e:unit`, so a change under `e2e/`
-is type-checked and unit-tested before it is committed, not only in CI.
+`lint-staged`, `npm run tsc`, `npm run build` and `npm run test:e2e:unit`, so a
+change under `e2e/` is type-checked and unit-tested before it is committed, not
+only in CI. `test:e2e:unit` is the only commit-path coverage of these helpers —
+`vitest.config.ts` excludes `e2e/**`, so nothing else in the commit gate can see
+them.
 
 Settings that differ from `tsconfig.app.json`, and why:
 

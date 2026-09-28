@@ -77,8 +77,9 @@ npm run build           # production bundle, and a real CI step
 
 ## Worktrees and dev servers
 
-One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost real debugging time:
+One git worktree per task, all under `.kilo/worktrees/`. Four traps that cost real debugging time:
 
+- **A worktree used to run no commit gate at all, silently.** `core.hooksPath` was `.husky/_` — a directory husky generates during `npm install` and keeps untracked — and git resolves a relative `core.hooksPath` against the root of the worktree it is running in. Every worktree made by `git worktree add` had no `.husky/_`, so git found no hook, ran nothing, and exited 0. The commit landed with no warning and nothing in its output to notice. 89 of 118 worktrees were in that state while 96 had a populated `node_modules`, so "just run npm install" was never the fix. `core.hooksPath` now points at `<common git dir>/hooks-gate`, which every worktree shares, and the tracked `.husky/pre-commit` is what runs. **If a hook ever stops firing, run `git config core.hooksPath` first and assume nothing.** Re-install with `npm install` (the `prepare` script).
 - **`node_modules` is empty or missing in most worktrees.** Node walks up to the parent checkout, so `tsc` and `vitest` mostly work anyway — which is exactly what makes it misleading. Vite does **not** walk up: it serves only what `server.fs.allow` permits, so fonts, images and AVIF assets from the ancestor checkout 404 in a worktree and work in the root checkout. Run `npm ci` there before debugging an asset that will not load.
 - **Every worktree's dev server wants :5173.** Locally `reuseExistingServer` is on, so `test:e2e` can attach to a server another worktree started and then test _that_ checkout. Use `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` in a worktree. "My change did nothing" in e2e is this, not a cache.
 - **The main worktree is not stable while you work.** Other sessions commit into it concurrently. Re-read `git status` / `git diff` before staging, and stage only your own paths.
@@ -94,13 +95,22 @@ One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost r
 
 ### Local
 
-`gate:commit`: `lint-staged --fail-on-changes --no-stash`, then `gate:verify` (`tsc` -> `build` -> `test:e2e:unit`). `test:staged` then runs related tests. `gate:push` runs the full app suite.
+Two hooks, each a one-line wrapper over a `package.json` script, so the hook and the command a developer or CI can run by hand cannot drift:
 
-- `gate:verify` proves types/build; `test:staged` catches behavior that those pass. `test:staged` needs no guard, but is incomplete: an unimported file passes it; `gate:push` covers that.
-- Keep the staged-path pipeline NUL-safe: `git diff --cached --name-only -z | xargs -0`. Unquoted command substitution can word-split/glob-expand into a silent `No test files found` pass.
-- `*.{ts,tsx}` uses ESLint + Prettier; `*.{js,scss,jsonc,yml,yaml,md,json}` uses Prettier only. **Do not add ESLint for the latter group**: no config covers it, and doing so breaks Markdown/SCSS commits.
-- `--fail-on-changes --no-stash` leaves formatter fixes unstaged and blocks the commit; never allow hooks to rewrite the index.
-- `build` is not redundant with `tsc`: it catches Sass, wasm, PostCSS, and import resolution. **NO LOCAL `lint:check`**; whole-tree linting is CI-only.
+| hook                | script        | runs                                                                                                 |
+| ------------------- | ------------- | ---------------------------------------------------------------------------------------------------- |
+| `.husky/pre-commit` | `gate:commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` (`tsc` -> `build` -> `test:e2e:unit`) |
+| `.husky/pre-push`   | `gate:push`   | `npm run test` — the full app suite                                                                  |
+
+Both are reached through a shared entry point in the common git dir, not through husky; see "Worktrees and dev servers". `HUSKY=0 git commit` is the escape hatch.
+
+- **The commit gate and these docs carry NO wall-clock numbers.** Every cost figure written into a hook comment or a doc in this repo has gone stale, and one of them — "the app suite is likely minutes" — was never measured at all and was the stated reason for a design decision that then shipped. Measure before you design; do not leave a number behind.
+- `test:e2e:unit` is **not** an e2e run: `vitest --config vitest.e2e.config.ts`, node environment, no browser. It is the **only** commit-path coverage of the e2e helper functions, because `vitest.config.ts` excludes `e2e/**`. Deleting it silently loses that coverage.
+- **The commit gate runs no app unit test, and that is deliberate.** `npm run test` is the whole-tree check: run it on demand, and `gate:push` runs it for you. A `vitest related` fan-out over the staged files was tried here and removed, because its cost is not bounded by the change — measured, it selected 10 of 180 test files for one component and **115 of 180** for `src/util/draw.ts`, its worst case is the full run it was introduced to replace. Accepted cost: a test that was already failing before the commit started is caught at push, in CI, or when someone runs `npm run test` — and this repo's worktrees are full of commits that needed exactly that catch.
+- `*.{ts,tsx}` uses ESLint + Prettier; `*.{js,scss,jsonc,yml,yaml,md,json}` uses Prettier only. **Do not add ESLint for the latter group**: no config covers it, and doing so breaks Markdown/SCSS commits. `scripts/*.js` is in that second group.
+- `--fail-on-changes --no-stash` leaves formatter fixes unstaged and blocks the commit; never allow hooks to rewrite the index. `--no-stash` is not optional: without it lint-staged keeps its backup stash every time it declines to revert, so each blocked commit leaves a `WIP on <branch>` entry behind.
+- `build` is not redundant with `tsc`: `vite build` strips types without checking them, and it alone catches Sass, wasm, PostCSS, and import resolution. **NO LOCAL `lint:check`**; whole-tree linting is CI-only.
+- No coverage and no Playwright, at any local gate.
 
 ### CI
 
@@ -120,7 +130,10 @@ One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost r
 
 ## Handoff documents
 
-`HANDOFF.md`, `.kilo/plans/`, and `e2e/OPEN_PROBLEMS.md`: validated, actionable problems only. **NO changelog, completion notes, or status summaries.** Verify against the tree.
+`HANDOFF.md`, `TEST-FLAKES.md`, and `e2e/OPEN_PROBLEMS.md`: validated, actionable problems only. **NO changelog, completion notes, or status summaries.** Verify against the tree.
+
+- **Route by scope.** `HANDOFF.md` is for history/replay and document-state defects. `TEST-FLAKES.md` is for test-infrastructure defects — flakiness, the pool, the runner, the gates themselves. `e2e/OPEN_PROBLEMS.md` is for Playwright. Do not file a gate or pool defect in `HANDOFF.md`; it is scoped, and a cross-scope entry is the one nobody reads.
+- **Nothing durable goes in `.kilo/`.** It is gitignored (`.gitignore:34`), so a finding recorded there dies with the machine and with the worktree. `HANDOFF.md` used to name `.kilo/plans/` as a handoff location; that was wrong, and it is why `TEST-FLAKES.md` exists.
 
 **WRITE OR UPDATE THE HANDOFF WITHOUT ASKING** for every validated issue, strong recommendation, or durable finding. Ship it with the work.
 

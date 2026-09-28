@@ -1,12 +1,9 @@
 #!/usr/bin/env sh
-# The gate sequence lives in package.json (`gate:commit`), not here, so the
-# hook and the command a developer or CI can run by hand cannot drift apart.
-# Rationale for the split against `gate:push` is in AGENTS.md, "Gates".
-#
-# `set -e` is redundant under husky -- .husky/_/h runs this file with `sh -e` --
-# and is kept so that executing this file directly still stops at the first
-# failure instead of reporting only the last command's status.
+# The everyday commit gate. This file is the gate for whichever worktree you are
+# in: it is invoked from the shared entry point in the common git dir, installed
+# by scripts/install-git-hooks.js. `set -e` is redundant there, and is kept so
+# that running this file directly still stops at the first failure instead of
+# reporting only the last command's status.
 set -e
 
 npm run gate:commit
-npm run test:staged
