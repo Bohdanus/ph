@@ -10,6 +10,7 @@ import type {
 } from '../contexts/general-types.ts';
 import { pointsBoundingPos } from './draw.ts';
 import { posToSortedRect, sortRect, trimRect } from './rect.ts';
+import { resetOverlayAlpha } from './canvas.ts';
 import type { DocumentFrame } from '../contexts/document-frame.ts';
 import { documentToCanvasPoint } from '../contexts/document-frame.ts';
 
@@ -147,6 +148,12 @@ export function drawSelectionOutline(ctx: CanvasRenderingContext2D, selection: S
   if (points.length < 3) return;
 
   ctx.save();
+  // The tool overlay is one 2D context for the whole session and every tool area is handed the
+  // same object, so an outline drawn with no `globalAlpha` of its own renders at whatever the last
+  // painting tool left behind. Resetting HERE rather than at the call sites is what makes the
+  // outline correct for every tool that draws one; the per-caller resets this retires were added
+  // one tool at a time and were missing the magic wand's.
+  resetOverlayAlpha(ctx);
   ctx.strokeStyle = 'rgba(0,123,255,0.95)';
   ctx.lineWidth = 2;
   ctx.setLineDash([6, 4]);

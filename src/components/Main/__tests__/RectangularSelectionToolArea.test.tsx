@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UseRectProps } from '../../../hooks/useRect.ts';
 import type { Selection } from '../../../contexts/general-types.ts';
 import { SELECTION_ACTION } from '../../../util/constants.ts';
+import { isDocumentGestureOpen, readDocumentGesture, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 import { RectangularSelectionToolArea } from '../RectangularSelectionToolArea.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -12,6 +13,12 @@ const storeState = vi.hoisted((): { selections: Selection[]; activeSelectionId: 
 }));
 const useRectProps = vi.hoisted((): { current: UseRectProps | null } => ({ current: null }));
 const useRectPointerDownMock = vi.hoisted(() => vi.fn(() => false));
+/**
+ * `isMouseDown` is part of what `useRect` returns, and the component reads it
+ * BEFORE delegating, to tell a press that starts a gesture from one `useRect`
+ * refuses (a non-primary button, or a second pointer while one is already down).
+ */
+const useRectIsMouseDown = vi.hoisted(() => ({ current: false }));
 
 /**
  * The rectangle commit is routed through `useSelectionHistory`, which reads the
@@ -39,6 +46,7 @@ vi.mock('../../../hooks/useRect.ts', () => ({
     useRectProps.current = props;
 
     return {
+      isMouseDown: useRectIsMouseDown,
       onPointerDown: useRectPointerDownMock,
       onPointerMove: vi.fn(),
       onPointerUp: vi.fn(),
@@ -90,6 +98,7 @@ describe('RectangularSelectionToolArea', () => {
     dispatchMock.mockClear();
     useRectPointerDownMock.mockReset();
     useRectPointerDownMock.mockReturnValue(false);
+    useRectIsMouseDown.current = false;
     storeState.selections = [];
     storeState.activeSelectionId = null;
     useRectProps.current = null;
@@ -239,5 +248,131 @@ describe('RectangularSelectionToolArea', () => {
     // nothing else — no draft, and no write of the live rect into the tool args —
     // so one call is the whole gesture.
     expect(dispatchMock).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * §47: the rectangle is the gesture the keyboard race is reachable on, because
+   * it is the one that opens a draft on `pointerdown` and commits from
+   * `useRect.handlePointerUp` — a real time boundary. An undo/redo in that window
+   * replaces `selections` from the SAME `history` array, so `history.length` never
+   * moves and the pending commit's `entries.slice(0, cursor + 1)` then truncates
+   * the redo tail with no other symptom. The fix is at the input layer, so what is
+   * pinned here is the claim this surface takes and every route that gives it
+   * back — a gate with no cancel route is worse than no gate, because the claim
+   * would outlive the gesture and the keyboard would stay dead.
+   */
+  describe('document gesture gate', () => {
+    beforeEach(() => {
+      // The slot is module-level, so a leaked claim would refuse every later
+      // claim in this file and read as a dozen unrelated failures.
+      resetDocumentGestures();
+    });
+
+    it('claims the document on the press that opens a draft, and releases it when the drag commits', () => {
+      const { container } = render(<RectangularSelectionToolArea className="test-rectangular-selection-area" />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 20, clientY: 10 });
+
+      // Held for the whole drag, which is the window a document-mutating
+      // shortcut must not reach.
+      expect(isDocumentGestureOpen()).toBe(true);
+      expect(readDocumentGesture()).toEqual({ kind: 'rectangular-selection', pointerId: 4 });
+
+      act(() => {
+        useRectProps.current!.onChangeEnd({ x1: 20, y1: 10, x2: 100, y2: 60 });
+      });
+
+      // Released by the time `commitSelection` appends, so the keyboard is open
+      // again for the entry this gesture just wrote.
+      expect(isDocumentGestureOpen()).toBe(false);
+      expect(singleSelectionEdit().payload.historyItem.actionName).toBe(SELECTION_ACTION);
+    });
+
+    it('claims the document for a drag of an already-committed selection too', () => {
+      useRectPointerDownMock.mockReturnValue(true);
+      const { container } = render(<RectangularSelectionToolArea className="test-rectangular-selection-area" />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 5, clientX: 15, clientY: 25 });
+
+      expect(readDocumentGesture()).toEqual({ kind: 'rectangular-selection', pointerId: 5 });
+    });
+
+    it('releases the claim on the path that commits nothing, so a zero-size drag cannot leave the keyboard dead', () => {
+      const { container } = render(<RectangularSelectionToolArea className="test-rectangular-selection-area" />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 6, clientX: 20, clientY: 10 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      // A rect whose width and height are both zero is what a press and release in
+      // the same place produce, and `createCommittedRectangleSelection` returns
+      // null for it — so `onChangeEnd` returns early WITHOUT committing. Releasing
+      // only at the commit statement would leave the claim set forever here; that
+      // is why the release is the first statement of the function.
+      act(() => {
+        useRectProps.current!.onChangeEnd({ x1: 20, y1: 10, x2: 20, y2: 10 });
+      });
+
+      expect(isDocumentGestureOpen()).toBe(false);
+      expect(selectionEdits()).toHaveLength(0);
+    });
+
+    it('releases the claim on pointer cancel, which surfaces no onChangeEnd', () => {
+      const { container } = render(<RectangularSelectionToolArea className="test-rectangular-selection-area" />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 20, clientY: 10 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      // `useRect` does not surface its internal `onPointerCancel`, so no
+      // `onChangeEnd` follows a cancel and the claim has to be dropped here.
+      fireEvent.pointerCancel(toolArea, { pointerId: 7, clientX: 20, clientY: 10 });
+
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('releases the claim on unmount, so a gesture that dies mid-drag cannot leave the keyboard dead', () => {
+      const { container, unmount } = render(
+        <RectangularSelectionToolArea className="test-rectangular-selection-area" />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 8, clientX: 20, clientY: 10 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      unmount();
+
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('claims nothing for a press `useRect` refuses, so a right-click cannot hold the document', () => {
+      const { container } = render(<RectangularSelectionToolArea className="test-rectangular-selection-area" />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      // A non-primary button starts no rectangle, so there is no gesture for the
+      // keyboard to wait on — and a claim taken here would refuse every shortcut
+      // until some unrelated drag happened to release it.
+      fireEvent.pointerDown(toolArea, { button: 2, pointerId: 9, clientX: 20, clientY: 10 });
+
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('claims nothing for a second pointer while one is already down', () => {
+      const { container } = render(<RectangularSelectionToolArea className="test-rectangular-selection-area" />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 20, clientY: 10 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      // `usePointerPosition.isPointerDownValid` refuses a second pointer, and
+      // that is the rule the claim follows: the document still belongs to the
+      // first drag, not to this press.
+      useRectIsMouseDown.current = true;
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 2, clientX: 40, clientY: 40 });
+
+      expect(readDocumentGesture()).toEqual({ kind: 'rectangular-selection', pointerId: 1 });
+    });
   });
 });

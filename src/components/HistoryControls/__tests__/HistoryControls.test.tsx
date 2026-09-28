@@ -9,13 +9,7 @@ const history = vi.hoisted(() => ({
   redo: vi.fn(),
 }));
 
-const currentTool = vi.hoisted(() => ({
-  isToolDirty: false,
-  resetToLastSavedArgs: vi.fn(),
-}));
-
 vi.mock('../../../contexts/useHistory.ts', () => ({ useHistory: () => history }));
-vi.mock('../../../contexts/useCurrentTool.tsx', () => ({ useCurrentTool: () => currentTool }));
 
 function undoButton() {
   return screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement;
@@ -29,7 +23,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   history.canUndo.mockReturnValue(false);
   history.canRedo.mockReturnValue(false);
-  currentTool.isToolDirty = false;
 });
 
 describe('HistoryControls rendering', () => {
@@ -58,66 +51,35 @@ describe('HistoryControls rendering', () => {
 });
 
 describe('HistoryControls disabled truth table', () => {
+  // Every combination of the two availability flags, so the buttons cannot be wired to one flag
+  // where they mean the other. The second row is the regression this table exists for: a redo
+  // button that enables itself from `canUndo` would pass every other row.
   it.each([
-    { canUndo: false, canRedo: false, isToolDirty: false, undoDisabled: true, redoDisabled: true },
-    { canUndo: true, canRedo: false, isToolDirty: false, undoDisabled: false, redoDisabled: true },
-    { canUndo: false, canRedo: true, isToolDirty: false, undoDisabled: true, redoDisabled: false },
-    { canUndo: true, canRedo: true, isToolDirty: false, undoDisabled: false, redoDisabled: false },
-    { canUndo: false, canRedo: false, isToolDirty: true, undoDisabled: false, redoDisabled: true },
-    { canUndo: true, canRedo: true, isToolDirty: true, undoDisabled: false, redoDisabled: false },
+    { canUndo: false, canRedo: false, undoDisabled: true, redoDisabled: true },
+    { canUndo: true, canRedo: false, undoDisabled: false, redoDisabled: true },
+    { canUndo: false, canRedo: true, undoDisabled: true, redoDisabled: false },
+    { canUndo: true, canRedo: true, undoDisabled: false, redoDisabled: false },
   ])(
-    'canUndo=$canUndo canRedo=$canRedo isToolDirty=$isToolDirty -> undo disabled=$undoDisabled redo disabled=$redoDisabled',
-    ({ canUndo, canRedo, isToolDirty, undoDisabled, redoDisabled }) => {
+    'canUndo=$canUndo canRedo=$canRedo -> undo disabled=$undoDisabled redo disabled=$redoDisabled',
+    ({ canUndo, canRedo, undoDisabled, redoDisabled }) => {
       history.canUndo.mockReturnValue(canUndo);
       history.canRedo.mockReturnValue(canRedo);
-      currentTool.isToolDirty = isToolDirty;
       render(<HistoryControls />);
 
       expect(undoButton().disabled).toBe(undoDisabled);
       expect(redoButton().disabled).toBe(redoDisabled);
     }
   );
-
-  it('never enables redo from a dirty tool alone', () => {
-    history.canRedo.mockReturnValue(false);
-    currentTool.isToolDirty = true;
-    render(<HistoryControls />);
-
-    expect(redoButton().disabled).toBe(true);
-  });
 });
 
 describe('HistoryControls undo dispatch', () => {
-  it('resets the dirty tool instead of undoing history', () => {
-    currentTool.isToolDirty = true;
-    history.canUndo.mockReturnValue(false);
-    render(<HistoryControls />);
-
-    fireEvent.click(undoButton());
-
-    expect(currentTool.resetToLastSavedArgs).toHaveBeenCalledExactlyOnceWith();
-    expect(history.undo).not.toHaveBeenCalled();
-  });
-
-  it('prefers the dirty-tool reset even when history could undo', () => {
-    currentTool.isToolDirty = true;
-    history.canUndo.mockReturnValue(true);
-    render(<HistoryControls />);
-
-    fireEvent.click(undoButton());
-
-    expect(currentTool.resetToLastSavedArgs).toHaveBeenCalledTimes(1);
-    expect(history.undo).not.toHaveBeenCalled();
-  });
-
-  it('undoes history when the tool is clean and history allows it', () => {
+  it('undoes history when the history allows it', () => {
     history.canUndo.mockReturnValue(true);
     render(<HistoryControls />);
 
     fireEvent.click(undoButton());
 
     expect(history.undo).toHaveBeenCalledTimes(1);
-    expect(currentTool.resetToLastSavedArgs).not.toHaveBeenCalled();
   });
 
   it('does not undo while the button is disabled, because the disabled attribute is the only guard', () => {
@@ -127,23 +89,6 @@ describe('HistoryControls undo dispatch', () => {
 
     expect(undoButton().disabled).toBe(true);
     expect(history.undo).not.toHaveBeenCalled();
-    expect(currentTool.resetToLastSavedArgs).not.toHaveBeenCalled();
-  });
-
-  it('switches to the history undo once the tool becomes clean', () => {
-    currentTool.isToolDirty = true;
-    history.canUndo.mockReturnValue(true);
-    const { rerender } = render(<HistoryControls />);
-
-    fireEvent.click(undoButton());
-    expect(currentTool.resetToLastSavedArgs).toHaveBeenCalledTimes(1);
-
-    currentTool.isToolDirty = false;
-    rerender(<HistoryControls />);
-    fireEvent.click(undoButton());
-
-    expect(history.undo).toHaveBeenCalledTimes(1);
-    expect(currentTool.resetToLastSavedArgs).toHaveBeenCalledTimes(1);
   });
 
   it('undoes on repeated clicks', () => {
@@ -154,6 +99,19 @@ describe('HistoryControls undo dispatch', () => {
     fireEvent.click(undoButton());
 
     expect(history.undo).toHaveBeenCalledTimes(2);
+  });
+
+  it('follows the history availability across a re-render', () => {
+    history.canUndo.mockReturnValue(false);
+    const { rerender } = render(<HistoryControls />);
+    fireEvent.click(undoButton());
+    expect(history.undo).not.toHaveBeenCalled();
+
+    history.canUndo.mockReturnValue(true);
+    rerender(<HistoryControls />);
+    fireEvent.click(undoButton());
+
+    expect(history.undo).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -166,18 +124,6 @@ describe('HistoryControls redo dispatch', () => {
 
     expect(history.redo).toHaveBeenCalledTimes(1);
     expect(history.undo).not.toHaveBeenCalled();
-    expect(currentTool.resetToLastSavedArgs).not.toHaveBeenCalled();
-  });
-
-  it('never resets the dirty tool from the redo button', () => {
-    currentTool.isToolDirty = true;
-    history.canRedo.mockReturnValue(true);
-    render(<HistoryControls />);
-
-    fireEvent.click(redoButton());
-
-    expect(history.redo).toHaveBeenCalledTimes(1);
-    expect(currentTool.resetToLastSavedArgs).not.toHaveBeenCalled();
   });
 
   it('does nothing while redo is unavailable', () => {

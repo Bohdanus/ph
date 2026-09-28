@@ -44,9 +44,15 @@ const FontSelect: React.FC<FontSelectProps> = ({ value, onChange }) => {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
+  // `mutatesDocument: false`: this Escape belongs to the popup, not to the
+  // document. `useKeyboardEvents` refuses document-mutating shortcuts while a
+  // document-committing gesture is open, and closing a popup is neither a
+  // document write nor a step of that gesture — it restores the font the toolbar
+  // was showing before the popup opened, which is local state.
   useKeyDownShortcut({
     key: 'Escape',
     enabled: isOpen,
+    mutatesDocument: false,
     onKeyDown: () => {
       onChange(initialValue);
       setIsOpen(false);

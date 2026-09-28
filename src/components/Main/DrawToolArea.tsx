@@ -1,6 +1,7 @@
-import { type PointerEvent, type RefObject, useRef } from 'react';
+import { type PointerEvent, type RefObject, useEffect, useRef } from 'react';
 import { type DrawToolArgs, setupDrawCtx } from '../../tools/draw.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
+import { claimDocumentGesture, releaseDocumentGesture } from '../../hooks/document-gesture.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
@@ -22,51 +23,106 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
 
   const args = toolArgs as DrawToolArgs;
   const pointsRef = useRef<Point[]>([]);
+  const frameRequested = useRef<number | null>(null);
+  /**
+   * The pointer id this component's own claim was taken with. The cancel handler and the unmount
+   * cleanup never see a pointer event, so the id is kept here for every release route to name the
+   * claim it is releasing.
+   */
+  const claimedPointerIdRef = useRef<number | null>(null);
 
   const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown } = usePointerPosition({
     ref: containerRef,
     imageSize: totalSize,
   });
 
-  // Repaints synchronously on every pointer move. The overlay is a cheap
-  // clearRect + stroke of the accumulated points, so this stays interactive
-  // without frame batching; ShapeToolArea batches via requestAnimationFrame.
+  // One stroke, one bracket, one repaint. `drawLine` re-strokes the whole accumulated path on
+  // every call, so the repaint is coalesced into a single animation frame exactly as
+  // `ShapeToolArea`/`useDrag`/`useRect` already do: a pointer that carries several moves per display
+  // frame otherwise repaints several times for one visible frame, and each repaint costs more than
+  // the last.
+  //
+  // The `save()`/`restore()` around `setupDrawCtx` is not optional decoration. The tool overlay is
+  // ONE 2D context for the whole session that every tool area is handed, `setupDrawCtx` writes
+  // `globalAlpha` (and the composite operator) and leaves them, and the brush default is 0.9 — so
+  // an unbracketed writer leaves the next tool painting at the previous tool's alpha. It cannot
+  // live inside `setupDrawCtx` itself: `drawLine` reads what it wrote, and this function is called
+  // once per frame against one context. Bracketing per paint also means no save level can outlive
+  // the gesture, whatever happens to the pointer.
   const flushDrawingFrame = () => {
-    if (!overlayCtxRef.current) return;
+    frameRequested.current = null;
 
-    overlayCtxRef.current.clearRect(0, 0, totalSize.width, totalSize.height);
+    const ctx = overlayCtxRef.current;
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, totalSize.width, totalSize.height);
 
     const drawArgs = { ...args, points: pointsRef.current };
-    drawLine({
-      args: drawArgs,
-      ctx: overlayCtxRef.current,
-    });
+    ctx.save();
+    try {
+      setupDrawCtx(ctx, drawArgs);
+      drawLine({
+        args: drawArgs,
+        ctx,
+      });
+    } finally {
+      ctx.restore();
+    }
   };
+
+  function releaseDocumentClaim() {
+    releaseDocumentGesture('brush-stroke', claimedPointerIdRef.current);
+    claimedPointerIdRef.current = null;
+  }
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (!isPointerDownValid(event)) return;
 
-    const ctx = overlayCtxRef.current;
-    if (!ctx) return;
-    setupDrawCtx(ctx, args);
+    if (!overlayCtxRef.current) return;
 
-    const coords = getLocalCoords(event);
-    pointsRef.current = [coords];
+    // The stroke commits from `handlePointerUp`, so the press-to-release window is exactly the
+    // window a document-mutating shortcut would corrupt: an undo there replaces `selections` from
+    // the SAME history array, so `history.length` never moves and the pending commit's
+    // `entries.slice(0, cursor + 1)` truncates the redo tail with no other symptom. Claimed after
+    // `isPointerDownValid`, so a refused press claims nothing, and only when the claim succeeded, so
+    // a loser never records an id it does not own.
+    if (claimDocumentGesture('brush-stroke', event.pointerId)) {
+      claimedPointerIdRef.current = event.pointerId;
+    }
 
+    pointsRef.current = [getLocalCoords(event)];
+
+    // Synchronous, deliberately: this is the only paint a single-point stroke gets, and waiting
+    // for a frame would leave a click with no visible mark until the pointer moved again.
     flushDrawingFrame();
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     if (!isMouseDown.current || !isPointerMoveValid(event)) return;
 
-    const coords = getLocalCoords(event);
-    pointsRef.current.push(coords);
+    pointsRef.current.push(getLocalCoords(event));
 
-    flushDrawingFrame();
+    if (frameRequested.current !== null) return;
+
+    frameRequested.current = requestAnimationFrame(flushDrawingFrame);
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
     if (!isPointerUpValid(event)) return;
+
+    // First, and inside the branch: a release the validator refuses — a foreign pointer — must not
+    // hand the document back on the first pointer's behalf, and this runs before every early return
+    // in the commit path below.
+    releaseDocumentClaim();
+
+    // Cancel AND null, as `useDrag`/`useRect` do. Nulling alone would leave `frameRequested`
+    // permanently non-null and every later drag's preview silently dropped; cancelling alone would
+    // drop the last preview, because the frame that would have painted the final point is the one
+    // being cancelled.
+    if (frameRequested.current !== null) {
+      cancelAnimationFrame(frameRequested.current);
+      flushDrawingFrame();
+    }
 
     const coords = getLocalCoords(event);
     const lastPoint = pointsRef.current[pointsRef.current.length - 1];
@@ -90,12 +146,27 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     overlayCtxRef.current?.clearRect(0, 0, totalSize.width, totalSize.height);
   };
 
+  const handlePointerCancel = () => {
+    // Paired with the abort the hook already performs: a cancel is a gesture that will never commit,
+    // so a claim left open here would gate every later keystroke for a stroke that does not exist.
+    releaseDocumentClaim();
+  };
+
+  useEffect(() => {
+    // An unmount between claim and commit is an abort like any other. Paired with the provider-level
+    // `resetDocumentGestures`, this is what bounds a leaked claim to the mount that leaked it.
+    return () => {
+      releaseDocumentClaim();
+    };
+  }, []);
+
   return (
     <div
       className={`${className} cursor-draw`}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerCancel}
     />
   );
 };

@@ -151,12 +151,15 @@ and it passed" is only meaningful if 8 is enough to have a reasonable chance of
 hitting a 1-in-N failure. If N is unknown, the run is exploratory and its result
 must be reported as exploratory.
 
-**Step 4 — once named, it becomes an ordinary defect.** A named intermittent
-failure is a bug with a location. It goes in `HANDOFF.md` as a precise open
-problem, and it is fixed at the cause, not by retrying. `test.retry` is a
-prohibition here, exactly as a raised threshold is a prohibition: it converts a
-real failure into a green run and destroys the only signal that the defect
-existed.
+**Step 4 — once named, it becomes an ordinary defect, in THIS file.** A named
+intermittent failure is a bug with a location, and it is fixed at the cause, not
+by retrying — but it stays in `TEST-FLAKES.md`, because that is where
+`AGENTS.md` routes anything about the runner, the pool or flakiness, and
+`HANDOFF.md` is scoped to history/replay and document state. An earlier revision
+of this step said `HANDOFF.md`, which would have misrouted this very entry and
+every named flake after it. `test.retry` is a prohibition here, exactly as a
+raised threshold is a prohibition: it converts a real failure into a green run
+and destroys the only signal that the defect existed.
 
 ## 6. What not to conclude
 
@@ -174,10 +177,77 @@ existed.
 - **Not** "we removed the code path that reported it, so the problem is gone."
   See section 3. The reporting path is gone; the runner configuration is not.
 
-## 7. Files
+## 7. A second, NAMED observation — `useFile.test.tsx` JPEG-quality save
+
+**Status: OPEN. Named, not reproduced. Two failures in roughly fifteen full runs.**
+
+This one is worth separating from section 1, because unlike it the failing test
+was captured:
+
+```
+FAIL  src/contexts/__tests__/useFile.test.tsx > FileProvider PSD integration
+      > passes JPEG quality through to raster encoding and resolves the save details
+ Test Files  1 failed | 197 passed (198)
+      Tests  1 failed | 4512 passed | 34 expected fail (4547)
+```
+
+Observed 2026-09-28, in a full `npm run test` on branch
+`fix/handoff-2026-09-28`. It has **not** reproduced on demand: the same file
+passes in isolation, and six further consecutive full runs were green (198/198
+files, 4513 passed, 34 expected fail). It then **recurred** during the rebase
+onto the responsive tranche, so the honest tally is **two** failures in roughly
+fifteen full runs, not one in seven. The assertion text was not captured on
+either occasion — only the test name — so the difference from section 1 is the
+name and a second data point, not a diagnosis.
+
+**Do not close it as "the pool".** Two things make this one worth keeping
+open, and neither is the pool:
+
+1. **The test's subject is an asynchronous save pipeline** — file handle, raster
+   encoding, quality threading, promise resolution — which is exactly the shape
+   section 6 warns about: unresolved work that outlives the file. The same
+   section's "Not `isolate: true`, so files cannot interfere" applies directly.
+2. **The encoder is NOT in this test's execution graph, and an earlier
+   revision of this entry said it was.** It blamed a pixel-budget refusal newly
+   added to `encodeAvif`, and described that refusal as positioned after
+   `getCanvasImageData` when it is positioned before. Both wrong.
+   `useFile.test.tsx:8-12` mocks `../image-load-save-utils.ts` wholesale, so
+   `saveImageToDisk` is a bare `vi.fn()`; `encodeAvif` is reachable only through
+   the dynamic `await import('./avif-utils.ts')` inside that module, which never
+   executes. `avif-utils.ts` and `raster-utils.ts` are not reachable from that
+   test at all. **Two of the three candidate causes for this failure are gone,
+   and the third is weaker than it looked.**
+3. **What the branch actually changed under this test is `SaveDialog.tsx`, and
+   it changed focus.** `git diff 80eb207 --stat` on `useFile.test.tsx`,
+   `useFile.tsx` and `image-load-save-utils.ts` is **empty** — the test and the
+   whole save path beneath it are untouched. The only file inside this test's
+   import graph that changed is the component itself. Its new mount effect calls
+   `.focus()` synchronously and its cleanup calls `previouslyFocused?.focus?.()`,
+   and both dispatch `focusin`/`focusout` — the events React 19 backs
+   `onFocus`/`onBlur` with — from inside a promise continuation. **That is a lead,
+   not a conclusion**, and it is recorded as one.
+4. **`retireUnreferenced` is structurally ruled out.** The test renders
+   `<FileProvider>` with no `StoreProvider`, and its save input is a detached
+   `document.createElement('canvas')` with `layers: {}`. A raster in no
+   published set can never be a retirement candidate, and the save it performs is
+   a `vi.fn()` that never reaches an encoder. Struck from the hunt rather than
+   left open.
+
+To hunt it, cheapest first: loop the single file
+(`npx vitest --run src/contexts/__tests__/useFile.test.tsx`) to get a cheap
+partial sample, then widen to the full suite — `npm run test 2>&1 | tee
+/tmp/full-$i.log` — which is the only reproduction-capable loop, because the
+failure was observed in a full run and section 6 forbids inferring from a scoped
+green. **Capture the assertion, not just the test name**, and record whether it
+was a timeout or a value mismatch: a timeout points at the focus/async
+interaction in 3, a value mismatch points at ordering.
+
+## 8. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
 - `src/util/draw.ts` — the file whose import fan-out defined the observed set
+- `src/contexts/__tests__/useFile.test.tsx` — the named failure in section 7
+- `src/contexts/avif-utils.ts` — the encoder whose budget check changed nearby
 - `.husky/pre-push` — where `npm run test` now runs
 - `AGENTS.md`, "`test:staged` is a command, not a gate" — where it lives now, and what it costs

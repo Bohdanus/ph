@@ -83,7 +83,6 @@ export type StoreData = {
   rectOverlayRef: RefObject<HTMLCanvasElement | null>;
   containerRef: RefObject<HTMLDivElement | null>;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
-  canvasCtxRef: React.RefObject<CanvasRenderingContext2D | null | undefined>;
 
   currentArgs: React.RefObject<ToolArgs>;
   clearPreviewLayers: () => void;
@@ -107,7 +106,6 @@ export type StoreData = {
 
   // tool state (that changes not so frequently)
   toolName: ToolName;
-  isToolDirty: boolean;
 
   // layers
   layers: LayersRecord;
@@ -171,13 +169,19 @@ type Action =
   | { type: 'SET_ORIGINAL_IMAGE'; payload: boolean }
   | { type: 'SET_SIZE'; payload: Size }
   | { type: 'SET_TOOL_NAME'; payload: ToolName }
-  | { type: 'SET_TOOL_DIRTY'; payload: boolean }
   | { type: 'SET_LAYERS'; payload: LayersRecord }
   | { type: 'SET_ACTIVE_LAYER'; payload: LayerId | null }
   | { type: 'ADD_LAYER'; payload: { layers: LayersRecord; activeLayerId: LayerId } }
-  | { type: 'UPDATE_LAYERS'; payload: LayersRecord }
   | { type: 'PUBLISH_RUNTIME_PRESENTATION'; payload: { layers: LayersRecord } }
   | { type: 'PROMOTE_LAYER_PRESENTATIONS'; payload: LayerPresentationBatch }
+  /**
+   * Rasters a writer built itself and is about to publish into a layer record:
+   * an import, a merge, a document import. They are already in the layer record
+   * by the time this runs, so the transition publishes nothing; it exists so the
+   * presentation scope learns about them and the scope's completeness guarantee
+   * covers every bitmap the store holds rather than only the ones it materialized.
+   */
+  | { type: 'ADOPT_LAYER_BITMAPS'; payload: { bitmaps: readonly BitmapSource[] } }
   /**
    * Document metadata only, such as save state. Layer, frame, selection, and
    * history mutations have their own actions, so a history writer can never be
@@ -252,7 +256,6 @@ const initialState: StoreData = {
   rectOverlayRef: { current: null },
   containerRef: { current: null },
   textareaRef: { current: null },
-  canvasCtxRef: { current: null },
 
   currentArgs: { current: {} as ToolArgs },
   clearPreviewLayers: () => undefined,
@@ -288,8 +291,6 @@ const initialState: StoreData = {
 
   color: '#000000',
   backgroundColor: '#ffffff',
-
-  isToolDirty: false,
 };
 
 type CommitDocumentEditAction = Extract<Action, { type: 'COMMIT_DOCUMENT_EDIT' }>;
@@ -381,12 +382,7 @@ function reducer(state: StoreData, action: Action): StoreData {
         durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
       };
     case 'SET_TOOL_NAME':
-      return { ...state, isToolDirty: false, toolName: action.payload };
-    case 'SET_TOOL_DIRTY':
-      if (state.isToolDirty === action.payload) {
-        return state;
-      }
-      return { ...state, isToolDirty: action.payload };
+      return { ...state, toolName: action.payload };
     case 'SET_LAYERS':
       // Kept conservative on purpose. Runtime layers are not one of the six
       // conversion inputs, but no production writer dispatches this action; a
@@ -416,17 +412,6 @@ function reducer(state: StoreData, action: Action): StoreData {
         durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
         hasUnsavedChanges: true,
       };
-    case 'UPDATE_LAYERS':
-      // Legacy escape hatch, retained for compatibility. No production writer
-      // uses it: layer changes that belong to a document edit go through
-      // `COMMIT_DOCUMENT_EDIT`, and cache promotion goes through
-      // `PROMOTE_LAYER_PRESENTATIONS`. Conservative, as for `SET_LAYERS`.
-      return {
-        ...state,
-        layers: action.payload,
-        durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
-        hasUnsavedChanges: true,
-      };
     case 'PUBLISH_RUNTIME_PRESENTATION':
       // Presentation-only publication of already-known layer records. The
       // dispatcher proves the payload differs from the stored layers only by a
@@ -447,6 +432,15 @@ function reducer(state: StoreData, action: Action): StoreData {
       }
       return published === state.layers ? state : { ...state, layers: published };
     }
+    case 'ADOPT_LAYER_BITMAPS':
+      // Ownership bookkeeping, and nothing else. The bitmaps are already in the
+      // layer records by the time this action is dispatched, so there is no
+      // state to publish and nothing to invalidate. The dispatcher registers
+      // them with the presentation scope and returns WITHOUT reaching this arm,
+      // so it is the typed landing place for the action rather than a live
+      // path — which is why the dispatcher's comment, not this one, is the one
+      // that has to stay true.
+      return state;
     case 'BATCH_UPDATES':
       // Metadata-only in production (the sole writer passes `fileName` and
       // `hasUnsavedChanges`). The wider legacy payload type still admits
@@ -619,32 +613,70 @@ function buildDurableDocument(
 }
 
 /**
- * Retires the presentation caches the published layer record no longer names.
+ * Every raster the document still names, from anywhere a later read can reach it.
  *
- * A cache is a candidate only when the transition dropped it from the live
- * record: either its layer is gone, or the layer that took its place points at a
- * different cache. `deletedLayers` and layer identity prove neither — the
- * deleted record accumulates across removals and survives undo, and replay
- * re-creates a removed layer under the same id with a freshly built cache — so
- * neither is consulted here.
+ * An adopted raster — one a writer minted for an import, a merge, or a
+ * document import — has three aliases, not one: the layer's own `bitmap`, the
+ * `source` object the layer stores verbatim, and the `layerSource`/`args`
+ * reference a `MERGE_ACTION` or an import entry retains rather than copies. So
+ * `history-replay` reads the same bitmap back on undo, and a liveness set built
+ * from `layer.bitmap` alone would let the scope close a bitmap replay is about
+ * to use.
  *
- * Ownership still decides. `retire` closes a bitmap only when this scope
- * published it, so a borrowed import, a replay source, and an in-flight
- * materialization are all left alone, and a cache that merely moved to another
- * layer stays live.
+ * `tmpCanvas` is included for the same reason: a preview canvas is not owned by
+ * the scope, but it IS reachable, and keeping it out of the set would only ever
+ * make the set smaller and the scope more eager to close.
+ */
+function imageSourceBitmap(value: unknown): BitmapSource | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as { kind?: unknown; bitmap?: BitmapSource };
+  return candidate.kind === 'image' && candidate.bitmap ? candidate.bitmap : null;
+}
+
+function collectLivePresentationBitmaps(next: LayersRecord, history: readonly HistoryItem[]): Set<BitmapSource> {
+  const live = new Set<BitmapSource>();
+  const add = (bitmap: BitmapSource | null | undefined) => {
+    if (bitmap) live.add(bitmap);
+  };
+  const addLayerAliases = (layer: Layer) => {
+    add(layer.bitmap);
+    add(layer.tmpCanvas);
+    add(imageSourceBitmap(layer.source));
+  };
+  for (const layer of Object.values(next)) addLayerAliases(layer);
+  for (const entry of history) {
+    add(imageSourceBitmap(entry.layerSource));
+    add(imageSourceBitmap(entry.args));
+    if (entry.documentSource) {
+      for (const layer of Object.values(entry.documentSource.layers)) addLayerAliases(layer);
+    }
+  }
+  return live;
+}
+
+/**
+ * Closes the caches the transition left behind, and only those.
+ *
+ * `previous` is deliberately not consulted. It used to supply the candidates,
+ * which was right when every cache in the scope had been `previous[].bitmap` at
+ * the moment it was replaced, and is wrong now that the scope also owns adopted
+ * rasters: one can leave the store's reach through a history truncation without
+ * ever appearing in a previous record. Candidacy now comes from the scope's own
+ * published set, vetoed by the liveness set above.
  */
 function retireDepartedPresentationBitmaps(
   presentationScope: DocumentPresentationScope,
-  previous: LayersRecord,
-  next: LayersRecord
+  documentId: string,
+  state: StoreData
 ): void {
-  const live = new Set<BitmapSource>();
-  for (const layer of Object.values(next)) {
-    if (layer.bitmap) live.add(layer.bitmap);
-  }
-  for (const layer of Object.values(previous)) {
-    if (layer.bitmap && !live.has(layer.bitmap)) presentationScope.retire(layer.bitmap);
-  }
+  presentationScope.retireUnreferenced(documentId, collectLivePresentationBitmaps(state.layers, state.history));
+}
+
+/** Ids whose candidate record is not the stored record, added or removed ids included. */
+function divergentLayerIds(current: LayersRecord, next: LayersRecord): string[] {
+  return [...new Set([...Object.keys(current), ...Object.keys(next)])]
+    .filter((id) => !Object.is(current[id], next[id]))
+    .sort();
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
@@ -654,7 +686,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const rectOverlayRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
   const currentArgsRef = useRef<ToolArgs>({} as ToolArgs);
   const previewLayersRef = useRef<Record<LayerId, { layer: Layer; toolArgs?: ToolArgs }>>({});
@@ -686,13 +717,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (action.type === 'PROMOTE_LAYER_PRESENTATIONS') {
       // A promotion is accepted only while the layer still holds the requesting
       // canvas. A superseded bitmap can never reach a layer, so the dispatcher
-      // closes it here, and the cache it replaces is closed only when this
-      // boundary created it.
-      const superseded: Array<BitmapSource | null> = [];
+      // closes it here. The cache it REPLACES is not closed here — see the
+      // retirement call after the publication below, which has to consult the
+      // history because a replaced cache may be an adopted raster that live
+      // history still names.
       const promotions = action.payload.promotions.filter(({ layerId, canvas, bitmap }) => {
         if (isSamePresentationCanvas(currentState.layers[layerId], canvas)) {
           presentationScope.trackPublished(currentState.documentId, bitmap);
-          superseded.push(currentState.layers[layerId].bitmap);
           return true;
         }
         closePresentationBitmap(bitmap);
@@ -705,18 +736,47 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           : { type: 'PROMOTE_LAYER_PRESENTATIONS', payload: { promotions } };
       latestStateRef.current = reducer(currentState, accepted);
       rawDispatch(accepted);
-      // Retire the replaced caches only after the publication, so a dropped
-      // update can never leave a live layer pointing at a closed bitmap.
-      for (const previous of superseded) presentationScope.retire(previous);
+      // Retire only after the publication, so a dropped update can never leave a
+      // live layer pointing at a closed bitmap. The replaced cache is not retired
+      // by name: an ADOPTED raster — an import, a merge, a document import — is
+      // also named by the layer's `source` and by the `layerSource`/`args`
+      // reference a history entry retains, so `history-replay` reads it back on
+      // undo. Retiring by name here closed it under a live history entry, and
+      // the next undo of the import then drew from a closed bitmap.
+      retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, latestStateRef.current);
+      return;
+    }
+    if (action.type === 'ADOPT_LAYER_BITMAPS') {
+      // Registration is ownership bookkeeping, not a transition: the layer
+      // records that reference these rasters are already published, so the
+      // reducer arm is a no-op and the state is deliberately left alone. The
+      // writer dispatches this AFTER the edit that published the layer, so a
+      // registration is never filed under the document that has just been
+      // replaced.
+      for (const bitmap of action.payload.bitmaps) {
+        presentationScope.trackPublished(currentState.documentId, bitmap);
+      }
       return;
     }
     if (action.type === 'PUBLISH_RUNTIME_PRESENTATION') {
       if (!layersDifferOnlyByPresentation(currentState.layers, action.payload.layers)) {
         // A refused publication is a contained no-op: the layer keeps rendering
-        // from its tmpCanvas and no logical state moves. It is the intended path
-        // for a record that only differs by an identity operation, so it is not
-        // a warning; a refusal that is not identity-only is the defect case.
-        console.debug('Ignored a runtime presentation publication that also changes durable layer state');
+        // from its tmpCanvas and no logical state moves. Two refusals share that
+        // outcome and mean different things, so only one of them is reported.
+        //
+        // A payload that differs in durable layer state breaks this action's
+        // invariant, which exists precisely because a promotion must never move
+        // logical state. Dropping it quietly loses a user edit, so it is
+        // reported with the offending ids. Re-publishing the stored records
+        // unchanged cannot reach here: `layersDifferOnlyByPresentation` accepts a
+        // reference-identical record (`layer-presentation.ts` short-circuits
+        // `previous === candidate` to `true`), so there is no quiet case to
+        // separate and no second test to keep honest.
+        console.error(
+          'Refused a runtime presentation publication that also changes durable layer state ' +
+            '(invariant: PUBLISH_RUNTIME_PRESENTATION carries presentation caches only, never logical layer state). ' +
+            `Offending layer ids: ${divergentLayerIds(currentState.layers, action.payload.layers).join(', ')}`
+        );
         return;
       }
       latestStateRef.current = reducer(currentState, action);
@@ -788,7 +848,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // commit that swaps a layer's cache all leave a published bitmap behind
       // with no remaining reference. The shared projection above matches the
       // reducer fields, including the dirty flag, before the queued transition.
-      retireDepartedPresentationBitmaps(presentationScope, currentState.layers, nextState.layers);
+      retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
       return;
     }
     if (action.type === 'APPLY_HISTORY_REPLAY') {
@@ -839,7 +899,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // under the same id with no cache at all, or with a different one. The
       // replayed record is already painted, so retiring against it cannot blank
       // a layer that is still on screen.
-      retireDepartedPresentationBitmaps(presentationScope, currentState.layers, nextState.layers);
+      retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
       return;
     }
     if (action.type === 'REPLACE_DOCUMENT') {
@@ -937,7 +997,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     rectOverlayRef,
     containerRef,
     textareaRef,
-    canvasCtxRef,
     currentArgs: currentArgsRef,
     clearPreviewLayers,
     promoteLayerPresentation,

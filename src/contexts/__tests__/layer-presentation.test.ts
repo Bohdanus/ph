@@ -184,19 +184,33 @@ describe('DocumentPresentationScope ownership', () => {
     expect(bitmap.close).toHaveBeenCalledTimes(1);
   });
 
-  it('retires a replaced cache only when this boundary created it', () => {
+  it('retires a cache only when this boundary created it AND nothing names it', () => {
+    // The single-retirement form was deleted rather than kept as a second route. It
+    // had no production caller once `retireUnreferenced` existed, and it is exactly
+    // the API that caused the use-after-close: it closed by name with no liveness
+    // question, so a raster an adopted raster's history entry still named was
+    // closed on the promotion path. Two ways to retire, one of them unsafe, is a
+    // defect waiting for the next caller.
     const scope = new DocumentPresentationScope();
     const owned = createMockImageBitmap();
-    const borrowed = createMockImageBitmap(10, 10);
+    const alsoNamed = createMockImageBitmap(20, 20);
     scope.trackPublished('doc-1', owned);
+    scope.trackPublished('doc-1', alsoNamed);
+    // Never published: a raster borrowed from an import, a replay, or an
+    // in-flight materialization is not a candidate at all, so ownership still
+    // decides before liveness is even consulted.
+    const borrowed = createMockImageBitmap(10, 10);
+    const stranger = createMockImageBitmap(30, 30);
 
-    scope.retire(borrowed);
+    scope.retireUnreferenced('doc-1', new Set([alsoNamed, stranger, borrowed]));
+    expect(stranger.close).not.toHaveBeenCalled();
     expect(borrowed.close).not.toHaveBeenCalled();
-
-    scope.retire(owned);
+    // `alsoNamed` is published AND named, so liveness has to veto it — that is the
+    // case the deleted method got wrong.
+    expect(alsoNamed.close).not.toHaveBeenCalled();
     expect(owned.close).toHaveBeenCalledTimes(1);
-    // A second retirement must not close it twice.
-    scope.retire(owned);
+    // A second call must not close the same raster twice.
+    scope.retireUnreferenced('doc-1', new Set());
     expect(owned.close).toHaveBeenCalledTimes(1);
 
     scope.dispose();
