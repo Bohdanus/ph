@@ -998,7 +998,7 @@ replay authority.
 
 ---
 
-## 41. The raster budget is a ceiling the operator set, and the AVIF half of it is still below the app's own maximum
+## 45. The raster budget is a ceiling the operator set, and the AVIF half of it is still below the app's own maximum
 
 **Problem.** `MAX_TIFF_BYTES` / `MAX_TIFF_PIXELS` in `src/contexts/tiff-utils.ts:15-27` are a
 product decision, not a security constant, and nothing records where the numbers came from — so the
