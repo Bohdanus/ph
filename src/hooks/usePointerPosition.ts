@@ -92,10 +92,20 @@ export function usePointerPosition<T extends HTMLElement>(
         `${dimensions.outerWidth}|${dimensions.outerHeight}|` +
         `${image.width}|${image.height}|${rect.x}|${rect.y}`;
       if (signature === publishedFitRef.current) return;
-      publishedFitRef.current = signature;
 
       const node = ref.current;
-      if (!node) return;
+      // Not `if (!node)`: the ref is generic over `T extends HTMLElement` and callers and
+      // tests put a measured stub in it, so a truthy node is not necessarily an element, and
+      // the caller has no interest in the attributes at all.
+      if (typeof node?.setAttribute !== 'function') return;
+
+      // Recorded only once the write has actually happened. Recording before the node check
+      // marked the values published for a call that wrote nothing, and the signature then
+      // matched for every later call with the same dimensions - so a first `calculateDimensions`
+      // that ran before the element was attached suppressed the publish for good, and the
+      // attributes never appeared at all.
+      publishedFitRef.current = signature;
+
       node.setAttribute(FIT_ATTRIBUTES.scale, String(dimensions.scale));
       node.setAttribute(FIT_ATTRIBUTES.offsetX, String(dimensions.offsetX));
       node.setAttribute(FIT_ATTRIBUTES.offsetY, String(dimensions.offsetY));
