@@ -1,4 +1,5 @@
 import { TEXT_PADDING } from '../util/constants.ts';
+import { resetOverlayAlpha } from '../util/canvas.ts';
 import type { CreatorToolParams } from './toolProcessors.ts';
 import type { Ctx2D, RectXYSorted } from '../contexts/general-types.ts';
 
@@ -21,6 +22,8 @@ export type TextToolSettings = Omit<TextToolArgs, 'color' | 'text' | 'rect'>;
 export function renderText(ctx: Ctx2D, args: TextToolArgs) {
   const { text, fontSize, lineHeight, fontFamily, color, rect, align, bold, italic } = args;
   if (!text || !rect) return;
+
+  resetOverlayAlpha(ctx);
 
   const { x1, y1, x2 } = rect;
   let x;

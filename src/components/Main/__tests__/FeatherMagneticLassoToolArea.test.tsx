@@ -696,6 +696,23 @@ describe('FeatherMagneticLassoToolArea', () => {
 
       expect(ctx.arc).toHaveBeenCalledWith(10, 10, 8, 0, Math.PI * 2);
     });
+
+    it('strokes at full opacity when the shared overlay was left at a tool alpha', () => {
+      const { ctx } = createRecordingContext();
+      const alphaAtStroke: number[] = [];
+      vi.mocked(ctx.stroke).mockImplementation(() => {
+        alphaAtStroke.push(ctx.globalAlpha);
+      });
+      ctx.globalAlpha = 0.2;
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 60, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 60, clientY: 60 });
+
+      expect(alphaAtStroke.length).toBeGreaterThan(0);
+      expect(alphaAtStroke.every((alpha) => alpha === 1)).toBe(true);
+    });
   });
 
   describe('teardown', () => {
