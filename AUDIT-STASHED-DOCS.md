@@ -25,18 +25,18 @@ produced items 24-27 below.
 
 ### 1. `maybeCommitAutoAnchor`'s commit branch is never executed
 
-`FeatherMagneticLassoToolArea.tsx:446-454` commits an auto-anchor segment, and the
-70 ms frequency gate at `:26` means no test ever gets past it: the fixture sets
-`frequency: 1000` and nothing advances `Date.now`. So `commitSegment` from the
-auto-anchor path is unexercised while every other commit route is covered. A
-slow-drag case with `frequency` lowered below the segment path length is the missing
-test.
+`FeatherMagneticLassoToolArea.tsx:464` commits an auto-anchor segment, and the
+70 ms frequency gate (`MIN_AUTO_ANCHOR_TIME_MS` at `:27`) means no test ever gets past
+it: the fixture sets `frequency: 1000` and nothing advances `Date.now`. So
+`commitSegment` from the auto-anchor path is unexercised while every other commit
+route is covered. A slow-drag case with `frequency` lowered below the segment path
+length is the missing test.
 
 ### 2. `getHistoryItemTitle`'s tool-`layerSource` branch is unreachable from the fixture
 
-`useHistory.ts:18` branches on `layerSource?.kind === 'tool'`; the `HistoryTab`
+`useHistory.ts:17` branches on `layerSource?.kind === 'tool'`; the `HistoryTab`
 fixture entry carries `TOOL_ACTION` with `args.toolName` and **no** `layerSource`, so
-it takes the `actionName === TOOL_ACTION` branch at `:22` instead. The mock
+it takes the `actionName === TOOL_ACTION` branch at `:21` instead. The mock
 previously restated the whole title map, so neither path was under test; now that
 the mock delegates to the real function, this is visible. Closing it means changing
 `mockHistory`, which ripples through the index-based row assertions — left alone
@@ -44,11 +44,11 @@ rather than half-changed.
 
 ### 3. `updateLayer` has no direct test
 
-`useLayer.ts:427-443` is reached only indirectly, via `toggleVisibility` and the
+`useLayer.ts:453` is reached only indirectly, via `toggleVisibility` and the
 unknown-layer early return. Its `COMMIT_DOCUMENT_EDIT` history item construction is
 unasserted.
 
-### 4. `Levels.test.tsx:113` is vacuous
+### 4. `Levels.test.tsx:166` is vacuous
 
 `does not call tempUpdateLayer when activeLayerId is null` fires a change and asserts
 `not.toHaveBeenCalled()` **without flushing a frame**, so it passes against the
@@ -60,15 +60,16 @@ duplicate weight, not coverage.
 
 `src/__tests__/fixtures/` is a real shared helper module, so the recovered doc's
 "no shared test-helper module" claim was wrong. What is genuinely missing is a shared
-**provider** wrapper: four local ones exist (e.g. `useCurrentTool.test.tsx:73`), 55
-files still `vi.mock` `StoreContext` themselves, and all six `Main` tool-area suites
-import zero lines from `fixtures/`. That duplication is the live residue.
+**provider** wrapper: 22 test files construct their own `StoreProvider` and 73 still
+`vi.mock` `StoreContext` themselves, and the `Main` tool-area suites import nothing
+from `fixtures/`. That duplication is the live residue.
 
-### 6. 50 exact-pixel assertions pin `ShapeToolArea.test.tsx` to production math
+### 6. 55 hardcoded geometry literals pin `ShapeToolArea.test.tsx` to production math
 
-Lines 174-913 hold 50 hardcoded coordinate/bbox literals (36 object-literal
-`toEqual`, 14 scalar) re-deriving what the `shared shape geometry wiring` describe at
-:915-1181 already asserts generically through `shapeGeometryBounds` /
+Re-measured after `main` rewrote this file: 26 `start`/`end` object literals, 13 `pos`
+bbox literals and 16 scalar coordinate `toBe`/`toBeCloseTo` assertions, spread over
+lines 264-1228. They re-derive what the `shared shape geometry wiring` describe
+(`:1078`) already asserts generically through `shapeGeometryBounds` /
 `normalizeShapeGeometry`. Fragile, and low value to fix.
 
 ### 7. `MIGRATION_NEXT_STEPS_SUNDAY.md:801-805` still carries a fixed issue
@@ -78,22 +79,29 @@ It states `toolbar-mapping.ts` is "type-checked only transitively" and prescribe
 `tsconfig.app.json:43` and `ci.yml:48`. A fixed-issue entry inside a section titled
 "Stale documentation — actively misleading".
 
-### 8. `saveLayerCanvas` is dead but still gates the cutover
+### 8. The cutover gate names a function that no longer exists
 
-`HANDOFF.md` §19 records that `saveLayerCanvas` (`src/contexts/layer-utils.ts:115`)
-has no non-test caller, and `AGENTS.md`'s architecture section says not to begin the
-single-writer cutover "while `saveLayerCanvas()` can still promote cached canvases
-outside reducer publication". The function is present and dead, so the gate is not
-wrong — but it is now decided by an export nothing calls. Either delete the function
-(the gate then clears) or state that the remaining risk is its presence, not its
-behaviour.
+`AGENTS.md:268` still reads: "**DO NOT start single-writer cutover while
+`saveLayerCanvas()` promotes cached canvases outside reducer publication.**" The
+function is gone — `saveLayerCanvas` appears nowhere in `src/`, and `HANDOFF.md` §19
+(which recorded it as dead) has been deleted. The gate is therefore undecidable: it
+blocks on the behaviour of an export that is not in the tree, and a reader cannot tell
+whether the single-writer cutover is cleared or not.
+
+**Fix.** Establish what replaced it before rewording. `layer-presentation.ts`
+(`promoteLayerPresentation` / `requestPresentations`) is where cache promotion now
+happens, and the cutover's real remaining question is whether _that_ can promote
+outside reducer publication. Repoint the gate at the live function, or state the
+condition positively if the promotion path is already inside the reducer.
 
 ### 9. 4-digit hex is still mis-parsed
 
-`hexToRgb('#f00a')` → `"240, 0, NaN"` and `isLightColor('#f00a')` → `false`, the same
-failure the 3-digit case had. The recovered doc scoped the defect to 3 digits and a
-`#rgba` / `#rrggbbaa` branch is a wider change than an audit warrants. 8-digit hex
-happens to work, because the three substrings land on the right channels.
+`normalizeHex` (`src/util/color.ts:1`) expands a 3-digit value and returns anything
+else unchanged, so `hexToRgb('#f00a')` still yields `240, 10, NaN` and
+`isLightColor('#f00a')` is still `false` — the same failure the 3-digit case had. The
+recovered doc scoped the defect to 3 digits and a `#rgba` / `#rrggbbaa` branch is a
+wider change than an audit warrants. 8-digit hex happens to work, because the three
+substrings land on the right channels.
 
 ---
 
@@ -109,10 +117,10 @@ green on top of it.
 | 12  | `removeLayer` threw after it had already committed                                                      | Now calls the already-guarded `clearOverlay`; the _passing_ tripwire that asserted the throw was inverted in the same change                                                                                           |
 | 13  | `ellipsify` could emit a lone surrogate                                                                 | Cut on `Intl.Segmenter` clusters, matching `deleteCharAt` three functions above; 4 new cases incl. a boundary-exact budget                                                                                             |
 | 14  | Apply committed a second identical text layer after a tool-switch commit                                | `commitDirtyTool` now clears through a new stable `SetToolArgsContext` instead of writing the ref directly, so there is one draft state; 3 new tests                                                                   |
-| 15  | `useDoubleClick` accepted a null points ref (`undefined <= 2` is `false`)                               | Explicit absence test. The `<=` boundary is preserved deliberately: the sole caller compensates at `PolygonClickToolArea.tsx:258`                                                                                      |
+| 15  | `useDoubleClick` accepted a null points ref (`undefined <= 2` is `false`)                               | Explicit absence test. The `<=` boundary is preserved deliberately: the sole caller compensates at `PolygonClickToolArea.tsx:331`                                                                                      |
 | 16  | `isLightColor('#fff')` was `false`; `hexToRgb('#fff')` was `"255, 15, NaN"`                             | One shared `normalizeHex` both parsers call, so the byte-identical copies cannot drift again                                                                                                                           |
 | 17  | `HistoryTab.test.tsx` re-implemented the title function it asserted                                     | Mock delegates via `importOriginal`; titles pinned to production literals so a regression in `getHistoryItemTitle` fails the suite                                                                                     |
-| 18  | `useHistory.test.tsx` certified its own mock reducer                                                    | 4 assertions on fabricated state removed; the real transition was already covered at `StoreContext.durable-boundary.test.tsx:1031`                                                                                     |
+| 18  | `useHistory.test.tsx` certified its own mock reducer                                                    | 4 assertions on fabricated state removed; the real transition was already covered at `StoreContext.durable-boundary.test.tsx:1001`                                                                                     |
 | 19  | `CropToolArea.test.tsx` could not observe the spread it is named for                                    | Hoisted handler fns, so the 3 call-count assertions are reachable; the `layer-utils`-style fresh-`vi.fn()`-per-call mock is gone                                                                                       |
 | 20  | `SidebarLeft.color-pickers` asserted zero-valued layout                                                 | Real `getBoundingClientRect` stub with non-round values; both prototype spies restored unconditionally in `afterEach`                                                                                                  |
 | 21  | `useCurrentTool.test.tsx` asserted a seed, not a round-trip                                             | `importOriginal` + delegate, and `beforeEach` resets `draw`/`text`/`shape`; 2 tests converted to true round-trips                                                                                                      |
@@ -164,6 +172,6 @@ Recorded so the next session does not re-audit them. Each was verified against m
   CI runs `npm run test -- --coverage` at `ci.yml:82`, so numbers are reported and
   nothing fails.
 - `docs/next-target-useLayer.md` Priority A "THE RACE" — not real, and never was.
-  `Text.tsx:82-89` clears the shared draft before committing and
-  `useCurrentTool.tsx:70` writes the ref synchronously, so the next `commitDirtyTool`
+  `Text.tsx:86` clears the shared draft before committing and
+  `useCurrentTool.tsx:71` writes the ref synchronously, so the next `commitDirtyTool`
   short-circuits. All three guards predate the plan.
