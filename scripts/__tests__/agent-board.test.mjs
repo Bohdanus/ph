@@ -15,7 +15,7 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -33,6 +33,7 @@ import { run } from '../agent-board.mjs';
  * runner that does not provide it.
  */
 const CLI = resolve(import.meta.dirname ?? process.cwd(), '..', 'agent-board.mjs');
+const PACKAGE_JSON = resolve(import.meta.dirname ?? process.cwd(), '..', '..', 'package.json');
 
 let dir;
 const agents = {};
@@ -401,8 +402,8 @@ describe('file locks make one-file-one-agent real', () => {
     expect(a.locksFor(id)).toHaveLength(1);
     expect(a.listIssues({ files: ['src/ghost.ts'], claimedBy: 'a' })).toHaveLength(1);
     advance(60_001);
-    // `board show` and the FILES column of `board ready` read locksFor, and used
-    // to advertise a lease that had already run out while `board check`, in the
+    // `swarm show` and the FILES column of `swarm ready` read locksFor, and used
+    // to advertise a lease that had already run out while `swarm check`, in the
     // same breath, called the file free.
     expect(a.liveClaimOrNull(id)).not.toBeNull();
     expect(a.locksFor(id)).toHaveLength(0);
@@ -428,7 +429,7 @@ describe('file locks make one-file-one-agent real', () => {
     a.close();
     const b = boardFor('b');
     b.touchAgent();
-    // `board check` is the gate a shell branches on, so a pasted absolute path
+    // `swarm check` is the gate a shell branches on, so a pasted absolute path
     // has to hit the same lock the hold stored in relative form. Normalising
     // only on the write side made this report a held file as FREE.
     expect(b.checkPath('src/x.ts').free).toBe(false);
@@ -468,7 +469,7 @@ describe('file locks make one-file-one-agent real', () => {
   it('keeps a file held for an UNCLAIMED issue, which is the normal case', () => {
     /**
      * The invariant B1 was about, at the layer it actually failed. The first fix
-     * counted pairings with a LIVE CLAIM, so `board hold src/x.ts --issue ph-2`
+     * counted pairings with a LIVE CLAIM, so `swarm hold src/x.ts --issue ph-2`
      * — reserving a file for work not yet started, the documented workflow —
      * did not count, and `release ph-1` freed a file the agent was in. Silent,
      * in normal use, with no error anywhere.
@@ -1229,17 +1230,32 @@ describe('the command line', () => {
     // `--help` is the other thing a fresh agent reaches for first.
     const help = await cli(['help']);
     expect(help.out).toContain('board_read');
-    expect(help.out).toMatch(/DIFFERENT thing/);
+    expect(help.out).toMatch(/different thing/i);
   });
 
-  it('puts a bare `board` and a typed `status` in the same state, differently introduced', async () => {
+  it('puts a bare `swarm` and a typed `status` in the same state, differently introduced', async () => {
     // The banner is for the invocation where the tool itself is in question. An
     // agent that already typed `status` wants the status, and a parser reading
     // this output should not have to skip a paragraph of prose to find it.
-    expect((await cli([])).out).toMatch(/swarm board/);
+    expect((await cli([])).out).toMatch(/^swarm —/);
     expect((await cli(['status'])).out).not.toMatch(/Kilo's built-in board_read/);
     // Both name the database, so neither can be confused with the other board.
     expect((await cli(['status'])).out).toContain(join(dir, 'board.db'));
+  });
+
+  /**
+   * The rename is the fix; the prose about the rename is the receipt. Adding
+   * `board` back as an alias would pass every test above and restore the exact
+   * collision this work exists to remove, so the script name is pinned here
+   * instead of being trusted to stay deleted.
+   */
+  it('has no `board` npm script, so the ambiguous name cannot come back', async () => {
+    const scripts = JSON.parse(readFileSync(PACKAGE_JSON, 'utf8')).scripts;
+    expect(Object.keys(scripts)).toContain('swarm');
+    expect(Object.keys(scripts)).not.toContain('board');
+    // And nothing in the tracked documentation still teaches the old name.
+    const readme = readFileSync(join(import.meta.dirname, '..', '..', 'AGENTS.md'), 'utf8');
+    expect(readme).not.toMatch(/npm run board\b/);
   });
 
   it('ranks a live swarm finding above a handoff import of the same priority', async () => {
@@ -1518,7 +1534,7 @@ describe('the command line', () => {
     const bad = await cli(['frobnicate']);
     expect(bad.code).toBe(1);
     expect(bad.err).toContain('unknown command: frobnicate');
-    expect(bad.err).toContain('agent board');
+    expect(bad.err).toContain('swarm');
   });
 
   it('emits valid JSON for EVERY machine-facing command, driven from the list', async () => {

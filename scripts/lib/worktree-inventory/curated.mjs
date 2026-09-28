@@ -574,9 +574,19 @@ export const CURATED = {
       'Corrects the tool descriptions so each one says what the tool actually does, rather than what its name suggests.',
   },
   'board-entrypoint': {
+    // This entry previously claimed `landed: true` and described a worktree that
+    // no longer existed, asserting a merge that never happened: main carried none
+    // of it. The contradiction test only checks entries against worktrees that
+    // exist, so a false claim about a deleted worktree raised nothing. A later
+    // worktree of the same name then made it checkable, and it failed.
+    //
+    // The lesson is the one `landed` exists to enforce: a curated entry is a
+    // claim about git, and a claim nothing re-derives is just prose. `landed`
+    // is deliberately FALSE here — this branch is not on main — and the entry
+    // goes away with the worktree when it lands.
     summary:
-      'A short-lived worktree on the board entrypoint fix, now merged: its branch is an ancestor of main and its working tree is clean.',
-    landed: true,
+      "The swarm board names which board it is (Kilo's built-in board_read is a different tool, empty by design) and ranks `ready` by provenance and contention, so the live work is not buried under the handoff imports.",
+    landed: false,
   },
   'handoff-citation-rotation': {
     summary:

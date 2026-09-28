@@ -17,7 +17,7 @@
  * to coordinate. SQLite in WAL mode with a busy timeout is a library, not a
  * service: every command opens the file, does its work inside a transaction
  * and exits. Nothing needs to be running for a claim to be atomic, and nothing
- * needs restarting after a crash. `board watch` polls; it is a reader, never a
+ * needs restarting after a crash. `swarm watch` polls; it is a reader, never a
  * required participant.
  *
  * WHY CLAIMS AND LOCKS EXPIRE
@@ -483,7 +483,7 @@ export class Board {
    *
    * Two things make this survivable on a board nobody can inspect first. v1's
    * `file_locks.issue_id` had NO foreign key and `holdFiles` never validated
-   * it, so `board hold x --issue ph-404` was accepted; v2 turns foreign keys on
+   * it, so `swarm hold x --issue ph-404` was accepted; v2 turns foreign keys on
    * before this runs, and a straight `INSERT … SELECT` then aborts the whole
    * migration on the first dangling id — leaving a board that cannot be opened
    * by any command, with no repair path, because you cannot open it to fix it.
@@ -817,7 +817,7 @@ export class Board {
 
   /**
    * Lists issues, most urgent first. `only` narrows to a set of statuses; the
-   * default is the whole board because `board list` is also a status report.
+   * default is the whole board because `swarm list` is also a status report.
    */
   listIssues({ status = null, scope = null, files = null, claimedBy = null, origin = null, limit = NO_LIMIT } = {}) {
     const where = [];
@@ -847,7 +847,7 @@ export class Board {
     if (claimedBy) {
       // The lease, not just the row: an issue whose claim expired a
       // millisecond ago is not being worked on by anybody, and
-      // `board list --claimed-by` saying otherwise sends the next agent round
+      // `swarm list --claimed-by` saying otherwise sends the next agent round
       // the loop to find work that is already free.
       where.push(
         `EXISTS (SELECT 1 FROM claims c WHERE c.issue_id = issues.id AND c.agent_id = ? AND c.released_at IS NULL AND c.lease_until > ?)`
@@ -1065,8 +1065,8 @@ export class Board {
    * The locks still holding on an issue, expired ones excluded.
    *
    * Filtering only on `released_at` reads a lock whose lease has run out as a
-   * live one, which is how `board show` and the FILES column of `board ready`
-   * came to advertise a file that `board check`, in the same breath, called
+   * live one, which is how `swarm show` and the FILES column of `swarm ready`
+   * came to advertise a file that `swarm check`, in the same breath, called
    * free. Anything that renders a lock to a human goes through here or through
    * `liveLocks`; anything that decides a conflict ALWAYS goes through
    * `liveLocks`, and never through this.
@@ -1231,7 +1231,7 @@ export class Board {
    *
    * "Still in use" therefore means a surviving pairing whose issue is not
    * CLOSED — not one that happens to hold a live claim. The claim-based version
-   * looked right and was wrong in normal use: `board hold src/x.ts --issue ph-2`
+   * looked right and was wrong in normal use: `swarm hold src/x.ts --issue ph-2`
    * on an issue the agent has not claimed yet is a documented workflow, and a
    * predicate that only counts claimed issues let `release ph-1` free a file the
    * agent was still in, with no error anywhere. An unclaimed issue is precisely
@@ -1377,7 +1377,7 @@ export class Board {
    * `/private/tmp`, `git rev-parse --show-toplevel` returns the RESOLVED path,
    * and a path typed by an agent or pasted from a shell keeps the symlink. So
    * `<wt>/src/x.ts` and `/tmp/<wt>/src/x.ts` are the same file and one of them
-   * matched no root — and this function's caller is `board check`, whose entire
+   * matched no root — and this function's caller is `swarm check`, whose entire
    * job is to answer "may I edit this". It answered FREE.
    *
    * Only the deepest EXISTING ancestor is resolved, because the file a caller
@@ -1430,8 +1430,8 @@ export class Board {
    * and the import deliberately takes none, so a table that reported locks
    * showed `-` for all fifty-four imported items and told an agent nothing about
    * the work in front of it. The file list itself lives in the issue's own
-   * `issue.create` event, which is where both filing paths (`board new` and
-   * `board import`) put it, so it is there for every issue that exists.
+   * `issue.create` event, which is where both filing paths (`swarm new` and
+   * `swarm import`) put it, so it is there for every issue that exists.
    */
   /**
    * Records that a document's numbering and the board no longer agree.
@@ -1483,7 +1483,7 @@ export class Board {
   }
 
   /**
-   * `board check <path>`: exit 0 free, 1 held. Scriptable on its own, and the
+   * `swarm check <path>`: exit 0 free, 1 held. Scriptable on its own, and the
    * one query an agent or a shell is most likely to trust.
    *
    * It normalises its input with the SAME function `holdFiles` normalises with,
@@ -1672,8 +1672,8 @@ export class Board {
       blocked: this.blockedIssues().length,
       agents: this.agents().length,
       claims,
-      // Reported rather than fixed: `board status` is a read, and the one
-      // command that releases an abandoned claim is `board doctor`.
+      // Reported rather than fixed: `swarm status` is a read, and the one
+      // command that releases an abandoned claim is `swarm doctor`.
       expiredClaims: unreleased.length - claims.length,
       locks,
       myClaims: mine,
@@ -1767,7 +1767,7 @@ export function foldTitle(title) {
  * The handoff documents label their entries `P0`–`P3`, and the board has four
  * levels, so the mapping is direct. It lives here rather than in the import
  * because it is a property of a TITLE, not of where the title came from: when
- * `board new` and `board import` disagreed about `P0 — …`, the same defect had
+ * `swarm new` and `swarm import` disagreed about `P0 — …`, the same defect had
  * two urgencies depending on which command filed it.
  */
 const SEVERITY_HEADING = /^P(\d{1,3})\b/i;

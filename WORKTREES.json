@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-28T20:20:40.956Z",
+  "generatedAt": "2026-09-28T21:19:05.280Z",
   "generator": "scripts/worktree-inventory.mjs",
   "base": "main",
-  "mainHead": "69f42c5f438ff118808aa05b054b1e5eea4d5b1d",
+  "mainHead": "2d91fba2bded91e8405e030341054a9c03e61dfd",
   "chatWindowMs": 86400000,
   "dataSources": {
     "git": {
@@ -14,36 +14,35 @@
     "sessions": {
       "ok": true,
       "path": "/Users/bkalynovskyi/.local/share/kilo/kilo.db",
-      "sessions": 88
+      "sessions": 82
     },
     "board": {
       "ok": true,
       "path": "/Users/bkalynovskyi/ph/.git/agent-board/board.db",
-      "issues": 58
+      "issues": 61
     }
   },
   "totals": {
-    "worktrees": 68,
-    "prunable": 2,
-    "salvage": 64,
-    "inUse": 2,
-    "holdingUncommittedWork": 24,
-    "withoutSummary": 2,
+    "worktrees": 71,
+    "prunable": 4,
+    "salvage": 63,
+    "inUse": 4,
+    "holdingUncommittedWork": 17,
+    "withoutSummary": 5,
     "byStatus": {
-      "uncommitted-only": 17,
-      "unmerged-work": 48,
-      "landed": 3
+      "uncommitted-only": 9,
+      "unmerged-work": 55,
+      "landed": 7
     },
     "byRecommendation": {
-      "salvage": 64,
-      "in-use": 2,
-      "prune": 2
+      "salvage": 63,
+      "in-use": 4,
+      "prune": 4
     },
     "byChatState": {
-      "finished": 64,
+      "finished": 61,
       "abandoned-midflight": 5,
-      "active": 7,
-      "blocked": 1
+      "active": 6
     }
   },
   "worktrees": [
@@ -66,7 +65,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 64,
+      "behind": 81,
       "mergedIntoMain": true,
       "dirty": 1,
       "untracked": 0,
@@ -126,7 +125,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 59,
+      "behind": 76,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -190,21 +189,21 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 172,
+      "behind": 189,
       "mergedIntoMain": true,
-      "dirty": 9,
-      "untracked": 1,
+      "dirty": 10,
+      "untracked": 0,
       "dirtyPaths": [
         "e2e/export/__tests__/helpers.unit.test.ts",
         "e2e/export/helpers.ts",
         "e2e/export/ico.spec.ts",
         "e2e/export/non-comparison-formats.spec.ts",
         "e2e/export/raster-formats.spec.ts",
+        "e2e/export/structured-formats.spec.ts",
         "e2e/export/svg.spec.ts",
         "e2e/export/visual-regression.spec.ts",
         "e2e/helpers/__tests__/image-comparison.unit.test.ts",
-        "e2e/helpers/image-comparison.ts",
-        "e2e/export/structured-formats.spec.ts"
+        "e2e/helpers/image-comparison.ts"
       ],
       "lastCommit": {
         "sha": "446d7eb80273634eff7e15fa480a73d7dc237285",
@@ -246,48 +245,32 @@
       "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-2-draw-specs",
       "branch": "e2e/ws-2-draw-specs",
       "isPrimary": false,
-      "head": "446d7eb80273634eff7e15fa480a73d7dc237285",
+      "head": "0216b2d981c7bb14dad767454135d226da7de473",
       "detached": false,
-      "status": "uncommitted-only",
+      "status": "unmerged-work",
       "recommendation": "salvage",
       "prunable": false,
       "riskScore": 90,
-      "statusReasons": [
-        "the branch reports 0 commits ahead of main and is an ancestor of it",
-        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
-        "git cannot distinguish this from a branch that landed and was then edited",
-        "work here is not reachable from any commit on this branch"
-      ],
-      "ahead": 0,
-      "behind": 172,
-      "mergedIntoMain": true,
-      "dirty": 15,
-      "untracked": 1,
-      "dirtyPaths": [
-        "e2e/check-dpr.spec.ts",
-        "e2e/color.spec.ts",
-        "e2e/example.spec.ts",
-        "e2e/helpers/__tests__/canvas-helpers.unit.test.ts",
-        "e2e/helpers/__tests__/canvas-interaction.unit.test.ts",
-        "e2e/helpers/__tests__/canvas-pixel-analysis.unit.test.ts",
-        "e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts",
-        "e2e/helpers/__tests__/toolbar-helpers.unit.test.ts",
-        "e2e/helpers/canvas-helpers.ts",
-        "e2e/helpers/toolbar-helpers.ts",
-        "e2e/pen-types.spec.ts",
-        "e2e/sidebar-flyout.spec.ts",
-        "e2e/sidebar-keyboard.spec.ts",
-        "e2e/viewport-drawing.spec.ts",
-        "src/components/SidebarLeft/SidebarLeft.tsx",
-        "e2e/draw.spec.ts"
-      ],
+      "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
+      "ahead": 1,
+      "behind": 189,
+      "mergedIntoMain": false,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
       "lastCommit": {
-        "sha": "446d7eb80273634eff7e15fa480a73d7dc237285",
-        "subject": "merge: record a polygon's selection drag once, per gesture",
-        "date": "2026-09-28T01:38:32+02:00",
+        "sha": "0216b2d981c7bb14dad767454135d226da7de473",
+        "subject": "wip(salvage): preserve uncommitted work from an abandoned worktree",
+        "date": "2026-09-28T23:13:24+02:00",
         "author": "Bohdan"
       },
-      "commitsAhead": [],
+      "commitsAhead": [
+        {
+          "sha": "0216b2d",
+          "subject": "wip(salvage): preserve uncommitted work from an abandoned worktree",
+          "date": "2026-09-28T23:13:24+02:00"
+        }
+      ],
       "commitsAheadTruncated": false,
       "claimedLanded": null,
       "summary": "Campaign shard 2 of 5, meant to write the drawing spec. Zero commits.",
@@ -326,38 +309,32 @@
       "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-3-layers-levels",
       "branch": "e2e/ws-3-layers-levels",
       "isPrimary": false,
-      "head": "446d7eb80273634eff7e15fa480a73d7dc237285",
+      "head": "684e18d8c8a729f721e5ba753b3e2041a6b96535",
       "detached": false,
-      "status": "uncommitted-only",
+      "status": "unmerged-work",
       "recommendation": "salvage",
       "prunable": false,
       "riskScore": 90,
-      "statusReasons": [
-        "the branch reports 0 commits ahead of main and is an ancestor of it",
-        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
-        "git cannot distinguish this from a branch that landed and was then edited",
-        "work here is not reachable from any commit on this branch"
-      ],
-      "ahead": 0,
-      "behind": 172,
-      "mergedIntoMain": true,
-      "dirty": 5,
-      "untracked": 1,
-      "dirtyPaths": [
-        "e2e/layers.spec.ts",
-        "e2e/levels.spec.ts",
-        "e2e/sidebar-layout.spec.ts",
-        "src/components/SidebarRight/LayersTab.tsx",
-        "src/contexts/layer-renderer.ts",
-        "e2e/zzmeasure.spec.ts"
-      ],
+      "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
+      "ahead": 1,
+      "behind": 189,
+      "mergedIntoMain": false,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
       "lastCommit": {
-        "sha": "446d7eb80273634eff7e15fa480a73d7dc237285",
-        "subject": "merge: record a polygon's selection drag once, per gesture",
-        "date": "2026-09-28T01:38:32+02:00",
+        "sha": "684e18d8c8a729f721e5ba753b3e2041a6b96535",
+        "subject": "wip(salvage): preserve uncommitted work from an abandoned worktree",
+        "date": "2026-09-28T23:14:02+02:00",
         "author": "Bohdan"
       },
-      "commitsAhead": [],
+      "commitsAhead": [
+        {
+          "sha": "684e18d",
+          "subject": "wip(salvage): preserve uncommitted work from an abandoned worktree",
+          "date": "2026-09-28T23:14:02+02:00"
+        }
+      ],
       "commitsAheadTruncated": false,
       "claimedLanded": null,
       "summary": "Campaign shard 3 of 5, named for the layers and levels specs. Uncommitted work touches two production files, `LayersTab.tsx` and `layer-renderer.ts`, alongside the specs.",
@@ -391,48 +368,32 @@
       "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-4-flyout-keyboard",
       "branch": "e2e/ws-4-flyout-keyboard",
       "isPrimary": false,
-      "head": "446d7eb80273634eff7e15fa480a73d7dc237285",
+      "head": "a6258cbb38573c021075d01e50486104c5ec8afa",
       "detached": false,
-      "status": "uncommitted-only",
+      "status": "unmerged-work",
       "recommendation": "salvage",
       "prunable": false,
       "riskScore": 90,
-      "statusReasons": [
-        "the branch reports 0 commits ahead of main and is an ancestor of it",
-        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
-        "git cannot distinguish this from a branch that landed and was then edited",
-        "work here is not reachable from any commit on this branch"
-      ],
-      "ahead": 0,
-      "behind": 172,
-      "mergedIntoMain": true,
-      "dirty": 15,
-      "untracked": 1,
-      "dirtyPaths": [
-        "e2e/check-dpr.spec.ts",
-        "e2e/color.spec.ts",
-        "e2e/example.spec.ts",
-        "e2e/helpers/__tests__/canvas-helpers.unit.test.ts",
-        "e2e/helpers/__tests__/canvas-interaction.unit.test.ts",
-        "e2e/helpers/__tests__/canvas-pixel-analysis.unit.test.ts",
-        "e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts",
-        "e2e/helpers/__tests__/toolbar-helpers.unit.test.ts",
-        "e2e/helpers/canvas-helpers.ts",
-        "e2e/helpers/toolbar-helpers.ts",
-        "e2e/pen-types.spec.ts",
-        "e2e/sidebar-flyout.spec.ts",
-        "e2e/sidebar-keyboard.spec.ts",
-        "e2e/viewport-drawing.spec.ts",
-        "src/components/SidebarLeft/SidebarLeft.tsx",
-        "e2e/draw.spec.ts"
-      ],
+      "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
+      "ahead": 1,
+      "behind": 189,
+      "mergedIntoMain": false,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
       "lastCommit": {
-        "sha": "446d7eb80273634eff7e15fa480a73d7dc237285",
-        "subject": "merge: record a polygon's selection drag once, per gesture",
-        "date": "2026-09-28T01:38:32+02:00",
+        "sha": "a6258cbb38573c021075d01e50486104c5ec8afa",
+        "subject": "wip(salvage): preserve uncommitted work from an abandoned worktree",
+        "date": "2026-09-28T23:14:46+02:00",
         "author": "Bohdan"
       },
-      "commitsAhead": [],
+      "commitsAhead": [
+        {
+          "sha": "a6258cb",
+          "subject": "wip(salvage): preserve uncommitted work from an abandoned worktree",
+          "date": "2026-09-28T23:14:46+02:00"
+        }
+      ],
       "commitsAheadTruncated": false,
       "claimedLanded": null,
       "summary": "Campaign shard 4 of 5, meant for flyout and keyboard specs. The board records its uncommitted files as the campaign’s content rather than flyout work.",
@@ -466,31 +427,32 @@
       "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-5-history-undo",
       "branch": "e2e/ws-5-history-undo",
       "isPrimary": false,
-      "head": "446d7eb80273634eff7e15fa480a73d7dc237285",
+      "head": "d82fc5c6aabb902ed90da339fb4c254b55ff2b08",
       "detached": false,
-      "status": "uncommitted-only",
+      "status": "unmerged-work",
       "recommendation": "salvage",
       "prunable": false,
       "riskScore": 90,
-      "statusReasons": [
-        "the branch reports 0 commits ahead of main and is an ancestor of it",
-        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
-        "git cannot distinguish this from a branch that landed and was then edited",
-        "work here is not reachable from any commit on this branch"
-      ],
-      "ahead": 0,
-      "behind": 172,
-      "mergedIntoMain": true,
+      "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
+      "ahead": 1,
+      "behind": 189,
+      "mergedIntoMain": false,
       "dirty": 0,
-      "untracked": 3,
-      "dirtyPaths": ["e2e/history-helpers.ts", "e2e/history-panel.spec.ts", "e2e/undo-redo.spec.ts"],
+      "untracked": 0,
+      "dirtyPaths": [],
       "lastCommit": {
-        "sha": "446d7eb80273634eff7e15fa480a73d7dc237285",
-        "subject": "merge: record a polygon's selection drag once, per gesture",
-        "date": "2026-09-28T01:38:32+02:00",
+        "sha": "d82fc5c6aabb902ed90da339fb4c254b55ff2b08",
+        "subject": "wip(salvage): preserve uncommitted work from an abandoned worktree",
+        "date": "2026-09-28T23:15:30+02:00",
         "author": "Bohdan"
       },
-      "commitsAhead": [],
+      "commitsAhead": [
+        {
+          "sha": "d82fc5c",
+          "subject": "wip(salvage): preserve uncommitted work from an abandoned worktree",
+          "date": "2026-09-28T23:15:30+02:00"
+        }
+      ],
       "commitsAheadTruncated": false,
       "claimedLanded": null,
       "summary": "Campaign shard 5 of 5, meant to cover the history panel and undo/redo. The branch has no commits of its own.",
@@ -529,26 +491,61 @@
       "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-campaign-int",
       "branch": "integration/e2e-campaign-final",
       "isPrimary": false,
-      "head": "52e000d7abd21efcedf8ae38817c12e39540a7bc",
+      "head": "210ace6c6bb088bf1a6bfed76d24f1356e318058",
       "detached": false,
       "status": "unmerged-work",
       "recommendation": "salvage",
       "prunable": false,
       "riskScore": 90,
-      "statusReasons": ["45 commit(s) ahead of main", "commits here are not on main"],
-      "ahead": 45,
-      "behind": 14,
+      "statusReasons": [
+        "47 commit(s) ahead of main",
+        "the working tree holds uncommitted changes",
+        "commits here are not on main"
+      ],
+      "ahead": 47,
+      "behind": 31,
       "mergedIntoMain": false,
-      "dirty": 0,
+      "dirty": 20,
       "untracked": 0,
-      "dirtyPaths": [],
+      "dirtyPaths": [
+        "AGENTS.md",
+        "HANDOFF.md",
+        "WORKTREES.json",
+        "e2e/README.md",
+        "e2e/document-dialogs.spec.ts",
+        "e2e/filter-tools.spec.ts",
+        "e2e/global-setup.ts",
+        "e2e/history-panel.spec.ts",
+        "e2e/keyboard-shortcuts.spec.ts",
+        "e2e/layers-panel.spec.ts",
+        "e2e/mobile-shell.spec.ts",
+        "e2e/shape-tools.spec.ts",
+        "scripts/__tests__/worktree-inventory.test.mjs",
+        "scripts/lib/worktree-inventory/assemble.mjs",
+        "scripts/lib/worktree-inventory/board.mjs",
+        "scripts/lib/worktree-inventory/chats.mjs",
+        "scripts/lib/worktree-inventory/classify.mjs",
+        "scripts/lib/worktree-inventory/curated.mjs",
+        "scripts/lib/worktree-inventory/git.mjs",
+        "scripts/worktree-inventory.mjs"
+      ],
       "lastCommit": {
-        "sha": "52e000d7abd21efcedf8ae38817c12e39540a7bc",
-        "subject": "merge(main): reconcile the campaign with 25 commits of main, in-branch",
-        "date": "2026-09-28T22:06:33+02:00",
+        "sha": "210ace6c6bb088bf1a6bfed76d24f1356e318058",
+        "subject": "fix(docs): four findings from the adversarial review of 0ad533f",
+        "date": "2026-09-28T22:43:21+02:00",
         "author": "Bohdan"
       },
       "commitsAhead": [
+        {
+          "sha": "210ace6",
+          "subject": "fix(docs): four findings from the adversarial review of 0ad533f",
+          "date": "2026-09-28T22:43:21+02:00"
+        },
+        {
+          "sha": "0ad533f",
+          "subject": "docs: re-derive every citation the merge moved, and the ones it exposed",
+          "date": "2026-09-28T22:30:11+02:00"
+        },
         {
           "sha": "52e000d",
           "subject": "merge(main): reconcile the campaign with 25 commits of main, in-branch",
@@ -638,16 +635,6 @@
           "sha": "eadfe3d",
           "subject": "merge(main): pick up the audit/stashed-docs tranche",
           "date": "2026-09-28T18:44:43+02:00"
-        },
-        {
-          "sha": "9dd7969",
-          "subject": "test(e2e): make the fit-agreement test satisfiable, and the export mock able to answer",
-          "date": "2026-09-28T18:42:42+02:00"
-        },
-        {
-          "sha": "8f88520",
-          "subject": "fix(app): publish the fit only to a node that can hold it",
-          "date": "2026-09-28T18:42:42+02:00"
         }
       ],
       "commitsAheadTruncated": true,
@@ -691,7 +678,7 @@
       "riskScore": 90,
       "statusReasons": ["24 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 24,
-      "behind": 105,
+      "behind": 122,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -845,7 +832,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 112,
+      "behind": 129,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -904,7 +891,7 @@
       "riskScore": 90,
       "statusReasons": ["2 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 2,
-      "behind": 112,
+      "behind": 129,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -968,7 +955,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 112,
+      "behind": 129,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1027,7 +1014,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 107,
+      "behind": 124,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1086,7 +1073,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 112,
+      "behind": 129,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1145,7 +1132,7 @@
       "riskScore": 90,
       "statusReasons": ["2 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 2,
-      "behind": 112,
+      "behind": 129,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1209,7 +1196,7 @@
       "riskScore": 90,
       "statusReasons": ["2 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 2,
-      "behind": 112,
+      "behind": 129,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1273,7 +1260,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 112,
+      "behind": 129,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1332,7 +1319,7 @@
       "riskScore": 90,
       "statusReasons": ["2 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 2,
-      "behind": 112,
+      "behind": 129,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1396,7 +1383,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 112,
+      "behind": 129,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1455,7 +1442,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 102,
+      "behind": 119,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1519,7 +1506,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 102,
+      "behind": 119,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1574,6 +1561,89 @@
       }
     },
     {
+      "name": "fix-e2e-findings",
+      "path": ".kilo/worktrees/fix-e2e-findings",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/fix-e2e-findings",
+      "branch": "fix/e2e-transferred-findings",
+      "isPrimary": false,
+      "head": "d16c228535740a0af807cf8635e772039c12d669",
+      "detached": false,
+      "status": "uncommitted-only",
+      "recommendation": "salvage",
+      "prunable": false,
+      "riskScore": 90,
+      "statusReasons": [
+        "the branch reports 0 commits ahead of main and is an ancestor of it",
+        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
+        "git cannot distinguish this from a branch that landed and was then edited",
+        "work here is not reachable from any commit on this branch"
+      ],
+      "ahead": 0,
+      "behind": 6,
+      "mergedIntoMain": true,
+      "dirty": 24,
+      "untracked": 0,
+      "dirtyPaths": [
+        "e2e/export/__tests__/helpers.unit.test.ts",
+        "e2e/export/helpers.ts",
+        "e2e/export/ico.spec.ts",
+        "e2e/export/photopea.spec.ts",
+        "e2e/export/visual-regression.spec.ts",
+        "e2e/helpers/__tests__/canvas-helpers.fixtures.ts",
+        "e2e/helpers/__tests__/canvas-helpers.unit.test.ts",
+        "e2e/helpers/__tests__/canvas-interaction.unit.test.ts",
+        "e2e/helpers/__tests__/canvas-pixel-analysis.unit.test.ts",
+        "e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts",
+        "e2e/helpers/__tests__/cdp-helpers.unit.test.ts",
+        "e2e/helpers/__tests__/screenshot-scale.unit.test.ts",
+        "e2e/helpers/__tests__/toolbar-helpers.unit.test.ts",
+        "e2e/helpers/canvas-helpers.spec.ts",
+        "e2e/helpers/canvas-helpers.ts",
+        "e2e/helpers/cdp-helpers.spec.ts",
+        "e2e/helpers/cdp-helpers.ts",
+        "e2e/helpers/screenshot-scale.ts",
+        "e2e/helpers/toolbar-helpers.ts",
+        "e2e/pen-types.spec.ts",
+        "e2e/shape-tools.spec.ts",
+        "e2e/sidebar-flyout.spec.ts",
+        "e2e/sidebar-keyboard.spec.ts",
+        "package.json"
+      ],
+      "lastCommit": {
+        "sha": "d16c228535740a0af807cf8635e772039c12d669",
+        "subject": "merge: the tool descriptions tell the truth",
+        "date": "2026-09-28T23:02:13+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": null,
+      "summarySource": "none",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [],
+        "agents": [],
+        "held": false
+      }
+    },
+    {
       "name": "fix-file-menu",
       "path": ".kilo/worktrees/fix-file-menu",
       "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/fix-file-menu",
@@ -1587,7 +1657,7 @@
       "riskScore": 90,
       "statusReasons": ["3 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 3,
-      "behind": 102,
+      "behind": 119,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1656,7 +1726,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 45,
+      "behind": 62,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1720,7 +1790,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 270,
+      "behind": 287,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1784,7 +1854,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 270,
+      "behind": 287,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1852,7 +1922,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 102,
+      "behind": 119,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1916,7 +1986,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 91,
+      "behind": 108,
       "mergedIntoMain": true,
       "dirty": 5,
       "untracked": 0,
@@ -1984,11 +2054,11 @@
         "commits here are not on main"
       ],
       "ahead": 22,
-      "behind": 59,
+      "behind": 76,
       "mergedIntoMain": false,
-      "dirty": 0,
-      "untracked": 1,
-      "dirtyPaths": [".tmp-measure/"],
+      "dirty": 1,
+      "untracked": 0,
+      "dirtyPaths": [".tmp-measure/ink-model.mjs"],
       "lastCommit": {
         "sha": "a93f0d9f2f23cb138a4b25a743ffe19082112e85",
         "subject": "test(e2e): make the fit-agreement test satisfiable, and the export mock able to answer",
@@ -2150,7 +2220,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 68,
+      "behind": 85,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2218,7 +2288,7 @@
       "riskScore": 90,
       "statusReasons": ["2 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 2,
-      "behind": 102,
+      "behind": 119,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2287,7 +2357,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 270,
+      "behind": 287,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2351,7 +2421,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 102,
+      "behind": 119,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2415,7 +2485,7 @@
       "riskScore": 90,
       "statusReasons": ["4 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 4,
-      "behind": 59,
+      "behind": 76,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2505,7 +2575,7 @@
       "riskScore": 90,
       "statusReasons": ["2 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 2,
-      "behind": 252,
+      "behind": 269,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2582,7 +2652,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 270,
+      "behind": 287,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2650,7 +2720,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 270,
+      "behind": 287,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2718,7 +2788,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 68,
+      "behind": 85,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2782,7 +2852,7 @@
       "riskScore": 90,
       "statusReasons": ["2 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 2,
-      "behind": 59,
+      "behind": 76,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2843,31 +2913,32 @@
       "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/history-append-layer-ops-main",
       "branch": "history/append-layer-ops-main",
       "isPrimary": false,
-      "head": "5b772d9de8ef308e55c1e8b0c8696955d8a5e051",
+      "head": "230b8d97325c936f64cbd1f0150f542ac1611224",
       "detached": false,
-      "status": "uncommitted-only",
+      "status": "unmerged-work",
       "recommendation": "salvage",
       "prunable": false,
       "riskScore": 90,
-      "statusReasons": [
-        "the branch reports 0 commits ahead of main and is an ancestor of it",
-        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
-        "git cannot distinguish this from a branch that landed and was then edited",
-        "work here is not reachable from any commit on this branch"
-      ],
-      "ahead": 0,
-      "behind": 106,
-      "mergedIntoMain": true,
-      "dirty": 3,
+      "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
+      "ahead": 1,
+      "behind": 123,
+      "mergedIntoMain": false,
+      "dirty": 0,
       "untracked": 0,
-      "dirtyPaths": ["src/contexts/history-adapter.ts", "src/contexts/history-append.ts", "src/contexts/useLayer.ts"],
+      "dirtyPaths": [],
       "lastCommit": {
-        "sha": "5b772d9de8ef308e55c1e8b0c8696955d8a5e051",
-        "subject": "gates: name the stale-worktree failure, and stop lying about the install",
-        "date": "2026-09-28T12:31:29+02:00",
+        "sha": "230b8d97325c936f64cbd1f0150f542ac1611224",
+        "subject": "wip(salvage): preserve uncommitted work from an abandoned worktree",
+        "date": "2026-09-28T23:16:54+02:00",
         "author": "Bohdan"
       },
-      "commitsAhead": [],
+      "commitsAhead": [
+        {
+          "sha": "230b8d9",
+          "subject": "wip(salvage): preserve uncommitted work from an abandoned worktree",
+          "date": "2026-09-28T23:16:54+02:00"
+        }
+      ],
       "commitsAheadTruncated": false,
       "claimedLanded": null,
       "summary": "A re-creation of the layer-property append-boundary slice against main. The branch was created from main and never committed, so its output is three uncommitted files.",
@@ -2909,7 +2980,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 240,
+      "behind": 257,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2937,11 +3008,11 @@
       "liveNote": null,
       "mustNotPrune": false,
       "chats": {
-        "count": 2,
-        "chatIds": ["ses_f1b6cafe1ffeT6w4Jgfbnujvg6", "ses_f1b79251dffensYUecgyM32P71"],
+        "count": 1,
+        "chatIds": ["ses_f1b6cafe1ffeT6w4Jgfbnujvg6"],
         "subagentCount": 0,
         "byState": {
-          "finished": 2
+          "finished": 1
         },
         "activeChatIds": [],
         "unfinishedChatIds": [],
@@ -2974,7 +3045,7 @@
         "commits here are not on main"
       ],
       "ahead": 1,
-      "behind": 240,
+      "behind": 257,
       "mergedIntoMain": false,
       "dirty": 1,
       "untracked": 0,
@@ -3007,15 +3078,13 @@
       "liveNote": null,
       "mustNotPrune": false,
       "chats": {
-        "count": 1,
-        "chatIds": ["ses_f1ba20bebffeG7fOESXGv96DGg"],
+        "count": 0,
+        "chatIds": [],
         "subagentCount": 0,
-        "byState": {
-          "finished": 1
-        },
+        "byState": {},
         "activeChatIds": [],
         "unfinishedChatIds": [],
-        "lastActivity": 1790540521098,
+        "lastActivity": null,
         "unfinished": [],
         "dead": []
       },
@@ -3044,7 +3113,7 @@
         "commits here are not on main"
       ],
       "ahead": 1,
-      "behind": 240,
+      "behind": 257,
       "mergedIntoMain": false,
       "dirty": 1,
       "untracked": 0,
@@ -3077,15 +3146,13 @@
       "liveNote": null,
       "mustNotPrune": false,
       "chats": {
-        "count": 2,
-        "chatIds": ["ses_f1b6f46feffeCr1vZFPgjC5Gin", "ses_f1b6673dfffe5JLrz4ZWoVKjc1"],
+        "count": 0,
+        "chatIds": [],
         "subagentCount": 0,
-        "byState": {
-          "finished": 2
-        },
+        "byState": {},
         "activeChatIds": [],
         "unfinishedChatIds": [],
-        "lastActivity": 1790542694893,
+        "lastActivity": null,
         "unfinished": [],
         "dead": []
       },
@@ -3114,7 +3181,7 @@
         "commits here are not on main"
       ],
       "ahead": 1,
-      "behind": 240,
+      "behind": 257,
       "mergedIntoMain": false,
       "dirty": 1,
       "untracked": 0,
@@ -3147,15 +3214,11 @@
       "liveNote": null,
       "mustNotPrune": false,
       "chats": {
-        "count": 3,
-        "chatIds": [
-          "ses_f1b87ca5bffeH3Sr4jum95Cmpv",
-          "ses_f1b3877baffeulCrn1qWWgBo2p",
-          "ses_f1b7b585cffetNsRppxaJkQvoP"
-        ],
+        "count": 2,
+        "chatIds": ["ses_f1b87ca5bffeH3Sr4jum95Cmpv", "ses_f1b3877baffeulCrn1qWWgBo2p"],
         "subagentCount": 0,
         "byState": {
-          "finished": 2,
+          "finished": 1,
           "abandoned-midflight": 1
         },
         "activeChatIds": [],
@@ -3166,8 +3229,8 @@
             "id": "ses_f1b3877baffeulCrn1qWWgBo2p",
             "title": "Review selection baseline history replay fix",
             "state": "abandoned-midflight",
-            "idleMs": 81708579,
-            "reasons": ["idle for 23h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 85212903,
+            "reasons": ["idle for 24h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 3,
             "creditsFailures": 0,
             "blockedOn": null
@@ -3200,7 +3263,7 @@
         "commits here are not on main"
       ],
       "ahead": 1,
-      "behind": 240,
+      "behind": 257,
       "mergedIntoMain": false,
       "dirty": 3,
       "untracked": 0,
@@ -3279,10 +3342,10 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 240,
+      "behind": 257,
       "mergedIntoMain": true,
-      "dirty": 12,
-      "untracked": 2,
+      "dirty": 14,
+      "untracked": 0,
       "dirtyPaths": [
         "src/components/Main/MagicWandToolArea.tsx",
         "src/components/Main/RectangularSelectionToolArea.tsx",
@@ -3294,9 +3357,9 @@
         "src/components/ToolbarsRight/MagicWand/__tests__/MagicWand.test.tsx",
         "src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx",
         "src/components/ToolbarsRight/RectangularSelection/__tests__/RectangularSelection.test.tsx",
+        "src/contexts/__tests__/useSelectionHistory.creation.test.tsx",
         "src/contexts/history-adapter.ts",
         "src/contexts/history-append.ts",
-        "src/contexts/__tests__/useSelectionHistory.creation.test.tsx",
         "src/contexts/useSelectionHistory.ts"
       ],
       "lastCommit": {
@@ -3354,10 +3417,10 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 240,
+      "behind": 257,
       "mergedIntoMain": true,
-      "dirty": 10,
-      "untracked": 1,
+      "dirty": 11,
+      "untracked": 0,
       "dirtyPaths": [
         "src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx",
         "src/components/ToolbarsRight/Lasso/FreehandLasso.tsx",
@@ -3388,11 +3451,11 @@
       "liveNote": null,
       "mustNotPrune": true,
       "chats": {
-        "count": 2,
-        "chatIds": ["ses_f1b5291e9ffe8ASwq9iJF61BQH", "ses_f1b4aa5d9ffedZypvE2Ian7hjL"],
+        "count": 1,
+        "chatIds": ["ses_f1b5291e9ffe8ASwq9iJF61BQH"],
         "subagentCount": 0,
         "byState": {
-          "finished": 2
+          "finished": 1
         },
         "activeChatIds": [],
         "unfinishedChatIds": [],
@@ -3426,10 +3489,10 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 240,
+      "behind": 257,
       "mergedIntoMain": true,
-      "dirty": 14,
-      "untracked": 2,
+      "dirty": 16,
+      "untracked": 0,
       "dirtyPaths": [
         "src/components/Main/MagicWandToolArea.tsx",
         "src/components/Main/RectangularSelectionToolArea.tsx",
@@ -3443,9 +3506,9 @@
         "src/components/ToolbarsRight/MagicWand/__tests__/MagicWand.test.tsx",
         "src/components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx",
         "src/components/ToolbarsRight/RectangularSelection/__tests__/RectangularSelection.test.tsx",
+        "src/contexts/__tests__/useSelectionHistory.test.tsx",
         "src/contexts/history-adapter.ts",
         "src/contexts/history-append.ts",
-        "src/contexts/__tests__/useSelectionHistory.test.tsx",
         "src/contexts/useSelectionHistory.ts"
       ],
       "lastCommit": {
@@ -3498,7 +3561,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 261,
+      "behind": 278,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3554,49 +3617,32 @@
       "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/polygon-marching-ants",
       "branch": "feature/polygon-marching-ants",
       "isPrimary": false,
-      "head": "446d7eb80273634eff7e15fa480a73d7dc237285",
+      "head": "f5c9fa8120678595d726b7659f459c4084485944",
       "detached": false,
-      "status": "uncommitted-only",
+      "status": "unmerged-work",
       "recommendation": "salvage",
       "prunable": false,
       "riskScore": 90,
-      "statusReasons": [
-        "the branch reports 0 commits ahead of main and is an ancestor of it",
-        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
-        "git cannot distinguish this from a branch that landed and was then edited",
-        "work here is not reachable from any commit on this branch"
-      ],
-      "ahead": 0,
-      "behind": 172,
-      "mergedIntoMain": true,
-      "dirty": 12,
-      "untracked": 5,
-      "dirtyPaths": [
-        "HANDOFF.md",
-        "src/components/Main/FeatherMagneticLassoToolArea.tsx",
-        "src/components/Main/MagicWandToolArea.tsx",
-        "src/components/Main/Main.tsx",
-        "src/components/Main/PolygonClickToolArea.tsx",
-        "src/components/Main/__tests__/LassoToolArea.test.tsx",
-        "src/components/Main/__tests__/MagicWandToolArea.test.tsx",
-        "src/components/Main/__tests__/Main.test.tsx",
-        "src/components/Main/__tests__/Main.toolAreas.test.tsx",
-        "src/components/Main/__tests__/PolygonClickToolArea.test.tsx",
-        "src/util/__tests__/selection.test.ts",
-        "src/util/selection.ts",
-        "e2e/selection-marching-ants.spec.ts",
-        "src/components/Main/SelectionMarchingAnts.tsx",
-        "src/components/Main/__tests__/SelectionMarchingAnts.test.tsx",
-        "src/hooks/__tests__/useSelectionAnts.test.tsx",
-        "src/hooks/useSelectionAnts.ts"
-      ],
+      "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
+      "ahead": 1,
+      "behind": 189,
+      "mergedIntoMain": false,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
       "lastCommit": {
-        "sha": "446d7eb80273634eff7e15fa480a73d7dc237285",
-        "subject": "merge: record a polygon's selection drag once, per gesture",
-        "date": "2026-09-28T01:38:32+02:00",
+        "sha": "f5c9fa8120678595d726b7659f459c4084485944",
+        "subject": "wip(salvage): preserve uncommitted work from an abandoned worktree",
+        "date": "2026-09-28T23:17:54+02:00",
         "author": "Bohdan"
       },
-      "commitsAhead": [],
+      "commitsAhead": [
+        {
+          "sha": "f5c9fa8",
+          "subject": "wip(salvage): preserve uncommitted work from an abandoned worktree",
+          "date": "2026-09-28T23:17:54+02:00"
+        }
+      ],
       "commitsAheadTruncated": false,
       "claimedLanded": null,
       "summary": "Polygon-selection marching ants: the ants component, the selection-ants hook, a new usePolylineAnts module and its tests, and edits to the lasso, magic wand and click tool areas. The branch has no commits of its own.",
@@ -3638,7 +3684,7 @@
       "riskScore": 90,
       "statusReasons": ["4 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 4,
-      "behind": 171,
+      "behind": 188,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3717,7 +3763,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 68,
+      "behind": 85,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3783,7 +3829,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 68,
+      "behind": 85,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3849,7 +3895,7 @@
       "riskScore": 90,
       "statusReasons": ["3 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 3,
-      "behind": 251,
+      "behind": 268,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3917,57 +3963,30 @@
       "isPrimary": false,
       "head": "446d7eb80273634eff7e15fa480a73d7dc237285",
       "detached": false,
-      "status": "uncommitted-only",
+      "status": "unmerged-work",
       "recommendation": "salvage",
       "prunable": false,
       "riskScore": 90,
-      "statusReasons": [
-        "the branch reports 0 commits ahead of main and is an ancestor of it",
-        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
-        "git cannot distinguish this from a branch that landed and was then edited",
-        "work here is not reachable from any commit on this branch"
-      ],
-      "ahead": 0,
-      "behind": 172,
-      "mergedIntoMain": true,
-      "dirty": 2,
-      "untracked": 25,
-      "dirtyPaths": [
-        "HANDOFF.md",
-        "src/util/magicWand.ts",
-        "e2e/eraser-tools.spec.ts",
-        "src/components/Main/CloneStampToolArea.tsx",
-        "src/components/Main/EraserToolArea.tsx",
-        "src/components/Main/MagicEraserToolArea.tsx",
-        "src/components/Main/PaintBucketToolArea.tsx",
-        "src/components/Main/__tests__/CloneStampToolArea.test.tsx",
-        "src/components/Main/__tests__/EraserToolArea.test.tsx",
-        "src/components/Main/__tests__/MagicEraserToolArea.test.tsx",
-        "src/components/Main/__tests__/PaintBucketToolArea.test.tsx",
-        "src/components/Main/pixelToolTarget.ts",
-        "src/components/ToolbarsRight/CloneStamp/",
-        "src/components/ToolbarsRight/Eraser/",
-        "src/components/ToolbarsRight/MagicEraser/",
-        "src/components/ToolbarsRight/PaintBucket/",
-        "src/tools/__tests__/clone-stamp.test.ts",
-        "src/tools/__tests__/eraser.test.ts",
-        "src/tools/__tests__/magic-eraser.test.ts",
-        "src/tools/__tests__/paint-bucket.test.ts",
-        "src/tools/clone-stamp.ts",
-        "src/tools/eraser.ts",
-        "src/tools/magic-eraser.ts",
-        "src/tools/paint-bucket.ts",
-        "src/util/__tests__/inplace-raster.test.ts",
-        "src/util/inplace-raster.ts",
-        "src/util/unregistered-tool-args.ts"
-      ],
+      "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
+      "ahead": 1,
+      "behind": 189,
+      "mergedIntoMain": false,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
       "lastCommit": {
-        "sha": "446d7eb80273634eff7e15fa480a73d7dc237285",
-        "subject": "merge: record a polygon's selection drag once, per gesture",
-        "date": "2026-09-28T01:38:32+02:00",
+        "sha": "52073fbebdb452d274460f23923b1a158ec7fdc5",
+        "subject": "wip(salvage): preserve uncommitted work from an abandoned worktree",
+        "date": "2026-09-28T23:18:18+02:00",
         "author": "Bohdan"
       },
-      "commitsAhead": [],
+      "commitsAhead": [
+        {
+          "sha": "52073fb",
+          "subject": "wip(salvage): preserve uncommitted work from an abandoned worktree",
+          "date": "2026-09-28T23:18:18+02:00"
+        }
+      ],
       "commitsAheadTruncated": false,
       "claimedLanded": null,
       "summary": "Eraser, Magic Eraser, Paint Bucket and Clone Stamp as four tool areas plus toolbars, with their tools and tests. The branch has no commits of its own; see `dirty` and `untracked` for what the working tree holds.",
@@ -4024,7 +4043,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 261,
+      "behind": 278,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4088,7 +4107,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 117,
+      "behind": 134,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4156,16 +4175,18 @@
         "commits here are not on main"
       ],
       "ahead": 1,
-      "behind": 171,
+      "behind": 188,
       "mergedIntoMain": false,
-      "dirty": 36,
-      "untracked": 13,
+      "dirty": 50,
+      "untracked": 0,
       "dirtyPaths": [
         "HANDOFF.md",
+        "e2e/gradient-tool.spec.ts",
         "src/components/Common/AppKeyboardShortcuts.tsx",
         "src/components/Common/__tests__/AppKeyboardShortcuts.shape.test.tsx",
         "src/components/Common/__tests__/AppKeyboardShortcuts.test.tsx",
         "src/components/DesktopHeader/DesktopHeader.tsx",
+        "src/components/Main/GradientToolArea.tsx",
         "src/components/Main/Main.tsx",
         "src/components/Main/__tests__/Main.toolAreas.test.tsx",
         "src/components/SidebarLeft/__tests__/SidebarLeft.cleanup.test.tsx",
@@ -4179,37 +4200,36 @@
         "src/components/SidebarLeft/__tests__/SidebarLeft.rendering.test.tsx",
         "src/components/SidebarLeft/__tests__/toolIcons.test.tsx",
         "src/components/SidebarLeft/__tests__/toolbar-mapping.test.ts",
-        "src/components/SidebarLeft/toolIcons.tsx",
-        "src/components/SidebarLeft/types.ts",
-        "src/components/ToolbarsRight/Figures/Shape.tsx",
-        "src/components/ToolbarsRight/Figures/__tests__/Shape.test.tsx",
-        "src/contexts/__tests__/history-adapter.tool-conversion.test.ts",
-        "src/contexts/history-adapter.ts",
-        "src/contexts/layer-renderer.ts",
-        "src/contexts/tool-types.ts",
-        "src/tools/__tests__/paint-tools.test.ts",
-        "src/tools/__tests__/tool-processors.test.ts",
-        "src/tools/__tests__/tool-settings.test.ts",
-        "src/tools/settings.ts",
-        "src/tools/shape.ts",
-        "src/tools/toolProcessors.ts",
-        "src/tools/toolsMap.ts",
-        "src/util/__tests__/settings.test.ts",
-        "src/util/settings.ts",
-        "toolbar-mapping.ts",
-        "e2e/gradient-tool.spec.ts",
-        "src/components/Main/GradientToolArea.tsx",
         "src/components/SidebarLeft/icons/CloneStampIcon.tsx",
         "src/components/SidebarLeft/icons/EraserIcon.tsx",
         "src/components/SidebarLeft/icons/GradientIcon.tsx",
         "src/components/SidebarLeft/icons/MagicEraserIcon.tsx",
         "src/components/SidebarLeft/icons/PaintBucketIcon.tsx",
         "src/components/SidebarLeft/icons/RoundedRectangleShapeIcon.tsx",
-        "src/components/ToolbarsRight/Gradient/",
+        "src/components/SidebarLeft/toolIcons.tsx",
+        "src/components/SidebarLeft/types.ts",
+        "src/components/ToolbarsRight/Figures/Shape.tsx",
+        "src/components/ToolbarsRight/Figures/__tests__/Shape.test.tsx",
+        "src/components/ToolbarsRight/Gradient/Gradient.tsx",
+        "src/components/ToolbarsRight/Gradient/__tests__/Gradient.test.tsx",
         "src/contexts/__tests__/gradient.durable.test.ts",
+        "src/contexts/__tests__/history-adapter.tool-conversion.test.ts",
+        "src/contexts/history-adapter.ts",
+        "src/contexts/layer-renderer.ts",
+        "src/contexts/tool-types.ts",
         "src/tools/__tests__/gradient.test.ts",
+        "src/tools/__tests__/paint-tools.test.ts",
         "src/tools/__tests__/shape-rounded-rectangle.test.ts",
-        "src/tools/gradient.ts"
+        "src/tools/__tests__/tool-processors.test.ts",
+        "src/tools/__tests__/tool-settings.test.ts",
+        "src/tools/gradient.ts",
+        "src/tools/settings.ts",
+        "src/tools/shape.ts",
+        "src/tools/toolProcessors.ts",
+        "src/tools/toolsMap.ts",
+        "src/util/__tests__/settings.test.ts",
+        "src/util/settings.ts",
+        "toolbar-mapping.ts"
       ],
       "lastCommit": {
         "sha": "ec9bbb58ec6089e9606e8f1d8403035fe874a672",
@@ -4276,7 +4296,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 261,
+      "behind": 278,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4340,7 +4360,7 @@
       "riskScore": 90,
       "statusReasons": ["20 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 20,
-      "behind": 59,
+      "behind": 76,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4494,7 +4514,7 @@
       "riskScore": 90,
       "statusReasons": ["15 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 15,
-      "behind": 68,
+      "behind": 85,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4633,7 +4653,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 172,
+      "behind": 189,
       "mergedIntoMain": true,
       "dirty": 8,
       "untracked": 6,
@@ -4706,7 +4726,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 39,
+      "behind": 56,
       "mergedIntoMain": true,
       "dirty": 1,
       "untracked": 0,
@@ -4746,54 +4766,61 @@
       }
     },
     {
-      "name": "tool-truth",
-      "path": ".kilo/worktrees/tool-truth",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/tool-truth",
-      "branch": "fix/tool-description-truth",
+      "name": "board-entrypoint",
+      "path": ".kilo/worktrees/board-entrypoint",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/board-entrypoint",
+      "branch": "fix/board-entrypoint",
       "isPrimary": false,
-      "head": "13f44a1f78807e4c3e26d792680d99934cd76ec9",
+      "head": "ae15031b14a754ab21df36111e849853cb111db3",
       "detached": false,
-      "status": "uncommitted-only",
-      "recommendation": "salvage",
+      "status": "unmerged-work",
+      "recommendation": "in-use",
       "prunable": false,
-      "riskScore": 90,
+      "riskScore": 70,
       "statusReasons": [
-        "the branch reports 0 commits ahead of main and is an ancestor of it",
-        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
-        "git cannot distinguish this from a branch that landed and was then edited",
-        "work here is not reachable from any commit on this branch"
+        "2 commit(s) ahead of main",
+        "the working tree holds uncommitted changes",
+        "the board saw agent fix/board-entrypoint in this worktree inside the last 30 minutes"
       ],
-      "ahead": 0,
-      "behind": 7,
-      "mergedIntoMain": true,
-      "dirty": 14,
+      "ahead": 2,
+      "behind": 6,
+      "mergedIntoMain": false,
+      "dirty": 11,
       "untracked": 0,
       "dirtyPaths": [
-        "src/tools/descriptions/eyedropper-draw.notes.md",
-        "src/tools/descriptions/eyedropper-draw.ts",
-        "src/tools/descriptions/focus.notes.md",
-        "src/tools/descriptions/focus.ts",
-        "src/tools/descriptions/paint.notes.md",
-        "src/tools/descriptions/paint.ts",
-        "src/tools/descriptions/pen.ts",
-        "src/tools/descriptions/selection.notes.md",
-        "src/tools/descriptions/selection.ts",
-        "src/tools/descriptions/shape.ts",
-        "src/tools/descriptions/transform.notes.md",
-        "src/tools/descriptions/transform.ts",
-        "src/tools/descriptions/type-crop.notes.md",
-        "src/tools/descriptions/type-crop.ts"
+        "AGENTS.md",
+        "WORKTREES.json",
+        "package.json",
+        "scripts/__tests__/agent-board.test.mjs",
+        "scripts/__tests__/handoff-import-wiring.test.mjs",
+        "scripts/agent-board.mjs",
+        "scripts/lib/agent-board/db.mjs",
+        "scripts/lib/agent-board/handoff-import.mjs",
+        "scripts/lib/agent-board/import-wiring.mjs",
+        "scripts/lib/worktree-inventory/board.mjs",
+        "scripts/lib/worktree-inventory/curated.mjs"
       ],
       "lastCommit": {
-        "sha": "13f44a1f78807e4c3e26d792680d99934cd76ec9",
-        "subject": "merge: main, and re-derive the two citations main moved",
-        "date": "2026-09-28T22:04:22+02:00",
+        "sha": "ae15031b14a754ab21df36111e849853cb111db3",
+        "subject": "Merge branch 'main' into fix/board-entrypoint",
+        "date": "2026-09-28T23:05:59+02:00",
         "author": "Bohdan"
       },
-      "commitsAhead": [],
+      "commitsAhead": [
+        {
+          "sha": "ae15031",
+          "subject": "Merge branch 'main' into fix/board-entrypoint",
+          "date": "2026-09-28T23:05:59+02:00"
+        },
+        {
+          "sha": "fc97b0f",
+          "subject": "fix(board): name which board it is, and make `ready` able to answer",
+          "date": "2026-09-28T23:05:33+02:00"
+        }
+      ],
       "commitsAheadTruncated": false,
-      "claimedLanded": null,
-      "summary": "Corrects the tool descriptions so each one says what the tool actually does, rather than what its name suggests.",
+      "claimedLanded": false,
+      "summary": "The swarm board names which board it is (Kilo's built-in board_read is a different tool, empty by design) and ranks `ready` by provenance and contention, so the live work is not buried under the handoff imports.",
       "summarySource": "curated",
       "issues": [],
       "inferredBoardIssues": [],
@@ -4813,98 +4840,160 @@
       },
       "board": {
         "claims": [],
-        "fileLocks": [
+        "fileLocks": [],
+        "agents": [
           {
-            "path": "src/tools/descriptions/paint.ts",
-            "agentId": "fix/tool-description-truth",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:55:20.864Z"
-          },
-          {
-            "path": "src/tools/descriptions/selection.ts",
-            "agentId": "fix/tool-description-truth",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:52:20.166Z"
-          },
-          {
-            "path": "src/tools/descriptions/shape.ts",
-            "agentId": "fix/tool-description-truth",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:52:20.166Z"
-          },
-          {
-            "path": "src/tools/descriptions/pen.ts",
-            "agentId": "fix/tool-description-truth",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:52:20.166Z"
-          },
-          {
-            "path": "src/tools/descriptions/transform.ts",
-            "agentId": "fix/tool-description-truth",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:52:20.166Z"
-          },
-          {
-            "path": "src/tools/descriptions/type-crop.ts",
-            "agentId": "fix/tool-description-truth",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:52:20.166Z"
-          },
-          {
-            "path": "src/tools/descriptions/focus.ts",
-            "agentId": "fix/tool-description-truth",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:52:20.166Z"
-          },
-          {
-            "path": "src/tools/descriptions/eyedropper-draw.ts",
-            "agentId": "fix/tool-description-truth",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:52:20.166Z"
-          },
-          {
-            "path": "src/tools/descriptions/paint.notes.md",
-            "agentId": "fix/tool-description-truth",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:55:15.126Z"
+            "agentId": "fix/board-entrypoint",
+            "branch": "fix/board-entrypoint",
+            "lastSeenMs": 1790630177560,
+            "live": true
           }
         ],
-        "agents": [],
-        "held": true
+        "held": false
       }
     },
     {
-      "name": "worktree-inventory",
-      "path": ".kilo/worktrees/worktree-inventory",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/worktree-inventory",
-      "branch": "chore/worktree-inventory",
+      "name": "chat-audit",
+      "path": ".kilo/worktrees/chat-audit",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/chat-audit",
+      "branch": "audit/chat-audit",
       "isPrimary": false,
-      "head": "9161837ffd8f3f1d78fe9a46848ea252f8949362",
+      "head": "2d91fba2bded91e8405e030341054a9c03e61dfd",
       "detached": false,
-      "status": "unmerged-work",
-      "recommendation": "salvage",
+      "status": "landed",
+      "recommendation": "in-use",
       "prunable": false,
-      "riskScore": 90,
-      "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
-      "ahead": 1,
+      "riskScore": 70,
+      "statusReasons": [
+        "the branch is an ancestor of main and the working tree is clean",
+        "the board saw agent audit/chat-audit in this worktree inside the last 30 minutes"
+      ],
+      "ahead": 0,
       "behind": 0,
-      "mergedIntoMain": false,
+      "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
       "dirtyPaths": [],
       "lastCommit": {
-        "sha": "9161837ffd8f3f1d78fe9a46848ea252f8949362",
-        "subject": "fix(scripts): read liveness from the board, not only from session.directory",
-        "date": "2026-09-28T22:19:53+02:00",
+        "sha": "2d91fba2bded91e8405e030341054a9c03e61dfd",
+        "subject": "chore: curate fix-e2e-findings, retract a stale landed claim",
+        "date": "2026-09-28T23:09:46+02:00",
         "author": "Bohdan"
       },
-      "commitsAhead": [
-        {
-          "sha": "9161837",
-          "subject": "fix(scripts): read liveness from the board, not only from session.directory",
-          "date": "2026-09-28T22:19:53+02:00"
-        }
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": null,
+      "summarySource": "none",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [
+          {
+            "issueId": "ph-61",
+            "agentId": "audit/chat-audit",
+            "branch": "audit/chat-audit",
+            "leaseUntil": "2026-09-28T21:58:31.553Z"
+          }
+        ],
+        "fileLocks": [
+          {
+            "path": "scripts/lib/worktree-inventory/chat-audit.mjs",
+            "agentId": "audit/chat-audit",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:58:23.231Z"
+          },
+          {
+            "path": "scripts/lib/worktree-inventory/chat-audit.data.json",
+            "agentId": "audit/chat-audit",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:58:23.232Z"
+          },
+          {
+            "path": "scripts/lib/worktree-inventory/assemble.mjs",
+            "agentId": "audit/chat-audit",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:58:23.232Z"
+          },
+          {
+            "path": "scripts/lib/worktree-inventory/chats.mjs",
+            "agentId": "audit/chat-audit",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:58:23.232Z"
+          },
+          {
+            "path": "scripts/__tests__/worktree-inventory.test.mjs",
+            "agentId": "audit/chat-audit",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:58:23.232Z"
+          },
+          {
+            "path": "WORKTREES.json",
+            "agentId": "audit/chat-audit",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:58:23.232Z"
+          },
+          {
+            "path": "AGENTS.md",
+            "agentId": "audit/chat-audit",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:58:23.232Z"
+          }
+        ],
+        "agents": [
+          {
+            "agentId": "audit/chat-audit",
+            "branch": "audit/chat-audit",
+            "lastSeenMs": 1790630011552,
+            "live": true
+          }
+        ],
+        "held": true
+      }
+    },
+    {
+      "name": "land-and-dispose",
+      "path": ".kilo/worktrees/land-and-dispose",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/land-and-dispose",
+      "branch": "feat/land-and-dispose",
+      "isPrimary": false,
+      "head": "2d91fba2bded91e8405e030341054a9c03e61dfd",
+      "detached": false,
+      "status": "landed",
+      "recommendation": "in-use",
+      "prunable": false,
+      "riskScore": 70,
+      "statusReasons": [
+        "the branch is an ancestor of main and the working tree is clean",
+        "the board saw agent feat/land-and-dispose in this worktree inside the last 30 minutes"
       ],
+      "ahead": 0,
+      "behind": 0,
+      "mergedIntoMain": true,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
+      "lastCommit": {
+        "sha": "2d91fba2bded91e8405e030341054a9c03e61dfd",
+        "subject": "chore: curate fix-e2e-findings, retract a stale landed claim",
+        "date": "2026-09-28T23:09:46+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
       "commitsAheadTruncated": false,
       "claimedLanded": null,
       "summary": null,
@@ -4912,9 +5001,15 @@
       "issues": [],
       "inferredBoardIssues": [
         {
-          "id": "ph-56",
-          "title": "Worktree inventory: committed WORKTREES.json + generator + AGENTS.md protocol scripts/worktree-inventory.mjs scripts/lib/worktree-inventory/ AGENTS.md",
-          "status": "open",
+          "id": "ph-59",
+          "title": "Split salvage into ready-to-land vs at-risk, and flag disposal candidates",
+          "status": "claimed",
+          "inferred": true
+        },
+        {
+          "id": "ph-61",
+          "title": "Read every chat from the last 30h and record what each agent actually did",
+          "status": "claimed",
           "inferred": true
         }
       ],
@@ -4937,108 +5032,13 @@
         "fileLocks": [],
         "agents": [
           {
-            "agentId": "chore/worktree-inventory",
-            "branch": "chore/worktree-inventory",
-            "lastSeenMs": 1790614059708,
-            "live": false
-          }
-        ],
-        "held": false
-      }
-    },
-    {
-      "name": "board-entrypoint",
-      "path": ".kilo/worktrees/board-entrypoint",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/board-entrypoint",
-      "branch": "fix/board-entrypoint",
-      "isPrimary": false,
-      "head": "4f3dec7bab58ee7a8041caf1d6a0a91ae768a8f3",
-      "detached": false,
-      "status": "uncommitted-only",
-      "recommendation": "in-use",
-      "prunable": false,
-      "riskScore": 70,
-      "statusReasons": [
-        "the branch reports 0 commits ahead of main and is an ancestor of it",
-        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
-        "git cannot distinguish this from a branch that landed and was then edited",
-        "the board saw agent fix/board-entrypoint in this worktree inside the last 30 minutes"
-      ],
-      "ahead": 0,
-      "behind": 14,
-      "mergedIntoMain": true,
-      "dirty": 3,
-      "untracked": 0,
-      "dirtyPaths": [
-        "scripts/__tests__/agent-board.test.mjs",
-        "scripts/agent-board.mjs",
-        "scripts/lib/agent-board/db.mjs"
-      ],
-      "lastCommit": {
-        "sha": "4f3dec7bab58ee7a8041caf1d6a0a91ae768a8f3",
-        "subject": "merge: fix(review) — close seven review findings and the eighth found while fixing them",
-        "date": "2026-09-28T21:49:12+02:00",
-        "author": "Bohdan"
-      },
-      "commitsAhead": [],
-      "commitsAheadTruncated": false,
-      "claimedLanded": true,
-      "summary": "A short-lived worktree on the board entrypoint fix, now merged: its branch is an ancestor of main and its working tree is clean.",
-      "summarySource": "curated",
-      "issues": [],
-      "inferredBoardIssues": [],
-      "note": null,
-      "liveNote": null,
-      "mustNotPrune": false,
-      "chats": {
-        "count": 0,
-        "chatIds": [],
-        "subagentCount": 0,
-        "byState": {},
-        "activeChatIds": [],
-        "unfinishedChatIds": [],
-        "lastActivity": null,
-        "unfinished": [],
-        "dead": []
-      },
-      "board": {
-        "claims": [
-          {
-            "issueId": "ph-58",
-            "agentId": "fix/board-entrypoint",
-            "branch": "fix/board-entrypoint",
-            "leaseUntil": "2026-09-28T20:41:32.693Z"
-          }
-        ],
-        "fileLocks": [
-          {
-            "path": "scripts/agent-board.mjs",
-            "agentId": "fix/board-entrypoint",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:41:32.692Z"
-          },
-          {
-            "path": "scripts/lib/agent-board/db.mjs",
-            "agentId": "fix/board-entrypoint",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:41:32.692Z"
-          },
-          {
-            "path": "scripts/__tests__/agent-board.test.mjs",
-            "agentId": "fix/board-entrypoint",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:41:32.692Z"
-          }
-        ],
-        "agents": [
-          {
-            "agentId": "fix/board-entrypoint",
-            "branch": "fix/board-entrypoint",
-            "lastSeenMs": 1790625677855,
+            "agentId": "feat/land-and-dispose",
+            "branch": "feat/land-and-dispose",
+            "lastSeenMs": 1790628628385,
             "live": true
           }
         ],
-        "held": true
+        "held": false
       }
     },
     {
@@ -5047,7 +5047,7 @@
       "absolutePath": "/Users/bkalynovskyi/ph",
       "branch": "main",
       "isPrimary": true,
-      "head": "69f42c5f438ff118808aa05b054b1e5eea4d5b1d",
+      "head": "2d91fba2bded91e8405e030341054a9c03e61dfd",
       "detached": false,
       "status": "landed",
       "recommendation": "in-use",
@@ -5057,13 +5057,13 @@
       "ahead": 0,
       "behind": 0,
       "mergedIntoMain": true,
-      "dirty": 1,
+      "dirty": 0,
       "untracked": 0,
-      "dirtyPaths": ["WORKTREES.json"],
+      "dirtyPaths": [],
       "lastCommit": {
-        "sha": "69f42c5f438ff118808aa05b054b1e5eea4d5b1d",
-        "subject": "Merge branch 'main' into chore/worktree-inventory",
-        "date": "2026-09-28T22:12:11+02:00",
+        "sha": "2d91fba2bded91e8405e030341054a9c03e61dfd",
+        "subject": "chore: curate fix-e2e-findings, retract a stale landed claim",
+        "date": "2026-09-28T23:09:46+02:00",
         "author": "Bohdan"
       },
       "commitsAhead": [],
@@ -5088,12 +5088,18 @@
         {
           "id": "ph-56",
           "title": "Worktree inventory: committed WORKTREES.json + generator + AGENTS.md protocol scripts/worktree-inventory.mjs scripts/lib/worktree-inventory/ AGENTS.md",
-          "status": "open",
+          "status": "resolved",
           "inferred": true
         },
         {
           "id": "ph-57",
           "title": "Land the e2e campaign: resolve main's 4 conflicts in-branch, re-gate, merge to main",
+          "status": "claimed",
+          "inferred": true
+        },
+        {
+          "id": "ph-59",
+          "title": "Split salvage into ready-to-land vs at-risk, and flag disposal candidates",
           "status": "claimed",
           "inferred": true
         }
@@ -5102,14 +5108,15 @@
       "liveNote": null,
       "mustNotPrune": false,
       "chats": {
-        "count": 59,
+        "count": 60,
         "chatIds": [
           "ses_f1717029bffeO2Tgiso7XjVWvz",
-          "ses_f167d43ebffenKG4aRh8qnMKN5",
-          "ses_f1703646effe9LHAl5QgqHkEbj",
           "ses_f1678e1ecffeE6PmxFG4SH1MGO",
-          "ses_f1692fbb5ffe48aRfBKFyv739e",
           "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
+          "ses_f167d43ebffenKG4aRh8qnMKN5",
+          "ses_f162b4452ffei0YUQf4OjQiJn7",
+          "ses_f1692fbb5ffe48aRfBKFyv739e",
+          "ses_f1703646effe9LHAl5QgqHkEbj",
           "ses_f1871204bffeRe2NIbxXCnD0pm",
           "ses_f16a47026ffe4E7yDrTCIlcxiX",
           "ses_f186d820cffemRcv5u3Ujt0loP",
@@ -5166,82 +5173,48 @@
         ],
         "subagentCount": 0,
         "byState": {
-          "active": 7,
-          "finished": 47,
-          "abandoned-midflight": 4,
-          "blocked": 1
+          "active": 6,
+          "finished": 50,
+          "abandoned-midflight": 4
         },
         "activeChatIds": [
           "ses_f1717029bffeO2Tgiso7XjVWvz",
-          "ses_f167d43ebffenKG4aRh8qnMKN5",
-          "ses_f1703646effe9LHAl5QgqHkEbj",
           "ses_f1678e1ecffeE6PmxFG4SH1MGO",
-          "ses_f1692fbb5ffe48aRfBKFyv739e",
           "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
-          "ses_f1871204bffeRe2NIbxXCnD0pm"
+          "ses_f167d43ebffenKG4aRh8qnMKN5",
+          "ses_f162b4452ffei0YUQf4OjQiJn7",
+          "ses_f1692fbb5ffe48aRfBKFyv739e"
         ],
         "unfinishedChatIds": [
           "ses_f1717029bffeO2Tgiso7XjVWvz",
-          "ses_f167d43ebffenKG4aRh8qnMKN5",
-          "ses_f1703646effe9LHAl5QgqHkEbj",
           "ses_f1678e1ecffeE6PmxFG4SH1MGO",
-          "ses_f1692fbb5ffe48aRfBKFyv739e",
           "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
-          "ses_f1871204bffeRe2NIbxXCnD0pm",
+          "ses_f167d43ebffenKG4aRh8qnMKN5",
+          "ses_f162b4452ffei0YUQf4OjQiJn7",
+          "ses_f1692fbb5ffe48aRfBKFyv739e",
           "ses_f174eec52ffedigagDe7uAkRob",
           "ses_f18cb10c7ffeQyGIipjfTQJifF",
           "ses_f183ab42cffeVdFwk5GNadKyhe",
-          "ses_f19365ab4ffefSJC5XwcDdHYDB",
-          "ses_f1ba92bedffeb9De69jCNMC00Q"
+          "ses_f19365ab4ffefSJC5XwcDdHYDB"
         ],
-        "lastActivity": 1790626803259,
+        "lastActivity": 1790630345280,
         "unfinished": [
           {
             "id": "ses_f1717029bffeO2Tgiso7XjVWvz",
             "title": "Worktree inventory JSON and agents.md update",
             "state": "active",
-            "idleMs": 37697,
-            "reasons": ["last message 1m ago"],
-            "toolErrors": 9,
-            "creditsFailures": 15,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f167d43ebffenKG4aRh8qnMKN5",
-            "title": "E2E orchestrator continuation next steps",
-            "state": "active",
-            "idleMs": 100330,
-            "reasons": ["last message 2m ago"],
-            "toolErrors": 5,
-            "creditsFailures": 0,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f1703646effe9LHAl5QgqHkEbj",
-            "title": "Increasing e2e test coverage",
-            "state": "active",
-            "idleMs": 607160,
-            "reasons": ["last message 10m ago"],
-            "toolErrors": 3,
-            "creditsFailures": 1,
+            "idleMs": 0,
+            "reasons": ["last message 0m ago"],
+            "toolErrors": 11,
+            "creditsFailures": 19,
             "blockedOn": null
           },
           {
             "id": "ses_f1678e1ecffeE6PmxFG4SH1MGO",
             "title": "Fix board service and launch as daemon",
             "state": "active",
-            "idleMs": 669386,
-            "reasons": ["last message 11m ago"],
-            "toolErrors": 0,
-            "creditsFailures": 1,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f1692fbb5ffe48aRfBKFyv739e",
-            "title": "Recent tool description audit",
-            "state": "active",
-            "idleMs": 723445,
-            "reasons": ["last message 12m ago"],
+            "idleMs": 6365,
+            "reasons": ["last message 0m ago"],
             "toolErrors": 0,
             "creditsFailures": 1,
             "blockedOn": null
@@ -5250,28 +5223,48 @@
             "id": "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
             "title": "Clean and merge stale worktrees into main",
             "state": "active",
-            "idleMs": 1039765,
-            "reasons": ["last message 17m ago"],
+            "idleMs": 377568,
+            "reasons": ["last message 6m ago"],
             "toolErrors": 1,
             "creditsFailures": 1,
             "blockedOn": null
           },
           {
-            "id": "ses_f1871204bffeRe2NIbxXCnD0pm",
-            "title": "Fix handoff doc issues and merge to main",
+            "id": "ses_f167d43ebffenKG4aRh8qnMKN5",
+            "title": "E2E orchestrator continuation next steps",
             "state": "active",
-            "idleMs": 1776707,
-            "reasons": ["last message 30m ago"],
-            "toolErrors": 2,
-            "creditsFailures": 3,
+            "idleMs": 615278,
+            "reasons": ["last message 10m ago"],
+            "toolErrors": 6,
+            "creditsFailures": 0,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f162b4452ffei0YUQf4OjQiJn7",
+            "title": "New session - 2026-09-28T21:03:48.144Z",
+            "state": "active",
+            "idleMs": 626930,
+            "reasons": ["last message 10m ago"],
+            "toolErrors": 1,
+            "creditsFailures": 0,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f1692fbb5ffe48aRfBKFyv739e",
+            "title": "Recent tool description audit",
+            "state": "active",
+            "idleMs": 961197,
+            "reasons": ["last message 16m ago"],
+            "toolErrors": 1,
+            "creditsFailures": 1,
             "blockedOn": null
           },
           {
             "id": "ses_f174eec52ffedigagDe7uAkRob",
             "title": "-- del --",
             "state": "abandoned-midflight",
-            "idleMs": 15360223,
-            "reasons": ["idle for 4h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 18864547,
+            "reasons": ["idle for 5h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 2,
             "creditsFailures": 0,
             "blockedOn": null
@@ -5280,8 +5273,8 @@
             "id": "ses_f18cb10c7ffeQyGIipjfTQJifF",
             "title": "-- e2e orchestrator",
             "state": "abandoned-midflight",
-            "idleMs": 24277175,
-            "reasons": ["idle for 7h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 27781499,
+            "reasons": ["idle for 8h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 7,
             "creditsFailures": 0,
             "blockedOn": null
@@ -5290,8 +5283,8 @@
             "id": "ses_f183ab42cffeVdFwk5GNadKyhe",
             "title": "-- PNG todo --",
             "state": "abandoned-midflight",
-            "idleMs": 31547323,
-            "reasons": ["idle for 9h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 35051647,
+            "reasons": ["idle for 10h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 2,
             "creditsFailures": 1,
             "blockedOn": null
@@ -5300,24 +5293,11 @@
             "id": "ses_f19365ab4ffefSJC5XwcDdHYDB",
             "title": "New session - 2026-09-28T06:52:49.867Z",
             "state": "abandoned-midflight",
-            "idleMs": 47887453,
-            "reasons": ["idle for 13h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 51391777,
+            "reasons": ["idle for 14h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 4,
             "creditsFailures": 0,
             "blockedOn": null
-          },
-          {
-            "id": "ses_f1ba92bedffeb9De69jCNMC00Q",
-            "title": "$$$ History migration architecture and planning $$$",
-            "state": "blocked",
-            "idleMs": 74490712,
-            "reasons": [
-              "last turn completed 21h ago and nothing has happened since",
-              "an agent_manager call reported a managed session waiting for input"
-            ],
-            "toolErrors": 5,
-            "creditsFailures": 0,
-            "blockedOn": "que_0e4b3e885001PBylIpsTKfV71Q"
           }
         ],
         "dead": []
@@ -5325,61 +5305,211 @@
       "board": {
         "claims": [
           {
-            "issueId": "ph-57",
-            "agentId": "integration/e2e-campaign-final",
+            "issueId": "ph-60",
+            "agentId": "fix/e2e-transferred-findings",
             "branch": "main",
-            "leaseUntil": "2026-09-28T20:39:40.672Z"
+            "leaseUntil": "2026-09-28T21:51:56.684Z"
           }
         ],
         "fileLocks": [
           {
-            "path": "TEST-FLAKES.md",
-            "agentId": "integration/e2e-campaign-final",
+            "path": "e2e/helpers/canvas-helpers.ts",
+            "agentId": "fix/e2e-transferred-findings",
             "issueId": null,
-            "expiresAt": "2026-09-28T20:39:00.975Z"
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/cdp-helpers.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/screenshot-scale.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
           },
           {
             "path": "e2e/helpers/toolbar-helpers.ts",
-            "agentId": "integration/e2e-campaign-final",
+            "agentId": "fix/e2e-transferred-findings",
             "issueId": null,
-            "expiresAt": "2026-09-28T20:39:00.976Z"
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/export/helpers.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "package.json",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/image-comparison.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/color-helpers.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/canvas-helpers.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/cdp-helpers.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/__tests__/canvas-helpers.fixtures.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
           },
           {
             "path": "e2e/helpers/__tests__/toolbar-helpers.unit.test.ts",
-            "agentId": "integration/e2e-campaign-final",
+            "agentId": "fix/e2e-transferred-findings",
             "issueId": null,
-            "expiresAt": "2026-09-28T20:39:00.976Z"
+            "expiresAt": "2026-09-28T21:51:56.680Z"
           },
           {
-            "path": "scripts/__tests__/handoff-import.test.mjs",
-            "agentId": "integration/e2e-campaign-final",
+            "path": "e2e/helpers/__tests__/image-comparison.unit.test.ts",
+            "agentId": "fix/e2e-transferred-findings",
             "issueId": null,
-            "expiresAt": "2026-09-28T20:39:00.976Z"
+            "expiresAt": "2026-09-28T21:51:56.680Z"
           },
           {
-            "path": "src/tools/descriptions/transform.notes.md",
-            "agentId": "fix/tool-description-truth",
+            "path": "e2e/helpers/__tests__/screenshot-scale.unit.test.ts",
+            "agentId": "fix/e2e-transferred-findings",
             "issueId": null,
-            "expiresAt": "2026-09-28T20:57:13.815Z"
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/__tests__/canvas-interaction.unit.test.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/export/__tests__/helpers.unit.test.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/export/visual-regression.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/export/ico.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/export/photopea.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/color.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/levels.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/sidebar-keyboard.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/sidebar-flyout.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/select-move.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/sidebar-layout.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/check-dpr.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/shape-tools.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "playwright.config.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
           }
         ],
         "agents": [
           {
             "agentId": "main",
             "branch": "main",
-            "lastSeenMs": 1790626334324,
+            "lastSeenMs": 1790629595594,
             "live": true
           },
           {
             "agentId": "integration/e2e-campaign-final",
             "branch": "main",
             "lastSeenMs": 1790625280670,
-            "live": true
+            "live": false
           },
           {
             "agentId": "fix/tool-description-truth",
             "branch": "main",
             "lastSeenMs": 1790626333692,
+            "live": false
+          },
+          {
+            "agentId": "fix/e2e-transferred-findings",
+            "branch": "main",
+            "lastSeenMs": 1790629616647,
             "live": true
           }
         ],
@@ -5400,7 +5530,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 7,
+      "behind": 24,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -5460,7 +5590,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 24,
+      "behind": 41,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -5501,6 +5631,126 @@
         "claims": [],
         "fileLocks": [],
         "agents": [],
+        "held": false
+      }
+    },
+    {
+      "name": "tool-truth",
+      "path": ".kilo/worktrees/tool-truth",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/tool-truth",
+      "branch": "fix/tool-description-truth",
+      "isPrimary": false,
+      "head": "5e497962461c0a111672eb6402697fa6c090aa90",
+      "detached": false,
+      "status": "landed",
+      "recommendation": "prune",
+      "prunable": true,
+      "riskScore": 10,
+      "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
+      "ahead": 0,
+      "behind": 7,
+      "mergedIntoMain": true,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
+      "lastCommit": {
+        "sha": "5e497962461c0a111672eb6402697fa6c090aa90",
+        "subject": "Merge branch 'main' into fix/tool-description-truth",
+        "date": "2026-09-28T22:51:47+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": "Corrects the tool descriptions so each one says what the tool actually does, rather than what its name suggests.",
+      "summarySource": "curated",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [],
+        "agents": [],
+        "held": false
+      }
+    },
+    {
+      "name": "worktree-inventory",
+      "path": ".kilo/worktrees/worktree-inventory",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/worktree-inventory",
+      "branch": "chore/worktree-inventory",
+      "isPrimary": false,
+      "head": "6c849717c609e39a4aa6b997648ca77da9f59bb0",
+      "detached": false,
+      "status": "landed",
+      "recommendation": "prune",
+      "prunable": true,
+      "riskScore": 10,
+      "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
+      "ahead": 0,
+      "behind": 15,
+      "mergedIntoMain": true,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
+      "lastCommit": {
+        "sha": "6c849717c609e39a4aa6b997648ca77da9f59bb0",
+        "subject": "chore: refresh WORKTREES.json after merging main",
+        "date": "2026-09-28T22:21:17+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": null,
+      "summarySource": "none",
+      "issues": [],
+      "inferredBoardIssues": [
+        {
+          "id": "ph-56",
+          "title": "Worktree inventory: committed WORKTREES.json + generator + AGENTS.md protocol scripts/worktree-inventory.mjs scripts/lib/worktree-inventory/ AGENTS.md",
+          "status": "resolved",
+          "inferred": true
+        }
+      ],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [],
+        "agents": [
+          {
+            "agentId": "chore/worktree-inventory",
+            "branch": "chore/worktree-inventory",
+            "lastSeenMs": 1790614059708,
+            "live": false
+          }
+        ],
         "held": false
       }
     }

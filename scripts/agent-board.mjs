@@ -16,9 +16,9 @@
  *
  * WHAT IT BUYS
  * ------------
- * - `board ready` is the answer to "is anybody already on this", without
+ * - `swarm ready` is the answer to "is anybody already on this", without
  *   reading a file that was true when it was written.
- * - `board hold` makes "never two agents on the same file" a refused write
+ * - `swarm hold` makes "never two agents on the same file" a refused write
  *   rather than a merge conflict, and it names the holder.
  * - Every command appends to one event log, so the swarm talks through one
  *   ordered, queryable history instead of N diverging documents.
@@ -26,7 +26,7 @@
  *   is in the log.
  *
  * Everything is one SQLite file under the common git directory, reachable from
- * every worktree, with no daemon. `board watch` polls; it is a reader, and
+ * every worktree, with no daemon. `swarm watch` polls; it is a reader, and
  * nothing depends on it running.
  *
  * @example node scripts/agent-board.mjs new "reorder drops hasUnsavedChanges" --scope history --files src/util/history-adapter.ts
@@ -49,18 +49,19 @@ import {
 } from './lib/agent-board/db.mjs';
 import { resolveIdentity } from './lib/agent-board/identity.mjs';
 
-const USAGE = `agent board — live coordination for a swarm of agents on one repository
+const USAGE = `swarm — live coordination for a swarm of agents on one repository
 
-  WHICH BOARD THIS IS
-  Kilo ships a built-in tool also called board_read. It is a DIFFERENT thing and
-  it is empty on purpose: it carries messages between one session and the task
-  children it spawned, so outside a fan-out it reports "no messages" truthfully.
-  It has no knowledge of this repository's work and never will. THIS board is one
-  SQLite file every worktree of this repository shares, and it is not empty.
-  If you are looking for what the agents on this repo are doing, you are here.
+  NOT KILO'S board_read
+  Kilo ships a built-in tool called board_read, and it is a different thing
+  entirely: it carries messages between one session and the task children it
+  spawned, so outside a fan-out it reports "no messages" truthfully and knows
+  nothing about this repository. This tool was renamed FROM 'board' because that
+  name is what made the two indistinguishable — a session asked it what the
+  agents were doing, was told the board was empty, and was holding 196 events.
+  It is now \`npm run swarm\`, and there is no 'board' script left to confuse.
 
-  live state: agent-board status      what is ready: agent-board ready
-  the log:    agent-board watch --follow
+  live state: swarm status      what is ready: swarm ready
+  the log:    swarm watch --follow
 
   new <title>            file an issue          --body --scope --priority --files --dep --origin
                            (the title is everything BEFORE the first flag)
@@ -309,7 +310,7 @@ export async function run(
       out.write(`${JSON.stringify(payload, null, 2)}\n`);
       return;
     }
-    // `null` means "this command's output IS the payload`: board export has
+    // `null` means "this command's output IS the payload`: swarm export has
     // no human form, and printing an empty line for it is not one.
     if (text === null) {
       out.write(`${JSON.stringify(payload)}\n`);
@@ -675,7 +676,7 @@ export async function run(
         // supplies about a person who is not in the room: it made the whole
         // resolve/close separation one flag wide, since an agent could resolve
         // an issue and then close it by claiming a reviewer verified it. A
-        // reviewer who wants to close it runs `board close` as themselves, and
+        // reviewer who wants to close it runs `swarm close` as themselves, and
         // the log records who actually did.
         const result = board.closeIssue(id, {
           note: flags.note ? String(flags.note) : null,
@@ -721,19 +722,19 @@ export async function run(
             // which file it just read cannot tell a live board from an empty one.
             implicit
               ? [
-                  `swarm board — the agents working THIS repository — ${board.path}`,
+                  `swarm — the agents working THIS repository — ${board.path}`,
                   '  (Kilo\'s built-in board_read is a different tool and reads "no messages" by design;',
                   '   it only carries traffic between one session and its subagents.)',
                   '',
                 ].join('\n')
-              : `board — ${board.path}`,
+              : `swarm — ${board.path}`,
             `${Object.entries(report.counts)
               .filter(([, count]) => count > 0)
               .map(([status, count]) => `${count} ${status}`)
               .join(' · ')}`,
             `${report.ready} ready · ${report.blocked} blocked · ${report.agents} agents seen`,
             report.expiredClaims > 0
-              ? `${report.expiredClaims} expired claim(s) still recorded — run: board doctor`
+              ? `${report.expiredClaims} expired claim(s) still recorded — run: swarm doctor`
               : null,
             '',
             report.myClaims.length
@@ -752,7 +753,7 @@ export async function run(
             '',
             ...report.locks.map((lock) => `  ${lock.path} — ${lock.agent_id} · ${remaining(lock.expires_at)}`),
             '',
-            `last event #${report.lastSeq} — board watch --since ${report.lastSeq}`,
+            `last event #${report.lastSeq} — swarm watch --since ${report.lastSeq}`,
           ]
             .filter((line) => line !== null)
             .join('\n')
@@ -817,7 +818,7 @@ export async function run(
             `${result.created.length} filed`,
             result.skipped.length ? `${result.skipped.length} already on the board` : null,
             result.drifted.length
-              ? `${result.drifted.length} DRIFTED — the document's item under that number is a different defect (board show <id>)`
+              ? `${result.drifted.length} DRIFTED — the document's item under that number is a different defect (swarm show <id>)`
               : null,
             result.dead.length ? `${result.dead.length} skipped as already closed in their document` : null,
           ]
@@ -830,7 +831,7 @@ export async function run(
       case 'export': {
         const issues = board.listIssues({ limit: Number.MAX_SAFE_INTEGER });
         // ALWAYS JSON, with or without the flag: the help says this command
-        // dumps the board as JSON, and a bare `board export` used to print a
+        // dumps the board as JSON, and a bare `swarm export` used to print a
         // single newline, which is not a dump of anything.
         emit(
           {
@@ -856,10 +857,10 @@ export async function run(
     }
   } catch (error) {
     if (error instanceof BoardError) {
-      err.write(`board: ${error.message}\n`);
+      err.write(`swarm: ${error.message}\n`);
       return error.code;
     }
-    err.write(`board: ${error?.stack ?? error}\n`);
+    err.write(`swarm: ${error?.stack ?? error}\n`);
     return 1;
   } finally {
     board.close();
