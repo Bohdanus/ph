@@ -539,3 +539,27 @@ box instead of the window. That is the shape every one of the eighty-three shoul
 **Do not fix this by re-recording anything.** A re-record would bless the new layout, which is
 exactly the failure this campaign already made once: the seven export baselines were re-derived from
 a moving letterbox before `e8f17ba` specified the line in document space.
+
+## P2 — the dialog spec's `documentSize` pins a read that no longer proves the resize happens
+
+`e2e/document-dialogs.spec.ts`
+
+The spec's claim is that the dialog's dimensions are the thing under test, and it pins the
+document size to prove the app resized its canvas to it. The read is real: the size comes
+off the canvas backing store rather than being assumed, and asserting it is what makes that
+read observable. But the resize it is taken to prove is not, and it is not close.
+
+Neighbouring `src/hooks/useApp.ts` resizes the same element at **two** sites — `:63` and
+`:113` — and `src/contexts/layer-renderer.ts:136` resizes it again. Neutering the call the
+spec's comment names, and leaving the other two live, turns all four dialog tests green.
+So a build in which `useApp`'s resize is dead still passes every one of them.
+
+The draft-outline wait in the same file has the same shape, one level up: it proves the
+DRAG happened, not that the commit did. The pixel containment assertion is what proves the
+commit, and it is the one that would fail if a resize were wrong.
+
+**Fix.** Pin the resize where it happens rather than at a distance: assert that the
+document canvas's backing store equals the size the dialog committed, after the resize path
+that owns it has run, and name which of the three sites the test is covering. Until then,
+`documentSize` proves the READ and the word "resized" in its comment is doing work the test
+does not do.

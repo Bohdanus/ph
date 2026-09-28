@@ -395,7 +395,33 @@ green result MUST confirm the served module actually contains the mutation — `
 module off the dev server and look for the change, rather than assuming the local worktree is what
 is being tested. A mutation campaign that reports "all green" has most likely measured nothing.
 
-## 10. Files
+## 10. A mutation campaign that does not verify the SERVED module reports false verdicts
+
+Section 9 is the coarse failure: with no `PLAYWRIGHT_PORT` the run attaches to another
+checkout and every mutation looks green. This is the fine one, and it survives that fix.
+
+A dev server serves a TRANSFORMED module, not the file on disk. So a mutation that is
+correct on disk can be absent from what the browser ran, and the test then reports the
+pre-mutation behaviour. Measured on `e2e/document-dialogs.spec.ts`: of thirteen mutations,
+**four verdicts were false** until the served module was fetched and inspected first. The
+fix is cheap and the check is one request — read the module off the dev server and confirm
+the mutation is in it before believing a green result.
+
+**Two transforms that will silently defeat a marker.** Both bite only if the marker is
+written in a form the transform removes, which is exactly what a hand-written mutation is:
+
+- **Vite strips type annotations.** A marker planted as a type-level change never reaches
+  the browser. Mutate a value.
+- **esbuild rewrites numeric literals.** `0.5` is served as `.5`. A marker written as
+  `=== 0.5` will not be found by a search for the original text, and a mutation asserting
+  on the served text can miss its own marker.
+
+A green mutation result is therefore evidence about the TEST only once it is evidence about
+the CODE THAT RAN. That is the same discipline as section 9, one level down, and the two
+compose: pinning the port stops the run testing the wrong tree, and verifying the served
+module stops it testing the wrong code in the right tree.
+
+## 11. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -408,4 +434,5 @@ is being tested. A mutation campaign that reports "all green" has most likely me
 - `e2e/helpers/canvas-helpers.ts:411-429,515-540,656-699` — the predicate, the poll loop and the sampler
 - `src/hooks/usePointerPosition.ts:122-156` — the validators whose refusal is silent
 - `playwright.config.ts:118-120` — the `reuseExistingServer` condition behind section 9
+- `e2e/document-dialogs.spec.ts` — the spec whose mutation method section 10 validates
 - `e2e/undo-redo.spec.ts` — the spec whose mutation campaign section 9 invalidated
