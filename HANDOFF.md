@@ -477,7 +477,7 @@ it is an ordinary passing test, so it must be rewritten rather than removed when
 
 The e2e suite pins nothing. `grep -rn 'it.fails(' e2e` returns 0, there is no `test.fixme` and no
 `describe.skip`, and the only skips are the two `test.skip` declarations
-(`e2e/export/photopea.spec.ts:6`, `e2e/sidebar-flyout.spec.ts:48`). So a failure on the default
+(`e2e/export/photopea.spec.ts:6`, `e2e/sidebar-flyout.spec.ts:157`). So a failure on the default
 headless run is a new defect rather than a known one; `e2e/OPEN_PROBLEMS.md` holds the latent
 defects the suite does not trip. `AGENTS.md` forbids every headed Playwright invocation, so a headed
 failure is not a gate and the mode must not be flipped to make one go away.
@@ -796,11 +796,12 @@ the fix rather than the wish.
 `src/components/SidebarLeft/__tests__/harness.tsx:1-11,64-127` is a shared render harness, and its
 docstring says a suite must import it before `../SidebarLeft.tsx` so its hoisted `vi.mock` calls
 apply. **Exactly one suite does** — `SidebarLeft.tablet.test.tsx:4-5`, which does it the required
-way. The other nine — `SidebarLeft.cleanup`, `SidebarLeft.color-pickers`,
-`SidebarLeft.context-menu`, `SidebarLeft.flyout`, `SidebarLeft.icon-state`, `SidebarLeft.keyboard`,
+way. The other ten — `SidebarLeft.cleanup`, `SidebarLeft.color-pickers`,
+`SidebarLeft.context-menu`, `SidebarLeft.flyout`, `SidebarLeft.flyout-hardening`,
+`SidebarLeft.icon-state`, `SidebarLeft.keyboard`,
 `SidebarLeft.layout`, `SidebarLeft.primary-selection`, `SidebarLeft.rendering` — re-declare the
-whole `storeState` / `toolArgs` / `useApp` / `useCurrentTool` / `toolIcons` fixture inline, so nine
-tenths of the harness has no callers and the mock it holds is duplicated in every one of them while
+whole `storeState` / `toolArgs` / `useApp` / `useCurrentTool` / `toolIcons` fixture inline, so one
+suite in eleven uses the harness and the mock it holds is duplicated in all ten of the others while
 still having to be kept compiling.
 
 The cost is a defect that only appears on the next tool. `toolIcons` is a hand-written object
@@ -808,7 +809,7 @@ literal listing every icon name, and `SidebarLeft` renders
 `getToolIcon(tool.name)`. Add a tool and the literal is out of date, so `Icon` is `undefined` and
 React throws `Element type is invalid` from `createFiberFromTypeAndProps` — in **every** file in the
 directory, with a message that names neither the missing icon nor the stale literal. Adding the
-four eraser-family icons meant editing the same list ten times.
+four eraser-family icons meant editing the same list eleven times.
 
 **Fix.** Delete the inline `vi.mock`/`vi.hoisted` blocks from the nine suites, import
 `storeState` / `toolArgs` / `goToTool` / `patchToolArgs` / `toolbarButtonByName` from
@@ -979,7 +980,7 @@ ring and the Color Sampler are overlay work and belong with the navigation clust
 ## 52. Hand, Zoom and Rotate View are absent because the view transform is commented out
 
 **Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and
-the placeholder is a commented-out JSX line: `src/components/SidebarLeft/SidebarLeft.tsx:432`
+the placeholder is a commented-out JSX line: `src/components/SidebarLeft/SidebarLeft.tsx:548`
 is `{/*<Zoom />*/}`.
 
 **Why it is not a wiring bug.** There is no view transform to wire. The store's
@@ -998,7 +999,7 @@ owning `{ dx, dy, zoom }`, with `usePointerPosition` and every pointer-to-image
 conversion reading from it, is the shape the commented-out code was reaching for.
 Do not start with a Hand tool; start with the scope, and the three tools fall out.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:432`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:548`,
 `src/contexts/StoreContext.tsx:1166-1172`, `src/hooks/usePointerPosition.ts`,
 `src/components/Main/Main.tsx:60`
 
@@ -1188,7 +1189,7 @@ layer property.
 ## 57. The mobile shell has no colour control at all
 
 **Problem.** The desktop rail carries the foreground and background swatches, a swap
-and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:385-429`).
+and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:520-528`).
 The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
 no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
 use whatever colour the document happened to be created with, and the foreground colour
@@ -1208,7 +1209,7 @@ decision. Note the swatches are 32px in the desktop rail; on a touch surface the
 the same 44px floor as the other mobile controls, which is why they should be built
 for mobile rather than copied across.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:385-429`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:520-528`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
 
 ---

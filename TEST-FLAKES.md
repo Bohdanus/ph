@@ -266,7 +266,7 @@ line, and none of them was a flyout assertion:
 ```
 Error: expect(locator).toBeVisible() failed
 Locator: getByTestId('workspace-canvas')
-Error: element(s) not found          # 5s budget, e2e/sidebar-flyout.spec.ts:111
+Error: element(s) not found          # 5s budget, e2e/sidebar-flyout.spec.ts:125
 ```
 
 The diagnostic detail is the shape of it: the failures were **tests 1-6** — the
@@ -310,4 +310,4 @@ does not need it.
 - `playwright.config.ts:106-120` — the `webServer` block, and why an explicit
   `PLAYWRIGHT_PORT` disables server reuse
 - `e2e/global-setup.ts` — where the warm-up in section 8 belongs
-- `e2e/sidebar-flyout.spec.ts:111` — the `beforeEach` that loses the race
+- `e2e/sidebar-flyout.spec.ts:125` — the `beforeEach` that loses the race
