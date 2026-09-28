@@ -12,7 +12,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
 const require = createRequire(import.meta.url);
-import { classify, riskScore } from './classify.mjs';
+import { classify, riskScore, ACTION } from './classify.mjs';
 import { summariseChats, isUnfinished, isDead } from './chats.mjs';
 import { curatedFor } from './curated.mjs';
 import { inferBoardIssues } from './board.mjs';
@@ -85,7 +85,14 @@ export function buildInventory({
 
       status: verdict.status,
       recommendation: verdict.recommendation,
+      action: verdict.action,
       prunable: verdict.prunable,
+      mergeConflict: verdict.mergeConflict,
+      mergeConflictFiles: verdict.mergeConflictFiles,
+      // Disambiguates the two things `mergeConflict: null` can mean: the check
+      // was skipped (already on main, or detached), or it was attempted and
+      // could not be answered.
+      mergeChecked: verdict.mergeChecked,
       riskScore: riskScore(verdict),
       statusReasons: verdict.reasons,
 
@@ -156,13 +163,28 @@ export function buildInventory({
   const byStatus = {};
   const byRecommendation = {};
   const byChatState = {};
+  const byAction = {};
   for (const r of records) {
     byStatus[r.status] = (byStatus[r.status] ?? 0) + 1;
     byRecommendation[r.recommendation] = (byRecommendation[r.recommendation] ?? 0) + 1;
+    byAction[r.action] = (byAction[r.action] ?? 0) + 1;
     for (const [state, n] of Object.entries(r.chats.byState)) {
       byChatState[state] = (byChatState[state] ?? 0) + n;
     }
   }
+
+  // The two lists an operator opens this file for, named at the top rather
+  // than left for a reader to derive by filtering the whole list. `readyToLand` is
+  // the answer to "what is finished and just needs merging" and
+  // `disposalCandidates` is the answer to "what can I delete right now".
+  //
+  // Names only, deliberately: the record itself carries the reason, the
+  // branch, the commit count and the conflict answer, and a name duplicated
+  // into a second place is a number that goes stale on its own.
+  const byActionNames = (action) => records.filter((r) => r.action === action).map((r) => r.name);
+  const readyToLand = byActionNames(ACTION.LAND);
+  const disposalCandidates = byActionNames(ACTION.DISPOSE);
+  const atRisk = byActionNames(ACTION.AT_RISK);
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -180,15 +202,24 @@ export function buildInventory({
         ? { ok: true, path: board.dbPath, issues: board.issues.length }
         : { ok: false, reason: 'no agent-board database at the expected path' },
     },
+    // Read these first. They are the answers; `worktrees` is the evidence.
+    readyToLand,
+    disposalCandidates,
+    atRisk,
+
     totals: {
       worktrees: records.length,
       prunable: records.filter((r) => r.prunable).length,
+      readyToLand: readyToLand.length,
+      disposalCandidates: disposalCandidates.length,
+      atRisk: atRisk.length,
       salvage: records.filter((r) => r.recommendation === 'salvage').length,
       inUse: records.filter((r) => r.recommendation === 'in-use').length,
       holdingUncommittedWork: records.filter((r) => r.dirty + r.untracked > 0).length,
       withoutSummary: records.filter((r) => !r.summary).length,
       byStatus,
       byRecommendation,
+      byAction,
       byChatState,
     },
     worktrees: records,
