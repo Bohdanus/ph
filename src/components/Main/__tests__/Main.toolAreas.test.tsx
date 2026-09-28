@@ -131,7 +131,25 @@ describe('Main tool-area routing', () => {
     expect(screen.getByTestId(`tool-area-${expected}`)).toBeTruthy();
   });
 
-  it.each(['zoom', 'custom-shape', 'transform'] as const)('falls back to the hidden dummy area for %s', (toolName) => {
+  it.each([
+    'zoom',
+    'custom-shape',
+    'transform',
+    // The eleven Photoshop tools whose panel is still a placeholder have no tool area
+    // yet, so they route to the hidden dummy exactly as `transform` does. Pinning them
+    // here is what stops a future tool area from mounting without a deliberate change.
+    'eyedropper',
+    'elliptical-selection',
+    'quick-selection',
+    'eraser',
+    'clone-stamp',
+    'paint-bucket',
+    'gradient',
+    'sharpen',
+    'smudge',
+    'dodge',
+    'burn',
+  ] as const)('falls back to the hidden dummy area for %s', (toolName) => {
     storeState.toolName = toolName;
 
     const { container } = render(<Main />);

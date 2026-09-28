@@ -6,16 +6,25 @@ import { toolProcessors, type ToolProcessorDefinition } from '../toolProcessors.
 import { toolsMap } from '../toolsMap.ts';
 import { defaultSettings } from '../settings.ts';
 import { blur } from '../blur.ts';
+import { cloneStamp } from '../cloneStamp.ts';
 import { colors } from '../colors.ts';
 import { crop } from '../crop.ts';
+import { burn, dodge } from '../dodgeBurn.ts';
 import { draw } from '../draw.ts';
+import { ellipticalSelection } from '../ellipticalSelection.ts';
+import { eraser } from '../eraser.ts';
 import { featherMagneticLasso } from '../featherMagneticLasso.ts';
+import { gradient } from '../gradient.ts';
 import { levels } from '../levels.ts';
 import { magicWand } from '../magicWand.ts';
+import { paintBucket } from '../paintBucket.ts';
+import { quickSelection } from '../quickSelection.ts';
 import { rectangularSelection } from '../rectangularSelection.ts';
 import { reposition } from '../reposition.ts';
 import { selection } from '../selection.ts';
 import { shape } from '../shape.ts';
+import { sharpen } from '../sharpen.ts';
+import { smudge } from '../smudge.ts';
 import { text } from '../text.ts';
 import { transform } from '../transform.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
@@ -77,7 +86,21 @@ describe('toolProcessors registry', () => {
     const requiresRaster = toolNames.filter((toolName) => toolProcessors[toolName].replay.requiresRaster);
 
     expect(requiresRaster.sort()).toEqual(
-      ['brush', 'color-replacement', 'feather-magnetic-lasso', 'magic-wand', 'pencil'].sort()
+      [
+        'brush',
+        'burn',
+        'clone-stamp',
+        'color-replacement',
+        'dodge',
+        'eraser',
+        'feather-magnetic-lasso',
+        'gradient',
+        'magic-wand',
+        'paint-bucket',
+        'pencil',
+        'sharpen',
+        'smudge',
+      ].sort()
     );
   });
 
@@ -91,6 +114,7 @@ describe('toolProcessors registry', () => {
         'curvature-pen',
         'custom-shape',
         'delete-anchor-point',
+        'eyedropper',
         'freeform-pen',
         'pen',
       ].sort()
@@ -114,7 +138,21 @@ describe('toolProcessors registry', () => {
   it('commits every raster processor as a raster-processor replay', () => {
     const rasterCommitted = toolNames.filter((toolName) => toolProcessors[toolName].commit === 'raster');
 
-    expect(rasterCommitted.sort()).toEqual(['brush', 'color-replacement', 'pencil']);
+    expect(rasterCommitted.sort()).toEqual(
+      [
+        'brush',
+        'burn',
+        'clone-stamp',
+        'color-replacement',
+        'dodge',
+        'eraser',
+        'gradient',
+        'paint-bucket',
+        'pencil',
+        'sharpen',
+        'smudge',
+      ].sort()
+    );
     for (const toolName of rasterCommitted) {
       expect(toolProcessors[toolName].replay.kind).toBe('raster-processor');
     }
@@ -127,10 +165,12 @@ describe('toolProcessors registry', () => {
       [
         'draw',
         'ellipse',
+        'elliptical-selection',
         'freehand-lasso',
         'line',
         'polygon',
         'polygonal-lasso',
+        'quick-selection',
         'rectangle',
         'rectangular-selection',
         'shape',
@@ -174,9 +214,20 @@ describe('toolProcessors registry', () => {
       'feather-magnetic-lasso': 'selection',
       'magic-wand': 'selection',
       'rectangular-selection': 'selection',
+      'elliptical-selection': 'selection',
+      'quick-selection': 'selection',
       brush: 'raster',
       pencil: 'raster',
       'color-replacement': 'raster',
+      eraser: 'raster',
+      'paint-bucket': 'raster',
+      gradient: 'raster',
+      sharpen: 'raster',
+      smudge: 'raster',
+      dodge: 'raster',
+      burn: 'raster',
+      'clone-stamp': 'raster',
+      eyedropper: 'unimplemented',
       pen: 'unimplemented',
       'freeform-pen': 'unimplemented',
       'curvature-pen': 'unimplemented',
@@ -197,6 +248,8 @@ describe('toolProcessors registry', () => {
     const featherSource = toolProcessors['feather-magnetic-lasso'].imageProcessor;
     const magicWandSource = toolProcessors['magic-wand'].imageProcessor;
     const rectSelectionSource = toolProcessors['rectangular-selection'].imageProcessor;
+    const ellipseSelectionSource = toolProcessors['elliptical-selection'].imageProcessor;
+    const quickSelectionSource = toolProcessors['quick-selection'].imageProcessor;
     const shapeSource = toolProcessors.shape.imageProcessor;
 
     expect(toolProcessors['freehand-lasso'].imageProcessor).toBe(lassoSource);
@@ -206,6 +259,13 @@ describe('toolProcessors registry', () => {
     expect(featherSource).not.toBe(lassoSource);
     expect(magicWandSource).not.toBe(lassoSource);
     expect(rectSelectionSource).not.toBe(lassoSource);
+    // The two newer selection tools are `creator: true` like the rectangular marquee,
+    // but they are not the same module: reusing `selection` for either would hand an
+    // elliptical or region-growing tool the polygon's mask.
+    expect(ellipseSelectionSource).not.toBe(lassoSource);
+    expect(ellipseSelectionSource).not.toBe(rectSelectionSource);
+    expect(quickSelectionSource).not.toBe(lassoSource);
+    expect(quickSelectionSource).not.toBe(rectSelectionSource);
   });
 
   it('returns a null bitmap from every unimplemented processor instead of throwing', () => {
@@ -370,6 +430,17 @@ describe('toolsMap wiring', () => {
       'delete-anchor-point',
       'convert-point',
       'custom-shape',
+      'eyedropper',
+      'elliptical-selection',
+      'quick-selection',
+      'eraser',
+      'clone-stamp',
+      'paint-bucket',
+      'gradient',
+      'sharpen',
+      'smudge',
+      'dodge',
+      'burn',
     ] as const;
 
     for (const toolName of placeholderNames) {
@@ -417,6 +488,16 @@ const directProcessorSources: readonly [ToolName, unknown][] = [
   ['feather-magnetic-lasso', featherMagneticLasso],
   ['magic-wand', magicWand],
   ['rectangular-selection', rectangularSelection],
+  ['elliptical-selection', ellipticalSelection],
+  ['quick-selection', quickSelection],
+  ['eraser', eraser],
+  ['paint-bucket', paintBucket],
+  ['gradient', gradient],
+  ['sharpen', sharpen],
+  ['smudge', smudge],
+  ['dodge', dodge],
+  ['burn', burn],
+  ['clone-stamp', cloneStamp],
   ['rectangle', shape],
   ['ellipse', shape],
   ['triangle', shape],
@@ -432,6 +513,10 @@ const unimplementedTools: readonly ToolName[] = [
   'delete-anchor-point',
   'convert-point',
   'custom-shape',
+  // The eyedropper belongs here because its registry entry is `commit: 'unimplemented'`:
+  // it produces a sampled colour in the store, not pixels, so it has no processor of its
+  // own and reuses the shared stub rather than the placeholder in `eyedropper.ts`.
+  'eyedropper',
 ];
 
 const paintWrapperTools: readonly PaintToolName[] = ['brush', 'pencil', 'color-replacement'];
@@ -503,25 +588,60 @@ describe('toolProcessors declared inner-processor arity', () => {
     }
   });
 
-  it('declares zero inner parameters only for the three type lies and the unimplemented set', () => {
+  it('declares zero inner parameters only for the type lies, the unimplemented set and the placeholders', () => {
+    // Every placeholder processor also ignores its args, so it lands here too. The set is
+    // the registry's own cast list plus the unimplemented stub: a processor that declares
+    // a zero-arity inner function is one whose published args type the registry cannot
+    // reach from its generic `(args: ToolArgs) => ToolResult` signature.
     const zeroArity = toolNames.filter((toolName) => toolProcessors[toolName].imageProcessor(params).length === 0);
 
     expect(zeroArity.sort()).toEqual(
-      [...unimplementedTools, 'feather-magnetic-lasso', 'magic-wand', 'rectangular-selection'].sort()
+      [
+        ...unimplementedTools,
+        'feather-magnetic-lasso',
+        'magic-wand',
+        'rectangular-selection',
+        'elliptical-selection',
+        'quick-selection',
+        'eraser',
+        'paint-bucket',
+        'gradient',
+        'sharpen',
+        'smudge',
+        'dodge',
+        'burn',
+        'clone-stamp',
+      ].sort()
     );
   });
 
   it('makes the zero-arity non-unimplemented processors the exact set needing a registry cast', () => {
-    // These three are the entries the registry has to silence with @ts-expect-error
-    // (src/tools/toolProcessors.ts:146, :152, :159) because their published args type
-    // is not reachable from the generic `(args: ToolArgs) => ToolResult` signature.
+    // These are the entries the registry has to silence with @ts-expect-error
+    // (src/tools/toolProcessors.ts) because their published args type is not reachable
+    // from the generic `(args: ToolArgs) => ToolResult` signature.
     const casted = toolNames.filter(
       (toolName) =>
         toolProcessors[toolName].commit !== 'unimplemented' &&
         toolProcessors[toolName].imageProcessor(params).length === 0
     );
 
-    expect(casted.sort()).toEqual(['feather-magnetic-lasso', 'magic-wand', 'rectangular-selection']);
+    expect(casted.sort()).toEqual(
+      [
+        'feather-magnetic-lasso',
+        'magic-wand',
+        'rectangular-selection',
+        'elliptical-selection',
+        'quick-selection',
+        'eraser',
+        'paint-bucket',
+        'gradient',
+        'sharpen',
+        'smudge',
+        'dodge',
+        'burn',
+        'clone-stamp',
+      ].sort()
+    );
   });
 });
 
@@ -559,9 +679,22 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['feather-magnetic-lasso', 'source-bitmap', 0, 0],
     ['magic-wand', 'source-bitmap', 0, 0],
     ['rectangular-selection', 'source-bitmap', 0, 0],
+    ['elliptical-selection', 'source-bitmap', 0, 0],
+    ['quick-selection', 'source-bitmap', 0, 0],
     ['brush', 'canvas', 40, 24],
     ['pencil', 'canvas', 40, 24],
     ['color-replacement', 'canvas', 40, 24],
+    // The eleven placeholders below have no raster implementation yet, so each hands the
+    // source bitmap straight back instead of allocating a canvas.
+    ['eraser', 'source-bitmap', 0, 0],
+    ['paint-bucket', 'source-bitmap', 0, 0],
+    ['gradient', 'source-bitmap', 0, 0],
+    ['sharpen', 'source-bitmap', 0, 0],
+    ['smudge', 'source-bitmap', 0, 0],
+    ['dodge', 'source-bitmap', 0, 0],
+    ['burn', 'source-bitmap', 0, 0],
+    ['clone-stamp', 'source-bitmap', 0, 0],
+    ['eyedropper', 'null', 0, 0],
     ['pen', 'null', 0, 0],
     ['freeform-pen', 'null', 0, 0],
     ['curvature-pen', 'null', 0, 0],
@@ -753,9 +886,20 @@ describe('toolsMap exhaustiveness', () => {
     ['feather-magnetic-lasso', 'lasso'],
     ['magic-wand', 'magic-wand'],
     ['rectangular-selection', 'rectangular-selection'],
+    ['elliptical-selection', 'elliptical-selection'],
+    ['quick-selection', 'quick-selection'],
     ['brush', 'brush'],
     ['pencil', 'pencil'],
     ['color-replacement', 'color-replacement'],
+    ['eraser', 'eraser'],
+    ['clone-stamp', 'clone-stamp'],
+    ['paint-bucket', 'paint-bucket'],
+    ['gradient', 'gradient'],
+    ['sharpen', 'sharpen'],
+    ['smudge', 'smudge'],
+    ['dodge', 'dodge'],
+    ['burn', 'burn'],
+    ['eyedropper', 'eyedropper'],
     ['pen', 'pen'],
     ['freeform-pen', 'freeform-pen'],
     ['curvature-pen', 'curvature-pen'],

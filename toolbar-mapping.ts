@@ -37,15 +37,24 @@ export const slugifyToolLabel = (label: string): string => label.toLowerCase().r
 export const toolbarMap = [
   [
     [{ label: 'Move Tool', name: 'reposition', shortcut: 'V' }],
-    [{ label: 'Rectangular Marquee Tool', name: 'rectangular-selection', shortcut: 'M' }],
+    [
+      { label: 'Rectangular Marquee Tool', name: 'rectangular-selection', shortcut: 'M' },
+      { label: 'Elliptical Marquee Tool', name: 'elliptical-selection' },
+    ],
     [
       { label: 'Lasso Tool', name: 'freehand-lasso', shortcut: 'L' },
       { label: 'Polygonal Lasso Tool', name: 'polygonal-lasso' },
       { label: 'Magnetic Lasso Tool', name: 'feather-magnetic-lasso', shortcut: 'Shift+L' },
     ],
-    [{ label: 'Magic Wand Tool', name: 'magic-wand', shortcut: 'W' }],
+    [
+      { label: 'Magic Wand Tool', name: 'magic-wand', shortcut: 'W' },
+      { label: 'Quick Selection Tool', name: 'quick-selection' },
+    ],
   ],
-  [[{ label: 'Crop Tool', name: 'crop', shortcut: 'C' }]],
+  [
+    [{ label: 'Crop Tool', name: 'crop', shortcut: 'C' }],
+    [{ label: 'Eyedropper Tool', name: 'eyedropper', shortcut: 'I' }],
+  ],
   [
     [
       { label: 'Colors', name: 'color' },
@@ -58,8 +67,24 @@ export const toolbarMap = [
       { label: 'Brush Tool', name: 'brush', shortcut: 'B' },
       { label: 'Pencil Tool', name: 'pencil' },
       { label: 'Color Replacement Tool', name: 'color-replacement' },
+      { label: 'Eraser Tool', name: 'eraser', shortcut: 'E' },
     ],
-    [{ label: 'Blur Tool', name: 'blur' }],
+    // Photoshop's Stamp flyout is its own tile immediately after the Brush group; the
+    // pattern and patch stamps behind it are not implemented and stay out of the map.
+    [{ label: 'Clone Stamp Tool', name: 'clone-stamp', shortcut: 'S' }],
+    [
+      { label: 'Blur Tool', name: 'blur' },
+      { label: 'Sharpen Tool', name: 'sharpen' },
+      { label: 'Smudge Tool', name: 'smudge' },
+    ],
+    [
+      { label: 'Paint Bucket Tool', name: 'paint-bucket', shortcut: 'G' },
+      { label: 'Gradient Tool', name: 'gradient' },
+    ],
+    [
+      { label: 'Dodge Tool', name: 'dodge', shortcut: 'O' },
+      { label: 'Burn Tool', name: 'burn' },
+    ],
     [{ label: 'Draw Tool', name: 'draw', shortcut: 'B' }],
   ],
   [
@@ -109,10 +134,21 @@ export const availableTools: readonly ToolName[] = [
   'levels',
   'transform',
   'rectangular-selection',
+  'elliptical-selection',
   'freehand-lasso',
   'polygonal-lasso',
   'feather-magnetic-lasso',
   'magic-wand',
+  'quick-selection',
+  'eyedropper',
+  'eraser',
+  'clone-stamp',
+  'paint-bucket',
+  'gradient',
+  'sharpen',
+  'smudge',
+  'dodge',
+  'burn',
 ];
 
 export const extraTools = ['color', 'levels', 'transform'] as const satisfies readonly ToolName[];

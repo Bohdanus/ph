@@ -225,6 +225,34 @@ describe('saveLastSettings tool-name coverage', () => {
     expect(lastSavedSettings['feather-magnetic-lasso']).toMatchObject({ featherRadius: 33, points: [] });
   });
 
+  it('keeps the point list out of every saved stroke-tool setting, and keeps the rest', () => {
+    // The four new brush-shaped tools all persist through the arm in
+    // `src/util/settings.ts` that empties `points`. A stroke is geometry, not a setting,
+    // so reseeding it would hand the next drag the previous one. The settings that ride
+    // alongside it have to survive, which is the part the `never` sentinel cannot see:
+    // it only catches a missing arm, never a wrong one.
+    const stroke = [
+      { x: 1, y: 2 },
+      { x: 9, y: 7 },
+    ];
+
+    saveLastSettings({ ...defaultSettings.smudge, strength: 80, points: stroke });
+    saveLastSettings({ ...defaultSettings.dodge, exposure: 20, points: stroke });
+    saveLastSettings({ ...defaultSettings.burn, exposure: 30, points: stroke });
+    saveLastSettings({ ...defaultSettings['clone-stamp'], alpha: 0.5, points: stroke });
+
+    expect(lastSavedSettings.smudge).toMatchObject({ strength: 80, points: [], toolName: 'smudge' });
+    expect(lastSavedSettings.dodge).toMatchObject({ exposure: 20, points: [], toolName: 'dodge' });
+    expect(lastSavedSettings.burn).toMatchObject({ exposure: 30, points: [], toolName: 'burn' });
+    // A clone-stamp source point is a setting, not geometry, so it is persisted.
+    expect(lastSavedSettings['clone-stamp']).toMatchObject({
+      alpha: 0.5,
+      points: [],
+      source: null,
+      toolName: 'clone-stamp',
+    });
+  });
+
   it('collapses tools without a settings UI down to their tool name', () => {
     saveLastSettings({ toolName: 'rectangular-selection', rect });
     saveLastSettings({ ...defaultSettings.pen, toolName: 'pen' } as ToolArgs);

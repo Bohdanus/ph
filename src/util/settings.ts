@@ -79,6 +79,35 @@ export function saveLastSettings(args: ToolArgs) {
     lastSavedSettings.color = cloneDeep(args as ColorsToolArgs);
   } else if (toolName === 'levels') {
     lastSavedSettings.levels = cloneDeep(args as LevelsToolArgs);
+  } else if (
+    toolName === 'elliptical-selection' ||
+    toolName === 'quick-selection' ||
+    toolName === 'eyedropper' ||
+    toolName === 'paint-bucket' ||
+    toolName === 'gradient' ||
+    toolName === 'sharpen'
+  ) {
+    // None of these six carry stroke geometry, so the whole args object is the
+    // settings — the same treatment the magic wand gets above.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(args);
+  } else if (
+    toolName === 'smudge' ||
+    toolName === 'dodge' ||
+    toolName === 'burn' ||
+    toolName === 'clone-stamp' ||
+    toolName === 'eraser'
+  ) {
+    // These five are brushes, so `points` is the stroke that was just committed and not
+    // a setting: reseeding it would hand the next drag the previous one. Emptied the
+    // way `draw` (:27) and `feather-magnetic-lasso` (:44) empty theirs. Note that
+    // `clone-stamp.source` survives — a source point is a setting, and losing it is the
+    // difference between "stamp where you last cloned" and "stamp nothing".
+    //
+    // The eraser is here rather than in the arm above for exactly that reason: it erases
+    // along a stroke, so its `points` is the stroke too, and `EraserToolArgs.points` is
+    // required rather than optional. Persisting the last erased stroke would reappear in
+    // the options bar on the next tool switch.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ ...args, points: [] });
   } else {
     // Every `ToolName` is persisted above by design. Without this trap a tool added to
     // `ToolArgsByName` falls off the end of the chain, its settings are dropped, and its sliders

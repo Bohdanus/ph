@@ -15,6 +15,16 @@ import type { LassoToolArgs, PolygonSelectionToolSettings } from './polygonSelec
 import type { RectangularSelectionToolArgs } from './rectangularSelection.ts';
 import type { FeatherMagneticLassoToolArgs, FeatherMagneticLassoToolSettings } from './featherMagneticLasso.ts';
 import type { MagicWandToolArgs, MagicWandToolSettings } from './magicWand.ts';
+import type { EyedropperToolArgs } from './eyedropper.ts';
+import type { EllipticalSelectionToolArgs } from './ellipticalSelection.ts';
+import type { QuickSelectionToolArgs } from './quickSelection.ts';
+import type { EraserToolArgs } from './eraser.ts';
+import type { PaintBucketToolArgs } from './paintBucket.ts';
+import type { GradientToolArgs } from './gradient.ts';
+import type { SharpenToolArgs } from './sharpen.ts';
+import type { SmudgeToolArgs, SmudgeToolSettings } from './smudge.ts';
+import type { DodgeBurnToolArgs, DodgeBurnToolSettings } from './dodgeBurn.ts';
+import type { CloneStampToolArgs, CloneStampToolSettings } from './cloneStamp.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
 type FigureSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end' | 'figure' | 'toolName'>;
@@ -112,6 +122,81 @@ export const defaultSettings = {
     toolName: 'magic-wand',
   } satisfies MagicWandToolArgs,
   'rectangular-selection': { toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,
+  'elliptical-selection': {
+    style: 'normal',
+    fixedRatio: 1,
+    fixedWidth: 100,
+    fixedHeight: 100,
+    toolName: 'elliptical-selection',
+  } satisfies EllipticalSelectionToolArgs,
+  'quick-selection': {
+    size: 40,
+    tolerance: 30,
+    mode: 'add',
+    alpha: 1,
+    toolName: 'quick-selection',
+  } satisfies QuickSelectionToolArgs,
+  // Bare, because the eyedropper is `commit: 'unimplemented'` and every such tool has to
+  // reduce to exactly `{ toolName }` (src/tools/__tests__/tool-settings.test.ts:362).
+  eyedropper: { toolName: 'eyedropper' } satisfies EyedropperToolArgs,
+  eraser: {
+    size: 40,
+    hardness: 100,
+    alpha: 1,
+    spacing: 25,
+    // Stroke geometry, not a setting — the same shape `draw` and every other brush in
+    // this family carries, and emptied again by `saveLastSettings` on every persist.
+    points: [],
+    toolName: 'eraser',
+  } satisfies EraserToolArgs,
+  'paint-bucket': {
+    color: '#000000',
+    tolerance: 32,
+    contiguous: true,
+    alpha: 1,
+    // A bucket is a click: no click yet, so no seed. The processor treats it as a no-op
+    // rather than a fill, which is what makes dispatching on the bare defaults well defined.
+    seed: null,
+    toolName: 'paint-bucket',
+  } satisfies PaintBucketToolArgs,
+  gradient: {
+    type: 'linear',
+    // A zero-length drag is a gradient with no extent, which is the honest seed: the
+    // options bar sets the endpoints before the first commit.
+    from: { x: 0, y: 0 },
+    to: { x: 0, y: 0 },
+    colorA: '#000000',
+    colorB: '#FFFFFF',
+    alpha: 1,
+    toolName: 'gradient',
+  } satisfies GradientToolArgs,
+  sharpen: { amount: 50, radius: 1, toolName: 'sharpen' } satisfies SharpenToolArgs,
+  smudge: { size: 40, hardness: 100, strength: 50, points: [], toolName: 'smudge' } satisfies SmudgeToolArgs,
+  dodge: {
+    exposure: 50,
+    range: 'midtones',
+    size: 40,
+    hardness: 100,
+    points: [],
+    toolName: 'dodge',
+  } satisfies DodgeBurnToolArgs,
+  burn: {
+    exposure: 50,
+    range: 'midtones',
+    size: 40,
+    hardness: 100,
+    points: [],
+    toolName: 'burn',
+  } satisfies DodgeBurnToolArgs,
+  'clone-stamp': {
+    size: 40,
+    hardness: 100,
+    alpha: 1,
+    source: null,
+    aligned: true,
+    points: [],
+    toolName: 'clone-stamp',
+  } satisfies CloneStampToolArgs,
   brush: {
     alpha: 0.9,
     color: '#000000',
@@ -201,6 +286,22 @@ export type SavedSettings =
   | RectangularSelectionToolArgs
   | MagicWandToolSettings
   | FeatherMagneticLassoToolSettings
-  | PolygonSelectionToolSettings;
+  | PolygonSelectionToolSettings
+  // A `*ToolSettings` member is the args type minus `points`, because a stroke is
+  // geometry rather than a setting and `saveLastSettings` empties it. The plain args
+  // types below have no `points` at all, so they are their own settings type. The eraser
+  // is a brush like `smudge`/`dodge`/`burn`/`clone-stamp` — `EraserToolArgs.points` is
+  // required, not optional — so it is spelled as an `Omit` here rather than as a named
+  // `EraserToolSettings` the eraser does not have.
+  | EyedropperToolArgs
+  | EllipticalSelectionToolArgs
+  | QuickSelectionToolArgs
+  | Omit<EraserToolArgs, 'points'>
+  | PaintBucketToolArgs
+  | GradientToolArgs
+  | SharpenToolArgs
+  | SmudgeToolSettings
+  | DodgeBurnToolSettings
+  | CloneStampToolSettings;
 
 export const lastSavedSettings: ToolArgsByName = cloneDeep(defaultSettings);

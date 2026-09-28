@@ -34,6 +34,32 @@ const PLACEHOLDER_TOOLS = [
     title: 'Custom Shape Tool',
     showTodoBadge: true,
   },
+  { toolName: 'eyedropper', configKey: 'eyedropper', title: 'Eyedropper Tool', showTodoBadge: true },
+  {
+    toolName: 'elliptical-selection',
+    configKey: 'elliptical-selection',
+    title: 'Elliptical Marquee Tool',
+    showTodoBadge: true,
+  },
+  {
+    toolName: 'quick-selection',
+    configKey: 'quick-selection',
+    title: 'Quick Selection Tool',
+    showTodoBadge: true,
+  },
+  { toolName: 'eraser', configKey: 'eraser', title: 'Eraser Tool', showTodoBadge: true },
+  {
+    toolName: 'clone-stamp',
+    configKey: 'clone-stamp',
+    title: 'Clone Stamp Tool',
+    showTodoBadge: true,
+  },
+  { toolName: 'paint-bucket', configKey: 'paint-bucket', title: 'Paint Bucket Tool', showTodoBadge: true },
+  { toolName: 'gradient', configKey: 'gradient', title: 'Gradient Tool', showTodoBadge: true },
+  { toolName: 'sharpen', configKey: 'sharpen', title: 'Sharpen Tool', showTodoBadge: true },
+  { toolName: 'smudge', configKey: 'smudge', title: 'Smudge Tool', showTodoBadge: true },
+  { toolName: 'dodge', configKey: 'dodge', title: 'Dodge Tool', showTodoBadge: true },
+  { toolName: 'burn', configKey: 'burn', title: 'Burn Tool', showTodoBadge: true },
 ] as const;
 
 describe('PlaceholderTool', () => {
@@ -121,7 +147,8 @@ describe('placeholder tool wiring in toolsMap', () => {
     const unreachableKeys = CONFIG_KEYS.filter((key) => !usedKeys.has(key));
 
     // toolsMap wires freeform-pen, curvature-pen and rectangle to other groups, so these
-    // three entries in toolbarPlaceholderConfig.ts are currently dead config.
+    // three entries in toolbarPlaceholderConfig.ts are currently dead config. Every other
+    // group, including the eleven Photoshop-bar placeholders, is reached by its tool.
     expect(unreachableKeys).toEqual(['freeform-pen', 'curvature-pen', 'rectangle']);
   });
 

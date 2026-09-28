@@ -12,6 +12,16 @@ import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { ToolName } from '../../contexts/tool-types.ts';
 import type { FigureType } from '../../tools/shape.ts';
 
+/**
+ * A second, non-exhaustive surface over the same tool set. `Array` rather than an
+ * exhaustive type, so nothing forces it to stay in step with `toolbarMap` — which is
+ * exactly why it is written out here: a tool missing from the Tools menu is a visible
+ * inconsistency the user has to notice and work around.
+ *
+ * The eleven entries added with the tool expansion carry the same labels
+ * `toolbar-mapping.ts` spells, and sit in the same relative order: selection tools after
+ * the lasso and wand, then the paint family (brush … burn), then the eyedropper.
+ */
 const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'reposition', label: 'Reposition' },
   { toolName: 'color', label: 'Colors' },
@@ -26,10 +36,21 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'freehand-lasso', label: 'Freehand Lasso' },
   { toolName: 'feather-magnetic-lasso', label: 'Feather Magnetic Lasso' },
   { toolName: 'magic-wand', label: 'Magic Wand' },
+  { toolName: 'quick-selection', label: 'Quick Selection Tool' },
   { toolName: 'rectangular-selection', label: 'Rectangular Selection' },
+  { toolName: 'elliptical-selection', label: 'Elliptical Marquee Tool' },
   { toolName: 'brush', label: 'Brush Tool' },
   { toolName: 'pencil', label: 'Pencil Tool' },
   { toolName: 'color-replacement', label: 'Color Replacement Tool' },
+  { toolName: 'eraser', label: 'Eraser Tool' },
+  { toolName: 'clone-stamp', label: 'Clone Stamp Tool' },
+  { toolName: 'sharpen', label: 'Sharpen Tool' },
+  { toolName: 'smudge', label: 'Smudge Tool' },
+  { toolName: 'paint-bucket', label: 'Paint Bucket Tool' },
+  { toolName: 'gradient', label: 'Gradient Tool' },
+  { toolName: 'dodge', label: 'Dodge Tool' },
+  { toolName: 'burn', label: 'Burn Tool' },
+  { toolName: 'eyedropper', label: 'Eyedropper Tool' },
   { toolName: 'pen', label: 'Pen Tool' },
   { toolName: 'freeform-pen', label: 'Freeform Pen Tool' },
   { toolName: 'curvature-pen', label: 'Curvature Pen Tool' },

@@ -11,6 +11,16 @@ import type { LassoToolArgs } from '../tools/polygonSelection.ts';
 import type { RectangularSelectionToolArgs } from '../tools/rectangularSelection.ts';
 import type { FeatherMagneticLassoToolArgs } from '../tools/featherMagneticLasso.ts';
 import type { MagicWandToolArgs } from '../tools/magicWand.ts';
+import type { EyedropperToolArgs } from '../tools/eyedropper.ts';
+import type { EllipticalSelectionToolArgs } from '../tools/ellipticalSelection.ts';
+import type { QuickSelectionToolArgs } from '../tools/quickSelection.ts';
+import type { EraserToolArgs } from '../tools/eraser.ts';
+import type { PaintBucketToolArgs } from '../tools/paintBucket.ts';
+import type { GradientToolArgs } from '../tools/gradient.ts';
+import type { SharpenToolArgs } from '../tools/sharpen.ts';
+import type { SmudgeToolArgs } from '../tools/smudge.ts';
+import type { DodgeBurnToolArgs } from '../tools/dodgeBurn.ts';
+import type { CloneStampToolArgs } from '../tools/cloneStamp.ts';
 
 import type { BitmapSource, Pos, Size } from './general-types.ts';
 
@@ -29,6 +39,17 @@ export type ToolArgsByName = {
   'feather-magnetic-lasso': FeatherMagneticLassoToolArgs;
   'magic-wand': MagicWandToolArgs;
   'rectangular-selection': RectangularSelectionToolArgs;
+  'elliptical-selection': EllipticalSelectionToolArgs;
+  'quick-selection': QuickSelectionToolArgs;
+  eyedropper: EyedropperToolArgs;
+  eraser: EraserToolArgs;
+  'paint-bucket': PaintBucketToolArgs;
+  gradient: GradientToolArgs;
+  sharpen: SharpenToolArgs;
+  smudge: SmudgeToolArgs;
+  dodge: DodgeBurnToolArgs;
+  burn: DodgeBurnToolArgs;
+  'clone-stamp': CloneStampToolArgs;
   brush: PaintToolArgs;
   pencil: PaintToolArgs;
   'color-replacement': PaintToolArgs;
