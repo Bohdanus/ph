@@ -1357,3 +1357,47 @@ of that decision: `raster-budget.ts` and its test were deleted, and `avif-utils.
 `tiff-utils.ts` and `avif-utils.test.ts` kept `main`'s version. **The ceiling stays at 80 MP. Do not
 raise it to "fix" item 45** — item 45's remaining work is BMP, GIF, ICO and SVG, which have no
 budget on either side.
+
+---
+
+## 66. Two Colors sliders moved in one frame: the first change is silently dropped
+
+**Problem.** `Color.tsx`'s `throttledOnChange` (`src/components/ToolbarsRight/Colors/Color.tsx:28-41`)
+stashes the whole args object in `pendingUpdateRef` and writes it from a
+`requestAnimationFrame` callback. Each of the three handlers builds that object from
+the **render-time** `args` closure — `handleGrayscaleChange` at `:43-46`,
+`handleSepiaChange` at `:48-51`, `handleSaturationChange` at `:53-56` — and none of
+them reads the pending value. So two slider changes that land in the same frame are
+both built from the same stale `args`: the second object carries the new second
+value over the **old** first value, and the first change is gone. The rAF does not
+queue, so nothing merges them either.
+
+Reproduced deterministically in a browser, not inferred: fill grayscale to 50, then
+sepia to 100, with no wait between them. On the first pass the store holds
+`grayscale: 0, sepia: 100` — the label still reads "Grayscale 0%". On the second and
+third passes of the same sequence both values hold, because by then the closure has
+already caught up. So the defect needs a cold panel and a user who touches two
+controls quickly, which is exactly what a person adjusting an image does.
+
+It is not reachable from jsdom, and the existing `Color` unit tests do not reach it:
+they call the handlers through the rendered control and assert one value at a time.
+
+**Fix.** Make the pending object the source of truth for the next one, rather than
+the render closure:
+
+```ts
+const base = pendingUpdateRef.current ?? args;
+pendingUpdateRef.current = { ...base, grayscale };
+```
+
+Every handler builds on `base`, so a second change in the same frame inherits the
+first instead of discarding it. Keep the render-time `args` only as the fallback
+when nothing is pending. Worth checking `Blur.tsx` and `Levels.tsx` for the same
+shape — they were not audited here.
+
+**Test that fails without the fix.** Set grayscale to 50 and sepia to 100 with no
+frame in between, then assert the grayscale label reads "Grayscale 50%". A test that
+waits on each control's accessible name between the two changes cannot see this, and
+must not: it is a race, and the test for a race is the one that does not wait.
+
+**Files.** `src/components/ToolbarsRight/Colors/Color.tsx:28-56`
