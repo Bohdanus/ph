@@ -127,6 +127,24 @@ describe('TIFF encode/decode round trip through the real utif codec', () => {
     expect(decoded.data).toEqual(Array.from(data));
   });
 
+  it('round-trips what the encoder writes at a size the budgets actually apply to', async () => {
+    // The budget reads the encoder's own IFD back — `t258` has one entry per sample and
+    // `t258.length` is the multiplier the decode budget is built on — so a file this build
+    // writes has to survive the budget this build applies. The small cases above cannot
+    // catch a disagreement, because a small page is inside every ceiling.
+    const width = 640;
+    const height = 480;
+    const data = gradient(width, height);
+    const encoded = await encodeTiff(pixelCanvas(width, height, data));
+    const bytes = new Uint8Array(await encoded.arrayBuffer());
+    installImageHarness();
+
+    const decoded = await loadAndCapturePixels(loadTiffFile(new Blob([bytes], { type: 'image/tiff' })));
+
+    expect([decoded.width, decoded.height]).toEqual([width, height]);
+    expect(decoded.data).toEqual(Array.from(data));
+  });
+
   it('produces a well-formed TIFF container', async () => {
     const encoded = await encodeTiff(pixelCanvas(2, 2, gradient(2, 2)));
     const bytes = new Uint8Array(await encoded.arrayBuffer());
