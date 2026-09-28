@@ -41,18 +41,31 @@ import {
   BoardError,
   DEFAULT_LEASE_MS,
   NO_LIMIT,
+  isImportedOrigin,
   parseDuration,
   priorityFromTitle,
+  priorityRank,
   resolveBoardDir,
 } from './lib/agent-board/db.mjs';
 import { resolveIdentity } from './lib/agent-board/identity.mjs';
 
 const USAGE = `agent board — live coordination for a swarm of agents on one repository
 
+  WHICH BOARD THIS IS
+  Kilo ships a built-in tool also called board_read. It is a DIFFERENT thing and
+  it is empty on purpose: it carries messages between one session and the task
+  children it spawned, so outside a fan-out it reports "no messages" truthfully.
+  It has no knowledge of this repository's work and never will. THIS board is one
+  SQLite file every worktree of this repository shares, and it is not empty.
+  If you are looking for what the agents on this repo are doing, you are here.
+
+  live state: agent-board status      what is ready: agent-board ready
+  the log:    agent-board watch --follow
+
   new <title>            file an issue          --body --scope --priority --files --dep --origin
                            (the title is everything BEFORE the first flag)
   init                   create the board if it is not there yet
-  ready                  unblocked, unclaimed work, most urgent first
+  ready                  unblocked, unclaimed work, most urgent first   --live --limit
   list                   the whole board        --status --scope --files --claimed-by --limit
   show <id>              one issue: claim, locks, deps, full thread
   claim <id>             take it, and its files --lease --note --force
@@ -271,6 +284,11 @@ export async function run(
   // `leading` is every bare token before the first flag, which includes the
   // command name. The title of `new` is the rest of that run.
   const leadingArgs = leading.slice(1);
+  // Whether a command was NAMED. A bare `npm run board` lands on `status`, and
+  // that is the one invocation a confused reader is most likely to have made —
+  // it is what gets typed when the tool itself is in question, so it is where
+  // the tool has to introduce itself.
+  const implicit = positional.length === 0;
   const command = positional[0] ?? (flags.help || flags.h ? 'help' : 'status');
   const args = positional.slice(1);
 
@@ -368,7 +386,12 @@ export async function run(
       }
 
       case 'ready': {
-        const issues = board.readyIssues({ limit: flags.limit ? Number(flags.limit) : 50 });
+        // The whole ready set, not a page of it. The page is taken AFTER the
+        // ranking below, because slicing first and ranking second is how a
+        // fifty-row queue ends up showing the same fifty rows every time: the
+        // cap fell on the import's file order, and the live work at the bottom
+        // of the board was never on the page at all.
+        const all = board.readyIssues({ limit: NO_LIMIT });
         // The FILES column is the whole point of the table: an issue nobody has
         // claimed can still be one whose files another agent is already in, and
         // an agent that has to find that out by trying is an agent that just
@@ -377,13 +400,67 @@ export async function run(
         // and a column that only ever said `-` told the reader nothing.
         const foreignLocks = board.liveLocks().filter((lock) => lock.agent_id !== identity.agentId);
         const detail = new Map();
-        const rows = issues.map((issue) => {
-          const named = board.issueFiles(issue.id);
-          const held = foreignLocks.filter((lock) => named.includes(lock.path));
+        for (const issue of all) {
+          const files = board.issueFiles(issue.id);
+          const held = foreignLocks.filter((lock) => files.includes(lock.path));
           detail.set(issue.id, {
-            files: named,
+            files,
+            live: !isImportedOrigin(issue.origin),
             held: held.map((lock) => ({ path: lock.path, agent_id: lock.agent_id })),
           });
+        }
+
+        /**
+         * Priority first, because it is the one signal an agent stated on
+         * purpose. After that, two facts this command can compute and the
+         * filer never had to:
+         *
+         * - LIVE before IMPORTED. A `HANDOFF.md#31` row is prose the durable
+         *   record already owns; a finding a peer filed an hour ago is the only
+         *   thing on this board that exists BECAUSE two agents were working at
+         *   once. With fifty-four imported rows sharing one `normal` band, the
+         *   old tie-break was file order, so `ready` handed back the import and
+         *   buried the swarm.
+         * - FREE before CONTENDED. An issue another agent is already inside its
+         *   files cannot be started; an agent reading a queue to answer "what do
+         *   I pick up" needs the startable ones at the top, not a count of the
+         *   busy ones.
+         */
+        const ranked = [...all].sort((a, b) => {
+          const aInfo = detail.get(a.id);
+          const bInfo = detail.get(b.id);
+          // Priority is compared HERE and not inherited from `listIssues`'s own
+          // ordering: a sort that only breaks ties still silently reorders when
+          // the query underneath it changes, and this is the list an agent
+          // picks its next task from.
+          return (
+            priorityRank(a.priority) - priorityRank(b.priority) ||
+            Number(bInfo.live) - Number(aInfo.live) ||
+            Number(aInfo.held.length > 0) - Number(bInfo.held.length > 0) ||
+            a.created_at.localeCompare(b.created_at)
+          );
+        });
+
+        const liveCount = all.filter((issue) => detail.get(issue.id).live).length;
+        const startable = all.filter(
+          (issue) => detail.get(issue.id).live && detail.get(issue.id).held.length === 0
+        ).length;
+        // The count, because the table cannot say it. Fifty-six rows in one
+        // priority band reads as fifty-six things to do; it is two, and the
+        // other fifty-four are a mirror of documents that are already merged.
+        const summary = [
+          `${liveCount} live · ${all.length - liveCount} imported from the handoff documents`,
+          startable > 0
+            ? `${startable} startable now — nobody else is in the files`
+            : 'none startable now: every live issue is inside a file another agent holds',
+        ].join(' · ');
+
+        const chosen = (flags.live ? ranked.filter((issue) => detail.get(issue.id).live) : ranked).slice(
+          0,
+          flags.limit ? Number(flags.limit) : 50
+        );
+        const rows = chosen.map((issue) => {
+          const { files: named, held } = detail.get(issue.id);
           return [
             issue.id,
             issue.priority,
@@ -403,10 +480,19 @@ export async function run(
           ];
         });
         emit(
-          { issues: issues.map((issue) => ({ ...issue, ...detail.get(issue.id) })) },
-          issues.length === 0
-            ? 'nothing ready: everything open is claimed, blocked, or closed'
-            : columns(rows, ['ID', 'PRIORITY', 'SCOPE', 'ORIGIN', 'FILES', 'TITLE'])
+          {
+            ...Object.fromEntries([
+              ['liveCount', liveCount],
+              ['importedCount', all.length - liveCount],
+              ['startableCount', startable],
+            ]),
+            issues: chosen.map((issue) => ({ ...issue, ...detail.get(issue.id) })),
+          },
+          chosen.length === 0
+            ? all.length === 0
+              ? 'nothing ready: everything open is claimed, blocked, or closed'
+              : `--live: nothing ready, because all ${all.length} ready issues are handoff imports`
+            : [columns(rows, ['ID', 'PRIORITY', 'SCOPE', 'ORIGIN', 'FILES', 'TITLE']), '', summary].join('\n')
         );
         return 0;
       }
@@ -630,6 +716,17 @@ export async function run(
         emit(
           report,
           [
+            // The path is the identity. Two boards on one machine, one per
+            // session and one per repository, and an agent that cannot say
+            // which file it just read cannot tell a live board from an empty one.
+            implicit
+              ? [
+                  `swarm board — the agents working THIS repository — ${board.path}`,
+                  '  (Kilo\'s built-in board_read is a different tool and reads "no messages" by design;',
+                  '   it only carries traffic between one session and its subagents.)',
+                  '',
+                ].join('\n')
+              : `board — ${board.path}`,
             `${Object.entries(report.counts)
               .filter(([, count]) => count > 0)
               .map(([status, count]) => `${count} ${status}`)

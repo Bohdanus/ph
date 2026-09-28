@@ -68,20 +68,53 @@ npm run test:e2e        # playwright, HEADLESS - starts the dev server itself
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
-npm run board -- help   # the swarm board: who has what, and which files are taken
+npm run board             # the swarm board, live state: who holds what right now
+npm run board -- help     # the full command list
+npm run board -- ready    # the work queue an agent picks from
+npm run board -- watch    # the event log; --follow to tail it
 ```
 
 ## The swarm board
 
-`npm run board -- <command>` is the LIVE coordination layer: who has claimed
-what, which file two agents are about to edit, what one agent found that another
-needs, and what nobody claimed because the worktree is gone. `npm run board --
-help` is the full command list; `--json` works on every command except `watch`, `help` and `--version`.
-`ready` is the queue an agent works from: it sorts by priority, and the FILES
-column is the files the issue is _about_ (from its own create event) annotated
-with who is currently in them. An imported issue holds none of them on purpose,
-which is why it still shows its real files rather than nothing, and a filer's own
-reservation is contention like any other and is shown as such.
+`npm run board` with no command prints the live state and names itself. Use it
+as the first call in a fresh session: it settles what the board is, and it is
+the only invocation that answers that question.
+
+**There are two boards and they are not the same thing.** Kilo ships a built-in
+tool also called `board_read`, and it is empty _on purpose_: it carries messages
+between one session and the task children it spawned, so outside a fan-out it
+reports `messages: []` truthfully and knows nothing about this repository. The
+swarm board is one SQLite file that every worktree of this repo shares, and it
+is essentially never empty. **A `board_read` result is not evidence that nobody
+is working** — it is evidence that no subagent posted. This has already cost a
+session: one concluded the swarm board was broken when it held 196 events, and
+the fix that would have prevented it was a line naming the distinction, which is
+now in `board --help` and in the no-argument output.
+
+**`ready` ranks in four steps, and the order is the contract.** Priority first,
+because it is the one signal the filer stated on purpose. Then live before
+imported: a `HANDOFF.md#31` row is prose the durable record already owns, while
+a peer finding is the only thing on this board that exists _because_ two agents
+were working at once. Then startable before contended, since an issue another
+agent is already inside its files cannot be picked up. Then oldest first. The
+first two are the load-bearing ones: with fifty-four imported rows sharing a
+single `normal` band, the old tie-break was file order, so `ready` returned the
+import and buried the live work at the bottom of a fifty-row page. Every run
+prints `N live · M imported from the handoff documents · K startable now`, and
+`--live` drops the imports entirely.
+
+- **`ready` is not a page of the import.** The limit is applied _after_ ranking.
+  Slicing first is how a fifty-row queue ends up showing the same fifty rows
+  forever, with the live work never on the page at all.
+- **Filing an issue with `--files` TAKES those files for the filer.** So a test
+  or a script that files `--files src/x.ts` and then has _another_ agent hold
+  `src/x.ts` has a refused hold and no contention at all, and a filer's own lock
+  is deliberately not contention. Take the other agent's lock FIRST.
+- **Provenance is read off the origin grammar** (`isImportedOrigin` in
+  `db.mjs`): `<file>.md#<number-or-slug>`. A live finding has no origin, or a
+  free-text one (`main: 2026-09-28`). The pattern tolerates a path prefix on
+  purpose — a stricter one would read `e2e/OPEN_PROBLEMS.md#p2-…` as live,
+  which is the one answer that promotes a mirror to the head of the queue.
 
 **It is NOT the handoff documents.** `HANDOFF.md`, `TEST-FLAKES.md` and
 `e2e/OPEN_PROBLEMS.md` stay the durable, reviewable record of what is known

@@ -48,8 +48,42 @@ export const NO_LIMIT = Number.MAX_SAFE_INTEGER;
 
 const PRIORITY_ORDER = { critical: 0, high: 1, normal: 2, low: 3 };
 export const PRIORITIES = Object.keys(PRIORITY_ORDER);
+
+/**
+ * How urgent a priority is, lowest first. An unrecognised value sorts last
+ * rather than first, so a typo in a flag cannot promote itself to the head of
+ * the queue — the failure mode of a lookup that defaulted to zero.
+ */
+export const priorityRank = (priority) => PRIORITY_ORDER[priority] ?? 9;
 export const SCOPES = ['history', 'test', 'e2e', 'prod'];
 export const STATUSES = ['open', 'claimed', 'resolved', 'closed', 'deferred'];
+
+/**
+ * An origin that names one item of a handoff document — `HANDOFF.md#12`.
+ *
+ * Only the importer writes this shape. A live swarm finding is filed with no
+ * origin at all, or with a free-text one recording where it came from
+ * (`main: 2026-09-28 operator request`), and `handoff-import.mjs` keys
+ * idempotency on this exact grammar.
+ *
+ * The path characters are in there for a reason. The importer writes the bare
+ * filename (`OPEN_PROBLEMS.md#p3-…`, the scope map is what knows the `e2e/`
+ * part), so a stricter pattern would match everything real — and would then
+ * quietly call a path-qualified origin `live`, which is the one answer that
+ * promotes a mirror to the top of the work queue. A pattern that fails open here
+ * is worse than one that fails closed: the cost of a false negative is a row
+ * sorted slightly low, and the cost of a false positive is a queue that lies.
+ *
+ * Telling the two apart is the difference between a work queue and a mirror.
+ * Fifty-four imported rows and two live ones are not fifty-six pieces of work:
+ * the durable record already owns the prose, `AGENTS.md` says so in as many
+ * words, and a queue that cannot say which is which looks authoritative while
+ * being ninety-six percent noise.
+ */
+const IMPORTED_ORIGIN = /^[\w./-]+\.md#(?:\d+|[a-z0-9-]+)$/;
+
+/** True when this issue was imported from a handoff document rather than filed live. */
+export const isImportedOrigin = (origin) => IMPORTED_ORIGIN.test(String(origin ?? ''));
 
 /** Claimable states. A resolved, closed or deferred issue is not up for grabs. */
 const CLAIMABLE = new Set(['open', 'deferred']);
@@ -840,11 +874,7 @@ export class Board {
     return this.db
       .prepare(`SELECT * FROM issues ${clause}`)
       .all(...params)
-      .sort(
-        (a, b) =>
-          (PRIORITY_ORDER[a.priority] ?? 9) - (PRIORITY_ORDER[b.priority] ?? 9) ||
-          a.created_at.localeCompare(b.created_at)
-      )
+      .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority) || a.created_at.localeCompare(b.created_at))
       .slice(0, limit);
   }
 
