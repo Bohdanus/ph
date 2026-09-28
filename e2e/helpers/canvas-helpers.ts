@@ -50,6 +50,61 @@ export const LINE_START_Y = 150;
 export const LINE_END_X = 350;
 export const LINE_END_Y = 150;
 
+/**
+ * The document the app opens by default, and the size the export baselines describe.
+ */
+export const DEFAULT_DOCUMENT_WIDTH = 800;
+export const DEFAULT_DOCUMENT_HEIGHT = 600;
+
+/**
+ * Map a point in DOCUMENT space to an offset within the canvas box.
+ *
+ * The canvas element is `w-full h-full` of its grid area, and `usePointerPosition` fits the
+ * document into that box and centres it, so a document point lands at a different offset
+ * for every canvas size. A gesture specified in canvas offsets is therefore specified
+ * relative to the window, and the document it actually touches changes whenever the canvas
+ * resizes — which is what coupled the export visual-regression baselines to the shell's
+ * layout. Fixing a desktop overflow that changed the canvas from 974x890 to 974x583 moved
+ * the export by 459 pixels with no change to the export path.
+ *
+ * This mirrors the app's own mapping exactly (`src/hooks/usePointerPosition.ts:72-89`:
+ * `scale = min(outerW/imageW, outerH/imageH)`, then the leftover split evenly as the
+ * offset), so a caller can name a document point and get the same pixel whatever the
+ * viewport.
+ */
+export function documentToCanvasOffset(
+  box: { width: number; height: number },
+  documentX: number,
+  documentY: number
+): { x: number; y: number } {
+  const scale = Math.min(box.width / DEFAULT_DOCUMENT_WIDTH, box.height / DEFAULT_DOCUMENT_HEIGHT);
+  const offsetX = (box.width - DEFAULT_DOCUMENT_WIDTH * scale) / 2;
+  const offsetY = (box.height - DEFAULT_DOCUMENT_HEIGHT * scale) / 2;
+
+  return { x: offsetX + documentX * scale, y: offsetY + documentY * scale };
+}
+
+/**
+ * The same mapping read off the live app, for asserting that `documentToCanvasOffset`
+ * still agrees with it.
+ *
+ * Returns the document point the app believes a given canvas offset refers to, which is
+ * `usePointerPosition`'s own inverse. If these two ever disagree, a document-space gesture
+ * is landing somewhere other than where the helper said, and every document-space spec is
+ * silently measuring the wrong pixel.
+ */
+export function canvasOffsetToDocument(
+  box: { width: number; height: number },
+  canvasX: number,
+  canvasY: number
+): { x: number; y: number } {
+  const scale = Math.min(box.width / DEFAULT_DOCUMENT_WIDTH, box.height / DEFAULT_DOCUMENT_HEIGHT);
+  const offsetX = (box.width - DEFAULT_DOCUMENT_WIDTH * scale) / 2;
+  const offsetY = (box.height - DEFAULT_DOCUMENT_HEIGHT * scale) / 2;
+
+  return { x: (canvasX - offsetX) / scale, y: (canvasY - offsetY) / scale };
+}
+
 export const CANVAS_REDRAW_TIMEOUT_MS = 10_000;
 export const CANVAS_REDRAW_POLL_INTERVAL_MS = 100;
 

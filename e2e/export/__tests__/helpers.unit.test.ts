@@ -6,6 +6,8 @@ import sharp from 'sharp';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import {
   CHANGED_CHANNEL_THRESHOLD_GENERAL,
+  EXPORT_LINE_END,
+  EXPORT_LINE_START,
   CHANGED_CHANNEL_THRESHOLD_ICO,
   CHANNEL_DELTA_TOLERANCE,
   DOWNLOAD_TIMEOUT_MS,
@@ -25,10 +27,8 @@ import {
 import {
   CANVAS_REDRAW_CLIP,
   CANVAS_REDRAW_POLL_INTERVAL_MS,
-  LINE_END_X,
-  LINE_END_Y,
-  LINE_START_X,
-  LINE_START_Y,
+  canvasRedrawClip,
+  documentToCanvasOffset,
 } from '../../helpers/canvas-helpers';
 
 const mocks = vi.hoisted(() => {
@@ -409,12 +409,22 @@ function createDownloadMock(suggestedFilename: string, failure: string | null = 
   };
 }
 
+/**
+ * The redraw region `setupExportTest` now polls, derived from the document-space line.
+ *
+ * It replaced a fixed `CANVAS_REDRAW_CLIP` region, which only covered the line at the one
+ * canvas size it was chosen for: the line sits at document y 57.7, so at any canvas that
+ * is not taller than the document's aspect the box-relative 100,100 region is below it and
+ * the wait passes without ever confirming the stroke reached the backing store.
+ */
 function redrawClip(box: Box): Box {
+  const start = documentToCanvasOffset(box, EXPORT_LINE_START.x, EXPORT_LINE_START.y);
+  const end = documentToCanvasOffset(box, EXPORT_LINE_END.x, EXPORT_LINE_END.y);
   return {
-    x: box.x + CANVAS_REDRAW_CLIP.x,
-    y: box.y + CANVAS_REDRAW_CLIP.y,
-    width: CANVAS_REDRAW_CLIP.width,
-    height: CANVAS_REDRAW_CLIP.height,
+    x: box.x + Math.floor(start.x) - 20,
+    y: box.y + Math.floor(start.y) - 20,
+    width: Math.ceil(end.x - start.x) + 40,
+    height: 40,
   };
 }
 
@@ -619,9 +629,14 @@ describe('Export Helpers', () => {
       expect(surface.locator).not.toHaveBeenCalled();
       expect(mocks.mockExpect).toHaveBeenCalledWith(canvas);
       expect(drawTool.click).toHaveBeenCalled();
+      // The stroke is specified in DOCUMENT space and mapped into this canvas, so the
+      // document point it marks does not depend on the canvas size. 512x384 is aspect 1.333,
+      // the document's own aspect, so there is no letterbox and the mapping is a plain scale.
+      const start = documentToCanvasOffset(box, EXPORT_LINE_START.x, EXPORT_LINE_START.y);
+      const end = documentToCanvasOffset(box, EXPORT_LINE_END.x, EXPORT_LINE_END.y);
       expect(surface.mouse.move.mock.calls).toEqual([
-        [box.x + LINE_START_X, box.y + LINE_START_Y],
-        [box.x + LINE_END_X, box.y + LINE_END_Y],
+        [box.x + start.x, box.y + start.y],
+        [box.x + end.x, box.y + end.y],
       ]);
       expect(surface.mouse.down).toHaveBeenCalled();
       expect(surface.mouse.up).toHaveBeenCalled();
@@ -646,12 +661,17 @@ describe('Export Helpers', () => {
       await setupExportTest(page, createTestInfoMock());
 
       const [start, end] = surface.mouse.move.mock.calls;
-      expect(start).toEqual([box.x + LINE_START_X, box.y + LINE_START_Y]);
-      expect(end).toEqual([box.x + LINE_END_X, box.y + LINE_END_Y]);
-      // Literal pins: box-relative offsets of 150/150 -> 350/150, so hard-coding
-      // viewport coordinates in the helper cannot satisfy this expectation.
-      expect(start).toEqual([461, 347]);
-      expect(end).toEqual([661, 347]);
+      const startOffset = documentToCanvasOffset(box, EXPORT_LINE_START.x, EXPORT_LINE_START.y);
+      const endOffset = documentToCanvasOffset(box, EXPORT_LINE_END.x, EXPORT_LINE_END.y);
+      expect(start).toEqual([box.x + startOffset.x, box.y + startOffset.y]);
+      expect(end).toEqual([box.x + endOffset.x, box.y + endOffset.y]);
+      // Literal pins. 640x480 is the document's aspect, so `scale = 0.8` with no letterbox
+      // and the document points map to 98.5626,46.1602 and 229.9795,46.1602. Hard-coding
+      // either viewport coordinates or the old 150/150 box offsets cannot satisfy these.
+      expect(start[0]).toBeCloseTo(409.562628, 5);
+      expect(start[1]).toBeCloseTo(243.160164, 5);
+      expect(end[0]).toBeCloseTo(540.979466, 5);
+      expect(end[1]).toBeCloseTo(243.160164, 5);
       expect(surface.screenshot).toHaveBeenCalledWith({ clip: redrawClip(box) });
     });
 
@@ -672,8 +692,22 @@ describe('Export Helpers', () => {
 
       expect(surface.screenshot).toHaveBeenCalledTimes(2);
       expect(surface.screenshot).toHaveBeenCalledWith({ clip: redrawClip(box) });
-      // Literal pin: the polled region is the box-relative 100,100 300x100 clip.
-      expect(surface.screenshot).toHaveBeenCalledWith({ clip: { x: 112, y: 108, width: 300, height: 100 } });
+      // Literal pin: a 500x500 box is taller than the document's aspect, so the document is
+      // fitted to the width at `scale = 0.625` with a vertical letterbox of 62.5px. The line
+      // therefore lands at canvas y 98.56, and the polled region is derived from that. The
+      // old fixed 100,100 region sat BELOW the line here, so the wait passed without the
+      // stroke ever reaching the backing store.
+      const startOffset = documentToCanvasOffset(box, EXPORT_LINE_START.x, EXPORT_LINE_START.y);
+      // The line's canvas span is (287.474333 - 123.203285) * 0.625 = 102.67, so the region is
+      // ceil(102.67) + 40 = 143 wide and 40 tall, set 20px above and left of the line.
+      expect(surface.screenshot).toHaveBeenCalledWith({
+        clip: {
+          x: 12 + Math.floor(startOffset.x) - 20,
+          y: 8 + Math.floor(startOffset.y) - 20,
+          width: 143,
+          height: 40,
+        },
+      });
       expect(surface.waitForTimeout).toHaveBeenCalledWith(CANVAS_REDRAW_POLL_INTERVAL_MS);
     });
 
@@ -1069,7 +1103,12 @@ describe('Export Helpers', () => {
       ]);
       expect(surface.mouse.down).toHaveBeenCalled();
       expect(surface.mouse.up).toHaveBeenCalled();
-      expect(surface.screenshot).toHaveBeenCalledWith({ clip: redrawClip(box) });
+      // The ICO flow is a different draw: a 256x256 document, stroked with `ICON_STROKE`
+      // canvas-relative offsets, and compared in-browser against the source canvas rather
+      // than against a committed baseline. It keeps the default `canvasRedrawClip`, so this
+      // is the box-relative 100,100 300x100 region rather than the export line's, and it
+      // remains coupled to the canvas box — recorded in `e2e/OPEN_PROBLEMS.md`.
+      expect(surface.screenshot).toHaveBeenCalledWith({ clip: canvasRedrawClip(box) });
       expect(canvas.evaluate).toHaveBeenCalled();
       expect(result).toBe(SOURCE_DATA_URL);
     });

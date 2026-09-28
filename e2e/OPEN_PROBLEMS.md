@@ -429,3 +429,77 @@ single-tool groups`.
   `playwright.config.ts` starts `npm run dev`. Nothing establishes that
   `vite build` output renders byte-identically, so a future switch to serving
   `dist/` should be treated as a possible baseline-affecting change.
+
+## P1 — the committed export baselines do not match on this host, and the delta predates the responsive work
+
+`e2e/export/visual-regression.spec.ts:37`, all 7 `comparePixels` formats
+
+On a clean checkout of `main` (`467f96a`), with no local changes, every committed
+baseline comparison fails on this host:
+
+| format | diff pixels | ratio  |
+| ------ | ----------- | ------ |
+| PNG    | 3824        | 0.0080 |
+| BMP    | 3824        | 0.0080 |
+| JPEG   | 3889        | 0.0081 |
+| WebP   | 3847        | 0.0080 |
+
+Deterministic: three consecutive runs of the PNG case returned 3824 exactly. The ICO
+comparison, which checks the export against the live source canvas in-browser rather than
+against a committed file, passes — so this is a host-versus-baseline difference, not a
+defect in the export path. The baselines are pixel data recorded on some other machine, and
+whatever differs on this one (font rasterisation, colour management, or a canvas
+accelerator path) touches roughly 0.8% of pixels on an 800x600 document.
+
+This contradicts the "Verified by running the suite against a real browser" entry above,
+which reports these comparisons passing. That entry is a record of a run on a different
+host, not a property of this one. Re-read it as host-specific.
+
+**Not re-recorded.** A baseline re-record is the operator's decision, and doing it here
+would bake this machine's 0.8% into the repository while masking whatever actually differs
+— so a real environment mismatch would be accepted silently. Whatever is decided, it should
+be decided with both numbers in view: 3824 is this host with or without the responsive
+work, so it is not a regression from it.
+
+## P2 — the export line is specified in document space; the ICO line still is not
+
+`e2e/export/helpers.ts`, `setupIcoTest`
+
+`setupExportTest` used to draw at canvas-relative offsets (`150,150` to `350,150`), which
+made the export a function of the window rather than of the document. The canvas is
+`w-full h-full` of a grid area the shell sizes, and `usePointerPosition` fits the document
+into it and centres it, so the same offsets marked different document points at different
+canvas sizes. The baselines encoded one particular canvas height: fixing a real desktop
+overflow moved the canvas from 974x890 to 974x583 and shifted the export by 459 pixels with
+no change anywhere in the export path.
+
+`setupExportTest` now specifies the line in document space and maps it in with
+`documentToCanvasOffset`, which mirrors the app's own contain-fit, and pins the committed
+pixels by using the document points the old offsets mapped to. `the export is independent of
+the canvas height` in the same spec asserts the property directly, and
+`e2e/helpers/__tests__/document-mapping.unit.test.ts` pins the mapping.
+
+`setupIcoTest` is untouched and still strokes at `ICON_STROKE` canvas-relative offsets
+against a 256x256 document. It escapes harm today because it compares in-browser against the
+source canvas rather than against a committed baseline, so a moved line still matches itself.
+It is one layout change away from the same class of failure, and the fix is the same: map
+`ICON_STROKE` through `documentToCanvasOffset` with a 256x256 document.
+
+## P2 — an explicit redraw clip is in page coordinates, and a canvas-relative one passes for the wrong reason
+
+`e2e/helpers/canvas-helpers.ts`, `buildClip`
+
+`buildClip` returns an explicit `clip` exactly as given; only its own default,
+`canvasRedrawClip`, adds the canvas box origin. A caller that passes canvas-relative
+offsets therefore polls the wrong region of the page.
+
+The failure mode is the dangerous shape rather than an obvious one: the wrong region is
+still a region, and `hasDarkPixels` may be satisfied by something that was already dark —
+the app's `#212529` header, for one. The wait returns, the stroke is not what was observed,
+and the test continues on a false positive. A clip that lands on empty canvas instead fails
+loudly, which is the better of the two outcomes and is not guaranteed.
+
+`setupExportTest` hit this while being decoupled and passed anyway, which is why
+`e2e/export/__tests__/helpers.unit.test.ts` pins the clip in page coordinates with literal
+values. Worth knowing before passing a custom clip anywhere in this suite: the two forms
+differ by the box origin and nothing in the types distinguishes them.

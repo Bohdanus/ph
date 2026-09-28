@@ -1,15 +1,7 @@
 import { type Download, expect, type Page, type TestInfo } from '@playwright/test';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import {
-  drawLine,
-  getWorkspaceCanvas,
-  LINE_END_X,
-  LINE_END_Y,
-  LINE_START_X,
-  LINE_START_Y,
-  waitForCanvasRedraw,
-} from '../helpers/canvas-helpers';
+import { documentToCanvasOffset, drawLine, getWorkspaceCanvas, waitForCanvasRedraw } from '../helpers/canvas-helpers';
 import { clickToolButton } from '../helpers/toolbar-helpers';
 
 export interface ExportFormat {
@@ -87,6 +79,28 @@ export function mimeType(extension: string | null | undefined): string {
   );
 }
 
+/**
+ * The test line, in DOCUMENT space, at the position the committed export baselines record.
+ *
+ * These are not round numbers on purpose. The baselines were recorded with the line
+ * specified in canvas-relative offsets (`150,150` to `350,150`) against a 974x890 canvas —
+ * the overflowing layout, in which the document was fitted at `scale = 1.2175` with a
+ * `79.75px` vertical letterbox. Under that mapping those offsets are the document points
+ * below. Pinning the document points reproduces the committed pixels exactly, which is what
+ * makes this change reviewable: the export is now a function of the document alone, so the
+ * shell's layout cannot move it again.
+ *
+ * Derivation, from `documentToCanvasOffset` inverted at the baseline geometry:
+ *
+ *   scale  = min(974/800, 890/600) = 1.2175
+ *   offsetX = (974 - 800*1.2175)/2  = 0
+ *   offsetY = (890 - 600*1.2175)/2  = 79.75
+ *   start = ((150 - 0)/1.2175, (150 - 79.75)/1.2175)
+ *   end   = ((350 - 0)/1.2175, (150 - 79.75)/1.2175)
+ */
+export const EXPORT_LINE_START = { x: 123.203285, y: 57.700205 };
+export const EXPORT_LINE_END = { x: 287.474333, y: 57.700205 };
+
 export async function setupExportTest(
   page: Page,
   testInfo: TestInfo
@@ -105,9 +119,34 @@ export async function setupExportTest(
   const box = await canvas.boundingBox();
   if (!box) throw new Error('Canvas not found');
 
+  // The line is specified in document coordinates and mapped into this canvas, so the
+  // document it marks — and therefore the exported image — is the same whatever the shell
+  // does with the space around it. See `documentToCanvasOffset` for why the box-relative
+  // form could not be used here.
+  const start = documentToCanvasOffset(box, EXPORT_LINE_START.x, EXPORT_LINE_START.y);
+  const end = documentToCanvasOffset(box, EXPORT_LINE_END.x, EXPORT_LINE_END.y);
+
   await clickToolButton(page, 'draw');
-  await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-  await waitForCanvasRedraw(page, box);
+  await drawLine(page, box, start.x, start.y, end.x, end.y);
+
+  // The redraw clip has to be derived from the mapped line as well. The shared
+  // `CANVAS_REDRAW_CLIP` is a fixed region of the canvas box, and at any canvas size other
+  // than the one it was chosen for it does not cover the line — so waiting on it would pass
+  // without ever confirming the stroke reached the backing store.
+  //
+  // The clip is in PAGE coordinates: `buildClip` takes an explicit clip as given, and only
+  // its own default (`canvasRedrawClip`) adds the box origin. Passing canvas-relative
+  // offsets here would poll the wrong region — and worse, it can poll a region that is
+  // legitimately dark for another reason and so report success without the stroke ever
+  // having reached the backing store.
+  await waitForCanvasRedraw(page, box, {
+    clip: {
+      x: box.x + Math.floor(start.x) - 20,
+      y: box.y + Math.floor(start.y) - 20,
+      width: Math.ceil(end.x - start.x) + 40,
+      height: 40,
+    },
+  });
 
   const sourceDataUrl = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL('image/png'));
 
