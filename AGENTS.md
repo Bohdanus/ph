@@ -167,26 +167,55 @@ tests", "Fix failing useApp.psd tests", "Fix failing useRect tests").
 `test:staged` is a 2.8s scoped run where the full suite is 7-14s, and it is
 unconditionally safe in Vitest 5: with no matching staged path it reports
 `No test files found` and exits 0, and a staged path outside `src/` — a `.md`
-file, an `e2e/**` helper — also exits 0 without running the whole suite. It
-therefore needs no `--passWithNoTests` and no guard. What it does **not** give you
-is completeness: a file with no test importing it passes it, which is why the full
-suite still runs at push.
+file, an `e2e/**` helper, a binary asset — also exits 0 without running the whole
+suite. It therefore needs no `--passWithNoTests` and no guard. What it does **not**
+give you is completeness: a file with no test importing it passes it, which is why
+the full suite still runs at push.
+
+One input widens it by design: a **merge commit** is index-vs-`HEAD`, so
+`git diff --cached` reports every file the merge brings in rather than what the
+operator staged. 120 merged `src` paths measure 9.8s and 81 test files, so a large
+merge makes the commit hook ~19s instead of ~12s. Slower, never a false pass. The
+opposite holds too: the selection is derived from Vite's module graph, so a staged
+file that many modules depend on legitimately widens it, and that set is not stable
+across environments — a staged `package.json` selects all 180 test files in a warm
+checkout and none at all in a freshly installed one. Do not rely on a staged
+non-`src` file dragging in its dependents; the full suite at push is what covers
+that case.
+
+The staged list is read with `-z` and passed through `xargs -0` on purpose. An
+unquoted `$(git diff --cached --name-only)` word-splits and glob-expands, and the
+failure is silent rather than loud: a path that expands to nothing makes vitest
+report `No test files found` and exit 0, so the gate appears to pass while testing
+nothing. No tracked filename today contains a space or a glob metacharacter, so
+the shell form works by accident of the current tree, and `src/components/[id]/`
+style paths are a plausible next addition. Empty input is a true no-op: BSD
+`xargs` does not invoke the command at all, so a docs-only commit costs 0.04s.
 
 Measured costs, for judging a future change to this table: `build` 1.7s,
 `test:e2e:unit` 1.1s, `test:staged` 2.8s, `tsc -b` 5s, `gate:commit` end to end
-~9s, `test:staged` adding ~3s, `test` 7-14s, `lint:check` 7s. `build` is in the
-commit hook because it is not redundant with `tsc`: `vite build` runs Babel and
-esbuild, which strip types without checking them, so it catches Sass, wasm
-resolution, PostCSS and import resolution that `tsc` cannot, and `tsc` catches types
-the bundle never sees.
+~9s, `test:staged` adding ~3s, `test` 7-14s. `build` is in the commit hook
+because it is not redundant with `tsc`: `vite build` runs Babel and esbuild,
+which strip types without checking them, so it catches Sass, wasm resolution,
+PostCSS and import resolution that `tsc` cannot, and `tsc` catches types the
+bundle never sees. `gate:verify`'s name predates its contents — it runs no lint
+and no app test, which is why it is a distinct row above rather than the whole
+gate.
 
 `lint-staged` formats two groups. `*.{ts,tsx}` gets `eslint --fix` and
 `prettier --write`; `*.{js,scss,jsonc,yml,yaml,md,json}` gets `prettier --write`
 only, because no ESLint config covers those and adding it would break every commit
 touching a `.md` or `.scss` file. The second group deliberately includes `.js`,
 `.scss` and `.jsonc`: `prettier --check .` matches all of them, and anything it
-matches but lint-staged does not is formatted by nobody at commit time and fails at
-`lint:check` or in CI instead.
+matches but lint-staged does not is formatted by nobody at commit time and fails
+in CI instead.
+
+Nothing local runs `lint:check` any more. `gate:push` used to, and dropping it
+means a whole-repo `eslint . --cache` and a whole-repo `prettier --check .` are
+CI-only, so a file already committed unformatted, a branch switch that changes
+lint rules, and a bad rebase are all caught by the `ci` job rather than locally.
+lint-staged covers the staged files, which is what the `.scss` gap needed, so the
+trade is a loss of whole-tree coverage and nothing else.
 
 `--fail-on-changes` is the reason the commit hook is trustworthy. By default
 lint-staged re-adds whatever `eslint --fix` and `prettier --write` changed, so the

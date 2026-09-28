@@ -15,7 +15,7 @@
     "format": "prettier --write .",
     "preview": "vite preview",
     "test": "vitest --run",
-    "test:staged": "vitest related $(git diff --cached --name-only --diff-filter=ACMR) --run",
+    "test:staged": "git diff --cached --name-only --diff-filter=ACMR -z | xargs -0 vitest related --run",
     "test:integration": "vitest --run src/contexts/__tests__/psd-utils.test.ts src/hooks/__tests__/useApp.psd.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
