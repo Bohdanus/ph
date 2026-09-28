@@ -168,8 +168,47 @@ it came from. Merge this with the length check above rather than adding a second
 guard on the same two lines.
 
 Pinned by `rejects with a raw TypeError when the CDP response omits data, and
-detaches` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:322`. A fix removes
-that pin in the same change.
+detaches` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:322`. A fix removes that
+pin in the same change.
+
+## P2 — the Text toolbar supplies the rectangle Apply's gate asks for, so text typed without a drag commits at the document origin
+
+`src/components/ToolbarsRight/Text/Text.tsx:37-42`, `:83`, `:210` and
+`src/util/rect.ts:117-166`
+
+`Apply` is gated on `disabled={!text || !rect}` (`Text.tsx:210`) and `applyText`
+re-checks `if (text && rect)` (`:83`), so the control states that a rectangle is a
+precondition for committing a text layer. The toolbar's own text input satisfies that
+precondition by itself: `handleTextChange` passes every keystroke through
+`calculateNewRect`, which manufactures a rectangle from the `{ x1: 0, y1: 0, x2: 0,
+y2: 0 }` placeholder it substitutes when `args.rect` is null (`rect.ts:123`), then
+widens it to the measured text (`rect.ts:133-166`). Typing the first character
+therefore produces a real rectangle, `!rect` is false, and Apply enables with no canvas
+interaction at all — so the `!rect` half of the gate is unreachable from the toolbar.
+
+Measured headless on `main` at `aea55d3`, foreground set to `#ff0000`, starting
+document 800x600, no canvas drag at any point:
+
+| step                         | observed                                         |
+| ---------------------------- | ------------------------------------------------ |
+| select the Type tool         | `Apply` disabled                                 |
+| type `Hi` into `#text-input` | `Apply` **enabled**                              |
+| click `Apply`                | layer row `text 2` added                         |
+| where the red pixels land    | document (5, 5) onward — the **document origin** |
+
+The drag-then-type path instead commits inside the dragged rectangle, so the two ways
+of enabling Apply place the text in different places and the UI says nothing about which
+one happened. A user who types before looking at the canvas gets a layer in the
+top-left corner of the document, which is routinely outside the region being worked on.
+The commit is not lost — the layer appears in the panel — but its position is not what
+the button's own gate advertises.
+
+Fix is a product decision, not a test change. Either commit at the origin deliberately
+and drop `!rect` from the gate so the control stops implying otherwise, or keep the
+gate and stop `calculateNewRect` from inventing a rectangle when `args.rect` is null:
+return `null` in that branch and have `handleTextChange` leave the existing rectangle
+alone. Whichever is chosen, `Text.tsx:210` and `handleTextChange` have to agree about
+it. No test pins the current behaviour, because it is the behaviour the entry questions.
 
 ## P3 — zero-sized image yields `NaN` edges
 
