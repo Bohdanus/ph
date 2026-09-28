@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "dist": "vite build",
+    "board": "node scripts/agent-board.mjs",
     "lint": "node scripts/lint-tracked.js --eslint-only",
     "lint:check": "node scripts/lint-tracked.js",
     "tsc": "tsc -b",
