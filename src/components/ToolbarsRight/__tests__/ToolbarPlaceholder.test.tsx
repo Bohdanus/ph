@@ -15,21 +15,18 @@ const CONFIG_KEYS = Object.keys(placeholderToolGroups) as Array<keyof typeof pla
  * (`src/components/ToolbarsRight/Paint/Paint.tsx`) and no longer have a config group, so
  * listing them here would keep their placeholder contract alive after the fact.
  *
- * Eleven more are absent for the same reason. `eraser`, `smudge`, `sharpen`, `paint-bucket`,
- * `gradient`, `clone-stamp`, `eyedropper`, `elliptical-selection`, `quick-selection`, `dodge`
- * and `burn` each render a real options bar, and `toolbarPlaceholderConfig.ts` has already
- * dropped their groups — a config key that survived its tool's panel would be dead config the
- * "no tool consumes" assertion below would report. Their bars are pinned individually in
- * `src/components/ToolbarsRight/<Name>/__tests__/`, and the registry's claim that all eleven
- * still mount a real bar is asserted in `src/tools/__tests__/tool-processors.test.ts`.
+ * Twelve more are absent for the same reason. `eraser`, `smudge`, `sharpen`, `paint-bucket`,
+ * `gradient`, `clone-stamp`, `eyedropper`, `elliptical-selection`, `quick-selection`, `dodge`,
+ * `burn` and `color-replacement` each render a real options bar, and
+ * `toolbarPlaceholderConfig.ts` has already dropped their groups — a config key that survived its
+ * tool's panel would be dead config the "no tool consumes" assertion below would report. Their
+ * bars are pinned individually in `src/components/ToolbarsRight/<Name>/__tests__/`, and the
+ * registry's claim that all twelve still mount a real bar is asserted in
+ * `src/tools/__tests__/tool-processors.test.ts`.
  */
 const PLACEHOLDER_TOOLS = [
-  {
-    toolName: 'color-replacement',
-    configKey: 'color-replacement',
-    title: 'Color Replacement Tool',
-    showTodoBadge: true,
-  },
+  // `color-replacement` was here and is gone: it has a real options bar now, so there is no
+  // placeholder group left for it to be keyed by.
   { toolName: 'pen', configKey: 'pen', title: 'Pen Tool', showTodoBadge: true },
   { toolName: 'freeform-pen', configKey: 'pen', title: 'Freeform Pen Tool', showTodoBadge: true },
   { toolName: 'curvature-pen', configKey: 'pen', title: 'Curvature Pen Tool', showTodoBadge: true },
@@ -65,6 +62,7 @@ const TOOLS_WITH_REAL_OPTIONS_BARS = [
   'smudge',
   'dodge',
   'burn',
+  'color-replacement',
 ] as const;
 
 describe('PlaceholderTool', () => {
