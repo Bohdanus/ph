@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useReducer, type Dispatch } from 'react';
-import { DEFAULT_TOOL } from '../util/constants.ts';
+import { DEFAULT_TOOL, REORDER_ACTION } from '../util/constants.ts';
 
 import type { ReactNode, RefObject } from 'react';
 import type { Layer, LayerId, LayersRecord } from './layer-types.ts';
@@ -16,6 +16,8 @@ import type { ToolArgs, ToolName } from './tool-types.ts';
 import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
 import { cloneDocumentFrame, documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
+import { createHistoryItem } from './history-utils.ts';
+import { reorderLayers } from './layer-utils.ts';
 import { freezeDurableDocument, type DurableDocument, type DurableHistoryEntry } from './history-model.ts';
 import {
   convertLegacyHistorySafely,
@@ -162,6 +164,24 @@ type StoreUpdates = Partial<
  */
 export type StoreMetadataUpdates = Pick<StoreUpdates, 'fileName' | 'hasImage' | 'hasUnsavedChanges'>;
 
+type ReorderLayersIntent = {
+  layerToMoveId: LayerId;
+  afterWhichLayerId?: LayerId | null;
+};
+
+type ReorderLayersAction = {
+  type: 'REORDER_LAYERS';
+  /** Callers provide intent only; the store owns the history and projection metadata. */
+  payload: ReorderLayersIntent;
+  /** Dispatcher-owned metadata keeps the reducer and fast path on one history item and conversion. */
+  historyItem?: HistoryItem;
+  durableProjection?: {
+    document: DurableDocument | null;
+    status: DurableDocumentStatus;
+    diagnostics: readonly MigrationDiagnostic[];
+  };
+};
+
 type Action =
   | { type: 'SET_HAS_IMAGE'; payload: boolean }
   | { type: 'SET_HAS_UNSAVED_CHANGES'; payload: boolean }
@@ -174,6 +194,7 @@ type Action =
   | { type: 'ADD_LAYER'; payload: { layers: LayersRecord; activeLayerId: LayerId } }
   | { type: 'PUBLISH_RUNTIME_PRESENTATION'; payload: { layers: LayersRecord } }
   | { type: 'PROMOTE_LAYER_PRESENTATIONS'; payload: LayerPresentationBatch }
+  | ReorderLayersAction
   /**
    * Rasters a writer built itself and is about to publish into a layer record:
    * an import, a merge, a document import. They are already in the layer record
@@ -298,8 +319,8 @@ type CommitDocumentEditAction = Extract<Action, { type: 'COMMIT_DOCUMENT_EDIT' }
 /**
  * The one post-transition projection, shared by every path that publishes a
  * new timeline: the `COMMIT_DOCUMENT_EDIT` reducer branch, the dispatcher's
- * commit fast path, the `APPLY_HISTORY_REPLAY` reducer branch, and the
- * dispatcher's replay path.
+ * commit fast path, the `APPLY_HISTORY_REPLAY` reducer branch, the dispatcher's
+ * replay path, and the store-owned reorder action.
  *
  * The dispatcher bypasses the reducer and pre-computes `latestStateRef` so a
  * second dispatch in the same React batch is decided against the state the
@@ -335,6 +356,32 @@ function projectPublishedTimeline(
       : {}),
     hasUnsavedChanges: true,
   };
+}
+
+function createReorderHistoryItem(intent: ReorderLayersIntent): HistoryItem {
+  return createHistoryItem({
+    layerId: intent.layerToMoveId,
+    actionName: REORDER_ACTION,
+    args: { layerToMoveId: intent.layerToMoveId, afterWhichLayerId: intent.afterWhichLayerId },
+  });
+}
+
+function reorderLayersFromState(layers: LayersRecord, intent: ReorderLayersIntent): LayersRecord {
+  if (!layers[intent.layerToMoveId]) return layers;
+  if (intent.afterWhichLayerId && !layers[intent.afterWhichLayerId]) return layers;
+
+  const reorderedLayers = Object.fromEntries(
+    Object.entries(layers).map(([id, layer]) => [id, { ...layer, pos: { ...layer.pos } }])
+  ) as LayersRecord;
+
+  // Legacy replay treats an absent mover or anchor as a no-op. Avoid calling the
+  // mutating helper in that case so the store keeps the same no-throw semantics.
+  reorderLayers({
+    layers: reorderedLayers,
+    layerToMoveId: intent.layerToMoveId,
+    afterWhichLayerId: intent.afterWhichLayerId,
+  });
+  return reorderedLayers;
 }
 
 function commitSelection(state: StoreData, selection: Selection): StoreData {
@@ -469,6 +516,23 @@ function reducer(state: StoreData, action: Action): StoreData {
         ...action.payload,
         durableStatus: state.durableStatus === 'unavailable' ? 'unavailable' : 'stale',
       };
+    case 'REORDER_LAYERS': {
+      const historyItem = action.historyItem ?? createReorderHistoryItem(action.payload);
+      const timeline = updateHistoryTimeline(
+        { entries: state.history, cursor: state.historyIndex, branchRevision: state.branchRevision },
+        { type: 'append', entry: historyItem }
+      );
+      const durableProjection =
+        action.durableProjection ??
+        buildDurableDocument(state, [...timeline.entries], timeline.cursor, timeline.branchRevision);
+      return projectPublishedTimeline(state, {
+        updates: { layers: reorderLayersFromState(state.layers, action.payload) },
+        timeline,
+        durableDocument: durableProjection.document,
+        durableStatus: durableProjection.status,
+        durableDiagnostics: durableProjection.diagnostics,
+      });
+    }
     case 'COMMIT_DOCUMENT_EDIT': {
       const timeline = updateHistoryTimeline(
         { entries: state.history, cursor: state.historyIndex, branchRevision: state.branchRevision },
@@ -778,6 +842,48 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       latestStateRef.current = reducer(currentState, action);
       rawDispatch(action);
+      return;
+    }
+    if (action.type === 'REORDER_LAYERS') {
+      const intent = { ...action.payload };
+      const historyItem = action.historyItem ?? createReorderHistoryItem(intent);
+      const timeline = updateHistoryTimeline(
+        {
+          entries: currentState.history,
+          cursor: currentState.historyIndex,
+          branchRevision: currentState.branchRevision,
+        },
+        { type: 'append', entry: historyItem }
+      );
+      // Reorder intentionally takes the existing conversion path. It has no
+      // durable append plan, so the shadow is rebuilt from the legacy timeline.
+      const converted = buildDurableDocument(
+        currentState,
+        [...timeline.entries],
+        timeline.cursor,
+        timeline.branchRevision
+      );
+      const nextLayers = reorderLayersFromState(currentState.layers, intent);
+      const committedAction: ReorderLayersAction = {
+        ...action,
+        payload: intent,
+        historyItem,
+        durableProjection: {
+          document: converted.document,
+          status: converted.status,
+          diagnostics: converted.diagnostics,
+        },
+      };
+      const nextState = projectPublishedTimeline(currentState, {
+        updates: { layers: nextLayers },
+        timeline,
+        durableDocument: converted.document,
+        durableStatus: converted.status,
+        durableDiagnostics: converted.diagnostics,
+      });
+      latestStateRef.current = nextState;
+      rawDispatch(committedAction);
+      retireDepartedPresentationBitmaps(presentationScope, currentState.layers, nextState.layers);
       return;
     }
     if (action.type === 'COMMIT_DOCUMENT_EDIT') {

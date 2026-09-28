@@ -16,7 +16,6 @@ import {
   createAffineLayerOperation,
   createLayerSource,
   getSortedLayersArray,
-  reorderLayers,
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs } from './tool-types.ts';
@@ -34,7 +33,6 @@ import {
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   REMOVE_ACTION,
-  REORDER_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
@@ -476,21 +474,9 @@ export const useLayers = () => {
   };
 
   const moveLayerAfter = (layerToMoveId: LayerId, afterWhichLayerId?: LayerId | null) => {
-    const reorderedLayers = Object.fromEntries(
-      Object.entries(layers).map(([id, layer]) => [id, { ...layer, pos: { ...layer.pos } }])
-    ) as LayersRecord;
-    reorderLayers({ layers: reorderedLayers, layerToMoveId, afterWhichLayerId });
-
     dispatch({
-      type: 'COMMIT_DOCUMENT_EDIT',
-      payload: {
-        updates: { layers: reorderedLayers },
-        historyItem: createHistoryItem({
-          layerId: layerToMoveId,
-          actionName: REORDER_ACTION,
-          args: { layerToMoveId, afterWhichLayerId },
-        }),
-      },
+      type: 'REORDER_LAYERS',
+      payload: { layerToMoveId, afterWhichLayerId },
     });
     drawAllLayers();
   };

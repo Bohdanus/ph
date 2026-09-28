@@ -210,7 +210,7 @@ describe('useLayers retained history commits', () => {
     expect(store.previewLayers.current).toEqual({});
   });
 
-  it('records a reorder as its own history entry against a detached copy of the record', () => {
+  it('records a reorder as its own history entry through the store-owned action', () => {
     const result = setup({ bottom: makeLayer('bottom', 0), top: makeLayer('top', 1) });
     const before = result.current.store.layers;
 

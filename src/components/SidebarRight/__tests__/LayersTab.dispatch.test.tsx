@@ -1,13 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import LayersTab from '../LayersTab.tsx';
-import {
-  HIDE_LAYER_ACTION,
-  REMOVE_ACTION,
-  RENAME_LAYER_ACTION,
-  REORDER_ACTION,
-  SHOW_LAYER_ACTION,
-} from '@/util/constants.ts';
+import { HIDE_LAYER_ACTION, REMOVE_ACTION, RENAME_LAYER_ACTION, SHOW_LAYER_ACTION } from '@/util/constants.ts';
 import { createMockStoreState, type MockStoreState } from '@/__tests__/fixtures/store.ts';
 import { createMockLayer, createMockLayers } from '@/__tests__/fixtures/layer.ts';
 import { createMockCanvas } from '@/__tests__/fixtures/canvas.ts';
@@ -325,7 +319,7 @@ describe('LayersTab actions reaching the store', () => {
     expect(updates.activeLayerId).toBeNull();
   });
 
-  it('dispatches REORDER_ACTION naming both layer ids when a row is dropped on another row', () => {
+  it('dispatches reorder intent naming both layer ids when a row is dropped on another row', () => {
     vi.useFakeTimers();
     render(<LayersTab />);
     const dataTransfer = createDataTransfer();
@@ -343,17 +337,16 @@ describe('LayersTab actions reaching the store', () => {
       vi.advanceTimersByTime(400);
     });
 
-    const action = onlyDispatched();
-    expect(action.type).toBe('COMMIT_DOCUMENT_EDIT');
-    expect(action.payload.historyItem).toEqual({
-      id: 'history-id',
-      layerId: 'layer-3',
-      actionName: REORDER_ACTION,
-      args: { layerToMoveId: 'layer-3', afterWhichLayerId: 'layer-1' },
+    // Intent only: the store owns the layer record and mints the history item,
+    // so a component that dispatches after its 200 ms deferral cannot ship a
+    // stale snapshot of the layers it rendered.
+    expect(onlyDispatched()).toEqual({
+      type: 'REORDER_LAYERS',
+      payload: { layerToMoveId: 'layer-3', afterWhichLayerId: 'layer-1' },
     });
   });
 
-  it('dispatches REORDER_ACTION without a placement id for a drop on the bottom zone', () => {
+  it('dispatches reorder intent without a placement id for a drop on the bottom zone', () => {
     vi.useFakeTimers();
     render(<LayersTab />);
     const dataTransfer = createDataTransfer();
@@ -368,12 +361,9 @@ describe('LayersTab actions reaching the store', () => {
       vi.advanceTimersByTime(400);
     });
 
-    const action = onlyDispatched();
-    expect(action.payload.historyItem).toEqual({
-      id: 'history-id',
-      layerId: 'layer-3',
-      actionName: REORDER_ACTION,
-      args: { layerToMoveId: 'layer-3', afterWhichLayerId: undefined },
+    expect(onlyDispatched()).toEqual({
+      type: 'REORDER_LAYERS',
+      payload: { layerToMoveId: 'layer-3', afterWhichLayerId: undefined },
     });
   });
 });
