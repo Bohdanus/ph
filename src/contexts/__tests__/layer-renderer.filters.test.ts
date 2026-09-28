@@ -4,7 +4,6 @@ import { drawLayerSource, getLayerFilter } from '../layer-renderer.ts';
 import type { Layer, LayerOperation, ToolLayerSource } from '../layer-types.ts';
 import type { ToolArgs } from '../tool-types.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
-import { exp1_1 } from '../../tools/functions.ts';
 
 function createRecordingContext() {
   return {
@@ -35,13 +34,17 @@ describe('getLayerFilter', () => {
       operation({ args: { toolName: 'color', grayscale: 30, sepia: 40, saturation: 50 } }),
     ]);
 
-    expect(filter).toBe(`grayscale(30%) sepia(40%) saturate(${exp1_1(50, 2.1)})`);
+    // Spelled out rather than recomputed from the builder: this is the preview half of the
+    // filter contract, and the whole defect was that four copies of it could each drift.
+    // saturation 50 at k=2.1 -> (exp(1.05) - exp(-2.1)) / (1 - exp(-2.1)) = 3.116876.
+    expect(filter).toBe('grayscale(30%) sepia(40%) saturate(311.69%)');
   });
 
   it('builds a levels filter through the shared exponential mapping', () => {
     const filter = getLayerFilter([operation({ args: { toolName: 'levels', brightness: 25, contrast: 80 } })]);
 
-    expect(filter).toBe(`brightness(${exp1_1(25, 1.9)}) contrast(${exp1_1(80, 2.2)})`);
+    // brightness 25 at k=1.9 -> 1.714884; contrast 80 at k=2.2 -> 6.412117.
+    expect(filter).toBe('brightness(171.49%) contrast(641.21%)');
   });
 
   it('joins several enabled operations in insertion order', () => {
@@ -50,7 +53,20 @@ describe('getLayerFilter', () => {
       operation({ id: 'b', args: { toolName: 'levels', brightness: 10, contrast: 10 } }),
     ]);
 
-    expect(filter).toBe(`blur(2px) brightness(${exp1_1(10, 1.9)}) contrast(${exp1_1(10, 2.2)})`);
+    // brightness 10 at k=1.9 -> 1.246145; contrast 10 at k=2.2 -> 1.276713.
+    expect(filter).toBe('blur(2px) brightness(124.61%) contrast(127.67%)');
+  });
+
+  it('reaches the same 0% endpoints the committing processors do', () => {
+    // The preview and the commit are one contract. If the preview ever emitted a
+    // dark-grey floor where the processor emits black, a layer would render differently
+    // from its own committed bitmap.
+    expect(getLayerFilter([operation({ args: { toolName: 'color', grayscale: 0, sepia: 0, saturation: -100 } })])).toBe(
+      'grayscale(0%) sepia(0%) saturate(0%)'
+    );
+    expect(getLayerFilter([operation({ args: { toolName: 'levels', brightness: -100, contrast: 0 } })])).toBe(
+      'brightness(0%) contrast(100%)'
+    );
   });
 
   it('drops disabled operations', () => {

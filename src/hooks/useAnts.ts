@@ -6,6 +6,7 @@ import {
   getLayerPresentationCorners,
   isIdentityAffineTransform,
 } from '../contexts/affine-transform.ts';
+import { resetOverlayAlpha } from '../util/canvas.ts';
 
 export const DASH_LENGTH = 6;
 export const GAP_LENGTH = 6;
@@ -53,6 +54,7 @@ export function useMarchingAnts({ overlayRef, containerRef }: AntsProps) {
 
     const { x, y, width, height } = outline.bounds;
     ctx.save();
+    resetOverlayAlpha(ctx);
     ctx.lineWidth = LINE_WIDTH;
     ctx.lineJoin = 'round';
     ctx.lineCap = 'butt';

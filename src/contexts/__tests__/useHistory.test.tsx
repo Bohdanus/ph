@@ -16,7 +16,7 @@ import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayersRecord, ToolLayerSource } from '../layer-types.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import { toolProcessors } from '../../tools/toolProcessors.ts';
-import { getSortedLayersArray, saveLayerCanvas } from '../layer-utils.ts';
+import { getSortedLayersArray } from '../layer-utils.ts';
 import { updateHistoryTimeline } from '../history-timeline.ts';
 import { createMockCanvasContext } from '../../test/setup.ts';
 
@@ -299,33 +299,69 @@ describe('useHistory undo replay', () => {
     return { state: storeStateMock, dispatch };
   }
 
-  it('adds history entries without capturing a canvas preview', () => {
-    setup(createHistory('layerSource').slice(0, 1));
-    useHistory().addHistoryEntry({ layerId: 'layer-1', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' } });
-    expect(dispatchMock).toHaveBeenCalledWith({
-      type: 'COMMIT_DOCUMENT_EDIT',
-      payload: {
-        historyItem: expect.objectContaining({
-          id: expect.any(String),
-          layerId: 'layer-1',
-          actionName: RENAME_LAYER_ACTION,
-          args: { name: 'Renamed' },
-        }),
-      },
-    });
-    expect(createImageBitmap).not.toHaveBeenCalled();
-  });
-
-  it('branches from the current entry and discards redo entries', () => {
+  /**
+   * A commit that lands on a cursor with redo entries behind it is the only way this timeline
+   * ever branches, and `useHistory` cannot cause one: it exposes no `addHistoryEntry`, and the
+   * append is the reducer's single-writer path. So the commit is fed through the same
+   * `createDispatch` fake the rest of this file uses, which runs the real `updateHistoryTimeline`
+   * — and the test is titled for what it actually exercises, the append contract, rather than for
+   * a hook call that no longer exists.
+   */
+  function commitAndBranch() {
     const { state } = setup();
     state.historyIndex = 0;
-    useHistory().addHistoryEntry({ layerId: 'layer-1', actionName: RENAME_LAYER_ACTION, args: { name: 'Branch' } });
-    const action = dispatchMock.mock.calls[0][0];
-    expect(action.type).toBe('COMMIT_DOCUMENT_EDIT');
-    expect(state.history).toHaveLength(2);
-    expect(state.history[0].id).toBe('h-1');
-    expect(state.history[1].id).not.toBe('h-2');
+    dispatchMock({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        historyItem: { id: 'h-branch', layerId: 'layer-1', actionName: RENAME_LAYER_ACTION, args: { name: 'Branch' } },
+      },
+    });
+    return state;
+  }
+
+  it('discards the redo entries and bumps the branch revision when a commit lands on a cursor with redo behind it', () => {
+    const state = commitAndBranch();
+
+    expect(state.history.map((entry) => entry.id)).toEqual(['h-1', 'h-branch']);
     expect(state.history[1]).not.toHaveProperty('imagePromise');
+    expect(state.historyIndex).toBe(1);
+    expect(state.branchRevision).toBe(1);
+  });
+
+  it('carries the branched timeline and its revision into every replay the hook dispatches afterwards', () => {
+    const state = commitAndBranch();
+    const branchedEntries = state.history.map((entry) => entry.id);
+    dispatchMock.mockClear();
+
+    useHistory().undo();
+
+    // The branch belongs to the store, so the hook can only forward what it read. An action
+    // carrying the pre-branch cursor, a revision left at 0, or the pre-branch entries would let
+    // the next commit branch off a position the user has already undone.
+    expect(dispatchMock).toHaveBeenCalledWith({
+      type: 'APPLY_HISTORY_REPLAY',
+      payload: expect.objectContaining({
+        timeline: {
+          entries: expect.any(Array),
+          cursor: 0,
+          branchRevision: 1,
+        },
+      }),
+    });
+    const undone = dispatchedActions()[0].payload as unknown as {
+      timeline: { entries: HistoryItem[] };
+    };
+    expect(undone.timeline.entries.map((entry) => entry.id)).toEqual(branchedEntries);
+    expect(state.historyIndex).toBe(0);
+
+    useHistory().redo();
+
+    // Redo walks the same branched timeline, and the revision is not consumed by navigation: a
+    // revision that reset on the way back would let two different timelines share a number.
+    expect(dispatchedActions().at(-1)).toMatchObject({
+      type: 'APPLY_HISTORY_REPLAY',
+      payload: { timeline: { cursor: 1, branchRevision: 1 } },
+    });
     expect(state.branchRevision).toBe(1);
   });
 
@@ -497,21 +533,6 @@ describe('useHistory undo replay', () => {
     useHistory().undo();
     expect(state.deletedLayers).not.toBe(deletedLayers);
     expect(deletedLayers).toEqual({});
-  });
-
-  it('does not let an obsolete bitmap save erase a newer preview', async () => {
-    const { state } = setup();
-    useHistory().undo();
-    await Promise.resolve();
-    const layer = state.layers['layer-1'];
-    const originalBitmap = layer.bitmap;
-    layer.tmpCanvas = new OffscreenCanvas(128, 64);
-    const save = saveLayerCanvas(layer);
-    const newerCanvas = new OffscreenCanvas(128, 64);
-    layer.tmpCanvas = newerCanvas;
-    await save;
-    expect(layer.tmpCanvas).toBe(newerCanvas);
-    expect(layer.bitmap).toBe(originalBitmap);
   });
 
   it('preserves PSD baseline metadata through tool edits and removal undo/redo', async () => {

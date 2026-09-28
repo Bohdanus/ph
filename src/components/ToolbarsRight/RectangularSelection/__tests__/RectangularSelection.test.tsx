@@ -23,6 +23,18 @@ vi.mock('../../../../contexts/StoreContext.tsx', () => ({
       totalSize: { width: 800, height: 600 },
       selections: storeState.selections,
       activeSelectionId: storeState.activeSelectionId,
+      // An empty timeline at cursor -1 is what a store with nothing appended yet
+      // actually looks like, and it is what puts the Clear writer on the append
+      // boundary's SUCCESS branch: `history`/`historyIndex` go straight into the
+      // planner's `timeline`, `validateTimeline` reports the out-of-range cursor
+      // as a diagnostic instead of throwing on `undefined`, and the writer
+      // dispatches the plan it made. Without them the writer's `catch` produces a
+      // byte-identical dispatch with no `durableEntry`, and every pin below would
+      // pass on that fallback instead. `branchRevision` is the hook's own default,
+      // included for shape parity.
+      history: [] as unknown[],
+      historyIndex: -1,
+      branchRevision: 0,
     },
     dispatchMock,
   ],
@@ -50,11 +62,19 @@ function resetStoreState(overrides: Partial<typeof storeState> = {}) {
  * `COMMIT_DOCUMENT_EDIT` carrying both the history item and the resulting
  * selection state.
  *
- * `durableEntry` is deliberately not matched. The store publishes the planned
- * entry only when its durable document still describes the timeline the plan was
- * made against, and the boundary's failure fallback omits it entirely; both are
- * correct, so the pin asserts the contract the two paths share. `id` is a fresh
- * uuid per call, hence `expect.any(String)`.
+ * The component's contract is to PLAN the append and DISPATCH the plan. Whether
+ * the planned `durableEntry` is published is the STORE's decision, made in
+ * `StoreContext` against a durable document this mocked store does not have, so
+ * it is not asserted here. `id` is a fresh uuid per call, hence
+ * `expect.any(String)`.
+ *
+ * The store mock below carries `history`/`historyIndex` so the writer reaches the
+ * SUCCESS branch of the append boundary: without them `planHistoryAppend`'s
+ * `validateTimeline` evaluates `timeline.entries.some(...)` on `undefined` and
+ * THROWS, the writer's `catch` converts that into a fallback dispatch that omits
+ * `durableEntry` entirely, and the two dispatches are byte-identical apart from
+ * that field — so this pin would keep passing on the failure path and a
+ * regression that made the planner throw would leave the file green.
  */
 const CLEAR_SELECTION_EDIT = expect.objectContaining({
   type: 'COMMIT_DOCUMENT_EDIT',

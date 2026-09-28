@@ -1,9 +1,12 @@
-import { SELECTION_ACTION, SET_DOCUMENT_FRAME_ACTION } from '../util/constants.ts';
+import { SELECTION_ACTION, SET_DOCUMENT_FRAME_ACTION, SHOW_LAYER_ACTION } from '../util/constants.ts';
 import type { DocumentFrame } from './document-frame.ts';
 import {
   deriveSetDocumentFrameEntry,
+  deriveSetLayerPropertiesEntry,
   deriveSetSelectionEntry,
+  isSetLayerPropertiesAction,
   isEntryEnabled,
+  layerPropertyKeyFor,
   type MigrationDiagnostic,
 } from './history-adapter.ts';
 import {
@@ -26,11 +29,10 @@ const EMPTY_SELECTIONS: SelectionSnapshot = Object.freeze({ selections: Object.f
  * Output is exactly one legacy `HistoryItem` plus either one equivalent durable
  * entry or an explicit durable-unavailable diagnostic.
  *
- * Phase 1 status: plan only. The durable entry is derived at the append point but
- * is not published. `StoreContext` still converts the whole timeline into the
- * diagnostic shadow, so publishing the planned entry here would create a second
- * writer for a single append. The next slice passes the planned entry through
- * `COMMIT_DOCUMENT_EDIT` and adopts it for one action at a time.
+ * The planned durable entry is published only when `StoreContext` proves that
+ * its durable shadow still describes this append's legacy pre-state. Otherwise
+ * the store falls back to a full conversion and keeps legacy history/runtime
+ * authority unchanged.
  *
  * Invariants:
  *
@@ -145,6 +147,18 @@ function translate(
         entry,
         'A selection change without a valid next selection state has no durable translation; the durable model never fabricates a cleared selection.',
         'unsupported-history-feature'
+      );
+    }
+    return { entry, durableEntry, diagnostics: [] };
+  }
+
+  if (isSetLayerPropertiesAction(entry.actionName)) {
+    const durableEntry = deriveSetLayerPropertiesEntry(entry);
+    if (!durableEntry) {
+      return unavailable(
+        entry,
+        `The ${entry.actionName} entry does not carry a valid layer-property value.`,
+        'invalid-history-entry'
       );
     }
     return { entry, durableEntry, diagnostics: [] };
@@ -290,7 +304,7 @@ function sameSelection(left: unknown, right: unknown): boolean {
  * the two deep-copied it is.
  *
  * `activeSelectionId` is compared through `?? null` because both the derivation
- * and `replayHistory` (`history-replay.ts:107`) read a key-absent id as `null`.
+ * and `replayHistory` (`history-replay.ts:102`) read a key-absent id as `null`.
  * A strict `!==` would report a mismatch between a legacy arg that omits the key
  * and the normalized planned entry, degrading a correct append to reconversion.
  */
@@ -350,6 +364,39 @@ export function validatePlannedDurableEntry(entry: HistoryItem, planned: Durable
       return 'the durable previous selection state does not match the legacy entry';
     }
     return null;
+  }
+
+  if (isSetLayerPropertiesAction(entry.actionName)) {
+    if (planned.operation.kind !== 'set-layer-properties') {
+      return `a layer-property change produced a "${planned.operation.kind}" operation`;
+    }
+    const { layerId, patch } = planned.operation;
+    if (layerId !== entry.layerId) return 'the durable layer id does not match the legacy entry';
+    // Checked against the legacy entry, not against a second call to the
+    // derivation that produced this plan: re-deriving would compare a value
+    // with itself and could only ever catch a hand-supplied entry, never a
+    // defect in the derivation. Exactly one key, and that key's value read
+    // from the action and the legacy args.
+    if (Object.keys(patch).length !== 1) {
+      return 'the durable layer-property operation does not match the legacy entry';
+    }
+    // Exhaustive on the owned key rather than `name` versus "everything else":
+    // an action that owned some other property would otherwise be graded
+    // against `visible` and reported as a mismatch for a correct entry.
+    switch (layerPropertyKeyFor(entry.actionName)) {
+      case 'name': {
+        const name = (entry.args as { name?: unknown } | undefined)?.name;
+        if (typeof name !== 'string') return 'the layer-property value is invalid';
+        if (patch.name !== name) return 'the durable layer name does not match the legacy entry';
+        return null;
+      }
+      case 'visible':
+        return patch.visible === (entry.actionName === SHOW_LAYER_ACTION)
+          ? null
+          : 'the durable layer visibility does not match the legacy entry';
+      default:
+        return 'the action does not own a durable layer property';
+    }
   }
 
   return `no durable translation is published for "${entry.actionName}" yet`;

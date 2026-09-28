@@ -1,5 +1,6 @@
 import type { Ctx2D, Point, Pos } from '../contexts/general-types.ts';
 import type { DrawToolArgs } from '../tools/draw.ts';
+import { smoothStrokePoints } from '../tools/brush.ts';
 import { hexToRgb } from './rect.ts';
 
 export function pointsBoundingPos({ lineWidth = 1, points }: { lineWidth?: number; points: Point[] }): Pos {
@@ -86,16 +87,66 @@ export const drawLine = (params: DrawStrokeParams) => {
     args: { penType },
   } = params;
 
+  // Smoothing is a filter over the sampled path, applied once here so the live
+  // overlay (src/components/Main/DrawToolArea.tsx:39-43), the committed stroke and
+  // every replay of it all smooth identically. It runs before the renderer choice
+  // because both renderers consume the same point list, and it leaves the call
+  // counts of a single-path pen stroke untouched.
+  const sampled = params.args.points ?? [];
+  const points = smoothStrokePoints(sampled, params.args.smoothing ?? 0);
+  const stroke = points === sampled ? params : { ...params, args: { ...params.args, points } };
+
   if (penType === 'pen' || penType === 'pen-dashed') {
-    drawPen(params);
+    drawPen(stroke);
   } else if (penType === 'spray') {
-    drawSpray(params);
+    drawSpray(stroke);
   }
+};
+
+/**
+ * Block mode's renderer: a hard, axis-aligned, fully opaque square of side `lineWidth`, stamped
+ * every `lineWidth` along the path. One `stroke()` cannot produce a block tip, and Adobe gives
+ * Block mode neither falloff nor an Opacity control, so the stamp ignores `args.alpha`: the
+ * Options bar hides the slider for this mode, and honouring its last value would silently fade
+ * the block. Drawn as `fillRect` rather than a path, so no `beginPath`/`stroke` is issued.
+ */
+const drawBlockStamps = ({ args, ctx }: DrawStrokeParams) => {
+  const points = args.points ?? [];
+  if (points.length === 0) return;
+
+  const size = Math.max(1, args.lineWidth);
+  const half = size / 2;
+
+  ctx.save();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = args.color;
+  ctx.fillRect(points[0].x - half, points[0].y - half, size, size);
+
+  for (let i = 1; i < points.length; i++) {
+    const from = points[i - 1];
+    const to = points[i];
+    // One stamp per `size` of travel, so a fast pointer cannot leave gaps the stroke path would
+    // have bridged. `Math.hypot` keeps a 0-length segment at 0 steps rather than dividing by NaN.
+    const steps = Math.max(1, Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / size));
+    for (let step = 1; step <= steps; step++) {
+      const ratio = step / steps;
+      const x = from.x + (to.x - from.x) * ratio;
+      const y = from.y + (to.y - from.y) * ratio;
+      ctx.fillRect(x - half, y - half, size, size);
+    }
+  }
+
+  ctx.restore();
 };
 
 export const drawPen = ({ args, ctx }: DrawStrokeParams) => {
   const points = args.points ?? [];
   if (points.length === 0) return;
+
+  if (args.blockStamp) {
+    drawBlockStamps({ args, ctx });
+    return;
+  }
 
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);

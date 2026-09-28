@@ -1,18 +1,31 @@
 import React from 'react';
 
 import Blur from '../components/ToolbarsRight/Blur/Blur.tsx';
+import Brush from '../components/ToolbarsRight/Brush/Brush.tsx';
+import CloneStamp from '../components/ToolbarsRight/CloneStamp/CloneStamp.tsx';
 import Color from '../components/ToolbarsRight/Colors/Color.tsx';
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
 import Draw from '../components/ToolbarsRight/Draw/Draw.tsx';
+import EllipticalSelection from '../components/ToolbarsRight/EllipticalSelection/EllipticalSelection.tsx';
+import Eraser from '../components/ToolbarsRight/Eraser/Eraser.tsx';
+import Eyedropper from '../components/ToolbarsRight/Eyedropper/Eyedropper.tsx';
 import Shape from '../components/ToolbarsRight/Figures/Shape.tsx';
+import Gradient from '../components/ToolbarsRight/Gradient/Gradient.tsx';
 import FeatherMagneticLasso from '../components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx';
 import FreehandLasso from '../components/ToolbarsRight/Lasso/FreehandLasso.tsx';
 import PolygonalLasso from '../components/ToolbarsRight/Lasso/PolygonalLasso.tsx';
 import Levels from '../components/ToolbarsRight/Levels/Levels.tsx';
+import MagicEraser from '../components/ToolbarsRight/MagicEraser/MagicEraser.tsx';
+import PaintBucket from '../components/ToolbarsRight/MagicEraser/PaintBucket.tsx';
 import MagicWand from '../components/ToolbarsRight/MagicWand/MagicWand.tsx';
 import Reposition from '../components/ToolbarsRight/Move/Reposition.tsx';
+import Pencil from '../components/ToolbarsRight/Pencil/Pencil.tsx';
+import QuickSelection from '../components/ToolbarsRight/QuickSelection/QuickSelection.tsx';
 import RectangularSelection from '../components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx';
+import Sharpen from '../components/ToolbarsRight/Sharpen/Sharpen.tsx';
+import Smudge from '../components/ToolbarsRight/Smudge/Smudge.tsx';
 import Text from '../components/ToolbarsRight/Text/Text.tsx';
+import Tonal from '../components/ToolbarsRight/Tonal/Tonal.tsx';
 import { PlaceholderTool } from '../components/ToolbarsRight/ToolbarPlaceholder.tsx';
 import { placeholderToolGroups } from '../components/ToolbarsRight/toolbarPlaceholderConfig.ts';
 import Transform from '../components/ToolbarsRight/Transform/Transform.tsx';
@@ -32,7 +45,7 @@ const placeholderTool = (
 
 type ToolsMap = Record<
   ToolName,
-  ToolProcessorDefinition & {
+  Partial<ToolProcessorDefinition> & {
     icon: string;
     toolboxComponent: ToolbarRightComponent;
   }
@@ -69,21 +82,48 @@ export const toolsMap: ToolsMap = {
     icon: 'rectangular-selection',
     toolboxComponent: RectangularSelection,
   },
+  'elliptical-selection': {
+    ...toolProcessors['elliptical-selection'],
+    icon: 'elliptical-selection',
+    toolboxComponent: EllipticalSelection,
+  },
+  'quick-selection': {
+    ...toolProcessors['quick-selection'],
+    icon: 'quick-selection',
+    toolboxComponent: QuickSelection,
+  },
+  'clone-stamp': { ...toolProcessors['clone-stamp'], icon: 'clone-stamp', toolboxComponent: CloneStamp },
+  gradient: { ...toolProcessors.gradient, icon: 'gradient', toolboxComponent: Gradient },
+  sharpen: { ...toolProcessors.sharpen, icon: 'sharpen', toolboxComponent: Sharpen },
+  smudge: { ...toolProcessors.smudge, icon: 'smudge', toolboxComponent: Smudge },
+  // `dodge` and `burn` share ONE panel deliberately: they are the same control set
+  // (Preset / Mode / Range / Exposure / Protect Skin Tone) over the same
+  // `DodgeBurnToolArgs`, and Photoshop draws them as one flyout tile pair anyway.
+  // `Tonal.tsx` reads `useStore().toolName` to decide which it is, so mounting it
+  // twice would show the same bar with a hardcoded name.
+  dodge: { ...toolProcessors.dodge, icon: 'dodge', toolboxComponent: Tonal },
+  burn: { ...toolProcessors.burn, icon: 'burn', toolboxComponent: Tonal },
   brush: {
     ...toolProcessors.brush,
     icon: 'brush',
-    toolboxComponent: placeholderTool('Brush Tool', 'brush', false),
+    toolboxComponent: Brush,
   },
   pencil: {
     ...toolProcessors.pencil,
     icon: 'pencil',
-    toolboxComponent: placeholderTool('Pencil Tool', 'pencil', false),
+    toolboxComponent: Pencil,
   },
   'color-replacement': {
     ...toolProcessors['color-replacement'],
     icon: 'color-replacement',
     toolboxComponent: placeholderTool('Color Replacement Tool', 'color-replacement'),
   },
+  eraser: { ...toolProcessors.eraser, icon: 'eraser', toolboxComponent: Eraser },
+  'magic-eraser': { ...toolProcessors['magic-eraser'], icon: 'magic-eraser', toolboxComponent: MagicEraser },
+  'paint-bucket': { ...toolProcessors['paint-bucket'], icon: 'paint-bucket', toolboxComponent: PaintBucket },
+  // No processor: the eyedropper rasterizes nothing (see `PIXEL_FREE_TOOLS` in toolProcessors.ts),
+  // so this entry carries only the icon and the options bar.
+  eyedropper: { icon: 'eyedropper', toolboxComponent: Eyedropper },
   pen: { ...toolProcessors.pen, icon: 'pen', toolboxComponent: placeholderTool('Pen Tool', 'pen') },
   'freeform-pen': {
     ...toolProcessors['freeform-pen'],

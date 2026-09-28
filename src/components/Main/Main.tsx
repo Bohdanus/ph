@@ -10,6 +10,17 @@ import { PolygonClickToolArea } from './PolygonClickToolArea.tsx';
 import { RectangularSelectionToolArea } from './RectangularSelectionToolArea.tsx';
 import { FeatherMagneticLassoToolArea } from './FeatherMagneticLassoToolArea.tsx';
 import { MagicWandToolArea } from './MagicWandToolArea.tsx';
+import { EllipticalSelectionToolArea } from './EllipticalSelectionToolArea.tsx';
+import { QuickSelectionToolArea } from './QuickSelectionToolArea.tsx';
+import { EyedropperToolArea } from './EyedropperToolArea.tsx';
+import { EraserToolArea } from './EraserToolArea.tsx';
+import { CloneStampToolArea } from './CloneStampToolArea.tsx';
+import { SharpenToolArea } from './SharpenToolArea.tsx';
+import { SmudgeToolArea } from './SmudgeToolArea.tsx';
+import { DodgeToolArea } from './DodgeToolArea.tsx';
+import { BurnToolArea } from './BurnToolArea.tsx';
+import { GradientToolArea } from './GradientToolArea.tsx';
+import { FillToolArea } from './FillToolArea.tsx';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { PRIMARY_BUTTON_LARGE, TEXT_LINK_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
@@ -44,7 +55,6 @@ const Main = () => {
 
   const [isDragging, setIsDragging] = useState(false);
 
-  const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const toolCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
   let interactionMode = 'zoom';
@@ -73,6 +83,38 @@ const Main = () => {
     interactionMode = 'magic-wand';
   } else if (toolName === 'rectangular-selection') {
     interactionMode = 'rectangular-selection';
+  } else if (toolName === 'elliptical-selection') {
+    // Its own mode rather than a second name on the rectangular one: the two areas
+    // paint different geometry (an axis-aligned box and an ellipse) off different args,
+    // so the mode has to name the area, not just the family.
+    interactionMode = 'elliptical-selection';
+  } else if (toolName === 'quick-selection') {
+    interactionMode = 'quick-selection';
+  } else if (toolName === 'eyedropper') {
+    interactionMode = 'eyedropper';
+  } else if (toolName === 'eraser') {
+    // A brush, but NOT the `draw` mode: `DrawToolArea` creates a new layer from a
+    // `{ ...args, points }` and draws the `DrawToolArgs` preview, where the eraser
+    // edits the ACTIVE layer in place through `tempUpdateLayer`. Sharing the mode would
+    // mount the wrong area rather than a differently-parameterised one.
+    interactionMode = 'eraser';
+  } else if (toolName === 'smudge') {
+    interactionMode = 'smudge';
+  } else if (toolName === 'dodge') {
+    interactionMode = 'dodge';
+  } else if (toolName === 'burn') {
+    interactionMode = 'burn';
+  } else if (toolName === 'clone-stamp') {
+    interactionMode = 'clone-stamp';
+  } else if (toolName === 'sharpen') {
+    interactionMode = 'sharpen';
+  } else if (toolName === 'magic-eraser' || toolName === 'paint-bucket') {
+    // One area, two tools: they differ only in what their processor writes into the fill mask.
+    // The bucket is a click rather than a drag, which `FillToolArea` already handles for both.
+    interactionMode = 'fill';
+  } else if (toolName === 'gradient') {
+    // A drag, unlike the bucket it shares an options bar with.
+    interactionMode = 'gradient';
   }
 
   useEffect(() => {
@@ -93,11 +135,6 @@ const Main = () => {
       resizeCanvas(rectOverlayRef.current, width, height);
       const rectCtx = rectOverlayRef.current.getContext('2d')!;
       rectCtx.imageSmoothingEnabled = false;
-    }
-
-    if (canvasCtxRef.current) {
-      canvasCtxRef.current.imageSmoothingEnabled = true;
-      canvasCtxRef.current.imageSmoothingQuality = 'low';
     }
   }, [rectOverlayRef, toolOverlayRef, totalSize]);
 
@@ -142,7 +179,18 @@ const Main = () => {
       | typeof PolygonClickToolArea
       | typeof FeatherMagneticLassoToolArea
       | typeof MagicWandToolArea
-      | typeof RectangularSelectionToolArea;
+      | typeof RectangularSelectionToolArea
+      | typeof EllipticalSelectionToolArea
+      | typeof QuickSelectionToolArea
+      | typeof EyedropperToolArea
+      | typeof EraserToolArea
+      | typeof SmudgeToolArea
+      | typeof DodgeToolArea
+      | typeof BurnToolArea
+      | typeof CloneStampToolArea
+      | typeof SharpenToolArea
+      | typeof GradientToolArea
+      | typeof FillToolArea;
 
     let EventHandler: ToolAreaComponent = DummyToolArea;
     if (hasImage) {
@@ -155,6 +203,17 @@ const Main = () => {
       else if (interactionMode === 'feather-magnetic-lasso') EventHandler = FeatherMagneticLassoToolArea;
       else if (interactionMode === 'magic-wand') EventHandler = MagicWandToolArea;
       else if (interactionMode === 'rectangular-selection') EventHandler = RectangularSelectionToolArea;
+      else if (interactionMode === 'elliptical-selection') EventHandler = EllipticalSelectionToolArea;
+      else if (interactionMode === 'quick-selection') EventHandler = QuickSelectionToolArea;
+      else if (interactionMode === 'eyedropper') EventHandler = EyedropperToolArea;
+      else if (interactionMode === 'eraser') EventHandler = EraserToolArea;
+      else if (interactionMode === 'smudge') EventHandler = SmudgeToolArea;
+      else if (interactionMode === 'dodge') EventHandler = DodgeToolArea;
+      else if (interactionMode === 'burn') EventHandler = BurnToolArea;
+      else if (interactionMode === 'clone-stamp') EventHandler = CloneStampToolArea;
+      else if (interactionMode === 'sharpen') EventHandler = SharpenToolArea;
+      else if (interactionMode === 'fill') EventHandler = FillToolArea;
+      else if (interactionMode === 'gradient') EventHandler = GradientToolArea;
       else EventHandler = DummyToolArea;
     }
 
@@ -181,6 +240,17 @@ const Main = () => {
           ref={toolOverlayRef}
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
+            // One entry per mode whose mounted area paints into `overlayCtxRef` — the
+            // list is a LOOKUP KEY, not a summary of "tools with an area", so a mode that
+            // paints and is missing here renders a blank preview with no error, and a
+            // mode listed here that paints nothing just shows an already-clear canvas.
+            // Painted: clone-stamp (the Alt source marker, CloneStampToolArea.tsx:249),
+            // and the two selection tools (EllipticalSelectionToolArea.tsx:107,
+            // QuickSelectionToolArea.tsx:99). NOT painted, and so deliberately absent:
+            // eraser, smudge, dodge, burn, sharpen, paint-bucket, gradient and the
+            // eyedropper — every one of them previews through `tempUpdateLayer`, which
+            // republishes the layer and redraws the document canvas, and the eyedropper
+            // paints neither context at all (EyedropperToolArea.tsx:12).
             display: [
               'draw',
               'crop',
@@ -191,6 +261,15 @@ const Main = () => {
               'feather-magnetic-lasso',
               'magic-wand',
               'rectangular-selection',
+              // The eraser is deliberately NOT here. It previews by mutating the active layer
+              // through `tempUpdateLayer` (see `EraserToolArea`), because `destination-out` on
+              // an empty transparent overlay computes `da' = 0` and can never draw a pixel. The
+              // fill and the eyedropper also commit on the click itself and never draw a preview,
+              // so keeping the overlay hidden for all three is what stops a stale overlay from an
+              // earlier tool from sitting on top of the document.
+              'elliptical-selection',
+              'quick-selection',
+              'clone-stamp',
             ].includes(interactionMode)
               ? 'block'
               : 'none',
@@ -203,11 +282,7 @@ const Main = () => {
             display: ['reposition'].includes(interactionMode) ? 'block' : 'none',
           }}
         />
-        <EventHandler
-          className="absolute inset-0 h-full w-full"
-          canvasCtxRef={canvasCtxRef}
-          overlayCtxRef={toolCtxRef}
-        />
+        <EventHandler className="absolute inset-0 h-full w-full" overlayCtxRef={toolCtxRef} />
       </div>
     );
   };
@@ -215,7 +290,7 @@ const Main = () => {
   return (
     <main
       ref={containerRef}
-      className={`relative overflow-y-auto [grid-area:main] ${
+      className={`relative overflow-y-auto [grid-area:main] mobile-safe-bottom ${
         isDragging
           ? 'bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-blue-500'
           : 'bg-white dark:bg-[#1a1a1a]'

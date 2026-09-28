@@ -1,15 +1,7 @@
 import { type Download, expect, type Page, type TestInfo } from '@playwright/test';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import {
-  drawLine,
-  getWorkspaceCanvas,
-  LINE_END_X,
-  LINE_END_Y,
-  LINE_START_X,
-  LINE_START_Y,
-  waitForCanvasRedraw,
-} from '../helpers/canvas-helpers';
+import { documentToCanvasOffset, drawLine, getWorkspaceCanvas, waitForCanvasRedraw } from '../helpers/canvas-helpers';
 import { clickToolButton } from '../helpers/toolbar-helpers';
 
 export interface ExportFormat {
@@ -87,6 +79,42 @@ export function mimeType(extension: string | null | undefined): string {
   );
 }
 
+/**
+ * The test line, in DOCUMENT space, at the position the committed export baselines record.
+ *
+ * These are not round numbers on purpose. The baselines were recorded with the line
+ * specified in canvas-relative offsets (`150,150` to `350,150`) against a 974x840 canvas —
+ * the overflowing layout, in which the document was fitted at `scale = 1.2175` with a
+ * `54.75px` vertical letterbox. Under that mapping those offsets are the document points
+ * below. Pinning the document points reproduces the committed pixels exactly, which is what
+ * makes this change reviewable: the export is now a function of the document alone, so the
+ * shell's layout cannot move it again.
+ *
+ * Derivation, from `documentToCanvasOffset` inverted at the baseline geometry:
+ *
+ *   scale  = min(974/800, 840/600) = 1.2175
+ *   offsetX = (974 - 800*1.2175)/2  = 0
+ *   offsetY = (840 - 600*1.2175)/2  = 54.75
+ *   start = ((150 - 0)/1.2175, (150 - 54.75)/1.2175)
+ *   end   = ((350 - 0)/1.2175, (150 - 54.75)/1.2175)
+ *
+ * The 840 is not a guess, and that is the whole reason the `y` below is what it is. A first
+ * pass inverted the mapping at a 974x**890** box and landed the line on document row ~58,
+ * which left all seven baselines failing by a constant 3824 pixels at a ratio of 0.0080 —
+ * a number that reads like a rendering difference and is not one. Decoding the committed
+ * `drawing.png` says where the stroke actually is:
+ *
+ *   committed baseline : rows 73-82, columns 118-291   (centre row 78)
+ *   that export        : rows 53-62, columns 119-291   (centre row 55)
+ *
+ * Two ten-pixel bands, twenty-three rows apart, with per-channel deltas of a whole 229 —
+ * a stroke sitting where it was drawn, not a font or a colour-management difference. A
+ * 840px letterbox of 54.75 puts row 150 on document row 78.23, which is the committed one.
+ * The recorded pixels were right all along and the constant was wrong.
+ */
+export const EXPORT_LINE_START = { x: 123.203285, y: 78.234086 };
+export const EXPORT_LINE_END = { x: 287.474333, y: 78.234086 };
+
 export async function setupExportTest(
   page: Page,
   testInfo: TestInfo
@@ -105,9 +133,34 @@ export async function setupExportTest(
   const box = await canvas.boundingBox();
   if (!box) throw new Error('Canvas not found');
 
+  // The line is specified in document coordinates and mapped into this canvas, so the
+  // document it marks — and therefore the exported image — is the same whatever the shell
+  // does with the space around it. See `documentToCanvasOffset` for why the box-relative
+  // form could not be used here.
+  const start = documentToCanvasOffset(box, EXPORT_LINE_START.x, EXPORT_LINE_START.y);
+  const end = documentToCanvasOffset(box, EXPORT_LINE_END.x, EXPORT_LINE_END.y);
+
   await clickToolButton(page, 'draw');
-  await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-  await waitForCanvasRedraw(page, box);
+  await drawLine(page, box, start.x, start.y, end.x, end.y);
+
+  // The redraw clip has to be derived from the mapped line as well. The shared
+  // `CANVAS_REDRAW_CLIP` is a fixed region of the canvas box, and at any canvas size other
+  // than the one it was chosen for it does not cover the line — so waiting on it would pass
+  // without ever confirming the stroke reached the backing store.
+  //
+  // The clip is in PAGE coordinates: `buildClip` takes an explicit clip as given, and only
+  // its own default (`canvasRedrawClip`) adds the box origin. Passing canvas-relative
+  // offsets here would poll the wrong region — and worse, it can poll a region that is
+  // legitimately dark for another reason and so report success without the stroke ever
+  // having reached the backing store.
+  await waitForCanvasRedraw(page, box, {
+    clip: {
+      x: box.x + Math.floor(start.x) - 20,
+      y: box.y + Math.floor(start.y) - 20,
+      width: Math.ceil(end.x - start.x) + 40,
+      height: 40,
+    },
+  });
 
   const sourceDataUrl = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL('image/png'));
 
@@ -246,6 +299,20 @@ export const ICON_STROKE = { startX: 60, centerY: 128, endX: 196, steps: 10 } as
 export async function setupIcoTest(page: Page): Promise<string> {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.getByTestId('header-file-menu-button').click();
+  // `File > New` in `src/components/DesktopHeader/DesktopHeader.tsx` asks
+  // `confirm()` before discarding a document that has unsaved changes, and
+  // `src/App.tsx` seeds a blank document on boot, so `hasUnsavedChanges` is
+  // already true on a freshly loaded page and the prompt is shown from the very
+  // first click. Playwright auto-dismisses dialogs that have no handler, which
+  // the guard reads as "declined" — the New Image dialog would then never open
+  // and this helper would hang on the first input. Accept the single prompt this
+  // helper causes. `once` keeps the handler scoped to the one dialog: a global
+  // accept in a fixture or in `global-setup.ts` would silently swallow every
+  // unexpected `alert`/`confirm` in the suite, and those surfacing is a
+  // load-bearing signal.
+  page.once('dialog', (dialog) => {
+    void dialog.accept();
+  });
   await page.getByTestId('header-file-new-button').click();
   await page.getByTestId('new-image-width-input').fill('256');
   await page.getByTestId('new-image-height-input').fill('256');

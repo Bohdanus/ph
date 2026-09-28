@@ -12,16 +12,21 @@ const toolArgs = vi.hoisted(() => ({
 
 const activeLayerId = vi.hoisted(() => ({ current: 'layer-1' as string | null }));
 
+// The discard is gated on a live preview for the active layer. `commitDirtyTool`
+// empties this map and bakes the adjustment into the layer plus a `TOOL_ACTION`
+// entry, so it is only non-empty while an adjustment is still uncommitted.
+const previewLayers = vi.hoisted(() => ({ current: {} as Record<string, unknown> }));
+
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
+const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
-const mockIsToolDirty = vi.hoisted(() => ({ current: true }));
 const mockResetToLastSavedArgs = vi.hoisted(() => vi.fn());
-const mockCanUndo = vi.hoisted(() => vi.fn(() => false));
 const mockUndo = vi.hoisted(() => vi.fn());
 
 vi.mock('../../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     tempUpdateLayer: mockTempUpdateLayer,
+    cancelLayerPreview: mockCancelLayerPreview,
   }),
 }));
 
@@ -29,14 +34,16 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs,
     setToolArgs: mockSetToolArgs,
-    isToolDirty: mockIsToolDirty.current,
     resetToLastSavedArgs: mockResetToLastSavedArgs,
   }),
 }));
 
+// The panel no longer reaches for history at all. The mock is kept deliberately: it
+// makes `undo` observable, so re-introducing the document-level fall-through — the
+// defect this suite used to pin as the contract — fails these tests again.
 vi.mock('../../../../contexts/useHistory.ts', () => ({
   useHistory: () => ({
-    canUndo: mockCanUndo,
+    canUndo: () => true,
     undo: mockUndo,
   }),
 }));
@@ -45,9 +52,17 @@ vi.mock('../../../../contexts/StoreContext.tsx', () => ({
   useStore: () => [
     {
       activeLayerId: activeLayerId.current,
+      previewLayers,
     },
   ],
 }));
+
+/** Stand in for a preview `tempUpdateLayer` has published and nothing has committed yet. */
+function seedLivePreview(layerId: string | null = activeLayerId.current) {
+  previewLayers.current = layerId ? { [layerId]: { layer: {} } } : {};
+}
+
+const getResetButton = () => screen.getByRole('button', { name: 'Reset' });
 
 function resetToolArgs(overrides: Partial<typeof toolArgs> = {}) {
   Object.assign(toolArgs, {
@@ -66,13 +81,12 @@ describe('Levels toolbar', () => {
   beforeEach(() => {
     resetToolArgs();
     mockTempUpdateLayer.mockClear();
+    mockCancelLayerPreview.mockClear();
     mockSetToolArgs.mockClear();
     mockResetToLastSavedArgs.mockClear();
-    mockCanUndo.mockClear();
-    mockCanUndo.mockReturnValue(false);
     mockUndo.mockClear();
-    mockIsToolDirty.current = true;
     setActiveLayerId('layer-1');
+    previewLayers.current = {};
   });
 
   it('renders brightness and contrast sliders', () => {
@@ -82,33 +96,72 @@ describe('Levels toolbar', () => {
     expect(screen.getByLabelText(/Contrast/)).toBeInTheDocument();
   });
 
-  it('renders UndoButton', () => {
+  it('offers the panel-local discard only while a live preview exists, because that preview is the only thing it can remove', () => {
+    // The panel reads exactly one thing to arm the button: the store's preview map
+    // for the active layer. History state is fixed here (`canUndo()` is `true`),
+    // so nothing else this render can see is what the gate turns on.
+    seedLivePreview();
     render(<Levels />);
 
-    expect(screen.getByRole('button', { name: 'Reset' })).toBeInTheDocument();
+    expect(getResetButton()).toBeEnabled();
   });
 
-  it('undoes the last history step instead of resetting when the tool has no unsaved changes', async () => {
-    mockIsToolDirty.current = false;
-    mockCanUndo.mockReturnValue(true);
-    const user = userEvent.setup();
+  it('clears the preview and writes the default levels args without touching history', () => {
+    resetToolArgs({ brightness: 70, contrast: -20 });
+    seedLivePreview();
     render(<Levels />);
 
-    const resetButton = screen.getByRole('button', { name: 'Reset' });
-    expect(resetButton).toBeEnabled();
+    fireEvent.click(getResetButton());
 
-    await user.click(resetButton);
-
-    expect(mockUndo).toHaveBeenCalledTimes(1);
+    expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
+    // The baseline is `defaultSettings.levels`, not the value the user just dragged to.
+    // A `resetToLastSavedArgs` reset would publish 70/-20 here.
+    expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
+      toolName: 'levels',
+      brightness: 0,
+      contrast: 0,
+    });
     expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
+    // The click removes an uncommitted preview. A committed adjustment is a
+    // document operation, and `undo()` — which the panel does not call — is the
+    // route out of one, so a fall-through to document-level undo stays pinned here.
+    expect(mockUndo).not.toHaveBeenCalled();
   });
 
-  it('disables the Reset button without history and without unsaved changes', () => {
-    mockIsToolDirty.current = false;
+  it('leaves the discard disabled once the adjustment is committed, rather than claiming a reset it cannot perform', () => {
+    // `commitDirtyTool` runs on tool switch, on export and in `mergeAllLayers`: it
+    // empties the preview map and bakes the adjustment into a real layer plus a
+    // `TOOL_ACTION` entry. The panel can no longer cancel what is not a preview.
+    resetToolArgs({ brightness: 70, contrast: -20 });
     render(<Levels />);
 
-    expect(screen.getByRole('button', { name: 'Reset' })).toBeDisabled();
+    const button = getResetButton();
+    expect(button).toBeDisabled();
+
+    fireEvent.click(button);
+
+    // The lie this pins: an always-enabled button reset both sliders to 0 here while
+    // the canvas kept the committed adjustment.
+    expect(mockCancelLayerPreview).not.toHaveBeenCalled();
+    expect(mockSetToolArgs).not.toHaveBeenCalled();
+    expect(mockUndo).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['there is no active layer', null],
+    ['the active layer has no preview of its own', 'layer-2'],
+  ])(
+    'leaves the discard disabled when %s, so a preview on another layer cannot arm it',
+    (_case, activeLayerIdValue) => {
+      // `cancelLayerPreview()` only ever cancels the active layer's entry, so a preview
+      // belonging to any other layer leaves the click with nothing to remove.
+      setActiveLayerId(activeLayerIdValue);
+      seedLivePreview('layer-1');
+      render(<Levels />);
+
+      expect(getResetButton()).toBeDisabled();
+    }
+  );
 
   it('does not call tempUpdateLayer when activeLayerId is null', () => {
     setActiveLayerId(null);
@@ -342,6 +395,7 @@ describe('Levels toolbar', () => {
 
   describe('keyboard navigation', () => {
     it('all focusable elements are reachable and in correct tab order', () => {
+      seedLivePreview();
       render(<Levels />);
 
       const brightnessSlider = screen.getByLabelText(/Brightness/);
@@ -381,8 +435,8 @@ describe('Levels toolbar', () => {
       expect(contrastSlider).toHaveFocus();
     });
 
-    it('allows enter to trigger reset button when enabled', () => {
-      mockIsToolDirty.current = true;
+    it('runs the panel-local discard when the focused reset button is clicked', () => {
+      seedLivePreview();
       render(<Levels />);
       const resetButton = screen.getByRole('button', { name: 'Reset' });
 
@@ -391,11 +445,18 @@ describe('Levels toolbar', () => {
       resetButton.focus();
       fireEvent.click(resetButton);
 
-      expect(mockResetToLastSavedArgs).toHaveBeenCalled();
+      expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
+        toolName: 'levels',
+        brightness: 0,
+        contrast: 0,
+      });
+      expect(mockUndo).not.toHaveBeenCalled();
     });
 
     it('reaches the sliders and the reset button by tabbing in DOM order', async () => {
       const user = userEvent.setup();
+      seedLivePreview();
       render(<Levels />);
 
       const brightnessSlider = screen.getByLabelText(/Brightness/);
@@ -412,8 +473,10 @@ describe('Levels toolbar', () => {
       expect(resetButton).toHaveFocus();
     });
 
-    it('resets to the last saved args when the focused reset button is activated with Enter', async () => {
+    it('discards the adjustment when the focused reset button is activated with Enter', async () => {
       const user = userEvent.setup();
+      resetToolArgs({ brightness: 45, contrast: -60 });
+      seedLivePreview();
       render(<Levels />);
 
       const resetButton = screen.getByRole('button', { name: 'Reset' });
@@ -424,7 +487,13 @@ describe('Levels toolbar', () => {
 
       await user.keyboard('{Enter}');
 
-      expect(mockResetToLastSavedArgs).toHaveBeenCalledTimes(1);
+      expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
+        toolName: 'levels',
+        brightness: 0,
+        contrast: 0,
+      });
+      expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
       expect(mockUndo).not.toHaveBeenCalled();
     });
 

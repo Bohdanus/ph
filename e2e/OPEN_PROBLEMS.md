@@ -38,11 +38,28 @@ breakage or unmaintainable. **P3** = cosmetic / robustness.
 **Run the suite headless** — `npm run test:e2e`. That is the default, and the
 reason is the first entry below.
 
-On the default (headless) configuration **nothing fails**: 97 pass, 2 are skipped by
-declaration, and that is stable across repeated full runs.
+Nothing fails on the default (headless) configuration. The export-baseline and
+`pen-types` failures that used to be recorded here are gone because the cause was
+fixed, not because an assertion was relaxed: `ab5f53c` corrected the export line's
+document constant, which had been derived from the canvas box rather than from the
+document, so the stroke landed 23 rows off the committed baseline. The recorded
+pixels were correct all along. The remaining entries below are latent defects that
+no run trips.
 
-The entries below are latent defects that no current run trips — none of them is a
-known failure.
+Three defect groups used to fail here and have been fixed in this repository. Their
+evidence is kept below rather than deleted, because each explains a shape the suite
+must not drift back into:
+
+| was failing                           | was                                     | now                                            |
+| ------------------------------------- | --------------------------------------- | ---------------------------------------------- |
+| `e2e/helpers/cdp-helpers.spec.ts`     | 2 headless, 5 headed, disjoint per mode | scale-agnostic contract; mode-independent      |
+| `e2e/sidebar-keyboard.spec.ts:76, 88` | 0–2, ~42% of headless runs              | root-caused to an rAF focus race, then awaited |
+| `e2e/levels.spec.ts:64, 109`          | 2, both modes                           | canvas found by test id, not document order    |
+
+All of these were introduced with the specs and were independent of how they were
+moved into this repository: each was reproducible with no changes to the specs or
+to `src/`. Apart from the layout entry below, the remaining entries in this file
+are latent defects that no current run trips.
 
 ### Invariant — headless is the default, and the refusal is structural
 
@@ -68,9 +85,10 @@ operator-input-caused failure has been reproduced in this suite: the one
 intermittent failure on record before headless became the default
 (`sidebar-keyboard.spec.ts:88`) turned out to be a real race that fires in headless
 runs with no operator input at all; the mechanism is recorded at
-`sidebar-keyboard.spec.ts:5-10`. The hazard is reported as recurring across this
-project's test work generally, which is why the default is structural rather than
-procedural: it removes the failure class instead of relying on everyone to remember.
+`sidebar-keyboard.spec.ts:5-10`. The hazard is
+reported as recurring across this project's test work generally, which is why the
+default is structural rather than procedural: it removes the failure class instead
+of relying on everyone to remember.
 
 Headless is also simply better for this suite, and that part is measured. The
 failure sets are disjoint per mode and deterministic across repeats:
@@ -80,7 +98,8 @@ failure sets are disjoint per mode and deterministic across repeats:
 | CDP, deriving expected size from `getDevicePixelRatio()` (`:113` `:129` `:146` `:163` `:195`) | 5 fail | pass     |
 | CDP, explicit `deviceScaleFactor: 2` block (`:220` `:239`)                                    | pass   | 2 fail   |
 
-So headless was the better mode even then, and both sets have since been fixed.
+So headless was the better mode even then, and both sets have since been fixed
+(below).
 
 **Headed runs are for looking at, not for gating on.** If you must run headed, a
 headless result is what CI will produce. The five CDP failures in the table above
@@ -93,6 +112,77 @@ so the tradeoff is visible at the moment it is accepted.
 `npm run test:e2e:ui` and `npm run test:e2e:debug` all bypass `use.headless` and open
 a real window, because that is what they are for. The rule applies to
 `npm run test:e2e` and to anyone interpreting its result.
+
+## P2 — `drawLine` applies no contain scale, so its arguments are not document coordinates
+
+`e2e/helpers/canvas-helpers.ts:426-436`
+
+A spec must not drift into the assumption that `drawLine`'s arguments are
+document coordinates. They are not. `drawLine` computes
+`{ x: box.x + startX, y: box.y + startY }` and nothing else, while the document it
+addresses is **contained** in that box (`object-contain`,
+`src/components/Main/Main.tsx:241`): the CSS origin of document `(0,0)` is
+
+```text
+scale    = min(boxWidth / 800, boxHeight / 600)
+offsetX  = (boxWidth  - 800 * scale) / 2
+offsetY  = (boxHeight - 600 * scale) / 2
+cssX     = box.x + offsetX + documentX * scale
+cssY     = box.y + offsetY + documentY * scale
+```
+
+so a document point reaches `page.mouse` as
+`(x / scale, (y - offsetY) / scale)` once the box origin is added. At the Desktop
+Chrome default in a 1280px viewport the scale is 1.2175, and `offsetY` is 54.75
+at a 840px box and 154.75 at a 1040px box — which is why the previous entry moves
+the export fixture's line by more than 80 document rows upward while its box
+coordinates do not change at all.
+
+Existing specs survive this only because their strokes need to land SOMEWHERE, not
+where they were asked to land. `levels.spec.ts`, `color.spec.ts`, `select-move.spec.ts`
+and `example.spec.ts` all pass `LINE_START_*`/`LINE_END_*` and then assert colour,
+presence or a bounding box wide enough to absorb the error. A new spec that asserts
+a specific pixel position, a specific row, or a stroke that must fall inside the
+document will be tens of pixels off, and the failure will look like an app bug.
+
+Fix: add a contain-aware coordinate helper next to `drawLine` — the arithmetic is
+the four lines above — and migrate the specs that need document precision onto it.
+Do not change `drawLine`'s existing behaviour: the specs that call it today are
+written around box-relative coordinates, and changing the meaning of the argument
+breaks all of them at once.
+
+## P2 — `boundingBox()` is viewport-relative and a CDP capture clip is page-relative
+
+`e2e/helpers/screenshot-scale.ts:46-68`, `e2e/helpers/cdp-helpers.ts:55-74`
+
+The hazard, for whoever refactors this next. The app is taller than Playwright's
+720px window, so the window scrolls. `Locator.boundingBox()` measures against the
+VIEWPORT and goes negative as soon as it does — a canvas scrolled 440px down
+reports `y: -340` where it reported `y: 100` before. `page.mouse` shares that
+space. But `page.screenshot({ clip })` and CDP `Page.captureScreenshot`, which
+this suite calls directly, take their clip against the DOCUMENT origin. The two
+take **opposite** conventions from each other for the same numbers: Playwright
+takes a viewport clip and adds the scroll offset itself, so converting there moves
+the clip the wrong way; raw CDP takes a page clip, so converting nothing moves the
+capture 440px away from the region the caller measured. Neither direction throws.
+A clip derived from a scrolled `boundingBox()` and handed to CDP untranslated
+either returns the wrong region or lands off-canvas, where the failure surfaces as
+`Clipped area is either empty or outside the resulting image` and reads as a
+capture bug rather than a coordinate bug.
+
+**The helper-level fix is done, and it is recorded here so a refactor does not
+undo it.** The conversion is the pure function `viewportRectToPageRect`
+(`screenshot-scale.ts:69-76`), it is applied **at the CDP site only**
+(`cdp-helpers.ts:66-74`) and not in the callers, the scroll offset is read per
+capture rather than cached (`getPageScroll`, `canvas-helpers.ts:207-209`, because
+the window scrolls between captures — `clickToolButton` alone scrolls 440px, which
+is what `preservingScroll` exists to undo, `toolbar-helpers.ts:117-121,128,150`),
+and the rule is unit-tested for a non-zero offset at
+`e2e/helpers/__tests__/screenshot-scale.unit.test.ts:306-323`.
+
+What is left is a rule for new code: a spec that mixes `boundingBox()` with a CDP
+capture must not assume the two agree, and must not introduce a second conversion
+somewhere that already has one.
 
 ## P2 — an empty CDP capture is reported as a successful capture
 
@@ -169,7 +259,7 @@ opaque. Callers must reject empty images first.
 
 ## P3 — transparent pixels weighted as fully opaque (low confidence)
 
-`e2e/helpers/canvas-helpers.ts:231` and `:525` **[pinned]**
+`e2e/helpers/canvas-helpers.ts:231` and `:507` **[pinned]**
 
 `dominantRed` and `getColorAtPoint` skip only `alpha === 0`, so a nearly
 invisible pixel counts at full weight. A weighting concern rather than a
@@ -231,7 +321,7 @@ The guard exists and is the same shape as `canvas-helpers.ts:207-209`, but it is
 the module's only uncovered statement: `npm run test:e2e:unit:coverage` reports
 `cdp-helpers.ts` at 93.75% statements and 93.33% lines with line 34 — the `throw` —
 uncovered, against 100% of its functions. The sibling guard is pinned
-(`e2e/helpers/__tests__/canvas-interaction.unit.test.ts:199-223`), so nothing fails
+(`e2e/helpers/__tests__/canvas-interaction.unit.test.ts:192-216`), so nothing fails
 if this one is deleted, and the raw V8 failure it exists to replace
 (`The "path" argument must be of type string. Received undefined`) returns with it.
 
@@ -240,6 +330,74 @@ Fix: add the two cases to `e2e/helpers/__tests__/cdp-helpers.unit.test.ts` — a
 own message and that no CDP session was opened. `createTestInfoMock()`
 (`e2e/helpers/__tests__/canvas-helpers.fixtures.ts:121`) already makes `outputDir`
 optional, so the double needs no change.
+
+## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
+
+`@playwright/test` 1.63.0, `elementState('disabled')` → `retarget(node, 'follow-label')`
+
+Every options bar in this repository wraps its own control in a `<label>`
+(`src/components/ToolbarsRight/Eraser/Eraser.tsx:47-59` and every sibling bar), so the
+markup that makes a control's accessible name is the same markup that defeats the
+assertion on it. Playwright's `disabled` state does not test the element the locator
+resolved: `retarget` first walks a non-form-control up to
+`button, [role=button], [role=checkbox], [role=radio]`, and then — for the
+`follow-label` behaviour it uses for `disabled` — up to `element.closest('label')` and
+returns `enclosingLabel.control`. An `<option>` is neither a form control nor a member
+of that first selector list, and its ancestor _is_ the label, so the check is made
+against the `<select>`, which carries no `disabled` attribute. The result is
+`Received: enabled` for an option that demonstrably has `disabled=""` and
+`option.disabled === true`.
+
+This is a wrong-pass: a bar that removed the attribute, or that enabled a mode it
+cannot render, would still be reported as correct. It is also invisible in jsdom —
+`src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx:89` asserts
+`expect(options[0]).toBeDisabled()` with `@testing-library/jest-dom` and passes,
+because that matcher reads the DOM property directly and has no retarget step. A
+jsdom pass is therefore not evidence that the browser assertion works.
+
+Workaround used in `e2e/erase-fill-eyedropper.spec.ts:326`: assert the attribute and
+the enabled set, both read straight off the DOM.
+
+```ts
+await expect(brushOption).toHaveAttribute('disabled', '');
+const selectable = await mode
+  .locator('option')
+  .evaluateAll((nodes) =>
+    nodes.filter((n) => !(n as HTMLOptionElement).disabled).map((n) => (n as HTMLOptionElement).value)
+  );
+expect(selectable).toEqual(['pencil', 'block']);
+```
+
+`toHaveAttribute` is unaffected (it reads the resolved element), and the enabled set is
+the same fact stated as what a user can actually choose. No fix is proposed here: the
+retarget is upstream behaviour, and the only way to remove it from the assertions is
+to stop wrapping the control in its label, which is the repo's markup convention.
+
+## P2 — a cached canvas box addresses a different pixel after a tool switch
+
+`e2e/canvas-helpers.ts` consumers; measured on `Desktop Chrome` (1280x720), 2026-09-28
+
+The workspace canvas element is `width: 100%; height: 100%` of a CSS grid row, and the
+row's height is the active tool's options bar. Switching from the Eraser bar to the
+Magic Eraser bar changes the bar's height, the main area resizes, and the canvas box
+moves. A spec that measures the box once and reuses it afterwards is then clicking and
+sampling a different pixel — with no error anywhere, because every coordinate is
+still a valid number.
+
+Measured on this suite: a `boundingBox()` of `{x: 56, y: 100, width: 974, height: 890}`
+taken under the Eraser bar addressed a point 20 CSS px higher under the Magic Eraser
+bar, which is enough to move a 24-CSS-px stroke out of the sampled window entirely.
+The symptom is not a failure but a _wrong_ one: the magic eraser appeared to erase the
+whole line and a bucket appeared to fill nothing, and both readings were artefacts of
+the stale box. `usePointerPosition` centres the 800x600 document inside the canvas, so
+the vertical offset is the product of two scales (`974/800` and `890/600`) rather than
+one, and a cached box cannot be corrected after the fact.
+
+Fix: measure the box immediately before every gesture and every capture, or measure it
+once per tool after the options bar for that tool has rendered. `e2e/erase-fill-eyedropper.spec.ts`
+threads a `canvasBox(page)` call through `stroke`, `clickAt`, `readPixel`,
+`measureErasedWidth` and `slabClip` for this reason. A helper that returns the box
+alongside the capture it took would make the mistake harder to make.
 
 ## Known-skip tests
 
@@ -255,12 +413,14 @@ single-tool groups`.
 
 **Verified by running the suite against a real browser:**
 
-- The 7 comparison formats match the committed baselines.
-  `e2e/export/visual-regression.spec.ts` passes, so every baseline the spec reads
-  decodes and matches its committed pixels on this host. The ICO spec passes
-  in-browser against the source canvas.
+- The 7 comparison formats matched the committed baselines, before the toolbar
+  grew. `e2e/export/visual-regression.spec.ts` passed, so every baseline the spec
+  reads decoded and matched its committed pixels on this host. The ICO spec passes
+  in-browser against the source canvas. They no longer match — see the P1 entry
+  above for the one layout change that moved them and the three ways out.
 
-  The check that produced this claim was `if (testInfo.config.updateSnapshots)`,
+  **This was not true until the `updateSnapshots` guard was fixed — see that entry
+  above.** The check that produced this claim was `if (testInfo.config.updateSnapshots)`,
   and Playwright's default for that option is the string `'missing'`, so the branch was
   always taken: every run re-recorded the baseline and returned before
   `compareScreenshots`. The comparison below it was unreachable, so "matches the
@@ -269,6 +429,14 @@ single-tool groups`.
   with a sharp decode error, and a valid-but-different baseline fails with
   `Visual mismatch for PNG: 480000 diff pixels (ratio: 1.0000)`. Before the fix both
   were silently overwritten and the spec passed.
+
+- The CDP failing set used to be deterministic per browser mode with disjoint sets:
+  headed failed `:113 :129 :146 :163 :195`, headless failed `:220 :239`,
+  reproduced identically across repeats. Both sets are now empty, and the new
+  assertions are mode-independent by construction rather than by observation.
+- `levels.spec.ts:64` and `:109` used to fail in both modes, 2/2 each, which is
+  what established the `getWorkspaceCanvas` index shift as a real defect rather
+  than a mode artifact. Both pass now that the canvas is found by test id.
 
 **Not verified:**
 
@@ -288,3 +456,46 @@ single-tool groups`.
   `playwright.config.ts` starts `npm run dev`. Nothing establishes that
   `vite build` output renders byte-identically, so a future switch to serving
   `dist/` should be treated as a possible baseline-affecting change.
+
+## P2 — the export line is specified in document space; the ICO line still is not
+
+`e2e/export/helpers.ts`, `setupIcoTest`
+
+`setupExportTest` used to draw at canvas-relative offsets (`150,150` to `350,150`), which
+made the export a function of the window rather than of the document. The canvas is
+`w-full h-full` of a grid area the shell sizes, and `usePointerPosition` fits the document
+into it and centres it, so the same offsets marked different document points at different
+canvas sizes. The baselines encoded one particular canvas height: fixing a real desktop
+overflow moved the canvas from 974x890 to 974x583 and shifted the export by 459 pixels with
+no change anywhere in the export path.
+
+`setupExportTest` now specifies the line in document space and maps it in with
+`documentToCanvasOffset`, which mirrors the app's own contain-fit, and pins the committed
+pixels by using the document points the old offsets mapped to. `the export is independent of
+the canvas height` in the same spec asserts the property directly, and
+`e2e/helpers/__tests__/document-mapping.unit.test.ts` pins the mapping.
+
+`setupIcoTest` is untouched and still strokes at `ICON_STROKE` canvas-relative offsets
+against a 256x256 document. It escapes harm today because it compares in-browser against the
+source canvas rather than against a committed baseline, so a moved line still matches itself.
+It is one layout change away from the same class of failure, and the fix is the same: map
+`ICON_STROKE` through `documentToCanvasOffset` with a 256x256 document.
+
+## P2 — an explicit redraw clip is in page coordinates, and a canvas-relative one passes for the wrong reason
+
+`e2e/helpers/canvas-helpers.ts`, `buildClip`
+
+`buildClip` returns an explicit `clip` exactly as given; only its own default,
+`canvasRedrawClip`, adds the canvas box origin. A caller that passes canvas-relative
+offsets therefore polls the wrong region of the page.
+
+The failure mode is the dangerous shape rather than an obvious one: the wrong region is
+still a region, and `hasDarkPixels` may be satisfied by something that was already dark —
+the app's `#212529` header, for one. The wait returns, the stroke is not what was observed,
+and the test continues on a false positive. A clip that lands on empty canvas instead fails
+loudly, which is the better of the two outcomes and is not guaranteed.
+
+`setupExportTest` hit this while being decoupled and passed anyway, which is why
+`e2e/export/__tests__/helpers.unit.test.ts` pins the clip in page coordinates with literal
+values. Worth knowing before passing a custom clip anywhere in this suite: the two forms
+differ by the box origin and nothing in the types distinguishes them.

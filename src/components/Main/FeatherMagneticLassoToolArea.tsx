@@ -1,4 +1,4 @@
-import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
+import { type PointerEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -18,6 +18,7 @@ import {
   type MagneticSegmentResult,
 } from '../../util/magneticLasso.ts';
 import { canvasToDocumentPoint, documentFrameFromSize, type DocumentFrame } from '../../contexts/document-frame.ts';
+import { resetOverlayAlpha } from '../../util/canvas.ts';
 
 const MIN_POINTS_FOR_SELECTION = 3;
 const CLOSE_START_THRESHOLD = 10;
@@ -75,6 +76,7 @@ function drawFeatherMagneticOverlay({
   }
 
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  resetOverlayAlpha(ctx);
   selections.forEach((selection) => drawSelectionOutline(ctx, selection, documentFrame));
   if (draftPoints.length === 0) return;
 
@@ -133,7 +135,10 @@ function drawFeatherMagneticOverlay({
 
 export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: FeatherMagneticLassoToolAreaProps) => {
   const [{ canvasRef, containerRef, selections, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
-  const { clearSelections, commitSelection } = useSelectionHistory();
+  // `clearSelections` is gone with `removeLastAnchor`'s empty-list arm: a
+  // Backspace aimed at nothing is a no-op now, not a deselect. `commitSelection`
+  // stays, and is the one writer this component owns.
+  const { commitSelection } = useSelectionHistory();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { toolArgs } = useCurrentTool();
   const args = toolArgs as FeatherMagneticLassoToolArgs;
@@ -147,6 +152,21 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   const lastAutoAnchorTimeRef = useRef(0);
   const pendingPointerMoveRef = useRef<PendingPointerMove | null>(null);
   const pointerMoveFrameRef = useRef<number | null>(null);
+
+  // The draft's anchors live in `anchorsRef`, and a render may not read a ref
+  // (`react-hooks/refs`), so the `Backspace`/`Delete` registrations cannot gate
+  // on the list itself. This mirrors "the draft has an anchor to pop" into
+  // state, written by the same handlers that mutate the list, and it is the
+  // draft's own value: nothing outside this component can clear it, so the
+  // registrations cannot close while the anchors are still on the overlay.
+  // The store's `selectionDraft` could — the sidebar deselect writes `idle` to
+  // it without touching the draft — which left `Backspace` silently doing
+  // nothing.
+  const [hasDraftAnchors, setHasDraftAnchors] = useState(false);
+
+  function syncDraftAnchorGate() {
+    setHasDraftAnchors(anchorsRef.current.length > 0);
+  }
 
   const { getLocalCoords } = usePointerPosition({
     ref: containerRef,
@@ -208,6 +228,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   function resetInteractionState() {
     cancelPendingPointerMoveFrame();
     anchorsRef.current = [];
+    syncDraftAnchorGate();
     segmentsRef.current = [];
     pointsRef.current = [];
     previewRef.current = null;
@@ -295,27 +316,22 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
 
     segmentsRef.current.push(segment.path);
     anchorsRef.current.push(segment.snappedPoint);
+    syncDraftAnchorGate();
     previewRef.current = null;
     rebuildPointsFromSegments();
   }
 
   function removeLastAnchor() {
+    // An empty anchor list does not prove no frame is in flight, so this runs on
+    // every path through the handler, before anything else.
     cancelPendingPointerMoveFrame();
 
-    if (anchorsRef.current.length === 0) {
-      // Routed through the single-writer hook rather than the raw
-      // `CLEAR_SELECTIONS` action, so a Backspace deselect appends the history
-      // entry that makes it undoable. Scope is unchanged — the hook clears every
-      // selection, exactly as the raw action's reducer arm did — and the
-      // `cancelPendingPointerMoveFrame()` above still runs first, on every path
-      // through this handler, because the anchor list being empty does not prove
-      // there is no frame in flight. The hook's own guard makes the "nothing
-      // selected" case dispatch nothing, which is stronger than the raw action:
-      // that used to bump the `selectionCleared` repaint marker over an
-      // already-empty selection.
-      clearSelections();
-      return;
-    }
+    // No draft means no anchor to remove. The registration is also gated off in
+    // that state, so this only guards the handler itself: a stray Backspace
+    // reaches the whole app, and clearing the document's committed selections
+    // from it appends a deselect the user never asked for. Matches the
+    // self-guard `cancelSelectionDraft` and `finishSelection` already have.
+    if (anchorsRef.current.length === 0) return;
 
     if (segmentsRef.current.length === 0) {
       cancelSelectionDraft();
@@ -324,6 +340,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
 
     segmentsRef.current.pop();
     anchorsRef.current.pop();
+    syncDraftAnchorGate();
     previewRef.current = null;
     rebuildPointsFromSegments();
     redrawOverlay();
@@ -435,6 +452,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     const startPoint = segment.snappedPoint;
 
     anchorsRef.current = [startPoint];
+    syncDraftAnchorGate();
     segmentsRef.current = [];
     pointsRef.current = [startPoint];
     previewRef.current = null;
@@ -503,10 +521,21 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     finishSelection();
   };
 
+  // `mutatesDocument: false` on all four, and every one of them is a shortcut
+  // about THIS component's own gesture, which is the only reason to claim the
+  // exemption. `useKeyboardEvents` refuses document-mutating shortcuts while a
+  // document-committing gesture holds the document, and a lasso here is built
+  // click by click with the anchors on the overlay: refusing `Escape` would leave
+  // no way to cancel it, `Enter` no way to finish it, and `Backspace` no way to
+  // remove a vertex placed against the wrong edge. This component claims no
+  // gesture of its own — every step between the first click and `finishSelection`
+  // mutates refs and the overlay and dispatches nothing — so the exemption costs
+  // nothing: there is no window here for a shortcut to corrupt.
   useKeyDownShortcut({
     key: 'Escape',
     preventDefault: true,
     allowInInput: true,
+    mutatesDocument: false,
     onKeyDown: cancelSelectionDraft,
   });
 
@@ -514,20 +543,29 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     key: 'Enter',
     preventDefault: true,
     allowInInput: true,
+    mutatesDocument: false,
     onKeyDown: finishSelection,
   });
 
+  // `enabled` gates the registration on the draft itself: there is an anchor to
+  // pop or there is not, and the mirror above is the draft's own count, so no
+  // reducer or sidebar action that clears `selectionDraft` can close the key
+  // while the anchors are still on the overlay. `allowInInput` stays off:
+  // removing an anchor is text editing from the field's point of view, and
+  // `preventDefault` would cancel the character the field was asked to delete.
   useKeyDownShortcut({
     key: 'Backspace',
     preventDefault: true,
-    allowInInput: true,
+    enabled: hasDraftAnchors,
+    mutatesDocument: false,
     onKeyDown: removeLastAnchor,
   });
 
   useKeyDownShortcut({
     key: 'Delete',
     preventDefault: true,
-    allowInInput: true,
+    enabled: hasDraftAnchors,
+    mutatesDocument: false,
     onKeyDown: removeLastAnchor,
   });
 

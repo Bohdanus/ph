@@ -4,12 +4,26 @@ import { distanceBetweenPoints } from './selection.ts';
 const MAX_MAGNETIC_PATH_AREA = 32_000;
 const LINE_SAMPLE_STEP = 2;
 
+/**
+ * How many luma rows the edge-map sweep keeps live. The Sobel pass reads three rows of the
+ * output row it is writing — `y - 1`, `y` and `y + 1` — and never any other, so three is
+ * both the minimum that works and the whole of what it needs.
+ */
+const LUMA_RING_ROWS = 3;
+
+/**
+ * `gradientMagnitude` is the only per-pixel buffer the path search reads, and
+ * `maxGradient` is the normalisation it compares against. `luma` and
+ * `gradientDirection` are computed by `createEdgeMapFromImageData` and
+ * deliberately not retained: the Sobel pass needs the luma plane while it runs
+ * and nothing downstream reads the direction, so returning either would hold 4
+ * more bytes per pixel for the whole draft. The luma plane is not retained
+ * either — it is a `LUMA_RING_ROWS`-deep ring, not a full frame.
+ */
 export type EdgeMap = {
   width: number;
   height: number;
-  luma: Float32Array;
   gradientMagnitude: Float32Array;
-  gradientDirection: Float32Array;
   maxGradient: number;
 };
 
@@ -48,6 +62,21 @@ function roundPoint(point: Point): Point {
 
 function getIndex(x: number, y: number, width: number): number {
   return y * width + x;
+}
+
+/**
+ * Alpha-composited luminance: `rgbLuma * alpha + 255 * (1 - alpha)`, so a
+ * transparent pixel behaves as white rather than as black and cannot be told
+ * apart from an unpainted background.
+ *
+ * Exported because the luma plane is a local of `createEdgeMapFromImageData`
+ * rather than part of the returned `EdgeMap`: this is where the rule lives, and
+ * it is the observable a caller or a test can check.
+ */
+export function computeLuma(red: number, green: number, blue: number, alpha: number): number {
+  const normalizedAlpha = alpha / 255;
+  const rgbLuma = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  return rgbLuma * normalizedAlpha + 255 * (1 - normalizedAlpha);
 }
 
 function heapPush(heap: HeapNode[], node: HeapNode): void {
@@ -122,43 +151,71 @@ export function createEdgeMapFromCanvas(canvas: HTMLCanvasElement | null): EdgeM
 
 export function createEdgeMapFromImageData(imageData: ImageData): EdgeMap {
   const { width, height, data } = imageData;
-  const luma = new Float32Array(width * height);
   const gradientMagnitude = new Float32Array(width * height);
-  const gradientDirection = new Float32Array(width * height);
   let maxGradient = 0;
 
-  for (let y = 0; y < height; y++) {
+  // The luma plane is a ring of `LUMA_RING_ROWS` rows rather than a full frame: output row
+  // `y` reads rows `y - 1`, `y` and `y + 1`, and row `y + 2` is the next one it will need,
+  // so the row that is about to be evicted is always the one already consumed. It is
+  // `Float32Array` and not `Float64Array` on purpose — the plane rounds `computeLuma`'s
+  // double exactly where the full-frame plane used to round it, and a wider plane would move
+  // every gradient magnitude in the map.
+  const ring = new Float32Array(LUMA_RING_ROWS * width);
+  const fillRingRow = (row: number) => {
     for (let x = 0; x < width; x++) {
-      const dataIndex = getIndex(x, y, width) * 4;
-      const alpha = data[dataIndex + 3] / 255;
-      const rgbLuma = data[dataIndex] * 0.2126 + data[dataIndex + 1] * 0.7152 + data[dataIndex + 2] * 0.0722;
-      luma[getIndex(x, y, width)] = rgbLuma * alpha + 255 * (1 - alpha);
+      const dataIndex = getIndex(x, row, width) * 4;
+      ring[getIndex(x, row % LUMA_RING_ROWS, width)] = computeLuma(
+        data[dataIndex],
+        data[dataIndex + 1],
+        data[dataIndex + 2],
+        data[dataIndex + 3]
+      );
     }
+  };
+
+  // The prologue fills the rows the first output row reads, and the bound keeps a frame
+  // shorter than the ring from reading past its own pixels. Such a frame has no strict
+  // interior, so the pass below writes nothing for it either.
+  for (let row = 0; row < LUMA_RING_ROWS && row < height; row++) {
+    fillRingRow(row);
   }
 
   for (let y = 1; y < height - 1; y++) {
+    // Row `y + 2` lands in the slot row `y - 1` still occupies, so the refill can only be
+    // issued once this output row has consumed it. It is guarded because the last output row
+    // has no row after its own bottom row to load.
+    const topRow = (y - 1) % LUMA_RING_ROWS;
+    const middleRow = y % LUMA_RING_ROWS;
+    const bottomRow = (y + 1) % LUMA_RING_ROWS;
+
     for (let x = 1; x < width - 1; x++) {
-      const topLeft = luma[getIndex(x - 1, y - 1, width)];
-      const top = luma[getIndex(x, y - 1, width)];
-      const topRight = luma[getIndex(x + 1, y - 1, width)];
-      const left = luma[getIndex(x - 1, y, width)];
-      const right = luma[getIndex(x + 1, y, width)];
-      const bottomLeft = luma[getIndex(x - 1, y + 1, width)];
-      const bottom = luma[getIndex(x, y + 1, width)];
-      const bottomRight = luma[getIndex(x + 1, y + 1, width)];
+      const topLeft = ring[getIndex(x - 1, topRow, width)];
+      const top = ring[getIndex(x, topRow, width)];
+      const topRight = ring[getIndex(x + 1, topRow, width)];
+      const left = ring[getIndex(x - 1, middleRow, width)];
+      const right = ring[getIndex(x + 1, middleRow, width)];
+      const bottomLeft = ring[getIndex(x - 1, bottomRow, width)];
+      const bottom = ring[getIndex(x, bottomRow, width)];
+      const bottomRight = ring[getIndex(x + 1, bottomRow, width)];
 
       const gx = -topLeft + topRight - 2 * left + 2 * right - bottomLeft + bottomRight;
       const gy = -topLeft - 2 * top - topRight + bottomLeft + 2 * bottom + bottomRight;
       const magnitude = Math.sqrt(gx * gx + gy * gy);
       const index = getIndex(x, y, width);
 
+      // The store rounds the magnitude into float32 and the running maximum keeps the
+      // unrounded double. That asymmetry is observable — the path search normalises against
+      // `maxGradient` and reads the stored sample — so it is preserved rather than tidied.
       gradientMagnitude[index] = magnitude;
-      gradientDirection[index] = Math.atan2(gy, gx);
       maxGradient = Math.max(maxGradient, magnitude);
+    }
+
+    if (y + 2 < height) {
+      fillRingRow(y + 2);
     }
   }
 
-  return { width, height, luma, gradientMagnitude, gradientDirection, maxGradient };
+  return { width, height, gradientMagnitude, maxGradient };
 }
 
 export function clampPointToEdgeMap(edgeMap: EdgeMap, point: Point): Point {

@@ -1,10 +1,12 @@
 import { type ChangeEvent, type RefObject, useEffect, useRef, useState } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useApp } from '../../hooks/useApp.ts';
+import AnchoredOverlay from './AnchoredOverlay.tsx';
 import ToolTooltip from './ToolTooltip.tsx';
 import { toolIcons } from './toolIcons.tsx';
 import { slugifyToolLabel, toolbarMap, type ToolbarTool, type ToolbarToolGroup } from '../../../toolbar-mapping.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import { useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
 
 const TOOL_BUTTON_BASE_CLASS =
   'group relative flex h-11 w-11 items-center justify-center rounded-md border text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 focus:ring-offset-gray-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:focus:ring-offset-gray-800';
@@ -29,7 +31,14 @@ const SidebarLeft = () => {
   const { toolArgs, patchToolArgs } = useCurrentTool();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
-  const [isSingleColumn, setIsSingleColumn] = useState(true);
+  // Two columns is the default. `min-h-0 overflow-y-auto` on the `<aside>` is what actually
+  // stops the toolbar from dictating the canvas: the aside's min-content height would otherwise
+  // become the grid row floor and drag the `h-full` canvas up (main's responsive work added that,
+  // and the page no longer outgrows a 720px viewport as a result). With the row bounded, the
+  // canvas keeps the same height in both layouts, so a single column only means the toolbar
+  // itself scrolls — which it now can, and which two columns mostly avoids.
+  const [isSingleColumn, setIsSingleColumn] = useState(false);
+  const isTablet = useIsTabletViewport();
   const longPressFlyoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressLongPressRef = useRef(false);
   const longPressOpenedRef = useRef(false);
@@ -40,6 +49,12 @@ const SidebarLeft = () => {
   const colorSquareRef = useRef<HTMLDivElement>(null);
   const bgColorSquareRef = useRef<HTMLDivElement>(null);
   const toolGroupRefs = useRef<Record<string, HTMLLIElement | null>>({});
+  // The tile a flyout is anchored to. Only the OPEN tile publishes one, and only for
+  // itself, so a flyout that switches groups can never be measured against the tile it
+  // replaced. Keyed by group because the anchor is published by a ref callback, which
+  // React re-invokes on every commit — the updater returns the same object when nothing
+  // changed, which is what stops that from re-rendering forever.
+  const [flyoutAnchor, setFlyoutAnchor] = useState<{ groupIndex: string; element: HTMLLIElement } | null>(null);
 
   const handleColorClick = (e: React.MouseEvent<HTMLDivElement>, inputRef: RefObject<HTMLInputElement | null>) => {
     if (!inputRef.current) return;
@@ -112,8 +127,18 @@ const SidebarLeft = () => {
     if (openGroup === null) return;
 
     const handleOutsideClick = (event: MouseEvent) => {
-      const group = toolGroupRefs.current[openGroup];
-      if (group && event.target instanceof Node && !group.contains(event.target)) setOpenGroup(null);
+      if (!(event.target instanceof Node)) return;
+      // The flyout is portalled into `document.body` to escape the rail's scroll
+      // container, so it is no longer inside the `<li>` that holds the tile. Without this
+      // second test every click on a flyout item reads as a click outside the group, and
+      // the menu closes under the item that was just chosen. The attribute is matched
+      // rather than a ref to the `<ul>` held here, because the element the click landed on
+      // is a descendant of it — the overlay's own wrapper, or a `<kbd>` — and only the DOM
+      // knows which group it belongs to.
+      const clickedFlyout = event.target instanceof Element ? event.target.closest('[data-toolbar-flyout]') : null;
+      if (toolGroupRefs.current[openGroup]?.contains(event.target)) return;
+      if (clickedFlyout?.getAttribute('data-toolbar-flyout') === openGroup) return;
+      setOpenGroup(null);
     };
 
     document.addEventListener('click', handleOutsideClick);
@@ -160,6 +185,10 @@ const SidebarLeft = () => {
         key={`${groupIndex}-${group.map(({ label }) => slugifyToolLabel(label)).join('-')}`}
         ref={(element) => {
           toolGroupRefs.current[groupIndex] = element;
+          if (element === null || !isOpen) return;
+          setFlyoutAnchor((current) =>
+            current?.groupIndex === groupIndex && current.element === element ? current : { groupIndex, element }
+          );
         }}
       >
         <ToolTooltip label={primaryTool.label} shortcut={primaryTool.shortcut}>
@@ -247,65 +276,68 @@ const SidebarLeft = () => {
           </button>
         </ToolTooltip>
 
-        {hasFlyout && isOpen && (
-          <ul
-            aria-label={group.some((tool) => tool.figure) ? 'Shape tools' : `${primaryTool.label} tools`}
-            className="absolute left-full top-0 z-50 ml-2 min-w-48 list-none rounded-lg border border-gray-300 bg-gray-100 p-1.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
-            onKeyDown={(event) => {
-              const items = Array.from(
-                event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
-              );
-              if (items.length === 0) return;
+        {hasFlyout && isOpen && flyoutAnchor?.groupIndex === groupIndex && (
+          <AnchoredOverlay align="start" anchor={flyoutAnchor.element} measureKey={groupIndex}>
+            <ul
+              aria-label={group.some((tool) => tool.figure) ? 'Shape tools' : `${primaryTool.label} tools`}
+              className="z-50 min-w-48 list-none rounded-lg border border-gray-300 bg-gray-100 p-1.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
+              data-toolbar-flyout={groupIndex}
+              onKeyDown={(event) => {
+                const items = Array.from(
+                  event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+                );
+                if (items.length === 0) return;
 
-              const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
-              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                event.preventDefault();
-                const nextIndex =
-                  currentIndex === -1
-                    ? 0
-                    : (currentIndex + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
-                items[nextIndex]?.focus();
-              }
+                const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  const nextIndex =
+                    currentIndex === -1
+                      ? 0
+                      : (currentIndex + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+                  items[nextIndex]?.focus();
+                }
 
-              if (event.key === 'Enter' && document.activeElement instanceof HTMLButtonElement) {
-                event.preventDefault();
-                document.activeElement.click();
-              }
-            }}
-            role="menu"
-            data-testid={`tool-flyout-${groupIndex}`}
-          >
-            {group.map((tool: ToolbarTool) => {
-              const FlyoutIcon = getToolIcon(tool);
-              const isSelected = isToolSelected(tool);
+                if (event.key === 'Enter' && document.activeElement instanceof HTMLButtonElement) {
+                  event.preventDefault();
+                  document.activeElement.click();
+                }
+              }}
+              role="menu"
+              data-testid={`tool-flyout-${groupIndex}`}
+            >
+              {group.map((tool: ToolbarTool) => {
+                const FlyoutIcon = getToolIcon(tool);
+                const isSelected = isToolSelected(tool);
 
-              return (
-                <li key={`${tool.name}-${slugifyToolLabel(tool.label)}`} role="none">
-                  <button
-                    aria-checked={isSelected}
-                    aria-label={tool.label}
-                    className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
-                      isSelected
-                        ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-100'
-                        : 'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700'
-                    }`}
-                    onClick={() => {
-                      setPrimaryTools((current) => ({ ...current, [groupIndex]: tool }));
-                      selectTool(tool);
-                      setOpenGroup(null);
-                    }}
-                    role="menuitemradio"
-                    type="button"
-                    data-testid={`tool-flyout-item-${tool.name}-${slugifyToolLabel(tool.label)}`}
-                  >
-                    <FlyoutIcon title={tool.label} />
-                    <span className="flex-1 whitespace-nowrap">{tool.label}</span>
-                    {tool.shortcut && <kbd className="text-[10px] opacity-65">{tool.shortcut}</kbd>}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+                return (
+                  <li key={`${tool.name}-${slugifyToolLabel(tool.label)}`} role="none">
+                    <button
+                      aria-checked={isSelected}
+                      aria-label={tool.label}
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+                        isSelected
+                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-100'
+                          : 'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700'
+                      }`}
+                      onClick={() => {
+                        setPrimaryTools((current) => ({ ...current, [groupIndex]: tool }));
+                        selectTool(tool);
+                        setOpenGroup(null);
+                      }}
+                      role="menuitemradio"
+                      type="button"
+                      data-testid={`tool-flyout-item-${tool.name}-${slugifyToolLabel(tool.label)}`}
+                    >
+                      <FlyoutIcon title={tool.label} />
+                      <span className="flex-1 whitespace-nowrap">{tool.label}</span>
+                      {tool.shortcut && <kbd className="text-[10px] opacity-65">{tool.shortcut}</kbd>}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </AnchoredOverlay>
         )}
       </li>
     );
@@ -313,38 +345,50 @@ const SidebarLeft = () => {
 
   if (!hasImage) return;
 
-  const toolbarWidth = isSingleColumn ? '3.5rem' : '6.75rem';
+  // The tablet band has no room for a 108px two-column rail: at 768px that plus the layers
+  // panel leaves the canvas 410px. The two-column choice is a desktop preference, so below
+  // `lg` the rail is forced to one column and the toggle is hidden rather than shown
+  // inert. This is the one place a media query has to reach the DOM rather than a class,
+  // because the two modes are different markup (one `<ul>` per section, versus a single
+  // two-column `<ul>`) and not a restyle of the same tree.
+  const isSingleColumnMode = isTablet || isSingleColumn;
+  const toolbarWidth = isSingleColumnMode ? '3.5rem' : '6.75rem';
 
   return (
     <aside
-      className="max-md:hidden border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]"
+      className="max-md:hidden min-h-0 overflow-y-auto overscroll-contain border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]"
       data-testid="left-sidebar"
       style={{ width: toolbarWidth }}
     >
-      <div className="flex h-full flex-col items-center px-3 py-4">
+      {/* `min-h-full`, not `h-full`: the aside now scrolls, and `h-full` on a child of a
+          scroll container resolves against the container's own height, which would leave
+          the colour swatches unpainted at the bottom of a long rail. */}
+      <div className="flex min-h-full flex-col items-center px-3 py-4">
         <div className="mb-2 flex w-full justify-end px-1">
-          <button
-            aria-label={isSingleColumn ? 'Use two-column toolbar' : 'Use one-column toolbar'}
-            aria-pressed={isSingleColumn}
-            className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
-            onClick={() => {
-              setIsSingleColumn((current) => !current);
-              setOpenGroup(null);
-            }}
-            title={isSingleColumn ? 'Use two columns' : 'Use one column'}
-            type="button"
-            data-testid="toolbar-layout-toggle"
-          >
-            <LayoutIcon singleColumn={isSingleColumn} />
-          </button>
+          {!isTablet && (
+            <button
+              aria-label={isSingleColumn ? 'Use two-column toolbar' : 'Use one-column toolbar'}
+              aria-pressed={isSingleColumn}
+              className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
+              onClick={() => {
+                setIsSingleColumn((current) => !current);
+                setOpenGroup(null);
+              }}
+              title={isSingleColumn ? 'Use two columns' : 'Use one column'}
+              type="button"
+              data-testid="toolbar-layout-toggle"
+            >
+              <LayoutIcon singleColumn={isSingleColumn} />
+            </button>
+          )}
         </div>
         <div
           className={`rounded-lg border border-gray-300 bg-gray-200/70 p-1.5 shadow-inner dark:border-gray-700 dark:bg-gray-950/35 ${
-            isSingleColumn ? 'w-14' : 'w-[6.75rem]'
+            isSingleColumnMode ? 'w-14' : 'w-[6.75rem]'
           }`}
           data-testid="left-toolbar-tools"
         >
-          {isSingleColumn ? (
+          {isSingleColumnMode ? (
             toolbarMap.map((section, sectionIndex) => (
               <ul
                 className={`grid list-none grid-cols-1 gap-1.5 ${sectionIndex > 0 ? 'mt-1.5 border-t border-gray-300 pt-1.5 dark:border-gray-700' : ''}`}

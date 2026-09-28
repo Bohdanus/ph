@@ -10,7 +10,6 @@ import { SetToolArgsContext } from './set-tool-args.ts';
 
 export interface CurrentToolContextState {
   toolArgs: ToolArgs;
-  isToolDirty: boolean;
   setToolArgs: (args: ToolArgs) => void;
   getToolArgs: <TName extends ToolName>(toolName: TName) => ToolArgsFor<TName> | null;
   patchToolArgs: <TName extends ToolName>(toolName: TName, patch: ToolPatch<TName>) => void;
@@ -42,7 +41,7 @@ type ToolState = {
 
 /* this provider is meant for fast updates. keep it away from Main component */
 export const CurrentToolProvider = ({ children }: { children: React.ReactNode }) => {
-  const [{ currentArgs: currentArgsRef, toolName, isToolDirty }] = useStore();
+  const [{ currentArgs: currentArgsRef, toolName }] = useStore();
   const [toolState, setToolState] = useState<ToolState>(() => ({
     toolName,
     args: cloneSavedToolArgs(toolName),
@@ -93,14 +92,13 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
   const value = useMemo(
     () => ({
       toolArgs,
-      isToolDirty,
       setToolArgs: _setToolArgs,
       getToolArgs,
       patchToolArgs,
 
       resetToLastSavedArgs,
     }),
-    [_setToolArgs, getToolArgs, isToolDirty, patchToolArgs, resetToLastSavedArgs, toolArgs]
+    [_setToolArgs, getToolArgs, patchToolArgs, resetToLastSavedArgs, toolArgs]
   );
 
   return (

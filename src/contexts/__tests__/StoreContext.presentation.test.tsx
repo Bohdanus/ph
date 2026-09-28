@@ -270,27 +270,56 @@ describe('PUBLISH_RUNTIME_PRESENTATION', () => {
     expect(store().durableStatus).toBe(before.durableStatus);
   });
 
-  it('refuses a payload that also changes durable layer state', () => {
-    const debug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+  /**
+   * The refused publication is logged as an error only when the payload is not
+   * reference-identical to the stored record, and that half of the guard is not
+   * reachable today. `layersDifferOnlyByPresentation`
+   * (`layer-presentation.ts:96-112`) returns `true` for a payload whose layer
+   * records ARE the stored objects — its `previous === candidate` short-circuit
+   * at `:106` — so an identity-identical payload is published, never refused,
+   * and the quiet branch in `StoreContext.tsx` never runs.
+   *
+   * That is recorded rather than tested: a test for the quiet branch would have
+   * to dispatch a payload the guard accepts, so it would pass before and after
+   * the change and prove nothing. What is reachable, and pinned below, is the
+   * refusal of a payload that moves durable layer state.
+   */
+
+  it('refuses a payload that also changes durable layer state, naming the offending ids', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { store, dispatch } = renderWithProbe();
-    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, null) });
+    replaceDocument(dispatch(), {
+      [layerId]: layerWithCanvas(layerId, null),
+      'layer-2': layerWithCanvas('layer-2', null),
+    });
     const before = store().layers[layerId];
+    const secondName = store().layers['layer-2'].name;
 
     act(() => {
       dispatch()({
         type: 'PUBLISH_RUNTIME_PRESENTATION',
-        payload: { layers: { [layerId]: { ...before, pos: { x: 99, y: 0, width: 100, height: 80 } } } },
+        payload: {
+          layers: {
+            [layerId]: { ...before, pos: { x: 99, y: 0, width: 100, height: 80 } },
+            'layer-2': { ...store().layers['layer-2'], name: 'renamed' },
+          },
+        },
       });
     });
 
     expect(store().layers[layerId]).toBe(before);
-    expect(debug).toHaveBeenCalledWith(
-      'Ignored a runtime presentation publication that also changes durable layer state'
-    );
+    expect(store().layers['layer-2'].name).toBe(secondName);
+    // A publication that moves durable layer state loses a user edit, so it is
+    // reported rather than discarded: the message names the invariant and the
+    // layers that broke it.
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const [message] = consoleError.mock.calls[0];
+    expect(String(message)).toContain('PUBLISH_RUNTIME_PRESENTATION');
+    expect(String(message)).toContain('layer-1, layer-2');
   });
 
   it('refuses a payload that rewrites a recorded tool edit', () => {
-    vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const { store, dispatch } = renderWithProbe();
     const base = layerWithCanvas(layerId, null);
     act(() => {

@@ -35,7 +35,6 @@ describe('DummyToolArea', () => {
     const { container } = render(
       <DummyToolArea
         className="tool-area"
-        canvasCtxRef={makeRef<CanvasRenderingContext2D>()}
         overlayCtxRef={makeRef<CanvasRenderingContext2D>()}
         toolOverlayRef={makeRef<HTMLCanvasElement>()}
       />

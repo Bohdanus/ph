@@ -3,6 +3,7 @@ import { fireEvent, render } from '@testing-library/react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { Selection } from '../../../contexts/general-types.ts';
 import { SELECTION_ACTION } from '../../../util/constants.ts';
+import { isDocumentGestureOpen, readDocumentGesture, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 import { PolygonClickToolArea } from '../PolygonClickToolArea.tsx';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -16,6 +17,9 @@ const toolState = vi.hoisted((): { toolArgs: { toolName?: string } | null } => (
   toolArgs: { toolName: 'polygonal-lasso' },
 }));
 const shortcutHandlers = vi.hoisted(() => new Map<string, () => void>());
+const rawShortcuts = vi.hoisted(
+  () => new Map<string, { key: string; enabled?: boolean; mutatesDocument?: boolean; onKeyDown: () => void }>()
+);
 
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   usePointerPosition: () => ({
@@ -23,8 +27,20 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   }),
 }));
 
+// `useKeyboardEvents` is mocked out wholesale here, which is exactly why the
+// document gate cannot be carried on a context this hook reads: the mock replaces
+// the module, so a provider carrying the value never renders. The module the tool
+// area imports for the gate is NOT mocked, so these registrations are the real
+// ones the component hands the hook — `mutatesDocument` is a plain field on the
+// object and survives a mock that only records the handler.
 vi.mock('../../../hooks/useKeyboardEvents.tsx', () => ({
-  useKeyDownShortcut: (shortcut: { key: string; onKeyDown: () => void }) => {
+  useKeyDownShortcut: (shortcut: {
+    key: string;
+    enabled?: boolean;
+    mutatesDocument?: boolean;
+    onKeyDown: () => void;
+  }) => {
+    rawShortcuts.set(shortcut.key, shortcut);
     shortcutHandlers.set(shortcut.key, shortcut.onKeyDown);
   },
 }));
@@ -166,9 +182,13 @@ describe('PolygonClickToolArea', () => {
   beforeEach(() => {
     dispatchMock.mockClear();
     shortcutHandlers.clear();
+    rawShortcuts.clear();
     storeState.selections = [];
     storeState.documentFrame = null;
     toolState.toolArgs = { toolName: 'polygonal-lasso' };
+    // The gesture slot is module-level, so a case that leaks a claim would refuse
+    // every later claim in this file and read as a dozen unrelated failures.
+    resetDocumentGestures();
   });
 
   describe('adding vertices', () => {
@@ -562,12 +582,6 @@ describe('PolygonClickToolArea', () => {
 
     it.each([
       [
-        'a pointer leave',
-        (toolArea: HTMLElement) => {
-          fireEvent.pointerLeave(toolArea, { clientX: 40, clientY: 40 });
-        },
-      ],
-      [
         'a pointer cancel',
         (toolArea: HTMLElement) => {
           fireEvent.pointerCancel(toolArea, { clientX: 40, clientY: 40 });
@@ -597,7 +611,7 @@ describe('PolygonClickToolArea', () => {
       expect(selectionEdits()).toHaveLength(0);
       // The store is only ever written through dispatch, so this is the
       // assertion that can actually fail about the store having been left alone:
-      // the abort writes nothing at all, and the one action any of the three
+      // the abort writes nothing at all, and the one action either of the two
       // routes may emit is the draft cancel, which touches `selectionDraft`
       // alone. Comparing the mocked store object to itself proved nothing — the
       // component only ever reads it.
@@ -615,6 +629,45 @@ describe('PolygonClickToolArea', () => {
       fireEvent.pointerMove(toolArea, { clientX: 60, clientY: 60 });
       fireEvent.pointerUp(toolArea, { clientX: 60, clientY: 60 });
       expect(selectionEdits()).toHaveLength(0);
+    });
+
+    it('commits a moved anchor drag that survives a pointer leave, on the release that follows it', () => {
+      // §34 parity. The rectangle captures its pointer, so a release outside its
+      // surface still reaches `useRect` and the move commits; this surface used
+      // to abort the drag on `pointerleave` instead, so the same gesture was
+      // silently dropped with NO history entry at all — not an entry describing a
+      // discard, simply nothing, and a move the user watched happen lost. The
+      // drag now takes the surface's capture on `pointerdown`, which makes a
+      // leave an interruption the browser follows with a release here rather than
+      // a terminal end.
+      storeState.selections = [committedTriangle()];
+      const ctx = createMockContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { pointerId: 1, clientX: 60, clientY: 40 });
+      fireEvent.pointerLeave(toolArea, { pointerId: 1, clientX: 60, clientY: 40 });
+
+      // The leave alone is not the end: the drag is still running, so nothing has
+      // been written and the preview still stands.
+      expect(selectionEdits()).toHaveLength(0);
+      expect(dispatchedActionTypes()).toEqual([]);
+
+      fireEvent.pointerUp(toolArea, { pointerId: 1, clientX: 60, clientY: 40 });
+
+      // One `'move'` entry, carrying the geometry the drag ended on — the same
+      // reshape the in-bounds release commits, byte for byte.
+      expect(selectionEdits()).toHaveLength(1);
+      expect(selectionEdits()[0].payload.updates.selections[0]).toMatchObject({
+        id: 'selection-1',
+        pos: { x: 59, y: 9, width: 42, height: 92 },
+        points: [
+          { x: 1, y: 31 },
+          { x: 41, y: 1 },
+          { x: 41, y: 91 },
+        ],
+        metadata: { movedAtVersion: 1 },
+      });
     });
 
     it('discards a displaced drag, and lets only the pointer that replaced it commit', () => {
@@ -772,6 +825,23 @@ describe('PolygonClickToolArea', () => {
       expect(ctx.lineTo).toHaveBeenCalledWith(10, 10);
     });
 
+    it('strokes at full opacity when the shared overlay was left at a tool alpha', () => {
+      const ctx = createMockContext();
+      const alphaAtStroke: number[] = [];
+      vi.mocked(ctx.stroke).mockImplementation(() => {
+        alphaAtStroke.push(ctx.globalAlpha);
+      });
+      ctx.globalAlpha = 0.2;
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { clientX: 60, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { clientX: 60, clientY: 60 });
+
+      expect(alphaAtStroke.length).toBeGreaterThan(0);
+      expect(alphaAtStroke.every((alpha) => alpha === 1)).toBe(true);
+    });
+
     it('draws only the start and end handles for a long freehand path', () => {
       const ctx = createMockContext();
       const toolArea = renderArea({ current: ctx }).ctx;
@@ -798,7 +868,272 @@ describe('PolygonClickToolArea', () => {
     });
   });
 
+  /**
+   * §47: a drag here commits on release, so between the press and the release a
+   * document-mutating shortcut would mutate the document the pending commit then
+   * appends to — and an undo/redo in that window replaces `selections` from the
+   * SAME `history` array, so `history.length` never moves and the commit's
+   * truncate silently destroys the redo tail. The gate is the document gesture
+   * this component claims, which is why the module it imports is deliberately
+   * NOT mocked here even though `useKeyboardEvents` is.
+   */
+  describe('document gesture gate', () => {
+    it('claims the document for the length of a body drag and releases it on the release', () => {
+      storeState.selections = [committedTriangle()];
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 7, clientX: 80, clientY: 40 });
+
+      expect(isDocumentGestureOpen()).toBe(true);
+      expect(readDocumentGesture()).toEqual({ kind: 'polygon-selection', pointerId: 7 });
+
+      fireEvent.pointerMove(toolArea, { pointerId: 7, clientX: 90, clientY: 55 });
+      // Still held mid-drag, which is the entire window the gate exists for.
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      fireEvent.pointerUp(toolArea, { pointerId: 7, clientX: 90, clientY: 55 });
+
+      // Released by the time `commitSelection` appends, so the keyboard is open
+      // again for the entry this gesture just wrote.
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('claims the document for an anchor drag, and releases it when the drag is cancelled', () => {
+      storeState.selections = [committedTriangle()];
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 3, clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { pointerId: 3, clientX: 40, clientY: 40 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      // A cancel is genuinely terminal, so this is one of the routes that has to
+      // give the claim back. A gate with no cancel route is worse than no gate.
+      fireEvent.pointerCancel(toolArea, { pointerId: 3, clientX: 40, clientY: 40 });
+
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('releases the claim when Escape abandons a drag', () => {
+      storeState.selections = [committedTriangle()];
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 80, clientY: 40 });
+      fireEvent.pointerMove(toolArea, { pointerId: 4, clientX: 95, clientY: 60 });
+      // The exemption and the claim are the two halves of one story: `Escape` is
+      // allowed to run while the drag holds the document BECAUSE it is the
+      // designed way out, and running it has to hand the document back.
+      shortcutHandlers.get('Escape')?.();
+
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('releases the claim when a second press displaces the running drag', () => {
+      storeState.selections = [committedTriangle()];
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 80, clientY: 40 });
+      fireEvent.pointerMove(toolArea, { pointerId: 1, clientX: 90, clientY: 55 });
+      expect(readDocumentGesture()).toEqual({ kind: 'polygon-selection', pointerId: 1 });
+
+      // The second press ends the displaced drag and then takes the claim for
+      // itself, so the document ends up owned by the gesture that is running
+      // rather than by the one that was dropped.
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 2, clientX: 90, clientY: 55 });
+
+      expect(readDocumentGesture()).toEqual({ kind: 'polygon-selection', pointerId: 2 });
+    });
+
+    it('releases the claim on unmount, so a gesture that dies mid-drag cannot leave the keyboard dead', () => {
+      storeState.selections = [committedTriangle()];
+      const { ctx: toolArea, unmount } = renderArea({ current: createMockContext() });
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 5, clientX: 80, clientY: 40 });
+      fireEvent.pointerMove(toolArea, { pointerId: 5, clientX: 95, clientY: 60 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      unmount();
+
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('leaves the anchor-adding clicks unclaimed, so a multi-click polygon can still be switched away from', () => {
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 300, clientY: 300 });
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 400, clientY: 400 });
+
+      // A polygon is built click by click and no click is a gesture with an end,
+      // so claiming here would close the keyboard for the whole run — with no
+      // release point that is not the draft's own end.
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('claims the document for a freehand stroke and releases it on the release', () => {
+      toolState.toolArgs = { toolName: 'freehand-lasso' };
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 9, clientX: 10, clientY: 10 });
+      expect(readDocumentGesture()).toEqual({ kind: 'freehand-lasso', pointerId: 9 });
+
+      fireEvent.pointerUp(toolArea, { pointerId: 9, clientX: 60, clientY: 60 });
+
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('releases a freehand claim when Escape cancels the draft', () => {
+      toolState.toolArgs = { toolName: 'freehand-lasso' };
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 9, clientX: 10, clientY: 10 });
+      shortcutHandlers.get('Escape')?.();
+
+      // The draft reset used to write the freehand refs directly, which is
+      // exactly how a claim would outlive the stroke that took it.
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('does not strand a freehand claim when a second pointer presses', () => {
+      // The freehand claim was the only one in the app written as
+      // `ref.current = id; claim(...)` with the return value discarded, and this
+      // surface never asks `isPointerDownValid` whether a second pointer may
+      // press — so the losing press overwrote the ref, and from there NO release
+      // route could name the open claim: the first pointer's release saw a ref
+      // that was not its own and bailed without releasing, and the second
+      // pointer's release named an id the claim was never taken with. The claim
+      // then outlived the gesture, and because `KeyboardEventsProvider` is
+      // mounted once in `App.tsx`, every document-mutating shortcut was dead
+      // until a page reload.
+      toolState.toolArgs = { toolName: 'freehand-lasso' };
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 9, clientX: 10, clientY: 10 });
+      expect(readDocumentGesture()).toEqual({ kind: 'freehand-lasso', pointerId: 9 });
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 10, clientX: 200, clientY: 200 });
+      // First claim wins, and the losing press must not record an id it does not own.
+      expect(readDocumentGesture()).toEqual({ kind: 'freehand-lasso', pointerId: 9 });
+
+      fireEvent.pointerUp(toolArea, { pointerId: 9, clientX: 60, clientY: 60 });
+      fireEvent.pointerUp(toolArea, { pointerId: 10, clientX: 200, clientY: 200 });
+
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('does not let a second press take a running freehand stroke away from its own pointer', () => {
+      toolState.toolArgs = { toolName: 'freehand-lasso' };
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 9, clientX: 10, clientY: 10 });
+      // The `isPointerDownValid` discipline the rest of the app uses, which this
+      // surface cannot get from the hook because it never asks it.
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 10, clientX: 200, clientY: 200 });
+
+      fireEvent.pointerMove(toolArea, { pointerId: 9, clientX: 100, clientY: 10 });
+      fireEvent.pointerMove(toolArea, { pointerId: 9, clientX: 100, clientY: 100 });
+      fireEvent.pointerUp(toolArea, { pointerId: 10, clientX: 200, clientY: 200 });
+      fireEvent.pointerUp(toolArea, { pointerId: 9, clientX: 100, clientY: 100 });
+
+      // One selection, and it is the stroke the first pointer drew: the foreign
+      // press neither restarted the path nor made the owning release a stranger
+      // to its own gesture. The points are stored normalized to the bounding box,
+      // which `pointsBoundingPos` pads by the default `lineWidth` of 1.
+      expect(selectionEdits()).toHaveLength(1);
+      expect(committedSelection()).toMatchObject({
+        sourceTool: 'freehand-lasso',
+        pos: { x: 9, y: 9, width: 92, height: 92 },
+        points: [
+          { x: 1, y: 1 },
+          { x: 91, y: 1 },
+          { x: 91, y: 91 },
+        ],
+      });
+    });
+
+    it('a re-render mid-drag neither ends the drag nor releases the claim', () => {
+      storeState.selections = [committedTriangle()];
+      const overlayCtxRef = { current: createMockContext() };
+      const { container, rerender } = render(
+        <PolygonClickToolArea overlayCtxRef={overlayCtxRef} className="test-polygon-click-area" />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 6, clientX: 80, clientY: 40 });
+      fireEvent.pointerMove(toolArea, { pointerId: 6, clientX: 90, clientY: 55 });
+      expect(readDocumentGesture()).toEqual({ kind: 'polygon-selection', pointerId: 6 });
+
+      // The unmount cleanup below lists the drag teardown among its dependencies, and
+      // it may only do that because every one of those identities is stable. A
+      // cleanup that re-ran on a re-render would end the live drag and release the
+      // claim at this point — a gate that closes the keyboard halfway through a drag
+      // and a drag that never reaches its commit.
+      rerender(<PolygonClickToolArea overlayCtxRef={overlayCtxRef} className="test-polygon-click-area" />);
+      expect(readDocumentGesture()).toEqual({ kind: 'polygon-selection', pointerId: 6 });
+
+      fireEvent.pointerMove(toolArea, { pointerId: 6, clientX: 95, clientY: 60 });
+      fireEvent.pointerUp(toolArea, { pointerId: 6, clientX: 95, clientY: 60 });
+
+      // Committed, not abandoned mid-flight.
+      expect(selectionEdits()).toHaveLength(1);
+      expect(selectionEdits()[0].payload.updates.selections[0]).toMatchObject({ id: 'selection-1' });
+    });
+
+    it('registers its own-gesture shortcuts as exempt, so a gesture is never unendable', () => {
+      const toolArea = renderArea({ current: createMockContext() }).ctx;
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 300, clientY: 300 });
+
+      // `mutatesDocument` defaults to TRUE, so a registration that says nothing
+      // is refused while a drag holds the document. All four of these are about
+      // this component's own gesture — cancel it, finish it, pop an anchor — and
+      // refusing any of them would leave the user holding a gesture with no way
+      // out of it.
+      for (const key of ['Escape', 'Enter', 'Backspace', 'Delete']) {
+        expect(rawShortcuts.get(key)?.mutatesDocument).toBe(false);
+      }
+    });
+  });
+
   describe('lifecycle', () => {
+    it('repaints the committed outline after a reset that had no drag to abort', () => {
+      // §35. `resetInteractionState` clears the overlay and then dropped the
+      // running drag, which repaints nothing when no drag was running — and the
+      // only other repaint is an effect keyed on `selections`, while the dispatch
+      // that accompanies a reset (`CANCEL_SELECTION_DRAFT`) returns the SAME
+      // `selections` array. So the committed outlines `clearOverlay` had just
+      // wiped had no path back to the canvas.
+      //
+      // What this pins is the UNCONDITIONAL-repaint guarantee, not a sequence the
+      // live UI drives in one mount: the live sequence needs a store that commits
+      // a move mid-draft and then leaves an active selection behind, and the
+      // store here is mocked. The arrangement below reaches the same route
+      // (Escape with a draft open and no drag) with an active selection visible,
+      // which is the state the guarantee is about. It can be driven directly in
+      // one mount only by relaxing `handlePointerDown`'s
+      // `selections.some(isActive) && pointsRef.current.length === 0` guard.
+      const ctx = createMockContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      // Open the draft first: a press with an active selection already stored is
+      // refused before it can start a draft.
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 300, clientY: 300 });
+      // The anchor push re-renders, so this commit is what puts the committed
+      // outline in front of the component with a draft still open.
+      storeState.selections = [committedTriangle()];
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 400, clientY: 400 });
+
+      vi.mocked(ctx.moveTo).mockClear();
+      vi.mocked(ctx.clearRect).mockClear();
+
+      shortcutHandlers.get('Escape')?.();
+
+      // The clear is still there...
+      expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, 800, 600);
+      // ...and the committed outline is drawn again, which is the whole point: the
+      // reset is unconditional, so the wipe cannot be the last word about it.
+      expect(ctx.moveTo).toHaveBeenCalledWith(10, 10);
+      expect(ctx.lineTo).toHaveBeenCalledWith(100, 10);
+      expect(ctx.lineTo).toHaveBeenCalledWith(100, 100);
+    });
+
     it('clears the overlay on unmount', () => {
       const ctx = createMockContext();
       const { ctx: toolArea, unmount } = renderArea({ current: ctx });

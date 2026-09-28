@@ -11,19 +11,28 @@ const toolArgs = vi.hoisted(() => ({
 
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
+const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
 const mockMergeAllLayers = vi.hoisted(() => vi.fn());
 const mockResetToLastSavedArgs = vi.hoisted(() => vi.fn());
 const mockUndo = vi.hoisted(() => vi.fn());
 
-const historyState = vi.hoisted(() => ({ canUndo: false, isToolDirty: false }));
+// The discard is gated on a live preview for the active layer, so the store's
+// preview map has to be part of the mock. `commitDirtyTool` clears this map and
+// bakes the adjustment into the layer plus a `TOOL_ACTION` entry; the map is only
+// non-empty while an adjustment is still uncommitted.
+const store = vi.hoisted(() => ({
+  activeLayerId: 'layer-1' as string | null,
+  previewLayers: { current: {} as Record<string, unknown> },
+}));
 
 vi.mock('../../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [{}],
+  useStore: () => [{ activeLayerId: store.activeLayerId, previewLayers: store.previewLayers }],
 }));
 
 vi.mock('../../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     tempUpdateLayer: mockTempUpdateLayer,
+    cancelLayerPreview: mockCancelLayerPreview,
     mergeAllLayers: mockMergeAllLayers,
   }),
 }));
@@ -32,14 +41,16 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs,
     setToolArgs: mockSetToolArgs,
-    isToolDirty: historyState.isToolDirty,
     resetToLastSavedArgs: mockResetToLastSavedArgs,
   }),
 }));
 
+// The panel no longer reaches for history at all. The mock is kept deliberately: it
+// makes `undo` observable, so re-introducing the document-level fall-through — the
+// defect this suite used to pin as the contract — fails these tests again.
 vi.mock('../../../../contexts/useHistory.ts', () => ({
   useHistory: () => ({
-    canUndo: () => historyState.canUndo,
+    canUndo: () => true,
     undo: mockUndo,
   }),
 }));
@@ -59,12 +70,21 @@ const changeSlider = (name: RegExp, value: string) => {
   fireEvent.change(getSlider(name), { target: { value } });
 };
 
+/** Stand in for a preview `tempUpdateLayer` has published and nothing has committed yet. */
+const seedLivePreview = (layerId: string | null = store.activeLayerId) => {
+  store.previewLayers.current = layerId ? { [layerId]: { layer: {} } } : {};
+};
+
+const getResetButton = () => screen.getByRole('button', { name: 'Reset' });
+
 describe('Color toolbar', () => {
   beforeEach(() => {
     Object.assign(toolArgs, { grayscale: 0, sepia: 0, saturation: 100, toolName: 'color' as const });
-    Object.assign(historyState, { canUndo: false, isToolDirty: false });
+    store.activeLayerId = 'layer-1';
+    store.previewLayers.current = {};
     mockSetToolArgs.mockClear();
     mockTempUpdateLayer.mockClear();
+    mockCancelLayerPreview.mockClear();
     mockMergeAllLayers.mockClear();
     mockResetToLastSavedArgs.mockClear();
     mockUndo.mockClear();
@@ -95,9 +115,29 @@ describe('Color toolbar', () => {
     expect(sepia).toHaveValue('0');
     expect(saturation).toHaveValue('100');
 
+    // Saturation is bipolar because the filter contract maps a signed percentage onto a
+    // CSS amount: -100% has to be reachable, or the slider could never desaturate.
+    expect(saturation).toHaveAttribute('type', 'range');
+    expect(saturation).toHaveAttribute('min', '-100');
+    expect(saturation).toHaveAttribute('max', '100');
+
     // Grayscale and Sepia are both 0, so the "0%" readout appears twice.
     expect(screen.getAllByText('0%')).toHaveLength(2);
     expect(screen.getByText('100%')).toBeInTheDocument();
+  });
+
+  it('publishes a negative saturation, so the desaturate end of the slider is reachable', () => {
+    render(<Color />);
+
+    changeSlider(/Saturation/, '-100');
+    flushRaf();
+
+    expect(mockSetToolArgs).toHaveBeenCalledWith({
+      grayscale: 0,
+      sepia: 0,
+      saturation: -100,
+      toolName: 'color',
+    });
   });
 
   it('commits only the changed field and preserves the other two tool args', () => {
@@ -209,29 +249,108 @@ describe('Color toolbar', () => {
     expect(mockSetToolArgs).not.toHaveBeenCalled();
   });
 
-  it('resets the tool args from the default Reset button when the tool is dirty', () => {
-    historyState.isToolDirty = true;
+  it('ignores a second merge click while the first merge is still pending', async () => {
+    let releaseMerge: (() => void) | undefined;
+    mockMergeAllLayers.mockReturnValueOnce(
+      new Promise((resolve) => {
+        releaseMerge = () => resolve(null);
+      })
+    );
     render(<Color />);
 
-    const resetButton = screen.getByRole('button', { name: 'Reset' });
-    expect(resetButton).toBeEnabled();
+    const mergeButton = screen.getByRole('button', { name: 'Merge all' });
+    fireEvent.click(mergeButton);
+    fireEvent.click(mergeButton);
 
-    fireEvent.click(resetButton);
+    // Every `mergeAllLayers` call commits the dirty tool and appends its own history
+    // entry, so the overlap is the defect — not a cosmetic double click.
+    expect(mockMergeAllLayers).toHaveBeenCalledTimes(1);
 
-    expect(mockResetToLastSavedArgs).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      releaseMerge?.();
+    });
+  });
+
+  it('reports a failed merge instead of leaking an unhandled rejection', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockMergeAllLayers.mockRejectedValueOnce(new Error('merge failed'));
+
+    try {
+      render(<Color />);
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Merge all' }));
+      });
+
+      expect(errorSpy).toHaveBeenCalledWith('Failed to merge all layers', expect.any(Error));
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('offers the Reset discard only while a live preview exists, because that preview is the only thing it can remove', () => {
+    // The panel reads exactly one thing to arm the button: the store's preview map
+    // for the active layer. History state is fixed here (`canUndo()` is `true`),
+    // so nothing else this render can see is what the gate turns on.
+    seedLivePreview();
+    render(<Color />);
+
+    expect(getResetButton()).toBeEnabled();
+  });
+
+  it('leaves Reset disabled once the adjustment is committed, rather than claiming a reset it cannot perform', () => {
+    // `commitDirtyTool` runs on tool switch, on export and in this panel's own
+    // "Merge all": it empties the preview map and bakes the adjustment into a real
+    // layer plus a `TOOL_ACTION` entry. The panel can no longer cancel what is not
+    // a preview.
+    Object.assign(toolArgs, { grayscale: 60, sepia: 20, saturation: 40, toolName: 'color' as const });
+    render(<Color />);
+
+    const button = getResetButton();
+    expect(button).toBeDisabled();
+
+    fireEvent.click(button);
+
+    // The lie this pins: an always-enabled button reset all three sliders to 0 here
+    // while the canvas kept the committed adjustment.
+    expect(mockCancelLayerPreview).not.toHaveBeenCalled();
+    expect(mockSetToolArgs).not.toHaveBeenCalled();
     expect(mockUndo).not.toHaveBeenCalled();
   });
 
-  it('undoes history from the default Reset button when the tool is clean', () => {
-    historyState.canUndo = true;
+  it.each([
+    ['there is no active layer', null],
+    ['the active layer has no preview of its own', 'layer-2'],
+  ])('leaves Reset disabled when %s, so a preview on another layer cannot arm it', (_case, activeLayerId) => {
+    // `cancelLayerPreview()` only ever cancels the active layer's entry, so a preview
+    // belonging to any other layer leaves the click with nothing to remove.
+    store.activeLayerId = activeLayerId;
+    seedLivePreview('layer-1');
     render(<Color />);
 
-    const resetButton = screen.getByRole('button', { name: 'Reset' });
-    expect(resetButton).toBeEnabled();
+    expect(getResetButton()).toBeDisabled();
+  });
 
-    fireEvent.click(resetButton);
+  it('clears the preview and writes the default colour args without touching history', () => {
+    Object.assign(toolArgs, { grayscale: 60, sepia: 20, saturation: 40, toolName: 'color' as const });
+    seedLivePreview();
+    render(<Color />);
 
-    expect(mockUndo).toHaveBeenCalledTimes(1);
+    fireEvent.click(getResetButton());
+
+    expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
+    // The baseline is `defaultSettings.color`, not the value the user just dragged to.
+    // A `resetToLastSavedArgs` reset would publish those three values here.
+    expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
+      grayscale: 0,
+      sepia: 0,
+      saturation: 0,
+      toolName: 'color',
+    });
     expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
+    // The click removes an uncommitted preview. A committed adjustment is a
+    // document operation, and `undo()` — which the panel does not call — is the
+    // route out of one, so a fall-through to document-level undo stays pinned here.
+    expect(mockUndo).not.toHaveBeenCalled();
   });
 });

@@ -3,6 +3,7 @@ import type { CropToolArgs } from '../../../tools/crop.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
+import { refitRectWidthToAspect } from '../../../util/rect-aspect.ts';
 
 const aspectRatios = [
   { label: 'Free', value: null },
@@ -18,9 +19,35 @@ const Crop: React.FC<{}> = () => {
   const { toolArgs, setToolArgs } = useCurrentTool();
 
   const args = toolArgs as CropToolArgs;
-  const { aspectRatio, rect } = args;
+  const { aspectRatio, rect, preRatioRect } = args;
 
   const onChange = setToolArgs;
+
+  /**
+   * A ratio change publishes the refitted rect, because the store has to hold what the user is
+   * shown — `Apply` hands `rect` straight to `applyDocumentCrop`, and refitting only the overlay's
+   * private ref would crop the document to a region the user never saw.
+   *
+   * Publishing it is a REGRESSION-CAUSED loss, and this is the way back: the pre-ratio rect was
+   * never stored anywhere, so `Free`/`Original` had nothing to restore and left the rect 16:9
+   * shaped. `preRatioRect` records it on the args the store holds — panel state would go stale the
+   * moment the user drags a new rect with the ratio still set — and the first ratio choice wins, so
+   * cycling through several presets still returns the user's original framing and not the last
+   * intermediate fit.
+   */
+  const onRatioChange = (newAspectRatio: number | null) => {
+    if (!newAspectRatio) {
+      onChange({ ...args, aspectRatio: newAspectRatio, rect: preRatioRect ?? rect, preRatioRect: null });
+      return;
+    }
+
+    onChange({
+      ...args,
+      aspectRatio: newAspectRatio,
+      rect: rect ? { ...rect, ...refitRectWidthToAspect(rect, newAspectRatio) } : rect,
+      preRatioRect: preRatioRect ?? rect ?? null,
+    });
+  };
 
   return (
     <div className="flex flex-row items-center gap-6 h-full">
@@ -36,8 +63,7 @@ const Crop: React.FC<{}> = () => {
           value={aspectRatio ?? ''}
           onChange={(e) => {
             const val = e.target.value;
-            const newAspectRatio = val === '' ? null : Number(val);
-            onChange({ ...args, aspectRatio: newAspectRatio });
+            onRatioChange(val === '' ? null : Number(val));
           }}
           className="rounded border border-gray-300 bg-white px-3 py-1 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
         >
@@ -54,13 +80,17 @@ const Crop: React.FC<{}> = () => {
           className={PRIMARY_BUTTON}
           disabled={!rect}
           onClick={() => {
-            if (rect && applyDocumentCrop(rect)) onChange({ ...args, rect: null });
+            if (rect && applyDocumentCrop(rect)) onChange({ ...args, rect: null, preRatioRect: null });
           }}
         >
           Apply
         </button>
 
-        <button className={SECONDARY_BUTTON} disabled={!rect} onClick={() => onChange({ ...args, rect: null })}>
+        <button
+          className={SECONDARY_BUTTON}
+          disabled={!rect}
+          onClick={() => onChange({ ...args, rect: null, preRatioRect: null })}
+        >
           Clear
         </button>
       </div>
@@ -68,4 +98,10 @@ const Crop: React.FC<{}> = () => {
   );
 };
 
+// A ratio change only reshapes the overlay's private `startRectRef`, so without publishing the
+// refit here `Apply` would hand the pre-ratio rect to `applyDocumentCrop` and the document would
+// be cropped to a region the user never saw. The refit itself is `refitRectWidthToAspect`, the one
+// implementation shared with `useRect`: this panel used to carry a byte-equal private copy of the
+// hook's `adjustWidthRatio`, and the only thing keeping the two in step was a comment, so a
+// one-sided edit (including flipping the axis to fit the height) left both suites green.
 export default Crop;

@@ -140,6 +140,14 @@ export function usePointerPosition<T extends HTMLElement>(
 
   // heads up, we rely on this being called
   const isPointerUpValid = (e: React.PointerEvent<T>) => {
+    // Symmetric with `isPointerDownValid`, and the symmetry is load-bearing: a
+    // right-button release that arrives while a left drag is in flight shares the
+    // left pointer's id, so matching on the id alone handed it to every caller's
+    // release path — a commit, a claim release, all of it — for a release this
+    // press never made. Refusing it leaves the captured pointer tracked, so the
+    // genuine primary release still arrives and is the one that ends the gesture.
+    if (e.button !== 0) return false; // Only handle left click
+
     if (activePointerId.current !== e.pointerId) return false;
 
     clearEvent(e);

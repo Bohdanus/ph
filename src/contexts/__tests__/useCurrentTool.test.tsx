@@ -128,11 +128,6 @@ describe('useCurrentTool', () => {
     expect(result.current.getToolArgs('draw')).toMatchObject({ penType: 'pen', lineWidth: 5 });
   });
 
-  it('returns isToolDirty from store', () => {
-    const { result } = renderWithProviders();
-    expect(result.current.isToolDirty).toBe(false);
-  });
-
   describe('setToolArgs', () => {
     it('updates toolArgs and marks tool as dirty', () => {
       const { result } = renderWithProviders();

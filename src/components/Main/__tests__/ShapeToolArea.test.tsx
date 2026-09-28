@@ -1,6 +1,7 @@
 import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PointerEvent } from 'react';
+import { isDocumentGestureOpen, readDocumentGesture, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 import { ShapeToolArea } from '../ShapeToolArea.tsx';
 import { normalizeShapeGeometry, shapeGeometryBounds, type FigureType } from '../../../tools/shape.ts';
 
@@ -8,7 +9,11 @@ const createLayerFromToolMock = vi.hoisted(() => vi.fn());
 const drawShapeMock = vi.hoisted(() => vi.fn());
 const setShapeCtxMock = vi.hoisted(() => vi.fn());
 
-const createPointerState = vi.hoisted(() => () => ({ isMouseDown: { current: false }, moveValid: true }));
+const createPointerState = vi.hoisted(() => () => ({
+  isMouseDown: { current: false },
+  moveValid: true,
+  activePointer: null as number | null | undefined,
+}));
 const createToolArgsState = vi.hoisted(() => () => ({
   toolArgs: {
     toolName: 'shape',
@@ -53,14 +58,8 @@ const createStoreMocks = vi.hoisted(() => () => {
 
 const promptMock = vi.hoisted(() => vi.fn());
 
-/**
- * The frame every store in this file publishes, and the origin every committed
- * shape is offset by. Non-zero on purpose: a zero-origin frame makes document
- * and canvas coordinates identical, so a conversion that dropped the offset
- * would still satisfy every assertion below. The shape tool commits document
- * space while it previews and drags in canvas space, so a non-zero frame makes
- * the two distinguishable.
- */
+// Non-zero on purpose: a zero-origin frame makes document and canvas coordinates identical, so a
+// conversion that dropped the offset would still satisfy every assertion in this file.
 const DOCUMENT_FRAME = { x: 30, y: 40, width: 800, height: 600 };
 
 const storeState = vi.hoisted(
@@ -93,17 +92,32 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   }),
 }));
 
+/**
+ * The pointer capture contract, faithfully: the first press claims the pointer and only that
+ * pointer's move and release are valid. A mock that accepted every event would make "a foreign
+ * pointer's release must not hand the document back" unobservable, which is one of the things the
+ * gesture gate pins.
+ *
+ * The `button` check on the release mirrors `usePointerPosition.isPointerUpValid`, which now
+ * refuses a non-primary release exactly as `isPointerDownValid` refuses a non-primary press. The
+ * check used to be stricter than the real hook, which made a suite asserting a non-primary release
+ * as ignored a guard for behaviour the product did not have; the hook was made symmetric instead.
+ */
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   usePointerPosition: () => ({
     pointerIdRef: { current: null },
     isPointerDownValid: vi.fn((event: PointerEvent) => {
       if (event.button !== 0) return false;
+      if (pointerState.activePointer !== null) return false;
       pointerState.isMouseDown.current = true;
+      pointerState.activePointer = event.pointerId;
       return true;
     }),
     isPointerMoveValid: vi.fn(() => pointerState.isMouseDown.current && pointerState.moveValid),
     isPointerUpValid: vi.fn((event: PointerEvent) => {
       if (event.button !== 0) return false;
+      if (pointerState.activePointer !== event.pointerId) return false;
+      pointerState.activePointer = null;
       pointerState.isMouseDown.current = false;
       return true;
     }),
@@ -161,22 +175,19 @@ const dragOnce = (
 };
 
 /** Recovers the document-space geometry from the rebased layer args and their origin. */
-const committedDocumentGeometry = ({ args, pos }: CommittedLayer) => ({
+const committedGeometry = ({ args, pos }: CommittedLayer) => ({
   start: { x: args.start.x + pos.x, y: args.start.y + pos.y },
   end: { x: args.end.x + pos.x, y: args.end.y + pos.y },
 });
 
-/** The same geometry in canvas space, which is where a drag's pointer coords and a preview live. */
-const committedGeometry = ({ args, pos }: CommittedLayer) => ({
-  start: { x: args.start.x + pos.x - DOCUMENT_FRAME.x, y: args.start.y + pos.y - DOCUMENT_FRAME.y },
-  end: { x: args.end.x + pos.x - DOCUMENT_FRAME.x, y: args.end.y + pos.y - DOCUMENT_FRAME.y },
+const toDocument = (point: Point): Point => ({
+  x: point.x + DOCUMENT_FRAME.x,
+  y: point.y + DOCUMENT_FRAME.y,
 });
 
-/** The document-space bounds a canvas-space box commits to. */
-const documentBounds = (bounds: { x: number; y: number; width: number; height: number }) => ({
-  ...bounds,
-  x: bounds.x + DOCUMENT_FRAME.x,
-  y: bounds.y + DOCUMENT_FRAME.y,
+const toDocumentShape = ({ start, end }: { start: Point; end: Point }) => ({
+  start: toDocument(start),
+  end: toDocument(end),
 });
 
 const midPoint = ({ start, end }: { start: Point; end: Point }): Point => ({
@@ -189,7 +200,7 @@ describe('ShapeToolArea', () => {
     pointerState = createPointerState();
     toolArgsState = createToolArgsState();
     storeMocks = createStoreMocks();
-    storeState.documentFrame = { ...DOCUMENT_FRAME };
+    storeState.documentFrame = DOCUMENT_FRAME;
     createLayerFromToolMock.mockClear();
     drawShapeMock.mockClear();
     setShapeCtxMock.mockClear();
@@ -274,8 +285,8 @@ describe('ShapeToolArea', () => {
       const secondCall = createLayerFromToolMock.mock.calls[1][0];
       // Pan: delta from second move = (150-120, 140-110) = (30, 30)
       // start was (100, 100), end was (120, 110)
-      // After pan: start = (130, 130), end = (150, 140) in canvas space
-      // pos = { min(160,180)-2, min(170,180)-2, |180-160|+4, |180-170|+4 } = {158, 168, 24, 14}
+      // After pan: start = (130, 130), end = (150, 140)
+      // pos = { min(130,150)-2+30, min(130,140)-2+40, |130-150|+4, |130-140|+4 } = {158, 168, 24, 14}
       // adjusted start = (160-158, 170-168) = (2, 2)
       // adjusted end = (180-158, 180-168) = (22, 12)
       expect(secondCall.args.start).toEqual({ x: 2, y: 2 });
@@ -297,7 +308,7 @@ describe('ShapeToolArea', () => {
       });
 
       const thirdCall = createLayerFromToolMock.mock.calls[2][0];
-      // Normal mode: start = (200, 200), pos = {228, 238, 44, 34}
+      // Normal mode: start = (200, 200), pos = {198+30, 198+40, 44, 34}
       expect(thirdCall.args.start).toEqual({ x: 2, y: 2 });
       expect(thirdCall.args.end).toEqual({ x: 42, y: 32 });
     });
@@ -340,7 +351,8 @@ describe('ShapeToolArea', () => {
       expect(setShapeCtxMock).not.toHaveBeenCalled();
     });
 
-    it('sets shape context and stores refs on valid pointer down', () => {
+    it('configures the shape context for the preview paint, not once at pointer down', () => {
+      vi.useFakeTimers();
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
@@ -348,8 +360,48 @@ describe('ShapeToolArea', () => {
         fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
       });
 
+      // Nothing is painted yet, so nothing is configured yet either. The bracket that keeps
+      // `setShapeCtx`'s alpha off the shared overlay lives around the paint, which is what makes
+      // per-paint bracketing possible at all.
+      expect(setShapeCtxMock).not.toHaveBeenCalled();
+
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
       expect(setShapeCtxMock).toHaveBeenCalledTimes(1);
-      expect(setShapeCtxMock).toHaveBeenCalledWith(storeMocks.ctx, expect.objectContaining({ toolName: 'shape' }));
+      expect(setShapeCtxMock).toHaveBeenCalledWith(
+        storeMocks.ctx,
+        expect.objectContaining({ toolName: 'shape', start: { x: 10, y: 20 }, end: { x: 50, y: 60 } })
+      );
+    });
+
+    it('brackets the preview paint so setShapeCtx cannot leave its alpha on the shared overlay', () => {
+      vi.useFakeTimers();
+      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      const saves = vi.mocked(storeMocks.ctx.save).mock.invocationCallOrder;
+      const restores = vi.mocked(storeMocks.ctx.restore).mock.invocationCallOrder;
+      expect(saves).toHaveLength(1);
+      expect(restores).toHaveLength(1);
+      // `setShapeCtx` runs INSIDE the bracket, not before it: configured outside, the `restore()`
+      // would discard exactly the stroke settings `drawShape` reads.
+      expect(vi.mocked(setShapeCtxMock).mock.invocationCallOrder[0]).toBeGreaterThan(saves[0]);
+      expect(vi.mocked(drawShapeMock).mock.invocationCallOrder[0]).toBeLessThan(restores[0]);
     });
 
     it('stores fromCenter flag based on altKey', () => {
@@ -367,8 +419,8 @@ describe('ShapeToolArea', () => {
       });
 
       const callArgs = createLayerFromToolMock.mock.calls[0][0];
-      // fromCenter: start = anchor * 2 - end = {0, 0}, then adjusted by pos
-      // pos = { -2, -2, 104, 104 }, so start = { 0-(-2), 0-(-2) } = { 2, 2 }
+      // fromCenter: start = anchor * 2 - end = {30, 40} in document space, then adjusted by pos
+      // pos = { 30 - 2, 40 - 2, 104, 104 }, so start = { 30-28, 40-38 } = { 2, 2 }
       expect(callArgs.args.start).toEqual({ x: 2, y: 2 });
     });
   });
@@ -557,7 +609,7 @@ describe('ShapeToolArea', () => {
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
 
       // Normalized: side = max(|50-10|, |80-20|) = 60 → end = (70, 80)
-      // pos = { 10 - 2, 20 - 2, 60 + 4, 60 + 4 } = { 8, 18, 64, 64 }
+      // pos = { 10 - 2 + 30, 20 - 2 + 40, 60 + 4, 60 + 4 } = { 38, 58, 64, 64 }
       expect(fullArgs.pos).toEqual({ x: 38, y: 58, width: 64, height: 64 });
       expect(fullArgs.args.start).toEqual({ x: 2, y: 2 });
       expect(fullArgs.args.end).toEqual({ x: 62, y: 62 });
@@ -600,18 +652,17 @@ describe('ShapeToolArea', () => {
 
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
 
-      // Anchor (50, 50) is the fixed center in canvas space, so (80, 90) in
-      // document space once the frame origin is added: half = max(50, 30) = 50
-      // → start = (30, 40), end = (130, 140)
-      // pos = { 30 - 2, 40 - 2, 100 + 4, 100 + 4 } = { 28, 38, 104, 104 }
+      // Anchor (50, 50) is the fixed center: half = max(50, 30) = 50
+      // → start = (0, 0), end = (100, 100), so in document space start = (30, 40), end = (130, 140)
+      // pos = { 30 - 2, 40 - 2, 100 + 4 + 30, 100 + 4 + 40 } = { 28, 38, 104, 104 }
       expect(fullArgs.pos).toEqual({ x: 28, y: 38, width: 104, height: 104 });
       expect(fullArgs.args.start).toEqual({ x: 2, y: 2 });
       expect(fullArgs.args.end).toEqual({ x: 102, y: 102 });
       // The anchor stays the exact center of the committed shape.
       const centerX = fullArgs.pos.x + (fullArgs.args.start.x + fullArgs.args.end.x) / 2;
       const centerY = fullArgs.pos.y + (fullArgs.args.start.y + fullArgs.args.end.y) / 2;
-      expect(centerX).toBe(80);
-      expect(centerY).toBe(90);
+      expect(centerX).toBe(50 + DOCUMENT_FRAME.x);
+      expect(centerY).toBe(50 + DOCUMENT_FRAME.y);
     });
 
     it('preserves the drag quadrant when shift is held in all four directions', () => {
@@ -702,9 +753,8 @@ describe('ShapeToolArea', () => {
       };
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
 
-      // The preview is in canvas space; the commit rebases it into document-space
-      // layer space. side = max(|90-30|, |70-40|) = 60 → end = (90, 100) canvas,
-      // (120, 140) document, against a (60, 80) document start.
+      // The preview is in canvas space; the commit rebases it into layer space through the document
+      // frame. side = max(|90-30|, |70-40|) = 60 → end = (90, 100)
       expect(preview.start).toEqual({ x: 30, y: 40 });
       expect(preview.end).toEqual({ x: 90, y: 100 });
       expect(fullArgs.pos).toEqual({ x: 58, y: 78, width: 64, height: 64 });
@@ -718,7 +768,10 @@ describe('ShapeToolArea', () => {
       });
     });
 
-    it('drops the previewed constraint when Shift is released before pointer up', () => {
+    it('commits the previewed square when Shift is released before pointer up', () => {
+      // Releasing Shift before the button comes up used to re-run normalizeShapeGeometry with the
+      // RELEASE event's shiftKey, so a square the user watched being previewed committed as an
+      // unconstrained rectangle. The commit now takes the previewed geometry as it stands.
       vi.useFakeTimers();
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
@@ -748,11 +801,72 @@ describe('ShapeToolArea', () => {
       expect(preview.end).toEqual({ x: 70, y: 80 });
       expect(preview.end.x - preview.start.x).toBe(preview.end.y - preview.start.y);
 
-      // handlePointerUp re-runs normalizeShapeGeometry with the release event's
-      // shiftKey, so the committed layer is the unconstrained 10,20 -> 50,80
-      // drag and no longer matches the square the preview drew.
-      expect(fullArgs.pos).toEqual({ x: 38, y: 58, width: 44, height: 64 });
-      expect(fullArgs.pos.width).not.toBe(fullArgs.pos.height);
+      // The committed layer is that same square, in document space.
+      expect(fullArgs.pos).toEqual({ x: 38, y: 58, width: 64, height: 64 });
+      expect(fullArgs.args.start).toEqual({ x: 2, y: 2 });
+      expect(fullArgs.args.end).toEqual({ x: 62, y: 62 });
+      expect(committedGeometry(fullArgs)).toEqual({ start: toDocument(preview.start), end: toDocument(preview.end) });
+    });
+
+    it('flushes the pending preview frame on pointer up', () => {
+      // The frame pointer up cancels is the one that would have painted the final geometry, so it
+      // is painted synchronously before the commit instead of being thrown away.
+      vi.useFakeTimers();
+      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      expect(drawShapeMock).not.toHaveBeenCalled();
+
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+
+      expect(drawShapeMock).toHaveBeenCalledTimes(1);
+      expect(drawShapeMock).toHaveBeenCalledWith(
+        storeMocks.ctx,
+        expect.objectContaining({ start: { x: 10, y: 20 }, end: { x: 50, y: 60 } })
+      );
+    });
+
+    it('previews a second drag after a first one was committed', () => {
+      // The frame slot has to be released on pointer up. It used to be cancelled but never nulled,
+      // so it stayed non-null for the component's lifetime and `handlePointerMove` short-circuited
+      // on it: after the very first drag, every later drag showed nothing until it was released.
+      vi.useFakeTimers();
+      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 200, clientY: 200 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 260, clientY: 240 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      expect(drawShapeMock).toHaveBeenLastCalledWith(
+        storeMocks.ctx,
+        expect.objectContaining({ start: { x: 200, y: 200 }, end: { x: 260, y: 240 } })
+      );
     });
 
     it('creates a layer from a bare pointer-up without prompting or previewing', () => {
@@ -781,7 +895,7 @@ describe('ShapeToolArea', () => {
       expect(fullArgs.args.end).toEqual({ x: 192, y: 242 });
     });
 
-    it('keeps fractional drag geometry inside the fractional layer box', () => {
+    it('rounds a fractional drag outward to an integral layer box', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
@@ -798,20 +912,28 @@ describe('ShapeToolArea', () => {
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
       const { width, height } = fullArgs.pos;
 
-      // shapeGeometryBounds returns the raw padded extent, so a zoomed drag
-      // commits a fractional box rather than rounding to whole pixels.
-      expect(fullArgs.pos.x).toBeCloseTo(38.4, 10);
-      expect(fullArgs.pos.y).toBeCloseTo(58.6, 10);
-      expect(width).toBeCloseTo(43.8, 10);
-      expect(height).toBeCloseTo(64.3, 10);
+      // shapeGeometryBounds rounds outward — the origin down, the far edge up — so all four
+      // fields are integers. The box sizes the layer bitmap via `new OffscreenCanvas(w, h)`,
+      // whose constructor truncates, so a fractional box declared an extent its own raster
+      // disagreed with. `pad = 2 / 2 + 1 = 2`, so in document space the near edge is
+      // (40.4, 60.6) floored and the far edge is (82.2, 122.9) ceiled.
+      expect(fullArgs.pos.x).toBe(38);
+      expect(fullArgs.pos.y).toBe(58);
+      expect(width).toBe(45);
+      expect(height).toBe(65);
+      expect(Number.isInteger(fullArgs.pos.x)).toBe(true);
+      expect(Number.isInteger(fullArgs.pos.y)).toBe(true);
+      expect(Number.isInteger(width)).toBe(true);
+      expect(Number.isInteger(height)).toBe(true);
 
-      // The layer-local geometry stays inside [0, width] x [0, height].
+      // The rebase subtracts the same box the bounds were measured with, so the layer-local
+      // geometry is still the fractional drag, and it still sits inside the box.
       const localStart = fullArgs.args.start as { x: number; y: number };
       const localEnd = fullArgs.args.end as { x: number; y: number };
-      expect(localStart.x).toBeCloseTo(2, 10);
-      expect(localStart.y).toBeCloseTo(2, 10);
-      expect(localEnd.x).toBeCloseTo(41.8, 10);
-      expect(localEnd.y).toBeCloseTo(62.3, 10);
+      expect(localStart.x).toBeCloseTo(2.4, 10);
+      expect(localStart.y).toBeCloseTo(2.6, 10);
+      expect(localEnd.x).toBeCloseTo(42.2, 10);
+      expect(localEnd.y).toBeCloseTo(62.9, 10);
       expect(localStart.x).toBeGreaterThanOrEqual(0);
       expect(localStart.y).toBeGreaterThanOrEqual(0);
       expect(localEnd.x).toBeLessThanOrEqual(width);
@@ -858,8 +980,7 @@ describe('ShapeToolArea', () => {
       expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
       // Click at (10,20) → prompt returns 100 for width/height
-      // end = (10+100, 20+100) = (110, 120) canvas, (140, 160) document,
-      // adjusted by pos {x:38, y:58} → (102, 102)
+      // end = (40+100, 60+100) = (140, 160), adjusted by pos {x:38, y:58} → (102, 102)
       expect(fullArgs.args.start).toEqual({ x: 2, y: 2 });
       expect(fullArgs.args.end).toEqual({ x: 102, y: 102 });
       expect(fullArgs.pos).toEqual({ x: 38, y: 58, width: 104, height: 104 });
@@ -934,7 +1055,6 @@ describe('ShapeToolArea', () => {
 
     it('falls back to documentFrameFromSize when currentFrame is null', () => {
       storeState.documentFrame = null;
-
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
@@ -965,7 +1085,7 @@ describe('ShapeToolArea', () => {
 
       const expected = normalizeShapeGeometry(anchor, pointer, 'rectangle', { shiftKey: false, altKey: false });
       expect(expected).toEqual({ start: { x: 30, y: 40 }, end: { x: 90, y: 70 } });
-      expect(committedGeometry(fullArgs)).toEqual(expected);
+      expect(committedGeometry(fullArgs)).toEqual(toDocumentShape(expected));
       view.unmount();
     });
 
@@ -984,7 +1104,7 @@ describe('ShapeToolArea', () => {
         expect(expected).toEqual({ start: { x: 10, y: 20 }, end: { x: 70, y: 80 } });
 
         const geometry = committedGeometry(fullArgs);
-        expect(geometry).toEqual(expected);
+        expect(geometry).toEqual(toDocumentShape(expected));
         expect(Math.abs(geometry.end.x - geometry.start.x)).toBe(60);
         expect(Math.abs(geometry.end.y - geometry.start.y)).toBe(60);
         expect(fullArgs.args.figure).toBe(figure);
@@ -1001,8 +1121,10 @@ describe('ShapeToolArea', () => {
       const fullArgs = dragOnce(toolArea, anchor, pointer, { shiftKey: true });
 
       const geometry = committedGeometry(fullArgs);
-      expect(geometry).toEqual(normalizeShapeGeometry(anchor, pointer, 'line', { shiftKey: true, altKey: false }));
-      expect(geometry).toEqual({ start: { x: 10, y: 20 }, end: { x: 50, y: 80 } });
+      expect(geometry).toEqual(
+        toDocumentShape(normalizeShapeGeometry(anchor, pointer, 'line', { shiftKey: true, altKey: false }))
+      );
+      expect(geometry).toEqual(toDocumentShape({ start: { x: 10, y: 20 }, end: { x: 50, y: 80 } }));
       // A free angle must survive Shift: clamping it to 60x60 would be a square.
       expect(Math.abs(geometry.end.x - geometry.start.x)).toBe(40);
       expect(Math.abs(geometry.end.y - geometry.start.y)).toBe(60);
@@ -1017,10 +1139,12 @@ describe('ShapeToolArea', () => {
       const fullArgs = dragOnce(toolArea, anchor, pointer, { altKey: true });
 
       const geometry = committedGeometry(fullArgs);
-      expect(geometry).toEqual(normalizeShapeGeometry(anchor, pointer, 'rectangle', { shiftKey: false, altKey: true }));
-      expect(geometry).toEqual({ start: { x: -20, y: 10 }, end: { x: 120, y: 90 } });
-      expect(midPoint(geometry)).toEqual(anchor);
-      expect(geometry.end).toEqual(pointer);
+      expect(geometry).toEqual(
+        toDocumentShape(normalizeShapeGeometry(anchor, pointer, 'rectangle', { shiftKey: false, altKey: true }))
+      );
+      expect(geometry).toEqual(toDocumentShape({ start: { x: -20, y: 10 }, end: { x: 120, y: 90 } }));
+      expect(midPoint(geometry)).toEqual(toDocument(anchor));
+      expect(geometry.end).toEqual(toDocument(pointer));
       view.unmount();
     });
 
@@ -1032,16 +1156,17 @@ describe('ShapeToolArea', () => {
       const fullArgs = dragOnce(toolArea, anchor, pointer, { altKey: true, shiftKey: true });
 
       const geometry = committedGeometry(fullArgs);
-      expect(geometry).toEqual(normalizeShapeGeometry(anchor, pointer, 'rectangle', { shiftKey: true, altKey: true }));
+      expect(geometry).toEqual(
+        toDocumentShape(normalizeShapeGeometry(anchor, pointer, 'rectangle', { shiftKey: true, altKey: true }))
+      );
       // half = max(|100-50|, |80-50|) = 50 in both directions.
-      expect(geometry).toEqual({ start: { x: 0, y: 0 }, end: { x: 100, y: 100 } });
-      expect(midPoint(geometry)).toEqual(anchor);
+      expect(geometry).toEqual(toDocumentShape({ start: { x: 0, y: 0 }, end: { x: 100, y: 100 } }));
+      expect(midPoint(geometry)).toEqual(toDocument(anchor));
       expect(Math.abs(geometry.end.x - geometry.start.x)).toBe(Math.abs(geometry.end.y - geometry.start.y));
-      // The layer-local midpoint is the anchor in document space, less the layer
-      // origin: (50, 50) canvas is (80, 90) document once the frame is applied.
+      const documentAnchor = toDocument(anchor);
       expect(midPoint(fullArgs.args)).toEqual({
-        x: anchor.x + DOCUMENT_FRAME.x - fullArgs.pos.x,
-        y: anchor.y + DOCUMENT_FRAME.y - fullArgs.pos.y,
+        x: documentAnchor.x - fullArgs.pos.x,
+        y: documentAnchor.y - fullArgs.pos.y,
       });
       view.unmount();
     });
@@ -1072,15 +1197,17 @@ describe('ShapeToolArea', () => {
       const fullArgs = dragOnce(toolArea, anchor, pointer, modifiers);
 
       const lineWidth = toolArgsState.toolArgs.lineWidth;
-      const geometry = normalizeShapeGeometry(anchor, pointer, 'rectangle', {
-        shiftKey: Boolean(modifiers.shiftKey),
-        altKey: Boolean(modifiers.altKey),
-      });
-      expect(committedGeometry(fullArgs)).toEqual(geometry);
-      expect(fullArgs.pos).toEqual(documentBounds(shapeGeometryBounds(geometry, lineWidth)));
+      const documentGeometry = toDocumentShape(
+        normalizeShapeGeometry(anchor, pointer, 'rectangle', {
+          shiftKey: Boolean(modifiers.shiftKey),
+          altKey: Boolean(modifiers.altKey),
+        })
+      );
+      expect(committedGeometry(fullArgs)).toEqual(documentGeometry);
+      expect(fullArgs.pos).toEqual(shapeGeometryBounds(documentGeometry, lineWidth));
       // Padding is half the stroke plus one pixel of antialiasing slack.
-      expect(fullArgs.pos.x).toBe(Math.min(geometry.start.x, geometry.end.x) - lineWidth / 2 - 1 + DOCUMENT_FRAME.x);
-      expect(fullArgs.pos.width).toBe(Math.abs(geometry.end.x - geometry.start.x) + lineWidth + 2);
+      expect(fullArgs.pos.x).toBe(Math.min(documentGeometry.start.x, documentGeometry.end.x) - lineWidth / 2 - 1);
+      expect(fullArgs.pos.width).toBe(Math.abs(documentGeometry.end.x - documentGeometry.start.x) + lineWidth + 2);
       view.unmount();
     });
 
@@ -1093,8 +1220,18 @@ describe('ShapeToolArea', () => {
       const fullArgs = dragOnce(toolArea, anchor, pointer);
 
       const geometry = { start: anchor, end: pointer };
-      expect(fullArgs.pos).toEqual({ x: 55.25, y: 75.25, width: 69.5, height: 39.5 });
-      expect(fullArgs.pos).toEqual(documentBounds(shapeGeometryBounds(geometry, 7.5)));
+      const documentGeometry = toDocumentShape(geometry);
+      // `pad = 7.5 / 2 + 1 = 4.75`, so in document space the near edge is (55.25, 75.25) floored
+      // and the far edge is (124.75, 114.75) ceiled. The extent is the difference of the two
+      // rounded edges, which is what keeps a half-pixel line width from declaring a fractional
+      // bitmap size.
+      expect(fullArgs.pos).toEqual({ x: 55, y: 75, width: 70, height: 40 });
+      expect(fullArgs.pos).toEqual(shapeGeometryBounds(documentGeometry, 7.5));
+      // Still contains the padded geometry, so the rounding did not clip the stroke.
+      expect(fullArgs.pos.x).toBeLessThanOrEqual(documentGeometry.start.x - 4.75);
+      expect(fullArgs.pos.y).toBeLessThanOrEqual(documentGeometry.start.y - 4.75);
+      expect(fullArgs.pos.x + fullArgs.pos.width).toBeGreaterThanOrEqual(documentGeometry.end.x + 4.75);
+      expect(fullArgs.pos.y + fullArgs.pos.height).toBeGreaterThanOrEqual(documentGeometry.end.y + 4.75);
       view.unmount();
     });
 
@@ -1109,7 +1246,7 @@ describe('ShapeToolArea', () => {
 
       const fullArgs = dragOnce(toolArea, anchor, pointer, modifiers);
 
-      const geometry = committedDocumentGeometry(fullArgs);
+      const geometry = committedGeometry(fullArgs);
       expect(fullArgs.args.start).toEqual({
         x: geometry.start.x - fullArgs.pos.x,
         y: geometry.start.y - fullArgs.pos.y,
@@ -1131,7 +1268,7 @@ describe('ShapeToolArea', () => {
 
         const fullArgs = dragOnce(toolArea, anchor, pointer, { shiftKey: true });
 
-        const geometry = committedDocumentGeometry(fullArgs);
+        const geometry = committedGeometry(fullArgs);
         expect(fullArgs.args.start, figure).toEqual({
           x: geometry.start.x - fullArgs.pos.x,
           y: geometry.start.y - fullArgs.pos.y,
@@ -1171,11 +1308,13 @@ describe('ShapeToolArea', () => {
 
       const fullArgs = createLayerFromToolMock.mock.calls[0][0] as CommittedLayer;
       const geometry = committedGeometry(fullArgs);
-      expect(geometry).toEqual({ start: { x: 130, y: 130 }, end: { x: 150, y: 140 } });
+      expect(geometry).toEqual(toDocumentShape({ start: { x: 130, y: 130 }, end: { x: 150, y: 140 } }));
       expect(geometry).not.toEqual(
-        normalizeShapeGeometry({ x: 100, y: 100 }, { x: 400, y: 320 }, 'rectangle', { shiftKey: true, altKey: false })
+        toDocumentShape(
+          normalizeShapeGeometry({ x: 100, y: 100 }, { x: 400, y: 320 }, 'rectangle', { shiftKey: true, altKey: false })
+        )
       );
-      expect(fullArgs.pos).toEqual(documentBounds(shapeGeometryBounds(geometry, toolArgsState.toolArgs.lineWidth)));
+      expect(fullArgs.pos).toEqual(shapeGeometryBounds(geometry, toolArgsState.toolArgs.lineWidth));
       view.unmount();
     });
 
@@ -1205,8 +1344,8 @@ describe('ShapeToolArea', () => {
 
       const fullArgs = createLayerFromToolMock.mock.calls[0][0] as CommittedLayer;
       const geometry = committedGeometry(fullArgs);
-      expect(geometry).toEqual({ start: { x: 130, y: 130 }, end: { x: 150, y: 140 } });
-      expect(fullArgs.pos).toEqual(documentBounds(shapeGeometryBounds(geometry, toolArgsState.toolArgs.lineWidth)));
+      expect(geometry).toEqual(toDocumentShape({ start: { x: 130, y: 130 }, end: { x: 150, y: 140 } }));
+      expect(fullArgs.pos).toEqual(shapeGeometryBounds(geometry, toolArgsState.toolArgs.lineWidth));
 
       // A fresh gesture after Space is released re-anchors on the new drag.
       createLayerFromToolMock.mockClear();
@@ -1222,9 +1361,95 @@ describe('ShapeToolArea', () => {
 
       const nextArgs = createLayerFromToolMock.mock.calls[0][0] as CommittedLayer;
       const nextGeometry = committedGeometry(nextArgs);
-      expect(nextGeometry).toEqual({ start: { x: 100, y: 100 }, end: { x: 200, y: 260 } });
-      expect(nextArgs.pos).toEqual(documentBounds(shapeGeometryBounds(nextGeometry, toolArgsState.toolArgs.lineWidth)));
+      expect(nextGeometry).toEqual(toDocumentShape({ start: { x: 100, y: 100 }, end: { x: 200, y: 260 } }));
+      expect(nextArgs.pos).toEqual(shapeGeometryBounds(nextGeometry, toolArgsState.toolArgs.lineWidth));
       view.unmount();
+    });
+  });
+
+  describe('document gesture gate', () => {
+    beforeEach(() => {
+      // The slot is module-level, so a leaked claim would refuse every later claim in this file and
+      // read as a dozen unrelated failures.
+      resetDocumentGestures();
+    });
+
+    it('claims the document for a shape drag and releases it on the release', () => {
+      // A shape commits from `createLayerFromTool` on release, so a document-mutating shortcut
+      // pressed mid-drag mutates the document behind the gesture's back, and an undo there replaces
+      // `selections` from the SAME history array, so the pending commit then truncates the redo tail
+      // with no other symptom.
+      const { toolArea } = renderToolArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
+      expect(isDocumentGestureOpen()).toBe(true);
+      expect(readDocumentGesture()).toEqual({ kind: 'shape-draw', pointerId: 4 });
+
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 4, clientX: 200, clientY: 260 });
+
+      expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('releases the claim before the commit path, so a release that commits nothing still frees the keyboard', () => {
+      // The release is the first statement inside the `isPointerUpValid` branch, which is what covers
+      // the prompt early-return below: a click the user dismisses must not leave the keyboard dead.
+      promptMock.mockReturnValue(null);
+      const { toolArea } = renderToolArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
+
+      expect(createLayerFromToolMock).not.toHaveBeenCalled();
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('does not let a foreign pointer release the claim it never took', () => {
+      const { toolArea } = renderToolArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      // The claim is released inside the `isPointerUpValid` branch, so a release the validator
+      // refuses cannot hand the document back on the first pointer's behalf.
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 42, clientX: 200, clientY: 260 });
+
+      expect(createLayerFromToolMock).not.toHaveBeenCalled();
+      expect(isDocumentGestureOpen()).toBe(true);
+    });
+
+    it('releases the claim on a pointer cancel, which is the abort route', () => {
+      const { toolArea } = renderToolArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 4 });
+
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('releases the claim on unmount, so a gesture that dies mid-drag cannot leave the keyboard dead', () => {
+      const { view, toolArea } = renderToolArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      view.unmount();
+
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('claims nothing for a press the pointer validator refuses', () => {
+      // `isPointerDownValid` has already refused a non-primary button and a second pointer, and the
+      // claim is taken after it, so a refused press starts no gesture to wait on.
+      const { toolArea } = renderToolArea();
+
+      fireEvent.pointerDown(toolArea, { button: 2, pointerId: 4, clientX: 100, clientY: 100 });
+
+      expect(isDocumentGestureOpen()).toBe(false);
     });
   });
 });

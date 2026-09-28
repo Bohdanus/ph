@@ -211,12 +211,33 @@ describe('ToolTooltip', () => {
 
     const tooltip = screen.getByRole('tooltip');
     expect(tooltip).toHaveClass('pointer-events-none');
-    expect(tooltip).toHaveClass('absolute');
     expect(tooltip).toHaveClass('z-50');
     expect(tooltip).toHaveClass('bg-gray-950');
     expect(tooltip).toHaveClass('text-white');
     expect(tooltip).toHaveClass('rounded-md');
     expect(tooltip).toHaveClass('shadow-lg');
+  });
+
+  it('escapes its container, because the left rail clips anything positioned outside it', () => {
+    renderWithTooltip('Test Tool');
+    const trigger = screen.getByTestId('trigger');
+
+    act(() => {
+      fireEvent.mouseEnter(trigger);
+    });
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    const tooltip = screen.getByRole('tooltip');
+    const wrapper = tooltip.parentElement as HTMLElement;
+
+    // The rail is `overflow-y-auto`, which makes it clip horizontally as well, so an
+    // `absolute` tooltip inside it is laid out but never painted. A fixed-position
+    // overlay in `document.body` has no clipping ancestor.
+    expect(wrapper.style.position).toBe('fixed');
+    expect(wrapper.parentElement).toBe(document.body);
+    expect(trigger.contains(tooltip)).toBe(false);
   });
 
   it('handles missing shortcut gracefully', () => {

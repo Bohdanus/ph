@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DesktopHeader from '../DesktopHeader.tsx';
 import { createMockLayers } from '../../../__tests__/fixtures/layer.ts';
 import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
+import type { TextToolArgs } from '../../../tools/text.ts';
 
 const committedLayers = createMockLayers(1);
 
@@ -44,8 +45,8 @@ const layers = vi.hoisted(() => ({
 }));
 
 const currentTool = vi.hoisted(() => ({
-  isToolDirty: false,
   resetToLastSavedArgs: vi.fn(),
+  patchToolArgs: vi.fn(),
 }));
 
 const themeState = vi.hoisted(() => ({ theme: 'light' as 'light' | 'dark', toggleTheme: vi.fn() }));
@@ -60,7 +61,7 @@ vi.mock('../../../contexts/ThemeContext.tsx', () => ({
   useTheme: () => themeState,
 }));
 
-const NEW_CONFIRM_MESSAGE = 'All unsaved changes to current image will be lost. Continue?.';
+const NEW_CONFIRM_MESSAGE = 'Discard unsaved changes and start a new image?';
 const OPEN_CONFIRM_MESSAGE = 'Discard unsaved changes and open another file?';
 
 const defaultStore = {
@@ -115,7 +116,6 @@ beforeEach(() => {
   history.canUndo.mockReturnValue(false);
   history.canRedo.mockReturnValue(false);
   layers.commitDirtyTool.mockReturnValue(committedLayers);
-  currentTool.isToolDirty = false;
   themeState.theme = 'light';
 });
 
@@ -124,7 +124,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   Object.assign(storeState, { ...defaultStore });
-  currentTool.isToolDirty = false;
   themeState.theme = 'light';
 });
 
@@ -394,22 +393,115 @@ describe('DesktopHeader Edit menu actions', () => {
   });
 });
 
+describe('DesktopHeader Tools menu figure entries', () => {
+  // These five entries are the second selection surface for the figures. The sidebar
+  // already reaches them as `goToTool('shape')` plus a `figure` patch; dispatching the
+  // registered figure `ToolName`s mounted the Shape panel with e.g. `toolName: 'rectangle'`,
+  // where the `args.toolName !== 'shape'` guard at Shape.tsx:32 suppressed the store-colour
+  // publish — so Tools > Rectangle Tool + a red colour well committed black.
+  //
+  // `ellipse` is the trap: the registered `ToolName` is `ellipse`, the stored figure is `oval`.
+  it.each([
+    ['tools-menu-rectangle-button', 'rectangle'],
+    ['tools-menu-ellipse-button', 'oval'],
+    ['tools-menu-triangle-button', 'triangle'],
+    ['tools-menu-polygon-button', 'polygon'],
+    ['tools-menu-line-button', 'line'],
+  ] as const)('selects %s as the shape tool with its figure, and closes the menu', (testId, figure) => {
+    render(<DesktopHeader />);
+
+    openMenu('Tools');
+    fireEvent.click(screen.getByTestId(testId));
+
+    expect(currentTool.patchToolArgs).toHaveBeenCalledExactlyOnceWith('shape', { figure });
+    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith('shape');
+    expect(screen.queryByTestId(testId)).toBeNull();
+  });
+
+  // The order of those two calls is load-bearing, but not for the reason a
+  // call-order assertion suggests. `goToTool` runs `commitDirtyTool()` against the
+  // OUTGOING tool (`useApp.ts:157`), and `patchToolArgs` writes straight into the live
+  // `currentArgsRef` (`useCurrentTool.tsx:70`). Patch first and the text branch at
+  // `useLayer.ts:329` reads shape args — no `.text`, no `.rect` — and early-returns, so
+  // an unapplied text layer is dropped with no layer and nothing to undo.
+  //
+  // So this models the real side effects instead of only the call shape:
+  // `patchToolArgs` overwrites the live args ref exactly as `_setToolArgs` does, and
+  // `goToTool` reads it exactly as `commitDirtyTool` does. The assertion is therefore
+  // about what the outgoing commit SEES, not about which mock ran first. Both calls are
+  // batched in one click handler, so no stale-figure render can exist between them.
+  it('commits the pending text draft before the tool changes', () => {
+    const pendingText: TextToolArgs = {
+      toolName: 'text',
+      text: 'draft',
+      rect: { x1: 0, y1: 0, x2: 40, y2: 12 },
+      align: 'left',
+      bold: false,
+      italic: false,
+      color: '#000000',
+      fontFamily: 'Roboto',
+      fontSize: 12,
+      lineHeight: 1.2,
+    };
+    const shapeArgs: ToolArgs = { toolName: 'shape', figure: 'oval' } as ToolArgs;
+    storeState.toolName = 'text';
+    storeState.currentArgs = { current: pendingText };
+
+    // What `commitDirtyTool` does on the way through `goToTool`.
+    const seenByCommit: Array<{ args: ToolArgs; outcome: 'committed' | 'dropped' }> = [];
+    currentTool.patchToolArgs.mockImplementationOnce(() => {
+      storeState.currentArgs.current = shapeArgs;
+    });
+    app.goToTool.mockImplementationOnce(() => {
+      const args = storeState.currentArgs.current;
+      // `useLayer.ts:328-330`: the same cast, then the guard that drops the draft.
+      const { text, rect } = args as TextToolArgs;
+      seenByCommit.push({ args, outcome: !text || !rect ? 'dropped' : 'committed' });
+    });
+
+    render(<DesktopHeader />);
+
+    openMenu('Tools');
+    fireEvent.click(screen.getByTestId('tools-menu-ellipse-button'));
+
+    expect(seenByCommit).toHaveLength(1);
+    // The commit must read the outgoing tool's args...
+    expect(seenByCommit[0].args).toBe(pendingText);
+    // ...so it takes the commit branch rather than the drop branch.
+    expect(seenByCommit[0].outcome).toBe('committed');
+    // And the reorder must not cost the figure the entry exists to select.
+    expect(storeState.currentArgs.current).toBe(shapeArgs);
+  });
+
+  it('leaves a non-figure tool on its own selection path', () => {
+    render(<DesktopHeader />);
+
+    openMenu('Tools');
+    fireEvent.click(screen.getByTestId('tools-menu-crop-button'));
+
+    expect(currentTool.patchToolArgs).not.toHaveBeenCalled();
+    expect(app.goToTool).toHaveBeenCalledExactlyOnceWith('crop');
+  });
+});
+
 describe('DesktopHeader File > New', () => {
-  it('creates a blank image from the dialog result and closes the menu', async () => {
+  it('creates a blank image without a discard prompt on a pristine document and closes the menu', async () => {
     const params = { color: '#ff0000', opacity: 0.5, size: { width: 640, height: 480 }, isBedrock: true };
-    const confirm = stubConfirm(true);
+    const confirm = stubConfirm(false);
     file.openNewImageDialog.mockResolvedValue(params);
     render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-new-button');
 
-    expect(confirm).toHaveBeenCalledExactlyOnceWith(NEW_CONFIRM_MESSAGE);
+    // A pristine document has nothing to discard, so it must never be asked about one.
+    expect(confirm).not.toHaveBeenCalled();
     expect(app.setBlankImage).toHaveBeenCalledExactlyOnceWith(params);
     expect(screen.queryByTestId('header-file-new-button')).toBeNull();
   });
 
   it('skips the new document dialog when the user dismisses the confirmation', async () => {
     const confirm = stubConfirm(false);
+    storeState.hasUnsavedChanges = true;
     file.openNewImageDialog.mockResolvedValue({
       color: '#ffffff',
       opacity: 1,
@@ -423,30 +515,46 @@ describe('DesktopHeader File > New', () => {
     expect(confirm).toHaveBeenCalledExactlyOnceWith(NEW_CONFIRM_MESSAGE);
     expect(file.openNewImageDialog).not.toHaveBeenCalled();
     expect(app.setBlankImage).not.toHaveBeenCalled();
-    // setOpenMenu(null) runs after the guard, so an aborted New still closes the menu.
-    expect(screen.queryByTestId('header-file-new-button')).toBeNull();
+    // The guard returns before setOpenMenu(null), so a dismissed discard leaves the menu
+    // standing and the document exactly as it was.
+    expect(screen.getByTestId('header-file-new-button')).toBeInTheDocument();
   });
 
-  it.fails(
-    'asks before discarding a document that really has unsaved changes (DesktopHeader.tsx:114 uses || so confirm is skipped exactly when it matters)',
-    async () => {
-      const confirm = stubConfirm(false);
-      storeState.hasUnsavedChanges = true;
-      file.openNewImageDialog.mockResolvedValue({
-        color: '#ffffff',
-        opacity: 1,
-        size: { width: 8, height: 8 },
-        isBedrock: true,
-      });
-      render(<DesktopHeader />);
+  it('asks before discarding a document that really has unsaved changes', async () => {
+    const confirm = stubConfirm(false);
+    storeState.hasUnsavedChanges = true;
+    file.openNewImageDialog.mockResolvedValue({
+      color: '#ffffff',
+      opacity: 1,
+      size: { width: 8, height: 8 },
+      isBedrock: true,
+    });
+    render(<DesktopHeader />);
 
-      await clickFileMenuItem('header-file-new-button');
+    await clickFileMenuItem('header-file-new-button');
 
-      expect(confirm).toHaveBeenCalledExactlyOnceWith(NEW_CONFIRM_MESSAGE);
-      expect(file.openNewImageDialog).not.toHaveBeenCalled();
-      expect(app.setBlankImage).not.toHaveBeenCalled();
-    }
-  );
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(NEW_CONFIRM_MESSAGE);
+    expect(file.openNewImageDialog).not.toHaveBeenCalled();
+    expect(app.setBlankImage).not.toHaveBeenCalled();
+  });
+
+  it('asks before discarding a text draft the document is not yet tracking as an unsaved change', async () => {
+    const confirm = stubConfirm(false);
+    storeState.currentArgs = {
+      current: {
+        toolName: 'text',
+        text: 'draft',
+        rect: { x: 0, y: 0, width: 10, height: 10 },
+      },
+    } as unknown as { current: ToolArgs };
+    file.openNewImageDialog.mockResolvedValue(null);
+    render(<DesktopHeader />);
+
+    await clickFileMenuItem('header-file-new-button');
+
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(NEW_CONFIRM_MESSAGE);
+    expect(file.openNewImageDialog).not.toHaveBeenCalled();
+  });
 
   it('leaves the document untouched when the dialog is cancelled and still closes the menu', async () => {
     stubConfirm(true);
@@ -720,19 +828,5 @@ describe('DesktopHeader history controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
 
     expect(history.redo).toHaveBeenCalledTimes(1);
-  });
-
-  it('resets a dirty tool from the header undo button even when history is empty', () => {
-    currentTool.isToolDirty = true;
-    history.canUndo.mockReturnValue(false);
-    render(<DesktopHeader />);
-
-    const undoButton = screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement;
-    expect(undoButton.disabled).toBe(false);
-
-    fireEvent.click(undoButton);
-
-    expect(currentTool.resetToLastSavedArgs).toHaveBeenCalledTimes(1);
-    expect(history.undo).not.toHaveBeenCalled();
   });
 });

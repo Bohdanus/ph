@@ -8,8 +8,21 @@ import { MENU_ITEM_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { flushSync } from 'react-dom';
 import { hasPendingText } from '../../util/typeGuards.ts';
+import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import { useRightPanelVisibility } from '../../contexts/RightPanelVisibility.tsx';
 import type { ToolName } from '../../contexts/tool-types.ts';
+import type { FigureType } from '../../tools/shape.ts';
 
+/**
+ * A second, non-exhaustive surface over the same tool set. `Array` rather than an
+ * exhaustive type, so nothing forces it to stay in step with `toolbarMap` — which is
+ * exactly why it is written out here: a tool missing from the Tools menu is a visible
+ * inconsistency the user has to notice and work around.
+ *
+ * The eleven entries added with the tool expansion carry the same labels
+ * `toolbar-mapping.ts` spells, and sit in the same relative order: selection tools after
+ * the lasso and wand, then the paint family (brush … burn), then the eyedropper.
+ */
 const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'reposition', label: 'Reposition' },
   { toolName: 'color', label: 'Colors' },
@@ -24,10 +37,21 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'freehand-lasso', label: 'Freehand Lasso' },
   { toolName: 'feather-magnetic-lasso', label: 'Feather Magnetic Lasso' },
   { toolName: 'magic-wand', label: 'Magic Wand' },
+  { toolName: 'quick-selection', label: 'Quick Selection Tool' },
   { toolName: 'rectangular-selection', label: 'Rectangular Selection' },
+  { toolName: 'elliptical-selection', label: 'Elliptical Marquee Tool' },
   { toolName: 'brush', label: 'Brush Tool' },
   { toolName: 'pencil', label: 'Pencil Tool' },
   { toolName: 'color-replacement', label: 'Color Replacement Tool' },
+  { toolName: 'eraser', label: 'Eraser Tool' },
+  { toolName: 'clone-stamp', label: 'Clone Stamp Tool' },
+  { toolName: 'sharpen', label: 'Sharpen Tool' },
+  { toolName: 'smudge', label: 'Smudge Tool' },
+  { toolName: 'paint-bucket', label: 'Paint Bucket Tool' },
+  { toolName: 'gradient', label: 'Gradient Tool' },
+  { toolName: 'dodge', label: 'Dodge Tool' },
+  { toolName: 'burn', label: 'Burn Tool' },
+  { toolName: 'eyedropper', label: 'Eyedropper Tool' },
   { toolName: 'pen', label: 'Pen Tool' },
   { toolName: 'freeform-pen', label: 'Freeform Pen Tool' },
   { toolName: 'curvature-pen', label: 'Curvature Pen Tool' },
@@ -39,11 +63,34 @@ const TOOL_MENU_ITEMS: Array<{ toolName: ToolName; label: string }> = [
   { toolName: 'custom-shape', label: 'Custom Shape Tool' },
 ];
 
+/**
+ * The five figure entries above are the *second* selection surface for the figures
+ * — the sidebar already selects them as `toolName: 'shape'` plus a `figure` patch.
+ * Dispatching the registered figure `ToolName`s directly mounted the Shape panel
+ * with, say, `toolName: 'rectangle'`, where its `toolName !== 'shape'` guard
+ * (`Shape.tsx:32`) suppressed the store-colour publish: the colour well said red
+ * and the shape committed `defaultSettings.rectangle.color`, black.
+ *
+ * So route them through the same path the sidebar uses, which is what makes that
+ * guard correct for every surface rather than special-casing this menu.
+ *
+ * `ellipse` is the trap: the registered `ToolName` is `ellipse` but the stored
+ * figure is `oval`, exactly as `toolbar-mapping.ts:77` spells it.
+ */
+const FIGURE_TOOLS: Partial<Record<ToolName, FigureType>> = {
+  rectangle: 'rectangle',
+  ellipse: 'oval',
+  triangle: 'triangle',
+  polygon: 'polygon',
+  line: 'line',
+};
+
 const DesktopHeader = () => {
   const [{ canvasRef, currentArgs, fileName, hasUnsavedChanges, totalSize, documentFrame, hasImage }] = useStore();
   const { commitDirtyTool } = useLayers();
   const { goToTool, setBlankImage, setImageFromUpload, handleImageSave } = useApp();
   const { openNewImageDialog, openLoadImageDialog, openSaveImageDialog } = useFile();
+  const { patchToolArgs } = useCurrentTool();
 
   const { theme, toggleTheme } = useTheme();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -52,7 +99,20 @@ const DesktopHeader = () => {
   const editMenuRef = useRef<HTMLLIElement>(null);
 
   const handleToolSelection = (toolName: ToolName) => {
-    goToTool(toolName);
+    const figure = FIGURE_TOOLS[toolName];
+    // Select first, then patch — deliberately *not* the order
+    // `SidebarLeft.selectTool` uses. `goToTool` runs `commitDirtyTool()` against the
+    // OUTGOING tool (`useApp.ts:157`), and `patchToolArgs` writes straight into the
+    // live `currentArgsRef` (`useCurrentTool.tsx:70`). Patching first would leave the
+    // text branch at `useLayer.ts:329` reading shape args — no `.text`, no `.rect` —
+    // so it early-returns and an unapplied text layer is dropped with nothing to undo.
+    // Selecting first lets that commit read the text args it is meant to read.
+    if (figure !== undefined) {
+      goToTool('shape');
+      patchToolArgs('shape', { figure });
+    } else {
+      goToTool(toolName);
+    }
     setOpenMenu(null);
   };
 
@@ -83,6 +143,12 @@ const DesktopHeader = () => {
     [openMenu]
   );
 
+  const {
+    isCollapsible: isRightPanelCollapsible,
+    isOpen: isRightPanelOpen,
+    toggle: toggleRightPanel,
+  } = useRightPanelVisibility();
+
   useEffect(() => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => {
@@ -111,12 +177,12 @@ const DesktopHeader = () => {
                   onClick={async () => {
                     try {
                       if (
-                        hasUnsavedChanges ||
-                        confirm('All unsaved changes to current image will be lost. Continue?.')
-                      ) {
-                        const data = await openNewImageDialog();
-                        if (data) setBlankImage(data);
-                      }
+                        (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
+                        !confirm('Discard unsaved changes and start a new image?')
+                      )
+                        return;
+                      const data = await openNewImageDialog();
+                      if (data) setBlankImage(data);
                       setOpenMenu(null);
                     } catch (error) {
                       console.error('Unable to create document', error);
@@ -311,6 +377,34 @@ const DesktopHeader = () => {
           )}
         </button>
         <HistoryControls />
+
+        {/* Tablet only. `lg:hidden` hides it from 1024px up, and the header itself is
+            `max-md:hidden`, so the button is visible in exactly the tablet band and at no
+            other width — desktop keeps no trace of it, including no extra grid area, no
+            state and no layout shift when the window crosses 1024px. */}
+        {isRightPanelCollapsible && (
+          <button
+            type="button"
+            onClick={toggleRightPanel}
+            aria-expanded={isRightPanelOpen}
+            aria-controls="right-panel"
+            aria-label={isRightPanelOpen ? 'Hide layers panel' : 'Show layers panel'}
+            title={isRightPanelOpen ? 'Hide layers panel' : 'Show layers panel'}
+            className="ml-2 rounded p-1 text-white/75 transition-colors hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-400 lg:hidden"
+            data-testid="right-panel-toggle"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              fill="currentColor"
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+            >
+              <path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8A2.5 2.5 0 0 1 15 2.5v11a2.5 2.5 0 0 1-2.5 2.5h-8A2.5 2.5 0 0 1 2 13.5zm10.5-1h-9a1.5 1.5 0 0 0-1.5 1.5v10A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5V3A1.5 1.5 0 0 0 13.5 1.5" />
+            </svg>
+          </button>
+        )}
       </div>
     </header>
   );
