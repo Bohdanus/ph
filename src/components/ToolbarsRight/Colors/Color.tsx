@@ -94,11 +94,11 @@ const Color: React.FC<{}> = () => {
    * nothing dispatches `SET_TOOL_DIRTY` with `true` — so every click replayed the
    * timeline one entry back and silently reverted the user's last committed edit.
    *
-   * The baseline is `defaultSettings.color`, not `resetToLastSavedArgs()`: the
-   * slider write goes through `setToolArgs`, which calls `saveLastSettings` on the
-   * same tick and overwrites `lastSavedSettings.color` with the value the user just
-   * dragged to. A reset cloned from there restores the unapplied value and the
-   * control goes on lying about it.
+   * The baseline is `defaultSettings.color`, never the last-saved copy of the
+   * colour settings: the slider write goes through `setToolArgs`, which calls
+   * `saveLastSettings` on the same tick, so `lastSavedSettings.color` already holds
+   * the value the user just dragged to. Cloning it back would restore the
+   * unapplied value and the control would go on lying about it.
    *
    * `commitDirtyTool` bakes the preview into a real layer plus a `TOOL_ACTION`
    * entry — on tool switch, on export and in this panel's own "Merge all" — and by
