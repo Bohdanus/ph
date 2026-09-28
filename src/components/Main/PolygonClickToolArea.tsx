@@ -1,4 +1,4 @@
-import { type PointerEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
+import { type PointerEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -166,7 +166,10 @@ function drawPolygonOverlay({
 
 export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickToolProps) => {
   const [{ containerRef, selections, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
-  const { clearSelections, commitSelection } = useSelectionHistory();
+  // `clearSelections` is gone with `removeLastAnchor`'s empty-list arm: a
+  // Backspace aimed at nothing is a no-op now, not a deselect. `commitSelection`
+  // stays, and is the one writer this component owns.
+  const { commitSelection } = useSelectionHistory();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
   const { toolArgs } = useCurrentTool();
 
@@ -179,6 +182,24 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   const freehandDrawingRef = useRef(false);
   const freehandPointerIdRef = useRef<number | null>(null);
   const doubleClickResetRef = useRef<() => void>(() => {});
+
+  // The draft's anchors live in `pointsRef`, and a render may not read a ref
+  // (`react-hooks/refs`), so the `Backspace`/`Delete` registrations cannot gate
+  // on the list itself. This mirrors "the draft has an anchor to pop" into
+  // state, written by the same handlers that mutate the list, and it is the
+  // draft's own value: nothing outside this component can clear it, so the
+  // registrations cannot close while the anchors are still on the overlay.
+  // The store's `selectionDraft` could — the `'move'` commit a selection drag
+  // publishes at release, and the sidebar deselect, both write `idle` to it
+  // without touching this draft, and a drag is reachable mid-draft because
+  // `handlePointerDown` hit-tests committed selections before it refuses to
+  // start a point. Either left `Backspace` silently doing nothing against
+  // anchors that were still on the overlay.
+  const [hasDraftAnchors, setHasDraftAnchors] = useState(false);
+
+  function syncDraftAnchorGate() {
+    setHasDraftAnchors(pointsRef.current.length > 0);
+  }
 
   const { getLocalCoords } = usePointerPosition({
     ref: containerRef,
@@ -338,6 +359,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     const lastPoint = points[points.length - 1];
     if (!lastPoint) {
       points.push(point);
+      syncDraftAnchorGate();
       return true;
     }
 
@@ -346,11 +368,13 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     }
 
     points.push(point);
+    syncDraftAnchorGate();
     return true;
   }
 
   function startFreehandSelection(event: PointerEvent<HTMLDivElement>, coords: Point) {
     pointsRef.current = [coords];
+    syncDraftAnchorGate();
     previewRef.current = null;
     captureFreehandPointer(event);
     dispatch({ type: 'START_SELECTION_DRAFT', payload: { sourceTool: 'freehand-lasso' } });
@@ -371,6 +395,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     releaseFreehandPointer(event);
     const hadDraft = pointsRef.current.length > 0;
     pointsRef.current = [];
+    syncDraftAnchorGate();
     previewRef.current = null;
     clearOverlay();
 
@@ -443,6 +468,12 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
 
   function resetInteractionState() {
     pointsRef.current = [];
+    // Every route that ends a draft lands here — the commit at
+    // `finishSelection`, Escape, and `removeLastAnchor`'s last vertex — so this
+    // is where the gate closes. It is the only one of the two `pointsRef.current
+    // = []` sites that runs while the component is still mounted; the other is
+    // the unmount cleanup, where the registrations are already gone.
+    syncDraftAnchorGate();
     previewRef.current = null;
     freehandPointerIdRef.current = null;
     freehandDrawingRef.current = false;
@@ -522,6 +553,7 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     }
 
     pointsRef.current.push(coords);
+    syncDraftAnchorGate();
     previewRef.current = null;
 
     redrawOverlay();
@@ -678,20 +710,15 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
   function removeLastAnchor() {
     if (isFreehand || selectionDragRef.current) return;
 
-    if (pointsRef.current.length === 0) {
-      // Routed through the single-writer hook rather than the raw
-      // `CLEAR_SELECTIONS` action, so a Backspace deselect appends the history
-      // entry that makes it undoable. Scope is unchanged — the hook clears every
-      // selection, exactly as the raw action's reducer arm did — and the draft
-      // is already empty here, so there is no draft reset to keep. The hook's own
-      // guard makes the "nothing selected" case dispatch nothing, which is
-      // stronger than the raw action: that used to bump the `selectionCleared`
-      // repaint marker over an already-empty selection.
-      clearSelections();
-      return;
-    }
+    // No draft means no anchor to remove. The registration is also gated off in
+    // that state, so this only guards the handler itself: a stray Backspace
+    // reaches the whole app, and clearing the document's committed selections
+    // from it appends a deselect the user never asked for. Matches the
+    // self-guard `cancelSelectionDraft` and `finishSelection` already have.
+    if (pointsRef.current.length === 0) return;
 
     pointsRef.current.pop();
+    syncDraftAnchorGate();
     previewRef.current = null;
 
     if (pointsRef.current.length === 0) {
@@ -717,17 +744,23 @@ export const PolygonClickToolArea = ({ className, overlayCtxRef }: PolygonClickT
     onKeyDown: () => finishSelection(),
   });
 
+  // `enabled` gates the registration on the draft itself: there is an anchor to
+  // pop or there is not, and the mirror above is the draft's own count, so no
+  // reducer or sidebar action that clears `selectionDraft` can close the key
+  // while the anchors are still on the overlay. `allowInInput` stays off:
+  // removing a vertex is text editing from the field's point of view, and
+  // `preventDefault` would cancel the character the field was asked to delete.
   useKeyDownShortcut({
     key: 'Backspace',
     preventDefault: true,
-    allowInInput: true,
+    enabled: hasDraftAnchors,
     onKeyDown: removeLastAnchor,
   });
 
   useKeyDownShortcut({
     key: 'Delete',
     preventDefault: true,
-    allowInInput: true,
+    enabled: hasDraftAnchors,
     onKeyDown: removeLastAnchor,
   });
 

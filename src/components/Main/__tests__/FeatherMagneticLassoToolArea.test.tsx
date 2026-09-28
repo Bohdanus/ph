@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import type { Selection } from '../../../contexts/general-types.ts';
 import type { FeatherMagneticLassoToolArgs } from '../../../tools/featherMagneticLasso.ts';
 import { SELECTION_ACTION } from '../../../util/constants.ts';
@@ -9,7 +9,9 @@ import { FeatherMagneticLassoToolArea } from '../FeatherMagneticLassoToolArea.ts
 const h = vi.hoisted(() => ({
   activeSelectionId: null as string | null,
   dispatch: vi.fn(),
+  selectionDraft: { status: 'idle' as 'idle' | 'draft' },
   shortcutHandlers: new Map<string, () => void>(),
+  rawShortcuts: new Map<string, { key: string; enabled?: boolean; onKeyDown: () => void }>(),
   selections: [] as Selection[],
   canvas: null as HTMLCanvasElement | null,
   toolArgs: {
@@ -32,7 +34,14 @@ vi.mock('../../../hooks/usePointerPosition.ts', () => ({
 }));
 
 vi.mock('../../../hooks/useKeyboardEvents.tsx', () => ({
-  useKeyDownShortcut: (shortcut: { key: string; onKeyDown: () => void }) => {
+  useKeyDownShortcut: (shortcut: { key: string; enabled?: boolean; onKeyDown: () => void }) => {
+    // `rawShortcuts` keeps the registration object so a test can assert what the
+    // hook was handed, and the mock runs on every render, so it tracks the live
+    // gate as the draft's anchor mirror re-renders this component. The mocked
+    // store never re-renders it on its own, so a test that needs one stands in
+    // an interaction that does. `shortcutHandlers` stays a direct call into
+    // `onKeyDown` so the handler itself can be exercised on its own.
+    h.rawShortcuts.set(shortcut.key, shortcut);
     h.shortcutHandlers.set(shortcut.key, shortcut.onKeyDown);
   },
 }));
@@ -43,12 +52,12 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
       activeSelectionId: h.activeSelectionId,
       canvasRef: { current: h.canvas },
       containerRef: { current: document.createElement('div') },
-      // The single-writer hook reads the legacy timeline so it can plan the
-      // append. An empty timeline at cursor -1 is what a store with nothing
-      // appended yet actually looks like, and `planHistoryAppend` reports the
-      // out-of-range cursor as a diagnostic rather than refusing the edit.
       history: [],
       historyIndex: -1,
+      // The Backspace/Delete registrations no longer gate on this field, but a
+      // test still sets it to model what the sidebar deselect leaves in the
+      // store.
+      selectionDraft: h.selectionDraft,
       selections: h.selections,
       totalSize: { width: 200, height: 120 },
       // Explicit, so the hook derives the same frame the tool area does rather
@@ -76,7 +85,9 @@ describe('FeatherMagneticLassoToolArea', () => {
   beforeEach(() => {
     h.activeSelectionId = null;
     h.dispatch.mockClear();
+    h.selectionDraft = { status: 'idle' };
     h.shortcutHandlers.clear();
+    h.rawShortcuts.clear();
     h.selections = [];
     h.canvas = null;
     h.toolArgs = {
@@ -252,50 +263,17 @@ describe('FeatherMagneticLassoToolArea', () => {
     h.activeSelectionId = activeSelectionId;
   };
 
-  /**
-   * Backspace over an empty draft no longer dispatches a raw `CLEAR_SELECTIONS`
-   * reducer action: it is a document edit that appends to history, so the
-   * deselect is undoable like any other. One dispatch carries both the history
-   * item and the resulting selection state, so the two cannot disagree.
-   *
-   * `durableEntry` is deliberately not matched. The store publishes the planned
-   * entry only when its durable document still describes the timeline the plan
-   * was made against, and the boundary's failure fallback omits it entirely;
-   * both are correct, so the pin asserts the contract the two paths share. `id`
-   * is a fresh uuid per call, hence `expect.any(String)`.
-   */
-  const CLEAR_SELECTION_EDIT = expect.objectContaining({
-    type: 'COMMIT_DOCUMENT_EDIT',
-    payload: expect.objectContaining({
-      historyItem: expect.objectContaining({
-        id: expect.any(String),
-        actionName: SELECTION_ACTION,
-        args: expect.objectContaining({
-          previousSelectionState: {
-            selections: [LASSO_SELECTION],
-            activeSelectionId: 'sel-1',
-          },
-          nextSelectionState: { selections: [], activeSelectionId: null },
-        }),
-      }),
-      // The visible half of the same transition. `selectionDraft` and
-      // `selectionCleared` are asserted too: they are the other two fields the
-      // raw reducer arm moved, so leaving them out would let the hook silently
-      // stop resetting the draft or repainting the overlay.
-      updates: expect.objectContaining({
-        activeSelectionId: null,
-        selectionCleared: expect.objectContaining({ status: 'cleared', version: 1 }),
-        selectionDraft: { status: 'idle' },
-        selections: [],
-      }),
-    }),
-  });
-
   const renderArea = (overlayCtxRef: { current: CanvasRenderingContext2D | null }) => {
-    const { container, unmount } = render(
+    const { container, rerender, unmount } = render(
       <FeatherMagneticLassoToolArea overlayCtxRef={overlayCtxRef} className="test-feather-lasso-area" />
     );
-    return { ctx: container.firstElementChild as HTMLDivElement, unmount };
+    return {
+      ctx: container.firstElementChild as HTMLDivElement,
+      // Stands in for the render the mocked store cannot perform on a dispatch.
+      rerenderStore: () =>
+        rerender(<FeatherMagneticLassoToolArea overlayCtxRef={overlayCtxRef} className="test-feather-lasso-area" />),
+      unmount,
+    };
   };
 
   it('commits a feathered magnetic lasso selection with metadata on Enter', () => {
@@ -552,19 +530,81 @@ describe('FeatherMagneticLassoToolArea', () => {
       expect(h.dispatch).toHaveBeenCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
     });
 
-    it('clears existing selections with Backspace when no draft exists', () => {
+    it('dispatches nothing with Backspace or Delete when no draft exists', () => {
       setStoreSelections([LASSO_SELECTION], 'sel-1');
       const mockCtx = createMockContext();
       renderArea({ current: mockCtx });
 
       h.dispatch.mockClear();
       h.shortcutHandlers.get('Backspace')?.();
+      h.shortcutHandlers.get('Delete')?.();
 
-      // Exactly one dispatch: the history append and the cleared selection ride
-      // on the same action, so there is no window in which one has landed
-      // without the other.
-      expect(h.dispatch).toHaveBeenCalledTimes(1);
-      expect(h.dispatch).toHaveBeenCalledWith(CLEAR_SELECTION_EDIT);
+      // These keys reach the whole app rather than the canvas, so with no draft
+      // in progress they must leave the committed selection alone instead of
+      // appending a deselect the user never asked for.
+      expect(h.dispatch).not.toHaveBeenCalled();
+      // Both registrations are gated on a draft as well, so the key is not even
+      // consumed — no `preventDefault` and no `allowInInput`, which is what keeps
+      // a Backspace inside a text field deleting the character it was aimed at.
+      expect(h.rawShortcuts.get('Backspace')?.enabled).toBe(false);
+      expect(h.rawShortcuts.get('Delete')?.enabled).toBe(false);
+    });
+
+    it('registers Backspace and Delete only while a draft is in progress', () => {
+      const mockCtx = createMockContext();
+      const toolArea = renderArea({ current: mockCtx }).ctx;
+
+      // No draft, so no anchor to pop and the keys are not even consumed.
+      expect(h.rawShortcuts.get('Backspace')?.enabled).toBe(false);
+      expect(h.rawShortcuts.get('Delete')?.enabled).toBe(false);
+
+      // One click is the draft's first anchor, which is all the gate needs: the
+      // handler pops while there is anything left to pop.
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+
+      // The other half of the gate: with a draft there is an anchor to pop, so
+      // the keys have to be live — see the anchor cases above.
+      expect(h.rawShortcuts.get('Backspace')?.enabled).toBe(true);
+      expect(h.rawShortcuts.get('Delete')?.enabled).toBe(true);
+    });
+
+    it('keeps Backspace and Delete live when the store draft is cleared mid-draft', () => {
+      const mockCtx = createMockContext();
+      const { ctx: toolArea, rerenderStore } = renderArea({ current: mockCtx });
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 10 });
+      // `START_SELECTION_DRAFT` is what sets the store flag in production.
+      h.selectionDraft = { status: 'draft' };
+
+      expect(h.rawShortcuts.get('Backspace')?.enabled).toBe(true);
+
+      // The sidebar Deselect button runs `clearSelections()`, whose update
+      // carries `selectionDraft: { status: 'idle' }` without touching the draft's
+      // anchors, which are still on the overlay. The mock store cannot re-render
+      // on a dispatch, so `rerenderStore` stands in for the render the real store
+      // performs once the deselect lands.
+      h.selectionDraft = { status: 'idle' };
+      rerenderStore();
+
+      // The gate follows the draft's own anchors, so the store field cannot take
+      // it away while the draft is live.
+      expect(h.rawShortcuts.get('Backspace')?.enabled).toBe(true);
+      expect(h.rawShortcuts.get('Delete')?.enabled).toBe(true);
+
+      h.dispatch.mockClear();
+      act(() => {
+        h.shortcutHandlers.get('Backspace')?.();
+      });
+      act(() => {
+        h.shortcutHandlers.get('Backspace')?.();
+      });
+
+      // The first press popped the last segment, the second found no segment
+      // left and cancelled the draft — only reachable if the key was live.
+      expect(h.dispatch).toHaveBeenCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
+      // And the gate closes again with the draft, so the mirror is not stuck on.
+      expect(h.rawShortcuts.get('Backspace')?.enabled).toBe(false);
     });
 
     it('dispatches nothing with Backspace when there is neither a draft nor a selection', () => {
@@ -575,9 +615,9 @@ describe('FeatherMagneticLassoToolArea', () => {
       h.dispatch.mockClear();
       h.shortcutHandlers.get('Backspace')?.();
 
-      // The writer guards on the selection state itself, so an already-empty
-      // document records nothing: no history entry describing a change that did
-      // not happen, and no edit flagging the document dirty.
+      // Nothing to remove and nothing to deselect, so the document records no
+      // edit: no history entry describing a change that did not happen, and no
+      // edit flagging the document dirty.
       expect(h.dispatch).not.toHaveBeenCalled();
     });
 
