@@ -283,12 +283,19 @@ interface DownloadSurface {
   saveAs: Mock<(target: string) => Promise<void>>;
 }
 
+/** The slice of Playwright's `Dialog` a helper may act on; `accept`/`dismiss` are the only calls. */
+interface DialogSurface {
+  accept: Mock<() => Promise<void>>;
+  dismiss: Mock<() => Promise<void>>;
+}
+
 interface PageSurface {
   goto: Mock<(url: string, options?: { waitUntil?: string; timeout?: number }) => Promise<null>>;
   getByTestId: Mock<(testId: string) => LocatorSurface>;
   getByRole: Mock<(role: string, options?: { name?: string | RegExp }) => LocatorSurface>;
   locator: Mock<(selector: string) => LocatorSurface>;
   waitForEvent: Mock<(event: string, options?: { timeout?: number }) => Promise<DownloadSurface>>;
+  once: Mock<(event: string, handler: (dialog: DialogSurface) => void) => void>;
   waitForFunction: Mock<
     (pageFunction: () => boolean, arg?: unknown, options?: { timeout?: number }) => Promise<unknown>
   >;
@@ -370,6 +377,7 @@ function createPageMock(overrides: Partial<PageSurface> = {}): {
     getByRole: byRole({}, fallback),
     locator: byKey({}, fallback),
     waitForEvent: vi.fn().mockRejectedValue(new Error('waitForEvent was not configured for this test')),
+    once: vi.fn().mockReturnValue(undefined),
     waitForFunction: vi.fn().mockResolvedValue(true),
     evaluate: vi.fn().mockResolvedValue({ ok: true }),
     screenshot: vi.fn(async () => strokePng(true)),
@@ -1064,6 +1072,35 @@ describe('Export Helpers', () => {
       expect(surface.screenshot).toHaveBeenCalledWith({ clip: redrawClip(box) });
       expect(canvas.evaluate).toHaveBeenCalled();
       expect(result).toBe(SOURCE_DATA_URL);
+    });
+
+    it('accepts the unsaved-changes confirm before clicking File > New', async () => {
+      const box: Box = { x: 24, y: 36, width: ICON_CANVAS_SIZE, height: ICON_CANVAS_SIZE };
+      const { surface, page, newImage } = createIcoPage(box);
+
+      await setupIcoTest(page);
+
+      // `File > New` in DesktopHeader.tsx asks `confirm()` whenever the document has
+      // unsaved changes, and `src/App.tsx` seeds a blank image on boot, so the prompt
+      // is shown on the first click of a fresh page. Playwright auto-dismisses a dialog
+      // with no handler, the guard reads that as "declined", and the New Image dialog
+      // never opens. Registered with `once`, so only that one prompt is accepted and an
+      // unexpected dialog later in the run still surfaces.
+      expect(surface.once).toHaveBeenCalledTimes(1);
+      const [event, handler] = surface.once.mock.calls[0];
+      expect(event).toBe('dialog');
+      expect(surface.once.mock.invocationCallOrder[0]).toBeLessThan(
+        newImage.newImageButton.click.mock.invocationCallOrder[0]
+      );
+      const dialog: DialogSurface = {
+        accept: vi.fn().mockResolvedValue(undefined),
+        dismiss: vi.fn().mockResolvedValue(undefined),
+      };
+
+      handler(dialog);
+
+      expect(dialog.accept).toHaveBeenCalled();
+      expect(dialog.dismiss).not.toHaveBeenCalled();
     });
 
     it('strokes at the icon stroke offsets rather than the canvas box centre', async () => {

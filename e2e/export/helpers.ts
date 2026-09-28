@@ -246,6 +246,20 @@ export const ICON_STROKE = { startX: 60, centerY: 128, endX: 196, steps: 10 } as
 export async function setupIcoTest(page: Page): Promise<string> {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await page.getByTestId('header-file-menu-button').click();
+  // `File > New` in `src/components/DesktopHeader/DesktopHeader.tsx` asks
+  // `confirm()` before discarding a document that has unsaved changes, and
+  // `src/App.tsx` seeds a blank document on boot, so `hasUnsavedChanges` is
+  // already true on a freshly loaded page and the prompt is shown from the very
+  // first click. Playwright auto-dismisses dialogs that have no handler, which
+  // the guard reads as "declined" — the New Image dialog would then never open
+  // and this helper would hang on the first input. Accept the single prompt this
+  // helper causes. `once` keeps the handler scoped to the one dialog: a global
+  // accept in a fixture or in `global-setup.ts` would silently swallow every
+  // unexpected `alert`/`confirm` in the suite, and those surfacing is a
+  // load-bearing signal.
+  page.once('dialog', (dialog) => {
+    void dialog.accept();
+  });
   await page.getByTestId('header-file-new-button').click();
   await page.getByTestId('new-image-width-input').fill('256');
   await page.getByTestId('new-image-height-input').fill('256');

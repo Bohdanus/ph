@@ -327,6 +327,103 @@ describe('region shapes', () => {
   });
 });
 
+describe('interior holes', () => {
+  /**
+   * A square ring: every lit pixel of `size` x `size` except the `holeSize` x `holeSize`
+   * block in the middle, so a contiguous fill from any lit pixel encloses unselected pixels.
+   */
+  const squareRing = (size: number, holeSize: number) => {
+    const imageData = createImageData(size, size, [0, 0, 0, 255]);
+    const offset = Math.floor((size - holeSize) / 2);
+
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const inHole = x >= offset && x < offset + holeSize && y >= offset && y < offset + holeSize;
+        if (!inHole) setPixel(imageData, x, y, [255, 0, 0, 255]);
+      }
+    }
+
+    return imageData;
+  };
+
+  it.each([
+    // The mask holds `size * size - holeSize * holeSize` pixels, but the outer contour alone
+    // encloses all `size * size` of them, so committing it would cover the hole with pixels this
+    // fill reported as unselected and make `selectedPixelCount` under-report the polygon.
+    ['a single-pixel hole in a 5x5 ring', 5, 1],
+    ['a single-pixel hole in a 3x3 ring', 3, 1],
+    ['a 2x2 hole in a 5x5 ring', 5, 2],
+  ])('returns null rather than a hole-covering outline for %s', (_label, size, holeSize) => {
+    const result = createMagicWandSelectionFromImageData(
+      squareRing(size, holeSize),
+      { x: 0, y: 0 },
+      {
+        tolerance: 0,
+      }
+    );
+
+    expect(result).toBeNull();
+  });
+
+  it('refuses a hole even when smoothing is on, since smoothing never widens the path', () => {
+    expect(
+      createMagicWandSelectionFromImageData(squareRing(5, 1), { x: 0, y: 0 }, { tolerance: 0, smoothing: 1 })
+    ).toBeNull();
+  });
+
+  it('still returns a selection when disjoint same-winding regions matched, not a hole', () => {
+    // A 2-pixel block and a 3-pixel L that share a corner are two independent outer contours, so
+    // their loops have the same winding sign. They are siblings to pick between, not a hole, and
+    // the larger one must still win. This is the other side of the discriminator the hole case
+    // relies on: reading the sign the other way round would null this and commit the annulus.
+    const imageData = createImageData(4, 4, [0, 0, 0, 255]);
+
+    for (const [x, y] of [
+      [0, 0],
+      [1, 0],
+      [2, 2],
+      [3, 2],
+      [3, 3],
+    ]) {
+      setPixel(imageData, x, y, [255, 0, 0, 255]);
+    }
+
+    const result = createMagicWandSelectionFromImageData(
+      imageData,
+      { x: 0, y: 0 },
+      {
+        tolerance: 0,
+        contiguous: false,
+      }
+    );
+
+    expect(result).not.toBeNull();
+    expect(result?.selectedPixelCount).toBe(5);
+    expect(getPointBounds(result!.points)).toEqual({ minX: 2, minY: 2, maxX: 4, maxY: 4 });
+  });
+
+  it('keeps a shape whose bounding box is full but whose missing pixels touch the outline', () => {
+    // The concave L has unselected pixels inside its bounding box, but they are not enclosed, so
+    // there is no second loop and the outline still steps in around the notch.
+    const imageData = createImageData(3, 3, [0, 0, 0, 255]);
+
+    for (const [x, y] of [
+      [0, 0],
+      [1, 0],
+      [2, 0],
+      [0, 1],
+      [0, 2],
+    ]) {
+      setPixel(imageData, x, y, [9, 9, 9, 255]);
+    }
+
+    const result = createMagicWandSelectionFromImageData(imageData, { x: 0, y: 0 }, { tolerance: 0 });
+
+    expect(result?.selectedPixelCount).toBe(5);
+    expect(result!.points).toHaveLength(12);
+  });
+});
+
 describe('degenerate image data', () => {
   it.each([
     ['zero width', 0, 4],

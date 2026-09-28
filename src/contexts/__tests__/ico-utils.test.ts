@@ -78,6 +78,8 @@ function buildDib(options: {
   colorsUsed?: number;
   palette?: number[][];
   masks?: number[];
+  /** Bytes of slack after the AND mask, so an entry is long enough for a wider mask block. */
+  trailingBytes?: number;
 }): Uint8Array<ArrayBuffer> {
   const { width, height, rows } = options;
   const bitsPerPixel = options.bitsPerPixel ?? 32;
@@ -86,10 +88,11 @@ function buildDib(options: {
   const maskBytes = options.maskBytes ?? 0;
   const palette = options.palette ?? [];
   const colorsUsed = options.colorsUsed ?? (bitsPerPixel <= 8 ? 1 << bitsPerPixel : 0);
+  const trailingBytes = options.trailingBytes ?? 0;
   const pixelDataOffset = dibSize + maskBytes + colorsUsed * 4;
   const rowStride = Math.ceil((width * bitsPerPixel) / 32) * 4;
   const maskStride = Math.ceil(width / 8) * 4;
-  const buffer = new ArrayBuffer(pixelDataOffset + rowStride * height + maskStride * height);
+  const buffer = new ArrayBuffer(pixelDataOffset + rowStride * height + maskStride * height + trailingBytes);
   const view = new DataView(buffer);
   const bytes = new Uint8Array(buffer);
 
@@ -248,6 +251,13 @@ describe('ICO encoding', () => {
 });
 
 describe('ICO decoding of 32-bit DIB entries', () => {
+  /** Two rows of four distinct pixels, with an AND-mask hole punched in the top-right one. */
+  const maskedRows: IconRow[] = [
+    { rgba: [10, 20, 30, 255, 40, 50, 60, 255], transparent: [false, true] },
+    { rgba: [70, 80, 90, 255, 100, 110, 120, 255] },
+  ];
+  const maskedPixels = [10, 20, 30, 255, 40, 50, 60, 0, 70, 80, 90, 255, 100, 110, 120, 255];
+
   it('decodes BI_BITFIELDS pixels and applies the 1-bit AND mask as transparency', async () => {
     installImageHarness();
     const dib = buildDib({
@@ -307,9 +317,55 @@ describe('ICO decoding of 32-bit DIB entries', () => {
       rows: [{ rgba: [5, 6, 7, 128] }],
     });
 
-    // ico-utils.ts:28 hard-codes a 16-byte mask block for 32-bit DIBs, so a spec-legal
-    // 12-byte (RGB-only) block is not reachable through `loadIcoFile`. Documented below.
-    await expect(loadIcoFile(new Blob([icon(dib, 1, 1)]))).rejects.toThrow('Invalid ICO file');
+    // 12 mask bytes is the spec-minimal block: three RGB DWORDs and no alpha DWORD, so
+    // `decodeBmp` leaves the channel opaque however the pixel itself was authored. The entry
+    // is exactly sized, so only the 12-byte reading leaves room for the XOR row and the AND
+    // mask row that follow it.
+    expect(Array.from((await decodeIco(icon(dib, 1, 1))).data)).toEqual([5, 6, 7, 255]);
+  });
+
+  it('decodes a 32-bit DIB whose mask block is the spec-legal 12-byte RGB-only form', async () => {
+    installImageHarness();
+    const dib = buildDib({
+      width: 2,
+      height: 2,
+      bitsPerPixel: 32,
+      compression: 3,
+      maskBytes: 12,
+      // Padding the 16-byte reading cannot use: the AND mask needs 8 bytes after the XOR
+      // block, so reading that block 4 bytes late wants 80 against an entry of 79. A decoder
+      // that assumes the optional alpha DWORD therefore reads trailing padding as the head of
+      // the XOR block, which displaces the pixels by a whole pixel and walks the AND mask off
+      // the scanlines it belongs to.
+      trailingBytes: 3,
+      rows: maskedRows,
+    });
+
+    const image = await decodeIco(icon(dib, 2, 2));
+
+    expect([image.width, image.height]).toEqual([2, 2]);
+    expect(Array.from(image.data)).toEqual(maskedPixels);
+  });
+
+  it('keeps reading the 16-byte mask block when the entry is long enough for both forms', async () => {
+    installImageHarness();
+    const dib = buildDib({
+      width: 2,
+      height: 2,
+      bitsPerPixel: 32,
+      compression: 3,
+      maskBytes: 16,
+      // Both readings fit now, so nothing but the 4-byte extent separates them. Preferring
+      // the narrower block would shift this icon by a pixel. The alpha DWORD is written at
+      // 52..55 either way; `decodeBmp` keys it off `dibSize >= 56`, which an ICO's 40-byte
+      // DIB header never satisfies, so what this asserts is the offset and not the channel.
+      trailingBytes: 8,
+      rows: maskedRows,
+    });
+
+    const image = await decodeIco(icon(dib, 2, 2));
+
+    expect(Array.from(image.data)).toEqual(maskedPixels);
   });
 });
 
@@ -592,29 +648,5 @@ describe('ICO malformed DIB entries', () => {
     new DataView(dib.buffer).setInt32(4, 16, true);
 
     await expect(loadIcoFile(new Blob([icon(dib, 16, 16)]))).rejects.toThrow('Invalid ICO file');
-  });
-});
-
-describe('ICO suspected product defects', () => {
-  it.fails('decodes a 32-bit DIB whose mask block is the spec-legal 12-byte RGB-only form', async () => {
-    // Suspected bug: src/contexts/ico-utils.ts:28 assumes `auxiliarySize === 16` for every
-    // 32-bit BI_BITFIELDS DIB with a 40-byte header. The ICO/BMP spec only requires the three
-    // RGB DWORD masks (12 bytes); the alpha DWORD is an optional extension, and several icon
-    // tools omit it. `decodeBmp` in bmp-utils.ts:55 handles both forms, so the two decoders
-    // disagree. With 12 mask bytes the reader shifts `pixelDataOffset` by 4 and the AND/XOR
-    // bounds check throws, so such icons fail to open at all instead of decoding.
-    installImageHarness();
-    const dib = buildDib({
-      width: 1,
-      height: 1,
-      bitsPerPixel: 32,
-      compression: 3,
-      maskBytes: 12,
-      rows: [{ rgba: [5, 6, 7, 128] }],
-    });
-    const pending = loadIcoFile(new Blob([icon(dib, 1, 1)]));
-
-    await expect(pending).resolves.toBeDefined();
-    expect(Array.from(putImageData.mock.calls[0][0].data)).toEqual([5, 6, 7, 255]);
   });
 });

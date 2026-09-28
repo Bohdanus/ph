@@ -4,7 +4,16 @@ import { encodeGif } from '../gif-utils.ts';
 type GifBlock =
   | { kind: 'graphic-control'; packed: number; delay: number; transparentIndex: number }
   | { kind: 'application'; label: string }
-  | { kind: 'image'; left: number; top: number; width: number; height: number; packed: number; codeSize: number }
+  | {
+      kind: 'image';
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+      packed: number;
+      codeSize: number;
+      lzw: number[];
+    }
   | { kind: 'unknown-extension'; label: number };
 
 type Gif = {
@@ -75,6 +84,15 @@ function parseGif(bytes: Uint8Array): Gif {
       const imagePacked = bytes[cursor + 9];
       let code = cursor + 10;
       if (imagePacked & 0x80) code += 3 * 2 ** ((imagePacked & 0x07) + 1);
+      // The palette indexes themselves are LZW-compressed behind the initial code size
+      // byte, so the sub-blocks are collected here and decoded by `decodeIndices`.
+      const lzw: number[] = [];
+      let scan = code + 1;
+      while (bytes[scan] !== 0) {
+        const size = bytes[scan];
+        for (let offset = 1; offset <= size; offset += 1) lzw.push(bytes[scan + offset]);
+        scan += size + 1;
+      }
       blocks.push({
         kind: 'image',
         left: u16(bytes, cursor + 1),
@@ -83,10 +101,9 @@ function parseGif(bytes: Uint8Array): Gif {
         height: u16(bytes, cursor + 7),
         packed: imagePacked,
         codeSize: bytes[code],
+        lzw,
       });
-      cursor = code + 1;
-      while (bytes[cursor] !== 0) cursor += bytes[cursor] + 1;
-      cursor += 1;
+      cursor = scan + 1;
       continue;
     }
     throw new Error(`Unexpected GIF block marker 0x${marker.toString(16)} at ${cursor}`);
@@ -103,6 +120,65 @@ function parseGif(bytes: Uint8Array): Gif {
     blocks,
     trailer,
   };
+}
+
+/**
+ * GIF LZW decoder, matched to the encoder in `gifenc/src/lzwEncode.js`: codes are packed
+ * least-significant-bit first, the dictionary starts with `1 << codeSize` literal entries
+ * and grows by one entry per emitted code until it reaches the next code-width boundary.
+ * Decoding is what makes the palette indices themselves assertable — the container alone
+ * only proves which entry was *declared* transparent, not which one the pixels use.
+ */
+function decodeIndices(image: Extract<GifBlock, { kind: 'image' }>): number[] {
+  const minCodeSize = image.codeSize;
+  const clear = 1 << minCodeSize;
+  const end = clear + 1;
+  let codeSize = minCodeSize + 1;
+  let next = clear + 2;
+  let dictionary: (number[] | undefined)[] = [];
+  const reset = () => {
+    dictionary = new Array(clear + 2);
+    for (let literal = 0; literal < clear; literal += 1) dictionary[literal] = [literal];
+    codeSize = minCodeSize + 1;
+    next = clear + 2;
+  };
+  reset();
+
+  const indices: number[] = [];
+  let previous: number[] | null = null;
+  let bit = 0;
+  for (;;) {
+    let code = 0;
+    for (let order = 0; order < codeSize; order += 1, bit += 1) {
+      code |= (((image.lzw[bit >> 3] ?? 0) >> (bit & 7)) & 1) << order;
+    }
+    if (code === end) return indices;
+    if (code === clear) {
+      reset();
+      previous = null;
+      continue;
+    }
+    let entry = dictionary[code];
+    if (!entry) {
+      if (!previous || code !== next) throw new Error(`Unexpected LZW code ${code}`);
+      entry = [...previous, previous[0]];
+    }
+    for (const value of entry) indices.push(value);
+    if (previous) {
+      dictionary[next] = [...previous, entry[0]];
+      next += 1;
+      if (next === 1 << codeSize && codeSize < 12) codeSize += 1;
+    }
+    previous = entry;
+  }
+}
+
+function graphicControl(gif: Gif) {
+  return gif.blocks.find((block) => block.kind === 'graphic-control') as Extract<GifBlock, { kind: 'graphic-control' }>;
+}
+
+function imageBlock(gif: Gif) {
+  return gif.blocks.find((block) => block.kind === 'image') as Extract<GifBlock, { kind: 'image' }>;
 }
 
 async function encode(width: number, height: number, data: Uint8ClampedArray) {
@@ -260,6 +336,115 @@ describe('GIF encoding', () => {
       [0, 0, 0],
       [0, 0, 0],
     ]);
+  });
+});
+
+// The transparent slot cannot be *found* in the quantised palette: `quantize` merges
+// colour bins on RGB alone and only binarises the surviving clusters' mean alpha
+// afterwards, so a fully transparent pixel absorbed into an opaque neighbour leaves no
+// zero-alpha entry to find and the frame is written opaque — a valid file, a successful
+// download, and silent data loss.
+describe('GIF transparent palette slot', () => {
+  it('keeps the transparent slot for a single fully transparent pixel in a large opaque field', async () => {
+    const width = 100;
+    const height = 100;
+    const data = gradient(width, height);
+    const transparentPixel = 4321;
+    data[transparentPixel * 4] = 0;
+    data[transparentPixel * 4 + 1] = 0;
+    data[transparentPixel * 4 + 2] = 0;
+    data[transparentPixel * 4 + 3] = 0;
+
+    const gif = await encode(width, height, data);
+    const control = graphicControl(gif);
+    const indices = decodeIndices(imageBlock(gif));
+
+    expect(indices).toHaveLength(width * height);
+    expect(control.packed & 0x01).toBe(0x01);
+    expect(control.transparentIndex).toBe(0);
+    expect(gif.globalColorTable[control.transparentIndex]).toEqual([0, 0, 0]);
+    // Only the genuinely transparent pixel may sit on the reserved slot.
+    expect(indices[transparentPixel]).toBe(0);
+    expect(indices.filter((entry) => entry === 0)).toHaveLength(1);
+    // Reserving the slot must not shift the opaque field onto its neighbour's colour.
+    let worstChannelError = 0;
+    for (let pixel = 0; pixel < width * height; pixel += 1) {
+      const color = gif.globalColorTable[indices[pixel]];
+      worstChannelError = Math.max(
+        worstChannelError,
+        Math.abs(color[0] - data[pixel * 4]),
+        Math.abs(color[1] - data[pixel * 4 + 1]),
+        Math.abs(color[2] - data[pixel * 4 + 2])
+      );
+    }
+    expect(worstChannelError).toBeLessThanOrEqual(32);
+  });
+
+  it('forces only pixels at or below the transparency threshold onto the reserved slot', async () => {
+    // 127 is the alpha that gifenc's `oneBitAlpha` binarises to transparent, so it is the
+    // last value that belongs on the slot; 128 has to keep an opaque entry of its own.
+    const width = 4;
+    const height = 1;
+    const data = new Uint8ClampedArray([255, 255, 255, 0, 255, 255, 255, 127, 255, 255, 255, 128, 0, 0, 0, 255]);
+
+    const gif = await encode(width, height, data);
+    const control = graphicControl(gif);
+    const indices = decodeIndices(imageBlock(gif));
+
+    expect(indices).toHaveLength(width * height);
+    expect(control.packed & 0x01).toBe(0x01);
+    expect(control.transparentIndex).toBe(0);
+    expect(indices[0]).toBe(0);
+    expect(indices[1]).toBe(0);
+    expect(indices[2]).not.toBe(0);
+    expect(gif.globalColorTable[indices[2]]).toEqual([255, 255, 255]);
+    expect(indices[3]).not.toBe(0);
+    expect(gif.globalColorTable[indices[3]]).toEqual([0, 0, 0]);
+  });
+
+  it('spends no palette slot on a frame whose softest pixel is above the threshold', async () => {
+    // Nothing here binarises transparent, so the frame stays unflagged and keeps the full
+    // colour budget rather than reserving a slot that no pixel points at. The four levels
+    // are far enough apart that each survives quantisation exactly.
+    const width = 8;
+    const height = 8;
+    const levels = [64, 128, 192, 255];
+    const data = new Uint8ClampedArray(width * height * 4);
+    for (let pixel = 0; pixel < width * height; pixel += 1) {
+      const level = levels[pixel % levels.length];
+      data[pixel * 4] = level;
+      data[pixel * 4 + 1] = level;
+      data[pixel * 4 + 2] = level;
+      data[pixel * 4 + 3] = 255;
+    }
+    for (const [pixel, alpha] of [
+      [0, 128],
+      [1, 200],
+      [width, 254],
+      [width + 1, 130],
+    ] as const) {
+      data[pixel * 4] = 255;
+      data[pixel * 4 + 1] = 255;
+      data[pixel * 4 + 2] = 255;
+      data[pixel * 4 + 3] = alpha;
+    }
+
+    const gif = await encode(width, height, data);
+    const control = graphicControl(gif);
+    const indices = decodeIndices(imageBlock(gif));
+
+    expect(indices).toHaveLength(width * height);
+    expect(control.packed & 0x01).toBe(0);
+    // A reserved fifth entry would pad the table to eight colours; four is the whole set.
+    expect(gif.globalColorTable).toEqual([
+      [255, 255, 255],
+      [64, 64, 64],
+      [128, 128, 128],
+      [192, 192, 192],
+    ]);
+    for (let pixel = 0; pixel < width * height; pixel += 1) {
+      expect(gif.globalColorTable[indices[pixel]]).toEqual([data[pixel * 4], data[pixel * 4 + 1], data[pixel * 4 + 2]]);
+    }
   });
 });
 

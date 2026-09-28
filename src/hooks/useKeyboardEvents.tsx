@@ -7,6 +7,7 @@ export type KeyboardShortcut = {
   preventDefault?: boolean;
   stopPropagation?: boolean;
   allowInInput?: boolean; // Default: false. Set to true for shortcuts that should work in input fields (tool commands, not text editing)
+  repeat?: boolean; // Default: false. Set to true for shortcuts that should re-fire while held (a zoom stepper, a scrub). The default is the safety property: one press is one intent. A `repeat: true` registration is resolved independently of the last-registered-wins rule used for the initial press, so a key already owned by a later registration will dispatch the earlier one while held.
   ctrl?: boolean;
   shift?: boolean;
   alt?: boolean;
@@ -111,6 +112,14 @@ export const KeyboardEventsProvider = ({ children }: { children: React.ReactNode
         if (shortcut.stopPropagation) {
           event.stopPropagation();
         }
+
+        // Suppress OS auto-repeat unless this registration opted in. Deliberately AFTER
+        // preventDefault/stopPropagation: those two are how the app claims the key for the
+        // lifetime of the press, so a held key must keep cancelling the browser default on every
+        // repeat. Gating above them would hand the browser a default it has never had — a held
+        // Backspace would mung the layer-rename field once its first press matched an
+        // allowInInput + preventDefault registration (the lasso/polygon tools' Backspace/Delete).
+        if (event.repeat && !shortcut.repeat) continue;
 
         shortcut.onKeyDown(event);
         break;
