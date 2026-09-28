@@ -293,14 +293,19 @@ describe('Main tool-area routing', () => {
     expect(canvases(container)[2].style.display).toBe('none');
   });
 
-  it('shows the tool overlay for the eraser stroke preview', () => {
-    // The eraser is the only one of the four that needs a preview overlay. Omitting it from the
-    // hardcoded display list would leave the stroke invisible until the mouse came up, which reads
-    // as a dead tool rather than as a missing list entry.
+  it('keeps the eraser OFF the overlay canvas, which structurally cannot preview an erase', () => {
+    // The eraser previews by mutating the active layer through `tempUpdateLayer`
+    // (`EraserToolArea.tsx`), not by drawing into the overlay. It used to draw into the overlay
+    // with `composite: 'destination-out'`, and that can never produce a visible pixel: the
+    // overlay is cleared to fully transparent each frame and `destination-out` computes
+    // `da' = da * (1 - sa)`, so `da = 0` gives `0` for every pixel. The stroke was therefore
+    // invisible for the whole gesture and appeared only on pointer-up, and this list entry is
+    // what kept the empty canvas stacked over the document. Listing it here again would
+    // reintroduce the dead-looking tool.
     storeState.toolName = 'eraser';
     const { container } = render(<Main />);
 
-    expect(canvases(container)[1].style.display).toBe('block');
+    expect(canvases(container)[1].style.display).toBe('none');
   });
 
   it('keeps the tool overlay hidden for the fill and eyedropper tools', () => {

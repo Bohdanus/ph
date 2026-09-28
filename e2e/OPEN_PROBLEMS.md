@@ -201,31 +201,45 @@ one helper next to `drawLine` rather than in the fixture, and `drawLine`'s own
 contain-scale gap (the next entry) is the same arithmetic and should be fixed in
 the same change.
 
-**Measured on the merged tree (eight tools, not eleven).** The eight-tool merge
-into `main` reproduces this exactly and adds no new cause. `npm run test:e2e` on
-the merge is **148 passed / 12 failed / 2 skipped**, against 145/24 before the
-tranche's own spec coupling was repaired. The twelve are:
+**What has been resolved.** The overflow itself is fixed, in two parts, and both are
+measured rather than assumed (Playwright 1280x720):
 
-- the seven `visual-regression` baselines, each about **2256 differing pixels at a
-  0.0047 ratio** against the 100-pixel budget — the P1 mechanism;
-- `e2e/pen-types.spec.ts:78`, the same mechanism;
-- `e2e/erase-fill-eyedropper.spec.ts:487` (paint bucket tolerance) and
-  `:603` (eyedropper 3x3 average), and
-  `e2e/selection-tools.spec.ts:453` (eyedropper refuses a transparent sample).
+| layout                                                   | canvas box  | page height | overflow  |
+| -------------------------------------------------------- | ----------- | ----------- | --------- |
+| one column, before                                       | 974x1040    | 1177        | **457px** |
+| two columns only                                         | 922x612     | 749         | 29px      |
+| two columns + `min-h-0 overflow-y-auto` on the `<aside>` | 922x**583** | **720**     | **0**     |
+| one column + the same                                    | 974x**583** | **720**     | **0**     |
 
-Those last three are worth separating from the seven. They **pass when their three
-specs are run together** (51/51) and **fail in the full 169-test run**, and they
-all assert by polling a document-space pixel that has moved. So they are the same
-geometry, not a second defect, but they are additionally sensitive to the time
-budget the full run leaves them: a taller page means more layout and paint per
-poll. They should be re-measured after whichever option above is chosen, and they
-are the earliest signal that option 1 would have fixed the class.
+1. **The toolbar defaults to two columns** (`src/components/SidebarLeft/SidebarLeft.tsx:32`).
+   That alone took the overflow from 457px to 29px.
+2. **The `<aside>` declares `min-h-0 overflow-y-auto`**
+   (`src/components/SidebarLeft/SidebarLeft.tsx:324`). This is the actual fix and it is why the
+   toolbar stopped dictating the layout at all: the aside's min-content height was becoming the
+   grid row floor, and scrolling inside its own column means the row is bounded by `<main>` and
+   the toolbar-right instead. The canvas is now **583px tall in BOTH layouts**, so the number of
+   tools installed no longer moves it.
+   `e2e/sidebar-layout.spec.ts` pins that the default page does not scroll, so this cannot
+   silently regress.
+3. **`e2e/pen-types.spec.ts` passes.** It was failing for this reason and now is not, because that
+   spec already aimed in document space and was never layout-dependent.
+4. **The export fixture no longer aims in box space.** `setupExportTest` maps the stroke through
+   the `object-contain` letterbox with `documentToBoxPoint`
+   (`e2e/helpers/canvas-helpers.ts`) and aims at document (118, 78)-(291, 78), read off the
+   recorded `drawing.png` (800x600, stroke on rows 73-82, columns 118-291) rather than assumed.
+   The redraw poll is aimed the same way, so it cannot time out because the line drifted out of a
+   box-relative window.
 
-Two failures in the same run are **not** this entry: both AVIF cases fail with
-`The request id .../avif_enc.wasm is outside of Vite serving allow list`, which is
-the documented worktree trap (`AGENTS.md`, "Worktrees and dev servers") — Vite
-does not walk up to the ancestor checkout's `node_modules`, so the codec 404s.
-`npm ci` in the worktree, or running from the root checkout, clears both.
+**What still needs the operator, and it is now only a re-record.** The canvas box is 583px tall
+where the seven baselines were recorded at 840px, so the recorded pixels are stale no matter how
+the fixture is written: the export the fixture now produces is correct and layout-independent, but
+it is not the export that was recorded. `--update-snapshots` ONCE is the fix, and it is only worth
+doing now — before it, any sidebar change would have invalidated them again, which is exactly what
+happened twice. That is the operator's call under `AGENTS.md` and is not taken here.
+
+**Do not** fix the remainder by raising `DEFAULT_MAX_DIFF_PIXELS`, or by nudging the two document
+coordinates until the count reaches zero. The second fits a constant to the old layout and would
+be wrong the moment the box changes again.
 
 ## P2 — `drawLine` applies no contain scale, so its arguments are not document coordinates
 

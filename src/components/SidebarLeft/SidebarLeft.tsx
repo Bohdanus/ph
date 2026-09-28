@@ -29,7 +29,13 @@ const SidebarLeft = () => {
   const { toolArgs, patchToolArgs } = useCurrentTool();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
-  const [isSingleColumn, setIsSingleColumn] = useState(true);
+  // Two columns is the default. A single column is as tall as the whole tool list, and that
+  // min-content height became the grid row floor, so the toolbar dragged the `h-full` canvas
+  // up with it and the page outgrew a 720px viewport by 457px (e2e/OPEN_PROBLEMS.md P1). Two
+  // columns cut that to 29px, and `min-h-0 overflow-y-auto` on the `<aside>` removes the rest:
+  // the toolbar scrolls inside its own column instead of setting the row's height, so the
+  // canvas box stops depending on how many tools are installed.
+  const [isSingleColumn, setIsSingleColumn] = useState(false);
   const longPressFlyoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressLongPressRef = useRef(false);
   const longPressOpenedRef = useRef(false);
@@ -317,7 +323,7 @@ const SidebarLeft = () => {
 
   return (
     <aside
-      className="max-md:hidden border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]"
+      className="max-md:hidden min-h-0 overflow-y-auto border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]"
       data-testid="left-sidebar"
       style={{ width: toolbarWidth }}
     >

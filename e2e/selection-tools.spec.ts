@@ -450,26 +450,30 @@ test.describe('Eyedropper', () => {
       .toBe(true);
   });
 
-  test('the eyedropper does not set a colour from a fully transparent pixel', async ({ page }) => {
+  test('the eyedropper samples the composite, so a transparent part of the draw layer reads through to the base', async ({
+    page,
+  }) => {
     const diagonal = await paintRedDiagonal(page);
     const bandBox = await measureCanvas(page);
     const inside = inCanvas(bandBox, diagonal);
     const centre = { x: inside.left + inside.width / 2, y: inside.top + inside.height / 2 };
-    // The draw tool's layer is a tight bounding box around the stroke, so a point just
-    // inside the box's top-right corner is inside the LAYER and far off the stroke. That
-    // distinction is the point of the test: a click there is a sample of a fully transparent
-    // pixel, not a click off the layer, and only the former reaches the alpha check.
+    // The draw tool's layer is a tight bounding box around the stroke, so a point just inside the
+    // box's top-right corner is inside the LAYER and far off the stroke.
     const transparent = { x: inside.left + inside.width - 3, y: inside.top + 3 };
 
     await clickToolButton(page, 'eyedropper');
-    // The eyedropper's bar is a real panel, not the `PlaceholderTool` the other unimplemented
-    // tools render, so the signal that the tool is active is its own Sample Size select.
     await expect(page.getByRole('combobox', { name: 'Sample Size' })).toBeVisible();
 
-    // Premise, in two halves. The band was painted with `KNOWN_RED`, which left the swatch
-    // already holding that colour, so the first click is made with a sentinel on the swatch:
-    // a change to `KNOWN_RED` is then evidence the tool sampled, and the second sentinel
-    // below makes "nothing happened" observable rather than indistinguishable from a repeat.
+    // The composited canvas is what the eyedropper reads, and the document's bedrock layer is
+    // opaque, so there is no fully transparent composite pixel to sample anywhere in this app
+    // today. This test used to assert the opposite — that a click there changes nothing — which
+    // is only true of an eyedropper that samples the ACTIVE LAYER. The production one samples the
+    // composite, which is Photoshop's default (`Sample: All Layers`), and there is no
+    // hide-layer control with which to build a transparent composite in the first place.
+    //
+    // What IS reachable, and what this pins now: the click samples whatever the user can
+    // actually see at that point. The stale-sentinel and the store's black initial value are both
+    // excluded, because either would mean the tool reported a colour it did not read.
     await setForegroundColor(page, SENTINEL_FOREGROUND, true);
     await page.mouse.click(centre.x, centre.y);
     await expect
@@ -480,19 +484,18 @@ test.describe('Eyedropper', () => {
 
     await setForegroundColor(page, SENTINEL_FOREGROUND, true);
     await page.mouse.click(transparent.x, transparent.y);
+    await expect
+      .poll(async () => (await foregroundHex(page)) !== SENTINEL_FOREGROUND, {
+        message: 'the composite sample should read through the transparent part of the draw layer',
+      })
+      .toBe(true);
+    expect(await foregroundHex(page)).not.toBe(BLACK);
 
-    expect
-      .soft(
-        await neverHappened(page, async () => (await foregroundHex(page)) === BLACK, NEGATIVE_WINDOW_MS),
-        'a fully transparent sample must not set the foreground to black, which is the store initial value'
-      )
-      .toBe(true);
-    expect
-      .soft(
-        await neverHappened(page, async () => (await foregroundHex(page)) !== SENTINEL_FOREGROUND, NEGATIVE_WINDOW_MS),
-        'a fully transparent sample must leave the swatch on the colour it was already showing'
-      )
-      .toBe(true);
+    // The guard that a truly transparent composite would need — `EyedropperToolArea` reads the
+    // sampled pixel's alpha and dispatches nothing when it is 0 — cannot be reached through this
+    // UI, because no control makes the composite transparent. It is pinned directly instead, by
+    // `src/components/Main/__tests__/EyedropperToolArea.test.tsx`, which builds a transparent
+    // pixel in the fixture and asserts no `SET_COLOR` is dispatched.
   });
 
   test('the eyedropper is reachable with the I shortcut', async ({ page }) => {

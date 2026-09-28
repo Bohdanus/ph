@@ -1,16 +1,14 @@
 import { type Download, expect, type Page, type TestInfo } from '@playwright/test';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import {
-  drawLine,
-  getWorkspaceCanvas,
-  LINE_END_X,
-  LINE_END_Y,
-  LINE_START_X,
-  LINE_START_Y,
-  waitForCanvasRedraw,
-} from '../helpers/canvas-helpers';
+import { documentToBoxPoint, drawLine, getWorkspaceCanvas, waitForCanvasRedraw } from '../helpers/canvas-helpers';
 import { clickToolButton } from '../helpers/toolbar-helpers';
+
+/** The stroke every export baseline is recorded against, in DOCUMENT coordinates. */
+const EXPORT_LINE = { start: { x: 118, y: 78 }, end: { x: 291, y: 78 } } as const;
+
+/** Half the 10px stroke width, used only to size the redraw window around the line. */
+const STROKE_HALF_HEIGHT_PX = 8;
 
 export interface ExportFormat {
   label: string;
@@ -106,8 +104,26 @@ export async function setupExportTest(
   if (!box) throw new Error('Canvas not found');
 
   await clickToolButton(page, 'draw');
-  await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-  await waitForCanvasRedraw(page, box);
+  // The line is aimed in DOCUMENT space, not box space, so the export does not depend on how
+  // tall the sidebar happens to be. The endpoints are read off the recorded baselines rather
+  // than assumed: `drawing.png` is 800x600 with the stroke occupying rows 73-82 and columns
+  // 118-291, so a stroke aimed at (118, 78)-(291, 78) reproduces them pixel for pixel.
+  // Under the old box-relative aim the same pixels fell out of the toolbar's height instead.
+  const from = documentToBoxPoint(box, EXPORT_LINE.start);
+  const to = documentToBoxPoint(box, EXPORT_LINE.end);
+  await drawLine(page, box, from.x, from.y, to.x, to.y);
+  // The redraw poll is aimed the same way, so it cannot time out because the line drifted out
+  // of a box-relative window that was only ever an accident of the sidebar's width.
+  await waitForCanvasRedraw(page, box, {
+    clip: {
+      x: from.x,
+      y: documentToBoxPoint(box, { x: 0, y: EXPORT_LINE.start.y - STROKE_HALF_HEIGHT_PX }).y,
+      width: to.x - from.x,
+      height:
+        documentToBoxPoint(box, { x: 0, y: EXPORT_LINE.start.y + STROKE_HALF_HEIGHT_PX }).y -
+        documentToBoxPoint(box, { x: 0, y: EXPORT_LINE.start.y - STROKE_HALF_HEIGHT_PX }).y,
+    },
+  });
 
   const sourceDataUrl = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL('image/png'));
 

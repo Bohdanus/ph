@@ -3,7 +3,6 @@ import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import type { EyedropperSampleSize, EyedropperToolArgs } from '../../tools/eyedropper.ts';
-import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 
 type EyedropperToolAreaProps = {
   className?: string;
@@ -45,8 +44,7 @@ const toHexColor = (red: number, green: number, blue: number): string =>
  * canvas pixel.
  */
 export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
-  const [{ canvasRef, containerRef, totalSize, documentFrame: currentFrame }, dispatch] = useStore();
-  const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
+  const [{ canvasRef, containerRef, totalSize }, dispatch] = useStore();
   const { toolArgs } = useCurrentTool();
 
   const args = toolArgs as EyedropperToolArgs;
@@ -76,9 +74,16 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
       return;
     }
 
-    const documentSeed = canvasToDocumentPoint(getLocalCoords(event), documentFrame);
-    const centerX = Math.floor(documentSeed.x);
-    const centerY = Math.floor(documentSeed.y);
+    // The composited canvas is drawn in FRAME space: it is sized by `documentFrameSize` and each
+    // layer is stamped at `position.x - documentFrame.x` (`src/contexts/layer-renderer.ts:78-79,119`).
+    // So the canvas's own pixel (0,0) is the frame origin, and `getLocalCoords` is already the
+    // index `getImageData` wants. Running it through `canvasToDocumentPoint` first would ADD the
+    // frame origin a second time: after a crop that trims 100px off the left, a click on canvas
+    // x=100 read canvas x=200, and a click past 600 read entirely outside the bitmap and silently
+    // dispatched nothing, which reads as a dead tool.
+    const canvasSeed = getLocalCoords(event);
+    const centerX = Math.floor(canvasSeed.x);
+    const centerY = Math.floor(canvasSeed.y);
 
     // Sample Size is the side of the square averaged around the click, and all three values are
     // odd, so the block is centred. The block is then CLIPPED to the canvas rather than shifted
@@ -95,6 +100,12 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     const { data } = ctx.getImageData(left, top, right - left, bottom - top);
     const sampleCount = Math.floor(data.length / 4);
     if (sampleCount === 0) return;
+
+    // A fully transparent pixel has no colour to report. The app's foreground is a CSS colour on
+    // an `<input type="color">`, which cannot express transparency, so averaging one in would
+    // silently set the foreground to black. Photoshop shows a crossed-out swatch and changes
+    // nothing, so nothing is dispatched here either.
+    if (data[(centerY - top) * (right - left) * 4 + (centerX - left) * 4 + 3] === 0) return;
 
     let red = 0;
     let green = 0;

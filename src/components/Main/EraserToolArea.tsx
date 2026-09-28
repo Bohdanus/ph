@@ -1,17 +1,14 @@
-import { type PointerEvent, type RefObject, useRef } from 'react';
-import { buildEraseArgs, type EraserToolArgs } from '../../tools/eraser.ts';
-import { setupDrawCtx } from '../../tools/draw.ts';
+import { type PointerEvent, useRef } from 'react';
+import { type EraserToolArgs } from '../../tools/eraser.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
-import { drawLine } from '../../util/draw.ts';
 import type { Point } from '../../contexts/general-types.ts';
 import { canvasToDocumentPoint, documentFrameFromSize } from '../../contexts/document-frame.ts';
 
 type EraserToolAreaProps = {
   className?: string;
-  overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
 };
 
 /**
@@ -24,67 +21,76 @@ type EraserToolAreaProps = {
  * is the one that produces exactly one `TOOL_ACTION` per call — which is what makes one history
  * state per stroke (per mouse-up) possible, rather than one per pointer move.
  *
- * The preview and the commit are kept from drifting by both going through `buildEraseArgs`, the
- * single place that turns `EraserToolArgs` into the shared painter's `DrawToolArgs`:
- * `setupDrawCtx` reads `composite` off it, and `drawLine` reads `blockStamp` off it
- * (`src/util/draw.ts:136`). Passing the raw `EraserToolArgs` to either would silently drop a flag —
- * `composite` would read as absent and the preview would paint instead of erasing.
+ * The preview goes through `tempUpdateLayer`, the sanctioned live-pixel writer, and NOT through
+ * the shared overlay canvas. The overlay starts every frame empty and transparent, and
+ * `destination-out` computes `da' = da * (1 - sa)`; with `da = 0` that is `0` for every pixel, so
+ * an overlay preview is arithmetically incapable of drawing anything and the stroke only appeared
+ * on pointer-up. Previewing by mutating the layer makes the preview and the commit the same
+ * operation, which is why they cannot drift.
  */
-export const EraserToolArea = ({ className, overlayCtxRef }: EraserToolAreaProps) => {
+export const EraserToolArea = ({ className }: EraserToolAreaProps) => {
   const [{ containerRef, layers, activeLayerId, totalSize, documentFrame: currentFrame }] = useStore();
   const documentFrame = currentFrame ?? documentFrameFromSize(totalSize);
-  const { updateLayerByTool } = useLayers();
+  const { updateLayerByTool, tempUpdateLayer } = useLayers();
   const { toolArgs } = useCurrentTool();
 
   const args = toolArgs as EraserToolArgs;
   const pointsRef = useRef<Point[]>([]);
+  const activeLayer = activeLayerId ? layers[activeLayerId] : undefined;
+
+  /**
+   * A raster edit to the BEDROCK layer is wrong, not merely surprising: bedrock is the document's
+   * own backing image — the floor every other layer composites over — and the Eraser is the one
+   * tool whose whole job is to punch holes. Erasing it changes the colour of the transparent
+   * regions the rest of the stack is judged against, and there is no layer left to restore it
+   * from. `MoveToolArea.tsx:35` reads the same flag for the same reason.
+   */
+  const isEnabled = Boolean(activeLayerId && activeLayer && !activeLayer.isBedrock);
 
   const { isPointerDownValid, isPointerMoveValid, isPointerUpValid, getLocalCoords, isMouseDown } = usePointerPosition({
     ref: containerRef,
     imageSize: totalSize,
   });
 
-  // Repaints synchronously on every pointer move, exactly as `DrawToolArea` does: the overlay is a
-  // clearRect plus one stroke of the accumulated points, so frame batching buys nothing here.
-  const flushDrawingFrame = () => {
-    const ctx = overlayCtxRef.current;
-    if (!ctx) return;
-
-    ctx.clearRect(0, 0, totalSize.width, totalSize.height);
-
-    // Overlay coordinates are canvas/image coordinates; the commit below converts to the active
-    // layer's local space. Repainting the whole accumulated path is what makes `destination-out`
-    // readable at all: erasing from the live overlay rather than accumulating into it is the only
-    // way a repeated stamp of the same path does not punch through twice.
-    drawLine({
-      args: buildEraseArgs({ ...args, points: pointsRef.current }),
-      ctx,
+  /**
+   * The processor addresses the LAYER's own raster, whose pixel (0, 0) is `activeLayer.pos`, so a
+   * document point becomes `point - activeLayer.pos` and a layer at the origin passes through
+   * unchanged. The same translation is applied to the preview and to the commit: a preview in
+   * canvas space and a commit in layer space would show the stroke at one place and put it
+   * somewhere else.
+   */
+  const toLayerPoints = (points: Point[]) =>
+    points.map((point) => {
+      const document = canvasToDocumentPoint(point, documentFrame);
+      return { x: document.x - activeLayer!.pos.x, y: document.y - activeLayer!.pos.y };
     });
-  };
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (args.toolName !== 'eraser') return;
+    if (!isEnabled) return;
     if (!isPointerDownValid(event)) return;
 
-    const ctx = overlayCtxRef.current;
-    if (!ctx) return;
+    pointsRef.current = [getLocalCoords(event)];
 
-    const coords = getLocalCoords(event);
-    pointsRef.current = [coords];
-
-    // Both eraser flags reach the overlay here, and only here. `setupDrawCtx` is shared with the
-    // committed raster, so the preview subtracts alpha exactly as the commit will.
-    setupDrawCtx(ctx, buildEraseArgs({ ...args, points: [coords] }));
-
-    flushDrawingFrame();
+    tempUpdateLayer({
+      id: activeLayerId!,
+      toolArgs: { ...args, points: toLayerPoints(pointsRef.current) },
+    });
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
     if (!isMouseDown.current || !isPointerMoveValid(event)) return;
+    if (!isEnabled) return;
 
     pointsRef.current.push(getLocalCoords(event));
 
-    flushDrawingFrame();
+    // The accumulated path is resent every move rather than only the new point, because
+    // `commit: 'raster'` REPLACES the whole layer with the canvas the processor returns. Sending
+    // one point would erase one point.
+    tempUpdateLayer({
+      id: activeLayerId!,
+      toolArgs: { ...args, points: toLayerPoints(pointsRef.current) },
+    });
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
@@ -97,23 +103,16 @@ export const EraserToolArea = ({ className, overlayCtxRef }: EraserToolAreaProps
       pointsRef.current.push(coords);
     }
 
-    const layer = activeLayerId ? layers[activeLayerId] : undefined;
-
     // `updateLayerByTool` takes no `pos`: `commit: 'raster'` REPLACES the layer's pixels with the
     // canvas the processor returns, which is the whole layer. Cropping the stroke to its bounding
-    // box the way `DrawToolArea` does would therefore shrink the layer out from under the erase,
-    // so the points are the layer's own local coordinates and nothing is cropped.
-    if (layer) {
-      const documentPoints = pointsRef.current.map((point) => canvasToDocumentPoint(point, documentFrame));
-      const layerPoints = documentPoints.map((point) => ({ x: point.x - layer.pos.x, y: point.y - layer.pos.y }));
-
+    // box the way `DrawToolArea` does would therefore shrink the layer out from under the erase.
+    if (pointsRef.current.length > 0 && activeLayer && !activeLayer.isBedrock) {
       // `id` is deliberately left to the hook's `= activeLayerId` default: the layer whose `pos`
       // the conversion above used is the one that must receive the edit.
-      updateLayerByTool({ toolArgs: { ...args, points: layerPoints } });
+      updateLayerByTool({ toolArgs: { ...args, points: toLayerPoints(pointsRef.current) } });
     }
 
     pointsRef.current = [];
-    overlayCtxRef.current?.clearRect(0, 0, totalSize.width, totalSize.height);
   };
 
   return (

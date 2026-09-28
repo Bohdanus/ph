@@ -169,7 +169,7 @@ describe('SidebarLeft rendering', () => {
     expect(toolbarButtonByName('brush')).toHaveAccessibleName('Brush Tool');
     expect(toolbarButtonByName('clone-stamp')).toHaveAccessibleName('Clone Stamp Tool');
     expect(toolbarButtonByName('blur')).toHaveAccessibleName('Blur Tool');
-    expect(toolbarButtonByName('paint-bucket')).toHaveAccessibleName('Paint Bucket Tool');
+    expect(toolbarButtonByName('gradient')).toHaveAccessibleName('Gradient Tool');
     expect(toolbarButtonByName('dodge')).toHaveAccessibleName('Dodge Tool');
     expect(toolbarButtonByName('draw')).toHaveAccessibleName('Draw Tool');
     expect(toolbarButtonByName('pen')).toHaveAccessibleName('Pen Tool');
@@ -188,12 +188,11 @@ describe('SidebarLeft rendering', () => {
     expect(hasFlyoutIndicator('brush')).toBe(true);
     expect(hasFlyoutIndicator('pen')).toBe(true);
     expect(hasFlyoutIndicator('shape')).toBe(true);
-    // The marquee, quick-selection, focus, gradient and tonal tiles are multi-item
-    // flyouts now, so each one carries the corner indicator.
+    // The marquee, quick-selection, focus and tonal tiles are multi-item flyouts, so each
+    // one carries the corner indicator.
     expect(hasFlyoutIndicator('rectangular-selection')).toBe(true);
     expect(hasFlyoutIndicator('magic-wand')).toBe(true);
     expect(hasFlyoutIndicator('blur')).toBe(true);
-    expect(hasFlyoutIndicator('paint-bucket')).toBe(true);
     expect(hasFlyoutIndicator('dodge')).toBe(true);
 
     expect(hasFlyoutIndicator('reposition')).toBe(false);
@@ -204,5 +203,9 @@ describe('SidebarLeft rendering', () => {
     expect(hasFlyoutIndicator('clone-stamp')).toBe(false);
     expect(hasFlyoutIndicator('draw')).toBe(false);
     expect(hasFlyoutIndicator('text')).toBe(false);
+    // The Gradient is its own single-tool tile. The Paint Bucket is NOT listed anywhere as a
+    // tile because it is a flyout item of the erase-and-fill group, which is where main keeps
+    // it and what `erase-fill-eyedropper.spec.ts` drives it by.
+    expect(hasFlyoutIndicator('gradient')).toBe(false);
   });
 });

@@ -1758,50 +1758,75 @@ agent not checked `Main.tsx:53`.
 **Files.** `src/tools/toolProcessors.ts:103,237,268`,
 `src/components/Main/Main.tsx:53,177`, `toolbar-mapping.ts:47-71`
 
-## 54. The eight-tool tranche cannot merge while the seven visual baselines encode the old toolbar height
+## 54. The eight-tool tranche is ready; the seven export baselines need one re-record
 
-**Problem.** The `ps/tool-expansion` tranche adds eight tools to the left
-toolbar — `elliptical-selection`, `quick-selection`, `clone-stamp`, `sharpen`,
-`smudge`, `dodge`, `burn`, `gradient`. Every one of them is fully wired: a
-`ToolName` key, a `toolProcessors` entry, a `toolsMap` entry, an icon, a
-`ToolbarsRight` panel, a `Main` tool area, an options bar, and e2e coverage. The
-merge is done and every non-visual gate is green. What blocks it is the toolbar
-getting taller, which moves the canvas, which invalidates recorded pixels.
+**Status.** The merge is done and every non-visual gate is green. What remains is a single
+recording decision, and the groundwork for it is now finished.
 
-The mechanism, verified rather than inferred. `html, body, #root` are
-`height: 100%`, so the page is viewport-pinned, and `<main>` already declares
-`overflow-y-auto` (`src/components/Main/Main.tsx:296`). The left `<aside>`
-declares **no** `overflow` (`src/components/SidebarLeft/SidebarLeft.tsx:319-323`),
-so its min-content height is the whole toolbar, that becomes the grid row floor,
-and the `h-full` canvas (`Main.tsx:231,241`) is dragged up with it. The page
-overflows the 1280x720 viewport, `canvas.boundingBox()` shifts, and everything
-addressed in document space moves. `compareScreenshots` spends a budget of
-`DEFAULT_MAX_DIFF_PIXELS = 100` (`e2e/helpers/image-comparison.ts:28`, applied at
-`:95`), and the seven `comparePixels` formats in `e2e/export/helpers.ts:59-66`
-measure about 2250 differing pixels each — roughly 0.0047 of the frame.
+**What landed.** The eight tools `main` lacked — `elliptical-selection`,
+`quick-selection`, `clone-stamp`, `sharpen`, `smudge`, `dodge`, `burn`, `gradient` — each with a
+`ToolName` key, a `toolProcessors` entry, a `toolsMap` entry, an icon, an options-bar panel, a
+`Main` tool area and e2e coverage. Plus the `toolLayerBlendMode` per-layer blend seam in
+`src/contexts/layer-utils.ts`, which is the seam entry 50 used to be blocked on.
 
-**This is a pre-existing overflow made visible, not a broken layout.** Before this
-tranche the page was already 257px taller than the viewport and the baselines
-already encoded that. The tranche did not create the bug; it grew the number.
+**The overflow cause is fixed and measured.** The toolbar defaults to two columns, and the
+`<aside>` declares `min-h-0 overflow-y-auto` (`src/components/SidebarLeft/SidebarLeft.tsx:324`).
+That aside's min-content height was the grid row floor, which dragged the `h-full` canvas up and
+outgrew a 720px viewport by 457px. Scrolling inside the column removes the coupling: the canvas is
+now **583px tall in both layouts**, so the toolbar no longer sets its height, and
+`e2e/sidebar-layout.spec.ts` pins that the page does not scroll.
 
-**Fix — needs a call, not a patch.** Two options, and the choice is the
-operator's:
+**The export fixture is now layout-independent.** `setupExportTest` aims in DOCUMENT space through
+`documentToBoxPoint` rather than at fixed box offsets, and the redraw poll is aimed the same way.
+Before this, every export baseline was a pin on the sidebar's height rather than on the export.
 
-1. **Add `min-h-0 overflow-y-auto` to the `<aside>`.** This is the real fix: the
-   toolbar scrolls inside its own column, the page stops growing, and the canvas
-   box lands at its natural height instead of being floored by the toolbar. It
-   also fixes the coordinate-dependent tests that fail for the same reason. The
-   cost is that all seven baselines change, because the canvas box moves — so
-   this is a **re-record, not a repair**, and per `AGENTS.md` a re-record is not
-   an agent's call.
-2. **Leave the overflow and re-record nothing.** The suite stays as it is on
-   `main` and this tranche waits for a viewport/layout decision.
+**The remaining decision.** The canvas is 583px tall where the seven baselines in
+`e2e/export/visual-regression.spec.ts:37` were recorded at 840px, so the recorded pixels are stale
+whatever the fixture does. One `--update-snapshots` is the fix. It is worth doing now and not
+before: until it happens, any sidebar change invalidates them again, which is what has happened
+twice.
 
-**Do not** fix it by raising `DEFAULT_MAX_DIFF_PIXELS`, by re-recording with
-`--update-snapshots` to make the run green, or by shrinking the toolbar to hide
-tiles. All three are gate-weakening, and the first two are explicitly forbidden.
+**Do not** reach the pixels by raising `DEFAULT_MAX_DIFF_PIXELS`, or by nudging the two document
+coordinates in `e2e/export/helpers.ts` until the count hits zero. The second fits a constant to the
+old box and is wrong again the moment the box moves.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:319-323`,
-`src/components/Main/Main.tsx:231,241,296`,
-`e2e/helpers/image-comparison.ts:28,95`, `e2e/export/helpers.ts:59-66`,
-`toolbar-mapping.ts:37-118`
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:32,324`,
+`e2e/helpers/canvas-helpers.ts`, `e2e/export/helpers.ts`,
+`e2e/export/visual-regression.spec.ts:37`, `e2e/sidebar-layout.spec.ts`
+
+## 55. Two flood-fill modules coexist, split by tolerance scale, and that boundary is load-bearing
+
+**Problem.** `src/util/floodFill.ts` and `src/util/flood-fill.ts` are two BFS flood fills with the
+same function names (`createContiguousMask`/`createContiguousScan`, `enqueuePixel`,
+`isPixelWithinTolerance`, …). A reader reasonably concludes one is a stale copy to delete, and
+deleting the wrong one silently changes which scale a tool's Tolerance slider uses.
+
+**Why both are still here.** They serve different scales, and the split is by consumer, not by
+accident:
+
+| module                   | scale     | consumers                                              |
+| ------------------------ | --------- | ------------------------------------------------------ |
+| `src/util/floodFill.ts`  | **0-255** | `src/tools/fill.ts` (paint bucket, magic eraser)       |
+| `src/util/flood-fill.ts` | **0-100** | `src/tools/quickSelection.ts`, `src/util/magicWand.ts` |
+
+Adobe's Paint Bucket page states "Enter a Tolerance value (0-255)", which is why the bucket uses
+255 and the magic wand (0-100, per the wand's own bar) uses 100. `floodFill.ts` also scales its
+threshold against a squared 3-channel maximum and bounds its writes to the region, so a large
+fill does not walk the whole layer.
+
+**Do not merge them without changing a tolerance scale.** Consolidating means one threshold
+formula with a parameterised maximum, and the per-tool scale then has to be stated at the call
+site. That is a real change to a load-bearing number in four tools, not a refactor.
+
+**The alpha question, settled.** `floodFill.ts` compares RGB only, so a fully transparent pixel
+is colour-identical to an opaque black one, and a fill at Tolerance 0 on a PNG cut-out floods the
+whole silhouette including the transparency. That is deliberate, it is pinned by a test
+(`src/util/__tests__/floodFill.test.ts`, `describe('alpha does not participate')`), and it matches
+Adobe: their Paint Bucket page's own tip for this case is "To avoid filling transparent areas,
+lock the layer's transparency in the Layers panel" — i.e. Photoshop floods them too unless
+transparency is locked. The discarded `flood-fill.ts` compared 4 channels including alpha, which
+is a defensible improvement but a **deviation** from Adobe, and it is the one difference its own
+branch pinned in the opposite direction. It was not adopted.
+
+**Files.** `src/util/floodFill.ts`, `src/util/flood-fill.ts`, `src/tools/fill.ts`,
+`src/tools/quickSelection.ts`, `src/util/magicWand.ts`

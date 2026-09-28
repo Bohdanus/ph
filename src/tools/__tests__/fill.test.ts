@@ -26,12 +26,19 @@ const RED_PIXELS: readonly [number, number][] = [
   [3, 3],
 ];
 
+/**
+ * Set by a test that needs a fully transparent destination. Under transparency the stored RGB is
+ * meaningless, which is the whole point: it is what separates a straight-alpha composite from a
+ * lerp of two straight RGBs.
+ */
+let sourceIsTransparent = false;
+
 const sourcePixels = (): Uint8ClampedArray => {
   const data = new Uint8ClampedArray(SIZE.width * SIZE.height * 4);
   for (const [x, y] of RED_PIXELS) {
     const index = (y * SIZE.width + x) * 4;
     data[index] = 255;
-    data[index + 3] = 255;
+    data[index + 3] = sourceIsTransparent ? 0 : 255;
   }
   return data;
 };
@@ -133,12 +140,30 @@ describe('paint bucket', () => {
     expect(rgbAt(3, 3, 2)).toBe(255);
   });
 
-  it('composites the fill at the requested opacity', () => {
+  it('composites the fill at the requested opacity over an opaque pixel', () => {
     run('paint-bucket', { color: '#0000FF', tolerance: 0, alpha: 0.5 });
 
     // 50% blue over opaque red: blue half, red half.
     expect(rgbAt(0, 0, 2)).toBe(128);
     expect(rgbAt(0, 0, 0)).toBe(128);
+  });
+
+  it('keeps the fill colour intact under a partially transparent pixel', () => {
+    sourceIsTransparent = true;
+    try {
+      run('paint-bucket', { color: '#0000FF', tolerance: 0, alpha: 0.5 });
+    } finally {
+      sourceIsTransparent = false;
+    }
+
+    // The destination's stored RGB under full transparency is 0, so a lerp of the two straight
+    // RGBs writes (0, 0, 128) — the fill mixed with nothing, i.e. half-black instead of half-blue.
+    // Straight-alpha source-over gives the fill colour at half coverage. This case is the reason
+    // `blendPixel` is used: the opaque-destination case above cannot tell the two apart, which is
+    // why this test exists separately rather than folded into it.
+    expect(rgbAt(0, 0, 2)).toBe(255);
+    expect(rgbAt(0, 0, 0)).toBe(0);
+    expect(alphaAt(0, 0)).toBe(128);
   });
 
   it('reaches an identical but unconnected pixel only when Contiguous is off', () => {

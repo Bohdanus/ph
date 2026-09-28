@@ -267,10 +267,12 @@ const Main = () => {
               'feather-magnetic-lasso',
               'magic-wand',
               'rectangular-selection',
-              // Only the eraser. The fill and the eyedropper commit on the click itself and never
-              // draw a preview, so keeping the overlay hidden for them is what stops a stale
-              // overlay from an earlier tool from sitting on top of the document.
-              'eraser',
+              // The eraser is deliberately NOT here. It previews by mutating the active layer
+              // through `tempUpdateLayer` (see `EraserToolArea`), because `destination-out` on
+              // an empty transparent overlay computes `da' = 0` and can never draw a pixel. The
+              // fill and the eyedropper also commit on the click itself and never draw a preview,
+              // so keeping the overlay hidden for all three is what stops a stale overlay from an
+              // earlier tool from sitting on top of the document.
               'elliptical-selection',
               'quick-selection',
               'clone-stamp',

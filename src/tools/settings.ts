@@ -128,9 +128,13 @@ export const defaultSettings = {
     penType: 'pen',
     lineWidth: 10,
     points: [],
-    // Smoothing and Mode are the Photoshop options-bar settings the paint panel owns. The
-    // defaults are the identity for both, so a stroke renders exactly as the `draw`-backed
-    // brush did before the panel existed.
+    // Smoothing and Mode are the Photoshop options-bar settings the paint panel owns. `Mode`
+    // defaults to Normal, so it composites exactly as the `draw`-backed brush did before the
+    // panel existed. `smoothing` does NOT: it defaults to 10, Photoshop's own default, so a
+    // brush stroke is now smoothed by 10% where it used to be unsmoothed. That is the
+    // intended behaviour, not an identity — `smoothStrokePoints` returns the same array
+    // instance at 0, which is what keeps the legacy `draw` tool's recorded baselines exact,
+    // and `draw` has no `smoothing` key at all so it reads `?? 0` and is untouched.
     smoothing: PAINT_SMOOTHING_DEFAULT,
     blendMode: 'source-over',
     toolName: 'brush',
@@ -141,9 +145,13 @@ export const defaultSettings = {
     penType: 'pen',
     lineWidth: 3,
     points: [],
-    // Smoothing and Mode are the Photoshop options-bar settings the paint panel owns. The
-    // defaults are the identity for both, so a stroke renders exactly as the `draw`-backed
-    // brush did before the panel existed.
+    // Smoothing and Mode are the Photoshop options-bar settings the paint panel owns. `Mode`
+    // defaults to Normal, so it composites exactly as the `draw`-backed brush did before the
+    // panel existed. `smoothing` does NOT: it defaults to 10, Photoshop's own default, so a
+    // brush stroke is now smoothed by 10% where it used to be unsmoothed. That is the
+    // intended behaviour, not an identity — `smoothStrokePoints` returns the same array
+    // instance at 0, which is what keeps the legacy `draw` tool's recorded baselines exact,
+    // and `draw` has no `smoothing` key at all so it reads `?? 0` and is untouched.
     smoothing: PAINT_SMOOTHING_DEFAULT,
     blendMode: 'source-over',
     toolName: 'pencil',
@@ -154,9 +162,13 @@ export const defaultSettings = {
     penType: 'spray',
     lineWidth: 18,
     points: [],
-    // Smoothing and Mode are the Photoshop options-bar settings the paint panel owns. The
-    // defaults are the identity for both, so a stroke renders exactly as the `draw`-backed
-    // brush did before the panel existed.
+    // Smoothing and Mode are the Photoshop options-bar settings the paint panel owns. `Mode`
+    // defaults to Normal, so it composites exactly as the `draw`-backed brush did before the
+    // panel existed. `smoothing` does NOT: it defaults to 10, Photoshop's own default, so a
+    // brush stroke is now smoothed by 10% where it used to be unsmoothed. That is the
+    // intended behaviour, not an identity — `smoothStrokePoints` returns the same array
+    // instance at 0, which is what keeps the legacy `draw` tool's recorded baselines exact,
+    // and `draw` has no `smoothing` key at all so it reads `?? 0` and is untouched.
     smoothing: PAINT_SMOOTHING_DEFAULT,
     blendMode: 'source-over',
     toolName: 'color-replacement',

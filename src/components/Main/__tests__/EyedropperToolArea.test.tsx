@@ -219,14 +219,46 @@ describe('EyedropperToolArea', () => {
     }
   });
 
-  it('offsets the sample by the document frame', () => {
+  it('reads the canvas pixel that was clicked, with a cropped frame already applied', () => {
     storeState.documentFrame = { x: 2, y: 0, width: 4, height: 4 };
     const toolArea = renderArea();
 
-    // Canvas point (0,0) is document point (2,0), which is canvas pixel (2,0).
+    // The composited canvas is drawn in FRAME space — sized by `documentFrameSize`, with each
+    // layer stamped at `position.x - documentFrame.x` (`src/contexts/layer-renderer.ts:78-79,119`)
+    // — so its pixel (0,0) IS canvas pixel (0,0), which is red. The frame origin is not added a
+    // second time: that shipped as a real defect, where a crop trimming 100px off the left made a
+    // click read 100px to the right, and a click past 600px read outside the bitmap and silently
+    // did nothing at all. This assertion used to expect the blue at (2,0), which is the bug.
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 0, clientY: 0 });
 
-    expect(colorActions()).toEqual([{ type: 'SET_COLOR', payload: '#0000ff' }]);
+    expect(colorActions()).toEqual([{ type: 'SET_COLOR', payload: '#ff0000' }]);
+  });
+
+  it('samples the clicked pixel under a large frame offset rather than running off the canvas', () => {
+    // The failure mode this pins is silent: with the offset applied twice, a click near the right
+    // edge produced a window entirely past `canvas.width`, and the tool dispatched nothing.
+    storeState.documentFrame = { x: 0, y: 0, width: 4, height: 4 };
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 3, clientY: 0 });
+
+    // Pixel (3,0) is yellow.
+    expect(colorActions()).toEqual([{ type: 'SET_COLOR', payload: '#ffff00' }]);
+  });
+
+  it('leaves the foreground alone when the sampled pixel is fully transparent', () => {
+    // The foreground is a CSS colour on an `<input type="color">`, which cannot express
+    // transparency, so averaging a transparent pixel in silently set the foreground to black.
+    // Photoshop shows a crossed-out swatch and changes nothing.
+    const data = COMPOSED.data;
+    data[3] = 0; // pixel (0,0) alpha
+    try {
+      const toolArea = renderArea();
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 0, clientY: 0 });
+      expect(colorActions()).toEqual([]);
+    } finally {
+      data[3] = 255;
+    }
   });
 
   it('ignores clicks outside the composited canvas', () => {

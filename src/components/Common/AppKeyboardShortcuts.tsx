@@ -226,6 +226,13 @@ export const AppKeyboardShortcuts = () => {
   });
 
   useKeyDownShortcut({
+    key: 'i',
+    mod: false,
+    enabled: hasImage,
+    onKeyDown: () => goToTool('eyedropper'),
+  });
+
+  useKeyDownShortcut({
     key: 'j',
     mod: true,
     preventDefault: true,

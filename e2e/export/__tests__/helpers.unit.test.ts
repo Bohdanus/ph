@@ -22,14 +22,7 @@ import {
   type ExportFormat,
   type PixelComparisonResult,
 } from '../helpers';
-import {
-  CANVAS_REDRAW_CLIP,
-  CANVAS_REDRAW_POLL_INTERVAL_MS,
-  LINE_END_X,
-  LINE_END_Y,
-  LINE_START_X,
-  LINE_START_Y,
-} from '../../helpers/canvas-helpers';
+import { CANVAS_REDRAW_CLIP, CANVAS_REDRAW_POLL_INTERVAL_MS, documentToBoxPoint } from '../../helpers/canvas-helpers';
 import { createScrollModel } from '../../helpers/__tests__/canvas-helpers.fixtures';
 
 const mocks = vi.hoisted(() => {
@@ -633,13 +626,27 @@ describe('Export Helpers', () => {
       expect(surface.locator).not.toHaveBeenCalled();
       expect(mocks.mockExpect).toHaveBeenCalledWith(canvas);
       expect(drawTool.click).toHaveBeenCalled();
+      // Aimed in DOCUMENT space, so the export does not move when the sidebar does. See
+      // `documentToBoxPoint`: a box-relative aim pins the baselines on the toolbar's height.
+      const from = documentToBoxPoint(box, { x: 118, y: 78 });
+      const to = documentToBoxPoint(box, { x: 291, y: 78 });
       expect(surface.mouse.move.mock.calls).toEqual([
-        [box.x + LINE_START_X, box.y + LINE_START_Y],
-        [box.x + LINE_END_X, box.y + LINE_END_Y],
+        [box.x + from.x, box.y + from.y],
+        [box.x + to.x, box.y + to.y],
       ]);
       expect(surface.mouse.down).toHaveBeenCalled();
       expect(surface.mouse.up).toHaveBeenCalled();
-      expect(surface.screenshot).toHaveBeenCalledWith({ clip: redrawClip(box) });
+      // The redraw window is aimed in document space too, sized to the stroke. A box-relative
+      // window here would be another pin on the sidebar's height, and would time out the moment
+      // the line drifted out of it.
+      expect(surface.screenshot).toHaveBeenCalledWith({
+        clip: {
+          x: from.x,
+          y: documentToBoxPoint(box, { x: 0, y: 70 }).y,
+          width: to.x - from.x,
+          height: documentToBoxPoint(box, { x: 0, y: 86 }).y - documentToBoxPoint(box, { x: 0, y: 70 }).y,
+        },
+      });
       expect(canvas.evaluate).toHaveBeenCalled();
       expect(result).toEqual({
         box,
@@ -660,16 +667,28 @@ describe('Export Helpers', () => {
       await setupExportTest(page, createTestInfoMock());
 
       const [start, end] = surface.mouse.move.mock.calls;
-      expect(start).toEqual([box.x + LINE_START_X, box.y + LINE_START_Y]);
-      expect(end).toEqual([box.x + LINE_END_X, box.y + LINE_END_Y]);
-      // Literal pins: box-relative offsets of 150/150 -> 350/150, so hard-coding
-      // viewport coordinates in the helper cannot satisfy this expectation.
-      expect(start).toEqual([461, 347]);
-      expect(end).toEqual([661, 347]);
-      expect(surface.screenshot).toHaveBeenCalledWith({ clip: redrawClip(box) });
+      const from = documentToBoxPoint(box, { x: 118, y: 78 });
+      const to = documentToBoxPoint(box, { x: 291, y: 78 });
+      expect(start).toEqual([box.x + from.x, box.y + from.y]);
+      expect(end).toEqual([box.x + to.x, box.y + to.y]);
+      // Literal pins, so hard-coding viewport coordinates in the helper cannot satisfy this
+      // expectation. The 640x480 box is exactly the document's aspect at scale 0.8, so the
+      // letterbox offset is zero and the aim is simply 0.8 * the document point.
+      expect(start).toEqual([405.4, 259.4]);
+      expect(end).toEqual([543.8, 259.4]);
+      // The redraw window follows the stroke in document space, so it is not the box-relative
+      // `CANVAS_REDRAW_CLIP` either.
+      expect(surface.screenshot).toHaveBeenCalledWith({
+        clip: {
+          x: 94.4,
+          y: 56,
+          width: 138.4,
+          height: documentToBoxPoint(box, { x: 0, y: 86 }).y - documentToBoxPoint(box, { x: 0, y: 70 }).y,
+        },
+      });
     });
 
-    it('polls the box-relative redraw region until the stroke reaches the backing store', async () => {
+    it('polls the stroke region until it reaches the backing store', async () => {
       const box: Box = { x: 12, y: 8, width: 500, height: 500 };
       const canvas = createLocatorMock({ boundingBox: vi.fn().mockResolvedValue(box) });
       const drawTool = createLocatorMock();
@@ -685,9 +704,19 @@ describe('Export Helpers', () => {
       await setupExportTest(page, createTestInfoMock());
 
       expect(surface.screenshot).toHaveBeenCalledTimes(2);
-      expect(surface.screenshot).toHaveBeenCalledWith({ clip: redrawClip(box) });
-      // Literal pin: the polled region is the box-relative 100,100 300x100 clip.
-      expect(surface.screenshot).toHaveBeenCalledWith({ clip: { x: 112, y: 108, width: 300, height: 100 } });
+      // The polled region is the stroke itself, aimed in document space. It used to be the
+      // box-relative `CANVAS_REDRAW_CLIP` at 100,100 300x100, which only happened to contain the
+      // line because of the sidebar's width — a line aimed anywhere else in the document would
+      // have polled a region nothing was ever drawn into, and timed out on it.
+      const from = documentToBoxPoint(box, { x: 118, y: 78 });
+      const to = documentToBoxPoint(box, { x: 291, y: 78 });
+      const clip = {
+        x: from.x,
+        y: documentToBoxPoint(box, { x: 0, y: 70 }).y,
+        width: to.x - from.x,
+        height: documentToBoxPoint(box, { x: 0, y: 86 }).y - documentToBoxPoint(box, { x: 0, y: 70 }).y,
+      };
+      expect(surface.screenshot).toHaveBeenCalledWith({ clip });
       expect(surface.waitForTimeout).toHaveBeenCalledWith(CANVAS_REDRAW_POLL_INTERVAL_MS);
     });
 

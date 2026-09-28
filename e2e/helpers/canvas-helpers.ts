@@ -50,6 +50,37 @@ export const LINE_START_Y = 150;
 export const LINE_END_X = 350;
 export const LINE_END_Y = 150;
 
+/** The document's own size, which every export baseline is recorded at. */
+export const DOCUMENT_WIDTH = 800;
+export const DOCUMENT_HEIGHT = 600;
+
+/**
+ * Maps a DOCUMENT point to a point inside the canvas box, inverting the `object-contain`
+ * letterbox the app renders the document into (`src/components/Main/Main.tsx:241`).
+ *
+ * `page.mouse` speaks viewport pixels, so a stroke has to be aimed at where the document
+ * actually landed inside the box. Doing that by hardcoding box-relative numbers makes every
+ * recorded baseline a pin on the TOOLBAR's height, not on the export: the export fixture
+ * drew at box y=150, and the document row that lands on depends on
+ * `(boxHeight - DOCUMENT_HEIGHT * scale) / 2`, which is a property of the surrounding chrome.
+ * That is how a sidebar layout change invalidated seven image baselines
+ * (`e2e/OPEN_PROBLEMS.md` P1). Aiming in document space removes the coupling: the same call
+ * produces the same export whatever the toolbar does.
+ *
+ * The scale is width-limited whenever the box is wider than the document's aspect, which is
+ * what `min()` selects here; the letterbox offsets then centre the result on the other axis.
+ */
+export function documentToBoxPoint(
+  box: Pick<BoundingBox, 'width' | 'height'>,
+  point: { x: number; y: number }
+): { x: number; y: number } {
+  const scale = Math.min(box.width / DOCUMENT_WIDTH, box.height / DOCUMENT_HEIGHT);
+  return {
+    x: (box.width - DOCUMENT_WIDTH * scale) / 2 + point.x * scale,
+    y: (box.height - DOCUMENT_HEIGHT * scale) / 2 + point.y * scale,
+  };
+}
+
 export const CANVAS_REDRAW_TIMEOUT_MS = 10_000;
 export const CANVAS_REDRAW_POLL_INTERVAL_MS = 100;
 

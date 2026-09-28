@@ -134,25 +134,31 @@ describe('SidebarLeft layout toggle', () => {
       [...toolbar.querySelectorAll<HTMLButtonElement>(':scope > ul > li > button')].map((button) =>
         button.dataset.testid?.replace('tool-button-', '')
       );
-    const oneColumnOrder = getPrimaryNames();
+    const twoColumnOrder = getPrimaryNames();
 
-    expect(toggle).toHaveAttribute('aria-label', 'Use two-column toolbar');
-    expect(toggle).toHaveAttribute('aria-pressed', 'true');
-    expect(firstSection).toHaveClass('grid-cols-1');
-    expect(toolbar).toHaveClass('w-14');
-    expect(sidebar).toHaveStyle({ width: '56px' });
+    // Two columns is the DEFAULT, and that is load-bearing rather than cosmetic: a one-column
+    // toolbar is as tall as the whole tool list, and that min-content height becomes the grid
+    // row floor, which drags the `h-full` canvas up and overflows a 720px viewport.
+    expect(toggle).toHaveAttribute('aria-label', 'Use one-column toolbar');
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    expect(firstSection).toHaveClass('grid-cols-2');
+    expect(toolbar).toHaveClass('w-[6.75rem]');
+    expect(sidebar).toHaveStyle({ width: '108px' });
+    // Two columns interleaves every section's tiles into ONE grid, so the toolbar holds a
+    // single `ul`. One column gives each section its own.
+    expect(toolbar.querySelectorAll(':scope > ul')).toHaveLength(1);
 
     act(() => {
       fireEvent.click(toggle);
     });
 
-    expect(toggle).toHaveAttribute('aria-label', 'Use one-column toolbar');
-    expect(toggle).toHaveAttribute('aria-pressed', 'false');
-    expect(toolbar.querySelector('ul')).toHaveClass('grid-cols-2');
-    expect(toolbar).toHaveClass('w-[6.75rem]');
-    expect(sidebar).toHaveStyle({ width: '108px' });
-    expect(toolbar.querySelectorAll(':scope > ul')).toHaveLength(1);
-    expect(getPrimaryNames()).toEqual(oneColumnOrder);
+    expect(toggle).toHaveAttribute('aria-label', 'Use two-column toolbar');
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(toolbar.querySelector('ul')).toHaveClass('grid-cols-1');
+    expect(toolbar).toHaveClass('w-14');
+    expect(sidebar).toHaveStyle({ width: '56px' });
+    expect(toolbar.querySelectorAll(':scope > ul')).toHaveLength(5);
+    expect(getPrimaryNames()).toEqual(twoColumnOrder);
   });
 
   it('closes any open flyout when toggling layout', () => {

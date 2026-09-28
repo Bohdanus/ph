@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { EraserToolArea } from '../EraserToolArea.tsx';
-import { buildEraseArgs } from '../../../tools/eraser.ts';
 import type { Layer, LayersRecord } from '../../../contexts/layer-types.ts';
 
 const updateLayerByToolMock = vi.hoisted(() => vi.fn());
+const tempUpdateLayerMock = vi.hoisted(() => vi.fn());
 const createLayerFromToolMock = vi.hoisted(() => vi.fn());
 const pointerState = vi.hoisted(() => ({ isMouseDown: { current: false }, activePointer: false }));
 const storeState = vi.hoisted(
@@ -45,10 +45,14 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
  * `createLayerFromTool` is present in the mock on purpose even though the component must never
  * reach it. A `useLayers` mock that simply omitted it would make the dead-eraser bug a `TypeError`
  * rather than an assertion, and a test that cannot fail on the defect is not a pin.
+ *
+ * `tempUpdateLayer` is the LIVE-PIXEL writer and the preview goes through it. A mock that omitted
+ * it would make the preview a `TypeError` rather than the assertion below.
  */
 vi.mock('../../../contexts/useLayer.ts', () => ({
   useLayers: () => ({
     updateLayerByTool: updateLayerByToolMock,
+    tempUpdateLayer: tempUpdateLayerMock,
     createLayerFromTool: createLayerFromToolMock,
   }),
 }));
@@ -105,40 +109,8 @@ const makeLayer = (id: string, pos: Layer['pos']): Layer => ({
  * if the real `drawPen` reads the real `DrawToolArgs`, which is the whole question: does the
  * preview path reach the branch the commit path reaches?
  */
-const makeOverlayContext = () =>
-  ({
-    canvas: document.createElement('canvas'),
-    clearRect: vi.fn(),
-    beginPath: vi.fn(),
-    moveTo: vi.fn(),
-    lineTo: vi.fn(),
-    bezierCurveTo: vi.fn(),
-    quadraticCurveTo: vi.fn(),
-    stroke: vi.fn(),
-    fill: vi.fn(),
-    arc: vi.fn(),
-    fillRect: vi.fn(),
-    save: vi.fn(),
-    restore: vi.fn(),
-    setLineDash: vi.fn(),
-    getLineDash: vi.fn(() => [] as number[]),
-    drawImage: vi.fn(),
-    clip: vi.fn(),
-    setTransform: vi.fn(),
-    resetTransform: vi.fn(),
-    strokeStyle: '',
-    fillStyle: '',
-    lineWidth: 1,
-    lineCap: 'round',
-    lineJoin: 'round',
-    globalAlpha: 1,
-    globalCompositeOperation: 'source-over',
-    imageSmoothingEnabled: true,
-    imageSmoothingQuality: 'low',
-  }) as unknown as CanvasRenderingContext2D;
-
-const renderArea = (overlayCtx: CanvasRenderingContext2D) => {
-  const { container } = render(<EraserToolArea className="test-eraser-area" overlayCtxRef={{ current: overlayCtx }} />);
+const renderArea = () => {
+  const { container } = render(<EraserToolArea className="test-eraser-area" />);
   return container.firstElementChild as HTMLDivElement;
 };
 
@@ -155,6 +127,7 @@ const stroke = (toolArea: HTMLDivElement, from: number[], ...to: number[][]) => 
 describe('EraserToolArea', () => {
   beforeEach(() => {
     updateLayerByToolMock.mockClear();
+    tempUpdateLayerMock.mockClear();
     createLayerFromToolMock.mockClear();
     pointerState.isMouseDown.current = false;
     pointerState.activePointer = false;
@@ -172,8 +145,7 @@ describe('EraserToolArea', () => {
   });
 
   it('edits the active layer instead of creating one', () => {
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
+    const toolArea = renderArea();
 
     stroke(toolArea, [40, 50], [120, 80], [200, 110]);
 
@@ -191,8 +163,7 @@ describe('EraserToolArea', () => {
   });
 
   it('records one commit per gesture rather than one per pointer event', () => {
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
+    const toolArea = renderArea();
 
     stroke(toolArea, [10, 20], [30, 50], [60, 70], [90, 100], [120, 130], [150, 160]);
 
@@ -202,8 +173,7 @@ describe('EraserToolArea', () => {
   });
 
   it('records one commit for a click that never moves', () => {
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
+    const toolArea = renderArea();
 
     stroke(toolArea, [70, 70]);
 
@@ -215,8 +185,7 @@ describe('EraserToolArea', () => {
   it('commits the stroke in the active layer local frame and never crops it', () => {
     storeState.layers = { base: makeLayer('base', { x: 30, y: 20, width: 300, height: 200 }) };
     storeState.activeLayerId = 'base';
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
+    const toolArea = renderArea();
 
     stroke(toolArea, [40, 50], [120, 80], [200, 110]);
 
@@ -235,8 +204,7 @@ describe('EraserToolArea', () => {
     storeState.documentFrame = { x: 10, y: 15, width: 300, height: 200 };
     storeState.layers = { base: makeLayer('base', { x: 10, y: 15, width: 300, height: 200 }) };
     storeState.activeLayerId = 'base';
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
+    const toolArea = renderArea();
 
     stroke(toolArea, [40, 50], [120, 80]);
 
@@ -247,92 +215,81 @@ describe('EraserToolArea', () => {
     ]);
   });
 
-  it('previews with destination-out so the overlay erases instead of painting', () => {
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
+  it('previews through the live layer writer rather than the overlay canvas', () => {
+    const toolArea = renderArea();
 
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 40, clientY: 50 });
 
-    // `composite` is read by `setupDrawCtx` (`src/tools/draw.ts:49`). EraserToolArgs has no
-    // `composite` field of its own — only `buildEraseArgs` writes it — so this is the pin that the
-    // preview goes through `buildEraseArgs` and cannot fall back to a plain `source-over` paint.
-    expect(overlayCtx.globalCompositeOperation).toBe('destination-out');
-    expect(overlayCtx.stroke).toHaveBeenCalled();
+    // The preview MUST go through `tempUpdateLayer`. An overlay preview cannot work: the
+    // overlay is cleared to fully transparent every frame, and `destination-out` computes
+    // `da' = da * (1 - sa)`, so with `da = 0` the result is `0` for every pixel and the stroke
+    // is arithmetically incapable of drawing anything. That defect shipped as a tool that
+    // showed no feedback until pointer-up, and an assertion on `globalCompositeOperation`
+    // could not see it.
+    expect(tempUpdateLayerMock).toHaveBeenCalledTimes(1);
+    expect(updateLayerByToolMock).not.toHaveBeenCalled();
   });
 
-  it('previews Block mode by stamping squares rather than stroking the path', () => {
-    toolState.toolArgs = {
-      toolName: 'eraser',
-      mode: 'block',
-      alpha: 1,
-      color: '#000000',
-      lineWidth: 10,
-      points: [],
-    };
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
+  it('previews in the same layer-local frame it commits in, so the stroke cannot jump on release', () => {
+    storeState.layers = { base: makeLayer('base', { x: 30, y: 20, width: 300, height: 200 }) };
+    storeState.activeLayerId = 'base';
+    const toolArea = renderArea();
+
+    stroke(toolArea, [40, 50], [120, 80]);
+
+    const [preview] = tempUpdateLayerMock.mock.calls.at(-1)! as [{ toolArgs: { points: { x: number; y: number }[] } }];
+    const [commit] = updateLayerByToolMock.mock.calls[0] as [{ toolArgs: { points: { x: number; y: number }[] } }];
+    expect(preview.toolArgs.points).toEqual([
+      { x: 10, y: 30 },
+      { x: 90, y: 60 },
+    ]);
+    // Same numbers the user just saw. A canvas-space preview against a layer-space commit puts
+    // the stroke somewhere else the moment the finger lifts.
+    expect(commit.toolArgs.points).toEqual(preview.toolArgs.points);
+  });
+
+  it('resends the accumulated path on every move, because raster commits replace the whole layer', () => {
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+    fireEvent.pointerMove(toolArea, { button: 0, clientX: 30, clientY: 50 });
+    fireEvent.pointerMove(toolArea, { button: 0, clientX: 60, clientY: 70 });
+
+    const lengths = tempUpdateLayerMock.mock.calls.map(
+      ([p]) => (p as { toolArgs: { points: unknown[] } }).toolArgs.points.length
+    );
+    // 1, 2, 3 — growing. `commit: 'raster'` REPLACES the layer's pixels with the canvas the
+    // processor returns, so sending only the newest point would erase exactly one point.
+    expect(lengths).toEqual([1, 2, 3]);
+  });
+
+  it('refuses to erase the bedrock layer, which has nothing beneath it to restore from', () => {
+    storeState.layers = { base: { ...makeLayer('base', { x: 0, y: 0, width: 300, height: 200 }), isBedrock: true } };
+    storeState.activeLayerId = 'base';
+    const toolArea = renderArea();
 
     stroke(toolArea, [20, 20], [90, 60]);
 
-    // `blockStamp` is read at `src/util/draw.ts:136`, inside `drawPen` — the function `drawLine`
-    // dispatches to for `penType: 'pen'`, which is the only pen type `buildEraseArgs` emits. Block
-    // mode must therefore reach `drawBlockStamps` on the PREVIEW, not only on the commit: a
-    // preview-blind flag renders a Pencil-looking stroke that commits as a hard Block stamp, which
-    // is the tool looking broken. Asserting the commit instead would pass with the preview broken.
-    expect(overlayCtx.fillRect).toHaveBeenCalled();
-    expect(overlayCtx.stroke).not.toHaveBeenCalled();
-    expect(overlayCtx.globalCompositeOperation).toBe('destination-out');
-  });
-
-  it('previews Pencil mode by stroking the path rather than stamping', () => {
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
-
-    stroke(toolArea, [20, 20], [90, 60]);
-
-    expect(overlayCtx.stroke).toHaveBeenCalled();
-    expect(overlayCtx.fillRect).not.toHaveBeenCalled();
-  });
-
-  it('builds the preview stroke from the same args builder the processor uses', () => {
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
-
-    fireEvent.pointerDown(toolArea, { button: 0, clientX: 40, clientY: 50 });
-    fireEvent.pointerMove(toolArea, { button: 0, clientX: 90, clientY: 70 });
-
-    // Same `composite` and same `blockStamp` as the committed raster: `eraser` calls
-    // `buildEraseArgs` and hands the result to `setupDrawCtx` and `drawLine`
-    // (`src/tools/eraser.ts:70-72`).
-    const args = toolState.toolArgs as unknown as Parameters<typeof buildEraseArgs>[0];
-    const strokeArgs = {
-      ...args,
-      points: [
-        { x: 40, y: 50 },
-        { x: 90, y: 70 },
-      ],
-    } as unknown as Parameters<typeof buildEraseArgs>[0];
-    expect(buildEraseArgs(strokeArgs)).toMatchObject({
-      composite: 'destination-out',
-      blockStamp: false,
-      penType: 'pen',
-    });
+    // Bedrock is the document's own backing image and the floor every other layer composites
+    // over. The Eraser is the one tool whose whole job is to punch holes, so erasing it changes
+    // the colour of the transparent regions the rest of the stack is judged against and leaves
+    // no layer to restore from. `MoveToolArea.tsx:35` reads the same flag for the same reason.
+    expect(tempUpdateLayerMock).not.toHaveBeenCalled();
+    expect(updateLayerByToolMock).not.toHaveBeenCalled();
   });
 
   it('ignores a stroke that starts with a non-primary mouse button', () => {
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
+    const toolArea = renderArea();
 
     fireEvent.pointerDown(toolArea, { button: 2, clientX: 10, clientY: 20 });
     fireEvent.pointerUp(toolArea, { button: 2, clientX: 60, clientY: 70 });
 
     expect(updateLayerByToolMock).not.toHaveBeenCalled();
-    expect(overlayCtx.stroke).not.toHaveBeenCalled();
+    expect(tempUpdateLayerMock).not.toHaveBeenCalled();
   });
 
   it('ignores pointer movement before the button goes down', () => {
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
+    const toolArea = renderArea();
 
     fireEvent.pointerMove(toolArea, { button: 0, clientX: 30, clientY: 50 });
     fireEvent.pointerUp(toolArea, { button: 0, clientX: 30, clientY: 50 });
@@ -342,8 +299,7 @@ describe('EraserToolArea', () => {
 
   it('commits nothing when there is no active layer', () => {
     storeState.activeLayerId = null;
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
+    const toolArea = renderArea();
 
     stroke(toolArea, [20, 20], [90, 60]);
 
@@ -359,34 +315,16 @@ describe('EraserToolArea', () => {
       lineWidth: 10,
       points: [],
     };
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
+    const toolArea = renderArea();
 
     stroke(toolArea, [20, 20], [90, 60]);
 
     expect(updateLayerByToolMock).not.toHaveBeenCalled();
-    expect(overlayCtx.stroke).not.toHaveBeenCalled();
-  });
-
-  it('clears the overlay once the stroke is committed', () => {
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
-
-    fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
-    fireEvent.pointerMove(toolArea, { button: 0, clientX: 30, clientY: 50 });
-    fireEvent.pointerMove(toolArea, { button: 0, clientX: 60, clientY: 70 });
-    // Every move already repaints the same rectangle, so only the release is observable here.
-    vi.mocked(overlayCtx.clearRect).mockClear();
-
-    fireEvent.pointerUp(toolArea, { button: 0, clientX: 60, clientY: 70 });
-
-    expect(overlayCtx.clearRect).toHaveBeenCalledWith(0, 0, 300, 200);
-    expect(updateLayerByToolMock).toHaveBeenCalledTimes(1);
+    expect(tempUpdateLayerMock).not.toHaveBeenCalled();
   });
 
   it('does not commit a second time for a release with no gesture in flight', () => {
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
+    const toolArea = renderArea();
 
     stroke(toolArea, [10, 20], [30, 50]);
     fireEvent.pointerUp(toolArea, { button: 0, clientX: 80, clientY: 90 });
@@ -394,22 +332,25 @@ describe('EraserToolArea', () => {
     expect(updateLayerByToolMock).toHaveBeenCalledTimes(1);
   });
 
-  it('starts a fresh preview after a stroke was committed', () => {
-    const overlayCtx = makeOverlayContext();
-    const toolArea = renderArea(overlayCtx);
+  it('starts a fresh stroke from the new press rather than continuing the committed one', () => {
+    const toolArea = renderArea();
 
     stroke(toolArea, [10, 20], [30, 50]);
-    vi.mocked(overlayCtx.stroke).mockClear();
+    const afterFirst = tempUpdateLayerMock.mock.calls.length;
+    tempUpdateLayerMock.mockClear();
 
     fireEvent.pointerDown(toolArea, { button: 0, clientX: 100, clientY: 100 });
 
-    expect(overlayCtx.moveTo).toHaveBeenLastCalledWith(100, 100);
+    // One point, not the tail of the previous stroke. A points array that survived the commit
+    // would re-erase everything already erased on every later stroke.
+    const [press] = tempUpdateLayerMock.mock.calls[0] as [{ toolArgs: { points: { x: number; y: number }[] } }];
+    expect(press.toolArgs.points).toEqual([{ x: 100, y: 100 }]);
+    expect(tempUpdateLayerMock.mock.calls.length).toBe(1);
+    expect(afterFirst).toBeGreaterThan(0);
   });
 
   it('renders a div carrying the supplied className and the draw cursor', () => {
-    const { container } = render(
-      <EraserToolArea className="test-eraser-area" overlayCtxRef={{ current: makeOverlayContext() }} />
-    );
+    const { container } = render(<EraserToolArea className="test-eraser-area" />);
 
     expect(container.firstElementChild).toHaveClass('test-eraser-area', 'cursor-draw');
   });
