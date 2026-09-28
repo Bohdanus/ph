@@ -242,7 +242,128 @@ green. **Capture the assertion, not just the test name**, and record whether it
 was a timeout or a value mismatch: a timeout points at the focus/async
 interaction in 3, a value mismatch points at ordering.
 
-## 8. Files
+## 8. A third, NAMED observation — the paint-bucket contiguous test, once, in a full headless run
+
+**Status: OPEN. Named, not reproduced. One failure in three reproduction attempts.**
+
+```
+  1 failed
+    e2e/erase-fill-eyedropper.spec.ts:438
+      > Eraser, fill tools and eyedropper
+      > the paint bucket fills a contiguous region and not its neighbour
+  Error: Canvas did not render the #cc0000 line within 10000ms
+    at helpers/canvas-helpers.ts:536
+    at waitForCanvasPixels (e2e/helpers/canvas-helpers.ts:536)
+    at drawSlab (e2e/erase-fill-eyedropper.spec.ts:233)
+    at e2e/erase-fill-eyedropper.spec.ts:441
+```
+
+Observed 2026-09-28 on `main` at `cc7b647`, in a full headless `npx playwright test`
+reporting `182 passed, 1 failed, 2 skipped` (185 total). The line numbers in that
+quote are `cc7b647`'s; on the branch that hardened the failure path the same
+anchors are the test declaration at `:487`, `drawSlab` at `:245` and the pixel
+wait at `:282`. `canvas-helpers.ts:536` is unchanged by that work.
+
+**That run was not a clean run, and that is the single most useful thing known
+about it.** It was produced by the e2e orchestrator with six other agents running
+Playwright concurrently on the same host (board post `main`, "Status of the
+takeover"), which also recorded the prediction that this flake and the flyout
+long-press one "both surface under CPU contention" and that a failure reported by
+a subagent is "very likely contention, not a regression". Every reproduction
+attempt below was made with nothing else running, and every one was green. **The
+difference between the two experiments is the contention, not the code.** A full
+suite under deliberate CPU load is the one experiment that would settle it; it
+has not been run, and it is the first thing to try.
+
+**It did not reproduce again.** Attempts, all on `cc7b647` in a dedicated worktree
+with `PLAYWRIGHT_PORT=5711` and `reuseExistingServer` off, all headless:
+
+| attempt                                                 | result                                                         |
+| ------------------------------------------------------- | -------------------------------------------------------------- |
+| full suite (`npx playwright test`)                      | `183 passed, 2 skipped`                                        |
+| `e2e/erase-fill-eyedropper.spec.ts --repeat-each=5`     | `50 passed`                                                    |
+| the failing test body, instrumented, `--repeat-each=60` | 0 failures in the 20 that completed before the run was stopped |
+
+**Two properties of the observation that the hunt must not assume away.**
+
+1. **It is not a cross-test state leak, and the "7 tests in one worker" shape is
+   the wrong frame.** The file declares **10** tests, not 7, and the failing one is
+   the 6th. Every test gets a fresh `BrowserContext`, the app persists nothing but
+   the theme (`src/contexts/ThemeContext.tsx:14,28` is the only `localStorage`
+   write in `src/`), and the document starts `uninitialized` on every load
+   (`src/contexts/StoreContext.tsx:296,304-306`). **A leaked marquee, layer,
+   zoom or tool is impossible across tests here**, and the failing test's first act
+   is `openWorkspace`, before any of its own state exists.
+2. **It is not the 440px scroll that `preservingScroll` exists to undo.** Measured
+   on this tree at 1280x720: `document.documentElement.scrollHeight` is **720**,
+   equal to `innerHeight`, and `window.scrollY` was **0** at every step of the
+   failing test's setup. The overflow that made the page 1177px tall was fixed by
+   `min-h-0 overflow-y-auto` on the `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx:335`);
+   the canvas box is a constant `108,100 922x583` from tool click to capture. The
+   1177px/440px figures in `e2e/helpers/screenshot-scale.ts:53`,
+   `e2e/helpers/cdp-helpers.ts:60`, `e2e/helpers/toolbar-helpers.ts:102-108` and
+   four unit-test comments now describe a layout this build does not produce.
+   **They are stale, not load-bearing, and correcting them is its own change.**
+
+**What the failure therefore is, and is not.** `hasRedPixels`
+(`e2e/helpers/canvas-helpers.ts:411-429`) wants `red > 180, green < 100,
+blue < 100` anywhere in a 360x140 capture that certainly contains the line. The
+line is composited over an opaque white base, so its red channel is **204 at full
+opacity and higher at any lower opacity** — the Draw tool's `Opacity` slider
+cannot push it under the threshold, and `drawSlab` pins that slider to 1 anyway.
+**The threshold is not defeatable and is not the cause.** The capture also lands
+wholly inside the viewport at `x 228..588, y 230..370` against a 1280x720 window,
+so the viewport-edge truncation recorded at `e2e/OPEN_PROBLEMS.md:113` does not
+apply. What is left is the only remaining reading: **the stroke never reached the
+composite**, and every action in `drawSlab` reported success while it did not.
+
+**The two candidate mechanisms, neither demonstrated.**
+
+- A **refused commit**. The Draw tool commits from `handlePointerUp` and nowhere
+  else (`src/components/Main/DrawToolArea.tsx:110-143`), and it is reached only
+  when `isPointerUpValid` agrees, which refuses a non-primary button or a foreign
+  pointer id (`src/hooks/usePointerPosition.ts:149,151`) and refuses a second
+  press while one is live (`:126`). A refusal produces no layer, no history entry
+  and no log. See `HANDOFF.md` §66 — that silence is recorded there as a
+  document-state defect in its own right, independently of this flake.
+- A **commit the seed overwrote**. The store has no document until the seeding
+  `REPLACE_DOCUMENT` lands (`src/hooks/useApp.ts:77-80` ->
+  `src/contexts/useLayer.ts:211-227` -> `:174-199`), and a tool layer is appended
+  with `COMMIT_DOCUMENT_EDIT` against the `layers` its render closure captured
+  (`src/contexts/useLayer.ts:201-207,292`). **Weakened, not eliminated:** an
+  instrumented copy of the real `openWorkspace` measured its own pixel poll
+  satisfied on its **first** attempt on 20 of 20 runs, 42-154 ms after `goto`
+  resolved, so the old gate did return before it had established that a document
+  existed. That gate is now fixed and proved by a committed assertion — see below —
+  but no run of the fixed tree has yet failed either, so it is **not** evidence
+  that this was the cause.
+
+**The fixed half, and the tripwire that replaces the ambiguity.** `openWorkspace`
+waited on `readPixel(...) not.toBeNull()` and claimed to wait for the seeded base
+layer. It did not: `readPixel` calls `getColorAtPoint(image, x, y, 0)` with no
+`ignoreNearWhite`, and that returns `null` only for an out-of-capture point or a
+fully transparent one (`e2e/helpers/canvas-helpers.ts:666,693`) — **a white pixel
+satisfied it**, so the poll only asserted that a screenshot was non-empty. It now
+additionally waits for the seeded `Blank 1` row to be in the Layers panel, read by
+name, which is a fact about the document rather than about a capture. And `drawSlab`
+now asserts the stroke **committed** — `undo` is disabled on a seeded document and
+enabled after the append — _before_ it polls for pixels, so a refused commit names
+itself in the default expect timeout instead of surfacing ten seconds later as a
+bare `Canvas did not render … within 10000ms` from `canvas-helpers.ts:536`.
+
+**To hunt it, capture the artifact, not the name.** The single most valuable
+change to a future report of this is the state at the moment the wait gives up:
+`window.scrollY`, the canvas `boundingBox()`, `elementFromPoint` at the press
+coordinate, whether `undo-button` is enabled, and a full-canvas red-pixel count.
+`drawSlab` now fails on the commit assertion before that state is needed, so the
+artifact to attach is the Playwright trace: run with `--retries=1` so
+`trace: 'on-first-retry'` yields one, and read `test-results/`. Do **not** close
+this by re-running the suite and getting green — that is the rule this file
+already sets for section 1, and it applies here unchanged. A second observation,
+with the assertion text and whether it was a timeout or a value mismatch, is
+worth more than twenty green runs.
+
+## 9. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -251,3 +372,6 @@ interaction in 3, a value mismatch points at ordering.
 - `src/contexts/avif-utils.ts` — the encoder whose budget check changed nearby
 - `.husky/pre-push` — where `npm run test` now runs
 - `AGENTS.md`, "`test:staged` is a command, not a gate" — where it lives now, and what it costs
+- `e2e/erase-fill-eyedropper.spec.ts` — the spec behind section 8, and the commit that hardened it
+- `e2e/helpers/canvas-helpers.ts:411-429,515-540,656-699` — the predicate, the poll loop and the sampler
+- `src/hooks/usePointerPosition.ts:122-156` — the validators whose refusal is silent

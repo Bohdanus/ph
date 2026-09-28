@@ -1242,3 +1242,34 @@ of that decision: `raster-budget.ts` and its test were deleted, and `avif-utils.
 `tiff-utils.ts` and `avif-utils.test.ts` kept `main`'s version. **The ceiling stays at 80 MP. Do not
 raise it to "fix" item 45** — item 45's remaining work is BMP, GIF, ICO and SVG, which have no
 budget on either side.
+
+## 66. A refused pointer gesture is a silent no-op on the document
+
+`src/hooks/usePointerPosition.ts:122-156`, and every tool area that calls its
+validators as a bare guard.
+
+`isPointerDownValid` refuses a non-primary button, refuses any press while
+`activePointerId` is already set, and only then records the id and takes pointer
+capture. `isPointerUpValid` refuses a non-primary release and a release whose id
+does not match, and only then clears. Both return `false` and nothing else. Every
+caller treats that as "this gesture is not mine" and returns early — with no
+log, no thrown error, and no entry in the store. `DrawToolArea` is the clearest
+case, because the commit lives in `handlePointerUp` and nowhere else
+(`src/components/Main/DrawToolArea.tsx:110-143`), so a refused release means the
+whole stroke vanishes: no layer, no history entry, no pixels, and the tool
+overlay cleared anyway by `:146`.
+
+That silence is the defect, and it is separate from any particular race. Every
+other writer in this codebase either publishes a history entry or reports; a
+gesture that is dropped reports nothing at all, so a lost stroke and a
+successfully drawn one are the same observable state. Two callers are already
+known to need a reason for a refusal and cannot get one:
+`EraserToolArea.tsx:142-145` comments that a release the validator refuses must
+not hand the document back, which is only checkable by instrumenting the
+validator; and `TEST-FLAKES.md` §8 records an e2e failure that surfaced as a bare
+ten-second pixel timeout against a canvas that was never going to change, which
+is this shape seen from outside the browser. **Whether a refusal has ever
+actually fired is not known** — this is an unstated invariant with no
+demonstrated occurrence, recorded as §63 is, and the cheapest thing that would
+settle it is a `console.warn` carrying the reason at each of the four early
+returns, which is a product decision rather than a test one.

@@ -483,7 +483,7 @@ cannot render, would still be reported as correct. It is also invisible in jsdom
 because that matcher reads the DOM property directly and has no retarget step. A
 jsdom pass is therefore not evidence that the browser assertion works.
 
-Workaround used in `e2e/erase-fill-eyedropper.spec.ts:326`: assert the attribute and
+Workaround used in `e2e/erase-fill-eyedropper.spec.ts:375`: assert the attribute and
 the enabled set, both read straight off the DOM.
 
 ```ts
