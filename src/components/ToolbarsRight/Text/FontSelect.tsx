@@ -35,6 +35,8 @@ interface ListPosition {
   top?: number;
   bottom?: number;
   width: number;
+  /** Capped to the room on the chosen side, so the list cannot run off the viewport. */
+  maxHeight: number;
 }
 
 const FontSelect: React.FC<FontSelectProps> = ({ value, onChange }) => {
@@ -69,15 +71,25 @@ const FontSelect: React.FC<FontSelectProps> = ({ value, onChange }) => {
     if (!trigger) return;
 
     const rect = trigger.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom;
-    // Flip above the trigger when the list would not fit below AND there is more room
-    // above, rather than opening off the bottom of the window.
-    const openUpwards = spaceBelow < LIST_MAX_HEIGHT + GUTTER && rect.top > spaceBelow;
+    const spaceBelow = window.innerHeight - rect.bottom - GUTTER;
+    const spaceAbove = rect.top - GUTTER - VIEWPORT_MARGIN;
+
+    // Pick the side with MORE room, then cap the list to the room that side actually has.
+    //
+    // The previous rule was `spaceBelow < LIST_MAX_HEIGHT + GUTTER && rect.top > spaceBelow`,
+    // which compares the room above against the room below and then places a `max-h-60` list
+    // there without checking it fits. In a short window it lost both ways: flipped upward
+    // with only 200px above a 240px list, the first fonts and the scrollbar went off the top
+    // of the viewport with no way to scroll them in; not flipped, the tail ran below the
+    // fold. Capping `maxHeight` is what makes the placement safe when neither side fits.
+    const openUpwards = spaceAbove > spaceBelow;
+    const available = Math.max(0, openUpwards ? spaceAbove : spaceBelow);
     const maxLeft = window.innerWidth - rect.width - VIEWPORT_MARGIN;
 
     setPosition({
       left: Math.max(VIEWPORT_MARGIN, Math.min(rect.left, maxLeft)),
       width: rect.width,
+      maxHeight: Math.min(LIST_MAX_HEIGHT, available),
       top: openUpwards ? undefined : rect.bottom + GUTTER,
       bottom: openUpwards ? window.innerHeight - rect.top + GUTTER : undefined,
     });
@@ -170,8 +182,14 @@ const FontSelect: React.FC<FontSelectProps> = ({ value, onChange }) => {
           <div
             id={LIST_ID}
             ref={listRef}
-            className="fixed z-[9999] max-h-60 overflow-auto rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-600 dark:bg-gray-700"
-            style={{ left: position.left, top: position.top, bottom: position.bottom, width: position.width }}
+            className="fixed z-[9999] overflow-auto rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-600 dark:bg-gray-700"
+            style={{
+              left: position.left,
+              top: position.top,
+              bottom: position.bottom,
+              width: position.width,
+              maxHeight: position.maxHeight,
+            }}
           >
             {FONTS.map((font) => (
               <button

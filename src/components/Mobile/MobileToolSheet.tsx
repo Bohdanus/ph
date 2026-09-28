@@ -5,7 +5,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useApp } from '../../hooks/useApp.ts';
 import type { ToolbarTool } from '../../../toolbar-mapping.ts';
-import { findMobileToolGroup } from './mobile-tools.ts';
+import { findMobileToolGroup, makeSelectTool } from './mobile-tools.ts';
 
 export interface MobileToolSheetProps {
   isOpen: boolean;
@@ -29,19 +29,7 @@ export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onTogg
   const isToolSelected = (tool: ToolbarTool) =>
     tool.name === toolName && (!tool.figure || (toolArgs.toolName === 'shape' && toolArgs.figure === tool.figure));
 
-  const selectTool = (tool: ToolbarTool) => {
-    if (tool.figure) {
-      // Select first, then patch — the order `DesktopHeader.handleToolSelection`
-      // uses, and deliberately not the order `SidebarLeft.selectTool` uses:
-      // `goToTool` runs `commitDirtyTool()` against the OUTGOING tool, so
-      // patching the incoming tool's args first clobbers the args the commit
-      // needs to read.
-      goToTool(tool.name);
-      patchToolArgs('shape', { figure: tool.figure });
-      return;
-    }
-    goToTool(tool.name);
-  };
+  const selectTool = makeSelectTool(goToTool, patchToolArgs);
 
   return (
     <div

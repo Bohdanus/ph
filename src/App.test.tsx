@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { setViewportWidth } from './test/setup.ts';
@@ -25,7 +26,35 @@ vi.mock('./components/Footer/Footer', () => ({ default: () => <div>Footer</div> 
 vi.mock('./components/SidebarLeft/SidebarLeft', () => ({ default: () => <div>SidebarLeft</div> }));
 vi.mock('./components/SidebarRight/SidebarRight', () => ({ default: () => <div>SidebarRight</div> }));
 vi.mock('./components/Main/Main.tsx', () => ({ default: () => <div>Main</div> }));
-vi.mock('./components/Mobile/MobileShell.tsx', () => ({ MobileShell: () => <div>MobileShell</div> }));
+// Reports the props it was handed, so the surface flags `AppContainer` owns are observable
+// without mounting the real mobile tree.
+vi.mock('./components/Mobile/MobileShell.tsx', () => ({
+  MobileShell: ({
+    isToolSheetOpen,
+    onToggleToolSheet,
+    isLayersOpen,
+    onToggleLayers,
+  }: {
+    isToolSheetOpen?: boolean;
+    onToggleToolSheet: () => void;
+    isLayersOpen?: boolean;
+    onToggleLayers: () => void;
+  }) => (
+    <div
+      data-testid="mobile-shell-props"
+      data-tool-sheet={String(Boolean(isToolSheetOpen))}
+      data-layers={String(Boolean(isLayersOpen))}
+    >
+      MobileShell
+      <button type="button" onClick={onToggleToolSheet}>
+        Tool options
+      </button>
+      <button type="button" onClick={onToggleLayers}>
+        Layers
+      </button>
+    </div>
+  ),
+}));
 vi.mock('./components/Common/AppKeyboardShortcuts.tsx', () => ({ AppKeyboardShortcuts: () => <div>Shortcuts</div> }));
 vi.mock('./contexts/ThemeContext', () => ({
   ThemeProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -167,8 +196,11 @@ describe('App shell layout', () => {
     // Grid areas place these visually, so the order is free — but it is the order keyboard
     // focus follows, and it is what a careless edit to this JSX silently reorders. The
     // mobile shell is appended last, so desktop focus order is unchanged.
+    //
+    // Each region's LABEL, not its whole `textContent`: the `MobileShell` mock carries
+    // toggle buttons beside its label, so the aggregate text is not the region name.
     const grid = container.firstElementChild as HTMLElement;
-    const regions = Array.from(grid.children).map((child) => child.textContent);
+    const regions = Array.from(grid.children).map((child) => child.firstChild?.textContent);
 
     expect(regions).toEqual(['Shortcuts', 'Menu', 'SidebarLeft', 'Main', 'SidebarRight', 'Footer', 'MobileShell']);
   });
@@ -236,5 +268,64 @@ describe('App shell layout', () => {
       }
       view.unmount();
     }
+  });
+});
+
+/**
+ * Crossing the mobile boundary must not leave mobile UI rendered on the desktop path.
+ *
+ * Both trees are mounted and `md:hidden` decides which shows, so the crossing costs no React
+ * work — but `display: none` hides without unmounting. A surface left open on a phone
+ * therefore stayed mounted on desktop, and `MobileToolSheet` held a second live instance of
+ * the active tool's options panel next to the one `ToolbarHorizontal` owns: duplicate
+ * `id="text-input"`, duplicate `id="font-family-select"`, duplicate window Escape listeners.
+ *
+ * `MobileShell` is mocked here, so the assertions are on the flags this component owns.
+ */
+describe('App mobile surface reset', () => {
+  beforeEach(() => {
+    setViewportWidth(500, 800);
+    storeState.hasImage = true;
+    useStoreMock.mockImplementation(() => [storeState, dispatch]);
+    localStorage.clear();
+  });
+
+  afterEach(() => setViewportWidth(1280, 800));
+
+  const openMobileSurfaces = async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: 'Tool options' }));
+    return user;
+  };
+
+  it('closes the tool sheet and the layers drawer when the viewport widens', async () => {
+    await openMobileSurfaces();
+    await userEvent.click(screen.getByRole('button', { name: 'Layers' }));
+    expect(screen.getByTestId('mobile-shell-props')).toHaveAttribute('data-layers', 'true');
+
+    // The real `MobileShell` is what exposes these ids, so this pair is asserted through the
+    // mock's contract: the props it received must go back to closed.
+    const shell = () => screen.getByTestId('mobile-shell-props');
+    expect(shell()).toHaveAttribute('data-tool-sheet', 'true');
+
+    act(() => {
+      setViewportWidth(1280);
+    });
+
+    expect(shell()).toHaveAttribute('data-tool-sheet', 'false');
+    expect(shell()).toHaveAttribute('data-layers', 'false');
+  });
+
+  it('leaves the surfaces closed when the crossing happens with them already closed', () => {
+    render(<App />);
+
+    act(() => {
+      setViewportWidth(1280);
+    });
+
+    const shell = screen.getByTestId('mobile-shell-props');
+    expect(shell).toHaveAttribute('data-tool-sheet', 'false');
+    expect(shell).toHaveAttribute('data-layers', 'false');
   });
 });

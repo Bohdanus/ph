@@ -330,3 +330,66 @@ test.describe('Crossing the mobile boundary', () => {
     await expect(page.getByTestId('left-sidebar')).toBeAttached();
   });
 });
+
+const MOBILE = { width: 500, height: 800 };
+
+test.describe('Mobile shell does not leak onto the desktop path', () => {
+  // The shell is mounted at every width and hidden with `md:hidden`, and `display: none`
+  // hides without unmounting. These are the two consequences that only a browser can show.
+  test('the canvas reserves room for the fixed mobile bar', async ({ page }) => {
+    test.setTimeout(60_000);
+    await open(page, MOBILE);
+
+    // The bar is `position: fixed` at `h-16`, so the grid's `bottom` area resolves to zero
+    // and it overlays the canvas. `<main>` must reserve that height or the bottom of the
+    // image sits under the bar with no way to pan it into view.
+    //
+    // Selected by the `mobile-safe-bottom` class, not by `[grid-area='main']`: the grid area
+    // is a Tailwind *class* on the element, so an attribute selector for it matches nothing
+    // at all. That mistake shipped for one revision and reserved no space.
+    const main = page.locator('[class*="grid-area:main"]').first();
+    await expect(main).toBeVisible();
+    await expect(main).toHaveClass(/mobile-safe-bottom/);
+
+    const padding = await main.evaluate((el) => getComputedStyle(el).paddingBottom);
+    expect(Number.parseFloat(padding), 'the fixed bar height must be reserved').toBeGreaterThanOrEqual(60);
+
+    // The reservation is mobile-scoped, so desktop is untouched.
+    await page.setViewportSize(DESKTOP);
+    const desktopPadding = await main.evaluate((el) => getComputedStyle(el).paddingBottom);
+    expect(Number.parseFloat(desktopPadding), 'desktop must reserve nothing').toBe(0);
+  });
+
+  test('an open tool sheet unmounts its panel when the viewport widens', async ({ page }) => {
+    test.setTimeout(60_000);
+    await open(page, MOBILE);
+
+    const optionsToggle = page.getByRole('button', { name: 'Tool options' });
+    await optionsToggle.click();
+    await expect(page.locator('#mobile-tool-options')).toBeVisible();
+
+    // Widening leaves the shell mounted and merely hidden, so an open sheet used to stay
+    // rendered — a second live instance of the active tool's options panel alongside the one
+    // `ToolbarHorizontal` owns, with duplicate `id`s and a duplicate window Escape listener.
+    await page.setViewportSize(DESKTOP);
+    await expect(optionsToggle).toBeHidden();
+    await expect(page.locator('#mobile-tool-options')).toHaveCount(0);
+  });
+
+  test('leaving the mobile band leaves exactly one tool panel in the document', async ({ page }) => {
+    test.setTimeout(60_000);
+    await open(page, MOBILE);
+
+    await page.getByRole('button', { name: 'Tool options' }).click();
+    await expect(page.locator('#mobile-tool-options')).toBeVisible();
+
+    await page.setViewportSize(DESKTOP);
+    // The desktop toolbar now owns the panel; a duplicate would make every id in it
+    // ambiguous, and `getElementById` and `<label for>` both resolve to the first match.
+    const ids = ['text-input', 'font-family-select', 'blur-slider', 'rotate-slider'];
+    for (const id of ids) {
+      const count = await page.locator(`#${id}`).count();
+      expect(count, `#${id} must not be duplicated by the mobile shell`).toBeLessThanOrEqual(1);
+    }
+  });
+});

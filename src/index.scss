@@ -104,7 +104,13 @@ body {
   // of occupying the grid's `bottom` area — that row resolves to zero, and `<main>` has
   // `overflow: hidden`. Without a reservation the bottom 64px of the image sits under the
   // bar with no way to pan it into view on a phone.
-  [grid-area='main'] {
+  //
+  // Selected by class, and deliberately not by `[grid-area='main']`. The grid area is a
+  // Tailwind *class* on the element, not an HTML attribute, so an attribute selector for it
+  // matches nothing at all: the rule compiles, ships, and silently reserves no space. That
+  // is exactly what this rule did for one revision. `mobile-safe-bottom` is a real class on
+  // the element, so it is greppable from the stylesheet and assertable from a test.
+  .mobile-safe-bottom {
     padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
   }
 }

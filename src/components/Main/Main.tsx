@@ -228,7 +228,7 @@ const Main = () => {
   return (
     <main
       ref={containerRef}
-      className={`relative overflow-y-auto [grid-area:main] ${
+      className={`relative overflow-y-auto [grid-area:main] mobile-safe-bottom ${
         isDragging
           ? 'bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-blue-500'
           : 'bg-white dark:bg-[#1a1a1a]'
