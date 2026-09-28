@@ -6,6 +6,7 @@ import type { ToolName, ToolArgs, ToolArgsFor, ToolPatch } from './tool-types.ts
 import { saveLastSettings } from '../util/settings.ts';
 import { useStore } from './StoreContext.tsx';
 import { setRefValue } from '../util/ref.ts';
+import { SetToolArgsContext } from './set-tool-args.ts';
 
 export interface CurrentToolContextState {
   toolArgs: ToolArgs;
@@ -100,7 +101,11 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
     [_setToolArgs, getToolArgs, patchToolArgs, resetToLastSavedArgs, toolArgs]
   );
 
-  return <CurrentToolContext.Provider value={value}>{children}</CurrentToolContext.Provider>;
+  return (
+    <SetToolArgsContext.Provider value={_setToolArgs}>
+      <CurrentToolContext.Provider value={value}>{children}</CurrentToolContext.Provider>
+    </SetToolArgsContext.Provider>
+  );
 };
 
 export const useCurrentTool = (): CurrentToolContextState => {

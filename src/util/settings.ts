@@ -36,7 +36,6 @@ export function saveLastSettings(args: ToolArgs) {
     // gap from a different document, and the next `Free`/`Original` would restore a framing the user
     // never drew on this one. Both are presentation state.
     lastSavedSettings.crop = cloneDeep(omit(args as CropToolArgs, 'rect', 'preRatioRect'));
-    // deliberately not storing for those three because they have a different philosophy, unfortunately
   } else if (toolName === 'transform') {
     lastSavedSettings.transform = cloneDeep(args);
   } else if (toolName === 'reposition') {

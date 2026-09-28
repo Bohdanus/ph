@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { charLength, deleteLastChar, deleteCharAt, ellipsify } from '../string.ts';
 
+/**
+ * `String.prototype.isWellFormed` is ES2024 and this project compiles against the ES2022
+ * lib, so the pairing check is spelled out. A well-formed surrogate pair is two code
+ * units in the D800-DFFF range, so counting those units proves nothing on its own.
+ */
+const hasUnpairedSurrogate = (str: string): boolean => {
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code < 0xd800 || code > 0xdfff) continue;
+    if (code >= 0xdc00) return true;
+    const next = str.charCodeAt(i + 1);
+    if (Number.isNaN(next) || next < 0xdc00 || next > 0xdfff) return true;
+    i++;
+  }
+  return false;
+};
+
 describe('charLength', () => {
   it('returns the grapheme cluster count for ASCII text', () => {
     expect(charLength('hello')).toBe(5);
@@ -88,5 +105,38 @@ describe('ellipsify', () => {
 
   it('uses default empty string when none is provided', () => {
     expect(ellipsify(undefined, 10)).toBe('');
+  });
+
+  it('truncates an emoji-only string without leaving a lone surrogate', () => {
+    // A 👍🏽 cluster is 4 code units, so a 5-unit budget ends mid-surrogate
+    const result = ellipsify('👍🏽👍🏽👍🏽👍🏽', 8);
+    expect(result).toBe('👍🏽...');
+    expect(hasUnpairedSurrogate(result)).toBe(false);
+  });
+
+  it('truncates a mixed emoji and ASCII string without leaving a lone surrogate', () => {
+    const result = ellipsify('layer 👍🏽 name', 10);
+    expect(result).toBe('layer ...');
+    expect(result.length).toBeLessThanOrEqual(10);
+    expect(hasUnpairedSurrogate(result)).toBe(false);
+  });
+
+  it('keeps the cluster that ends exactly on the budget boundary', () => {
+    const result = ellipsify('👍🏽👍🏽👍🏽', 7);
+    expect(result).toBe('👍🏽...');
+    expect(result).toHaveLength(7);
+    expect(hasUnpairedSurrogate(result)).toBe(false);
+  });
+
+  it('never exceeds maxLength for a range of budgets and emoji inputs', () => {
+    const inputs = ['👍🏽👍🏽👍🏽👍🏽', 'layer 👍🏽 name', 'ab👨‍👩‍👧‍👦cd', '👍👍👍👍', 'hello world'];
+
+    for (const input of inputs) {
+      for (let maxLength = 0; maxLength <= 12; maxLength++) {
+        const result = ellipsify(input, maxLength);
+        expect(result.length).toBeLessThanOrEqual(Math.max(maxLength, 0));
+        expect(hasUnpairedSurrogate(result)).toBe(false);
+      }
+    }
   });
 });

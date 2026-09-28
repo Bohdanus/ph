@@ -49,7 +49,7 @@ Claims are not equally well-supported. Stated plainly so you can re-check the we
 | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | **Verified directly**                                                | every `file:line`, every commit hash and subject, the 14-dispatch-site count, the `durableStatus`/`base`-null chain, the 42 `it.fails` pins, the zero-importer findings, the `b027de3` delta, the worktree/branch list, the 3813/42 test counts | `git`, `grep`, `sed` — all reproduced in Appendix A                        |
 | **Re-measured in this document**                                     | `npm run test` (173 files, 3813 pass, 42 xfail, 6.05 s)                                                                                                                                                                                         | run it                                                                     |
-| **Read from another document, not re-derived**                       | the e2e counts (97 collected, 92/3/2), the `lint:check` 19-warning count, `HISTORY_MIGRATION_04_COMPLETION_STATUS.md`'s contents                                                                                                                | `e2e/OPEN_PROBLEMS.md`                                                     |
+| **Read from another document, not re-derived**                       | the e2e counts (97 pass, 2 skipped, 0 failing), the `lint:check` 19-warning count, `HISTORY_MIGRATION_04_COMPLETION_STATUS.md`'s contents                                                                                                       | `e2e/OPEN_PROBLEMS.md`                                                     |
 | **Derived by a stated method**                                       | the §3.2 thematic split (keyword CASE over session titles)                                                                                                                                                                                      | method and its known bias are in §3.2                                      |
 | **Reported by one of the 11 audit subagents, not re-verified by me** | the 598-task completion scores in §2.5 and every per-task table in the plan files                                                                                                                                                               | read the appended `## Assessment by Space Bunny` section in each plan file |
 | **Judgement, not finding**                                           | all of §6 and §7                                                                                                                                                                                                                                | argue with it                                                              |
@@ -633,14 +633,8 @@ its tests reads them. `durableDiagnostics` and `durableStatus` have **no reader 
 | `npm run lint:check` (eslint + prettier)  | 0 errors, 19 pre-existing warnings                                                                             |
 | `npm run test` (vitest 5.0.2, jsdom)      | 173/173 files, **3813 passed, 42 `it.fails` expected**, 3855 total, 6.05 s — **re-measured for this document** |
 | `npm run test:e2e:unit` (vitest, node)    | 693 passed / 2 expected-fail, 10 files — _reported, not re-measured_                                           |
-| `npm run test:e2e` (playwright, headless) | 97 collected, 92 pass, 3 fail, 2 skipped — _reported in `e2e/OPEN_PROBLEMS.md`, not re-measured_               |
+| `npm run test:e2e` (playwright, headless) | 97 pass, 2 skipped by declaration, none failing — _reported in `e2e/OPEN_PROBLEMS.md`, not re-measured_        |
 | `npm run build`                           | green                                                                                                          |
-
-The unit-test row is the one that matters, and it exposes one more stale doc: `e2e/OPEN_PROBLEMS.md:16-17`
-states _"173/173 files passing (3811 pass, 42 expected-fail)"_. The real number is **3813**. The
-e2e doc is one commit stale. Note that the two numbers differ in _passing_ tests only — the
-expected-fail count of 42 is stable, which is the useful signal: a change in the 42 is a real
-regression, a change in 3813 is often not.
 
 ---
 
@@ -771,18 +765,11 @@ fix must remove the pin in the same change. There are 42 of them. The migration-
 | `tools/__tests__/tool-processors.test.ts:143, 303` | the new `affine-operation` commit kind                                                                                                                                                                                                                                                                                                                                                                 |
 | `text.test.ts:258`                                 | replaying text from a durable vector source without re-rasterizing                                                                                                                                                                                                                                                                                                                                     |
 
-E2E known failures (`e2e/OPEN_PROBLEMS.md`), 2–4 of 97 on the default headless run:
-
-| tests                                                     | count | mode            |
-| --------------------------------------------------------- | ----- | --------------- |
-| `e2e/helpers/cdp-helpers.spec.ts:220, 239`                | 2     | headless only   |
-| `e2e/helpers/cdp-helpers.spec.ts:113, 129, 146, 163, 195` | 5     | **headed only** |
-| `e2e/sidebar-keyboard.spec.ts:77, 89`                     | 0–2   | intermittent    |
-
 **`AGENTS.md` forbids every headed Playwright invocation outright** — `--headed`, `--ui`,
 `--debug`, `show-report`, `show-trace`, `codegen`, `PLAYWRIGHT_ALLOW_HEADED=1`,
-`test.use({headless: false})`. A headed run fails 5 of 97 against headless's 2–4, on a disjoint set,
-and operator input reaches the page as real input. Do not flip the mode to "fix" a failure.
+`test.use({headless: false})`. Nothing fails headless today, and a headed run is expected to be green
+too, but no run in this repository establishes that and `AGENTS.md` forbids an agent from producing
+one: operator input reaches the page as real input. Do not flip the mode to "fix" a failure.
 
 ### 5.5 Stale documentation — actively misleading
 
@@ -804,15 +791,6 @@ Both were invalidated by `de91a83` on 09-27 10:12. `StoreContext.tsx:647-666` pu
 entry through `decideDurableAppend`, and on `mismatch` appends `durableAppendDiagnostic` at
 `:679-684`. `HANDOFF.md` item 5 flags only the `useLayer.ts` one — **the `history-append.ts` one is a
 second, unflagged instance.** Both are fixed on `b027de3`.
-
-**Ten doc locations claim `npm run tsc` is blocked.** It exits 0, and
-`e2e/OPEN_PROBLEMS.md:11-17` additionally quotes a stale test count (3811 vs the real 3813).
-`HANDOFF.md` §7 lists the locations; the highest-value is
-`.github/workflows/ci.yml:43-52`, which justifies a whole separate `e2e-unit` job
-on a premise that no longer holds, plus `ci.yml:73-76` running a redundant subset type-check, plus
-`README.md:109-111`, `e2e/README.md:123-128, 227, 304-305, 307-313, 315-319`, and
-`e2e/OPEN_PROBLEMS.md:11-15`. Fix: delete `ci.yml:73-76` and the `e2e-unit` job, fold
-`npm run test:e2e:unit` into the `ci` job's Test step, and correct the docs.
 
 **`tsc --noEmit` and bare `tsc` type-check zero files.** The root `tsconfig.json` is a solution stub
 with `"files": []`. Verified: a probe file with `export const broken: number = "definitely not a
@@ -967,13 +945,11 @@ Ordered. Each is cheap relative to what it prevents.
    as `set-document-frame` is.
 7. **Add the error boundary** (blocker 5). It is the cheapest item on the P0 list and it is the
    control that would have contained the `2f051a0` regressions.
-8. **Fix the two CI/typecheck defects** (§5.5): the redundant `e2e-unit` job and the unclaimed
-   `toolbar-mapping.ts`. Both are false-green generators.
-9. **Update or delete `PUBLISH_DURABLE_REPLAY` references** in the consolidated and readiness plans
+8. **Update or delete `PUBLISH_DURABLE_REPLAY` references** in the consolidated and readiness plans
    (§6.4). Mark them superseded rather than leaving them actionable.
-10. **Write a `WIRING.md`** listing, per module, its production importers — generated, not
-    maintained by hand. The fact that four modules are dead was discoverable only by grepping
-    importers, eleven independent times.
+9. **Write a `WIRING.md`** listing, per module, its production importers — generated, not
+   maintained by hand. The fact that four modules were dead was discoverable only by grepping
+   importers, eleven independent times.
 
 ---
 
@@ -1049,10 +1025,10 @@ Self-contained. Paste into a fresh Kilo session rooted at `/Users/bkalynovskyi/p
 >
 > - **Never run Playwright headed.** No `--headed`, `--ui`, `--debug`, `show-report`, `show-trace`,
 >   `codegen`, `PLAYWRIGHT_ALLOW_HEADED=1`, or `test.use({headless: false})`. `kilo.jsonc` denies most
->   of these and `e2e/global-setup.ts` refuses the rest. A headed run fails 5 of 97 against headless's
->   2–4, on a disjoint set, and your own mouse and keyboard reach the page as real input. If
->   something only reproduces visually, that is the operator's call: ask them to run
->   `npm run test:e2e:headed` themselves.
+>   of these and `e2e/global-setup.ts` refuses the rest. Nothing fails headless, and a headed run is
+>   expected to be green too, but nothing here measures that and your own mouse and keyboard reach
+>   the page as real input. If something only reproduces visually, that is the operator's call: ask
+>   them to run `npm run test:e2e:headed` themselves.
 > - **A pin is a tripwire.** There are 42 `it.fails(...)` tests. Each asserts current broken behaviour
 >   on purpose and fails the moment you fix the defect. Removing a pin is part of the fix, not a
 >   separate change. Do not widen a threshold, add a skip, or re-record a visual baseline to make
@@ -1081,8 +1057,8 @@ Self-contained. Paste into a fresh Kilo session rooted at `/Users/bkalynovskyi/p
 > `npm run tsc` (exit 0) · `npm run lint:check` (0 errors; 19 warnings are pre-existing) ·
 > `npm run test` (173/173 files; 3813 pass and 42 `it.fails` expected — a _lower_ pass count with
 > the same expected-fail count means you broke something) · `npm run build` (green) ·
-> `npm run test:e2e` headless (2–4 of 97 fail by design; read `e2e/OPEN_PROBLEMS.md` before
-> investigating any of them).
+> `npm run test:e2e` headless (97 pass, 2 skipped by declaration, none failing — a failure there is
+> a new defect, not a known one; read `e2e/OPEN_PROBLEMS.md` first).
 >
 > **At the end, produce:** what you changed, which of Options A/B/C you took and why, the gate
 > output, what you deliberately did not do, and a fresh problem list. Then write the follow-up prompt
