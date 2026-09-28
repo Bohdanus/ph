@@ -1415,7 +1415,7 @@ attributes are pinned rather than assumed.
 
 ---
 
-## 45. The AVIF encoder enforces no raster budget, and the two codecs' ceilings still disagree
+## 45. The AVIF encoder enforces the raster budget on save, and the codecs' ceilings still disagree
 
 **What is fixed.** `encodeAvif` (`avif-utils.ts:32`) called the codec on an unbounded canvas while
 `loadAvifFile` (`:20`) refused anything over `MAX_AVIF_PIXELS`, so `New ▸ A3 @ 1200 dpi` followed by
@@ -1439,22 +1439,25 @@ capability loss rather than a latent trap:
 | AVIF, open and save                 | 80,000,000  | `avif-utils.ts:12`           |
 | TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:23`           |
 
-So a document between 80 MP and 100 MP now **cannot be saved as AVIF at all** — `saveImageToDisk`
-throws with the budget message, and `useFile.tsx:119-135` surfaces it as an alert. Before the guard
-it saved and then failed to reopen, which is the worse failure, so the change is right; the cost is
-real and the number was not chosen by whoever added the guard. The handoff's own instruction is that
-this value is the operator's call. Either raise `MAX_AVIF_PIXELS` to the same
-`MAX_CREATABLE_DOCUMENT_PIXELS` derivation TIFF uses, or name 80 MP as the accepted AVIF ceiling and
-accept that A3 @ 1200 dpi is not exportable in that format.
+So a document between 80 MP and 100 MP **cannot be saved as AVIF at all** — `saveImageToDisk` throws
+with the budget message, and `useFile.tsx:119-135` surfaces it as an alert. Before the guard it saved
+and then failed to reopen, which is the worse failure, so the change is right; the cost is real and
+the number was not chosen by whoever added the guard.
 
-**The rule that must survive whichever number is chosen.** Above a ceiling the file is **rejected
-with an error, never clamped or downscaled**: a clamp silently hands the user a smaller image than
-the one they opened, and a rejected file loses nothing. The TIFF byte ceiling also has a recorded
-provenance worth keeping — `MAX_TIFF_BYTES` is the app's largest creatable document at 16 bytes per
-pixel, the largest buffer `UTIF.decodeImage` can build for a 4-sample page
-(`Math.min(32, t258[0])` bits per sample, `UTIF.js:116`, times 4 samples) — and
-`MAX_TIFF_PIXELS` is that same budget read at 8 bytes per pixel, so the two agree by construction
-rather than by coincidence. That derivation is what makes a different number defensible.
+**Decided 2026-09-28: the 80 MP ceiling stands.** The operator was asked to choose between raising
+`MAX_AVIF_PIXELS` to TIFF's `MAX_CREATABLE_DOCUMENT_PIXELS` derivation and accepting the export loss,
+and chose to keep 80 MP. So **New ▸ A3 @ 1200 dpi is not AVIF-exportable in this build, by
+decision** — do not "fix" that by raising the number without asking again. The remaining work on this
+entry is the other-format gap below, not the ceiling.
+
+**The rule that must survive.** Above a ceiling the file is **rejected with an error, never clamped
+or downscaled**: a clamp silently hands the user a smaller image than the one they opened, and a
+rejected file loses nothing. The TIFF byte ceiling also has a recorded provenance worth keeping —
+`MAX_TIFF_BYTES` is the app's largest creatable document at 16 bytes per pixel, the largest buffer
+`UTIF.decodeImage` can build for a 4-sample page (`Math.min(32, t258[0])` bits per sample,
+`UTIF.js:116`, times 4 samples) — and `MAX_TIFF_PIXELS` is that same budget read at 8 bytes per
+pixel, so the two agree by construction rather than by coincidence. That derivation is what makes a
+different number defensible if the ceiling is ever revisited.
 
 **Also unfixed, and the same drift.** `image-load-save-utils.ts:150-172` exports BMP, GIF, ICO and
 SVG with no budget on either side, so a 100 MP document is refused for AVIF (80 MP), refused for
