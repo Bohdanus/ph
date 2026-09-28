@@ -26,6 +26,32 @@ this pass, the source wins, and the two places it loses are recorded at the end.
   the one place in the family where a selection tool's bar has fewer modes than its siblings. One
   Adobe page contradicts it and is disclosed in the Quick Selection section rather than argued
   away.
+- **No selection tool reads a combination-mode modifier, and most read no modifier at all.**
+  A grep for `shiftKey|altKey|metaKey|ctrlKey` across `src/components/Main/*.tsx` returns
+  production hits in `EllipticalSelectionToolArea`, `FeatherMagneticLassoToolArea` and
+  `ShapeToolArea` only. Of the seven tools here, that leaves exactly two whose
+  `modifiers[]` rows describe anything real: the elliptical marquee (Shift → circle, Alt →
+  from centre, `EllipticalSelectionToolArea.tsx:172`-`:173`) and the magnetic lasso's one
+  `Alt` read (`FeatherMagneticLassoToolArea.tsx:449`, the freehand segment). The freehand
+  lasso, polygonal lasso, Magic Wand and Quick Selection read no modifier key whatsoever, so
+  every combination-mode row on those four — and the Quick Selection's two `Alt` rows — is a
+  Photoshop binding with no implementation. The `options[]` rows already said `missing`; the
+  `modifiers[]` rows did not say anything, which read as implemented. They are kept, because
+  the file describes Photoshop, and each absence is now stated in `appNotes` with the file
+  that proves it.
+- **The keyboard.** `src/components/Common/AppKeyboardShortcuts.tsx` is the app's complete
+  global table. It binds `Z`/`Y` (undo, redo), `Cmd/Ctrl+C` (copy the selection), `Cmd/Ctrl+V`
+  (paste), `Cmd/Ctrl+J` (layer via copy), and the tool letters `V` (reposition), `I`
+  (eyedropper), `B`, `U`, `T`, `L`, `W`, `G`, `O`, `P` — each of the last eight with a
+  `Shift+<letter>` twin that cycles its flyout — plus the single-tool tiles `E` (eraser) and
+  `S` (clone stamp) and `C` (crop). It binds no `[`, `]`, `,`, `.`, `Caps Lock`, or `Return`.
+  The two click-built lassos register four keys of their own on
+  their own gesture — `Escape`, `Enter`, `Backspace`, `Delete`
+  (`PolygonClickToolArea.tsx:914`-`:950`, `FeatherMagneticLassoToolArea.tsx:534`-`:570`) — and
+  that is the whole of the per-tool keyboard. Every Photoshop binding in this family's
+  `shortcuts[]` that is not a tool letter is therefore in one of two states: bound as `Enter`
+  or `Delete` on those two tools, or unbound everywhere. The unbound ones are kept, as the
+  file describes Photoshop, and named as unbound in `appNotes`.
 - **The app has no `Select` menu.** There is no `Select All`, `Deselect`, `Inverse`,
   `Color Range`, `Modify > Feather/Expand/Contract/Border/Smooth`, `Grow`, `Similar`,
   `Refine Edge`, `Select and Mask` or `Transform Selection` anywhere in the application. The
@@ -86,11 +112,23 @@ tool declares no settings at all, so there is nothing that could be `inert`. Its
 sentence and three buttons.
 
 **The modifier finding.** The rectangle is drawn through `useRect`, and `useRect` reads
-`event.ctrlKey || event.metaKey || event.shiftKey` in one place only: when a **handle of an
+`event.ctrlKey || event.metaKey || event.shiftKey` in one place only — `src/hooks/useRect.ts:97`,
+and a whole-file grep for those four properties returns no other line: when a **handle of an
 already-committed rectangle is being resized**, where it locks the aspect ratio to the one the
 rect already has. Nothing reads Shift during the initial drag, so Shift-to-square is not
 implemented at all, and what _is_ implemented is a different feature that happens to use the
 same key.
+
+**The `M` group has two members, not four.** `marqueeGroup` in
+`src/components/Common/AppKeyboardShortcuts.tsx:25` is `['rectangular-selection',
+'elliptical-selection']` and the same two names are all `toolbar-mapping.ts:144`-`:145` lists
+under the marquee tile. Adobe documents four marquee tools — Rectangular, Elliptical, Single Row
+and Single Column — so two of Photoshop's four are real tools the app simply does not have, and
+an earlier version of the data file described the `M` cycle as running through
+"single-row/column variants" that do not exist in the app. Both entries now say the group is the
+rectangular and the elliptical marquee, and `appNotes` records that the app has no single-row or
+single-column marquee at all. This is a missing capability, **not** a claim that Photoshop lacks
+the tool.
 
 ## Elliptical Marquee Tool — `elliptical-selection`
 
@@ -106,7 +144,7 @@ anti-aliasing on or off for the Elliptical Marquee tool." Modifiers: `Shift` for
 | Feather                                       | pixel radius, default 0                            | `missing`  | —                             |
 | Anti-alias                                    | on by default; marquee tools only                  | `missing`  | —                             |
 | Style                                         | Normal / Fixed Ratio / Fixed Size                  | `partial`  | `EllipticalSelection.tsx:96`  |
-| Width and Height                              | decimal pair (ratio) / whole pixels (size) / units | `partial`  | `EllipticalSelection.tsx:112` |
+| Width and Height                              | decimal pair (ratio) / whole pixels (size) / units | `partial`  | `EllipticalSelection.tsx:130` |
 | Select and Mask                               | on every selection tool's bar                      | `missing`  | —                             |
 
 **App fidelity: partial** — the only tool in the family with any Photoshop control on its bar,
@@ -149,6 +187,13 @@ selection — so it shares a name with the thing it is not. `LassoToolArgs` carr
 **Shortcut gap.** Photoshop binds `Return`/`Enter` to select the tool and focus the `Feather`
 field, so a feather can be typed before the next trace. Nothing in the app binds it.
 
+**Modifier gap.** None of this tool's Photoshop modifiers is implemented, and neither is the
+`Space`-to-Hand mid-trace binding. The freehand lasso is drawn by `PolygonClickToolArea` — the
+same component as the polygonal lasso, reached through the shared `interactionMode === 'lasso'`
+branch at `src/components/Main/Main.tsx:78`/`:202` — and that file reads no modifier key at all.
+The `modifiers[]` rows are kept because the file describes Photoshop; the absence is stated in
+`appNotes` rather than by deleting the rows.
+
 ## Polygonal Lasso Tool — `polygonal-lasso`
 
 Identical three-control bar. The gesture is where this tool lives, and Adobe's page is
@@ -181,6 +226,24 @@ removal and `Escape` abort are all registered in `PolygonClickToolArea` — agai
 least complete bar. The bar is forty lines: one Outline/Fill toggle and a hint. It is also the
 only bar in the family with no Copy, Paste or Clear buttons, which the freehand and magnetic
 lasso bars beside it both render.
+
+**Modifier gap, and it is larger than the combination modes.** `PolygonClickToolArea` reads no
+modifier key, so _none_ of this tool's `modifiers[]` rows is implemented: not the 45° constraint
+added in an earlier pass, not the `Alt`-drag freehand segment, not the `Alt`-double-click straight
+close, and not the three combination modes. The `Enter` and `Delete` `shortcuts[]` rows **are**
+bound (`:922` and `:944`); the `Return` row's Feather-focus half is not, because the bar has no
+Feather field to focus. The rows stay and the absence is stated in `appNotes`.
+
+**The feather claim that was wrong.** The data file used to say a feather set on any selection
+tool "is only reachable by re-making the selection with the tool". Neither half of that is true.
+Re-making a selection applies no feather at all — `featherRadius` is a field of
+`FeatherMagneticLassoToolArgs` alone (`src/tools/featherMagneticLasso.ts:6`), and it is the only
+tool area that writes it into the selection's metadata (`src/components/Main/FeatherMagneticLassoToolArea.tsx:385`).
+And the magnetic lasso's feather is not a selection feather: `copySelectionToCanvas` routes
+**only** the magnetic lasso through `copyFeatheredPolygonSelectionToCanvas`
+(`src/util/selection.ts:727`-`:733`), so the radius softens the copied alpha mask and leaves the
+selection the marching ants are drawn from unchanged. The corrected sentence is in `appNotes` and
+is deliberately narrower than the one it replaces.
 
 **Correction to the research corpus.** `01-photoshop-reference.md` §1.5 attributes to this tool
 a click-and-drag that produces a _smooth anchor with drag-set tangent handles_, cited to [8][9].
@@ -253,8 +316,19 @@ strongly the cursor is pulled toward detected edges"), `Smooth` (0–10 px path 
 and the `Preview feather` outline. None has a Photoshop counterpart, so none appears in the
 `options` array; they are recorded here and in `appNotes`.
 
-**Shortcut gap.** `[`/`]`, `,`/`.`, `Caps Lock`, `Return` and `Delete` are all documented by
-Adobe or by two independent third parties; none is bound in the app.
+**Shortcut gap.** `[`/`]`, `,`/`.`, `Caps Lock` and `Return` are documented by Adobe or by two
+independent third parties; none of them is bound in the app, whose complete global table is
+`src/components/Common/AppKeyboardShortcuts.tsx`. `Delete` **is** bound, on this tool's own
+gesture (`src/components/Main/FeatherMagneticLassoToolArea.tsx:564`), and so is `Enter`
+(`:542`) — an earlier version of this file grouped `Delete` with the unbound keys and was wrong.
+
+**Modifier gap — the one real modifier in the family.** This tool reads `Alt`, and only as
+`magneticEnabled: !event.altKey` at `src/components/Main/FeatherMagneticLassoToolArea.tsx:449`.
+That single read is what makes the freehand-segment row true. Everything else is absent: `Shift`,
+`Alt`-as-a-combination-mode, `Shift+Alt`, and the `Alt`-double-click straight close — the
+double-click detector at `:430` calls `finishSelection` without consulting a modifier. So the
+`modifiers[]` list is a Photoshop description annotated, not an app capability list, and the
+annotation is in `appNotes`.
 
 ## Magic Wand Tool — `magic-wand`
 
@@ -291,6 +365,13 @@ it is a different product. See `## Unverified`.
 | Select and Mask                               | on every selection tool's bar                                                 | `missing`  | —                  |
 
 **App fidelity: partial.**
+
+**Modifier gap.** `MagicWandToolArea` reads no modifier key — a grep for
+`shiftKey|altKey|metaKey|ctrlKey` in that file returns nothing. The wand's
+`modifiers[]` rows (Shift-adds, `Alt`-subtracts, `Shift+Alt`-intersects) are therefore
+Photoshop's bindings with no implementation here, and they were unannotated until this pass. The
+rows are kept, because the file's job is to describe Photoshop's tool, and the absence now
+appears in `appNotes`.
 
 **`Contiguous` is the finding here, and it is not `inert`.** It is absent from
 `MagicWandToolArgs` entirely, so it is neither declared nor rendered and the honest status is
@@ -582,6 +663,18 @@ are absent, and there is no route from a selection to a layer mask at all. The b
 Alt-drag size gesture and the live size/opacity readout are not bound. The committed region is one
 traced contour, so a grown region containing an enclosed hole is refused outright rather than
 committed, and a `Selection` cannot express the hole.
+
+**Both `Alt` rows are unannotated false claims about the app.** `QuickSelectionToolArea` reads no
+modifier key either, so neither the `Alt`-subtracts-for-the-stroke row nor the
+`Alt`-drag-changes-the-brush-size row has an implementation. Both were carried as if they did.
+The rows are kept as Photoshop descriptions and the absence is now in `appNotes`.
+
+**The bar promises a gesture it does not honour.** The quick-selection bar's own hint text reads
+"Shift and Alt drag on the canvas" (`src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:99`,
+and the same sentence on the Subtract branch at `:100`) while the tool area consults neither key.
+That is an on-screen promise to the user, not a documentation gap, and it is recorded in
+`appNotes` as one. It is the sharpest instance of the defect this pass is about, because it is
+the only false claim in the family a user reads without opening anything.
 
 ### Sources
 

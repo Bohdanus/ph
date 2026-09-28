@@ -1,5 +1,5 @@
 /**
- * The parsing half of `board import`: the three hand-maintained Markdown
+ * The parsing half of `swarm import`: the three hand-maintained Markdown
  * handoff documents in, a list of board items out.
  *
  * WHY THE DOCUMENTS STAY THE SOURCE OF TRUTH

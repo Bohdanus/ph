@@ -68,28 +68,69 @@ npm run test:e2e        # playwright, HEADLESS - starts the dev server itself
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
-npm run board -- help   # the swarm board: who has what, and which files are taken
+npm run swarm             # the swarm board, live state: who holds what right now
+npm run swarm -- help     # the full command list
+npm run swarm -- ready    # the work queue an agent picks from
+npm run swarm -- watch    # the event log; --follow to tail it
 
 node scripts/worktree-inventory.mjs   # WORKTREES.json: what every worktree holds
 ```
 
 ## The swarm board
 
-`npm run board -- <command>` is the LIVE coordination layer: who has claimed
-what, which file two agents are about to edit, what one agent found that another
-needs, and what nobody claimed because the worktree is gone. `npm run board --
-help` is the full command list; `--json` works on every command except `watch`, `help` and `--version`.
-`ready` is the queue an agent works from: it sorts by priority, and the FILES
-column is the files the issue is _about_ (from its own create event) annotated
-with who is currently in them. An imported issue holds none of them on purpose,
-which is why it still shows its real files rather than nothing, and a filer's own
-reservation is contention like any other and is shown as such.
+It is called **`swarm`**, and that name is load-bearing. It used to be `board`,
+which is the same word Kilo's built-in tool uses for something else entirely, and
+the collision cost a real session. **Do not rename it back to `board`, and do not
+add `board` as an alias** — an alias passes every behavioural test and restores
+the exact confusion this name exists to prevent. `scripts/__tests__/agent-board.test.mjs`
+pins the script name, and the file on disk keeps its name because `agent-board.mjs`
+is not a word anything else claims.
+
+`npm run swarm` with no command prints the live state and names itself. Use it
+as the first call in a fresh session: it settles what the tool is, and it is the
+only invocation that answers that question.
+
+**There are two boards and they are not the same thing.** Kilo ships a built-in
+tool called `board_read`, and it is empty _on purpose_: it carries messages
+between one session and the task children it spawned, so outside a fan-out it
+reports `messages: []` truthfully and knows nothing about this repository. The
+swarm board is one SQLite file that every worktree of this repo shares, and it
+is essentially never empty. **A `board_read` result is not evidence that nobody
+is working** — it is evidence that no subagent posted. This has already cost a
+session: one asked what the agents were doing, was told the board was empty, and
+was holding 196 events. Renaming removed the trap; the note in `swarm --help` and
+in the no-argument output is the receipt, not the fix.
+
+**`ready` ranks in four steps, and the order is the contract.** Priority first,
+because it is the one signal the filer stated on purpose. Then live before
+imported: a `HANDOFF.md#31` row is prose the durable record already owns, while
+a peer finding is the only thing on this board that exists _because_ two agents
+were working at once. Then startable before contended, since an issue another
+agent is already inside its files cannot be picked up. Then oldest first. The
+first two are the load-bearing ones: with fifty-four imported rows sharing a
+single `normal` band, the old tie-break was file order, so `ready` returned the
+import and buried the live work at the bottom of a fifty-row page. Every run
+prints `N live · M imported from the handoff documents · K startable now`, and
+`--live` drops the imports entirely.
+
+- **`ready` is not a page of the import.** The limit is applied _after_ ranking.
+  Slicing first is how a fifty-row queue ends up showing the same fifty rows
+  forever, with the live work never on the page at all.
+- **Filing an issue with `--files` TAKES those files for the filer.** So a test
+  or a script that files `--files src/x.ts` and then has _another_ agent hold
+  `src/x.ts` has a refused hold and no contention at all, and a filer's own lock
+  is deliberately not contention. Take the other agent's lock FIRST.
+- **Provenance is read off the origin grammar** (`isImportedOrigin` in
+  `db.mjs`): `<file>.md#<number-or-slug>`. A live finding has no origin, or a
+  free-text one (`main: 2026-09-28`). The pattern tolerates a path prefix on
+  purpose — a stricter one would read `e2e/OPEN_PROBLEMS.md#p2-…` as live,
+  which is the one answer that promotes a mirror to the head of the queue.
 
 **It is NOT the handoff documents.** `HANDOFF.md`, `TEST-FLAKES.md` and
 `e2e/OPEN_PROBLEMS.md` stay the durable, reviewable record of what is known
 about this codebase, written by hand and merged through a pull request. The
 board answers the questions prose cannot: what is true _right now_, between
-concurrent agents. `board import` copies the documents' items onto the board
+concurrent agents. `swarm import` copies the documents' items onto the board
 once, keyed on their own numbering (`HANDOFF.md#12`), so re-running files only
 what is new.
 
@@ -109,25 +150,25 @@ what is new.
   you are working outside a dedicated worktree — on `main`, or detached — pass
   `--agent` or set `AGENT_BOARD_AGENT`, or you and the next agent are the same
   agent as far as the board is concerned.
-- **A claim is a lease, not a mutex.** `board claim ph-12` holds it for 45
-  minutes; `board heartbeat ph-12` extends it. Past the lease the issue is
+- **A claim is a lease, not a mutex.** `swarm claim ph-12` holds it for 45
+  minutes; `swarm heartbeat ph-12` extends it. Past the lease the issue is
   offered again and the takeover is in the event log with both agents named.
-  **`board status` reports; `board doctor` is the only command that releases an
+  **`swarm status` reports; `swarm doctor` is the only command that releases an
   abandoned claim**, and it releases a claim whose worktree no longer exists even
   when the lease has not run out.
-- **`board hold <path>` makes "never two agents on the same file" a refused
-  write**, and the refusal names the holder. `board check <path>` exits 1 when
-  somebody else holds it, so a shell can gate on it. `board claim --files a.ts
+- **`swarm hold <path>` makes "never two agents on the same file" a refused
+  write**, and the refusal names the holder. `swarm check <path>` exits 1 when
+  somebody else holds it, so a shell can gate on it. `swarm claim --files a.ts
 b.ts` takes both, and gives back **only the ones it took** if the claim is
   then refused — never a file that agent already held, and never with `--force`.
-- **The fixer's claim is not its verification.** `board resolve` needs the live
-  claim; `board close` refuses the agent that resolved the issue, exactly as
+- **The fixer's claim is not its verification.** `swarm resolve` needs the live
+  claim; `swarm close` refuses the agent that resolved the issue, exactly as
   this document's own handoff lifecycle requires. Exit code 5 is that refusal.
   **There is no `--verified-by`**, and that is the point: a flag naming somebody
   else is a name the caller supplies about an agent that is not in the room, and
   it made the whole rule one flag wide. A reviewer closes an issue by being the
   reviewer.
-- **`board note` is how one agent addresses the swarm**; `board watch --follow`
+- **`swarm note` is how one agent addresses the swarm**; `swarm watch --follow`
   tails the same log. Every command appends to it, which is the replacement for
   N agents each writing their own account of the same work into a document
   nobody else can see until it is merged.
@@ -141,23 +182,23 @@ blocked on it.
 ### The board is cross-session, so a merge can announce itself
 
 The database is global with **no session scoping at all** — `scripts/agent-board.mjs`
-never mentions a session id, and identity is the git branch — so a `board note` from
-one worktree is in the same log every other session's `board watch --follow` tails.
+never mentions a session id, and identity is the git branch — so a `swarm note` from
+one worktree is in the same log every other session's `swarm watch --follow` tails.
 That is the whole reason the board can prevent a merge mess, and it is why these four
 are not optional politeness:
 
-- **Claim before the first edit**, not after: `board claim <id> --files <paths you will
-touch>`, or `board hold <path>` for a path with no issue. `board check <paths>` before
+- **Claim before the first edit**, not after: `swarm claim <id> --files <paths you will
+touch>`, or `swarm hold <path>` for a path with no issue. `swarm check <paths>` before
   you edit anything a brief, a handoff, or a sibling subagent names. Both exit 1 on a
   path somebody else holds, and the refusal names the holder.
 - **Claim the merge, not just the files.** A branch that is about to land carries a
-  hazard to every path in it, and no file claim expresses that. `board note` the branch
+  hazard to every path in it, and no file claim expresses that. `swarm note` the branch
   and the paths _before_ you start resolving, so an agent holding one of them learns it
   before it edits rather than after.
 - **A delivered note is a log write, not a delivery.** There is no recipient column, no
   wake and no activity notice: `note` is broadcast, and `comment <id>` needs an issue
   somebody filed. Put the fact where a running agent will meet it anyway — a claimed
-  path it must `check`, and a `board note` naming its own files.
+  path it must `check`, and a `swarm note` naming its own files.
 - **An empty board is not evidence that nobody is working.** A file nobody claimed
   reads as free, so claiming is what makes a second reader of the path find out.
 
@@ -227,13 +268,60 @@ node scripts/worktree-inventory.mjs --check    # exit 1 if stale, write nothing
 node scripts/worktree-inventory.mjs --quiet    # totals only
 ```
 
-**Read `recommendation` and `prunable`, never `ahead`/`behind` on their own.**
-`prunable: true` means ALL of these hold: it is not the main worktree, the
-branch is an ancestor of `main`, the working tree is clean, and no curated
-finding protects it. `recommendation` is the decision — `prune`, `salvage`,
-`review-residue`, `in-use`, or `keep` (the main checkout, which is never a
-deletion candidate) — and `statusReasons` is why, in the generator's own words,
-so you can check the reasoning rather than trust it.
+**Read `action` first.** Every record carries one value, and it is the whole
+answer — which of the three things is it:
+
+| `action`    | meaning                                           | do this           |
+| ----------- | ------------------------------------------------- | ----------------- |
+| `land`      | clean tree, commits ahead of `main`, merges clean | merge it          |
+| `at-risk`   | work on no ref, or the merge needs a human        | save it           |
+| `dispose`   | on `main`, clean, nothing protects it             | delete it         |
+| `in-use`    | an agent or a session is active there             | leave it          |
+| `keep`      | the main checkout                                 | never a candidate |
+| `undecided` | cannot be told from what is known                 | do not remove     |
+
+**`land` is a point-in-time answer, not a licence.** It is true against the
+`mainHead` and the tree state recorded in this file, and is only as fresh as
+`generatedAt`. `main` moves, and a branch that merged cleanly stops doing so.
+Re-read `dirty` and `mergeConflict` before acting on a `land` you did not
+generate yourself — and note that a worktree with **no liveness signal at all**
+(`chats.count` 0 and `board.agents` empty) is the one most likely to have
+changed since, because nothing here can see that somebody walked away from it.
+That happened to a `land` entry within minutes of it being written.
+
+**`mustNotPrune` vetoes `land` as well as `dispose`.** It is a human claim that
+something here is not accounted for, and a merge recommendation is as much a
+claim about the contents as a prune recommendation is. A `land` entry carrying
+`mustNotPrune: true` is impossible by construction; if you see one, the flag is
+stale and belongs retracted in the same change that noticed it.
+
+`readyToLand`, `disposalCandidates` and `atRisk` are named at the top of the
+file so you do not have to filter the whole list to find them, and
+`node scripts/worktree-inventory.mjs` prints the first two before the
+evidence.
+
+**`land` and `at-risk` were one bucket, and that was the defect.** Every
+unmerged branch used to report `salvage`, so "a clean branch one commit ahead
+that merges cleanly" was indistinguishable from "a branch whose only work sits
+in a working tree on no ref at all". They call for **opposite** actions — go
+and merge, versus go and save — so they are separate values now.
+
+**"merges cleanly" is VERIFIED, not assumed.** `mergeConflict` comes from
+`git merge-tree --write-tree`, which performs the merge in a scratch object
+store and touches no working tree, index or ref, so it is safe to run across
+every worktree. `mergeConflictFiles` names the files that collide. It is
+`null` — never `false` — when the merge could not be attempted, because an
+unknown is not a licence to land. `mergeChecked` distinguishes "not checked"
+from "checked and unanswerable". `mergeConflictFiles` names the collisions,
+because "this branch conflicts" sends somebody to investigate and "it conflicts
+in these files" is the work. Roughly three quarters of the clean unmerged
+branches here conflict, which is not a fact you can guess from
+`ahead`/`behind`.
+
+`prunable: true` remains the strict disposal test: it is not the main worktree,
+the branch is an ancestor of `main`, the working tree is clean, and no curated
+finding protects it. `dispose` is derived from the same decision, so the two
+cannot disagree.
 
 ### "0 commits ahead of main" is NOT evidence that a worktree is disposable
 

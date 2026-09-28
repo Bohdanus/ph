@@ -15,12 +15,12 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Board, BoardError, parseDuration } from '../lib/agent-board/db.mjs';
+import { Board, BoardError, isImportedOrigin, parseDuration } from '../lib/agent-board/db.mjs';
 import { resolveIdentity } from '../lib/agent-board/identity.mjs';
 import { run } from '../agent-board.mjs';
 
@@ -33,6 +33,7 @@ import { run } from '../agent-board.mjs';
  * runner that does not provide it.
  */
 const CLI = resolve(import.meta.dirname ?? process.cwd(), '..', 'agent-board.mjs');
+const PACKAGE_JSON = resolve(import.meta.dirname ?? process.cwd(), '..', '..', 'package.json');
 
 let dir;
 const agents = {};
@@ -401,8 +402,8 @@ describe('file locks make one-file-one-agent real', () => {
     expect(a.locksFor(id)).toHaveLength(1);
     expect(a.listIssues({ files: ['src/ghost.ts'], claimedBy: 'a' })).toHaveLength(1);
     advance(60_001);
-    // `board show` and the FILES column of `board ready` read locksFor, and used
-    // to advertise a lease that had already run out while `board check`, in the
+    // `swarm show` and the FILES column of `swarm ready` read locksFor, and used
+    // to advertise a lease that had already run out while `swarm check`, in the
     // same breath, called the file free.
     expect(a.liveClaimOrNull(id)).not.toBeNull();
     expect(a.locksFor(id)).toHaveLength(0);
@@ -428,7 +429,7 @@ describe('file locks make one-file-one-agent real', () => {
     a.close();
     const b = boardFor('b');
     b.touchAgent();
-    // `board check` is the gate a shell branches on, so a pasted absolute path
+    // `swarm check` is the gate a shell branches on, so a pasted absolute path
     // has to hit the same lock the hold stored in relative form. Normalising
     // only on the write side made this report a held file as FREE.
     expect(b.checkPath('src/x.ts').free).toBe(false);
@@ -468,7 +469,7 @@ describe('file locks make one-file-one-agent real', () => {
   it('keeps a file held for an UNCLAIMED issue, which is the normal case', () => {
     /**
      * The invariant B1 was about, at the layer it actually failed. The first fix
-     * counted pairings with a LIVE CLAIM, so `board hold src/x.ts --issue ph-2`
+     * counted pairings with a LIVE CLAIM, so `swarm hold src/x.ts --issue ph-2`
      * — reserving a file for work not yet started, the documented workflow —
      * did not count, and `release ph-1` freed a file the agent was in. Silent,
      * in normal use, with no error anywhere.
@@ -1205,6 +1206,172 @@ describe('the command line', () => {
     expect(issues.map((issue) => issue.priority)).toEqual(['critical', 'high', 'low']);
   });
 
+  /**
+   * The failure this pins. A fresh session asked the board what the agents on
+   * this repo were doing, was told the board was empty, and the board was not:
+   * it had 196 events in it. Kilo ships a built-in tool ALSO called `board_read`,
+   * scoped to one session and its task children, so outside a fan-out it reports
+   * "no messages" truthfully and knows nothing about this repository. The swarm
+   * board could not defend itself from that, because nothing it printed ever said
+   * which board it was or where it lived.
+   */
+  it('says which board it is on a bare `board`, and on `--help`', async () => {
+    const bare = await cli([]);
+    expect(bare.code).toBe(0);
+    // The file it just read. Two boards exist on this machine at once and only
+    // one of them is about this repository.
+    expect(bare.out).toContain(join(dir, 'board.db'));
+    // The distinction, by the name that caused it.
+    expect(bare.out).toContain('board_read');
+    // AND the live state, so the command that settles the question also answers
+    // it: this is a board with things on it, not an empty one.
+    expect(bare.out).toMatch(/\d+ (ready|open|claimed)/);
+
+    // `--help` is the other thing a fresh agent reaches for first.
+    const help = await cli(['help']);
+    expect(help.out).toContain('board_read');
+    expect(help.out).toMatch(/different thing/i);
+  });
+
+  it('puts a bare `swarm` and a typed `status` in the same state, differently introduced', async () => {
+    // The banner is for the invocation where the tool itself is in question. An
+    // agent that already typed `status` wants the status, and a parser reading
+    // this output should not have to skip a paragraph of prose to find it.
+    expect((await cli([])).out).toMatch(/^swarm —/);
+    expect((await cli(['status'])).out).not.toMatch(/Kilo's built-in board_read/);
+    // Both name the database, so neither can be confused with the other board.
+    expect((await cli(['status'])).out).toContain(join(dir, 'board.db'));
+  });
+
+  /**
+   * The rename is the fix; the prose about the rename is the receipt. Adding
+   * `board` back as an alias would pass every test above and restore the exact
+   * collision this work exists to remove, so the script name is pinned here
+   * instead of being trusted to stay deleted.
+   */
+  it('has no `board` npm script, so the ambiguous name cannot come back', async () => {
+    const scripts = JSON.parse(readFileSync(PACKAGE_JSON, 'utf8')).scripts;
+    expect(Object.keys(scripts)).toContain('swarm');
+    expect(Object.keys(scripts)).not.toContain('board');
+    // And nothing in the tracked documentation still teaches the old name.
+    const readme = readFileSync(join(import.meta.dirname, '..', '..', 'AGENTS.md'), 'utf8');
+    expect(readme).not.toMatch(/npm run board\b/);
+  });
+
+  it('ranks a live swarm finding above a handoff import of the same priority', async () => {
+    // Same priority on purpose: priority is the one signal the filer stated, and
+    // it is not what separates these. The import is filed FIRST, so the old
+    // tie-break (file order) put it first too and the live finding was buried at
+    // the bottom of a fifty-row queue.
+    await cli(['new', 'imported mirror', '--priority', 'normal', '--origin', 'HANDOFF.md#1', '--json']);
+    await cli(['new', 'imported mirror two', '--priority', 'normal', '--origin', 'HANDOFF.md#2', '--json']);
+    const live = JSON.parse((await cli(['new', 'found by a peer', '--priority', 'normal', '--json'])).out);
+    const { issues } = JSON.parse((await cli(['ready', '--json'])).out);
+    expect(issues[0].id).toBe(live.id);
+    // And the flag that takes the whole argument away.
+    const onlyLive = JSON.parse((await cli(['ready', '--live', '--json'])).out);
+    expect(onlyLive.issues.map((issue) => issue.id)).toEqual([live.id]);
+  });
+
+  it('still ranks priority above provenance, because priority is the stated intent', async () => {
+    // The opposite order from the test above, and the one that must NOT change:
+    // a P0 outranks a normal live finding even though the live one is the
+    // swarm's own work. Making `live` sort first would be a different, worse bug.
+    await cli(['new', 'P0 from a document', '--priority', 'critical', '--origin', 'HANDOFF.md#1', '--json']);
+    const live = JSON.parse((await cli(['new', 'peer finding', '--priority', 'normal', '--json'])).out);
+    const { issues } = JSON.parse((await cli(['ready', '--json'])).out);
+    expect(issues[0].priority).toBe('critical');
+    expect(issues.at(-1).id).toBe(live.id);
+  });
+
+  it('puts a startable issue above one another agent is already inside', async () => {
+    // The lock is taken FIRST, by somebody else. Filing an issue `--files` a
+    // path TAKES that path for the filer, so `new` first and `hold` after
+    // produces no contention at all — and the filer's own lock is deliberately
+    // not contention, so that mistake leaves this test green against a ranking
+    // that does not work.
+    await cli(['hold', 'src/shared.ts'], 'other');
+    const busy = JSON.parse(
+      (await cli(['new', 'contended work', '--priority', 'normal', '--files', 'src/shared.ts', '--json'])).out
+    );
+    const free = JSON.parse(
+      (await cli(['new', 'startable work', '--priority', 'normal', '--files', 'src/mine.ts', '--json'])).out
+    );
+    const { issues } = JSON.parse((await cli(['ready', '--json'])).out);
+    // Filed second, so file order would put the contended one first.
+    expect(issues[0].id).toBe(free.id);
+    expect(issues.at(-1).id).toBe(busy.id);
+  });
+
+  it('reads provenance off the origin grammar, and a live finding is never an import', async () => {
+    // The classifier decides what outranks what, so its edges are pinned
+    // directly rather than only through a ranking that could hide a mistake.
+    // Every real origin the importer writes, and every shape a live finding
+    // actually takes.
+    for (const origin of [
+      'HANDOFF.md#1',
+      'HANDOFF.md#65',
+      'TEST-FLAKES.md#8',
+      'OPEN_PROBLEMS.md#p3-10-orphaned-committed-baselines-2-1-mb',
+      // The scope map is what knows the `e2e/` prefix, not the origin — but an
+      // origin carrying it must still read as an import, because reading it as
+      // `live` is what puts a mirror at the head of the work queue.
+      'e2e/OPEN_PROBLEMS.md#p2-an-empty-cdp-capture',
+    ]) {
+      expect(isImportedOrigin(origin), origin).toBe(true);
+    }
+    for (const origin of [
+      null,
+      undefined,
+      '',
+      'main: 2026-09-28',
+      'main: 2026-09-28 operator request',
+      'agent-board-init',
+      // Near misses that are NOT the importer's grammar.
+      'HANDOFF.md',
+      'HANDOFF.md#',
+      'HANDOFF.md#Not-A-Slug',
+      '#1',
+    ]) {
+      expect(isImportedOrigin(origin), String(origin)).toBe(false);
+    }
+  });
+
+  it('says how much of the ready queue is imported prose rather than work', async () => {
+    // Fifty-six rows in one priority band reads as fifty-six things to do. The
+    // table cannot say otherwise: the ORIGIN column is per-row and a reader
+    // scanning the top ten never reaches the arithmetic.
+    await cli(['new', 'import one', '--priority', 'normal', '--origin', 'HANDOFF.md#1', '--json']);
+    await cli(['new', 'import two', '--priority', 'normal', '--origin', 'TEST-FLAKES.md#3', '--json']);
+    // The bare filename is what the importer actually writes — `e2e/` belongs to
+    // the scope map, not the origin. The path-qualified form is asserted below,
+    // because a pattern that only matched the bare one would call it `live`.
+    await cli(['new', 'import three', '--priority', 'normal', '--origin', 'OPEN_PROBLEMS.md#p3-thing', '--json']);
+    await cli(['new', 'a live finding', '--priority', 'normal', '--json']);
+
+    const human = (await cli(['ready'])).out;
+    expect(human).toMatch(/1 live · 3 imported from the handoff documents/);
+    expect(human).toMatch(/1 startable now/);
+
+    const { liveCount, importedCount, startableCount, issues } = JSON.parse((await cli(['ready', '--json'])).out);
+    expect({ liveCount, importedCount, startableCount }).toEqual({
+      liveCount: 1,
+      importedCount: 3,
+      startableCount: 1,
+    });
+    // The per-issue flag, so a consumer does not have to re-derive the grammar.
+    expect(issues.map((issue) => issue.live)).toEqual([true, false, false, false]);
+  });
+
+  it('explains an empty `--live` rather than printing a bare header', async () => {
+    await cli(['new', 'import only', '--origin', 'HANDOFF.md#1', '--json']);
+    const onlyLive = await cli(['ready', '--live']);
+    expect(onlyLive.code).toBe(0);
+    expect(onlyLive.out).toMatch(/--live: nothing ready, because all 1 ready issues are handoff imports/);
+    // The queue is not empty. Saying "nothing ready" here would be the old lie.
+    expect(onlyLive.out).not.toMatch(/^nothing ready/m);
+  });
+
   it('exits 1 from `check` when a file is taken, so a shell can gate on it', async () => {
     await cli(['hold', 'src/taken.ts']);
     // Asked as a different agent: your own lock is not a conflict with yourself.
@@ -1367,7 +1534,7 @@ describe('the command line', () => {
     const bad = await cli(['frobnicate']);
     expect(bad.code).toBe(1);
     expect(bad.err).toContain('unknown command: frobnicate');
-    expect(bad.err).toContain('agent board');
+    expect(bad.err).toContain('swarm');
   });
 
   it('emits valid JSON for EVERY machine-facing command, driven from the list', async () => {

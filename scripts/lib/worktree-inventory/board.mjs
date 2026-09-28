@@ -63,7 +63,7 @@ function openBoard(dbPath) {
  * Live claims, file locks and issues, keyed for lookup by worktree path.
  *
  * A claim is "live" when it has neither been released nor had its lease run
- * out, which is the same rule `board status` applies, so a worktree marked
+ * out, which is the same rule `swarm status` applies, so a worktree marked
  * in-use here is one the board also still shows as held.
  *
  * `lease_until` and `expires_at` are ISO-8601 TEXT, not numbers, so they must
