@@ -569,6 +569,10 @@ export const CURATED = {
       'A documentation branch for the migration-status cleanup, sitting on a main commit with nothing of its own and a clean tree.',
     landed: true,
   },
+  'tool-truth': {
+    summary:
+      'Corrects the tool descriptions so each one says what the tool actually does, rather than what its name suggests.',
+  },
   'board-entrypoint': {
     summary:
       'A short-lived worktree on the board entrypoint fix, now merged: its branch is an ancestor of main and its working tree is clean.',
