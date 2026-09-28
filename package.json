@@ -26,7 +26,13 @@
     "test:e2e:report": "playwright show-report",
     "test:e2e:clean": "rm -rf test-results",
     "test:e2e:install": "playwright install chrome",
-    "prepare": "husky"
+    "prepare": "husky",
+    "gate:verify": "npm run tsc && npm run build && npm run test:e2e:unit",
+    "gate:commit": "lint-staged --fail-on-changes --no-stash && npm run gate:verify",
+    "gate:push": "npm run gate:commit && npm run lint:check && npm run test"
+  },
+  "engines": {
+    "node": ">=24"
   },
   "lint-staged": {
     "*.{ts,tsx}": [

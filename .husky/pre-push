@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+# Runs the commit gate again before the objects leave the machine. It is repeated
+# on purpose: a push can follow a `git commit --no-verify`, a rebase, or a
+# cherry-pick, none of which is guaranteed to have passed `gate:commit`, and
+# nothing downstream re-runs it until CI does.
+#
+# `lint:check` and the app unit suite are here rather than in `gate:commit`
+# because they are whole-tree checks and the slowest gates in the repo.
+set -e
+
+npm run gate:push

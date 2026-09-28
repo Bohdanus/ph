@@ -61,23 +61,12 @@ it had never been established by any run.
 
 ## 3. Pipeline work
 
-- **The `e2e` CI job still cannot fail, and the reason it could not is now gone.**
-  It is `continue-on-error: true`, which makes "everything is broken" and "all green"
-  both report success. That was acceptable while 2–4 tests failed for documented
-  reasons; it is not now, because a blocking job is achievable and the job is
-  currently blind either way. Flipping it is a workflow decision that belongs to the
-  operator, so it has not been flipped here. Two things to settle first: a headed run
-  to confirm the CDP fix outside the one configuration this host produces, and
-  whether the baselines should come from a production build.
 - **CI never runs the suite against a production build.** `playwright.config.ts`
   starts `npm run dev`, and the `ci` job's `Build` step is never exercised by the
   e2e suite. So nothing verifies `dist/` works, and the visual-regression baselines
   are only ever compared against a Vite dev server. Serving `dist/` via
   `npm run preview` would need a `webServer.command` switch, and would be a
   possible baseline-affecting change.
-- **No Playwright browser cache in the `e2e` job.** `npx playwright install
---with-deps chrome` runs on every build. `actions/cache` on
-  `~/.cache/ms-playwright` would cut a few minutes per run.
 
 ## 4. Carried-over debt in the imported code
 

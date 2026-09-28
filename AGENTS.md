@@ -143,11 +143,62 @@ debugging time:
 
 ## Gates
 
-CI (Node 24) has two blocking jobs — `ci`: `lint:check` -> `npm audit
---audit-level=high` -> `tsc` -> `test --coverage` -> `build`; and `e2e-unit`:
-`test:e2e:unit` -> `tsc -b tsconfig.e2e.json`. The `e2e` job is
-`continue-on-error` and reports the true state, known failures included. Dependency
-review allows MIT, Apache-2.0, BSD-2/3-Clause, ISC, MPL-2.0 and rejects GPL/AGPL.
+### Local gates
+
+Two husky hooks, and both delegate to a script in `package.json` so the sequence a
+developer is gated by is a command anyone can run by hand:
+
+| Command               | Runs from           | Contents                                                       |
+| --------------------- | ------------------- | -------------------------------------------------------------- |
+| `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
+| `npm run gate:verify` | —                   | `tsc` -> `build` -> `test:e2e:unit`                            |
+| `npm run gate:push`   | `.husky/pre-push`   | `gate:commit`, then `lint:check` -> `test`                     |
+
+The split is by measured cost, not by principle: `build` 1.4s, `test:e2e:unit`
+1.2s, `tsc -b` 7.4s, `test` 16s, `lint:check` 6-12s. Anything that would push the
+commit hook past ~10s belongs to the push hook. `build` stays in the commit hook
+despite being cheap because it is not redundant with `tsc`: `vite build` runs Babel
+and esbuild, which strip types without checking them, so it catches Sass, wasm
+resolution, PostCSS and import resolution that `tsc` cannot, and `tsc` catches types
+the bundle never sees.
+
+`--fail-on-changes` is the reason the commit hook is trustworthy. By default
+lint-staged re-adds whatever `eslint --fix` and `prettier --write` changed, so the
+commit ends up containing code that was never staged and never read. With the flag
+the fix is left in the working tree, the index is not touched, and the commit is
+blocked so the change can be read and staged deliberately. `--no-stash` is what
+makes that clean: without it lint-staged keeps its backup stash when it declines to
+revert, so a blocked commit leaves a `WIP on <branch>` entry behind. The two flags
+together produce no index rewrite and no residue. The cost is one extra round trip
+per commit that touched an unformatted file; `npm run format` removes it.
+
+The hook repeats `gate:commit` on push on purpose: a push can follow a
+`git commit --no-verify`, a rebase, or a cherry-pick, and nothing re-runs the commit
+gate until CI does.
+
+### CI gates
+
+CI (Node 24 from `.nvmrc`, which is also what `engines` requires) has four gating
+jobs on every push and pull request to `main`, plus `workflow_dispatch`:
+
+- `ci` — `lint:check` -> `npm audit --audit-level=high` -> `tsc` -> an assertion
+  that every tracked `.ts`/`.tsx` is inside some project's `include` -> `test
+--coverage` -> `build`. Uploads `coverage/`.
+- `e2e-unit` — `test:e2e:unit` -> `test:e2e:unit:coverage`, uploading
+  `coverage-e2e/`. Separate from `ci` so a break in the app pipeline cannot skip the
+  only gate on `e2e/`.
+- `e2e` — the Playwright specs. It used to be `continue-on-error`, justified by five
+  failing specs that are now fixed; the job was reporting a state the suite no longer
+  had, so it is a gate. What it does not rest on: the CDP capture assertions are mode-
+  and host-independent by construction, so the disjoint per-mode failing sets that
+  justified `continue-on-error` are empty by design, not by observation.
+- `dependency-review` — pull requests only. Enforces
+  `.github/dependency-review-config.yml`, which denies GPL-3.0-only and
+  AGPL-3.0-only, fails on a high-severity advisory, and allowlists MIT, Apache-2.0,
+  BSD-2/3-Clause, ISC, MPL-2.0, CC0-1.0, Unlicense, WTFPL, Zlib, CC-BY-4.0 and
+  CC-BY-SA-4.0. That list was written when nothing read the file, so no dependency
+  has ever been checked against it; tightening it is a policy call, not a cleanup.
+
 Do not weaken a gate to get green: no skips, no raised thresholds, no deleted
 assertions, no re-recorded visual baselines.
 
