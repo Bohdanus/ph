@@ -1,4 +1,4 @@
-import { SELECTION_ACTION, SET_DOCUMENT_FRAME_ACTION } from '../util/constants.ts';
+import { SELECTION_ACTION, SET_DOCUMENT_FRAME_ACTION, SHOW_LAYER_ACTION } from '../util/constants.ts';
 import type { DocumentFrame } from './document-frame.ts';
 import {
   deriveSetDocumentFrameEntry,
@@ -6,6 +6,7 @@ import {
   deriveSetSelectionEntry,
   isSetLayerPropertiesAction,
   isEntryEnabled,
+  layerPropertyKeyFor,
   type MigrationDiagnostic,
 } from './history-adapter.ts';
 import {
@@ -366,10 +367,25 @@ export function validatePlannedDurableEntry(entry: HistoryItem, planned: Durable
   }
 
   if (isSetLayerPropertiesAction(entry.actionName)) {
-    const expected = deriveSetLayerPropertiesEntry(entry);
-    if (!expected) return 'the layer-property value is invalid';
-    if (!sameJsonValue(planned.operation, expected.operation)) {
+    if (planned.operation.kind !== 'set-layer-properties') {
+      return `a layer-property change produced a "${planned.operation.kind}" operation`;
+    }
+    const { layerId, patch } = planned.operation;
+    if (layerId !== entry.layerId) return 'the durable layer id does not match the legacy entry';
+    // Checked against the legacy entry, not against a second call to the
+    // derivation that produced this plan: re-deriving would compare a value
+    // with itself and could only ever catch a hand-supplied entry, never a
+    // defect in the derivation. Exactly one key, and that key's value read
+    // from the action and the legacy args.
+    if (Object.keys(patch).length !== 1) {
       return 'the durable layer-property operation does not match the legacy entry';
+    }
+    if (layerPropertyKeyFor(entry.actionName) === 'name') {
+      const name = (entry.args as { name?: unknown } | undefined)?.name;
+      if (typeof name !== 'string') return 'the layer-property value is invalid';
+      if (patch.name !== name) return 'the durable layer name does not match the legacy entry';
+    } else if (patch.visible !== (entry.actionName === SHOW_LAYER_ACTION)) {
+      return 'the durable layer visibility does not match the legacy entry';
     }
     return null;
   }

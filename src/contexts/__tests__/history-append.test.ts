@@ -875,28 +875,39 @@ describe('decideDurableAppend: layer-property entries', () => {
   });
 
   it.each([
-    ['a rewritten name', { operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Other' } } }],
+    [
+      'a rewritten name',
+      { operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Other' } } },
+      'the durable layer name does not match the legacy entry',
+    ],
     [
       'a second property in a rename patch',
       {
         operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Renamed', visible: false } },
       },
+      'the durable layer-property operation does not match the legacy entry',
     ],
     [
       'a retargeted layer',
       { operation: { kind: 'set-layer-properties', layerId: 'other', patch: { name: 'Renamed' } } },
+      'the durable layer id does not match the legacy entry',
     ],
     [
       'a document frame operation',
       { operation: { kind: 'set-document-frame', previous: baselineFrame, next: croppedFrame } },
+      'a layer-property change produced a "set-document-frame" operation',
     ],
-    ['a no-op patch', { operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: {} } }],
-  ] as const)('reports a mismatch for a planned rename carrying %s', (_label, replacement) => {
+    [
+      'a no-op patch',
+      { operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: {} } },
+      'the durable layer-property operation does not match the legacy entry',
+    ],
+  ] as const)('reports a mismatch for a planned rename carrying %s', (_label, replacement, reason) => {
     const decision = decidePlan(renamePlan, replacement);
 
     expect(decision.outcome).toBe('mismatch');
     if (decision.outcome === 'mismatch') {
-      expect(decision.reason).toBe('the durable layer-property operation does not match the legacy entry');
+      expect(decision.reason).toBe(reason);
     }
   });
 

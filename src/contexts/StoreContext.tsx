@@ -295,25 +295,42 @@ const initialState: StoreData = {
 
 type CommitDocumentEditAction = Extract<Action, { type: 'COMMIT_DOCUMENT_EDIT' }>;
 
-function projectCommitDocumentEdit(
+/**
+ * The one post-transition projection, shared by every path that publishes a
+ * new timeline: the `COMMIT_DOCUMENT_EDIT` reducer branch, the dispatcher's
+ * commit fast path, the `APPLY_HISTORY_REPLAY` reducer branch, and the
+ * dispatcher's replay path.
+ *
+ * The dispatcher bypasses the reducer and pre-computes `latestStateRef` so a
+ * second dispatch in the same React batch is decided against the state the
+ * first one produced. When that copy was hand-written it silently dropped
+ * `hasUnsavedChanges`, so after an undo the ref disagreed with the published
+ * state. One function removes the class of bug rather than the instance.
+ */
+function projectPublishedTimeline(
   state: StoreData,
-  action: CommitDocumentEditAction,
-  timeline: HistoryTimeline
+  payload: {
+    updates?: StoreUpdates;
+    timeline: HistoryTimeline;
+    durableDocument?: DurableDocument | null;
+    durableStatus?: DurableDocumentStatus;
+    durableDiagnostics?: readonly MigrationDiagnostic[];
+  }
 ): StoreData {
-  const updates = action.payload.updates ?? {};
+  const updates = payload.updates ?? {};
   const nextFrame = updates.documentFrame;
   return {
     ...state,
     ...updates,
     ...(nextFrame ? { documentFrame: cloneDocumentFrame(nextFrame), totalSize: documentFrameSize(nextFrame) } : {}),
-    history: [...timeline.entries],
-    historyIndex: timeline.cursor,
-    branchRevision: timeline.branchRevision,
-    ...(action.payload.durableDocument !== undefined
+    history: [...payload.timeline.entries],
+    historyIndex: payload.timeline.cursor,
+    branchRevision: payload.timeline.branchRevision,
+    ...(payload.durableDocument !== undefined
       ? {
-          durableDocument: action.payload.durableDocument,
-          durableStatus: action.payload.durableStatus ?? (action.payload.durableDocument ? 'current' : 'unavailable'),
-          durableDiagnostics: action.payload.durableDiagnostics ?? [],
+          durableDocument: payload.durableDocument,
+          durableStatus: payload.durableStatus ?? (payload.durableDocument ? 'current' : 'unavailable'),
+          durableDiagnostics: payload.durableDiagnostics ?? [],
         }
       : {}),
     hasUnsavedChanges: true,
@@ -457,30 +474,10 @@ function reducer(state: StoreData, action: Action): StoreData {
         { entries: state.history, cursor: state.historyIndex, branchRevision: state.branchRevision },
         { type: 'append', entry: action.payload.historyItem }
       );
-      return projectCommitDocumentEdit(state, action, timeline);
+      return projectPublishedTimeline(state, { ...action.payload, timeline });
     }
     case 'APPLY_HISTORY_REPLAY': {
-      const replayUpdates = action.payload.updates;
-      const replayFrame = replayUpdates.documentFrame;
-      return {
-        ...state,
-        ...replayUpdates,
-        ...(replayFrame
-          ? { documentFrame: cloneDocumentFrame(replayFrame), totalSize: documentFrameSize(replayFrame) }
-          : {}),
-        history: [...action.payload.timeline.entries],
-        historyIndex: action.payload.timeline.cursor,
-        branchRevision: action.payload.timeline.branchRevision,
-        ...(action.payload.durableDocument !== undefined
-          ? {
-              durableDocument: action.payload.durableDocument,
-              durableStatus:
-                action.payload.durableStatus ?? (action.payload.durableDocument ? 'current' : 'unavailable'),
-              durableDiagnostics: action.payload.durableDiagnostics ?? [],
-            }
-          : {}),
-        hasUnsavedChanges: true,
-      };
+      return projectPublishedTimeline(state, action.payload);
     }
     case 'REPLACE_DOCUMENT': {
       const updates = action.payload.updates;
@@ -840,7 +837,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           durableDiagnostics: converted.diagnostics,
         },
       };
-      const nextState = projectCommitDocumentEdit(currentState, committedAction, timeline);
+      const nextState = projectPublishedTimeline(currentState, {
+        updates: committedAction.payload.updates,
+        timeline,
+        durableDocument: converted.document,
+        durableStatus: converted.status,
+        durableDiagnostics: converted.diagnostics,
+      });
       latestStateRef.current = nextState;
       rawDispatch(committedAction);
       // Retirement runs after the transition is published, and only against the
@@ -868,22 +871,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         action.payload.timeline.cursor,
         action.payload.timeline.branchRevision
       );
-      const nextState: StoreData = {
-        ...currentState,
-        ...replayUpdates,
-        ...(replayFrame
-          ? {
-              documentFrame: cloneDocumentFrame(replayFrame),
-              totalSize: documentFrameSize(replayFrame),
-            }
-          : {}),
-        history: [...action.payload.timeline.entries],
-        historyIndex: action.payload.timeline.cursor,
-        branchRevision: action.payload.timeline.branchRevision,
+      const nextState = projectPublishedTimeline(currentState, {
+        updates: replayUpdates,
+        timeline: action.payload.timeline,
         durableDocument: converted.document,
         durableStatus: converted.status,
         durableDiagnostics: converted.diagnostics,
-      };
+      });
       latestStateRef.current = nextState;
       rawDispatch({
         ...action,

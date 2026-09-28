@@ -240,7 +240,7 @@ function frameFromLegacy(
         : documentFrameFromSize(initialSize);
 }
 
-function entry(id: string, operation: DurableOperation, enabled = true): DurableHistoryEntry {
+function entry<Op extends DurableOperation>(id: string, operation: Op, enabled = true): DurableHistoryEntry<Op> {
   return Object.freeze({ id, schemaVersion: DURABLE_SCHEMA_VERSION, enabled, operation });
 }
 
@@ -328,8 +328,47 @@ export function deriveSetSelectionEntry(
   return entry(item.id, operation, isEntryEnabled(item));
 }
 
-export function isSetLayerPropertiesAction(actionName: ActionType): boolean {
-  return actionName === SHOW_LAYER_ACTION || actionName === HIDE_LAYER_ACTION || actionName === RENAME_LAYER_ACTION;
+/**
+ * The layer-property actions the append boundary translates, and the single
+ * property each one owns. This map is the only place membership is stated:
+ * a per-action if/else beside it would let the two disagree, and an action
+ * added here without a property arm would make conversion record no operation
+ * while the boundary reported an invalid value.
+ */
+const LAYER_PROPERTY_BY_ACTION = {
+  [SHOW_LAYER_ACTION]: 'visible',
+  [HIDE_LAYER_ACTION]: 'visible',
+  [RENAME_LAYER_ACTION]: 'name',
+} as const satisfies Partial<Record<ActionType, keyof DurableLayerPropertyPatch>>;
+
+type LayerPropertyAction = keyof typeof LAYER_PROPERTY_BY_ACTION;
+type LayerPropertyOperation = Extract<DurableOperation, { kind: 'set-layer-properties' }>;
+
+export function isSetLayerPropertiesAction(actionName: ActionType): actionName is LayerPropertyAction {
+  return Object.hasOwn(LAYER_PROPERTY_BY_ACTION, actionName);
+}
+
+/**
+ * The property an action owns, or `null` when it is not a layer-property
+ * action. Callers that must check a planned operation against the legacy entry
+ * use this rather than re-deriving, so the check reads the action and not the
+ * derivation that produced the thing being checked.
+ */
+export function layerPropertyKeyFor(actionName: ActionType): keyof DurableLayerPropertyPatch | null {
+  return isSetLayerPropertiesAction(actionName) ? LAYER_PROPERTY_BY_ACTION[actionName] : null;
+}
+
+/**
+ * The patch a planned entry carries, or `null` when there is no entry or it is
+ * not a layer-property operation. A writer needs this to apply the same patch
+ * the store will publish; keeping the operation-kind narrowing here means the
+ * writer does not restate which kind it is reading.
+ */
+export function derivedLayerPropertyPatch(
+  plannedEntry: DurableHistoryEntry | null | undefined
+): DurableLayerPropertyPatch | null {
+  const operation = plannedEntry?.operation;
+  return operation?.kind === 'set-layer-properties' ? operation.patch : null;
 }
 
 /**
@@ -337,26 +376,25 @@ export function isSetLayerPropertiesAction(actionName: ActionType): boolean {
  * the append boundary. Keeping the action whitelist here makes conversion and
  * a live writer use the same semantics without accepting arbitrary patches.
  */
-export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistoryEntry | null {
+export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistoryEntry<LayerPropertyOperation> | null {
+  if (!isSetLayerPropertiesAction(item.actionName)) return null;
   let patch: DurableLayerPropertyPatch;
-  if (item.actionName === SHOW_LAYER_ACTION || item.actionName === HIDE_LAYER_ACTION) {
-    patch = { visible: item.actionName === SHOW_LAYER_ACTION };
-  } else if (item.actionName === RENAME_LAYER_ACTION) {
+  if (LAYER_PROPERTY_BY_ACTION[item.actionName] === 'name') {
     const name = (item.args as { name?: unknown } | undefined)?.name;
     if (typeof name !== 'string') return null;
     patch = { name };
   } else {
-    return null;
+    // Visibility comes from the action, never from `args.visible`: that is the
+    // rule legacy replay applies, and a hand-built args object must not be able
+    // to record an entry whose durable patch contradicts the action.
+    patch = { visible: item.actionName === SHOW_LAYER_ACTION };
   }
-  return entry(
-    item.id,
-    Object.freeze({
-      kind: 'set-layer-properties',
-      layerId: item.layerId,
-      patch: Object.freeze(patch),
-    }),
-    isEntryEnabled(item)
-  );
+  const operation: LayerPropertyOperation = Object.freeze({
+    kind: 'set-layer-properties',
+    layerId: item.layerId,
+    patch: Object.freeze(patch),
+  });
+  return entry(item.id, operation, isEntryEnabled(item));
 }
 
 function diagnosticFromError(error: unknown, item?: HistoryItem): MigrationDiagnostic {
@@ -537,11 +575,10 @@ export function legacyHistoryToDurable(
       } else if (isSetLayerPropertiesAction(item.actionName)) {
         const layerPropertiesEntry = deriveSetLayerPropertiesEntry(item);
         if (layerPropertiesEntry) {
-          const layerPropertiesOperation = layerPropertiesEntry.operation;
-          operation = layerPropertiesOperation;
+          operation = layerPropertiesEntry.operation;
           const layer = currentLayers.get(item.layerId);
-          if (enabled && layer && layerPropertiesOperation.kind === 'set-layer-properties') {
-            currentLayers.set(item.layerId, cloneLayerSnapshot({ ...layer, ...layerPropertiesOperation.patch }));
+          if (enabled && layer) {
+            currentLayers.set(item.layerId, cloneLayerSnapshot({ ...layer, ...layerPropertiesEntry.operation.patch }));
           }
         }
       } else if (item.actionName === REORDER_ACTION) {

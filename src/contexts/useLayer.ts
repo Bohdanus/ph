@@ -45,7 +45,7 @@ import type { TransformToolArgs } from '../tools/transform.ts';
 import type { NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { planHistoryAppend } from './history-append.ts';
-import { isSetLayerPropertiesAction } from './history-adapter.ts';
+import { derivedLayerPropertyPatch, isSetLayerPropertiesAction } from './history-adapter.ts';
 import type { LayerPresentationRequest } from './layer-presentation.ts';
 import {
   canvasRectToDocumentFrame,
@@ -456,11 +456,13 @@ export const useLayers = () => {
           currentFrame: documentFrame,
         })
       : null;
-    const runtimePatch = isSetLayerPropertiesAction(actionName)
-      ? planned?.durableEntry?.operation.kind === 'set-layer-properties'
-        ? planned.durableEntry.operation.patch
-        : patch
-      : patch;
+    // The runtime layer takes the DERIVED patch, not the caller's: the durable
+    // entry is what the store will publish, and letting a caller reach the live
+    // layer with fields legacy replay would ignore makes the layer change on
+    // commit and not revert. Falls back to the caller's patch only when the
+    // derivation refused, which keeps the pre-derivation behaviour for a
+    // malformed rename.
+    const runtimePatch = derivedLayerPropertyPatch(planned?.durableEntry) ?? patch;
     const newLayers = { ...layers, [id]: { ...layer, ...runtimePatch } } as LayersRecord;
     dispatch({
       type: 'COMMIT_DOCUMENT_EDIT',
