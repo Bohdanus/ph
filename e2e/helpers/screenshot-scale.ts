@@ -11,6 +11,25 @@
  * The viewport-relative -> page-relative translation below is the same kind of rule
  * for the pair of spaces `boundingBox()` and the capture APIs disagree about, so it
  * lives here too rather than being written a second time next to its only caller.
+ *
+ * One conversion here carries a convention the point rule does not. `imageBoundsToCss`
+ * takes `left`/`top`/`right`/`bottom` as INCLUSIVE image pixel indices -- the shape
+ * `screenshotBoundsToCss` produces and both of its consumers pass through -- and runs
+ * each corner through the point rule, so `right`/`bottom` land on the CENTRE of the last
+ * covered pixel. `right - left` is therefore the distance between two pixel centres and
+ * under-reports the covered width by exactly one image pixel. Both current consumers want
+ * a point or a tolerant comparison, so it is documented rather than corrected; that
+ * function's own JSDoc spells out what a caller doing area or delta math must add.
+ *
+ * This module also owns every coordinate SHAPE the suite uses -- `CssBox`, `CssBounds`
+ * and `ClipOptions` are declared here and nowhere else. They used to be duplicated
+ * across `canvas-helpers.ts` and `cdp-helpers.ts`, which interoperated by structural
+ * typing rather than by aliasing, so a field added to one copy silently did not reach
+ * the others and the compiler was happy with all three. `canvas-helpers.ts` re-exports
+ * `CssBox` under the name `BoundingBox` because that is the name the specs import, so
+ * no caller outside this directory had to change; `cdp-helpers.ts` imports both shapes
+ * directly. Do not re-declare them: `__tests__/screenshot-scale.unit.test.ts` fails if a
+ * second copy appears anywhere under `e2e/helpers/`.
  */
 
 export interface Point {
@@ -23,6 +42,17 @@ export interface ImageSize {
   height: number;
 }
 
+export interface CssBounds {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/**
+ * A rectangle in CSS page space. `canvas-helpers.ts` re-exports this as `BoundingBox`,
+ * the name the specs import, and `cdp-helpers.ts` calls it `BoundingBox` too.
+ */
 export interface CssBox {
   x: number;
   y: number;
@@ -30,11 +60,16 @@ export interface CssBox {
   height: number;
 }
 
-export interface CssBounds {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
+/**
+ * A capture region, every axis optional: an omitted axis means "whatever the default
+ * for this call site is", and `buildClip` in canvas-helpers.ts resolves one of these
+ * against a `Required<ClipOptions>` default. Declared once here, imported everywhere.
+ */
+export interface ClipOptions {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
 }
 
 /** `window.scrollX` / `window.scrollY`, read at the moment a clip is built. */
@@ -95,6 +130,30 @@ export function cssPointToImage(image: ImageSize, box: CssBox, point: Point): Po
   };
 }
 
+/**
+ * Maps a captured image's pixel bounds onto the CSS page. Each corner goes through
+ * `imagePointToCss`, so this is the point rule with one added convention, and the
+ * convention is the caller's, not the arithmetic's.
+ *
+ * `left` / `top` / `right` / `bottom` are INCLUSIVE image pixel indices -- the shape
+ * `screenshotBoundsToCss` in canvas-helpers.ts produces, and what `select-move.spec.ts`
+ * and `viewport-drawing.spec.ts` feed in. `right` and `bottom` are still converted as
+ * points, so they land on the CENTRE of the last covered pixel rather than on its outer
+ * edge.
+ *
+ * The off-by-one that follows is real and currently invisible: `right - left` measures
+ * between two pixel centres, so it under-reports the covered width by exactly one image
+ * pixel. Image pixels 10..14 inclusive are five of them, and at 1:1 with the box the
+ * span reports 4 rather than 5. A caller that wants the covered AREA, or a drag DELTA,
+ * has to add one image pixel itself (half a CSS pixel on a 2x capture) before the
+ * multiplication. Neither current consumer does: they want a location or a tolerant
+ * comparison, so nothing breaks today.
+ *
+ * Do not "fix" this by mapping `right`/`bottom` to the outer edge instead. Two existing
+ * cases in `screenshot-scale.unit.test.ts` pin the centre-of-the-last-pixel answer as the
+ * convention, so changing the arithmetic is a deliberate change to the callers' contract
+ * and not a local correction -- which is the whole reason it is written down here.
+ */
 export function imageBoundsToCss(
   image: ImageSize,
   box: CssBox,

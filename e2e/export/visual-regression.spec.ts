@@ -1,6 +1,9 @@
 import { expect, test, type TestInfo } from '@playwright/test';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { compareScreenshots } from '../helpers/image-comparison';
 import {
   exportAndVerify,
@@ -16,6 +19,21 @@ const formats = exportFormats.filter((f) => f.comparePixels);
 
 /** Sub-directory of the committed snapshot directory that holds the baseline PNGs. */
 const BASELINE_DIR = 'export-baselines';
+
+/**
+ * The one `updateSnapshots` value that re-records a baseline.
+ *
+ * Playwright declares `--update-snapshots [mode]` with `choices: ['all', 'changed',
+ * 'missing', 'none']` and `preset: 'changed'`
+ * (`node_modules/playwright/lib/program.js:225`), so the BARE flag resolves to
+ * `'changed'`, not `'all'`, and `'changed'` is inert here anyway: this spec reads its
+ * baseline with `readFile` and compares with `compareScreenshots`, so there is no
+ * Playwright snapshot state for it to rewrite. `npm run test:e2e:update-baselines`
+ * therefore has to pass `--update-snapshots=all` explicitly, and the
+ * `the re-record command passes the snapshot mode the record branch requires` test
+ * below is what keeps the two spellings from drifting apart again.
+ */
+const BASELINE_RECORD_MODE = 'all';
 
 /**
  * Absolute path of a committed baseline PNG.
@@ -34,7 +52,10 @@ function baselineFile(testInfo: TestInfo, fileName: string): string {
 
 test.describe('Export visual regression', () => {
   for (const format of formats) {
-    test(`exports to ${format.label} (${format.extension}) matches visual baseline`, async ({ page }, testInfo) => {
+    test(`exports to ${format.label} (${format.extension}) matches visual baseline`, async ({
+      page,
+      browser,
+    }, testInfo) => {
       test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
 
       const { sourceDataUrl, downloadDirectory } = await setupExportTest(page, testInfo);
@@ -64,13 +85,13 @@ test.describe('Export visual regression', () => {
       const exportedBuffer = Buffer.from(exportedScreenshot, 'base64');
       const baselineFilePath = baselineFile(testInfo, `drawing${format.extension}.png`);
 
-      // `updateSnapshots` is a string union ('all' | 'changed' | 'missing' | 'none')
-      // whose DEFAULT is 'missing', which is truthy. A bare truthiness check therefore
-      // always took this branch: every run rewrote the committed baseline and returned
-      // before comparing, so `compareScreenshots` and the assertion below it were
-      // unreachable and the committed oracle was disposable. Only an explicit
-      // --update-snapshots ('all') may re-record a baseline.
-      if (testInfo.config.updateSnapshots === 'all') {
+      // A bare truthiness check on `updateSnapshots` was the first defect here: the
+      // option is a string union whose default ('missing') is truthy, so every run
+      // rewrote the committed baseline and returned before comparing, and the
+      // comparison below it was unreachable. The check is now an exact match against
+      // BASELINE_RECORD_MODE, and `npm run test:e2e:update-baselines` is pinned to
+      // pass the same value, because the two are one mechanism seen from two places.
+      if (testInfo.config.updateSnapshots === BASELINE_RECORD_MODE) {
         await mkdir(path.dirname(baselineFilePath), { recursive: true });
         await writeFile(baselineFilePath, exportedBuffer);
         testInfo.annotations.push({ type: 'baseline-recorded', description: baselineFilePath });
@@ -80,8 +101,49 @@ test.describe('Export visual regression', () => {
       const baseline = await readFile(baselineFilePath).catch(() => null);
       if (!baseline) {
         await testInfo.attach(`${format.label}-baseline-missing`, { body: exportedBuffer, contentType: 'image/png' });
-        throw new Error(`Baseline missing for ${format.label}. Run with --update-snapshots to create.`);
+        // The command is named by its npm script, not by its raw flag: the bare
+        // `--update-snapshots` this used to print resolves to 'changed' and cannot
+        // reach this branch, so telling a reader to run it named a dead end.
+        throw new Error(
+          `Baseline missing for ${format.label}. Record it with \`npm run test:e2e:update-baselines\`, ` +
+            `which runs \`playwright test e2e/export/visual-regression.spec.ts --update-snapshots=${BASELINE_RECORD_MODE}\`. ` +
+            'Re-recording replaces a committed oracle, so it is an operator decision - review the diff it produces.'
+        );
       }
+
+      /**
+       * An 800x600 baseline is 480,000 pixels, so 100 differing pixels is 0.021% of
+       * the picture. That is a TRIPWIRE, not a tolerance, and the distinction is the
+       * contract rather than a detail of the number:
+       *
+       * - Four of the seven compared formats are lossy — JPEG, WebP, GIF and AVIF —
+       *         and the encoder inside the browser decides their last digits. The budget
+       *         covers that encoder's bounded non-determinism. It does not cover a CHANGE
+       *         in it. (PNG, BMP and SVG are lossless, and PNG is the one a logic change
+       *         in the export path would break first.)
+       * - A Chrome, libjpeg or libavif upgrade moves those digits by more than 100
+       *         pixels, and that is a hard red on a blocking gate. Raising either number is
+       *         the wrong repair: at `maxDiffPixels: 4800` this suite would pass a visibly
+       *         different picture, so the raise does not make the gate tolerant, it makes it
+       *         blind. A red here is fixed by fixing the export path or by re-recording
+       *         deliberately, and never by widening the budget.
+       * - The browser version is printed in the failure message for that triage
+       *         specifically. The first question about a red here is "did the encoder
+       *         change", and it is now answerable from the run output rather than guessed.
+       *
+       * WHY THE CHROME VERSION IS NOT PINNED IN CI, which is the other half of this
+       * finding and a deliberate non-action. `playwright.config.ts` uses
+       * `channel: 'chrome'` - the system browser - and the `e2e` job installs it with
+       * `npx playwright install --with-deps chrome`, which resolves to whatever
+       * `google-chrome-stable` currently is. Pinning a version in the workflow would
+       * be a guess, not a fix: nothing in this repository records which Chrome produced
+       * the committed baselines, so a pin that does not match the recording version
+       * turns a green gate red for a reason no one can diagnose from the tree, and a
+       * pin that does match it asserts a reproducibility this repository cannot
+       * demonstrate. Establishing that record means re-recording the baselines under a
+       * known version, which is an operator decision and out of scope here. Reporting
+       * the version is the half of reproducibility that is available without it.
+       */
 
       const result = await compareScreenshots(exportedBuffer, baseline, {
         threshold: 0.01,
@@ -89,7 +151,9 @@ test.describe('Export visual regression', () => {
       });
       expect(
         result.matches,
-        `Visual mismatch for ${format.label}: ${result.diffPixels} diff pixels (ratio: ${result.diffRatio.toFixed(4)})`
+        `Visual mismatch for ${format.label}: ${result.diffPixels} diff pixels ` +
+          `(ratio: ${result.diffRatio.toFixed(4)}), encoded by ${browser.version()}. ` +
+          'Do not widen the budget - see the argument above this call.'
       ).toBe(true);
     });
   }
@@ -144,5 +208,98 @@ test.describe('Export visual regression', () => {
     await mkdir(downloadDirectory, { recursive: true });
 
     await exportIcoAndVerify(page, sourceDataUrl, downloadDirectory);
+  });
+});
+
+/**
+ * The two npm scripts that operate on this oracle.
+ *
+ * They live here rather than in a spec of their own because there is nothing else in
+ * the suite they could belong to: `package.json` is not importable from a
+ * Playwright spec's type-checked project without a cast, and the only way to pin a
+ * shell command is to read the command and run it. Both tests are hermetic - no
+ * browser, no dev server, and the `clean` one works inside a temporary directory it
+ * creates and removes itself.
+ */
+test.describe('Export harness commands', () => {
+  /**
+   * The repository root, taken from the resolved Playwright config rather than from
+   * `process.cwd()`. npm scripts run with the package directory as their cwd, but a
+   * direct `playwright test` from a subdirectory would not, and reading the wrong
+   * `package.json` would make both tests below pass on nothing.
+   */
+  function repositoryRoot(testInfo: TestInfo): string {
+    const configFile = testInfo.config.configFile;
+    if (!configFile) {
+      throw new Error('No Playwright config file was resolved, so the repository root is unknown');
+    }
+    return path.dirname(configFile);
+  }
+
+  async function packageScript(testInfo: TestInfo, name: string): Promise<string> {
+    const manifest = JSON.parse(await readFile(path.join(repositoryRoot(testInfo), 'package.json'), 'utf8')) as {
+      scripts?: Record<string, string>;
+    };
+    const script = manifest.scripts?.[name];
+    if (script === undefined) {
+      throw new Error(`package.json has no "${name}" script`);
+    }
+    return script;
+  }
+
+  test('the re-record command passes the snapshot mode the record branch requires', async (_fixtures, testInfo) => {
+    const script = await packageScript(testInfo, 'test:e2e:update-baselines');
+
+    expect(
+      script,
+      'test:e2e:update-baselines must pass --update-snapshots=all. A bare --update-snapshots ' +
+        "resolves to 'changed' (preset in playwright/lib/program.js), which never reaches the " +
+        'record branch, so the script re-recorded nothing and every baseline was only ever compared.'
+    ).toContain(`--update-snapshots=${BASELINE_RECORD_MODE}`);
+  });
+
+  test('the clean command removes generated run output and keeps the reporter result', async (_fixtures, testInfo) => {
+    const root = repositoryRoot(testInfo);
+    const clean = await packageScript(testInfo, 'test:e2e:clean');
+
+    // Read the JSON reporter's output path out of the config rather than repeating it
+    // here, so a change to that path keeps this test pointed at the real file.
+    const configSource = await readFile(path.join(root, 'playwright.config.ts'), 'utf8');
+    const reporterOutput = /outputFile: '([^']+)'/.exec(configSource)?.[1];
+    expect(
+      reporterOutput,
+      'playwright.config.ts must name a JSON reporter output file, or this test has nothing to protect'
+    ).toBeTruthy();
+
+    // The fixture mirrors the repository root, because the reporter path is relative
+    // to it: the sandbox stands in for the root and `test-results` is the real
+    // outputDir. The script runs with the sandbox as its cwd, so the only paths it can
+    // touch are inside the fixture.
+    const sandbox = await mkdtemp(path.join(tmpdir(), 'e2e-clean-'));
+    try {
+      const runOutput = path.join(sandbox, 'test-results');
+      await mkdir(path.join(runOutput, 'exports-a-visual-regression-test'), { recursive: true });
+      await writeFile(path.join(sandbox, reporterOutput!), '{"suites":[]}', 'utf8');
+      await writeFile(path.join(runOutput, '.last-run.json'), '{"status":"passed"}', 'utf8');
+      await writeFile(path.join(runOutput, 'exports-a-visual-regression-test', 'drawing.png'), 'x', 'utf8');
+
+      execSync(clean, { cwd: sandbox, stdio: 'pipe' });
+
+      expect(
+        existsSync(path.join(sandbox, reporterOutput!)),
+        'test:e2e:clean must not delete the machine-readable run result; the whole suite is ' +
+          'readable from it without opening the HTML report'
+      ).toBe(true);
+      expect(
+        existsSync(path.join(runOutput, 'exports-a-visual-regression-test')),
+        'test:e2e:clean must delete the per-test output directories, which is what it is named for'
+      ).toBe(false);
+      expect(
+        existsSync(path.join(runOutput, '.last-run.json')),
+        'test:e2e:clean must delete the last-run marker, which describes a run whose output is gone'
+      ).toBe(false);
+    } finally {
+      await rm(sandbox, { recursive: true, force: true });
+    }
   });
 });

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   cssPointToImage,
   imageBoundsToCss,
@@ -10,6 +11,27 @@ import {
 
 /** Workspace canvas box as reported by Playwright in the e2e specs. */
 const BOX: CssBox = { x: 100, y: 50, width: 400, height: 300 };
+
+const SCALE_SOURCE = readFileSync(new URL('../screenshot-scale.ts', import.meta.url), 'utf8');
+
+/**
+ * The `/** ... *\/` block immediately preceding `marker`, as source text.
+ *
+ * The inclusive-index convention on `imageBoundsToCss` is prose, so the pin for it has to
+ * read prose. Going through the source keeps the test from having to re-declare the rule
+ * somewhere a future edit can forget to update.
+ */
+function blockCommentBefore(marker: string): string {
+  const markerAt = SCALE_SOURCE.indexOf(marker);
+  if (markerAt === -1) throw new Error(`marker not found in screenshot-scale.ts: ${marker}`);
+  const head = SCALE_SOURCE.slice(0, markerAt);
+  const start = head.lastIndexOf('/*');
+  if (start === -1) throw new Error(`no block comment precedes: ${marker}`);
+  const block = head.slice(start);
+  const end = block.indexOf('*/');
+  if (end === -1) throw new Error(`unterminated block comment before: ${marker}`);
+  return block.slice(0, end + 2);
+}
 
 describe('imagePointToCss', () => {
   const CASES: {
@@ -153,6 +175,80 @@ describe('imageBoundsToCss', () => {
       top: imagePointToCss(image, BOX, { x: bounds.left, y: bounds.top }).y,
       right: imagePointToCss(image, BOX, { x: bounds.right, y: bounds.bottom }).x,
       bottom: imagePointToCss(image, BOX, { x: bounds.right, y: bounds.bottom }).y,
+    });
+  });
+
+  it('reports the covered width one image pixel short, because inclusive indices land on pixel centres', () => {
+    // FINDING, pinned: `left`/`right` are INCLUSIVE image pixel indices and both corners
+    // go through the point rule, so `right` is the CENTRE of the last covered pixel and
+    // the span measures centre-to-centre. Nothing is broken today — both consumers want a
+    // point or a tolerant comparison — but a caller doing drag-delta or area math would be
+    // short by exactly one image pixel, and before this test nothing in the module said so.
+    const image: ImageSize = { width: 400, height: 300 }; // 1:1 with BOX
+    const bounds = { left: 10, top: 20, right: 14, bottom: 24 };
+
+    // Image pixels 10..14 inclusive: five of them, so five CSS pixels at 1:1.
+    expect(bounds.right - bounds.left + 1).toBe(5);
+
+    const css = imageBoundsToCss(image, BOX, bounds);
+    expect(css).toEqual({ left: 110, top: 70, right: 114, bottom: 74 });
+    // The reported span, which is the number area math would use.
+    expect(css.right - css.left).toBe(4);
+    expect(css.bottom - css.top).toBe(4);
+  });
+
+  it('carries the same one-pixel shortfall onto a 2x capture, where it is half a CSS pixel', () => {
+    // A 2x capture does not repair it. The span is still one image pixel short; scaled,
+    // that is half a CSS pixel, which is asserted in CSS units because that is the number
+    // a caller would do the arithmetic on.
+    const image: ImageSize = { width: 800, height: 600 };
+    const bounds = { left: 20, top: 40, right: 28, bottom: 48 }; // nine image pixels
+
+    const css = imageBoundsToCss(image, BOX, bounds);
+    // Nine image pixels at 2x cover 4.5 CSS pixels; the span reports 4.
+    expect(css).toEqual({ left: 110, top: 70, right: 114, bottom: 74 });
+    expect(css.right - css.left).toBe(4);
+    // The amount a caller has to add back: one image pixel, in CSS units.
+    expect(css.right - css.left + BOX.width / image.width).toBe(4.5);
+  });
+
+  /**
+   * The two arithmetic tests above pin the convention; these pin that it is WRITTEN DOWN.
+   *
+   * `imageBoundsToCss` had no JSDoc at all and the module docstring did not mention it, so
+   * the inclusive-index/pixel-centre rule survived only as the expected values in this
+   * file. A caller reading only the module would have had to guess, and a "fix" to the
+   * arithmetic would have looked like an obvious correction rather than a change of
+   * contract. Asserting the wording keeps the documentation from being deleted as an
+   * apparent duplicate of the arithmetic.
+   */
+  describe('the convention is documented on the function', () => {
+    const JSDOC = blockCommentBefore('export function imageBoundsToCss');
+
+    it('says the bounds are inclusive image pixel indices', () => {
+      expect(JSDOC).toMatch(/inclusive/i);
+    });
+
+    it('says right and bottom land on the centre of the last covered pixel', () => {
+      expect(JSDOC).toMatch(/cent(re|er)/i);
+      expect(JSDOC).toMatch(/last covered pixel/i);
+    });
+
+    it('states the arithmetic consequence, so "inclusive" is not read as "right is exclusive"', () => {
+      expect(JSDOC).toMatch(/under-reports|short by/i);
+    });
+  });
+
+  describe('the convention is documented in the module docstring', () => {
+    const MODULE_DOC = blockCommentBefore('export interface Point');
+
+    it('mentions imageBoundsToCss and the inclusive-index convention', () => {
+      expect(MODULE_DOC).toMatch(/imageBoundsToCss/);
+      expect(MODULE_DOC).toMatch(/inclusive/i);
+    });
+
+    it('mentions the pixel-centre mapping that causes the off-by-one', () => {
+      expect(MODULE_DOC).toMatch(/cent(re|er)/i);
     });
   });
 });
@@ -363,5 +459,48 @@ describe('viewportRectToPageRect', () => {
   it('is a pure function of its two arguments', () => {
     const scroll = { x: 30, y: 440 };
     expect(viewportRectToPageRect(RECT, scroll)).toEqual(viewportRectToPageRect(RECT, scroll));
+  });
+});
+
+describe('the coordinate shapes have exactly one declaration', () => {
+  /**
+   * `BoundingBox`, `CssBox`, `CssBounds` and `ClipOptions` were each declared more than
+   * once across `canvas-helpers.ts`, `cdp-helpers.ts` and this file, and the copies were
+   * byte-identical, so structural typing made them interchangeable and the compiler
+   * reported no drift when they stopped being identical. `canvas-helpers.ts` still
+   * re-exports `CssBox` as `BoundingBox` because that is the name the specs import -- a
+   * re-export is not a second declaration, which is what these assertions check.
+   */
+  const HELPER_SOURCES = ['canvas-helpers.ts', 'cdp-helpers.ts', 'screenshot-scale.ts'] as const;
+
+  function declarationsIn(file: string): string[] {
+    const source = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+    return [...source.matchAll(/^\s*(?:export\s+)?interface\s+(\w+)/gm)].map((match) => match[1]);
+  }
+
+  function ownersOf(name: string): string[] {
+    return HELPER_SOURCES.filter((file) => declarationsIn(file).includes(name));
+  }
+
+  it.each(['CssBox', 'CssBounds', 'ClipOptions'])('declares %s only here', (name) => {
+    expect(ownersOf(name)).toEqual(['screenshot-scale.ts']);
+  });
+
+  it('leaves no helper module with a private BoundingBox of its own', () => {
+    // The name specs import stays a re-export of `CssBox`; a declaration anywhere else
+    // is the drift this replaces, whatever the file calls it.
+    const local = HELPER_SOURCES.filter(
+      (file) => file !== 'screenshot-scale.ts' && declarationsIn(file).includes('BoundingBox')
+    );
+    expect(local).toEqual([]);
+  });
+
+  it('wires canvas-helpers to the shared declaration instead of shadowing it', () => {
+    // A re-export is invisible to a declaration count, so the alias is what proves the
+    // specs' `import type { BoundingBox } from './helpers/canvas-helpers'` resolves to
+    // this file's `CssBox` rather than to a local shape that merely looks like it.
+    const source = readFileSync(new URL('../canvas-helpers.ts', import.meta.url), 'utf8');
+    expect(source).toMatch(/type\s+CssBox\s+as\s+BoundingBox/);
+    expect(source).toMatch(/export type \{[^}]*\bBoundingBox\b/);
   });
 });

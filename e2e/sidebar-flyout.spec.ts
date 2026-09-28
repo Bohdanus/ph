@@ -154,15 +154,13 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     await expect(flyout).toContainText('Brush Tool');
   });
 
+  // Known skip — recorded in e2e/OPEN_PROBLEMS.md, "Known-skip tests". Right-click on a
+  // single-tool group is not a user-facing behaviour this suite pins, and the browser's own
+  // context menu makes the probe unreliable across environments. The `dd774cd` this block
+  // used to cite came from the suite's source repository, whose history did not travel with
+  // it, so the hash resolves to nothing here and cannot be recovered from this checkout.
   test.skip('right-click does not open flyout for single-tool groups', async ({ page }) => {
     // Draw is a single tool (no group)
-    // SKIPPED: Business value unclear - right-click on single-tool groups is not a user-facing feature.
-    // The test checks that right-click doesn't open a flyout, but there's no requirement or user story
-    // for this behavior. Introduced in dd774cd merge without clear rationale.
-    // FLAKINESS: Browser native context menu interferes with right-click detection.
-    // Right-click events are consumed by browser before reaching app logic in some environments.
-    // This makes the test unreliable across CI/browser configurations.
-    // Re-enable if a specific UX requirement for right-click handling on single tools emerges.
     const drawButton = page.getByTestId('tool-button-draw');
     await expect(drawButton).toBeVisible();
 
@@ -196,6 +194,14 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
 
     // Verify primary tool shows Ellipse
     await verifyPrimaryTool(page, 'shape', 'Ellipse Tool');
+
+    // And that the STORE carries the figure, not just the tile's caption. All five figures
+    // share the tool name `shape`, so `selectTool` selects the same tool whichever item was
+    // clicked and the tile alone cannot tell them apart — the only thing that distinguishes
+    // an ellipse from a rectangle is the patched `figure`. Its one appearance in the
+    // document is the Shape options bar's readout, which is what this reads. The default is
+    // `rectangle`, so without the patch this says `Rectangle Tool`.
+    await expect(page.locator('[aria-label="Current shape"]')).toContainText('Ellipse Tool');
   });
 
   test('flyout closes on outside click', async ({ page }) => {

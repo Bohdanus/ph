@@ -3,6 +3,7 @@ import type { Mock } from 'vitest';
 import type { Page, TestInfo } from '@playwright/test';
 import path from 'node:path';
 import sharp from 'sharp';
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import {
   CHANGED_CHANNEL_THRESHOLD_GENERAL,
@@ -95,11 +96,31 @@ const mocks = vi.hoisted(() => {
     }),
   };
 
+  /**
+   * `expect(x).not` is modelled by inversion, not by re-running the check: every
+   * matcher above fails by throwing, so a negated matcher passes exactly when the
+   * matcher it wraps FAILED. A mock that ran the wrapped matcher and reported its
+   * result would be inverted, which is the easiest part of Playwright to get wrong.
+   */
+  const negated: Record<string, Mock<(...args: never[]) => Promise<unknown>>> = {};
+  for (const [name, matcher] of Object.entries(matchers) as Array<
+    [string, Mock<(...args: never[]) => Promise<unknown>>]
+  >) {
+    negated[name] = vi.fn(async (...args: never[]) => {
+      try {
+        await matcher(...args);
+      } catch {
+        return;
+      }
+      fail(`not.${name}`, 'expected the expectation to fail, but it passed');
+    });
+  }
+
   return {
     mockExpect: vi.fn((received: unknown, message?: string) => {
       context.received = received;
       context.message = message;
-      return matchers;
+      return { ...matchers, not: negated };
     }),
     matchers,
     exportedFile: Buffer.alloc(512),
@@ -127,8 +148,25 @@ const DOWNLOAD_DIRECTORY = path.join(OUTPUT_DIR, 'exports');
 const PSD_PATH = '/tmp/export-unit/drawing.psd';
 const ICON_CANVAS_SIZE = 256;
 const PHOTOPEA_URL = 'https://www.photopea.com/';
-const PHOTOPEA_BODY_WITH_EXPORT = 'drawing.png 512 x 512';
-const PHOTOPEA_BODY_WITHOUT_EXPORT = 'Untitled-1';
+
+/**
+ * The document size an export produces, and the bytes that state it. `verifyPsdInPhotopea`
+ * reads the expected dimensions out of the PSD header it is given, so a test needs a
+ * header that really carries them — the same layout the app's own PSD fixtures build
+ * (`src/contexts/__tests__/psd-utils.stub.test.ts`).
+ */
+function psdHeader(width: number, height: number): Buffer<ArrayBuffer> {
+  const header = Buffer.alloc(22);
+  header.write('8BPS', 0, 'latin1');
+  header.writeUInt16BE(1, 4);
+  header.writeUInt16BE(3, 12);
+  header.writeUInt32BE(height, 14);
+  header.writeUInt32BE(width, 18);
+  return header;
+}
+
+const EXPORTED_DOCUMENT_SIZE = { width: 800, height: 600 };
+const PSD_FILE = psdHeader(EXPORTED_DOCUMENT_SIZE.width, EXPORTED_DOCUMENT_SIZE.height);
 
 // Literal pins for the budgets helpers.ts hard-codes: Playwright defaults to
 // 30s and a 1ms budget passes any upper-bound-only assertion, so the intended
@@ -136,7 +174,7 @@ const PHOTOPEA_BODY_WITHOUT_EXPORT = 'Untitled-1';
 const CANVAS_READY_TIMEOUT_MS = 60_000;
 const PHOTOPEA_API_TIMEOUT_MS = 10_000;
 const PHOTOPEA_NAVIGATION_TIMEOUT_MS = 30_000;
-const PHOTOPEA_EXPORT_VISIBLE_TIMEOUT_MS = 30_000;
+const PHOTOPEA_DOCUMENT_TIMEOUT_MS_LITERAL = 30_000;
 const DOWNLOAD_TIMEOUT_MS_LITERAL = 30_000;
 const MIN_EXPORT_BYTES = 100;
 
@@ -293,11 +331,20 @@ interface PageSurface {
   goto: Mock<(url: string, options?: { waitUntil?: string; timeout?: number }) => Promise<null>>;
   getByTestId: Mock<(testId: string) => LocatorSurface>;
   getByRole: Mock<(role: string, options?: { name?: string | RegExp }) => LocatorSurface>;
+  getByText: Mock<(text: string | RegExp, options?: { exact?: boolean }) => LocatorSurface>;
   locator: Mock<(selector: string) => LocatorSurface>;
   waitForEvent: Mock<(event: string, options?: { timeout?: number }) => Promise<DownloadSurface>>;
   once: Mock<(event: string, handler: (dialog: DialogSurface) => void) => void>;
+  /**
+   * `pageFunction` is typed `(...args: never[]) => unknown` and the argument `never`,
+   * because a page function is serialised and evaluated in the browser: one that closes
+   * over a Node value compiles fine and silently sees `undefined` there, so the value
+   * has to be passed as the argument. `never` is what lets a zero-argument and a
+   * one-argument page function both be recorded here without either being cast — it is
+   * assignable to every parameter type and from none.
+   */
   waitForFunction: Mock<
-    (pageFunction: () => boolean, arg?: unknown, options?: { timeout?: number }) => Promise<unknown>
+    (pageFunction: (...args: never[]) => unknown, arg: never, options?: { timeout?: number }) => Promise<unknown>
   >;
   evaluate: Mock<
     (
@@ -330,7 +377,20 @@ function createLocatorMock(overrides: Partial<LocatorSurface> = {}): LocatorSurf
     nth: vi.fn(),
     ...overrides,
   };
-  surface.first.mockReturnValue(surface);
+  // Playwright's `.first()` caps the match set at one element, so a `toHaveCount`
+  // assertion on the result can never see a second match. The derived locator shares
+  // the base's mocks — it is the same underlying element — and only `count` is clamped,
+  // so `count` is deliberately NOT copied: a clamp that delegated to a copy of itself
+  // would recurse, and nothing calls it until a test does.
+  surface.first.mockImplementation(() => {
+    const first = createLocatorMock();
+    for (const key of Object.keys(surface) as Array<keyof LocatorSurface>) {
+      if (key === 'count') continue;
+      Reflect.set(first, key, surface[key]);
+    }
+    first.count.mockImplementation(async () => Math.min(1, await surface.count()));
+    return first;
+  });
   surface.or.mockReturnValue(surface);
   surface.nth.mockReturnValue(surface);
   return surface;
@@ -375,6 +435,7 @@ function createPageMock(overrides: Partial<PageSurface> = {}): {
     goto: vi.fn().mockResolvedValue(null),
     getByTestId: byKey({}, fallback),
     getByRole: byRole({}, fallback),
+    getByText: vi.fn(() => fallback),
     locator: byKey({}, fallback),
     waitForEvent: vi.fn().mockRejectedValue(new Error('waitForEvent was not configured for this test')),
     once: vi.fn().mockReturnValue(undefined),
@@ -754,7 +815,7 @@ describe('Export Helpers', () => {
     function createSaveDialogPage(
       options: {
         download?: DownloadSurface;
-        headingCount?: number;
+        saveDialogCount?: number;
         evaluate?: PageSurface['evaluate'];
       } = {}
     ): { surface: PageSurface; page: Page; dialog: Record<string, LocatorSurface>; download: DownloadSurface } {
@@ -763,7 +824,9 @@ describe('Export Helpers', () => {
       const filenameInput = createLocatorMock();
       const formatSelect = createLocatorMock();
       const submitButton = createLocatorMock();
-      const heading = createLocatorMock({ count: vi.fn().mockResolvedValue(options.headingCount ?? 0) });
+      // Count 0 is the truth on a page the dialog has already unmounted from, which
+      // is the state `exportAndVerify` reaches before it reads the file back.
+      const saveDialog = createLocatorMock({ count: vi.fn().mockResolvedValue(options.saveDialogCount ?? 0) });
       const download = options.download ?? createDownloadMock(`${EXPORT_FILENAME}${PNG_FORMAT.extension}`);
       const { surface, page } = createPageMock({
         getByTestId: byKey(
@@ -773,17 +836,17 @@ describe('Export Helpers', () => {
             'save-dialog-filename-input': filenameInput,
             'save-dialog-format-select': formatSelect,
             'save-dialog-submit-button': submitButton,
+            'save-dialog': saveDialog,
           },
           fileMenuButton
         ),
-        getByRole: byRole({ 'heading:Save File As...': heading }, heading),
         waitForEvent: vi.fn().mockResolvedValue(download),
         ...(options.evaluate ? { evaluate: options.evaluate } : {}),
       });
       return {
         surface,
         page,
-        dialog: { fileMenuButton, saveMenuButton, filenameInput, formatSelect, submitButton, heading },
+        dialog: { fileMenuButton, saveMenuButton, filenameInput, formatSelect, submitButton, saveDialog },
         download,
       };
     }
@@ -804,8 +867,20 @@ describe('Export Helpers', () => {
       expect(mocks.matchers.toBeNull).toHaveBeenCalled();
       expect(mocks.matchers.toBe).toHaveBeenCalledWith(PNG_FORMAT.extension);
       expect(download.saveAs).toHaveBeenCalledWith(target);
-      expect(mocks.mockExpect).toHaveBeenCalledWith(dialog.heading);
+      // The dialog is located by its testid, never by its title. `getByRole('heading',
+      // { name: 'Save File As...' })` matches the dialog only while that title is both a
+      // heading and spelled exactly this; render it as a `<div>` or reword it and the
+      // locator matches nothing, `toHaveCount(0)` passes forever with the dialog open,
+      // and this assertion goes vacuous without a single line of the export flow changing.
+      expect(surface.getByTestId).toHaveBeenCalledWith('save-dialog');
+      expect(mocks.mockExpect).toHaveBeenCalledWith(dialog.saveDialog);
       expect(mocks.matchers.toHaveCount).toHaveBeenCalledWith(0);
+      expect(surface.getByRole).not.toHaveBeenCalled();
+      // And it is read after the submit, so it is observing a dialog that was open
+      // and closed rather than one that was never there.
+      expect(dialog.submitButton.click.mock.invocationCallOrder[0]).toBeLessThan(
+        dialog.saveDialog.count.mock.invocationCallOrder[0]
+      );
       expect(vi.mocked(readFile)).toHaveBeenCalledWith(target);
       expect(mocks.matchers.toBeGreaterThan).toHaveBeenCalledWith(MIN_EXPORT_BYTES);
       expect(surface.evaluate).toHaveBeenCalledTimes(1);
@@ -908,7 +983,7 @@ describe('Export Helpers', () => {
     });
 
     it('rejects when the save dialog is still open after submitting', async () => {
-      const { page, download } = createSaveDialogPage({ headingCount: 1 });
+      const { page, download } = createSaveDialogPage({ saveDialogCount: 1 });
 
       await expect(
         exportAndVerify(page, PNG_FORMAT, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY, createTestInfoMock())
@@ -1186,6 +1261,7 @@ describe('Export Helpers', () => {
     function createIcoExportPage(
       options: {
         failure?: string | null;
+        saveDialogCount?: number;
         evaluate?: PageSurface['evaluate'];
       } = {}
     ): { surface: PageSurface; page: Page; dialog: Record<string, LocatorSurface>; download: DownloadSurface } {
@@ -1194,6 +1270,9 @@ describe('Export Helpers', () => {
       const filenameInput = createLocatorMock();
       const formatSelect = createLocatorMock();
       const submitButton = createLocatorMock();
+      // Same testid, same count-0 truth as the `exportAndVerify` fixture: the ICO flow
+      // ends with a dialog that has unmounted, and the helper now has to say so.
+      const saveDialog = createLocatorMock({ count: vi.fn().mockResolvedValue(options.saveDialogCount ?? 0) });
       const download = createDownloadMock(`${ICON_EXPORT_FILENAME}${icoFormat.extension}`, options.failure ?? null);
       const { surface, page } = createPageMock({
         getByTestId: byKey(
@@ -1203,6 +1282,7 @@ describe('Export Helpers', () => {
             'save-dialog-filename-input': filenameInput,
             'save-dialog-format-select': formatSelect,
             'save-dialog-submit-button': submitButton,
+            'save-dialog': saveDialog,
           },
           fileMenuButton
         ),
@@ -1212,7 +1292,7 @@ describe('Export Helpers', () => {
       return {
         surface,
         page,
-        dialog: { fileMenuButton, saveMenuButton, filenameInput, formatSelect, submitButton },
+        dialog: { fileMenuButton, saveMenuButton, filenameInput, formatSelect, submitButton, saveDialog },
         download,
       };
     }
@@ -1231,6 +1311,12 @@ describe('Export Helpers', () => {
       expect(surface.waitForEvent).toHaveBeenCalledWith('download', { timeout: DOWNLOAD_TIMEOUT_MS_LITERAL });
       expect(mocks.matchers.toBe).toHaveBeenCalledWith(icoFormat.extension);
       expect(download.saveAs).toHaveBeenCalledWith(target);
+      // The ICO flow used to end on the download alone, with nothing proving the save
+      // dialog had gone. It does the same job as `exportAndVerify`, so it makes the
+      // same assertion, against the same testid.
+      expect(surface.getByTestId).toHaveBeenCalledWith('save-dialog');
+      expect(mocks.mockExpect).toHaveBeenCalledWith(dialog.saveDialog);
+      expect(surface.getByRole).not.toHaveBeenCalled();
       expect(vi.mocked(readFile)).toHaveBeenCalledWith(target);
       expect(mocks.matchers.toBeGreaterThan).toHaveBeenCalledWith(MIN_EXPORT_BYTES);
       expect(surface.evaluate).toHaveBeenCalledTimes(1);
@@ -1276,6 +1362,19 @@ describe('Export Helpers', () => {
       );
 
       await expect(compare(payload)).resolves.toEqual({ ok: false, reason: 'context-unavailable' });
+    });
+
+    it('rejects when the save dialog is still open after the ICO download', async () => {
+      // Without the dialog-closed assertion this resolves, and the pixel comparison
+      // runs against an export whose dialog is still covering the document.
+      const { page, download } = createIcoExportPage({ saveDialogCount: 1 });
+
+      await expect(exportIcoAndVerify(page, SOURCE_DATA_URL, DOWNLOAD_DIRECTORY)).rejects.toThrow(
+        'expected count 0, received 1'
+      );
+
+      expect(download.saveAs).toHaveBeenCalled();
+      expect(vi.mocked(readFile)).not.toHaveBeenCalled();
     });
 
     it('rejects without saving when the ICO download failed', async () => {
@@ -1330,27 +1429,38 @@ describe('Export Helpers', () => {
   });
 
   describe('verifyPsdInPhotopea', () => {
-    function createPhotopeaPage(options: { bodyText?: string } = {}): {
+    // `verifyPsdInPhotopea` reads the exported file's own header to learn the size it
+    // expects the loaded document to have, so every test here needs real PSD bytes.
+    // Restored afterwards: the module-level mock hands out `mocks.exportedFile` for the
+    // byte comparisons elsewhere, and a leaked override would quietly change those.
+    beforeEach(() => {
+      vi.mocked(readFile).mockResolvedValue(PSD_FILE);
+    });
+
+    afterEach(() => {
+      vi.mocked(readFile).mockImplementation(async () => mocks.exportedFile);
+    });
+
+    function createPhotopeaPage(options: { fileInputCount?: number; nameMatches?: number } = {}): {
       surface: PageSurface;
       page: Page;
       startButton: LocatorSurface;
       fileInput: LocatorSurface;
-      body: LocatorSurface;
+      nameLocator: LocatorSurface;
     } {
       const startButton = createLocatorMock();
-      const fileInput = createLocatorMock();
-      const body = createLocatorMock({
-        textContent: vi.fn().mockResolvedValue(options.bodyText ?? PHOTOPEA_BODY_WITH_EXPORT),
-      });
+      const fileInput = createLocatorMock({ count: vi.fn().mockResolvedValue(options.fileInputCount ?? 1) });
+      const nameLocator = createLocatorMock({ count: vi.fn().mockResolvedValue(options.nameMatches ?? 1) });
       const { surface, page } = createPageMock({
         getByRole: byRole({ 'button:Start using Photopea': startButton }, startButton),
-        locator: byKey({ 'input[type="file"]': fileInput, body }, fileInput),
+        getByText: vi.fn(() => nameLocator),
+        locator: byKey({ 'input[type="file"]': fileInput }, fileInput),
       });
-      return { surface, page, startButton, fileInput, body };
+      return { surface, page, startButton, fileInput, nameLocator };
     }
 
-    it('opens Photopea, starts the editor, uploads the PSD and verifies the file name', async () => {
-      const { surface, page, startButton, fileInput, body } = createPhotopeaPage();
+    it('opens Photopea, starts the editor and uploads the PSD', async () => {
+      const { surface, page, startButton, fileInput } = createPhotopeaPage();
 
       await verifyPsdInPhotopea(page, PSD_PATH);
 
@@ -1361,50 +1471,160 @@ describe('Export Helpers', () => {
       expect(startButton.click).toHaveBeenCalled();
       expect(surface.waitForFunction).toHaveBeenCalled();
       expect(surface.locator).toHaveBeenCalledWith('input[type="file"]');
+      expect(fileInput.setInputFiles).toHaveBeenCalledWith(PSD_PATH);
+    });
+
+    it('asserts the file input is unique on the locator that is not capped at one match', async () => {
+      const { page, fileInput } = createPhotopeaPage();
+
+      await verifyPsdInPhotopea(page, PSD_PATH);
+
+      // `.first()` caps the match set at one element, so `toHaveCount(1)` on the result
+      // can only ever tell zero from one — the opposite of asserting uniqueness. The
+      // mock's `.first()` reproduces that cap, so these two assertions distinguish the
+      // locators that the defect was about; `mocks.matchers.toHaveCount` was pinned to
+      // `(1)` alone, which is satisfied by the defective shape as well.
+      expect(fileInput.first).not.toHaveBeenCalled();
       expect(mocks.mockExpect).toHaveBeenCalledWith(fileInput);
       expect(mocks.matchers.toHaveCount).toHaveBeenCalledWith(1);
+      // The file goes to the same locator that was counted, not to a different one.
       expect(fileInput.setInputFiles).toHaveBeenCalledWith(PSD_PATH);
-      expect(mocks.mockExpect).toHaveBeenCalledWith(body);
-      expect(mocks.matchers.toContainText).toHaveBeenCalledWith(EXPORT_FILENAME, {
-        timeout: PHOTOPEA_EXPORT_VISIBLE_TIMEOUT_MS,
-      });
-      expect(body.textContent).toHaveBeenCalled();
     });
 
-    it('expects the document name derived from the psd path, not the export dialog default', async () => {
-      const renamedPsdPath = '/tmp/export-unit/harbour-at-dusk.psd';
-      const { page } = createPhotopeaPage({ bodyText: 'harbour-at-dusk.psd 512 x 512' });
+    it.each([
+      ['rejects when the page has no file input at all', 0],
+      ['accepts exactly one file input', 1],
+      ['rejects when the page has two file inputs', 2],
+    ])('%s', async (_label, count) => {
+      const { page, fileInput } = createPhotopeaPage({ fileInputCount: count });
 
-      await verifyPsdInPhotopea(page, renamedPsdPath);
+      const run = verifyPsdInPhotopea(page, PSD_PATH);
 
-      expect(mocks.matchers.toContainText).toHaveBeenCalledWith('harbour-at-dusk', {
-        timeout: PHOTOPEA_EXPORT_VISIBLE_TIMEOUT_MS,
-      });
-      // A hardcoded 'drawing' would pass the first test above and fail this one.
-      expect(mocks.matchers.toContainText).not.toHaveBeenCalledWith(EXPORT_FILENAME, expect.anything());
+      if (count === 1) {
+        await expect(run).resolves.toBeUndefined();
+      } else {
+        // The two-file-input case is the load-bearing one: `.first()` caps it at one
+        // match, so under the old code the upload would have gone to whichever input
+        // came first and this test would have passed.
+        await expect(run).rejects.toThrow(`expected count 1, received ${count}`);
+      }
+      expect(fileInput.setInputFiles).toHaveBeenCalledTimes(count === 1 ? 1 : 0);
     });
 
-    it('drops the extension and keeps interior dots when deriving the document name', async () => {
-      const { page } = createPhotopeaPage({ bodyText: '2026.09.27.sheet.psd 512 x 512' });
+    it('identifies the loaded document by an exact name and by the size in the PSD header', async () => {
+      const { surface, page, nameLocator } = createPhotopeaPage();
 
-      await verifyPsdInPhotopea(page, '/tmp/export-unit/2026.09.27.sheet.psd');
+      await verifyPsdInPhotopea(page, PSD_PATH);
 
-      expect(mocks.matchers.toContainText).toHaveBeenCalledWith('2026.09.27.sheet', {
-        timeout: PHOTOPEA_EXPORT_VISIBLE_TIMEOUT_MS,
-      });
+      // Not `page.locator('body')` and a substring: photopea.com is a third-party page
+      // whose own chrome — a menu label, an advertisement, a recent-files entry — can
+      // contain `drawing`, so a whole-page substring match passes with nothing loaded.
+      expect(surface.getByText).toHaveBeenCalledWith(EXPORT_FILENAME, { exact: true });
+      expect(surface.locator).not.toHaveBeenCalledWith('body');
+      expect(mocks.mockExpect).toHaveBeenCalledWith(nameLocator);
     });
 
-    it('passes the readiness budgets as waitForFunction options, not as the evaluation argument', async () => {
+    it('accepts the document once the exact name is rendered at least once', async () => {
+      const { page } = createPhotopeaPage({ nameMatches: 2 });
+
+      // Photopea may render the name in more than one place, so the claim is existence
+      // rather than a count of exactly one.
+      await expect(verifyPsdInPhotopea(page, PSD_PATH)).resolves.toBeUndefined();
+    });
+
+    it('rejects when no element renders the document name at all', async () => {
+      const { page, fileInput } = createPhotopeaPage({ nameMatches: 0 });
+
+      await expect(verifyPsdInPhotopea(page, PSD_PATH)).rejects.toThrow('not.toHaveCount');
+
+      expect(fileInput.setInputFiles).toHaveBeenCalledWith(PSD_PATH);
+    });
+
+    it('waits for a canvas whose backing store is the width and height in the PSD header', async () => {
       const { surface, page } = createPhotopeaPage();
 
       await verifyPsdInPhotopea(page, PSD_PATH);
 
-      expect(surface.waitForFunction).toHaveBeenCalledTimes(2);
-      const [[, readyArg, readyOptions], [, apiArg, apiOptions]] = surface.waitForFunction.mock.calls;
+      const [pageFunction, documentSize, options] = surface.waitForFunction.mock.calls[2];
+      // The expected size comes from the file this function was handed, not from a
+      // constant here, so it follows the document if its size ever changes.
+      expect(documentSize).toEqual(EXPORTED_DOCUMENT_SIZE);
+      expect(options).toEqual({ timeout: PHOTOPEA_DOCUMENT_TIMEOUT_MS_LITERAL });
+
+      vi.stubGlobal('document', {
+        querySelectorAll: () => [{ width: 512, height: 64 }, { ...EXPORTED_DOCUMENT_SIZE }],
+      });
+      expect(pageFunction(documentSize)).toBe(true);
+      vi.stubGlobal('document', { querySelectorAll: () => [{ width: 512, height: 64 }] });
+      expect(pageFunction(documentSize)).toBe(false);
+      vi.stubGlobal('document', {
+        querySelectorAll: () => [{ width: EXPORTED_DOCUMENT_SIZE.width, height: EXPORTED_DOCUMENT_SIZE.height - 1 }],
+      });
+      expect(pageFunction(documentSize)).toBe(false);
+    });
+
+    it('expects the document name derived from the psd path, not the export dialog default', async () => {
+      const { surface, page } = createPhotopeaPage();
+
+      await verifyPsdInPhotopea(page, '/tmp/export-unit/harbour-at-dusk.psd');
+
+      expect(surface.getByText).toHaveBeenCalledWith('harbour-at-dusk', { exact: true });
+      // A hardcoded 'drawing' would pass the first test above and fail this one.
+      expect(surface.getByText).not.toHaveBeenCalledWith(EXPORT_FILENAME, expect.anything());
+    });
+
+    it('drops the extension and keeps interior dots when deriving the document name', async () => {
+      const { surface, page } = createPhotopeaPage();
+
+      await verifyPsdInPhotopea(page, '/tmp/export-unit/2026.09.27.sheet.psd');
+
+      expect(surface.getByText).toHaveBeenCalledWith('2026.09.27.sheet', { exact: true });
+    });
+
+    it('takes the document size from the file, so a renamed export keeps its own dimensions', async () => {
+      const { surface, page } = createPhotopeaPage();
+      vi.mocked(readFile).mockResolvedValue(psdHeader(1024, 768));
+
+      await verifyPsdInPhotopea(page, '/tmp/export-unit/panorama.psd');
+
+      expect(surface.waitForFunction.mock.calls[2][1]).toEqual({ width: 1024, height: 768 });
+    });
+
+    it('rejects before navigating when the file is not a PSD', async () => {
+      const { surface, page } = createPhotopeaPage();
+      vi.mocked(readFile).mockResolvedValue(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'));
+
+      await expect(verifyPsdInPhotopea(page, '/tmp/export-unit/not-a-psd.psd')).rejects.toThrow('Not a PSD');
+
+      expect(surface.goto).not.toHaveBeenCalled();
+    });
+
+    it('rejects before navigating when the file is too short to carry a PSD header', async () => {
+      const { surface, page } = createPhotopeaPage();
+      vi.mocked(readFile).mockResolvedValue(Buffer.from('8BPS'));
+
+      await expect(verifyPsdInPhotopea(page, '/tmp/export-unit/truncated.psd')).rejects.toThrow('Not a PSD');
+
+      expect(surface.goto).not.toHaveBeenCalled();
+    });
+
+    it('passes every readiness budget as waitForFunction options, not as the evaluation argument', async () => {
+      const { surface, page } = createPhotopeaPage();
+
+      await verifyPsdInPhotopea(page, PSD_PATH);
+
+      expect(surface.waitForFunction).toHaveBeenCalledTimes(3);
+      const [[, readyArg, readyOptions], [, apiArg, apiOptions], [, documentArg, documentOptions]] =
+        surface.waitForFunction.mock.calls;
       expect(readyArg).toBeUndefined();
       expect(readyOptions).toEqual({ timeout: CANVAS_READY_TIMEOUT_MS });
       expect(apiArg).toBeUndefined();
       expect(apiOptions).toEqual({ timeout: PHOTOPEA_API_TIMEOUT_MS });
+      // The third wait is the one that needs a value from Node, and it has to be passed
+      // as the argument: a page function is evaluated in the browser, where a closure
+      // over the expected size would silently be `undefined`.
+      expect(documentArg).toEqual(EXPORTED_DOCUMENT_SIZE);
+      expect(documentOptions).toEqual({ timeout: PHOTOPEA_DOCUMENT_TIMEOUT_MS_LITERAL });
     });
 
     it('accepts an editor canvas above the minimum size and rejects anything smaller', async () => {
@@ -1439,16 +1659,15 @@ describe('Export Helpers', () => {
     });
 
     it('tolerates a Photopea build that never exposes its internal api', async () => {
-      const { surface, page, fileInput, body } = createPhotopeaPage();
+      const { surface, page, fileInput } = createPhotopeaPage();
       surface.waitForFunction
         .mockResolvedValueOnce(true)
         .mockRejectedValueOnce(new Error('waitForFunction: Timeout 10000ms exceeded'));
 
       await verifyPsdInPhotopea(page, PSD_PATH);
 
-      expect(surface.waitForFunction).toHaveBeenCalledTimes(2);
+      expect(surface.waitForFunction).toHaveBeenCalledTimes(3);
       expect(fileInput.setInputFiles).toHaveBeenCalledWith(PSD_PATH);
-      expect(body.textContent).toHaveBeenCalled();
     });
 
     it('rejects without starting the editor when the Photopea page fails to load', async () => {
@@ -1471,18 +1690,64 @@ describe('Export Helpers', () => {
     });
 
     it('rejects when the PSD upload fails', async () => {
-      const { page, fileInput, body } = createPhotopeaPage();
+      const { page, fileInput, nameLocator } = createPhotopeaPage();
       fileInput.setInputFiles.mockRejectedValue(new Error('ENOENT: no such file or directory'));
 
       await expect(verifyPsdInPhotopea(page, PSD_PATH)).rejects.toThrow('ENOENT: no such file or directory');
 
-      expect(body.textContent).not.toHaveBeenCalled();
+      expect(nameLocator.count).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The two specs are Playwright tests, so nothing in this Node project can call them
+   * and their behaviour cannot be exercised here. What can be pinned is their shape,
+   * because both defects were structural: the ICO spec ran the whole export fixture and
+   * discarded all of it, and the PSD skip carried 25 lines of rationale resting on a
+   * premise that is no longer true. Both are read as source, because both are source.
+   */
+  describe('export spec shape', () => {
+    const readSource = (name: string) => readFileSync(new URL(`../${name}`, import.meta.url), 'utf8');
+
+    it('does not run the export fixture in the ICO spec, which discards every step of it', () => {
+      // Comments are stripped first: the spec explains why the fixture is gone, and
+      // naming it there is the point, while calling or importing it is the defect.
+      const code = readSource('ico.spec.ts').replace(/^\s*\/\/.*$/gm, '');
+      const source = readSource('ico.spec.ts');
+
+      // `setupIcoTest` opens its own 256x256 document, so `setupExportTest` drew the
+      // export line, encoded a source data URL and navigated a second time only for
+      // the ICO flow to throw all of it away and keep the download directory.
+      expect(code).not.toMatch(/\bsetupExportTest\b/);
+      expect(code).toMatch(/\bsetupIcoTest\b/);
+      expect(code).toMatch(/\bmkdir\b/);
+      expect(source).toContain('visual-regression.spec.ts');
     });
 
-    it('rejects when the loaded document does not show the exported file name', async () => {
-      const { page } = createPhotopeaPage({ bodyText: PHOTOPEA_BODY_WITHOUT_EXPORT });
+    it('reduces the PSD skip block to a short reason and a pointer at the full rationale', () => {
+      const source = readSource('photopea.spec.ts');
+      const beforeTheTest = source.slice(0, source.indexOf('test.skip'));
+      const skipComment = beforeTheTest
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith('//'));
 
-      await expect(verifyPsdInPhotopea(page, PSD_PATH)).rejects.toThrow(/toContainText/);
+      expect(skipComment.length).toBeLessThanOrEqual(6);
+      expect(skipComment.join('\n')).toContain('consent modal');
+      expect(skipComment.join('\n')).toContain('verifyPsdInPhotopea');
+      expect(skipComment.join('\n')).toContain('./helpers');
+      // The old block recommended "psd.js / psd-tools" and rested on there being no PSD
+      // library available, which stopped being true when ag-psd became a root dependency.
+      expect(source).not.toContain('psd.js');
+      expect(source).not.toContain('psd-tools');
+    });
+
+    it('keeps the full PSD rationale on the helper, with the stale premise corrected', () => {
+      const source = readSource('helpers.ts');
+
+      expect(source).toContain('ag-psd@^31.0.2');
+      expect(source).toContain('is a root dependency');
+      expect(source).not.toContain('psd-tools');
     });
   });
 });

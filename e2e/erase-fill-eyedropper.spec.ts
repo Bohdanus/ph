@@ -17,6 +17,7 @@ import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { cssPointToImage, imagePointToCss } from './helpers/screenshot-scale';
 import { clickToolButton, openToolFlyout, selectFromFlyout, verifyPrimaryTool } from './helpers/toolbar-helpers';
 
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 /**
  * CONTROL CONTRACT for every bar this spec drives. There are no `data-testid`s in these
  * options bars, by repo convention: each control is a `<label htmlFor>` wrapping its own input,
@@ -270,7 +271,7 @@ async function measureErasedWidth(page: Page, centreX: number): Promise<number |
 test.describe('Eraser, fill tools and eyedropper', () => {
   // eraser: a stroke must actually cut the pixels out of the layer it is editing
   test('the eraser cuts transparency out of the active layer', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, BLACK, SLIM, hasDarkPixels);
 
@@ -292,7 +293,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // eraser: one history state per stroke, not per pointer event
   test('the eraser stroke is one history entry', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, BLACK, SLIM, hasDarkPixels);
 
@@ -364,7 +365,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // eraser: Size must change the rendered tip, not only the readout
   test('the eraser size control changes the width of the erased region', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, BLACK, SLAB, hasDarkPixels);
 
@@ -402,7 +403,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // eraser: Opacity must reach the composited pixels, not only the readout
   test('the eraser opacity control reaches the pixels', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, BLACK, SLAB, hasDarkPixels);
 
@@ -436,7 +437,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // paint bucket: Contiguous must bound the fill to the clicked region
   test('the paint bucket fills a contiguous region and not its neighbour', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, RED, SLIM, hasRedPixels);
 
@@ -485,7 +486,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // paint bucket: Tolerance must decide which pixels are inside the region
   test('the paint bucket tolerance control changes which pixels are filled', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     // A 100px slab: `pointsBoundingPos` pads the layer by a full lineWidth on every side, so the
     // layer's corners stay transparent where the round cap never reached.
@@ -528,7 +529,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // magic eraser: same gesture and same region as the bucket, opposite output
   test('the magic eraser erases the clicked region and leaves a neighbour alone', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, RED, SLIM, hasRedPixels);
 
@@ -558,7 +559,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // eyedropper: sets the foreground and records no history state at all
   test('the eyedropper sets the foreground colour and records no history state', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, RED, SLAB, hasRedPixels);
 
@@ -601,7 +602,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // eyedropper: Sample Size must average the block, not copy the centre pixel
   test('the eyedropper sample size averages the clicked block', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, RED, SLAB, hasRedPixels);
 

@@ -439,7 +439,17 @@ It is worth knowing for what it is good: cost tracks blast radius, and so does r
 
 - Read `e2e/OPEN_PROBLEMS.md` first. A new failure is a new defect.
 - A pin/`expected-fail` is a tripwire for broken behavior; remove it in the same change that fixes the defect.
-- Visual baselines re-record only with `--update-snapshots`; green means pixels matched.
+- Visual baselines re-record only with `npm run test:e2e:update-baselines`, which runs
+  `playwright test e2e/export/visual-regression.spec.ts --update-snapshots=all`. The `=all` is
+  load-bearing: Playwright declares the flag with `preset: 'changed'`, so a bare
+  `--update-snapshots` resolves to `'changed'`, and `'changed'` is inert against a spec that
+  reads its baseline with `readFile` and compares with `compareScreenshots`. Green means pixels
+  matched.
+- The 100-pixel budget in `visual-regression.spec.ts` is a tripwire, not a tolerance. Do not
+  widen `threshold` or `maxDiffPixels` to make a red go green — the argument for the numbers and
+  for NOT pinning a Chrome version in CI is written out at that call site.
+- `npm run test:e2e:clean` deletes the per-test output directories under `test-results/` and
+  keeps `test-results/results.json`, so a run's machine-readable result survives it.
 - Read failures from `test-results/`; `trace.zip` needs a window, so ask the operator.
 
 ## Handoff documents

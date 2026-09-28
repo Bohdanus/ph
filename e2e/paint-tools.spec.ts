@@ -10,6 +10,7 @@ import {
   selectFromFlyout,
 } from './helpers/toolbar-helpers';
 
+import { PAINT_TOOLS_TEST_TIMEOUT_MS } from './helpers/timeouts';
 /**
  * The six Photoshop paint tools on `ps/tool-expansion`.
  *
@@ -573,7 +574,7 @@ test.describe('Paint tools', () => {
   // Each of these tests opens an options bar, builds a one or two layer fixture, strokes, and
   // then makes three history round trips, with a capture per poll. The suite's 30s default is
   // not enough for that on a cold Vite module graph.
-  test.describe.configure({ timeout: 120_000 });
+  test.describe.configure({ timeout: PAINT_TOOLS_TEST_TIMEOUT_MS });
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');

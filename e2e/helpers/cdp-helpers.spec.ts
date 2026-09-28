@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { captureCanvasScreenshot, getDevicePixelRatio } from './cdp-helpers';
+import { captureCanvasScreenshot } from './cdp-helpers';
 import { loadImageData, screenshotBoundsToCss, type ImageDataResult } from './canvas-helpers';
 
 /** CSS geometry of the red canvas inside the synthetic page. */
@@ -111,23 +111,6 @@ function expectFaithfulCaptureOf(imageData: ImageDataResult, rect: { width: numb
 }
 
 test.describe('CDP Helpers', () => {
-  test.describe('getDevicePixelRatio', () => {
-    test('returns devicePixelRatio from window', async ({ page }) => {
-      await page.setContent('<div>test</div>');
-      const dpr = await getDevicePixelRatio(page);
-      expect(dpr).toBeGreaterThanOrEqual(1);
-    });
-
-    test('returns 1 when devicePixelRatio is not available', async ({ page }) => {
-      await page.addInitScript(() => {
-        Object.defineProperty(window, 'devicePixelRatio', { value: undefined, configurable: true });
-      });
-      await page.setContent('<div>test</div>');
-      const dpr = await getDevicePixelRatio(page);
-      expect(dpr).toBe(1);
-    });
-  });
-
   /**
    * Output contract of `captureCanvasScreenshot`: the CDP clip is expressed in CSS
    * pixels and the result is a faithful image of exactly that rect, at whatever device
@@ -283,7 +266,7 @@ test.describe('CDP Helpers', () => {
 
     test('reports the emulated ratio, so the override provably applied', async ({ page }) => {
       await page.setContent(RED_CANVAS_PAGE);
-      expect(await getDevicePixelRatio(page)).toBe(2);
+      expect(await page.evaluate(() => window.devicePixelRatio)).toBe(2);
     });
 
     test('returns the clip region at one integral scale', async ({ page }, testInfo) => {
@@ -317,7 +300,7 @@ test.describe('CDP Helpers', () => {
       const box = FULL_CANVAS_BOX;
       const clip = { x: CANVAS_LEFT, y: CANVAS_TOP, width: 120, height: 80 };
 
-      expect(await getDevicePixelRatio(page)).toBe(2);
+      expect(await page.evaluate(() => window.devicePixelRatio)).toBe(2);
 
       const screenshot = await captureCanvasScreenshot(page, box, testInfo, 'test-capture-2x-css', clip);
       const imageData = await decodeScreenshot(screenshot);

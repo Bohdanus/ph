@@ -14,6 +14,7 @@ import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 /**
  * `useKeyboardEvents.matchesShortcut` treats `mod` as `(metaKey || ctrlKey)`, so Control
  * satisfies every `mod: true` registration in `AppKeyboardShortcuts` on every platform.
@@ -54,7 +55,7 @@ test.describe('Keyboard shortcuts', () => {
   });
 
   test.describe('undo and redo', () => {
-    test.describe.configure({ timeout: 60_000 });
+    test.describe.configure({ timeout: DEFAULT_TEST_TIMEOUT_MS });
 
     test('mod+Z removes the stroke and mod+Shift+Z puts it back', async ({ page }) => {
       const box = await canvasBox(page);

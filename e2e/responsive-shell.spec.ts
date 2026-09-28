@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 /**
  * Desktop-first shell invariants across the responsive bands.
  *
@@ -50,7 +51,7 @@ test.describe('Left tool rail reachability', () => {
   // into content nobody could get to. The rail now owns its scrolling via `min-h-0`.
   for (const size of [DESKTOP, SHORT_DESKTOP, WIDE_DESKTOP]) {
     test(`every control in the rail is reachable at ${size.width}x${size.height}`, async ({ page }) => {
-      test.setTimeout(60_000);
+      test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
       await open(page, size);
 
       // The rail must be a scroll container, or a long rail has no way to reach its end.
@@ -74,7 +75,7 @@ test.describe('Left tool rail reachability', () => {
   }
 
   test('the last tool group in the rail is reachable at a short window height', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, SHORT_DESKTOP);
 
     // The Text tool sits well down the rail; at 600px it is below the fold.
@@ -90,7 +91,7 @@ test.describe('Left tool rail reachability', () => {
 
 test.describe('No global scroll lock', () => {
   test('the shell does not lock document scrolling', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, DESKTOP);
 
     // A global `overflow: hidden` on html/body/#root converts every overflowing region in
@@ -105,7 +106,7 @@ test.describe('No global scroll lock', () => {
   });
 
   test('scrollable panels are not globally disabled for touch', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, DESKTOP);
 
     // `touch-action` is the intersection of an element's value with every ancestor's, so a
@@ -130,7 +131,7 @@ test.describe('Tool option popovers are not clipped', () => {
   // 50px box. Anchored `absolute` inside a clipping ancestor, the 240px font list rendered
   // as an 8px strip: the text tool's font family was unselectable and no test noticed.
   test('the text tool font list opens fully and every font is clickable', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, DESKTOP);
 
     await clickToolButton(page, 'text');
@@ -162,7 +163,7 @@ test.describe('Tool option popovers are not clipped', () => {
   });
 
   test('the font list opens upward when the toolbar sits near the window bottom', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, { width: 1280, height: 400 });
 
     await clickToolButton(page, 'text');
@@ -177,7 +178,7 @@ test.describe('Tool option popovers are not clipped', () => {
 
 test.describe('Tablet band', () => {
   test('uses the one-column tool rail and hides the layout toggle', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, TABLET);
 
     // The two-column rail is a desktop preference. At 900px it would cost the canvas 52px
@@ -187,7 +188,7 @@ test.describe('Tablet band', () => {
   });
 
   test('reclaims the layers column by default and offers a toggle for it', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, TABLET);
 
     const panel = page.locator('#right-panel');
@@ -207,7 +208,7 @@ test.describe('Tablet band', () => {
   });
 
   test('gives the canvas the space the collapsed panel freed', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await open(page, TABLET);
     const collapsed = (await getWorkspaceCanvas(page).boundingBox())!.width;
@@ -229,7 +230,7 @@ test.describe('Tablet band', () => {
     { label: 'Horizontal Type Tool', minWidth: 1036 },
   ]) {
     test(`makes the ${label} option panel horizontally scrollable rather than unreachable`, async ({ page }) => {
-      test.setTimeout(60_000);
+      test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
       await open(page, TABLET);
 
       await selectToolFromMenu(page, label);
@@ -260,7 +261,7 @@ test.describe('Tablet band', () => {
 
 test.describe('Desktop band is unchanged', () => {
   test('has no tablet toggle and keeps the layers panel open', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, DESKTOP);
 
     // Desktop gains no control, no state and no layout shift from the tablet work.
@@ -271,7 +272,7 @@ test.describe('Desktop band is unchanged', () => {
   });
 
   test('keeps the layout toggle and the user two-column rail', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, DESKTOP);
 
     const toggle = page.getByTestId('toolbar-layout-toggle');
@@ -286,7 +287,7 @@ test.describe('Desktop band is unchanged', () => {
   });
 
   test('keeps the option row unscrollable, so popovers are never clipped', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, DESKTOP);
 
     await selectToolFromMenu(page, 'Transform');
@@ -303,7 +304,7 @@ test.describe('Crossing the mobile boundary', () => {
   // each and is destroyed and recreated. A desktop user narrowing the window under 768px
   // would lose a half-drawn stroke.
   test('the canvas survives a round trip across the mobile boundary', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, DESKTOP);
 
     const markCanvas = () =>
@@ -325,7 +326,7 @@ test.describe('Crossing the mobile boundary', () => {
   });
 
   test('the desktop regions are still mounted below the mobile boundary, not destroyed', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, DESKTOP);
     await page.setViewportSize({ width: 500, height: 800 });
 
@@ -341,7 +342,7 @@ test.describe('Mobile shell does not leak onto the desktop path', () => {
   // The shell is mounted at every width and hidden with `md:hidden`, and `display: none`
   // hides without unmounting. These are the two consequences that only a browser can show.
   test('the canvas reserves room for the fixed mobile bar', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, MOBILE);
 
     // The bar is `position: fixed` at `h-16`, so the grid's `bottom` area resolves to zero
@@ -365,7 +366,7 @@ test.describe('Mobile shell does not leak onto the desktop path', () => {
   });
 
   test('an open tool sheet unmounts its panel when the viewport widens', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, MOBILE);
 
     const optionsToggle = page.getByRole('button', { name: 'Tool options' });
@@ -381,7 +382,7 @@ test.describe('Mobile shell does not leak onto the desktop path', () => {
   });
 
   test('leaving the mobile band leaves exactly one tool panel in the document', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, MOBILE);
 
     await page.getByRole('button', { name: 'Tool options' }).click();

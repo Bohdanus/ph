@@ -836,9 +836,10 @@ describe('Toolbar Helpers', () => {
 
     it('restores the window on the role fallback too, which is a different locator', async () => {
       const dom = createFakeDom({ scrollOnClick: true });
-      // The role fallback matches "Select and Move": the helper expands `&` before building
-      // the pattern, because the legacy label spells the word out.
-      dom.add({ name: 'Select and Move' });
+      // The role fallback is reached only when the testid is absent, and this is the label
+      // as the caller wrote it. Which spelling of `&` is searched is pinned in the
+      // `clickToolButton` block below; this one is about the scroll, not the match.
+      dom.add({ name: 'Select & Move' });
 
       await clickToolButton(dom.page, 'Select & Move');
 
@@ -928,6 +929,51 @@ describe('Toolbar Helpers', () => {
 
       expect(dom.mocks.getByTestId).toHaveBeenCalledWith(toolButtonTestId('Select & Move'));
       expect(dom.clicked).toEqual([legacyButton]);
+    });
+
+    it('finds a button whose accessible name keeps the ampersand as written', async () => {
+      // The regression. The raw caller-supplied name was one of the three fallback
+      // candidates, and every candidate had `&` expanded in place, so `Select & Move` was
+      // only ever searched as `Select and Move` — a pattern that cannot match a button
+      // labelled `Select & Move`. The candidate existed and was dead.
+      const dom = createFakeDom();
+      const ampersandButton = dom.add({ testId: 'legacy-ampersand', name: 'Select & Move' });
+
+      await clickToolButton(dom.page, 'Select & Move');
+
+      expect(dom.clicked).toEqual([ampersandButton]);
+      // Asserted on the FIRST pattern rather than only on the element that ended up
+      // clicked, so a regression is attributed to the ordering of the two attempts
+      // instead of hiding behind the expanded fallback that still succeeds.
+      const first = dom.mocks.getByRole.mock.calls[0][1];
+      const firstPattern = first?.name as RegExp;
+      expect(firstPattern.test('Select & Move')).toBe(true);
+      expect(firstPattern.test('Select and Move')).toBe(false);
+    });
+
+    it('still finds the legacy label that spells the ampersand out', async () => {
+      // The other half, and the reason the fix is two attempts rather than one: expanding
+      // in place is what broke the literal label, but the expanded spelling is a label that
+      // really exists in the wild and dropping it would be a regression of its own.
+      const dom = createFakeDom();
+      const expandedButton = dom.add({ testId: 'legacy-expanded', name: LEGACY_SELECT_AND_MOVE_LABEL });
+
+      await clickToolButton(dom.page, 'Select & Move');
+
+      expect(dom.clicked).toEqual([expandedButton]);
+    });
+
+    it("prefers the caller's own spelling when a button carries each one", async () => {
+      // Added first, so an expansion-first order would find it and this would go red. The
+      // order is the contract: the name the caller asked for is the more specific match.
+      const dom = createFakeDom();
+      const expandedButton = dom.add({ testId: 'legacy-expanded', name: LEGACY_SELECT_AND_MOVE_LABEL });
+      const ampersandButton = dom.add({ testId: 'legacy-ampersand', name: 'Select & Move' });
+
+      await clickToolButton(dom.page, 'Select & Move');
+
+      expect(dom.clicked).toEqual([ampersandButton]);
+      expect(dom.clicked).not.toContain(expandedButton);
     });
 
     it('falls back to the display label for the internal name "reposition"', async () => {

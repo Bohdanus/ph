@@ -12,6 +12,7 @@ import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot) => !(await hasDarkPixels(screenshot));
 
 /** The standard test line, black, on the row offset from the box origin. */
@@ -61,7 +62,7 @@ test.describe('History panel', () => {
   });
 
   test('clicking an earlier row rewinds the canvas without touching the undo button', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     const box = await canvasBox(page);
     const base = canvasRedrawClip(box);
     const firstClip = base;
@@ -95,7 +96,7 @@ test.describe('History panel', () => {
   });
 
   test('the eye disables an entry, and the current state is recomputed without it', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     const box = await canvasBox(page);
     const base = canvasRedrawClip(box);
     const firstClip = base;

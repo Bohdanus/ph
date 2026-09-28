@@ -13,6 +13,7 @@ import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 const hasNoDarkPixels: CanvasPixelPredicate = async (screenshot) => !(await hasDarkPixels(screenshot));
 
 async function canvasBox(page: Page): Promise<BoundingBox> {
@@ -56,7 +57,7 @@ test.describe('Layers panel', () => {
   });
 
   test('the eye takes a layer off the canvas and puts it back', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     const box = await canvasBox(page);
     const clip = canvasRedrawClip(box);
 
@@ -102,7 +103,7 @@ test.describe('Layers panel', () => {
   });
 
   test('clicking a row makes that layer the one the next tool gesture edits', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     await clickToolButton(page, 'draw');
     await setForegroundColor(page, '#000000', true);

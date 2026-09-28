@@ -2,21 +2,22 @@ import { type Page, type Locator, type TestInfo } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
-import { imageBoundsToCss, viewportRectToPageRect } from './screenshot-scale';
+import {
+  type ClipOptions,
+  type CssBounds,
+  type CssBox as BoundingBox,
+  imageBoundsToCss,
+  viewportRectToPageRect,
+} from './screenshot-scale';
 
-export interface BoundingBox {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-export interface CssBounds {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
+/**
+ * The coordinate shapes are declared once, in `./screenshot-scale`, and re-exported here
+ * under the names the specs have always imported. This module is the suite's public
+ * helper surface, so a spec still writes `import type { BoundingBox } from
+ * './helpers/canvas-helpers'`; what it must not do is own a private copy of the shape,
+ * which is what the three-way duplication this replaces was.
+ */
+export type { ClipOptions, CssBounds, BoundingBox };
 
 export interface ScreenshotBounds {
   left: number;
@@ -115,13 +116,6 @@ export interface DominantColor {
   count: number;
 }
 
-export interface ClipOptions {
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-}
-
 export function buildClip(clip: ClipOptions | undefined, defaultClip: Required<ClipOptions>): Required<ClipOptions> {
   return {
     x: clip?.x ?? defaultClip.x,
@@ -202,10 +196,13 @@ export const STROKE_ANALYSIS = {
   SPRAY_LUMINANCE_THRESHOLD: 200, // Luminance > 200 = bright spray
   SPRAY_SATURATION_THRESHOLD: 30, // Saturation < 30 = grayscale spray
 
-  // Classification thresholds
-  SPRAY_VERTICAL_SPREAD_THRESHOLD: 30, // Vertical spread > 30 = spray (fills most of clip)
+  // Classification thresholds. Every length below is in CSS pixels and is compared
+  // against a measurement taken in CAPTURE pixels, so `getStrokeAnalysis` scales it by
+  // the capture's own scale first. See `captureScale`.
+  SPRAY_VERTICAL_SPREAD_THRESHOLD: 30, // Vertical spread > 30 CSS px = spray (fills most of clip)
 
-  // Segment gap thresholds (anti-aliasing bridges small gaps)
+  // Segment gap thresholds (anti-aliasing bridges small gaps), in CSS pixels between
+  // two occupied columns
   SPRAY_GAP_THRESHOLD: 3, // Spray: smaller gaps due to anti-aliasing
   PEN_GAP_THRESHOLD: 5, // Pen/Dashed: clearer gaps between segments
 
@@ -305,10 +302,9 @@ async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<On
  * The window's scroll offset, read at the moment a caller needs it.
  *
  * The one place in the helpers that reads page state rather than deriving geometry from a
- * box, and shaped like `getDevicePixelRatio` (cdp-helpers.ts): a page function, read at the
- * call site. Caching it would be wrong rather than merely stale — `clickToolButton` scrolls
- * the window by 440px in this build, so an offset read once is wrong by a different amount
- * before and after any tool click.
+ * box: a page function, read at the call site. Caching it would be wrong rather than merely
+ * stale — `clickToolButton` scrolls the window by 440px in this build, so an offset read
+ * once is wrong by a different amount before and after any tool click.
  */
 export async function getPageScroll(page: Page): Promise<{ x: number; y: number }> {
   return page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
@@ -593,7 +589,14 @@ export async function getDarkPixelBounds(screenshot: Buffer | ImageDataResult): 
 export interface StrokeAnalysis {
   type: 'solid' | 'dashed' | 'spray';
   segments: number;
+  /**
+   * Height of the stroke's occupied rows in CAPTURE pixels, not CSS pixels. The
+   * classification is scale-corrected; this raw measurement is not, so it still doubles on
+   * a 2x host. A caller that wants a resolution-independent figure divides it by the
+   * capture scale, which is `imageWidth / region.width` for the call it just made.
+   */
   verticalSpread: number;
+  /** Stroke pixels in the capture: a raw image count, so it scales with the capture's area. */
   pixelCount: number;
 }
 
@@ -663,6 +666,20 @@ export async function getColorAtPoint(
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const { width, height, data } = imageData;
 
+  // Rejected rather than truncated, and this is the deliberate opposite of the radius clamp
+  // below. A coordinate is an ADDRESS, and a fractional one puts the sample window off the
+  // pixel grid: `index` below is `(y * width + x) * 4`, so a `.5` that cancels against the
+  // `* 4` reads a real pixel that is not the one asked for, a `.25` reads a green or blue
+  // channel where a red or an alpha was expected, and a `.1` reads `undefined` at all -
+  // and `undefined === 0` is false, so the transparent-pixel skip never fires. Each of
+  // those returns a non-null colour where the contract says null means "nothing at this
+  // point", and each is a colour at a pixel the caller never named. Truncating would return
+  // the same three answers one pixel along, so it hides the defect rather than closing it,
+  // and it would bury the caller's own arithmetic - a divide, a `cssPointToImage` result -
+  // that produced a coordinate no pixel has. A radius is a window rather than an address,
+  // which is why clamping one is right and truncating the other is not.
+  if (!Number.isInteger(pointX) || !Number.isInteger(pointY)) return null;
+
   if (pointX < 0 || pointX >= width || pointY < 0 || pointY >= height) return null;
 
   const colors = { red: 0, green: 0, blue: 0, count: 0 };
@@ -698,9 +715,66 @@ export async function getColorAtPoint(
   };
 }
 
-export async function getStrokeAnalysis(screenshot: Buffer | ImageDataResult): Promise<StrokeAnalysis | null> {
+/**
+ * The CSS-pixel size of the region a capture was asked for, which is what makes the
+ * capture's scale derivable without assuming anything about the host.
+ *
+ * `page.screenshot({ clip })` defaults to `scale: 'device'` and a CDP
+ * `Page.captureScreenshot` comes back at Chrome's surface scale, so a capture of a CSS
+ * region is not a CSS-resolution image, and never was one host-independently either. The
+ * caller knows the CSS size it asked for and the decoded image knows its own pixel size,
+ * so `imageWidth / region.width` is the scale: measured rather than declared. It is a
+ * required argument rather than an option, because the one thing this classifier must
+ * never do is quietly classify a 2x capture against thresholds authored for 1x.
+ */
+export interface CaptureRegion {
+  /** CSS-pixel width of the clip the caller passed to the capture API. */
+  width: number;
+  /** CSS-pixel height of the same clip. */
+  height: number;
+}
+
+/**
+ * Device pixels per CSS pixel in a capture of `region`, from the decoded image's own
+ * width. A faithful capture scales both axes equally (`expectFaithfulCaptureOf` in
+ * `cdp-helpers.spec.ts` pins that for the CDP path), and on a fractional clip the two can
+ * differ by a fraction of a pixel because each axis is rounded independently, so the width
+ * axis is the one read.
+ */
+function captureScale(imageWidth: number, region: CaptureRegion): number {
+  if (
+    !(region.width > 0) ||
+    !(region.height > 0) ||
+    !Number.isFinite(region.width) ||
+    !Number.isFinite(region.height)
+  ) {
+    throw new Error(
+      `getStrokeAnalysis: the captured region needs a positive CSS size to derive the capture scale from, got ${region.width}x${region.height}`
+    );
+  }
+  return imageWidth / region.width;
+}
+
+/**
+ * Classifies a captured stroke as a solid line, a dashed one or a spray.
+ *
+ * `region` is the CSS-pixel size of the clip the capture was taken over, and it is what
+ * makes the classification independent of the host's pixel density. The thresholds in
+ * `STROKE_ANALYSIS` are authored in CSS pixels; the measurements below are taken in the
+ * capture's own pixels, so each threshold is multiplied by the capture scale before the
+ * comparison. Without that, the same physical stroke measured at 2x carries twice the
+ * vertical spread and twice the gaps against thresholds that did not move: a pen stroke's
+ * antialiased edge clears SPRAY_VERTICAL_SPREAD_THRESHOLD and reads as a spray, and a
+ * 3-CSS-px antialiasing bridge becomes 6 device columns, clears PEN_GAP_THRESHOLD, and
+ * splits one solid stroke into two segments.
+ */
+export async function getStrokeAnalysis(
+  screenshot: Buffer | ImageDataResult,
+  region: CaptureRegion
+): Promise<StrokeAnalysis | null> {
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const { width, height, data } = imageData;
+  const scale = captureScale(width, region);
 
   const occupiedColumns = new Set<number>();
   let top = height;
@@ -752,10 +826,17 @@ export async function getStrokeAnalysis(screenshot: Buffer | ImageDataResult): P
 
   const verticalSpread = bottom - top + 1;
   const columns = [...occupiedColumns].sort((a, b) => a - b);
-  const isSpray = verticalSpread > STROKE_ANALYSIS.SPRAY_VERTICAL_SPREAD_THRESHOLD;
-  const gapThreshold = isSpray ? STROKE_ANALYSIS.SPRAY_GAP_THRESHOLD : STROKE_ANALYSIS.PEN_GAP_THRESHOLD;
-  let segments = 0;
-  let prev = -10;
+  const isSpray = verticalSpread > STROKE_ANALYSIS.SPRAY_VERTICAL_SPREAD_THRESHOLD * scale;
+  const gapThreshold = (isSpray ? STROKE_ANALYSIS.SPRAY_GAP_THRESHOLD : STROKE_ANALYSIS.PEN_GAP_THRESHOLD) * scale;
+  // Seeded from the first occupied column, which is occupied by definition: the loop above
+  // returned null unless there was at least one. The previous `segments = 0; prev = -10`
+  // counted the first column as a segment only while `col - prev > gapThreshold`, i.e. only
+  // while the threshold stayed below `firstColumn + 10`, so raising PEN_GAP_THRESHOLD to 10
+  // reported ZERO segments for a stroke that starts at the first column and, because `type`
+  // tests `segments > 1`, returned the self-inconsistent `{ type: 'solid', segments: 0 }`. A
+  // bound nothing stated, guaranteed only by a hand-maintained constant table.
+  let segments = 1;
+  let prev = columns[0];
   for (const col of columns) {
     if (col - prev > gapThreshold) segments++;
     prev = col;

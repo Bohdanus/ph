@@ -141,14 +141,26 @@ export async function clickToolButton(page: Page, toolName: string): Promise<voi
     fallbackNames.push(normalizedName);
   }
 
+  // `&` is spelled both ways in the wild, so a candidate that carries one is searched as
+  // it was written FIRST and only then expanded to "and". Expanding in place deleted the
+  // first of the two: for `Select & Move` the caller's own label was only ever searched as
+  // `Select and Move`, which cannot match a button whose accessible name is `Select & Move`
+  // — one of the three attempts was dead for the case that motivated it. The expansion is
+  // part of the data, so both patterns escape it.
+  const patternsFor = (name: string): RegExp[] => {
+    const asWritten = new RegExp(escapeRegExp(name), 'i');
+    if (!name.includes('&')) return [asWritten];
+    return [asWritten, new RegExp(escapeRegExp(name.replace(/&/g, 'and')), 'i')];
+  };
+
   const attempted: string[] = [];
   for (const name of fallbackNames) {
-    // `&` expands to "and" because the legacy labels spell the word out while the
-    // map keys do not; the expansion is part of the data, so it is escaped too.
-    const roleTool = page.getByRole('button', { name: new RegExp(escapeRegExp(name.replace(/&/g, 'and')), 'i') });
-    if (await roleTool.count()) {
-      await preservingScroll(page, () => roleTool.first().click());
-      return;
+    for (const pattern of patternsFor(name)) {
+      const roleTool = page.getByRole('button', { name: pattern });
+      if (await roleTool.count()) {
+        await preservingScroll(page, () => roleTool.first().click());
+        return;
+      }
     }
     attempted.push(name);
   }
@@ -233,7 +245,8 @@ export async function openToolFlyout(page: Page, toolName: string): Promise<void
 
 /**
  * Waits for a flyout menu to become visible after long-press, right-click, or keyboard.
- * All flyouts have role="menu" (SidebarLeft.tsx line 285).
+ * All flyouts have role="menu" — the app renders the overlay as a `role="menu"` list in
+ * `SidebarLeft`, and that is the only thing this waits on, not any per-item structure.
  *
  * Unlike `openToolFlyout` this accepts ANY open flyout, which is correct for its callers:
  * they open exactly one flyout by right-click or keyboard, so there is never an earlier one
