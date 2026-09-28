@@ -1454,7 +1454,7 @@ the jsdom tests below**, which drive the handlers directly and cannot miss it.
 `src/components/ToolbarsRight/Colors/__tests__/Color.test.tsx` assert the loss:
 
 - `'coalesces a burst of changes across different sliders into one frame'`
-  (`:190`) fires all three sliders before the stubbed rAF and expects
+  (`:187`) fires all three sliders before the stubbed rAF and expects
   `{ grayscale: 0, sepia: 0, saturation: 30 }` — the first two gone. Its own
   comment says this documents the lost-update behaviour "rather than a merge".
 - `'drops the earlier in-frame edit when two different sliders move before the
@@ -1487,4 +1487,4 @@ control's accessible name between the two changes cannot see this, and must not:
 it is a race, and the test for a race is the one that does not wait.
 
 **Files.** `src/components/ToolbarsRight/Colors/Color.tsx:28-56`,
-`src/components/ToolbarsRight/Colors/__tests__/Color.test.tsx:190,213`
+`src/components/ToolbarsRight/Colors/__tests__/Color.test.tsx:187,210`
