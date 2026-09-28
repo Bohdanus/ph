@@ -30,8 +30,9 @@ const RISK_ORDER = { high: 0, medium: 1, low: 2 };
  */
 function relativePathFor(root, absolute) {
   if (absolute === root) return '.';
-  const rest = absolute.slice(root.length);
-  if (rest.startsWith('/')) return rest.slice(1);
+  if (absolute.startsWith(`${root}/`)) return absolute.slice(root.length + 1);
+  // Outside the repository. Slice(3) here produced a path fragment that looked
+  // relative but resolved to nothing, which is the worst of both.
   return absolute;
 }
 
@@ -100,6 +101,11 @@ export function buildInventory({
 
     return {
       name: wt.name,
+      // A worktree can live anywhere — several agents run scratch worktrees
+      // in /tmp. `inRepo` separates the ones this repository's curated table is
+      // about from transients, because "every worktree needs a curated entry"
+      // is only a sensible rule for the first kind.
+      inRepo: wt.path === root || wt.path.startsWith(`${root}/`),
       path: relativePathFor(root, wt.path),
       absolutePath: wt.path,
       branch: wt.branch,

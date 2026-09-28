@@ -48,7 +48,7 @@ export const CURATED = {
   'agent-board': {
     summary:
       'The swarm board itself: scripts/agent-board.mjs and its node:sqlite storage under the common git directory.',
-    note: 'This said `landed: true` while it was. It has since taken a salvage commit preserving work from an abandoned worktree, so it is unmerged again, and the claim is retracted rather than argued with — which is what the landed-claim test exists to force.',
+    note: 'The board work itself is on main. A later `wip(salvage)` commit (3f1d0e2) sits on this branch on top of that, carrying an uncommitted board-schema migration test suite that was on no ref when the owning worktree was swept. It does not pass as it stands — one of the 74 tests in `agent-board.test.mjs` fails on this branch — so the claim is retracted rather than asserted. Landing it is a real fix, not a deletion.',
   },
   'board-file-index': {
     summary:
@@ -573,9 +573,53 @@ export const CURATED = {
       'Corrects the tool descriptions so each one says what the tool actually does, rather than what its name suggests.',
   },
   'board-entrypoint': {
+    // This entry previously claimed `landed: true` and described a worktree that
+    // no longer existed, asserting a merge that never happened: main carried none
+    // of it. The contradiction test only checks entries against worktrees that
+    // exist, so a false claim about a deleted worktree raised nothing. A later
+    // worktree of the same name then made it checkable, and it failed.
+    //
+    // The lesson is the one `landed` exists to enforce: a curated entry is a
+    // claim about git, and a claim nothing re-derives is just prose.
+    //
+    // It is `true` again because it is now true — `npm run board` was merged as
+    // `npm run swarm`, the worktree is removed, and the branch is an ancestor of
+    // main. The entry is KEPT rather than deleted, matching every other landed
+    // worktree here: a landed-and-removed worktree is history, and the claim is
+    // only worth keeping while something re-derives it.
     summary:
-      'Names which board the CLI is talking about and teaches `ready` to answer. Was merged once and then extended, so it is unmerged again.',
-    note: 'This entry said `landed: true` while git reported the branch off main. That contradiction is what the landed-claim test exists to catch, and it caught it.',
+      "Landed: the board command is `swarm` (it was `board`, which is also the name of Kilo's unrelated built-in tool), and `ready` ranks by priority, then live-before-imported, then startable-before-contended.",
+    landed: true,
+  },
+  // A test-pin tranche: one worktree per subsystem, each pinning behaviour that
+  // currently has no test. All sit on the same merge commit and are unmerged.
+  'durable-replay-pins': {
+    summary: 'Pins durable-replay behaviour that currently has no test asserting it.',
+  },
+  'harness-integrity-pins': {
+    summary:
+      'Pins the test harness invariants themselves, including the context factory that a prior audit showed returns a different object per call.',
+  },
+  'hooks-pins': {
+    summary: 'Pins the commit-gate hooks, which were the subject of the silent-no-gate bug in 89 of 118 worktrees.',
+  },
+  'main-tool-area-pins': {
+    summary: 'Pins Main and the tool areas, whose overlay painters were the subject of the unmount-frame defect.',
+  },
+  'selection-pixel-pins': {
+    summary: 'Pins selection pixel behaviour.',
+  },
+  'store-history-pins': {
+    summary: 'Pins StoreContext and history behaviour that no test currently covers.',
+  },
+  'tools-registry-pins': {
+    summary: 'Pins the tool registry, where a pixel-free tool is not a typecheck error.',
+  },
+  'ui-shell-pins': {
+    summary: 'Pins UI shell behaviour.',
+  },
+  'swarm-file-index': {
+    summary: 'The durable issue_files index on the board, so a file named by an open issue counts as held.',
   },
   'swarm-lease': {
     summary: 'A board worktree on lease behaviour, sitting on the merge that landed the brush-tip-core branch.',

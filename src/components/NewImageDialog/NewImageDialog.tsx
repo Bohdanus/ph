@@ -6,8 +6,23 @@ import { useDialogFocusContainment } from '../../hooks/useDialogFocusContainment
 
 interface NewImageDialogProps {
   onClose: () => void;
-  // width/height in pixels, dpi (optional), background color (optional)
-  // last parameter indicates whether background should be opaque; if false, background is transparent
+  // The payload is `BlankImageParams` and nothing else: a pixel `size`, a `color` that is
+  // always sent and required by the type, and `opacity` -- the last parameter, which says
+  // whether the background is opaque, false leaving it transparent.
+  //
+  // There is deliberately no `dpi` here, and none on the type. DPI is a one-shot
+  // physical-to-pixel conversion: it is applied to the width/height inputs by
+  // `computePixelsFromPreset` and is spent by the time the form submits, so the created
+  // document carries the correct pixel size and no provenance. Recording it would mean a
+  // `dpi` field on `BlankImageParams` that `history-adapter.ts:153` then silently drops --
+  // that case is an explicit whitelist -- and a new field on `DurableLayerSource`'s blank
+  // arm (`history-model.ts:13`) under `DURABLE_SCHEMA_VERSION = 1`, for metadata no
+  // surface displays. The user asked for a pixel size, and got one.
+  //
+  // The control is coherent because `PRESETS.custom` carries neither `widthMm` nor
+  // `widthIn` (`imagePresets.ts:17`): the field is hidden for pixel-unit presets, editing
+  // either dimension forces the preset back to `custom`, and so DPI exists only for the six
+  // physical presets, where it has a physical size to convert.
   onCreate: (params: BlankImageParams) => void;
 }
 

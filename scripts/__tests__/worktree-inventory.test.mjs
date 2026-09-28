@@ -1600,10 +1600,21 @@ describe('the curated table', () => {
     const live = listWorktrees(cwd).filter((w) => !missingPaths.has(w.path));
     expect(live.length).toBeGreaterThan(1);
 
+    // Only worktrees INSIDE the repository. Several agents run scratch
+    // worktrees in /tmp, and "every worktree needs a curated entry" is not a
+    // sensible rule for a transient one — the curated table documents this
+    // repository's worktrees.
+    // The MAIN checkout, which is the first entry of `git worktree list` — not
+    // `cwd`, which under a task worktree is that worktree, and against which
+    // every other worktree path would fail the prefix test.
+    const repoRoot = live[0].path;
+    const inRepo = live.filter((w) => w.path === repoRoot || w.path.startsWith(`${repoRoot}/`));
+    expect(inRepo.length, 'no worktrees matched the repository prefix').toBeGreaterThan(10);
+
     // Worktrees created after the table was written, plus the two that are
     // documented elsewhere by construction. Everything else must be curated.
     const allowed = new Set(['worktree-inventory', 'land-and-dispose']);
-    const uncategorised = live
+    const uncategorised = inRepo
       .map((w) => w.name)
       .filter((name) => name !== 'ph' && !allowed.has(name) && !CURATED[name]);
 

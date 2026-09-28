@@ -81,7 +81,7 @@ describe('the import of the handoff documents', () => {
 
   /**
    * The documents state urgency in the heading, and priority is the column
-   * `board ready` SORTS on. Every item arriving as `normal` meant the queue an
+   * `swarm ready` SORTS on. Every item arriving as `normal` meant the queue an
    * agent works from was in document order, not in order of damage.
    */
   it("reads the document's own P-level into the board's priority", () => {
