@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { defaultSettings, savedArgsPerFigure } from '../settings.ts';
+import { defaultSettings, savedArgsPerFigure, savedDrawPerPen } from '../settings.ts';
 import { toolProcessors } from '../toolProcessors.ts';
 import { toolsMap } from '../toolsMap.ts';
 import { drawShape } from '../shape.ts';
 import { createLayerSource } from '../../contexts/layer-utils.ts';
+import { drawSpray } from '../../util/draw.ts';
+import { hexToRgb } from '../../util/rect.ts';
 import { toolbarMap } from '../../../toolbar-mapping.ts';
 import type { ToolbarTool } from '../../../toolbar-mapping.ts';
-import type { PaintToolArgs, PaintToolName } from '../draw.ts';
+import type { DrawToolArgs, PaintToolArgs, PaintToolName } from '../draw.ts';
 import type { FigureType } from '../shape.ts';
 import type { Ctx2D, Point } from '../../contexts/general-types.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
@@ -241,9 +243,11 @@ describe('paint tool rasterization', () => {
         expect(canvas.ctx.lineWidth, toolName).not.toBe(defaults.lineWidth);
         expect(canvas.ctx.globalAlpha, toolName).not.toBe(defaults.alpha);
         expect(canvas.ctx.strokeStyle, toolName).not.toBe(defaults.color);
-        // The spray path still spends lineWidth as the radial-gradient radius.
+        // The spray path spends half the lineWidth as the radial-gradient radius, because the
+        // Size slider is a diameter on every other pen and spending all of it painted a blob
+        // twice the requested size that also overflowed the layer crop.
         const gradientCall = (canvas.ctx.createRadialGradient.mock.calls as unknown as number[][])[0];
-        expect(gradientCall[5], toolName).toBe(defaults.lineWidth);
+        expect(gradientCall[5], toolName).toBe(defaults.lineWidth / 2);
         continue;
       }
 
@@ -321,6 +325,114 @@ describe('paint tool rasterization', () => {
     for (const toolName of ['rectangle', 'ellipse', 'triangle', 'polygon', 'line'] as const) {
       expect(toolsMap[toolName].imageProcessor, toolName).toBe(toolsMap.shape.imageProcessor);
     }
+  });
+});
+
+/**
+ * The spray pen's dab contract, pinned on `drawSpray` itself rather than through a tool
+ * registry entry.
+ *
+ * Two reasons it is driven directly instead of through `toolProcessors`. First, the dab's
+ * shape is `drawSpray`'s business and no registry entry owns it. Second, the tool that
+ * currently forces the spray pen is `color-replacement`, which stops being a spray tool;
+ * a pin reached through the registry would delete itself the moment that stops being true.
+ *
+ * Each of the three numbers below was wrong before, in a way that compounded: the peak was
+ * `alpha / 4` (0.125 at the spray preset's own Opacity 0.5), the ramp started at the centre
+ * and fell to nothing across the whole radius, and that radius was the whole `lineWidth` —
+ * a diameter everywhere else. So one dab was a nearly invisible full-width blur, and the
+ * ground it covered was twice the size the user asked for.
+ */
+describe('spray pen dab', () => {
+  const dabAt = (overrides: Partial<DrawToolArgs> = {}) => {
+    const ctx = createMockCanvasContext();
+
+    drawSpray({
+      args: {
+        toolName: 'draw',
+        penType: 'spray',
+        color: '#ff0000',
+        alpha: 0.8,
+        lineWidth: 10,
+        points: [{ x: 5, y: 5 }],
+        ...overrides,
+      },
+      ctx: ctx as unknown as Ctx2D,
+    });
+
+    // The mock builds a fresh gradient object per call, so the stops are only reachable
+    // through the recorded result, not through the return value.
+    const gradient = vi.mocked(ctx.createRadialGradient).mock.results[0]?.value as
+      { addColorStop: ReturnType<typeof vi.fn> } | undefined;
+
+    expect(gradient, 'the dab must have created a gradient').toBeDefined();
+
+    return { ctx, gradient: gradient! };
+  };
+
+  const stopsOf = (gradient: { addColorStop: ReturnType<typeof vi.fn> }) =>
+    gradient.addColorStop.mock.calls as [number, string][];
+
+  const rgb = hexToRgb('#ff0000');
+
+  it('peaks at 0.4 of the Opacity setting, not a quarter of it', () => {
+    const { gradient } = dabAt({ alpha: 0.8 });
+
+    // 0.8 x 0.4 = 0.32, rounded to four places because the raw product carries
+    // binary-float noise (0.32000000000000006) into the colour string.
+    expect(stopsOf(gradient)[0]).toEqual([0, `rgba(${rgb}, 0.32)`]);
+
+    // The campaign's concrete failure: the preset's own Opacity 0.5 under the old `/4`
+    // peaked at 0.125, which measured rgb(223,223,223) for a single tap on white.
+    const preset = dabAt({ ...savedDrawPerPen.spray });
+    expect(stopsOf(preset.gradient)[0]).toEqual([0, `rgba(${rgb}, 0.2)`]);
+  });
+
+  it('holds the peak over the inner quarter of the radius instead of ramping from the centre', () => {
+    const { gradient } = dabAt({ alpha: 0.8 });
+
+    // Exactly three stops, in this order. A dab with a body has a plateau and a rim; the
+    // pre-fix two-stop ramp (0 then 1) spent the entire dab as falloff, which is a blur
+    // and is what made repeated passes accumulate haze instead of building a stroke.
+    expect(stopsOf(gradient)).toEqual([
+      [0, `rgba(${rgb}, 0.32)`],
+      [0.25, `rgba(${rgb}, 0.32)`],
+      [1, `rgba(${rgb}, 0)`],
+    ]);
+  });
+
+  it('spends half the lineWidth as the gradient radius, because Size is a diameter', () => {
+    const { ctx } = dabAt({ lineWidth: 10 });
+
+    // The pre-fix radius was the whole `lineWidth`, painting a 200px blot at Size 100 and
+    // overflowing the `lineWidth` padding `pointsBoundingPos` reserves for the layer crop.
+    expect(ctx.createRadialGradient).toHaveBeenCalledWith(5, 5, 0, 5, 5, 5);
+    // The arc has to use the same radius, or the gradient is clipped by a larger disc and
+    // the outermost three quarters of every dab is cut off rather than falling off.
+    expect(ctx.arc).toHaveBeenCalledWith(5, 5, 5, 0, Math.PI * 2);
+  });
+
+  it('still draws one dab per sample, and nothing at all without samples', () => {
+    const two = dabAt({
+      points: [
+        { x: 1, y: 1 },
+        { x: 2, y: 2 },
+      ],
+    });
+    expect(two.ctx.createRadialGradient).toHaveBeenCalledTimes(2);
+    expect(two.ctx.fill).toHaveBeenCalledTimes(2);
+
+    // Driven through a bare context rather than `dabAt`, which asserts a gradient exists
+    // and so cannot express the case where none should.
+    const empty = createMockCanvasContext();
+    drawSpray({
+      args: { toolName: 'draw', penType: 'spray', color: '#ff0000', alpha: 0.8, lineWidth: 10, points: [] },
+      ctx: empty as unknown as Ctx2D,
+    });
+
+    expect(empty.createRadialGradient).not.toHaveBeenCalled();
+    expect(empty.fill).not.toHaveBeenCalled();
+    expect(empty.beginPath).not.toHaveBeenCalled();
   });
 });
 
