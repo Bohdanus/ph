@@ -22,7 +22,10 @@ const Reposition: React.FC<{}> = () => {
         Merge all
       </button>
 
-      <div className="text-[10px] text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded border border-blue-200 dark:border-blue-800">
+      <div
+        className="text-[10px] text-blue-800 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded border border-blue-200 dark:border-blue-800"
+        data-testid="reposition-hint-text"
+      >
         Drag or resize on canvas
       </div>
     </div>

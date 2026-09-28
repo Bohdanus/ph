@@ -1,8 +1,8 @@
 import type { Pos } from './general-types.ts';
 import type { Layer, LayerOperation, ToolLayerSource } from './layer-types.ts';
 import type { ToolArgs, ToolName } from './tool-types.ts';
-import { exp1_1 } from '../tools/functions.ts';
-import { toolProcessors, type CreatorToolParams } from '../tools/toolProcessors.ts';
+import { buildColorsFilter, buildLevelsFilter } from '../tools/functions.ts';
+import { findToolProcessor, type CreatorToolParams } from '../tools/toolProcessors.ts';
 import { documentFrameSize, type DocumentFrame } from './document-frame.ts';
 import { getLayerAffineTransform, isIdentityAffineTransform } from './affine-transform.ts';
 import { resizeCanvas } from '../util/canvas.ts';
@@ -13,9 +13,9 @@ function filterForOperation(operation: Extract<LayerOperation, { args: unknown }
     case 'blur':
       return `blur(${args.radius}px)`;
     case 'color':
-      return `grayscale(${args.grayscale}%) sepia(${args.sepia}%) saturate(${exp1_1(args.saturation, 2.1)})`;
+      return buildColorsFilter(args);
     case 'levels':
-      return `brightness(${exp1_1(args.brightness, 1.9)}) contrast(${exp1_1(args.contrast, 2.2)})`;
+      return buildLevelsFilter(args);
   }
 }
 
@@ -53,7 +53,12 @@ function getLayerBitmap(layer: Layer, position: Pos) {
   if (!isVectorSource(layer.source)) return layer.bitmap;
 
   const args = scaleVectorArgs(layer.source.args, layer.source, position);
-  const [canvas] = toolProcessors[args.toolName].imageProcessor({ size: position } as CreatorToolParams)(args);
+  const processor = findToolProcessor(args.toolName);
+  // A vector source is only ever created by a creator tool, and a tool with no processor
+  // (`PIXEL_FREE_TOOLS`) is never one, so this is unreachable — and falls back to the layer's own
+  // bitmap rather than throwing on a lookup that produced nothing.
+  if (!processor) return layer.bitmap;
+  const [canvas] = processor.imageProcessor({ size: position } as CreatorToolParams)(args);
   return canvas;
 }
 

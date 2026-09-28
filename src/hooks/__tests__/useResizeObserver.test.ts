@@ -3,6 +3,7 @@ import { renderHook } from '@testing-library/react';
 import type { RefObject } from 'react';
 import { usePointerPosition } from '../usePointerPosition.ts';
 import { useResizeObserverRAF } from '../useResizeObserver.ts';
+import type { Pos } from '../../contexts/general-types.ts';
 
 type MockResizeObserverInstance = {
   callback: ResizeObserverCallback;
@@ -49,21 +50,21 @@ function makeElement(rect: Partial<DOMRect> = {}) {
   } as unknown as HTMLElement;
 }
 
-function makeEntry(width: number, height: number): ResizeObserverEntry {
+function makeEntry(width: number, height: number, contentWidth = width, contentHeight = height): ResizeObserverEntry {
   return {
     contentRect: {
       x: 0,
       y: 0,
-      width,
-      height,
+      width: contentWidth,
+      height: contentHeight,
       top: 0,
       left: 0,
-      right: width,
-      bottom: height,
+      right: contentWidth,
+      bottom: contentHeight,
       toJSON: () => {},
     },
-    contentBoxSize: [],
-    borderBoxSize: [],
+    contentBoxSize: [{ inlineSize: contentWidth, blockSize: contentHeight }],
+    borderBoxSize: [{ inlineSize: width, blockSize: height }],
     devicePixelContentBoxSize: [],
     target: makeElement(),
   };
@@ -76,7 +77,7 @@ describe('useResizeObserverRAF', () => {
     vi.useFakeTimers();
     const { MockResizeObserver, getInstance: getInst } = createMockResizeObserver();
     getInstance = getInst;
-    vi.spyOn(globalThis, 'ResizeObserver').mockImplementation(MockResizeObserver as any);
+    vi.spyOn(globalThis, 'ResizeObserver').mockImplementation(MockResizeObserver as unknown as typeof ResizeObserver);
   });
 
   afterEach(() => {
@@ -84,7 +85,7 @@ describe('useResizeObserverRAF', () => {
     vi.restoreAllMocks();
   });
 
-  it('calls onResize with the element position and the new content rect dimensions', () => {
+  it('calls onResize with the element position and the observed border box size', () => {
     const el = makeElement({ left: 10, top: 20 });
     const ref = { current: el } as RefObject<HTMLElement | null>;
     const onResize = vi.fn();
@@ -102,6 +103,43 @@ describe('useResizeObserverRAF', () => {
     vi.advanceTimersByTime(16);
 
     expect(onResize).toHaveBeenCalledWith({ x: 10, y: 20, width: 50, height: 60 });
+  });
+
+  it('reports the border box, not the content box, for a bordered element', () => {
+    // `x`/`y` come from the viewport-relative getBoundingClientRect(), so the size
+    // has to come from the same box. A border makes contentRect smaller, and
+    // mixing the two reported a position and a size that disagreed.
+    const el = makeElement({ left: 3, top: 4 });
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const onResize = vi.fn();
+
+    renderHook(() => useResizeObserverRAF(ref, onResize));
+
+    const instance = getInstance();
+    // borderBox 100x100 (the default measured size), contentBox 92x92 (4px border).
+    instance!.callback([makeEntry(100, 100, 92, 92)], instance! as unknown as ResizeObserver);
+
+    vi.advanceTimersByTime(16);
+
+    expect(onResize).toHaveBeenCalledExactlyOnceWith({ x: 3, y: 4, width: 100, height: 100 });
+  });
+
+  it('falls back to the measured border box when the entry carries no border box size', () => {
+    const el = makeElement({ left: 5, top: 6 });
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const onResize = vi.fn();
+
+    renderHook(() => useResizeObserverRAF(ref, onResize));
+
+    const instance = getInstance();
+    const entry = makeEntry(50, 60);
+    instance!.callback([{ ...entry, borderBoxSize: [] }], instance! as unknown as ResizeObserver);
+
+    vi.advanceTimersByTime(16);
+
+    // makeElement measures 100x100; the fallback must stay on the border box rather
+    // than resurrecting the content box.
+    expect(onResize).toHaveBeenCalledExactlyOnceWith({ x: 5, y: 6, width: 100, height: 100 });
   });
 
   it('throttles consecutive resize notifications to one per animation frame', () => {
@@ -188,7 +226,7 @@ describe('useResizeObserverRAF', () => {
   });
 
   it('does not set up an observer when ResizeObserver is undefined', () => {
-    vi.spyOn(globalThis, 'ResizeObserver').mockImplementation(undefined as any);
+    vi.spyOn(globalThis, 'ResizeObserver').mockImplementation(undefined as unknown as typeof ResizeObserver);
     const el = makeElement();
     const ref = { current: el } as RefObject<HTMLElement | null>;
     const onResize = vi.fn();
@@ -207,6 +245,57 @@ describe('useResizeObserverRAF', () => {
     unmount();
 
     expect(getInstance()!.disconnect).toHaveBeenCalled();
+  });
+
+  it('reports a collapsed element as a zero-size rect', () => {
+    const el = makeElement({ left: 7, top: 8 });
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const onResize = vi.fn();
+
+    renderHook(() => useResizeObserverRAF(ref, onResize));
+
+    const instance = getInstance();
+    instance!.callback([makeEntry(0, 0)], instance! as unknown as ResizeObserver);
+
+    vi.advanceTimersByTime(16);
+
+    expect(onResize).toHaveBeenCalledExactlyOnceWith({ x: 7, y: 8, width: 0, height: 0 });
+  });
+
+  it('ignores an empty entries batch', () => {
+    const el = makeElement();
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const onResize = vi.fn();
+
+    renderHook(() => useResizeObserverRAF(ref, onResize));
+
+    const instance = getInstance();
+    instance!.callback([], instance! as unknown as ResizeObserver);
+
+    vi.advanceTimersByTime(16);
+
+    expect(onResize).not.toHaveBeenCalled();
+  });
+
+  it('notifies the latest onResize callback after a re-render', () => {
+    const el = makeElement({ left: 1, top: 2 });
+    const ref = { current: el } as RefObject<HTMLElement | null>;
+    const first = vi.fn();
+    const second = vi.fn();
+
+    const { rerender } = renderHook(
+      ({ onResize }: { onResize: (size: Pos) => void }) => useResizeObserverRAF(ref, onResize),
+      { initialProps: { onResize: first } }
+    );
+
+    rerender({ onResize: second });
+
+    const instance = getInstance();
+    instance!.callback([makeEntry(10, 20)], instance! as unknown as ResizeObserver);
+    vi.advanceTimersByTime(16);
+
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledExactlyOnceWith({ x: 1, y: 2, width: 10, height: 20 });
   });
 
   it('cancels a pending animation frame on unmount', () => {

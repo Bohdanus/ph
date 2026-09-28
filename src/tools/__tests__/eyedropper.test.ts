@@ -1,0 +1,43 @@
+import { describe, expect, it } from 'vitest';
+
+import { EYEDROPPER_SAMPLE_SIZE_OPTIONS, type EyedropperSampleSize } from '../eyedropper.ts';
+import { defaultSettings } from '../settings.ts';
+import { findToolProcessor, PIXEL_FREE_TOOLS, toolProcessors } from '../toolProcessors.ts';
+
+describe('eyedropper args', () => {
+  it('carries settings only, with no geometry to persist or replay', () => {
+    expect(Object.keys(defaultSettings.eyedropper).sort()).toEqual(['sampleAllLayers', 'sampleSize', 'toolName']);
+  });
+
+  it('seeds the Photoshop defaults: a point sample, and every layer off', () => {
+    expect(defaultSettings.eyedropper).toEqual({
+      toolName: 'eyedropper',
+      sampleSize: 1,
+      sampleAllLayers: false,
+    });
+  });
+
+  it('names only the three sizes the options bar offers', () => {
+    const values: readonly EyedropperSampleSize[] = EYEDROPPER_SAMPLE_SIZE_OPTIONS.map(({ value }) => value);
+
+    expect(values).toEqual([1, 3, 5]);
+    expect(EYEDROPPER_SAMPLE_SIZE_OPTIONS.map(({ label }) => label)).toEqual([
+      'Point Sample',
+      '3 by 3 Average',
+      '5 by 5 Average',
+    ]);
+  });
+});
+
+describe('eyedropper registry absence', () => {
+  it('has no processor, because it rasterizes nothing and records no history', () => {
+    expect(PIXEL_FREE_TOOLS).toEqual(['eyedropper']);
+    expect(findToolProcessor('eyedropper')).toBeUndefined();
+    expect(Object.hasOwn(toolProcessors, 'eyedropper')).toBe(false);
+  });
+
+  it('is the only tool in the pixel-free set, so the set cannot grow unnoticed', () => {
+    // Every other tool rasterizes, so a second entry here would be a claim that has to be earned.
+    expect([...PIXEL_FREE_TOOLS]).toHaveLength(1);
+  });
+});

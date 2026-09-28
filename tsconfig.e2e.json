@@ -1,0 +1,50 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.e2e.tsbuildinfo",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    // NOT "vitest/globals": every e2e unit file imports describe/it/expect from
+    // 'vitest' explicitly. Listing the global types would let an unimported
+    // `describe` typecheck here and then fail at runtime under the Node-environment
+    // e2e project, which does not set `globals: true`.
+    "types": ["@playwright/test", "node"],
+    // Same as tsconfig.app.json / tsconfig.node.json. Without it, a dependency `.d.ts`
+    // change in a `@types/node` / `@playwright/test` / `vitest` minor bump can turn
+    // `tsc -b` — and therefore the pre-commit gate — red through no repo change.
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    /* Linting */
+    "strict": true,
+    "noImplicitAny": true,
+    "noUnusedLocals": true,
+    // ON, matching tsconfig.app.json / tsconfig.node.json. It was off here only to
+    // accommodate unread parameters, and there are now none: `exportAndVerify`'s
+    // `testInfo` attaches the exported bytes to the report when the pixel comparison
+    // fails (`e2e/export/helpers.ts:230`). An earlier version of this comment claimed a
+    // dead parameter was "a documented defect in e2e/OPEN_PROBLEMS.md"; it was not, and
+    // the parameter was not missing a step.
+    //
+    // The e2e ESLint block also sets `args: 'all'`, so an unread parameter is reported by
+    // both tools rather than by one and hidden by the other.
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true
+  },
+  // The specs and the `__tests__` unit files are included on purpose: type-checking the
+  // tests is the point of wiring this project into `tsc -b`.
+  "include": ["e2e/**/*.ts", "playwright.config.ts", "vitest.e2e.config.ts"],
+  // `e2e/**/*.spec.ts-snapshots/**` holds the committed visual-regression baselines
+  // (PNG/ICO/BMP/GIF/AVIF/WebP/JPEG/SVG) and no TypeScript, so nothing in it would be
+  // picked up by the glob above. It is listed to document that the directory is image
+  // data, not source, and to keep it out if a stray `.ts` ever lands beside it.
+  "exclude": ["node_modules", "e2e/**/*.spec.ts-snapshots/**"]
+}

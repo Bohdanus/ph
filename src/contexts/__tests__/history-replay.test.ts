@@ -1,10 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { replayHistory, type HistoryReplayDependencies } from '../history-replay.ts';
+import { deriveSetLayerPropertiesEntry } from '../history-adapter.ts';
 import type { Selection } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerSource } from '../layer-types.ts';
-import { NEW_LAYER_ACTION, SELECTION_ACTION, SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import {
+  HIDE_LAYER_ACTION,
+  NEW_LAYER_ACTION,
+  RENAME_LAYER_ACTION,
+  SELECTION_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
+  SHOW_LAYER_ACTION,
+  TOOL_ACTION,
+} from '../../util/constants.ts';
 
 const layerId = 'layer-1';
 const initialSize = { width: 400, height: 300 };
@@ -124,6 +133,71 @@ describe('replayHistory', () => {
     expect(atSelection).toMatchObject({ selections: [nextSelection], activeSelectionId: nextSelection.id });
   });
 
+  it('replays a committed selection move back to the pre-move geometry and forward again', () => {
+    const dependencies = createDependencies();
+    const drawn: Selection = {
+      id: 'selection-1',
+      points: [
+        { x: 1, y: 1 },
+        { x: 91, y: 1 },
+        { x: 91, y: 91 },
+      ],
+      isActive: true,
+      pos: { x: 9, y: 9, width: 92, height: 92 },
+    };
+    const moved: Selection = {
+      ...drawn,
+      points: [
+        { x: 11, y: 6 },
+        { x: 101, y: 6 },
+        { x: 101, y: 96 },
+      ],
+      isActive: true,
+      pos: { x: 19, y: 4, width: 92, height: 92 },
+      metadata: { movedAtVersion: 1 },
+    };
+    // The shape a polygon's anchor or body drag now leaves behind: two entries,
+    // one per completed gesture, the second replacing the first selection's
+    // geometry rather than appending a second selection.
+    const history: HistoryItem[] = [
+      newLayerHistoryItem(),
+      {
+        id: 'selection-create',
+        actionName: SELECTION_ACTION,
+        layerId,
+        args: {
+          previousSelectionState: { selections: [], activeSelectionId: null },
+          nextSelectionState: { selections: [drawn], activeSelectionId: drawn.id },
+        },
+      },
+      {
+        id: 'selection-move',
+        actionName: SELECTION_ACTION,
+        layerId,
+        args: {
+          previousSelectionState: { selections: [drawn], activeSelectionId: drawn.id },
+          nextSelectionState: { selections: [moved], activeSelectionId: moved.id },
+        },
+      },
+    ];
+
+    // The user-visible fix: redo after the move returns the pre-move geometry, and
+    // undoing that redo puts the move back. A move that appended no history entry
+    // could not be undone at all, and redoing it left the moved geometry forever.
+    expect(replayHistory(history, 1, initialSize, dependencies)).toMatchObject({
+      selections: [drawn],
+      activeSelectionId: drawn.id,
+    });
+    expect(replayHistory(history, 2, initialSize, dependencies)).toMatchObject({
+      selections: [moved],
+      activeSelectionId: moved.id,
+    });
+    expect(replayHistory(history, 1, initialSize, dependencies)).toMatchObject({
+      selections: [drawn],
+      activeSelectionId: drawn.id,
+    });
+  });
+
   it('replays document-frame crops without changing layer world geometry or sources', () => {
     const dependencies = createDependencies();
     const baselineLayer = createTestLayer(layerId);
@@ -172,5 +246,58 @@ describe('replayHistory', () => {
     ];
 
     expect(replayHistory(history, 1, initialSize, dependencies).documentFrame).toEqual(baselineFrame);
+  });
+});
+
+/**
+ * `deriveSetLayerPropertiesEntry` and the branches above encode the same rule
+ * twice: once for the durable entry the store publishes, once for the legacy
+ * replay that drives undo/redo. Nothing in the type system ties them together,
+ * so this suite pins the agreement directly — if either side is edited alone,
+ * the layer starts changing on commit and not reverting, and this fails.
+ */
+describe('layer-property parity between the durable derivation and legacy replay', () => {
+  const propertyCases = [
+    { label: 'show', actionName: SHOW_LAYER_ACTION, args: { visible: true } },
+    { label: 'hide', actionName: HIDE_LAYER_ACTION, args: { visible: false } },
+    { label: 'rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' } },
+  ] as const;
+
+  it.each(propertyCases)(
+    'replaying $label changes exactly the property the derivation patched',
+    ({ actionName, args }) => {
+      const history: HistoryItem[] = [newLayerHistoryItem(), { id: 'property', actionName, layerId, args }];
+      const planned = deriveSetLayerPropertiesEntry(history[1]);
+      expect(planned).not.toBeNull();
+
+      const replayed = replayHistory(history, history.length - 1, initialSize, createDependencies()).layers[layerId];
+      const patch = planned!.operation.patch;
+      expect(Object.keys(patch)).toHaveLength(1);
+      for (const [property, value] of Object.entries(patch)) {
+        expect(replayed[property as 'name' | 'visible']).toEqual(value);
+      }
+    }
+  );
+
+  it('refuses a malformed rename in the derivation, and replay still applies it raw', () => {
+    // A documented divergence, not an oversight: the derivation refuses a
+    // non-string name, but replay assigns `args.name` unconditionally once the
+    // layer exists. That is why the writer falls back to the caller's patch
+    // when the derivation refuses — falling back to `{}` would leave the live
+    // layer untouched and make undo restore a value it never had.
+    const history: HistoryItem[] = [
+      newLayerHistoryItem(),
+      { id: 'bad-rename', actionName: RENAME_LAYER_ACTION, layerId, args: { name: 42 } },
+    ];
+
+    expect(deriveSetLayerPropertiesEntry(history[1])).toBeNull();
+    expect(replayHistory(history, 1, initialSize, createDependencies()).layers[layerId].name).toBe(42);
+  });
+
+  it('records a property entry for a layer replay cannot find', () => {
+    const orphan: HistoryItem = { id: 'orphan', actionName: HIDE_LAYER_ACTION, layerId: 'missing', args: {} };
+
+    expect(deriveSetLayerPropertiesEntry(orphan)).not.toBeNull();
+    expect(replayHistory([orphan], 0, initialSize, createDependencies()).layers['missing']).toBeUndefined();
   });
 });

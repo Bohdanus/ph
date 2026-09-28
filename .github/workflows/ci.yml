@@ -5,6 +5,20 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Re-run a gate on demand without pushing an empty commit. The `e2e` job in
+  # particular is the one whose result a reviewer may want to confirm.
+  workflow_dispatch:
+
+# Superseded runs are pointless work, and this workflow is triggered on every push
+# to a PR branch as well as `main`.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only by default. No job in this workflow needs to write to the repository,
+# and an un-scoped GITHUB_TOKEN inherits whatever the org default happens to be.
+permissions:
+  contents: read
 
 jobs:
   ci:
@@ -13,11 +27,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Nothing in this workflow pushes, tags or reads a private ref, so the
+          # token the checkout leaves in .git/config is a credential with no job
+          # that needs it. Combined with the read-only `permissions` above, a
+          # compromised step cannot exfiltrate a usable token.
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          # Read from .nvmrc rather than repeated here, so the runner and every
+          # developer resolve the same major from one file.
+          node-version-file: '.nvmrc'
           cache: 'npm'
 
       - name: Install dependencies
@@ -30,10 +52,205 @@ jobs:
         run: npm audit --audit-level=high
 
       - name: Type-check
+        # `tsc -b` builds tsconfig.app.json, tsconfig.node.json and tsconfig.e2e.json,
+        # so this also type-checks the Playwright specs and their helper unit tests.
         run: npm run tsc
+
+      - name: Assert every tracked TypeScript file is in a project
+        # A `.ts`/`.tsx` that no project's `include` reaches is type-checked by
+        # nothing: there is no error, and the file can sit there indefinitely. This
+        # is the durable form of that check.
+        #
+        # Note the scope: `tsc -b --listFiles` reports the whole program, so this
+        # fails for a file no project reaches at all. It does NOT fail for a file
+        # that only some other file imports — such a file IS in the program, so
+        # being reachable only through its importers stays invisible here. The
+        # `toolbar-mapping.ts` case was that shape, and the fix for it is the
+        # explicit `include` entry in tsconfig.app.json, not this step.
+        run: |
+          set -euo pipefail
+          dir="$(mktemp -d)"
+          # A non-zero exit here fails the step, so a type error or a broken build
+          # can never leave the comparison below running on a partial file list.
+          npx tsc -b --listFiles > "$dir/all"
+          # Strip the repo prefix without a regex: a checkout path containing a sed
+          # metacharacter would otherwise corrupt every line. Anything not under the
+          # repo root is reported on stderr rather than silently dropped.
+          grep -v '/node_modules/' "$dir/all" \
+            | awk -v root="$PWD/" \
+                'index($0, root) == 1 { print substr($0, length(root) + 1); next } \
+                 { print "!UNPREFIXED " $0 > "/dev/stderr" }' \
+            | sort -u > "$dir/included"
+          uncovered="$(comm -23 <(git ls-files '*.ts' '*.tsx' | sort -u) "$dir/included")"
+          if [ -n "$uncovered" ]; then
+            echo "::error::Tracked TypeScript files that no tsconfig project includes:"
+            echo "$uncovered"
+            exit 1
+          fi
+          echo "All $(git ls-files '*.ts' '*.tsx' | wc -l | tr -d ' ') tracked TypeScript files are type-checked by some project."
 
       - name: Test
         run: npm run test -- --coverage
 
+      - name: Upload app coverage
+        # The report is the point of `--coverage`; without an upload the run
+        # computes lcov and throws it away, and a coverage regression can only be
+        # noticed by re-running the suite locally. `!cancelled()` so a failed run
+        # still publishes the partial report that explains the failure.
+        #
+        # Not a gate. vitest.config.ts declares no `thresholds`, so this step can
+        # only fail by finding no report at all.
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-coverage
+          path: |
+            coverage/
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Build
         run: npm run build
+
+  # The licence policy for the dependency tree is in `DEPENDENCIES.md`, and it
+  # is not a gate: nothing reads it, by decision. The vulnerability half of the
+  # same policy is `npm audit --audit-level=high` in the `ci` job above, which
+  # runs on every push to main and covers the whole tree rather than a diff.
+
+  # The blocking gate for everything under e2e/.
+  #
+  # A separate job rather than a step in `ci`, so that a break anywhere in the app
+  # pipeline cannot silently remove the only gate on this code: within one job a
+  # failed step aborts the rest, and a step ordered after a failing one simply never
+  # runs while the workflow still reads as if it were covered.
+  #
+  # Needs no browser and no application instance.
+  e2e-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit test the e2e helpers
+        run: npm run test:e2e:unit
+
+      - name: Cover the e2e helpers
+        # LAST, and deliberately still a gate. `test:e2e:unit:coverage` re-runs the
+        # same suite with v8 instrumentation and reports into ./coverage-e2e. Ordered
+        # after the real gate so it cannot be skipped or obscured by it: a failure here
+        # is reported against a job whose tests already passed, and a failure in the gate
+        # above aborts this step rather than letting coverage output stand in for it. It
+        # is not `continue-on-error` — an untested change to these helpers would otherwise
+        # ship the moment the coverage run broke for an unrelated reason.
+        #
+        # No type-check step: the `ci` job's `npm run tsc` is `tsc -b`, which builds
+        # tsconfig.e2e.json along with the app and node projects, so a second scoped run
+        # here could only repeat it.
+        #
+        # There are no coverage thresholds in vitest.e2e.config.ts, so this step
+        # cannot go red on a percentage; it fails only if a test fails.
+        run: npm run test:e2e:unit:coverage
+
+      - name: Upload e2e helper coverage
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-helper-coverage
+          path: |
+            coverage-e2e/
+          retention-days: 7
+          if-no-files-found: error
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # A GATE, and the only one for the e2e specs themselves.
+    #
+    # It was `continue-on-error: true` on the stated grounds that "5 of the 97 tests
+    # fail": 2 CDP capture-size specs, 2 `levels.spec.ts` canvas-lookup specs, and a
+    # sidebar keyboard flyout race. All three of those groups are fixed in this
+    # repository, and are recorded as fixed in `e2e/OPEN_PROBLEMS.md` ("Observed
+    # failures") and in `e2e/README.md`. The specs declare no `test.fail`, no
+    # `test.fixme` and no `describe.skip`; the only two skips are unconditional
+    # `test.skip` declarations in `e2e/export/photopea.spec.ts` and
+    # `e2e/sidebar-flyout.spec.ts`. Nothing in the tree marks a test as failing, so
+    # the stated justification had stopped describing the suite, and the job went on
+    # reporting a state the suite no longer had. The comment kept its number alive
+    # long after the failures behind it were gone.
+    #
+    # It does not replace the `e2e-unit` job, which stays the gate for the helpers:
+    # this one proves the specs pass, that one proves the helpers the specs call are
+    # tested.
+    #
+    # This is the job's first run as a gate, and its first run on a Linux runner at
+    # all, so a red first run is a real finding to investigate rather than a reason
+    # to put `continue-on-error` back. What the job no longer rests on: the CDP
+    # capture assertions are mode- and host-independent by construction -- they no
+    # longer name a scale -- so the disjoint per-mode failing sets the old comment
+    # described are empty by design rather than by observation. See
+    # `e2e/OPEN_PROBLEMS.md`, "Verified and still unverified".
+    #
+    # The suite runs headless here, and that is not incidental: `playwright.config.ts`
+    # defaults to headless so that no operator's mouse, keyboard or focus can reach
+    # the page mid-run. A CI runner has no such input, but keeping the same default
+    # locally is what stops that class of failure from being misread as flakiness.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chrome
+        # playwright.config.ts defaults to `channel: 'chrome'` (the system browser),
+        # so install that rather than Playwright's bundled Chromium.
+        #
+        # No `actions/cache` step on purpose. That directory is where Playwright
+        # unpacks the browsers IT downloads, and this job installs none: the
+        # `chrome` channel goes through the OS package manager. A cache keyed on
+        # `~/.cache/ms-playwright` here would carry an absent directory, hit on
+        # every run, and save nothing. The install below is apt, which is not
+        # cacheable.
+        run: npx playwright install --with-deps chrome
+
+      - name: Run Playwright specs
+        # playwright.config.ts declares a `webServer` running `npm run dev` on :5173.
+        # `CI` is set by the runner, so `reuseExistingServer` is false and the job
+        # always starts its own server instead of trusting the port.
+        #
+        # No --grep-invert: this job reports the true state of the suite. A failure
+        # here is a new defect unless e2e/OPEN_PROBLEMS.md says otherwise, and
+        # filtering failures out would hide the one signal this job now exists to
+        # give.
+        run: npx playwright test
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore

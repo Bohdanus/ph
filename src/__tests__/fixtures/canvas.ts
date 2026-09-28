@@ -9,36 +9,66 @@ export const createMockCanvasContext = (overrides: Record<string, unknown> = {})
   lineTo: vi.fn(),
   bezierCurveTo: vi.fn(),
   quadraticCurveTo: vi.fn(),
+  rect: vi.fn(),
+  roundRect: vi.fn(),
+  arcTo: vi.fn(),
   stroke: vi.fn(),
   fill: vi.fn(),
   fillRect: vi.fn(),
   strokeRect: vi.fn(),
+  fillText: vi.fn(),
+  strokeText: vi.fn(),
+  measureText: vi.fn(() => ({ width: 0 })),
   arc: vi.fn(),
+  ellipse: vi.fn(),
   save: vi.fn(),
   restore: vi.fn(),
+  reset: vi.fn(),
   setLineDash: vi.fn(),
+  getLineDash: vi.fn(() => [] as number[]),
   drawImage: vi.fn(),
   clip: vi.fn(),
+  isPointInPath: vi.fn(() => false),
+  isPointInStroke: vi.fn(() => false),
   createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+  createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+  createConicGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
   translate: vi.fn(),
+  rotate: vi.fn(),
+  scale: vi.fn(),
   transform: vi.fn(),
   setTransform: vi.fn(),
+  resetTransform: vi.fn(),
   strokeStyle: '',
   fillStyle: '',
   lineWidth: 1,
+  lineCap: 'butt',
+  lineJoin: 'miter',
+  miterLimit: 10,
+  font: '10px sans-serif',
+  textAlign: 'start',
+  textBaseline: 'alphabetic',
+  direction: 'inherit',
+  imageSmoothingEnabled: true,
+  shadowBlur: 0,
+  shadowColor: 'rgba(0, 0, 0, 0)',
+  shadowOffsetX: 0,
+  shadowOffsetY: 0,
   globalAlpha: 1,
   globalCompositeOperation: 'source-over',
   ...overrides,
 });
 
 export const createMockCanvas = (overrides: Record<string, unknown> = {}) => {
-  const context = createMockCanvasContext();
-  return {
-    getContext: vi.fn(() => context),
+  const canvas = {
+    getContext: vi.fn(),
     width: 128,
     height: 64,
     ...overrides,
   } as unknown as HTMLCanvasElement;
+  const context = createMockCanvasContext({ canvas });
+  vi.mocked(canvas.getContext).mockReturnValue(context as unknown as CanvasRenderingContext2D);
+  return canvas;
 };
 
 export const createMockImageBitmap = (width: number = 128, height: number = 64) =>

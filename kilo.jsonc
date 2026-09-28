@@ -1,0 +1,60 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  // Project-scope Kilo config. Everything here serves one goal: keeping an agent
+  // from putting a browser window on the operator's screen.
+  //
+  // The global config sets `permission.bash: "allow"`, so every command - including
+  // `playwright test --headed` and `playwright show-report` - runs with no prompt at
+  // all. That is why the headless default in playwright.config.ts kept losing:
+  // nothing was stopping a run, and `--headed` is one flag away.
+  //
+  // `bash` becomes an object here, which replaces the global scalar. ORDER IS THE
+  // WHOLE MECHANISM: the last matching rule wins, so the catch-all `"*": "allow"`
+  // must come FIRST and every exception after it. A catch-all last would silently
+  // re-allow everything above it, which is the opposite of what it looks like.
+  //
+  // Kilo matches each parsed command in a shell block separately, so a chained
+  // `foo && playwright test --headed` is denied by the second command's rule even
+  // though the first one is allowed.
+  //
+  // The pairing is deliberate. e2e/global-setup.ts refuses the run inside Playwright
+  // with a message explaining what to run instead; these rules stop it before it
+  // starts, and they also cover the three commands that never load the Playwright
+  // config at all (`show-report`, `show-trace`, `codegen`/`open`) and the
+  // `PLAYWRIGHT_ALLOW_HEADED=1` prefix that the guard cannot distinguish from a
+  // human's own signature. The guard alone is bypassable by an agent that sets the
+  // variable by hand; this layer is not.
+  //
+  // `deny` is for the window-opening commands. `ask` is for the two interactive
+  // debuggers, where a human may genuinely want them and a wrong guess should reach
+  // a prompt rather than a silent block.
+  "permission": {
+    "bash": {
+      "*": "allow",
+
+      // Playwright flags that override `use.headless` after the config is read.
+      "*--headed*": "deny",
+      "*playwright*--ui*": "deny",
+      "*--debug*": "ask",
+
+      // Never loads playwright.config.ts, so the guard cannot see these. All open a
+      // window, and the first two block until it is closed.
+      "*show-report*": "deny",
+      "*show-trace*": "deny",
+      "*playwright codegen*": "deny",
+      "*playwright open*": "deny",
+
+      // The same commands by npm script name, which is how an agent spells them.
+      "*test:e2e:headed*": "deny",
+      "*test:e2e:ui*": "deny",
+      "*test:e2e:debug*": "ask",
+      "*test:e2e:report*": "deny",
+
+      // The guard's own escape hatch. Denying the variable closes the loop: the
+      // only remaining way to get a window is a human typing it in their own
+      // terminal. `npm run test:e2e:headed` still works for them - it sets the
+      // variable inside package.json, which Kilo never inspects.
+      "*PLAYWRIGHT_ALLOW_HEADED*": "deny",
+    },
+  },
+}

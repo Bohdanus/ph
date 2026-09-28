@@ -1,12 +1,14 @@
 import React from 'react';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useSelectionClipboard } from '../../../contexts/useSelectionClipboard.ts';
+import { useSelectionHistory } from '../../../contexts/useSelectionHistory.ts';
 import { getActiveRectangularSelection, getSelectionRect } from '../../../util/selection.ts';
 import { PRIMARY_BUTTON, SECONDARY_BUTTON } from '../buttonStyles.ts';
 
 const RectangularSelection: React.FC<{}> = () => {
-  const [{ selections, activeSelectionId }, dispatch] = useStore();
+  const [{ selections, activeSelectionId }] = useStore();
   const { copyActiveSelection, hasSelectionClipboard, pasteSelectionClipboard } = useSelectionClipboard();
+  const { clearSelections } = useSelectionHistory();
 
   const activeRectangleSelection = getActiveRectangularSelection(selections, activeSelectionId);
   const activeRectangleRect = activeRectangleSelection ? getSelectionRect(activeRectangleSelection) : null;
@@ -23,7 +25,7 @@ const RectangularSelection: React.FC<{}> = () => {
   };
 
   const handleClear = () => {
-    dispatch({ type: 'CLEAR_SELECTIONS' });
+    clearSelections();
   };
 
   return (

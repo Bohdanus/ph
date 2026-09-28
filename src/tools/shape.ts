@@ -134,17 +134,37 @@ export const normalizeShapeGeometry = (
  * start/end the preview draws, so the committed layer can never disagree with
  * the live preview. Padding covers half the stroke on each side plus one
  * pixel of antialiasing slack.
+ *
+ * The box is rounded OUTWARD — the origin down, the far edge up — so all four fields are
+ * integers and the box is a valid `OffscreenCanvas` size. That is the whole point: the layer's
+ * bitmap is allocated as `new OffscreenCanvas(width, height)`, whose constructor truncates, so a
+ * fractional box used to declare an extent its own raster disagreed with by up to a pixel and the
+ * right or bottom edge — including half the stroke the padding exists for — was clipped on
+ * composite. Rounding inward instead would clip a stroke that the geometry genuinely covers.
+ *
+ * Outward rounding is the identity ONLY when the padding is integral, i.e. at an even stroke
+ * width. The Size slider is `min="0.5" step="0.5"` and every figure preset seeds `5`, so
+ * `lineWidth / 2 + 1` is a half-integer for every odd step and the box GROWS: measured on
+ * (10,20)-(50,60), width 1 pads to a 43-wide box that rounds to 44, half a pixel further out on
+ * each side. The growth is harmless, and the half-integer widths a 0.5 step reaches behave the
+ * same way (width 0.5 pads to 42.5 and rounds to 44), because `floor` and `ceil` can only widen
+ * the box, never narrow it — the geometry plus the full stroke stays inside the allocation either
+ * way. The rebase is exact at any width, and for a different reason: `ShapeToolArea` subtracts
+ * this box's INTEGRAL origin from the committed `start`/`end`, so integer geometry rebases to
+ * integer coordinates whether or not the stroke width is even.
  */
 export const shapeGeometryBounds = (
   { start, end }: ShapeGeometry,
   lineWidth: number
 ): { x: number; y: number; width: number; height: number } => {
-  const halfLineWidth = lineWidth / 2;
+  const pad = lineWidth / 2 + 1;
+  const x = Math.floor(Math.min(start.x, end.x) - pad);
+  const y = Math.floor(Math.min(start.y, end.y) - pad);
   return {
-    x: Math.min(start.x, end.x) - halfLineWidth - 1,
-    y: Math.min(start.y, end.y) - halfLineWidth - 1,
-    width: Math.abs(end.x - start.x) + lineWidth + 2,
-    height: Math.abs(end.y - start.y) + lineWidth + 2,
+    x,
+    y,
+    width: Math.ceil(Math.max(start.x, end.x) + pad) - x,
+    height: Math.ceil(Math.max(start.y, end.y) + pad) - y,
   };
 };
 
@@ -210,16 +230,28 @@ export const drawShape = (ctx: Ctx2D, args: ShapeToolArgs) => {
     if (hasFill) ctx.fill();
     ctx.stroke();
   } else if (figure === 'rectangle') {
-    const w = end.x - start.x;
-    const h = end.y - start.y;
+    // A rectangle is quadrant-independent, so derive the top-left corner and the
+    // positive extents the way shapeGeometryBounds allocates them, not the way
+    // the raw drag happened to run. normalizeShapeGeometry keeps the drag
+    // quadrant, so a drag up-and-left reaches here with end < start; taking the
+    // absolute extents alone would keep the wrong origin and mirror the shape
+    // into the opposite quadrant, and a negative extent would also invert which
+    // corner each `r` offset in roundedRectPath is measured from -- `r` itself is
+    // clamped to `min(|width|/2, |height|/2, radius)`, so a negative extent still
+    // cannot widen the radius -- dilating the rounded path by `r` outward on every
+    // negative axis and sending it outside the layer bounds.
+    const x = Math.min(start.x, end.x);
+    const y = Math.min(start.y, end.y);
+    const w = Math.abs(end.x - start.x);
+    const h = Math.abs(end.y - start.y);
     const radius = args.cornerRadius ?? 0;
     if (radius > 0) {
-      roundedRectPath(ctx, start.x, start.y, w, h, radius);
+      roundedRectPath(ctx, x, y, w, h, radius);
       if (hasFill) ctx.fill();
       ctx.stroke();
     } else {
-      if (hasFill) ctx.fillRect(start.x, start.y, w, h);
-      ctx.strokeRect(start.x, start.y, w, h);
+      if (hasFill) ctx.fillRect(x, y, w, h);
+      ctx.strokeRect(x, y, w, h);
     }
   } else if (figure === 'oval') {
     const rx = Math.abs(end.x - start.x) / 2;
@@ -246,9 +278,17 @@ export const shape =
     const ctx = canvas.getContext('2d')!;
     const shapeArgs = { ...args, toolName: 'shape', figure: normalizeFigure(args.figure) } as ShapeToolArgs;
 
-    setShapeCtx(ctx, shapeArgs);
+    // `setShapeCtx` writes stroke, fill, alpha and the dash and leaves them on the context, so
+    // every caller has to bracket it. The bracket cannot live inside `setShapeCtx`: `drawShape`
+    // reads exactly the values it wrote, and the overlay paints many times per one `setShapeCtx`.
+    ctx.save();
+    try {
+      setShapeCtx(ctx, shapeArgs);
 
-    drawShape(ctx, shapeArgs);
+      drawShape(ctx, shapeArgs);
+    } finally {
+      ctx.restore();
+    }
 
     return [canvas];
   };

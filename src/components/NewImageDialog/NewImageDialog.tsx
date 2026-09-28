@@ -2,11 +2,27 @@ import { useEffect, useRef, useState } from 'react';
 import { PRESETS, computePixelsFromPreset } from '../../constants/imagePresets';
 import type { BlankImageParams } from '../../contexts/tool-types.ts';
 import { PRIMARY_BUTTON, DIALOG_SECONDARY_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
+import { useDialogFocusContainment } from '../../hooks/useDialogFocusContainment.ts';
 
 interface NewImageDialogProps {
   onClose: () => void;
-  // width/height in pixels, dpi (optional), background color (optional)
-  // last parameter indicates whether background should be opaque; if false, background is transparent
+  // The payload is `BlankImageParams` and nothing else: a pixel `size`, a `color` that is
+  // always sent and required by the type, and `opacity` -- the last parameter, which says
+  // whether the background is opaque, false leaving it transparent.
+  //
+  // There is deliberately no `dpi` here, and none on the type. DPI is a one-shot
+  // physical-to-pixel conversion: it is applied to the width/height inputs by
+  // `computePixelsFromPreset` and is spent by the time the form submits, so the created
+  // document carries the correct pixel size and no provenance. Recording it would mean a
+  // `dpi` field on `BlankImageParams` that `history-adapter.ts:153` then silently drops --
+  // that case is an explicit whitelist -- and a new field on `DurableLayerSource`'s blank
+  // arm (`history-model.ts:13`) under `DURABLE_SCHEMA_VERSION = 1`, for metadata no
+  // surface displays. The user asked for a pixel size, and got one.
+  //
+  // The control is coherent because `PRESETS.custom` carries neither `widthMm` nor
+  // `widthIn` (`imagePresets.ts:17`): the field is hidden for pixel-unit presets, editing
+  // either dimension forces the preset back to `custom`, and so DPI exists only for the six
+  // physical presets, where it has a physical size to convert.
   onCreate: (params: BlankImageParams) => void;
 }
 
@@ -24,6 +40,11 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
     onClose();
   };
 
+  // Closing on unmount is this dialog's own lifecycle decision, not part of focus
+  // ownership, so it stays here rather than moving into the shared hook: the hook
+  // dispatches Escape and nothing else, because `SaveDialog` must not close itself when
+  // it unmounts — its `onSave` resolves and the CALLER closes it. The ref exists only so
+  // this mount-once effect does not close over the first `onClose` the parent passed.
   const onCloseRef = useRef(onClose);
   useEffect(() => {
     onCloseRef.current = onClose;
@@ -35,16 +56,29 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
     };
   }, []);
 
+  // Focus ownership — mount focus, the three containment arms, the Tab wrap and the
+  // restore on unmount — is the shared hook's; see its module comment for why a dialog
+  // has to own its keyboard at all. Called after the unmount-close effect above so the
+  // focus restore still runs second, as it did while both lived in this file.
+  const { panelRef, handleKeyDown } = useDialogFocusContainment({ onEscape: onClose });
+
   return (
     <div
+      ref={panelRef}
+      onKeyDown={handleKeyDown}
       className="fixed inset-0 z-[1050] flex items-center justify-center overflow-y-auto overflow-x-hidden outline-none focus:outline-none"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="new-image-dialog-title"
       data-testid="new-image-dialog"
     >
       <div className="fixed inset-0 bg-black bg-opacity-25 transition-opacity" onClick={onClose} />
       <div className="relative mx-auto my-6 w-full max-w-lg px-4">
         <div className="relative flex w-full flex-col rounded-lg border-0 bg-white shadow-lg outline-none focus:outline-none dark:bg-gray-800 dark:text-gray-100">
           <div className="flex items-center justify-between rounded-t border-b border-solid border-gray-200 p-4 dark:border-gray-700">
-            <h3 className="m-0 text-xl font-semibold">New Image</h3>
+            <h3 id="new-image-dialog-title" className="m-0 text-xl font-semibold">
+              New Image
+            </h3>
             <button
               className="ml-auto border-0 bg-transparent p-1 text-3xl font-semibold leading-none text-black opacity-50 outline-none hover:opacity-100 focus:outline-none dark:text-white"
               onClick={onClose}

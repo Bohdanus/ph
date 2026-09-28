@@ -58,6 +58,25 @@ function yieldToHost(): Promise<void> {
  * Coordinates async materialization without owning StoreContext. The caller
  * supplies a token snapshot and a validity function backed by the current
  * durable document. Cancellation is advisory; token checks remain mandatory.
+ *
+ * Phase 1 status: dormant. No production path mounts a coordinator, no store
+ * action publishes a materialized replay, and this module must not be imported
+ * by a navigation or rendering path while the legacy runtime stays
+ * authoritative.
+ *
+ * Phase 4 requirements before the first production request:
+ *
+ * - the request must carry a complete token: document id, document revision,
+ *   branch revision, durable revision, cursor, baseline asset generation,
+ *   operation-set revision, source generation, and frame revision when output
+ *   is frame-relative;
+ * - `isStillValid` must be backed by live StoreContext state and compared
+ *   against a freshly read token immediately before `publish`, never against the
+ *   request-time snapshot;
+ * - every unpublished result must release its leases and temporary bitmaps
+ *   exactly once, including the stale, cancelled, and thrown paths;
+ * - one coordinator instance per live document, cancelled on document
+ *   replacement.
  */
 export class ReplayCoordinator<T> {
   private requestSequence = 0;

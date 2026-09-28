@@ -16,7 +16,7 @@ A web-based photo editor built with React 19, TypeScript, Vite, and Tailwind CSS
 - **Framework**: React 19 with React Compiler
 - **Language**: TypeScript 6 (strict mode)
 - **Build**: Vite 8
-- **Testing**: Vitest 5 with jsdom
+- **Testing**: Vitest 5 with jsdom, plus Playwright for end-to-end
 - **Styling**: Tailwind CSS v4 + PostCSS
 - **Linting**: ESLint 10 (flat config) + Prettier
 - **CI/CD**: GitHub Actions
@@ -25,7 +25,7 @@ A web-based photo editor built with React 19, TypeScript, Vite, and Tailwind CSS
 
 ### Prerequisites
 
-- Node.js 22+
+- Node.js 24+ (`.nvmrc`, and the version CI pins)
 - npm 10+
 
 ### Installation
@@ -55,12 +55,35 @@ npm run preview
 ## Testing
 
 ```bash
-# Run all tests
+# Unit tests (jsdom)
 npm run test
 
-# Run integration tests
+# Integration tests
 npm run test:integration
+
+# End-to-end tests (Playwright; starts the dev server itself)
+npm run test:e2e
+
+# Unit tests for the e2e helpers (Node, no browser needed)
+npm run test:e2e:unit
 ```
+
+See [`e2e/README.md`](e2e/README.md) for the end-to-end suite,
+[`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md) for the latent defects in its test
+code — none of them fails a current run — and
+[`e2e/MIGRATION-TODO.md`](e2e/MIGRATION-TODO.md) for what the migration left
+undone.
+
+The e2e suite runs **headless** by default and that default should stay. A headed
+run leaves a live window on your desktop, and your own clicks, keystrokes and focus
+changes reach the page as real input — producing failures that belong to you, not to
+the code, and that look like flakiness. `npm run test:e2e:headed` is the deliberate
+opt-in for watching a visual issue.
+
+It is enforced, not just documented: `e2e/global-setup.ts` refuses `--headed`,
+`--ui` and `--debug` before a browser is created, and `kilo.jsonc` denies the
+window-opening commands at the agent permission layer. `AGENTS.md` states the rule
+for coding agents.
 
 ## Linting & Formatting
 
@@ -85,10 +108,27 @@ npm run tsc
 
 The project uses GitHub Actions for continuous integration:
 
-- **Check Job**: TypeScript, lint, tests, and build on every push/PR
-- **Security Audit**: npm audit for high-severity vulnerabilities
-- **Dependency Review**: License and vulnerability scanning on PRs
-- **Integration Tests**: Additional test suite for PSD/file handling
+- **Check Job**: ESLint + Prettier, `npm audit --audit-level=high`, TypeScript
+  (`tsc -b`, which also builds `tsconfig.e2e.json`), an assertion that every
+  tracked `.ts`/`.tsx` is inside some project's `include`, unit tests, and the
+  production build, on every push/PR.
+- **Integration Tests**: `npm run test:integration` (PSD/file handling), a subset of
+  the Check Job rather than a separate job
+- **E2E Unit Job**: unit tests for the e2e helpers, then a coverage run, with
+  `coverage-e2e/` uploaded as an artifact. It repeats no type-check: the Check
+  Job's `tsc -b` already builds `tsconfig.e2e.json`. This is the **blocking** gate
+  for `e2e/`, kept as a separate job so a break in the app pipeline cannot
+  silently skip the only coverage of that code.
+- **E2E Job**: Playwright specs in Chrome. A **blocking** gate. It was
+  `continue-on-error` on the stated grounds that five specs failed; those failures
+  were fixed, so the comment justifying it stopped describing the suite and the job
+  went on reporting a state the suite no longer had. Chrome is installed through the
+  OS package manager, so there is nothing here to cache. See
+  [`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md).
+- **Dependency licences**: the allow/deny list and the high-severity advisory
+  threshold are written down in [`DEPENDENCIES.md`](DEPENDENCIES.md), and nothing
+  enforces them. `npm audit --audit-level=high` is a real step on every push, and
+  it is the vulnerability half of that policy.
 
 ![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)
 
@@ -103,22 +143,34 @@ src/
 ├── util/             # Utility functions
 ├── __tests__/        # Test fixtures and setup
 └── test/             # Test configuration
+
+e2e/                  # Playwright end-to-end specs + their helper unit tests
 ```
 
 ## Scripts
 
-| Script             | Description              |
-| ------------------ | ------------------------ |
-| `dev`              | Start development server |
-| `build`            | Build for production     |
-| `preview`          | Preview production build |
-| `test`             | Run unit tests           |
-| `test:integration` | Run integration tests    |
-| `tsc`              | TypeScript type checking |
-| `lint`             | Lint with ESLint         |
-| `lint:check`       | Lint + format check      |
-| `lint:fix`         | Auto-fix lint issues     |
-| `format`           | Format with Prettier     |
+| Script                      | Description                                           |
+| --------------------------- | ----------------------------------------------------- |
+| `dev`                       | Start development server                              |
+| `build`                     | Build for production                                  |
+| `preview`                   | Preview production build                              |
+| `test`                      | Run unit tests                                        |
+| `test:integration`          | Run integration tests                                 |
+| `test:e2e`                  | Run Playwright end-to-end specs                       |
+| `test:e2e:unit`             | Run e2e helper unit tests                             |
+| `test:e2e:unit:coverage`    | e2e helper unit tests + coverage                      |
+| `test:e2e:ui`               | Playwright UI mode (opens a window)                   |
+| `test:e2e:debug`            | Playwright inspector (opens a window)                 |
+| `test:e2e:headed`           | Opt in to a visible window (warns; do not touch it)   |
+| `test:e2e:install`          | Install the Chrome browser Playwright uses            |
+| `test:e2e:update-baselines` | Rewrite visual-regression baselines                   |
+| `test:e2e:report`           | Open the last Playwright HTML report (opens a window) |
+| `test:e2e:clean`            | Remove generated run output                           |
+| `tsc`                       | TypeScript type checking                              |
+| `lint`                      | Lint with ESLint                                      |
+| `lint:check`                | Lint + format check                                   |
+| `lint:fix`                  | Auto-fix lint issues                                  |
+| `format`                    | Format with Prettier                                  |
 
 ## License
 

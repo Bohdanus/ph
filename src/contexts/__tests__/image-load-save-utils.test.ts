@@ -70,7 +70,7 @@ describe('document file routing', () => {
         constructor() {
           this.result = new ArrayBuffer(0);
         }
-      } as any
+      } as unknown as typeof FileReader
     );
     await expect(loadDocumentFile(file)).resolves.toEqual({ fileName: name, document });
     expect(loadPsd).toHaveBeenCalledExactlyOnceWith(await file.arrayBuffer());
@@ -81,7 +81,7 @@ describe('document file routing', () => {
     const file = new File(['PNG data'], 'photo.png', { type: 'image/png' });
     const readAsDataURL = vi.fn();
     let reader!: { onload: (event: { target: { result: string } }) => void };
-    let image!: { onload: () => void; src: string };
+    let image!: HTMLImageElement;
     vi.spyOn(globalThis, 'FileReader').mockImplementation(
       class {
         onload = () => {};
@@ -89,14 +89,14 @@ describe('document file routing', () => {
         constructor() {
           reader = this;
         }
-      } as any
+      } as unknown as typeof FileReader
     );
-    vi.spyOn(globalThis, 'Image').mockImplementation(function (this: any) {
+    vi.spyOn(globalThis, 'Image').mockImplementation(function (this: HTMLImageElement) {
       this.onload = () => {};
       this.src = '';
       image = this;
       return this;
-    } as any);
+    } as unknown as typeof Image);
     const loaded = vi.fn();
     const promise = loadDocumentFile(file).then((value) => {
       loaded(value);
@@ -106,7 +106,7 @@ describe('document file routing', () => {
     reader.onload({ target: { result: 'data:image/png;base64,test' } });
     expect(image.src).toBe('data:image/png;base64,test');
     expect(loaded).not.toHaveBeenCalled();
-    image.onload();
+    image.onload!(new Event('load'));
     await expect(promise).resolves.toEqual({ fileName: 'photo.png', image });
     expect(loadPsd).not.toHaveBeenCalled();
   });
@@ -118,7 +118,7 @@ describe('document file routing', () => {
     const file = new File([content], name, { type: '' });
     let reader!: { onload: (event: { target: { result: string } }) => void; readAsDataURL: (value: Blob) => void };
     let readerInput!: Blob;
-    let image!: { onload: () => void; src: string };
+    let image!: HTMLImageElement;
     vi.spyOn(globalThis, 'FileReader').mockImplementation(
       class {
         onload = () => {};
@@ -128,20 +128,20 @@ describe('document file routing', () => {
         constructor() {
           reader = this;
         }
-      } as any
+      } as unknown as typeof FileReader
     );
-    vi.spyOn(globalThis, 'Image').mockImplementation(function (this: any) {
+    vi.spyOn(globalThis, 'Image').mockImplementation(function (this: HTMLImageElement) {
       this.onload = () => {};
       this.src = '';
       image = this;
       return this;
-    } as any);
+    } as unknown as typeof Image);
 
     const promise = loadDocumentFile(file);
     await vi.waitFor(() => expect(readerInput).toBeInstanceOf(Blob));
     expect(readerInput.type).toBe(mimeType);
     reader.onload({ target: { result: `data:${mimeType};base64,test` } });
-    image.onload();
+    image.onload!(new Event('load'));
     await expect(promise).resolves.toEqual({ fileName: name, image });
   });
 

@@ -13,6 +13,7 @@ These files are **never** modified by this skill, under any circumstances:
 - `useHistory.test.ts`, `useApp.psd.test.ts`, `functions.test.ts` — concerns were overblown or minor; not worth the risk of a rewrite
 
 **If a subagent identifies an issue in a protected file, it must:**
+
 1. Record it in the "Remaining (Manual Review)" section
 2. NOT modify the file
 3. Return `{file, action: "skipped", reason: "protected"}`
@@ -69,44 +70,45 @@ git status --porcelain > /tmp/git-baseline.txt
 
 For each candidate file, score these criteria (1 point each):
 
-| Criterion | What to look for | Score |
-|-----------|-----------------|-------|
-| Test count > 3 | File has more than 3 `it()` blocks | +1 |
-| Parameterized tests | Uses `it.each([...])` with multiple cases | +1 |
-| Pixel/canvas assertions | Asserts on `getImageData()`, `drawImage` args, `putImageData`, canvas pixel arrays | +1 |
-| Error path coverage | Has `rejects.toThrow()` or `expect(...).rejects` tests | +1 |
-| Negative path coverage | Tests `!hasImage`, `!toolName`, disabled states, empty inputs | +1 |
-| Warning assertions | Asserts on `warnings.join(' ')` or `warnings` array | +1 |
-| Mock verification | Uses `toHaveBeenCalledTimes`, `toHaveBeenNthCalledWith`, `toHaveBeenCalledWith` | +1 |
-| Real codec usage | Imports real encoder/decoder (e.g., `ag-psd`, `gifenc`) instead of mocking it | +1 |
+| Criterion               | What to look for                                                                   | Score |
+| ----------------------- | ---------------------------------------------------------------------------------- | ----- |
+| Test count > 3          | File has more than 3 `it()` blocks                                                 | +1    |
+| Parameterized tests     | Uses `it.each([...])` with multiple cases                                          | +1    |
+| Pixel/canvas assertions | Asserts on `getImageData()`, `drawImage` args, `putImageData`, canvas pixel arrays | +1    |
+| Error path coverage     | Has `rejects.toThrow()` or `expect(...).rejects` tests                             | +1    |
+| Negative path coverage  | Tests `!hasImage`, `!toolName`, disabled states, empty inputs                      | +1    |
+| Warning assertions      | Asserts on `warnings.join(' ')` or `warnings` array                                | +1    |
+| Mock verification       | Uses `toHaveBeenCalledTimes`, `toHaveBeenNthCalledWith`, `toHaveBeenCalledWith`    | +1    |
+| Real codec usage        | Imports real encoder/decoder (e.g., `ag-psd`, `gifenc`) instead of mocking it      | +1    |
 
 ### GTD Classification
 
-| Score | Classification | Action |
-|-------|---------------|--------|
-| **5+** | **Gold** | **DO NOT TOUCH** — record in "Remaining (Manual Review)" |
-| **3-4** | **Solid** | Only fix **Critical** defects (real errors, flaky tests). No assertion changes, no coverage additions. |
-| **1-2** | **Shallow** | Safe to improve — add coverage, strengthen assertions |
-| **0** | **Broken/Empty** | Safe to rewrite or expand |
+| Score   | Classification   | Action                                                                                                 |
+| ------- | ---------------- | ------------------------------------------------------------------------------------------------------ |
+| **5+**  | **Gold**         | **DO NOT TOUCH** — record in "Remaining (Manual Review)"                                               |
+| **3-4** | **Solid**        | Only fix **Critical** defects (real errors, flaky tests). No assertion changes, no coverage additions. |
+| **1-2** | **Shallow**      | Safe to improve — add coverage, strengthen assertions                                                  |
+| **0**   | **Broken/Empty** | Safe to rewrite or expand                                                                              |
 
 ### GTD Examples from This Repo
 
-| File | Score | Classification | Why |
-|------|-------|----------------|-----|
-| `psd-utils.test.tsx` | 8 | Gold | 16 tests, `it.each` blend modes, pixel assertions, error paths, warnings, mock verification, real codec |
-| `useAnts.test.tsx` | 5 | Gold | 5+ tests, canvas call assertions, verified accurate per source |
-| `rect.test.ts` | 5 | Gold | 5+ tests, exact assertion matches `trimRect` |
-| `draw.test.ts` | 5 | Gold | 5+ tests, exact `bezierCurveTo`/`quadraticCurveTo` assertions |
-| `SidebarLeft.test.tsx` | 7 | Gold | 8 tests, keyboard nav, flyout interactions, aria-checked assertions |
-| `DesktopHeader.test.tsx` | 6 | Solid | 8 tests, menu toggles, confirm dialogs, error paths |
-| `Draw.test.tsx` | 1 | Shallow | 1 test, only renders controls |
-| `Transform.test.tsx` | 1 | Shallow | 3 tests, only renders controls |
-| `Levels.test.tsx` | 1 | Shallow | 2 tests, only renders controls |
-| `MagicWand.test.tsx` | 1 | Shallow | 1 test, only renders controls |
+| File                     | Score | Classification | Why                                                                                                     |
+| ------------------------ | ----- | -------------- | ------------------------------------------------------------------------------------------------------- |
+| `psd-utils.test.tsx`     | 8     | Gold           | 16 tests, `it.each` blend modes, pixel assertions, error paths, warnings, mock verification, real codec |
+| `useAnts.test.tsx`       | 5     | Gold           | 5+ tests, canvas call assertions, verified accurate per source                                          |
+| `rect.test.ts`           | 5     | Gold           | 5+ tests, exact assertion matches `trimRect`                                                            |
+| `draw.test.ts`           | 5     | Gold           | 5+ tests, exact `bezierCurveTo`/`quadraticCurveTo` assertions                                           |
+| `SidebarLeft.test.tsx`   | 7     | Gold           | 8 tests, keyboard nav, flyout interactions, aria-checked assertions                                     |
+| `DesktopHeader.test.tsx` | 6     | Solid          | 8 tests, menu toggles, confirm dialogs, error paths                                                     |
+| `Draw.test.tsx`          | 1     | Shallow        | 1 test, only renders controls                                                                           |
+| `Transform.test.tsx`     | 1     | Shallow        | 3 tests, only renders controls                                                                          |
+| `Levels.test.tsx`        | 1     | Shallow        | 2 tests, only renders controls                                                                          |
+| `MagicWand.test.tsx`     | 1     | Shallow        | 1 test, only renders controls                                                                           |
 
 ### GTD Enforcement
 
 **Subagent contract**: Before modifying any file, the subagent must:
+
 1. Read the file
 2. Score it using the GTD rubric
 3. If Gold (5+) → return `{file, action: "skipped", reason: "gold_standard", score: N}`
@@ -123,6 +125,7 @@ For each candidate file, score these criteria (1 point each):
 Launch 3 subagents **simultaneously**. Each returns structured JSON.
 
 ### 1A. Test Runner Subagent
+
 ```
 Run: npm test -- --run --reporter=json
 Return JSON with:
@@ -137,6 +140,7 @@ Return JSON with:
 ```
 
 ### 1B. Lint Check Subagent
+
 ```
 Run: npm run lint:check -- src/**/__tests__/
 Return JSON with:
@@ -147,6 +151,7 @@ Return JSON with:
 ```
 
 ### 1C. Pattern Scanner Subagent
+
 ```
 Search ALL test files (src/**/__tests__/*.test.{ts,tsx}) for these exact patterns.
 Return JSON array of findings: [{"file": "path", "line": number, "pattern": "id", "match": "exact matched text", "severity": "critical|high|medium|low"}]
@@ -195,16 +200,17 @@ LOW — style/hygiene:
 Aggregate findings from all 3 subagents. Group by file and severity.
 
 **Priority Matrix**:
-| Severity | Category | Action |
-|----------|----------|--------|
+
+| Severity | Category                                | Action                    |
+| -------- | --------------------------------------- | ------------------------- |
 | Critical | Unhandled error / flaky / mock mismatch | Fix immediately (Phase 3) |
-| Critical | Vitest 5 hoisting violation | Fix immediately (Phase 3) |
-| Critical | Fake-timer/global-stub hygiene | Fix immediately (Phase 3) |
-| High | Brittle selector / Tailwind assertion | Fix in Phase 4 |
-| High | Weak assertion (container.toBeTruthy) | Fix in Phase 4 |
-| Medium | Missing negative/error path | Add coverage in Phase 5 |
-| Medium | Missing keyboard nav | Add coverage in Phase 5 |
-| Low | Style/hygiene/nesting | Optional, batch at end |
+| Critical | Vitest 5 hoisting violation             | Fix immediately (Phase 3) |
+| Critical | Fake-timer/global-stub hygiene          | Fix immediately (Phase 3) |
+| High     | Brittle selector / Tailwind assertion   | Fix in Phase 4            |
+| High     | Weak assertion (container.toBeTruthy)   | Fix in Phase 4            |
+| Medium   | Missing negative/error path             | Add coverage in Phase 5   |
+| Medium   | Missing keyboard nav                    | Add coverage in Phase 5   |
+| Low      | Style/hygiene/nesting                   | Optional, batch at end    |
 
 **Output**: `triage.json` with `{critical: [], high: [], medium: [], low: []}` each containing `{file, line, pattern, description, fixStrategy}`.
 
@@ -213,6 +219,7 @@ Aggregate findings from all 3 subagents. Group by file and severity.
 ## Phase 3: Fix Critical Defects (Parallel Subagents, One File Each)
 
 **Launch one subagent per critical finding**. Each subagent:
+
 1. Reads the test file
 2. Applies the specific fix strategy
 3. Runs `npm test -- --run <file>` to verify
@@ -222,21 +229,24 @@ Aggregate findings from all 3 subagents. Group by file and severity.
 ### Fix Strategies by Pattern
 
 #### 3.1 useTheme Array Mock → Object
+
 ```typescript
 // BAD
 vi.mock('../../../contexts/ThemeContext.tsx', () => ({
-  useTheme: () => [{ theme: 'light', toggleTheme: vi.fn() }]
+  useTheme: () => [{ theme: 'light', toggleTheme: vi.fn() }],
 }));
 
 // GOOD
 const themeState = { theme: 'light', toggleTheme: vi.fn() };
 vi.mock('../../../contexts/ThemeContext.tsx', () => ({
-  useTheme: () => themeState
+  useTheme: () => themeState,
 }));
 ```
+
 **Also applies to**: `useStore`, `useApp`, `useFile`, `useHistory`, `useLayers`, `useCurrentTool` — verify each returns correct type.
 
 #### 3.2 Vitest 5 Hoisting: Move vi.mock to Top Level
+
 ```typescript
 // BAD (inside describe)
 describe('Component', () => {
@@ -247,14 +257,16 @@ describe('Component', () => {
 vi.mock('../context.tsx', () => ({ useCtx: () => mock }));
 describe('Component', () => { ... });
 ```
+
 Use `vi.hoisted` for factories needing runtime values.
 
 #### 3.3 Fake Timer / Global Stub Hygiene
+
 ```typescript
 // BAD
 beforeEach(() => {
-  global.requestAnimationFrame = cb => setTimeout(cb, 16);
-  global.cancelAnimationFrame = id => clearTimeout(id);
+  global.requestAnimationFrame = (cb) => setTimeout(cb, 16);
+  global.cancelAnimationFrame = (id) => clearTimeout(id);
 });
 afterEach(() => {
   vi.restoreAllMocks(); // Doesn't clear pending setTimeout!
@@ -270,27 +282,32 @@ afterEach(() => {
   vi.unstubAllGlobals(); // Unconditional
 });
 ```
+
 In tests: use `vi.advanceTimersByTime(16)` to drain rAF callbacks.
 
 #### 3.4 vi.stubGlobal Without Unstub
+
 Add `afterEach(() => { vi.unstubAllGlobals(); })` unconditionally.
 
 #### 3.5 useStore Array Mock → Tuple
+
 ```typescript
 // BAD
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [{ hasImage: true }]
+  useStore: () => [{ hasImage: true }],
 }));
 
 // GOOD
 const storeState = { hasImage: true, dispatch: vi.fn() };
 vi.mock('../../../contexts/StoreContext.tsx', () => ({
-  useStore: () => [storeState, storeState.dispatch]
+  useStore: () => [storeState, storeState.dispatch],
 }));
 ```
+
 Verify: `useStore()` returns `[state, dispatch]` — both must be present.
 
 #### 3.6 vi.restoreAllMocks Without vi.useRealTimers
+
 ```typescript
 // BAD
 afterEach(() => {
@@ -314,6 +331,7 @@ afterEach(() => {
 ### Fix Strategies
 
 #### 4.1 Replace Indexed getAllByRole
+
 ```typescript
 // BAD
 const buttons = screen.getAllByRole('button');
@@ -326,9 +344,11 @@ expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
 // OR if names are dynamic:
 expect(screen.getByTestId('save-dialog-save-button')).toBeInTheDocument();
 ```
+
 **If no stable accessible name exists**: Add `data-testid` to source component (minimal, semantic name like `save-dialog-backdrop`).
 
 #### 4.2 Replace Tailwind Class Assertions
+
 ```typescript
 // BAD
 expect(toolbar).toHaveClass('w-[6.5rem]');
@@ -342,6 +362,7 @@ expect(screen.getByTestId('left-toolbar-tools')).toHaveAttribute('data-layout', 
 ```
 
 #### 4.3 Replace Weak Assertions
+
 ```typescript
 // BAD
 expect(container).toBeTruthy();
@@ -352,6 +373,7 @@ expect(screen.getByTestId('specific-element')).toBeInTheDocument();
 ```
 
 #### 4.4 Replace getByTitle with Accessible Query
+
 ```typescript
 // BAD
 expect(screen.getByTitle('Rotate 90° Left')).toBeTruthy();
@@ -363,6 +385,7 @@ expect(screen.getByRole('button', { name: 'Rotate 90° Left' })).toBeInTheDocume
 ```
 
 #### 4.5 Replace Truthy/Falsy on queryBy with toBeNull
+
 ```typescript
 // BAD
 expect(screen.queryByText('Not found')).toBeTruthy();
@@ -374,6 +397,7 @@ expect(screen.queryByText('Found')).not.toBeNull();
 ```
 
 #### 4.6 Replace Negated Truthy
+
 ```typescript
 // BAD
 expect(screen.queryByText('X')).not.toBeTruthy();
@@ -383,6 +407,7 @@ expect(screen.queryByText('X')).toBeNull();
 ```
 
 #### 4.7 Replace getByLabelText/getByText/getByTitle with toBeInTheDocument
+
 ```typescript
 // BAD — truthy assertion on DOM node (fragile)
 expect(screen.getByLabelText('Pen Type')).toBeTruthy();
@@ -394,9 +419,11 @@ expect(screen.getByLabelText('Pen Type')).toBeInTheDocument();
 expect(screen.getByLabelText(/Size/)).toBeInTheDocument();
 expect(screen.getByText('Reset All')).toBeInTheDocument();
 ```
+
 **Why**: `toBeTruthy()` on a DOM node passes even if the element doesn't exist (returns `null` which is falsy, but `getByLabelText` throws if not found — so truthy is redundant). Use `toBeInTheDocument()` for explicit assertions.
 
 #### 4.8 Replace getByTitle with getByRole + aria-label
+
 ```typescript
 // BAD — title attribute is not accessible
 expect(screen.getByTitle('Rotate 90° Left')).toBeTruthy();
@@ -406,6 +433,7 @@ expect(screen.getByRole('button', { name: 'Rotate 90° Left' })).toBeInTheDocume
 // If source doesn't have aria-label, add it:
 // <button aria-label="Rotate 90° Left" title="Rotate 90° Left">...</button>
 ```
+
 **Evidence**: Transform.test.tsx:35-37 uses `getByTitle` for rotate buttons. The source likely renders `<button title="Rotate 90° Left">` without `aria-label`. Add `aria-label` to source and use `getByRole`.
 
 ---
@@ -414,14 +442,15 @@ expect(screen.getByRole('button', { name: 'Rotate 90° Left' })).toBeInTheDocume
 
 **Target components with gaps** (from TEST_REVIEW_HANDOFF.md + triage):
 
-| Component | Missing Coverage |
-|-----------|------------------|
+| Component                                                                            | Missing Coverage                                                        |
+| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | Draw, Transform, Levels, Text, MagicWand, RectangularSelection, FeatherMagneticLasso | Disabled controls, empty inputs, `!hasImage`, `!toolName` early returns |
-| SaveDialog, NewImageDialog | Error paths, cancel flows |
-| Format utils (bmp, tiff, ico, gif, svg, avif) | Real round-trip encoding/decoding with pixel assertions |
-| SidebarLeft, SidebarRight, ToolbarHorizontal, BottomToolbar, Footer | Keyboard nav (ArrowUp/Down, Enter, Space, Escape), focus management |
+| SaveDialog, NewImageDialog                                                           | Error paths, cancel flows                                               |
+| Format utils (bmp, tiff, ico, gif, svg, avif)                                        | Real round-trip encoding/decoding with pixel assertions                 |
+| SidebarLeft, SidebarRight, ToolbarHorizontal, BottomToolbar, Footer                  | Keyboard nav (ArrowUp/Down, Enter, Space, Escape), focus management     |
 
 ### Subagent Template for Coverage
+
 ```
 Add tests to: <test-file-path>
 Target: <specific gap from triage>
@@ -438,6 +467,7 @@ Constraints:
 ### Coverage Patterns from Gold-Standard Tests
 
 **psd-utils.test.tsx** (the repo's gold standard for format-utils tests):
+
 - Real `ag-psd` encoding/decoding (not mocked codec)
 - Pixel-level assertions (`Array.from(layer.getContext('2d')!.getImageData(0,0,w,h).data)`)
 - Metadata assertions (name, order, opacity, blendMode, visibility, locked)
@@ -450,34 +480,35 @@ Constraints:
 
 ### Concrete Gaps from Repo Scan
 
-| File | Current Tests | Missing Coverage | Priority |
-|------|--------------|------------------|----------|
-| Draw.test.tsx | 1 test (renders controls) | Pen type change, size slider change, opacity change, disabled state | Medium |
-| Transform.test.tsx | 3 tests (renders controls) | Rotate button clicks, mirror toggle clicks, Reset All click, skew/trapezoid/resize changes | Medium |
-| Levels.test.tsx | 2 tests (renders controls) | Brightness/contrast slider changes, Reset click, undo behavior | Medium |
-| MagicWand.test.tsx | 1 test (tolerance/smoothing change) | Tolerance bounds, smoothing bounds, dispatch on change, disabled state | Medium |
-| RectangularSelection.test.tsx | Happy path only | Empty inputs, disabled controls, `!hasImage` early return | Medium |
-| FeatherMagneticLasso.test.tsx | Happy path only | Empty inputs, disabled controls, `!hasImage` early return | Medium |
-| Text.test.tsx | Happy path only | Font size change, text input, disabled state, `!hasImage` early return | Medium |
-| SaveDialog.test.tsx | Happy path + cancel | Error paths, file name validation, empty name | Medium |
-| NewImageDialog.test.tsx | Happy path only | Invalid dimensions, cancel flow, error paths | Medium |
-| bmp-utils.test.tsx | 1 test (round-trip) | Invalid header, invalid dimensions, error paths | Medium |
-| tiff-utils.test.tsx | Shallow | Real round-trip with pixel assertions | Medium |
-| ico-utils.test.tsx | Shallow | Real round-trip with pixel assertions | Medium |
-| gif-utils.test.tsx | Shallow | Real round-trip with pixel assertions | Medium |
-| svg-utils.test.tsx | Shallow | Real round-trip with pixel assertions | Medium |
-| avif-utils.test.tsx | Shallow | Real round-trip with pixel assertions | Medium |
-| SidebarLeft.test.tsx | 8 tests (comprehensive) | Already good — focus management tested | Low |
-| SidebarRight.test.tsx | Structural + negative | Keyboard nav, focus management | Low |
-| ToolbarHorizontal.test.tsx | Structural + negative | Keyboard nav, focus management | Low |
-| BottomToolbar.test.tsx | Structural + negative | Keyboard nav, focus management | Low |
-| Footer.test.tsx | Structural + negative | Keyboard nav, focus management | Low |
+| File                          | Current Tests                       | Missing Coverage                                                                           | Priority |
+| ----------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------ | -------- |
+| Draw.test.tsx                 | 1 test (renders controls)           | Pen type change, size slider change, opacity change, disabled state                        | Medium   |
+| Transform.test.tsx            | 3 tests (renders controls)          | Rotate button clicks, mirror toggle clicks, Reset All click, skew/trapezoid/resize changes | Medium   |
+| Levels.test.tsx               | 2 tests (renders controls)          | Brightness/contrast slider changes, Reset click, undo behavior                             | Medium   |
+| MagicWand.test.tsx            | 1 test (tolerance/smoothing change) | Tolerance bounds, smoothing bounds, dispatch on change, disabled state                     | Medium   |
+| RectangularSelection.test.tsx | Happy path only                     | Empty inputs, disabled controls, `!hasImage` early return                                  | Medium   |
+| FeatherMagneticLasso.test.tsx | Happy path only                     | Empty inputs, disabled controls, `!hasImage` early return                                  | Medium   |
+| Text.test.tsx                 | Happy path only                     | Font size change, text input, disabled state, `!hasImage` early return                     | Medium   |
+| SaveDialog.test.tsx           | Happy path + cancel                 | Error paths, file name validation, empty name                                              | Medium   |
+| NewImageDialog.test.tsx       | Happy path only                     | Invalid dimensions, cancel flow, error paths                                               | Medium   |
+| bmp-utils.test.tsx            | 1 test (round-trip)                 | Invalid header, invalid dimensions, error paths                                            | Medium   |
+| tiff-utils.test.tsx           | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| ico-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| gif-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| svg-utils.test.tsx            | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| avif-utils.test.tsx           | Shallow                             | Real round-trip with pixel assertions                                                      | Medium   |
+| SidebarLeft.test.tsx          | 8 tests (comprehensive)             | Already good — focus management tested                                                     | Low      |
+| SidebarRight.test.tsx         | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
+| ToolbarHorizontal.test.tsx    | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
+| BottomToolbar.test.tsx        | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
+| Footer.test.tsx               | Structural + negative               | Keyboard nav, focus management                                                             | Low      |
 
 ---
 
 ## Phase 6: Verification & Report
 
 ### 6.1 Automated Verification
+
 ```bash
 # After ALL fixes applied
 npm test -- --run --reporter=json > /tmp/test-final.json
@@ -492,13 +523,16 @@ npm run tsc > /tmp/tsc-final.txt
 ```
 
 ### 6.2 Regression Check
+
 If ANY regression detected:
+
 - Stop immediately
 - Output diff vs baseline
 - List files modified in this session
 - Do not proceed
 
 ### 6.3 Final Report Format
+
 ```
 ## Broad Test Improvement Summary
 
@@ -572,15 +606,15 @@ If ANY regression detected:
 
 ### 🚨 Red Flags — If You See These, STOP and Report
 
-| Red Flag | Why |
-|----------|-----|
-| Test asserts on exact pixel values (`[12, 24, 36, 255]`) | Likely a regression guard — don't touch |
-| Test uses `it.each` with 5+ cases | High-value parameterized coverage — don't touch |
+| Red Flag                                                        | Why                                                          |
+| --------------------------------------------------------------- | ------------------------------------------------------------ |
+| Test asserts on exact pixel values (`[12, 24, 36, 255]`)        | Likely a regression guard — don't touch                      |
+| Test uses `it.each` with 5+ cases                               | High-value parameterized coverage — don't touch              |
 | Test mocks a real codec (e.g., `ag-psd`) but the source uses it | The mock may be testing integration — verify before changing |
-| Test has `expect(...).rejects.toThrow('specific message')` | Error path coverage — don't remove |
-| Test has `vi.spyOn` on canvas methods | Likely testing drawing behavior — don't simplify |
-| Test file has 8+ tests | Likely well-structured — classify with GTD before touching |
-| Test file was modified in a prior session (check git log) | May be a known-good fix — don't revert |
+| Test has `expect(...).rejects.toThrow('specific message')`      | Error path coverage — don't remove                           |
+| Test has `vi.spyOn` on canvas methods                           | Likely testing drawing behavior — don't simplify             |
+| Test file has 8+ tests                                          | Likely well-structured — classify with GTD before touching   |
+| Test file was modified in a prior session (check git log)       | May be a known-good fix — don't revert                       |
 
 ### 🧪 Verification Protocol
 
@@ -612,44 +646,44 @@ npm test -- --run
 
 These are tracked across sessions. Update after each run.
 
-| Issue | Files Affected | GTD Score | Status |
-|-------|---------------|-----------|--------|
-| useTheme array mock | DesktopHeader.test.tsx (was fixed), Main.test.tsx (verify) | Solid (6) | Phase 3 — Critical only |
-| Fake-timer hygiene | usePolylineAnts.test.tsx (fixed), check others | Gold (5) | Phase 3 — Critical only |
-| Vitest 5 hoisting | SidebarLeft.test.tsx:53, others | Gold (7) | Phase 3 — Critical only |
-| Brittle toolbar tests | Draw, Transform, Levels, Text, MagicWand, RectangularSelection, FeatherMagneticLasso | Shallow (0-1) | Phase 4 — Safe to improve |
-| Format-utils shallow | bmp, tiff, ico, gif, svg, avif utils tests | Shallow (0-1) | Phase 5 — Safe to improve |
-| Toolbar negative paths | 7 toolbar components | Shallow (0-1) | Phase 5 — Safe to improve |
+| Issue                  | Files Affected                                                                       | GTD Score     | Status                    |
+| ---------------------- | ------------------------------------------------------------------------------------ | ------------- | ------------------------- |
+| useTheme array mock    | DesktopHeader.test.tsx (was fixed), Main.test.tsx (verify)                           | Solid (6)     | Phase 3 — Critical only   |
+| Fake-timer hygiene     | usePolylineAnts.test.tsx (fixed), check others                                       | Gold (5)      | Phase 3 — Critical only   |
+| Vitest 5 hoisting      | SidebarLeft.test.tsx:53, others                                                      | Gold (7)      | Phase 3 — Critical only   |
+| Brittle toolbar tests  | Draw, Transform, Levels, Text, MagicWand, RectangularSelection, FeatherMagneticLasso | Shallow (0-1) | Phase 4 — Safe to improve |
+| Format-utils shallow   | bmp, tiff, ico, gif, svg, avif utils tests                                           | Shallow (0-1) | Phase 5 — Safe to improve |
+| Toolbar negative paths | 7 toolbar components                                                                 | Shallow (0-1) | Phase 5 — Safe to improve |
 
 ## Concrete Evidence from Repo Scan
 
 Patterns verified in actual test files (not speculative). GTD scores from the rubric above.
 
-| Pattern | File:Line | GTD | Severity | Evidence |
-|---------|-----------|-----|----------|----------|
-| `getByTitle` used instead of accessible query | Transform.test.tsx:35-37 | Shallow (1) | High | `screen.getByTitle('Rotate 90° Left')` — not accessible |
-| `getByText(...).toBeTruthy()` instead of `toBeInTheDocument` | Transform.test.tsx:37-40, Levels.test.tsx:35-38 | Shallow (1) | High | Truthy assertion on DOM node |
-| `getByLabelText(...).toBeTruthy()` instead of `toBeInTheDocument` | Draw.test.tsx:45-47, Levels.test.tsx:38-39 | Shallow (1) | High | Truthy assertion on DOM node |
-| Single happy-path test only | Draw.test.tsx (1 test), Transform.test.tsx (3 tests), Levels.test.tsx (2 tests), MagicWand.test.tsx (1 test) | Shallow (0-1) | Medium | No negative/error path coverage |
-| `vi.mock` inside describe block | SidebarLeft.test.tsx:24-60 | Gold (7) | Critical | Vitest 5 hoisting violation |
-| `useTheme` array mock (object return) | DesktopHeader.test.tsx:51 (was fixed) | Solid (6) | Critical | Already addressed in prior session |
-| `mockResolvedValue` without error path | DesktopHeader.test.tsx:135-143 | Solid (6) | Medium | Only success path tested |
-| Format-utils shallow (mocked codec) | bmp-utils.test.tsx, tiff-utils.test.tsx, ico-utils.test.tsx, gif-utils.test.tsx, svg-utils.test.tsx, avif-utils.test.tsx | Shallow (0-1) | Medium | Real round-trip only in psd-utils.test.tsx |
-| `vi.hoisted` used correctly | MagicWand.test.tsx:5-6 | Shallow (1) | Good | Pattern to replicate |
-| `vi.stubGlobal` + `vi.unstubAllGlobals` | DesktopHeader.test.tsx:131-132, 146-147 | Solid (6) | Good | Pattern to replicate |
+| Pattern                                                           | File:Line                                                                                                                | GTD           | Severity | Evidence                                                |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------- | -------- | ------------------------------------------------------- |
+| `getByTitle` used instead of accessible query                     | Transform.test.tsx:35-37                                                                                                 | Shallow (1)   | High     | `screen.getByTitle('Rotate 90° Left')` — not accessible |
+| `getByText(...).toBeTruthy()` instead of `toBeInTheDocument`      | Transform.test.tsx:37-40, Levels.test.tsx:35-38                                                                          | Shallow (1)   | High     | Truthy assertion on DOM node                            |
+| `getByLabelText(...).toBeTruthy()` instead of `toBeInTheDocument` | Draw.test.tsx:45-47, Levels.test.tsx:38-39                                                                               | Shallow (1)   | High     | Truthy assertion on DOM node                            |
+| Single happy-path test only                                       | Draw.test.tsx (1 test), Transform.test.tsx (3 tests), Levels.test.tsx (2 tests), MagicWand.test.tsx (1 test)             | Shallow (0-1) | Medium   | No negative/error path coverage                         |
+| `vi.mock` inside describe block                                   | SidebarLeft.test.tsx:24-60                                                                                               | Gold (7)      | Critical | Vitest 5 hoisting violation                             |
+| `useTheme` array mock (object return)                             | DesktopHeader.test.tsx:51 (was fixed)                                                                                    | Solid (6)     | Critical | Already addressed in prior session                      |
+| `mockResolvedValue` without error path                            | DesktopHeader.test.tsx:135-143                                                                                           | Solid (6)     | Medium   | Only success path tested                                |
+| Format-utils shallow (mocked codec)                               | bmp-utils.test.tsx, tiff-utils.test.tsx, ico-utils.test.tsx, gif-utils.test.tsx, svg-utils.test.tsx, avif-utils.test.tsx | Shallow (0-1) | Medium   | Real round-trip only in psd-utils.test.tsx              |
+| `vi.hoisted` used correctly                                       | MagicWand.test.tsx:5-6                                                                                                   | Shallow (1)   | Good     | Pattern to replicate                                    |
+| `vi.stubGlobal` + `vi.unstubAllGlobals`                           | DesktopHeader.test.tsx:131-132, 146-147                                                                                  | Solid (6)     | Good     | Pattern to replicate                                    |
 
 ### Gold-Standard Files (DO NOT TOUCH)
 
-| File | GTD | Why Protected |
-|------|-----|---------------|
-| `psd-utils.test.tsx` | 8 | 16 tests, `it.each` blend modes, pixel assertions, error paths, warnings, mock verification, real codec |
-| `useAnts.test.tsx` | 5 | 5+ tests, canvas call assertions, verified accurate per `useAnts.ts` |
-| `rect.test.ts` | 5 | 5+ tests, exact assertion matches `trimRect` |
-| `draw.test.ts` | 5 | 5+ tests, exact `bezierCurveTo`/`quadraticCurveTo` assertions |
-| `SidebarLeft.test.tsx` | 7 | 8 tests, keyboard nav, flyout interactions, aria-checked assertions |
-| `useHistory.test.ts` | 5+ | Prior session determined concerns were overblown |
-| `useApp.psd.test.ts` | 5+ | Prior session determined concerns were overblown |
-| `functions.test.ts` | 5+ | Prior session determined concerns were overblown |
+| File                   | GTD | Why Protected                                                                                           |
+| ---------------------- | --- | ------------------------------------------------------------------------------------------------------- |
+| `psd-utils.test.tsx`   | 8   | 16 tests, `it.each` blend modes, pixel assertions, error paths, warnings, mock verification, real codec |
+| `useAnts.test.tsx`     | 5   | 5+ tests, canvas call assertions, verified accurate per `useAnts.ts`                                    |
+| `rect.test.ts`         | 5   | 5+ tests, exact assertion matches `trimRect`                                                            |
+| `draw.test.ts`         | 5   | 5+ tests, exact `bezierCurveTo`/`quadraticCurveTo` assertions                                           |
+| `SidebarLeft.test.tsx` | 7   | 8 tests, keyboard nav, flyout interactions, aria-checked assertions                                     |
+| `useHistory.test.ts`   | 5+  | Prior session determined concerns were overblown                                                        |
+| `useApp.psd.test.ts`   | 5+  | Prior session determined concerns were overblown                                                        |
+| `functions.test.ts`    | 5+  | Prior session determined concerns were overblown                                                        |
 
 ---
 

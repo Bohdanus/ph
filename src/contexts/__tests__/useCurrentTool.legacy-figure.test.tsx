@@ -155,27 +155,6 @@ describe('useCurrentTool legacy figure boundary', () => {
       expect(args).toMatchObject({ lineWidth: 7, cornerRadius: 4, hasFill: true });
     });
 
-    it('coerces the legacy figure when resetting the shape tool back to saved settings', () => {
-      lastSavedSettings.shape = shapeSettingsWith('circle');
-
-      const rendered = renderHarness();
-      selectTool(rendered, 'shape');
-      act(() => {
-        rendered.result.current.tool.setToolArgs({ ...(shapeArgsWith('polygon') as ShapeToolArgs), lineWidth: 99 });
-      });
-      expect(stateArgs(rendered).figure).toBe('polygon');
-      // The commit above persisted `polygon`, so restore the legacy value to
-      // model a document that was saved by an older build.
-      lastSavedSettings.shape = shapeSettingsWith('circle');
-
-      act(() => {
-        rendered.result.current.tool.resetToLastSavedArgs('shape');
-      });
-
-      expect(stateArgs(rendered).figure).toBe('oval');
-      expect(stateArgs(rendered).lineWidth).toBe(7);
-    });
-
     it.each(validFigures)('publishes the already valid saved figure %s unchanged', (figure) => {
       lastSavedSettings.shape = shapeSettingsWith(figure);
 
@@ -198,11 +177,6 @@ describe('useCurrentTool legacy figure boundary', () => {
       // Mutating the published args must not write through into the settings.
       (args as { lineWidth: number }).lineWidth = 999;
       expect((lastSavedSettings.shape as ShapeToolArgs).lineWidth).toBe(7);
-
-      act(() => {
-        rendered.result.current.tool.resetToLastSavedArgs('shape');
-      });
-      expect(stateArgs(rendered).lineWidth).toBe(7);
     });
 
     it.each(garbageFigures)('falls back to rectangle for the unknown saved figure %s', (figure) => {
@@ -430,7 +404,7 @@ describe('useCurrentTool legacy figure boundary', () => {
       expect(stateArgs(rendered)).toEqual(committed as unknown as ShapeToolArgs);
     });
 
-    it('does not throw or corrupt the settings for a tool the persistence layer ignores', () => {
+    it('patches a figure-less tool without injecting a spurious figure key', () => {
       const rendered = renderHarness();
       selectTool(rendered, 'blur');
 
@@ -442,8 +416,37 @@ describe('useCurrentTool legacy figure boundary', () => {
 
       expect(stateArgs(rendered)).toMatchObject({ toolName: 'blur', radius: 12 });
       expect(refArgs(rendered)).toMatchObject({ toolName: 'blur', radius: 12 });
+      // `normalizeToolArgs` (src/contexts/useCurrentTool.tsx:26) must return a figure-less tool
+      // untouched rather than coercing it to a default figure.
+      expect('figure' in (stateArgs(rendered) as object)).toBe(false);
+      expect(Object.keys(stateArgs(rendered) as object)).not.toContain('figure');
+      expect('figure' in (lastSavedSettings.blur as object)).toBe(false);
       expect(saveLastSettingsSpy).toHaveBeenCalledTimes(1);
-      expect(lastSavedSettings).toEqual(baseline);
+      // A figure-less tool is persisted like any other: what the toolbar writes is what the next
+      // tool switch reads back.
+      expect(lastSavedSettings.blur).toEqual({ radius: 12, toolName: 'blur' });
+      // No other tool was disturbed. Restoring `blur` to its baseline value must leave the whole
+      // record equal to the defaults.
+      expect({ ...lastSavedSettings, blur: baseline.blur }).toEqual(baseline);
+    });
+
+    it('keeps a filter tool settings across a tool switch', () => {
+      const rendered = renderHarness();
+      selectTool(rendered, 'blur');
+      act(() => {
+        rendered.result.current.tool.patchToolArgs('blur', { radius: 12 });
+      });
+
+      // Editing the other tool is what used to strand the blur radius: it replaces the
+      // provider's in-memory args, so the switch back has to be served from `lastSavedSettings`.
+      selectTool(rendered, 'levels');
+      act(() => {
+        rendered.result.current.tool.patchToolArgs('levels', { brightness: 40 });
+      });
+
+      selectTool(rendered, 'blur');
+      expect(rendered.result.current.tool.getToolArgs('blur')).toMatchObject({ toolName: 'blur', radius: 12 });
+      expect(refArgs(rendered)).toMatchObject({ toolName: 'blur', radius: 12 });
     });
 
     it('normalizes a legacy figure committed through the dedicated ellipse tool', () => {
@@ -467,9 +470,6 @@ describe('useCurrentTool legacy figure boundary', () => {
       expect(() => {
         act(() => {
           rendered.result.current.tool.patchToolArgs('crop', { aspectRatio: 1 });
-        });
-        act(() => {
-          rendered.result.current.tool.resetToLastSavedArgs('crop');
         });
         rendered.result.current.tool.getToolArgs('crop');
       }).not.toThrow();

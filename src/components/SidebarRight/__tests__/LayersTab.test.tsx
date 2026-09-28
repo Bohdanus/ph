@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import LayersTab from '../LayersTab.tsx';
-import type { Layer, LayersRecord } from '@/contexts/layer-types.ts';
+import type { Layer, LayerId, LayersRecord } from '@/contexts/layer-types.ts';
 import { createMockLayer } from '@/__tests__/fixtures/layer.ts';
+import { RENAME_LAYER_ACTION } from '@/util/constants.ts';
 
 vi.mock('../../Icons/EyeIcon.tsx', () => ({
   EyeIcon: ({ open }: { open: boolean }) => <span data-testid="eye-icon" data-open={open} />,
@@ -22,12 +23,17 @@ const mockLayers: LayersRecord = {
   'layer-3': createMockLayer({ id: 'layer-3', name: 'Top Layer', order: 2 }),
 };
 
-const mockStore = {
-  layers: mockLayers,
-  activeLayerId: 'layer-2',
-};
+type StoreSnapshot = { layers: LayersRecord; activeLayerId: LayerId | null };
 
-const { useStore, useLayers, layerMocks } = vi.hoisted(() => {
+/**
+ * The action mocks are wired back into a real store snapshot, so a payload assertion
+ * cannot pass unless the component actually reached the store through its own handler.
+ */
+const { useLayers, layerMocks, liveStore, subscribe, getSnapshot, noopDispatch } = vi.hoisted(() => {
+  const store = {
+    snapshot: { layers: {}, activeLayerId: null } as unknown as StoreSnapshot,
+    listeners: new Set<() => void>(),
+  };
   const mocks = {
     toggleVisibility: vi.fn(),
     removeLayer: vi.fn(),
@@ -35,39 +41,134 @@ const { useStore, useLayers, layerMocks } = vi.hoisted(() => {
     setActiveLayer: vi.fn(),
     updateLayer: vi.fn(),
   };
-  return { useStore: vi.fn(), useLayers: vi.fn(() => mocks), layerMocks: mocks };
+  return {
+    useLayers: vi.fn(() => mocks),
+    layerMocks: mocks,
+    liveStore: store,
+    subscribe: (listener: () => void) => {
+      store.listeners.add(listener);
+      return () => {
+        store.listeners.delete(listener);
+      };
+    },
+    getSnapshot: () => store.snapshot,
+    noopDispatch: vi.fn(),
+  };
 });
 
-vi.mock('@/contexts/StoreContext.tsx', () => ({
-  useStore,
-}));
+vi.mock('@/contexts/StoreContext.tsx', async () => {
+  const { useSyncExternalStore } = await import('react');
+  return {
+    useStore: () => [useSyncExternalStore(subscribe, getSnapshot), noopDispatch],
+  };
+});
 
 vi.mock('@/contexts/useLayer.ts', () => ({
   useLayers,
 }));
 
-vi.mock('@/contexts/layer-utils.ts', () => ({
-  getSortedLayersArray: (layers: LayersRecord) => Object.values(layers).sort((a: Layer, b: Layer) => a.order - b.order),
-}));
+function seed(layers: LayersRecord = mockLayers, activeLayerId: LayerId | null = 'layer-2') {
+  liveStore.snapshot = { layers, activeLayerId };
+}
 
-function getLayerDivs() {
+function updateStore(mutate: (snapshot: StoreSnapshot) => StoreSnapshot) {
+  liveStore.snapshot = mutate(liveStore.snapshot);
+  for (const listener of liveStore.listeners) listener();
+}
+
+function reorderRecord(layers: LayersRecord, layerToMoveId: LayerId, afterWhichLayerId?: LayerId): LayersRecord {
+  const next: LayersRecord = { ...layers, [layerToMoveId]: { ...layers[layerToMoveId] } };
+  if (!afterWhichLayerId) {
+    const minOrder = Math.min(...Object.values(next).map((layer) => layer.order));
+    next[layerToMoveId].order = minOrder - 1;
+    return next;
+  }
+  const targetOrder = next[afterWhichLayerId].order;
+  for (const id of Object.keys(next)) {
+    if (id !== layerToMoveId && next[id].order > targetOrder) {
+      next[id] = { ...next[id], order: next[id].order + 2 };
+    }
+  }
+  next[layerToMoveId] = { ...next[layerToMoveId], order: targetOrder + 1 };
+  return next;
+}
+
+function wireActionsToStore() {
+  layerMocks.toggleVisibility.mockImplementation((id: LayerId) =>
+    updateStore((prev) => ({
+      ...prev,
+      layers: { ...prev.layers, [id]: { ...prev.layers[id], visible: !prev.layers[id].visible } },
+    }))
+  );
+  layerMocks.removeLayer.mockImplementation((id: LayerId) =>
+    updateStore((prev) => {
+      const layers = { ...prev.layers };
+      delete layers[id];
+      return { ...prev, layers };
+    })
+  );
+  layerMocks.moveLayerAfter.mockImplementation((id: LayerId, after?: LayerId) =>
+    updateStore((prev) => ({ ...prev, layers: reorderRecord(prev.layers, id, after) }))
+  );
+  layerMocks.setActiveLayer.mockImplementation((id: LayerId) =>
+    updateStore((prev) => ({ ...prev, activeLayerId: id }))
+  );
+  layerMocks.updateLayer.mockImplementation((id: LayerId, patch: Partial<Layer>) =>
+    updateStore((prev) => ({ ...prev, layers: { ...prev.layers, [id]: { ...prev.layers[id], ...patch } } }))
+  );
+}
+
+function getLayerDivs(): HTMLElement[] {
   const items = screen.getAllByRole('listitem');
-  return items.map((item) => item.querySelector('div[title="Drag to reorder"]')!);
+  return items.map((item) => item.querySelector<HTMLElement>('div[title="Drag to reorder"]')!);
+}
+
+function getListItemFor(name: string): HTMLElement {
+  const item = screen.getAllByRole('listitem').find((li) => li.textContent?.includes(name));
+  if (!item) throw new Error(`no list item for ${name}`);
+  return item;
+}
+
+function getNameSpan(name: string): HTMLElement {
+  return getLayerDivs()
+    .find((div) => div.textContent?.includes(name))!
+    .querySelector<HTMLElement>('span.truncate')!;
+}
+
+function getBottomDropZone(container: HTMLElement) {
+  return container.querySelector('[class~="min-h-[20px]"]') as HTMLElement;
+}
+
+function getRenderedNames(container: HTMLElement) {
+  return Array.from(container.querySelectorAll('span.truncate')).map((span) => span.textContent);
+}
+
+function createDataTransfer() {
+  return {
+    effectAllowed: 'none',
+    dropEffect: 'none',
+    types: [] as string[],
+    setData: vi.fn(),
+    getData: vi.fn(),
+    setDragImage: vi.fn(),
+  };
 }
 
 describe('LayersTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    useStore.mockReturnValue([mockStore, vi.fn()]);
+    wireActionsToStore();
+    seed();
   });
 
   afterEach(() => {
+    document.body.classList.remove('cursor-grabbing');
     vi.useRealTimers();
   });
 
   it('renders "No layers yet" when layers is empty', () => {
-    useStore.mockReturnValue([{ ...mockStore, layers: {} }, vi.fn()]);
+    seed({}, null);
     render(<LayersTab />);
     expect(screen.getByText('No layers yet.')).toBeInTheDocument();
   });
@@ -104,7 +205,7 @@ describe('LayersTab', () => {
       ...mockLayers,
       'layer-2': createMockLayer({ id: 'layer-2', name: 'Layer 2', visible: false }),
     };
-    useStore.mockReturnValue([{ ...mockStore, layers: hiddenLayers }, vi.fn()]);
+    seed(hiddenLayers);
     render(<LayersTab />);
     const layerDivs = getLayerDivs();
     const eyeIcon = layerDivs[1].querySelector('[data-testid="eye-icon"]');
@@ -121,6 +222,11 @@ describe('LayersTab', () => {
     });
     expect(layerMocks.toggleVisibility).toHaveBeenCalledTimes(1);
     expect(layerMocks.toggleVisibility).toHaveBeenCalledWith('layer-3');
+
+    const toggled = getLayerDivs()[0];
+    expect(toggled.querySelector('[data-testid="eye-icon"]')).toHaveAttribute('data-open', 'false');
+    expect(toggled.querySelector('button')).toHaveAttribute('aria-label', 'Show layer');
+    expect(liveStore.snapshot.layers['layer-3'].visible).toBe(false);
   });
 
   it('calls setActiveLayer on layer click', () => {
@@ -131,6 +237,12 @@ describe('LayersTab', () => {
     });
     expect(layerMocks.setActiveLayer).toHaveBeenCalledTimes(1);
     expect(layerMocks.setActiveLayer).toHaveBeenCalledWith('layer-3');
+
+    const reordered = getLayerDivs();
+    expect(reordered[0]).toHaveTextContent('Top Layer');
+    expect(reordered[0]).toHaveClass('bg-white');
+    expect(reordered[1]).toHaveTextContent('Layer 2');
+    expect(reordered[1]).toHaveClass('bg-transparent');
   });
 
   it('removes layer on trash click', () => {
@@ -142,6 +254,10 @@ describe('LayersTab', () => {
     });
     expect(layerMocks.removeLayer).toHaveBeenCalledTimes(1);
     expect(layerMocks.removeLayer).toHaveBeenCalledWith('layer-3');
+
+    expect(screen.queryByText('Top Layer')).toBeNull();
+    expect(screen.getAllByRole('listitem')).toHaveLength(2);
+    expect('layer-3' in liveStore.snapshot.layers).toBe(false);
   });
 
   it('stops propagation on trash click', () => {
@@ -153,6 +269,10 @@ describe('LayersTab', () => {
     });
     expect(layerMocks.removeLayer).toHaveBeenCalledWith('layer-3');
     expect(layerMocks.setActiveLayer).not.toHaveBeenCalled();
+
+    expect(screen.queryByText('Top Layer')).toBeNull();
+    expect(getLayerDivs()[0]).toHaveTextContent('Layer 2');
+    expect(getLayerDivs()[0]).toHaveClass('bg-white');
   });
 
   it('stops propagation on eye button click', () => {
@@ -164,6 +284,11 @@ describe('LayersTab', () => {
     });
     expect(layerMocks.toggleVisibility).toHaveBeenCalledWith('layer-3');
     expect(layerMocks.setActiveLayer).not.toHaveBeenCalled();
+
+    expect(getLayerDivs()[0]).toHaveTextContent('Top Layer');
+    expect(getLayerDivs()[0]).toHaveClass('bg-transparent');
+    expect(getLayerDivs()[1]).toHaveTextContent('Layer 2');
+    expect(getLayerDivs()[1]).toHaveClass('bg-white');
   });
 
   it('shows layer name in span', () => {
@@ -185,10 +310,7 @@ describe('LayersTab', () => {
   });
 
   it('keeps remove control available for a bedrock layer', () => {
-    useStore.mockReturnValue([
-      { ...mockStore, layers: { bedrock: createMockLayer({ id: 'bedrock', name: 'Background', isBedrock: true }) } },
-      vi.fn(),
-    ]);
+    seed({ bedrock: createMockLayer({ id: 'bedrock', name: 'Background', isBedrock: true }) }, null);
     render(<LayersTab />);
     const [bedrockRow] = getLayerDivs();
     expect(bedrockRow).toHaveTextContent('Background');
@@ -211,5 +333,460 @@ describe('LayersTab', () => {
     expect(trashButtons[0]).toBeInTheDocument();
     expect(trashButtons[1]).toBeInTheDocument();
     expect(trashButtons[2]).toBeInTheDocument();
+  });
+});
+
+describe('LayersTab inline rename', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    wireActionsToStore();
+    seed();
+  });
+
+  afterEach(() => {
+    document.body.classList.remove('cursor-grabbing');
+    vi.useRealTimers();
+  });
+
+  it('starts out with the name span read-only and the row draggable', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+
+    expect(span).toHaveAttribute('contenteditable', 'false');
+    expect(getLayerDivs()[0]).toHaveAttribute('draggable', 'true');
+  });
+
+  it('turns the name span into an editable region on mouse down', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+
+    act(() => {
+      fireEvent.mouseDown(span);
+    });
+
+    expect(span).toHaveAttribute('contenteditable', 'true');
+    expect(span).toHaveStyle({ background: '#fff' });
+  });
+
+  it('suspends dragging for the layer that is being renamed', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+
+    act(() => {
+      fireEvent.mouseDown(span);
+    });
+
+    expect(getLayerDivs()[0]).toHaveAttribute('draggable', 'false');
+  });
+
+  it('cancels a drag gesture started on the layer that is being renamed', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+    act(() => {
+      fireEvent.mouseDown(span);
+    });
+
+    const row = getLayerDivs()[0];
+    const event = new Event('dragstart', { bubbles: true, cancelable: true });
+    act(() => {
+      fireEvent(row, event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(document.body).not.toHaveClass('cursor-grabbing');
+  });
+
+  it('stays in rename mode when the name is pressed again', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+
+    act(() => {
+      fireEvent.mouseDown(span);
+    });
+    act(() => {
+      fireEvent.mouseDown(span);
+    });
+
+    expect(span).toHaveAttribute('contenteditable', 'true');
+  });
+
+  it('does not select the row or commit the edit when the name area is clicked while editing', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+    act(() => {
+      fireEvent.mouseDown(span);
+    });
+    act(() => {
+      span.textContent = '  Sky  ';
+    });
+
+    // the wrapper stops the click so an in-progress rename is not committed by accident
+    const wrapper = span.parentElement!;
+    act(() => {
+      fireEvent.click(wrapper);
+    });
+
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+    expect(layerMocks.setActiveLayer).not.toHaveBeenCalled();
+    expect(span).toHaveAttribute('contenteditable', 'true');
+    expect(liveStore.snapshot.layers['layer-3'].name).toBe('Top Layer');
+    expect(liveStore.snapshot.activeLayerId).toBe('layer-2');
+  });
+
+  it('keeps the rename edit open when the span itself is clicked', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+    act(() => {
+      fireEvent.mouseDown(span);
+    });
+
+    act(() => {
+      fireEvent.click(span);
+    });
+
+    expect(span).toHaveAttribute('contenteditable', 'true');
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+    expect(layerMocks.setActiveLayer).not.toHaveBeenCalled();
+    expect(liveStore.snapshot.layers['layer-3'].name).toBe('Top Layer');
+    expect(liveStore.snapshot.activeLayerId).toBe('layer-2');
+  });
+
+  it('leaves rename mode and commits the typed name when Enter is pressed', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+    act(() => {
+      fireEvent.mouseDown(span);
+    });
+    act(() => {
+      span.textContent = 'Sky';
+    });
+    act(() => {
+      span.focus();
+    });
+    expect(span).toHaveFocus();
+
+    const blurSpy = vi.spyOn(span, 'blur');
+    const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    act(() => {
+      fireEvent(span, event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(blurSpy).toHaveBeenCalled();
+    expect(layerMocks.updateLayer).toHaveBeenCalledWith('layer-3', { name: 'Sky' }, RENAME_LAYER_ACTION);
+    expect(screen.queryByText('Top Layer')).toBeNull();
+    expect(screen.getByText('Sky')).toBeInTheDocument();
+    expect(liveStore.snapshot.layers['layer-3'].name).toBe('Sky');
+    blurSpy.mockRestore();
+  });
+
+  it('restores the original name and dispatches nothing when Escape is pressed', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+    act(() => {
+      fireEvent.mouseDown(span);
+    });
+    act(() => {
+      span.textContent = 'Discarded';
+    });
+
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    act(() => {
+      fireEvent(span, event);
+    });
+
+    expect(span.textContent).toBe('Top Layer');
+    expect(span).toHaveAttribute('contenteditable', 'false');
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+    expect(liveStore.snapshot.layers['layer-3'].name).toBe('Top Layer');
+  });
+
+  it('ignores unrelated keys while renaming', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+    act(() => {
+      fireEvent.mouseDown(span);
+    });
+    act(() => {
+      span.textContent = 'Sky';
+    });
+
+    act(() => {
+      fireEvent.keyDown(span, { key: 'a' });
+    });
+
+    expect(span).toHaveAttribute('contenteditable', 'true');
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+    expect(liveStore.snapshot.layers['layer-3'].name).toBe('Top Layer');
+  });
+
+  it.each([
+    ['a whitespace-only name', '   '],
+    ['an empty name', ''],
+  ])('rejects %s and leaves the layer name untouched', (_label, nextName) => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+    act(() => {
+      fireEvent.mouseDown(span);
+    });
+    act(() => {
+      span.textContent = nextName;
+      fireEvent.blur(span);
+    });
+
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+    expect(span).toHaveAttribute('contenteditable', 'false');
+    expect(liveStore.snapshot.layers['layer-3'].name).toBe('Top Layer');
+  });
+
+  // Product bug — src/components/SidebarRight/LayersTab.tsx:76-82.
+  // `handleNameChange` refuses to commit a blank name, but unlike the Escape branch at
+  // LayersTab.tsx:207 it never writes the previous name back into the contentEditable
+  // span. Because the span is no longer editable the DOM text is no longer owned by
+  // React, so the row keeps showing the blank label until some later store render
+  // happens to rewrite it — the user sees a nameless layer that still exists.
+  it.fails('restores the previous label in the row when a blank rename is rejected', () => {
+    render(<LayersTab />);
+    const span = getNameSpan('Top Layer');
+    act(() => {
+      fireEvent.mouseDown(span);
+    });
+    act(() => {
+      span.textContent = '   ';
+      fireEvent.blur(span);
+    });
+
+    expect(layerMocks.updateLayer).not.toHaveBeenCalled();
+    expect(span).toHaveTextContent('Top Layer');
+  });
+});
+
+describe('LayersTab drag and drop guards', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    wireActionsToStore();
+    seed();
+  });
+
+  afterEach(() => {
+    document.body.classList.remove('cursor-grabbing');
+    vi.useRealTimers();
+  });
+
+  it('marks the document as grabbing while a layer drag is in flight', () => {
+    render(<LayersTab />);
+
+    act(() => {
+      fireEvent.dragStart(getLayerDivs()[0], { dataTransfer: createDataTransfer() });
+    });
+
+    expect(document.body).toHaveClass('cursor-grabbing');
+  });
+
+  it('publishes the dragged layer id and drag image through the data transfer', () => {
+    render(<LayersTab />);
+    const dataTransfer = createDataTransfer();
+
+    act(() => {
+      fireEvent.dragStart(getLayerDivs()[0], { dataTransfer });
+    });
+
+    expect(dataTransfer.effectAllowed).toBe('move');
+    expect(dataTransfer.setData).toHaveBeenCalledWith('application/x-layer-id', 'layer-3');
+    expect(dataTransfer.setDragImage).toHaveBeenCalled();
+  });
+
+  it('resets the drag state and the grabbing cursor on drag end', () => {
+    const { container } = render(<LayersTab />);
+    const dataTransfer = createDataTransfer();
+
+    act(() => {
+      fireEvent.dragStart(getLayerDivs()[0], { dataTransfer });
+    });
+    act(() => {
+      fireEvent.dragOver(getLayerDivs()[2], { dataTransfer });
+    });
+    expect(getListItemFor('Background').querySelector('div.bg-blue-500')).toBeInTheDocument();
+
+    act(() => {
+      fireEvent.dragEnd(getLayerDivs()[0], { dataTransfer });
+    });
+
+    expect(document.body).not.toHaveClass('cursor-grabbing');
+    expect(getListItemFor('Background').querySelector('div.bg-blue-500')).toBeNull();
+    expect(getBottomDropZone(container).previousSibling).not.toHaveClass('bg-blue-500');
+  });
+
+  it('arms a row as a drop target and cancels the dragover default from the next hover on', () => {
+    render(<LayersTab />);
+    const dataTransfer = createDataTransfer();
+    act(() => {
+      fireEvent.dragStart(getLayerDivs()[0], { dataTransfer });
+    });
+
+    // the target is armed by the state update, so the hover that arms it is not cancelled yet
+    const armingEvent = new Event('dragover', { bubbles: true, cancelable: true });
+    act(() => {
+      fireEvent(getLayerDivs()[2], armingEvent);
+    });
+    expect(armingEvent.defaultPrevented).toBe(false);
+    expect(getListItemFor('Background').querySelector('div.bg-blue-500')).toBeInTheDocument();
+
+    const armedEvent = new Event('dragover', { bubbles: true, cancelable: true });
+    act(() => {
+      fireEvent(getLayerDivs()[2], armedEvent);
+    });
+    expect(armedEvent.defaultPrevented).toBe(true);
+  });
+
+  it('shows the insertion indicator on a valid row hover and clears it again', () => {
+    render(<LayersTab />);
+    const dataTransfer = createDataTransfer();
+
+    act(() => {
+      fireEvent.dragStart(getLayerDivs()[0], { dataTransfer });
+    });
+    act(() => {
+      fireEvent.dragOver(getLayerDivs()[2], { dataTransfer });
+    });
+    expect(getListItemFor('Background').querySelector('div.bg-blue-500')).toBeInTheDocument();
+
+    act(() => {
+      fireEvent.dragOver(getLayerDivs()[0], { dataTransfer });
+    });
+    expect(getListItemFor('Top Layer').querySelector('div.bg-blue-500')).toBeNull();
+  });
+
+  it('refuses a drop on the row directly above the dragged layer', () => {
+    vi.useFakeTimers();
+    const { container } = render(<LayersTab />);
+    const dataTransfer = createDataTransfer();
+    act(() => {
+      fireEvent.dragStart(getLayerDivs()[0], { dataTransfer });
+    });
+    act(() => {
+      fireEvent.dragOver(getLayerDivs()[1], { dataTransfer });
+    });
+
+    const event = new Event('drop', { bubbles: true, cancelable: true });
+    act(() => {
+      fireEvent(getLayerDivs()[1], event);
+    });
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
+    expect(getRenderedNames(container)).toEqual(['Top Layer', 'Layer 2', 'Background']);
+  });
+
+  it('refuses a drop on a row when no drag is in flight', () => {
+    vi.useFakeTimers();
+    const { container } = render(<LayersTab />);
+
+    const event = new Event('drop', { bubbles: true, cancelable: true });
+    act(() => {
+      fireEvent(getLayerDivs()[2], event);
+    });
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
+    expect(getRenderedNames(container)).toEqual(['Top Layer', 'Layer 2', 'Background']);
+  });
+
+  it('ignores bottom-zone hover and drop when no drag is in flight', () => {
+    vi.useFakeTimers();
+    const { container } = render(<LayersTab />);
+    const bottomZone = getBottomDropZone(container);
+
+    const overEvent = new Event('dragover', { bubbles: true, cancelable: true });
+    act(() => {
+      fireEvent(bottomZone, overEvent);
+    });
+    expect(overEvent.defaultPrevented).toBe(false);
+    expect(getBottomDropZone(container).previousSibling).not.toHaveClass('bg-blue-500');
+
+    const dropEvent = new Event('drop', { bubbles: true, cancelable: true });
+    act(() => {
+      fireEvent(bottomZone, dropEvent);
+    });
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+
+    expect(dropEvent.defaultPrevented).toBe(false);
+    expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
+    expect(getRenderedNames(container)).toEqual(['Top Layer', 'Layer 2', 'Background']);
+  });
+
+  it('shows the trailing insertion marker while hovering the bottom zone', () => {
+    const { container } = render(<LayersTab />);
+    const bottomZone = getBottomDropZone(container);
+
+    act(() => {
+      fireEvent.dragStart(getLayerDivs()[0], { dataTransfer: createDataTransfer() });
+    });
+    act(() => {
+      fireEvent.dragOver(bottomZone, { dataTransfer: createDataTransfer() });
+    });
+
+    const marker = container.querySelector('div.bg-blue-500.h-2');
+    expect(marker).toBeInTheDocument();
+    expect(marker).toHaveClass('-top-1');
+
+    act(() => {
+      fireEvent.dragEnd(getLayerDivs()[0], { dataTransfer: createDataTransfer() });
+    });
+    expect(container.querySelector('div.bg-blue-500.h-2')).toBeNull();
+  });
+
+  it('animates the moved row through its shrink phase before the reorder lands', () => {
+    const { container } = render(<LayersTab />);
+    const dataTransfer = createDataTransfer();
+    act(() => {
+      fireEvent.dragStart(getLayerDivs()[0], { dataTransfer });
+    });
+    act(() => {
+      fireEvent.dragOver(getLayerDivs()[2], { dataTransfer });
+    });
+    act(() => {
+      fireEvent.drop(getLayerDivs()[2], { dataTransfer });
+    });
+
+    // shrink phase: the row collapses before `moveLayerAfter` is invoked
+    expect(getListItemFor('Top Layer')).toHaveClass('h-0', 'opacity-0');
+    expect(layerMocks.moveLayerAfter).not.toHaveBeenCalled();
+    expect(getRenderedNames(container)).toEqual(['Top Layer', 'Layer 2', 'Background']);
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(layerMocks.moveLayerAfter).toHaveBeenCalledWith('layer-3', 'layer-1');
+    expect(getListItemFor('Top Layer')).toHaveClass('h-10', 'opacity-100', 'animate-height-increase');
+    expect(getRenderedNames(container)).toEqual(['Layer 2', 'Top Layer', 'Background']);
+
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(getListItemFor('Top Layer')).toHaveClass('h-10', 'opacity-100');
+    expect(getListItemFor('Top Layer')).not.toHaveClass('animate-height-increase');
+  });
+
+  it('clears the grabbing cursor when the panel unmounts mid-drag', () => {
+    const { unmount } = render(<LayersTab />);
+    act(() => {
+      fireEvent.dragStart(getLayerDivs()[0], { dataTransfer: createDataTransfer() });
+    });
+    expect(document.body).toHaveClass('cursor-grabbing');
+
+    unmount();
+
+    expect(document.body).not.toHaveClass('cursor-grabbing');
   });
 });

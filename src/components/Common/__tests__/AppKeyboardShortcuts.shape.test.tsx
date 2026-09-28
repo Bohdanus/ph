@@ -7,16 +7,14 @@ import { savedArgsPerFigure } from '../../../tools/settings.ts';
 
 const goToToolMock = vi.hoisted(() => vi.fn());
 const patchToolArgsMock = vi.hoisted(() => vi.fn());
-const resetToLastSavedArgsMock = vi.hoisted(() => vi.fn());
 const shortcutHandlers = vi.hoisted(() => [] as { key: string; shift: boolean; handler: () => void }[]);
 
 const storeState = vi.hoisted(
   () =>
     ({
       hasImage: true,
-      isToolDirty: false,
       toolName: 'brush',
-    }) as { hasImage: boolean; isToolDirty: boolean; toolName: ToolName }
+    }) as { hasImage: boolean; toolName: ToolName }
 );
 
 const toolState = vi.hoisted(
@@ -31,7 +29,7 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
 }));
 
 vi.mock('../../../contexts/useHistory.ts', () => ({
-  useHistory: () => ({ canUndo: false, undo: vi.fn(), canRedo: false, redo: vi.fn() }),
+  useHistory: () => ({ canUndo: () => false, undo: vi.fn(), canRedo: () => false, redo: vi.fn() }),
 }));
 
 vi.mock('../../../hooks/useApp.ts', () => ({
@@ -42,7 +40,6 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs: toolState.toolArgs,
     patchToolArgs: patchToolArgsMock,
-    resetToLastSavedArgs: resetToLastSavedArgsMock,
   }),
 }));
 
@@ -150,7 +147,6 @@ describe('AppKeyboardShortcuts shape selection', () => {
     shortcutHandlers.length = 0;
     goToToolMock.mockClear();
     patchToolArgsMock.mockClear();
-    resetToLastSavedArgsMock.mockClear();
     storeState.toolName = 'brush';
     toolState.toolArgs = { toolName: 'brush' } as ToolArgs;
   });
@@ -159,7 +155,6 @@ describe('AppKeyboardShortcuts shape selection', () => {
     shortcutHandlers.length = 0;
     goToToolMock.mockClear();
     patchToolArgsMock.mockClear();
-    resetToLastSavedArgsMock.mockClear();
   });
 
   it('registers a plain and a shift variant of the U shortcut', () => {

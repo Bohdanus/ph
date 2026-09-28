@@ -3,7 +3,8 @@ import { cloneDeep } from 'lodash-es';
 import { saveLastSettings } from '../settings.ts';
 import { defaultSettings, lastSavedSettings, savedDrawPerPen, savedArgsPerFigure } from '../../tools/settings.ts';
 import { isFigureType, normalizeFigure, type FigureType } from '../../tools/shape.ts';
-import type { ToolArgs } from '../../contexts/tool-types.ts';
+import type { ToolArgs, ToolArgsFor, ToolName } from '../../contexts/tool-types.ts';
+import type { PaintToolArgs } from '../../tools/draw.ts';
 
 /**
  * Hard-coded copy of the narrowed `FigureType` union. The imported type cannot be
@@ -30,6 +31,19 @@ const loadPersistedArgs = <T extends { figure?: unknown }>(args: T): T => {
   const loaded = cloneDeep(args);
   if (isFigureType(loaded.figure)) return loaded;
   return { ...loaded, figure: normalizeFigure(loaded.figure) };
+};
+
+/**
+ * Mirrors the read a tool switch performs: `CurrentToolProvider` hands the incoming tool its
+ * args by deep-cloning `lastSavedSettings[toolName]` (src/contexts/useCurrentTool.tsx:33-51).
+ * Nothing else carries a tool's settings across a switch — `tempUpdateLayer` only writes a
+ * transient bitmap preview (src/contexts/useLayer.ts:459) — so this is the only path the
+ * settings have to survive.
+ */
+const switchToTool = <TName extends ToolName>(toolName: TName): ToolArgsFor<TName> => {
+  const args = cloneDeep(lastSavedSettings[toolName]) as ToolArgsFor<TName> & { figure?: unknown };
+  if (!('figure' in args)) return args as ToolArgsFor<TName>;
+  return loadPersistedArgs(args) as ToolArgsFor<TName>;
 };
 
 describe('saveLastSettings', () => {
@@ -166,6 +180,21 @@ describe('saveLastSettings', () => {
     expect(crop.aspectRatio).toBe(1.5);
   });
 
+  it('stores crop settings without the pre-ratio rect', () => {
+    // `aspectRatio` IS persisted while `rect` is not, so a restored session arrives with a ratio and
+    // no rect. A persisted `preRatioRect` would fill that gap from a DIFFERENT document: choosing
+    // `Free` would then restore a framing the user never drew on this one. Both are presentation
+    // state, and presentation state is exactly what this arm drops.
+    saveLastSettings({
+      rect: { x1: 0, y1: 0, x2: 100, y2: 100 },
+      preRatioRect: { x1: 5, y1: 6, x2: 200, y2: 150 },
+      aspectRatio: 1.5,
+      toolName: 'crop',
+    });
+
+    expect(lastSavedSettings.crop.preRatioRect).toBeUndefined();
+  });
+
   it('stores transform settings verbatim', () => {
     const args = {
       rotate: 90,
@@ -258,6 +287,192 @@ describe('saveLastSettings', () => {
     };
     saveLastSettings(args);
     expect(args.points).toEqual([{ x: 1, y: 2 }]);
+  });
+
+  it('stores blur settings verbatim', () => {
+    const args = { radius: 25, toolName: 'blur' as const };
+    saveLastSettings(args);
+    expect(lastSavedSettings.blur).toEqual(args);
+  });
+
+  it('stores color settings verbatim', () => {
+    const args = { grayscale: 30, sepia: 60, saturation: 90, toolName: 'color' as const };
+    saveLastSettings(args);
+    expect(lastSavedSettings.color).toEqual(args);
+  });
+
+  it('stores levels settings verbatim', () => {
+    const args = { brightness: -40, contrast: 55, toolName: 'levels' as const };
+    saveLastSettings(args);
+    expect(lastSavedSettings.levels).toEqual(args);
+  });
+
+  it('does not alias the caller args when storing a filter tool', () => {
+    const args = { radius: 12, toolName: 'blur' as const };
+    saveLastSettings(args);
+    expect(lastSavedSettings.blur).not.toBe(args);
+  });
+});
+
+describe('saveLastSettings across a tool switch', () => {
+  beforeEach(() => {
+    resetLastSavedSettings();
+  });
+
+  afterEach(() => {
+    resetLastSavedSettings();
+  });
+
+  it('keeps the blur radius when another tool is edited between the two switches', () => {
+    saveLastSettings({ radius: 25, toolName: 'blur' });
+
+    // The second save is what loses the value in production: editing the other tool replaces
+    // the provider's in-memory args, so the switch back has to read `lastSavedSettings`.
+    switchToTool('levels');
+    saveLastSettings({ brightness: 40, contrast: -20, toolName: 'levels' });
+
+    expect(switchToTool('blur')).toEqual({ radius: 25, toolName: 'blur' });
+    expect(switchToTool('levels')).toEqual({ brightness: 40, contrast: -20, toolName: 'levels' });
+  });
+
+  it('keeps every color adjustment when another tool is edited between the two switches', () => {
+    saveLastSettings({ grayscale: 30, sepia: 60, saturation: 90, toolName: 'color' });
+
+    switchToTool('blur');
+    saveLastSettings({ radius: 8, toolName: 'blur' });
+
+    expect(switchToTool('color')).toEqual({ grayscale: 30, sepia: 60, saturation: 90, toolName: 'color' });
+  });
+
+  it('keeps both levels adjustments when another tool is edited between the two switches', () => {
+    saveLastSettings({ brightness: -40, contrast: 55, toolName: 'levels' });
+
+    switchToTool('color');
+    saveLastSettings({ grayscale: 15, sepia: 0, saturation: 0, toolName: 'color' });
+
+    expect(switchToTool('levels')).toEqual({ brightness: -40, contrast: 55, toolName: 'levels' });
+  });
+
+  it('persists a partial update on top of the previously saved filter settings', () => {
+    saveLastSettings({ grayscale: 30, sepia: 60, saturation: 90, toolName: 'color' });
+    switchToTool('levels');
+
+    saveLastSettings({ grayscale: 75, sepia: 60, saturation: 90, toolName: 'color' });
+
+    expect(switchToTool('color')).toEqual({ grayscale: 75, sepia: 60, saturation: 90, toolName: 'color' });
+  });
+
+  it('starts a filter tool from its neutral default when it has never been edited', () => {
+    expect(switchToTool('blur')).toEqual({ radius: 0, toolName: 'blur' });
+    expect(switchToTool('color')).toEqual({ grayscale: 0, sepia: 0, saturation: 0, toolName: 'color' });
+    expect(switchToTool('levels')).toEqual({ brightness: 0, contrast: 0, toolName: 'levels' });
+  });
+});
+
+/**
+ * The Photoshop paint bar publishes every control through `setToolArgs`, which lands
+ * in `saveLastSettings` on the same tick (`src/contexts/useCurrentTool.tsx:62`). The
+ * paint tools used to share the arm that persists a bare `{ toolName }` with the pen
+ * and shape families, so a brush Size change was written and then thrown away before
+ * the next tool switch, and the bar re-seeded with every control at `undefined`.
+ *
+ * These assertions are deliberately about the VALUES and not merely about the key
+ * being present: `src/tools/__tests__/tool-settings.test.ts:255-268` already pins
+ * that every tool name survives `saveLastSettings`, and it passed happily while the
+ * four paint settings were being discarded.
+ */
+describe('saveLastSettings for the Photoshop paint tools', () => {
+  beforeEach(() => {
+    resetLastSavedSettings();
+  });
+
+  afterEach(() => {
+    resetLastSavedSettings();
+  });
+
+  const paintArgs = (toolName: 'brush' | 'pencil', overrides: Partial<PaintToolArgs> = {}): ToolArgs =>
+    ({ ...defaultSettings[toolName], ...overrides }) as unknown as ToolArgs;
+
+  it.each(['brush', 'pencil'] as const)('persists the %s options the bar writes', (toolName) => {
+    saveLastSettings(
+      paintArgs(toolName, {
+        lineWidth: 77,
+        alpha: 0.42,
+        smoothing: 63,
+        blendMode: 'multiply',
+        color: '#ff8800',
+      })
+    );
+
+    expect(lastSavedSettings[toolName]).toMatchObject({
+      lineWidth: 77,
+      alpha: 0.42,
+      smoothing: 63,
+      blendMode: 'multiply',
+      color: '#ff8800',
+      toolName,
+    });
+  });
+
+  it.each(['brush', 'pencil'] as const)(
+    'keeps the %s Size, Opacity, Smoothing and Mode across a tool switch',
+    (toolName) => {
+      saveLastSettings(paintArgs(toolName, { lineWidth: 77, alpha: 0.42, smoothing: 63, blendMode: 'difference' }));
+
+      // Editing another tool is what loses the value in production: it replaces the
+      // provider's in-memory args, so the switch back has to read `lastSavedSettings`.
+      switchToTool('blur');
+      saveLastSettings({ radius: 8, toolName: 'blur' });
+
+      expect(switchToTool(toolName)).toMatchObject({
+        lineWidth: 77,
+        alpha: 0.42,
+        smoothing: 63,
+        blendMode: 'difference',
+        toolName,
+      });
+    }
+  );
+
+  it('empties the stroke geometry, because a stroke is not a setting', () => {
+    saveLastSettings(
+      paintArgs('brush', {
+        points: [
+          { x: 1, y: 2 },
+          { x: 9, y: 7 },
+        ],
+      })
+    );
+
+    // The same treatment `draw` and `feather-magnetic-lasso` get: the polyline of the
+    // stroke that was just committed must not be reseeded into the next one.
+    expect(lastSavedSettings.brush.points).toEqual([]);
+  });
+
+  it('does not alias the caller args', () => {
+    const args = paintArgs('brush', { lineWidth: 33 });
+    saveLastSettings(args);
+
+    expect(lastSavedSettings.brush).not.toBe(args);
+    expect(lastSavedSettings.brush).toEqual(args);
+  });
+
+  it('keeps the color-replacement tool settings too, which the same arm used to discard', () => {
+    saveLastSettings({
+      ...defaultSettings['color-replacement'],
+      lineWidth: 24,
+    } as unknown as ToolArgs);
+
+    expect(lastSavedSettings['color-replacement']).toMatchObject({ lineWidth: 24, toolName: 'color-replacement' });
+  });
+
+  it('starts each paint tool from its own seeded defaults', () => {
+    // Two tools that share a shape but not a scale: the brush and the pencil are the
+    // only tools whose options bar would be wrong on a fresh switch if the persisted
+    // record were shared rather than per-tool.
+    expect(switchToTool('brush')).toEqual({ ...defaultSettings.brush, points: [] });
+    expect(switchToTool('pencil')).toEqual({ ...defaultSettings.pencil, points: [] });
+    expect(switchToTool('brush').lineWidth).not.toBe(switchToTool('pencil').lineWidth);
   });
 });
 

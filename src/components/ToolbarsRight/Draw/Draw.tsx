@@ -65,7 +65,17 @@ const Draw: React.FC<{}> = () => {
 
   const handlePenTypeChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const penType = event.target.value as PenType;
-    handleChange({ ...args, ...savedDrawPerPen[penType], penType });
+    const preset = savedDrawPerPen[penType];
+    // Only the dashed pen carries a dash pattern. Its own preset declares one, but `pen` and
+    // `spray` declare none, so the leading `...args` spread would otherwise hand the active
+    // pen's dash to the next one — and `handleChange` would then bake that dash into the new
+    // pen's own record, so it survives the next tool switch too.
+    handleChange({
+      ...args,
+      ...preset,
+      lineDash: penType === 'pen-dashed' ? (preset.lineDash ?? null) : null,
+      penType,
+    });
   };
 
   const { alpha, lineWidth: brushSize, penType, lineDash } = args;

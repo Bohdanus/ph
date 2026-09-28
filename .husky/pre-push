@@ -1,0 +1,18 @@
+#!/usr/bin/env sh
+# The full app unit suite, once per push, and nothing else.
+#
+# It is here rather than in `gate:commit` because the commit gate runs no app
+# test at all, so it cannot approximate this: a commit can pass the commit gate
+# and still land a change whose own test was already failing before the commit
+# started. `npm run test` is also the on-demand full scan — this hook is a
+# reminder that it exists, not a second place to configure it.
+#
+# `tsc` and `build` are deliberately NOT repeated here. An earlier version
+# re-ran all of `gate:commit` and bought nothing with it: a rebase or a
+# `--no-verify` commit that broke the build is caught by the `ci` job in about a
+# minute, and re-running several seconds of deterministic checks to protect a
+# shorter suite run is how a gate ends up `--no-verify`'d along with everything
+# else.
+set -e
+
+npm run gate:push

@@ -15,9 +15,9 @@ export interface MockStoreState {
   rectOverlayRef?: { current: HTMLCanvasElement | null };
   containerRef?: { current: HTMLDivElement | null };
   textareaRef?: { current: HTMLTextAreaElement | null };
-  canvasCtxRef?: { current: CanvasRenderingContext2D | null };
   currentArgs?: { current: ToolArgs };
   clearPreviewLayers?: () => void;
+  promoteLayerPresentation?: (request: unknown) => void;
   previewLayers?: Record<LayerId, { layer: unknown; toolArgs?: ToolArgs }>;
   hasImage?: boolean;
   hasUnsavedChanges?: boolean;
@@ -25,7 +25,6 @@ export interface MockStoreState {
   totalSize?: Size;
   documentFrame?: DocumentFrame;
   toolName?: ToolName;
-  isToolDirty?: boolean;
   layers?: LayersRecord;
   deletedLayers?: LayersRecord;
   activeLayerId?: LayerId | null;
@@ -52,9 +51,9 @@ export const createMockStoreState = (overrides: MockStoreState = {}): MockStoreS
   rectOverlayRef: { current: null },
   containerRef: { current: null },
   textareaRef: { current: null },
-  canvasCtxRef: { current: null },
   currentArgs: { current: {} as ToolArgs },
   clearPreviewLayers: vi.fn(),
+  promoteLayerPresentation: vi.fn(),
   previewLayers: {},
   hasImage: false,
   hasUnsavedChanges: false,
@@ -62,7 +61,6 @@ export const createMockStoreState = (overrides: MockStoreState = {}): MockStoreS
   totalSize: { width: 128, height: 64 },
   documentFrame: { x: 0, y: 0, width: 128, height: 64 },
   toolName: 'reposition' as ToolName,
-  isToolDirty: false,
   layers: {},
   deletedLayers: {},
   activeLayerId: null,

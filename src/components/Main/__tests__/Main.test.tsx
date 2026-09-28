@@ -59,15 +59,21 @@ describe('Main', () => {
   it('renders Open File and blank image buttons when no image is loaded', () => {
     render(<Main />);
 
-    expect(screen.getByRole('button', { name: 'Open File' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'blank image' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open File' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'blank image' })).toBeInTheDocument();
   });
 
   it('renders testid buttons when no image is loaded', () => {
     render(<Main />);
 
-    expect(screen.getByTestId('main-open-file-button')).toBeTruthy();
-    expect(screen.getByTestId('main-blank-image-button')).toBeTruthy();
+    expect(screen.getByTestId('main-open-file-button')).toBeInTheDocument();
+    expect(screen.getByTestId('main-blank-image-button')).toBeInTheDocument();
+  });
+
+  it('publishes the workspace canvas test id the e2e helper resolves by', () => {
+    render(<Main />);
+
+    expect(screen.getByTestId('workspace-canvas')).toBeInTheDocument();
   });
 
   it('opens a dropped image file', async () => {

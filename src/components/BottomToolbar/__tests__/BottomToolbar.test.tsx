@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import BottomToolbar from '../BottomToolbar.tsx';
 
@@ -37,5 +37,35 @@ describe('BottomToolbar', () => {
     const toolbar = screen.getByRole('toolbar', { name: /mobile toolbar/i });
     expect(toolbar).toBeInTheDocument();
     expect(screen.getAllByRole('button', { hidden: true })).toHaveLength(3);
+  });
+
+  it('keeps every action button focusable in document order', () => {
+    render(<BottomToolbar />);
+
+    const buttons = screen.getAllByRole('button');
+    for (const button of buttons) {
+      button.focus();
+      expect(document.activeElement).toBe(button);
+    }
+
+    expect(buttons.map((button) => button.textContent)).toEqual(['Todo', 'Mobile', 'Toolbar']);
+  });
+
+  it('does not disable any of the placeholder actions', () => {
+    render(<BottomToolbar />);
+
+    for (const button of screen.getAllByRole('button')) {
+      expect((button as HTMLButtonElement).disabled).toBe(false);
+    }
+  });
+
+  it('renders inert placeholders that do not throw on click or keydown', () => {
+    render(<BottomToolbar />);
+
+    for (const button of screen.getAllByRole('button')) {
+      expect(() => fireEvent.click(button)).not.toThrow();
+      expect(() => fireEvent.keyDown(button, { key: 'Enter' })).not.toThrow();
+      expect(() => fireEvent.keyDown(button, { key: ' ' })).not.toThrow();
+    }
   });
 });

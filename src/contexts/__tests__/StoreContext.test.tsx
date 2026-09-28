@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import { useEffect } from 'react';
 import { describe, expect, it } from 'vitest';
 import { StoreProvider, useStore } from '../StoreContext.tsx';
 import type { Selection } from '../general-types.ts';
@@ -201,5 +202,68 @@ describe('StoreContext durable diagnostic contract', () => {
     expect('presentationMaterialization' in store).toBe(false);
     expect('getReplayRevisionToken' in store).toBe(false);
     expect(Object.keys(store)).toEqual(expect.not.arrayContaining(['replayCoordinator']));
+  });
+});
+
+describe('StoreContext initial state contract', () => {
+  const InitialProbe = () => {
+    const [store] = useStore();
+    return (
+      <div>
+        <div data-testid="initial-file-state">{`${store.hasImage}:${store.fileName}:${store.hasUnsavedChanges}`}</div>
+        <div data-testid="initial-size">{`${store.totalSize.width}x${store.totalSize.height}`}</div>
+        <div data-testid="initial-frame">{`${store.documentFrame.x},${store.documentFrame.y},${store.documentFrame.width},${store.documentFrame.height}`}</div>
+        <div data-testid="initial-history">
+          {`${store.history.length}:${store.historyIndex}:${store.branchRevision}:${store.documentRevision}:${store.documentId}`}
+        </div>
+        <div data-testid="initial-durable">{`${store.durableStatus}:${store.durableDocument === null}`}</div>
+        <div data-testid="initial-colors">{`${store.color}:${store.backgroundColor}`}</div>
+        <div data-testid="initial-refs">
+          {[store.canvasRef, store.toolOverlayRef, store.rectOverlayRef, store.containerRef, store.textareaRef]
+            .map((ref) => `${ref.current === null ? 'detached' : 'attached'}`)
+            .join(',')}
+        </div>
+      </div>
+    );
+  };
+
+  it('starts from an empty, uninitialized, image-free document with null DOM refs', () => {
+    render(
+      <StoreProvider>
+        <InitialProbe />
+      </StoreProvider>
+    );
+
+    expect(screen.getByTestId('initial-file-state').textContent).toBe('false::false');
+    expect(screen.getByTestId('initial-size').textContent).toBe('0x0');
+    expect(screen.getByTestId('initial-frame').textContent).toBe('0,0,0,0');
+    expect(screen.getByTestId('initial-history').textContent).toBe('0:0:0:0:uninitialized');
+    // A never-converted document must never claim a durable shadow.
+    expect(screen.getByTestId('initial-durable').textContent).toBe('unavailable:true');
+    expect(screen.getByTestId('initial-colors').textContent).toBe('#000000:#ffffff');
+    // Every live DOM ref starts detached; production code null-checks them.
+    expect(screen.getByTestId('initial-refs').textContent).toBe('detached,detached,detached,detached,detached');
+  });
+
+  it('ships a no-op clearPreviewLayers before any preview exists', () => {
+    const captured: { store: ReturnType<typeof useStore>[0] | null } = { store: null };
+    const Capture = () => {
+      const [store] = useStore();
+      useEffect(() => {
+        captured.store = store;
+      }, [store]);
+      return null;
+    };
+
+    render(
+      <StoreProvider>
+        <Capture />
+      </StoreProvider>
+    );
+
+    const store = captured.store!;
+    expect(store.previewLayers.current).toEqual({});
+    expect(() => store.clearPreviewLayers()).not.toThrow();
+    expect(store.previewLayers.current).toEqual({});
   });
 });

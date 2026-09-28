@@ -1,4 +1,4 @@
-import { configDefaults, defineConfig } from 'vitest/config';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
@@ -25,13 +25,11 @@ export default defineConfig({
       '@': path.resolve(import.meta.dirname, './src'),
     },
   },
-  test: {
-    environment: 'jsdom',
-    pool: 'vmThreads',
-    maxWorkers: 4,
-    isolate: true,
-    exclude: [...configDefaults.exclude, '**/.kilo/**'],
-    setupFiles: ['./src/test/setup.ts'],
-    globals: true,
-  },
+  // No `test` block here on purpose. This file is the Vite build config; unit-test
+  // settings live in `vitest.config.ts` (app, jsdom) and `vitest.e2e.config.ts`
+  // (e2e helpers, node). Vitest prefers `vitest.config.*` over `vite.config.ts`, so
+  // a `test` block below was dead for every default invocation — but it was a live
+  // footgun for `vitest --config vite.config.ts` and for any IDE runner pointed at
+  // this file, because it could not know about the e2e project's existence and would
+  // load all 21 Playwright specs into jsdom.
 });

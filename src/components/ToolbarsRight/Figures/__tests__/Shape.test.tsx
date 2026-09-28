@@ -111,8 +111,11 @@ function lastPreviewSize() {
   return lastCallArgs(shapeSizeMock) as unknown as { size: { width: number; height: number } };
 }
 
+const PRISTINE_SAVED_ARGS_PER_FIGURE = structuredClone(savedArgsPerFigure);
+
 describe('Shape toolbar', () => {
   beforeEach(() => {
+    Object.assign(savedArgsPerFigure, structuredClone(PRISTINE_SAVED_ARGS_PER_FIGURE));
     setToolArgsMock.mockClear();
     shapeCreatorMock.mockClear();
     shapeSizeMock.mockClear();
@@ -125,8 +128,11 @@ describe('Shape toolbar', () => {
     // `vi.restoreAllMocks()` is intentionally not used here: it would also undo
     // the global HTMLCanvasElement.prototype.getContext spy installed by
     // src/test/setup.ts, which the shape preview needs in order to draw.
+    Object.assign(savedArgsPerFigure, structuredClone(PRISTINE_SAVED_ARGS_PER_FIGURE));
     baseToolArgs.figure = 'rectangle';
     baseToolArgs.lineWidth = 5;
+    storeState.color = '#000000';
+    storeState.backgroundColor = '#ffffff';
     pointerScale.value = 1;
   });
 
@@ -324,6 +330,18 @@ describe('Shape toolbar', () => {
     expect(canvas?.height).toBe(48);
   });
 
+  it('swaps the checkerboard backdrop so the outline stays visible on either colour', () => {
+    const dark = render(<Shape />);
+    // `isLightColor('#000000')` is false, so the light backdrop is used.
+    expect((document.querySelector('canvas') as HTMLCanvasElement).parentElement).toHaveClass('chessboard-light');
+    dark.unmount();
+
+    storeState.color = '#ffffff';
+    render(<Shape />);
+    // A near-white outline would be invisible on the light backdrop.
+    expect((document.querySelector('canvas') as HTMLCanvasElement).parentElement).toHaveClass('chessboard-dark');
+  });
+
   describe('preview geometry', () => {
     it('derives the runtime figure set from the narrowed FigureType union', () => {
       expect([...FIGURE_TYPE_VALUES].sort()).toEqual(['line', 'oval', 'polygon', 'rectangle', 'triangle']);
@@ -461,6 +479,78 @@ describe('Shape toolbar', () => {
       expect(screen.getByText('Rectangle Tool')).toBeInTheDocument();
       expect(screen.queryByText('Circle Tool')).toBeNull();
       view.unmount();
+    });
+  });
+
+  describe('colour synchronisation', () => {
+    it('adopts the store stroke and background colours when they diverge', () => {
+      storeState.color = '#ff0000';
+      storeState.backgroundColor = '#00ff00';
+      render(<Shape />);
+
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ color: '#ff0000', backgroundColor: '#00ff00' });
+    });
+
+    it('adopts a stroke colour change without waiting for the background colour', () => {
+      storeState.color = '#0000ff';
+      render(<Shape />);
+
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ color: '#0000ff', backgroundColor: '#ffffff' });
+    });
+
+    it('does not publish anything when the tool args already match the store colours', () => {
+      render(<Shape />);
+
+      expect(setToolArgsMock).not.toHaveBeenCalled();
+    });
+
+    it('does not publish anything for args that belong to a different tool (Shape.tsx:32)', () => {
+      (baseToolArgs as { toolName: string }).toolName = 'draw';
+      storeState.color = '#ff0000';
+      const view = render(<Shape />);
+
+      // The guard is the `args.toolName !== 'shape'` half: a shape toolbar mounted with another
+      // tool's args must not overwrite them with the store colours.
+      expect(setToolArgsMock).not.toHaveBeenCalled();
+      view.unmount();
+      (baseToolArgs as { toolName: string }).toolName = 'shape';
+    });
+  });
+
+  describe('line cap', () => {
+    beforeEach(() => {
+      baseToolArgs.figure = 'line';
+    });
+
+    it('offers the three caps for a line figure only', () => {
+      const view = render(<Shape />);
+
+      const cap = screen.getByRole('combobox', { name: 'Line cap' }) as HTMLSelectElement;
+      expect(Array.from(cap.options, (option) => option.value)).toEqual(['butt', 'round', 'square']);
+      // `lineCap` is absent from the args, so the destructuring default applies.
+      expect(cap).toHaveValue('butt');
+      view.unmount();
+
+      baseToolArgs.figure = 'rectangle';
+      const rectangle = render(<Shape />);
+      expect(screen.queryByRole('combobox', { name: 'Line cap' })).toBeNull();
+      expect(screen.getByRole('slider', { name: 'Radius' })).toBeInTheDocument();
+      rectangle.unmount();
+    });
+
+    it('publishes the chosen cap and remembers it for the line figure (Shape.tsx:94-95)', () => {
+      render(<Shape />);
+
+      fireEvent.change(screen.getByRole('combobox', { name: 'Line cap' }), { target: { value: 'round' } });
+
+      expect(lastCallArgs(setToolArgsMock)).toMatchObject({ lineCap: 'round' });
+      expect(savedArgsPerFigure.line).toMatchObject({ lineCap: 'round' });
+    });
+
+    it('leaves the radius control out of a line figure', () => {
+      render(<Shape />);
+
+      expect(screen.queryByRole('slider', { name: 'Radius' })).toBeNull();
     });
   });
 });

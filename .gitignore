@@ -16,10 +16,23 @@ dist-ssr
 
 # Test coverage
 coverage
+coverage-e2e
+
+# Playwright (e2e)
+# NOTE: the committed visual-regression baselines under
+# `e2e/export/visual-regression.spec.ts-snapshots/` are TRACKED on purpose.
+# Only per-run generated output is ignored here.
+test-results
+playwright-report
+blob-report
+playwright/.cache
+playwright/.auth
+.playwright-mcp
 
 .eslintcache
 
 .kilo
+.serena
 
 # Editor directories and files
 .vscode/*

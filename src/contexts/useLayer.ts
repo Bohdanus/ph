@@ -1,6 +1,8 @@
-import { useCallback } from 'react';
+import { useCallback, type Dispatch } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from './StoreContext.tsx';
+import type { BitmapSource } from './general-types.ts';
+import { useSetToolArgs } from './set-tool-args.ts';
 import type {
   BlankLayerSource,
   ImageLayerSource,
@@ -15,12 +17,15 @@ import {
   createAffineLayerOperation,
   createLayerSource,
   getSortedLayersArray,
-  reorderLayers,
-  saveLayerCanvas,
 } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs } from './tool-types.ts';
-import { type CreatorToolParams, type ProcessorToolParams, toolProcessors } from '../tools/toolProcessors.ts';
+import {
+  type CreatorToolParams,
+  findToolProcessor,
+  type ProcessorToolParams,
+  type ToolResult,
+} from '../tools/toolProcessors.ts';
 import { reduceRect, sortRect, sortedRectToPos, trimRect } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
 import {
@@ -29,7 +34,6 @@ import {
   MERGE_ACTION,
   NEW_LAYER_ACTION,
   REMOVE_ACTION,
-  REORDER_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SHOW_LAYER_ACTION,
   TOOL_ACTION,
@@ -39,6 +43,9 @@ import type { RepositionToolArgs } from '../tools/reposition.ts';
 import type { TransformToolArgs } from '../tools/transform.ts';
 import type { NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
+import { planHistoryAppend } from './history-append.ts';
+import { derivedLayerPropertyPatch, isSetLayerPropertiesAction } from './history-adapter.ts';
+import type { LayerPresentationRequest } from './layer-presentation.ts';
 import {
   canvasRectToDocumentFrame,
   canvasToDocumentPos,
@@ -78,6 +85,27 @@ async function immutableRaster(bitmap: ImageLayerSource['bitmap']): Promise<Imag
   return globalThis.createImageBitmap(bitmap as CanvasImageSource);
 }
 
+/**
+ * The action that hands a raster the store has adopted to the presentation scope.
+ *
+ * `DocumentPresentationScope` is "the owner of every presentation bitmap the store
+ * materializes", and its completeness guarantee only holds if every published
+ * bitmap is registered with `trackPublished`. Three sites produce one with a bare
+ * `createImageBitmap` — `immutableRaster` below, `useApp`'s PSD-import
+ * `immutableRaster`, and `mergeAllLayers` — and each publishes it as `layer.bitmap`
+ * without the scope ever learning about it, so nothing closes it deterministically.
+ *
+ * The action is a pure no-op on state; the registration happens in the store's
+ * dispatcher, which is the only place the owning `documentId` exists.
+ */
+export const ADOPT_LAYER_BITMAPS = 'ADOPT_LAYER_BITMAPS';
+
+/** The typed payload. `bitmaps` is deduplicated by the caller: the scope keys on a `Set`. */
+export type AdoptLayerBitmapsAction = Readonly<{
+  type: typeof ADOPT_LAYER_BITMAPS;
+  payload: Readonly<{ bitmaps: readonly BitmapSource[] }>;
+}>;
+
 export const useLayers = () => {
   const [
     {
@@ -89,12 +117,49 @@ export const useLayers = () => {
       totalSize,
       documentFrame: currentDocumentFrame,
       toolName,
+      history,
+      historyIndex,
+      branchRevision = 0,
       currentArgs: currentArgsRef,
       previewLayers: previewLayersRef,
+      promoteLayerPresentation,
     },
-    dispatch,
+    baseDispatch,
   ] = useStore();
+  // `ADOPT_LAYER_BITMAPS` is declared here and wired into the store's action union
+  // in the same change; the intersection types the registration at its call site
+  // rather than hiding it behind a cast.
+  const dispatch = baseDispatch as typeof baseDispatch & Dispatch<AdoptLayerBitmapsAction>;
+
+  const setToolArgs = useSetToolArgs();
   const documentFrame = currentDocumentFrame ?? documentFrameFromSize(totalSize);
+
+  /**
+   * Hands adopted rasters to the presentation scope. It has to run *after* the
+   * action that published them: the scope is keyed by the document that owns the
+   * bitmap, so an import registered before its `REPLACE_DOCUMENT` would be filed
+   * under the outgoing document id and closed by that document's release.
+   */
+  const adoptLayerBitmaps = (bitmaps: readonly BitmapSource[]) => {
+    const distinct = [...new Set(bitmaps)];
+    if (!distinct.length) return;
+    dispatch({ type: ADOPT_LAYER_BITMAPS, payload: { bitmaps: distinct } });
+  };
+
+  /**
+   * Presentation caches are materialized after the layer is published. The store
+   * owns the promotion, so a layer record the caller already dispatched is never
+   * mutated from a late async callback. One call per commit keeps the
+   * publication to a single store transition.
+   */
+  const requestPresentations = (candidates: Iterable<Layer>) => {
+    const requests: LayerPresentationRequest[] = [];
+    for (const layer of candidates) {
+      if (layer.tmpCanvas) requests.push({ layerId: layer.id, canvas: layer.tmpCanvas });
+    }
+    if (requests.length) promoteLayerPresentation(requests);
+  };
+  const requestPresentation = (layer: Layer) => requestPresentations([layer]);
 
   function clearOverlay() {
     const overlayCtx = toolOverlayRef.current?.getContext('2d');
@@ -124,7 +189,6 @@ export const useLayers = () => {
             documentFrame: documentFrameFromSize(newDocument.size),
             hasImage: true,
             hasUnsavedChanges: newDocument.hasUnsavedChanges,
-            isToolDirty: false,
             selections: [],
             activeSelectionId: null,
             selectionDraft: { status: 'idle' },
@@ -133,6 +197,7 @@ export const useLayers = () => {
           },
         },
       });
+      requestPresentation(layer);
       return;
     }
 
@@ -143,6 +208,7 @@ export const useLayers = () => {
         historyItem: entry,
       },
     });
+    requestPresentation(layer);
   };
 
   const createBlankLayer = (params: BlankImageParams, replaceDocument = false) => {
@@ -188,6 +254,11 @@ export const useLayers = () => {
         : undefined,
       currentLayers
     );
+    // One registration covers all three aliases the raster now has: `layer.bitmap`,
+    // `layer.source.bitmap` (the `source` object is stored verbatim on the layer) and
+    // the live history entry's `layerSource.bitmap`. They are the same object, and
+    // `trackPublished` keys on a `Set`.
+    adoptLayerBitmaps([source.bitmap]);
   };
   const createLayerFromTool = (sourceArgs: Optional<FullArgs, 'pos'>) => {
     // commented out because causes infinite recursion
@@ -223,6 +294,7 @@ export const useLayers = () => {
 
     const newLayer = createLayerSource({ layers, source });
 
+    // `_addLayer` publishes the layer and requests its presentation cache.
     _addLayer(newLayer, {
       layerId: newLayer.id,
       actionName: NEW_LAYER_ACTION,
@@ -235,32 +307,20 @@ export const useLayers = () => {
 
   const updateLayerByTool = async ({ id = activeLayerId, toolArgs }: LayerEditParams) => {
     const toolArgsToolName = (toolArgs as ToolArgs).toolName;
-    const processor = toolProcessors[toolArgsToolName];
+    const processor = findToolProcessor(toolArgsToolName);
+    // Statically enforced, not by convention: a tool with no processor (`PIXEL_FREE_TOOLS`) has no
+    // pixel operation, so it is not reachable through this path at all.
+    if (!processor) return;
     if (!id || !layers[id]) return;
     if (processor.commit === 'document-operation') return;
 
-    // Check if tool requires flattening layers
-    if (processor.flattenRequired) {
-      const mergedLayer = await mergeAllLayers();
-      if (!mergedLayer?.bitmap) return;
-
-      const [canvas, positionPatch] = processor.imageProcessor({ bitmap: mergedLayer.bitmap, size: mergedLayer.pos })(
-        toolArgs
-      );
-      const updatedLayer = {
-        ...mergedLayer,
-        pos: positionPatch ? { ...mergedLayer.pos, ...positionPatch } : mergedLayer.pos,
-        tmpCanvas: canvas,
-      };
-      dispatch({
-        type: 'COMMIT_DOCUMENT_EDIT',
-        payload: {
-          updates: { layers: { [mergedLayer.id]: updatedLayer }, activeLayerId: mergedLayer.id },
-          historyItem: createHistoryItem({ layerId: mergedLayer.id, actionName: TOOL_ACTION, args: toolArgs }),
-        },
-      });
-      return;
-    }
+    // Whole-document merging is not a transparent step inside a tool, and there is
+    // no processor flag that asks for one: `mergeAllLayers` below is reached by the
+    // user pressing `Merge all` in `ToolbarsRight/Move/Reposition.tsx` or
+    // `ToolbarsRight/Colors/Color.tsx`, and a tool that genuinely needs the
+    // flattened raster calls it explicitly. What was removed here was a branch that
+    // only two tests could reach, by mutating the `toolProcessors` record at
+    // runtime — a branch nothing verified.
 
     // should mark layer dirty
     tempUpdateLayer({ id, toolArgs });
@@ -291,12 +351,20 @@ export const useLayers = () => {
       if (!args.text || !args.rect) return layers;
 
       const layer = createLayerFromTool({ args });
-      currentArgsRef.current = { ...args, text: '' };
+      const cleared = { ...args, text: '', rect: null };
+      if (setToolArgs) {
+        setToolArgs(cleared);
+      } else {
+        currentArgsRef.current = cleared;
+      }
       return { ...layers, [layer.id]: layer };
     }
 
     const committedLayers = { ...layers } as LayersRecord;
     let hasPreviewLayers = false;
+    // Keyed by layer id so the record that is actually published is the one that
+    // asks for a cache promotion.
+    const pendingPresentations = new Map<LayerId, Layer>();
 
     const pendingToolEdits: Array<{ layerId: LayerId; args: ToolArgs | object }> = [];
     for (const [id, preview] of Object.entries(previewLayersRef.current)) {
@@ -307,9 +375,7 @@ export const useLayers = () => {
         const committedArgs = normalizeCommittedToolArgs(layer, preview.toolArgs);
         if (committedArgs) pendingToolEdits.push({ layerId: id, args: committedArgs });
       }
-      if (layer.tmpCanvas) {
-        saveLayerCanvas(layer);
-      }
+      if (layer.tmpCanvas) pendingPresentations.set(id, layer);
     }
     previewLayersRef.current = {};
 
@@ -317,7 +383,7 @@ export const useLayers = () => {
     for (const layer of Object.values(committedLayers)) {
       if (layer.tmpCanvas) {
         const detachedLayer = { ...layer, pos: { ...layer.pos } };
-        saveLayerCanvas(detachedLayer);
+        pendingPresentations.set(detachedLayer.id, detachedLayer);
         committedLayers[layer.id] = detachedLayer;
         hasPreviewLayers = true;
         break;
@@ -326,7 +392,9 @@ export const useLayers = () => {
 
     if (hasPreviewLayers && !deferDispatch) {
       if (!pendingToolEdits.length) {
-        dispatch({ type: 'UPDATE_LAYERS', payload: committedLayers });
+        // No logical change to record: publish the already-known layer records so
+        // their promoted cache can land through the presentation boundary.
+        dispatch({ type: 'PUBLISH_RUNTIME_PRESENTATION', payload: { layers: committedLayers } });
       } else {
         for (const [index, pendingEdit] of pendingToolEdits.entries()) {
           dispatch({
@@ -343,6 +411,10 @@ export const useLayers = () => {
         }
       }
     }
+    // Promotion is requested after publication. A deferred caller publishes the
+    // same records in this tick, and the store re-checks the canvas identity
+    // before a promotion can reach a layer.
+    requestPresentations(pendingPresentations.values());
     return committedLayers;
   };
 
@@ -375,44 +447,43 @@ export const useLayers = () => {
       },
     });
 
-    const ctx = toolOverlayRef.current!.getContext('2d')!;
-    ctx.clearRect(0, 0, totalSize.width, totalSize.height);
+    clearOverlay();
   };
 
   const updateLayer = (id: LayerId, patch: Partial<Layer>, actionName: ActionType) => {
     const layer = layers[id];
     if (!layer) return;
-    const newLayers = { ...layers, [id]: { ...layer, ...patch } } as LayersRecord;
+    const item = { layerId: id, actionName, args: patch };
+    const planned = isSetLayerPropertiesAction(actionName)
+      ? planHistoryAppend({
+          item,
+          timeline: { entries: history, cursor: historyIndex, branchRevision },
+          currentFrame: documentFrame,
+        })
+      : null;
+    // The runtime layer takes the DERIVED patch, not the caller's: the durable
+    // entry is what the store will publish, and letting a caller reach the live
+    // layer with fields legacy replay would ignore makes the layer change on
+    // commit and not revert. Falls back to the caller's patch only when the
+    // derivation refused, which keeps the pre-derivation behaviour for a
+    // malformed rename.
+    const runtimePatch = derivedLayerPropertyPatch(planned?.durableEntry) ?? patch;
+    const newLayers = { ...layers, [id]: { ...layer, ...runtimePatch } } as LayersRecord;
     dispatch({
       type: 'COMMIT_DOCUMENT_EDIT',
       payload: {
         updates: { layers: newLayers },
-        historyItem: createHistoryItem({
-          layerId: id,
-          actionName,
-          args: patch,
-        }),
+        historyItem: planned?.entry ?? createHistoryItem(item),
+        ...(planned ? { durableEntry: planned.durableEntry } : {}),
       },
     });
     drawAllLayers();
   };
 
   const moveLayerAfter = (layerToMoveId: LayerId, afterWhichLayerId?: LayerId | null) => {
-    const reorderedLayers = Object.fromEntries(
-      Object.entries(layers).map(([id, layer]) => [id, { ...layer, pos: { ...layer.pos } }])
-    ) as LayersRecord;
-    reorderLayers({ layers: reorderedLayers, layerToMoveId, afterWhichLayerId });
-
     dispatch({
-      type: 'COMMIT_DOCUMENT_EDIT',
-      payload: {
-        updates: { layers: reorderedLayers },
-        historyItem: createHistoryItem({
-          layerId: layerToMoveId,
-          actionName: REORDER_ACTION,
-          args: { layerToMoveId, afterWhichLayerId },
-        }),
-      },
+      type: 'REORDER_LAYERS',
+      payload: { layerToMoveId, afterWhichLayerId },
     });
     drawAllLayers();
   };
@@ -432,7 +503,8 @@ export const useLayers = () => {
     if (!layer) return;
 
     const { toolName: toolArgsToolName } = toolArgs;
-    const processor = toolProcessors[toolArgsToolName];
+    const processor = findToolProcessor(toolArgsToolName);
+    if (!processor) return;
 
     if (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0) {
       try {
@@ -488,8 +560,23 @@ export const useLayers = () => {
       return;
     }
 
-    const [canvas, positionPatch] = processor.imageProcessor({ bitmap, size: layer.pos } as
-      CreatorToolParams | ProcessorToolParams)(toolArgs);
+    // This is the call every live pointer move reaches, so it is the one that has to be
+    // guarded. A trapezoid-only transform satisfies `commit: 'affine-operation'`, so it
+    // falls past both early returns above and lands here, and `transform` throws for
+    // several argument shapes (`src/tools/transform.ts`: a non-finite or over-tapered
+    // trapezoid, a non-invertible homography, degenerate affine bounds). Without the
+    // guard the throw escapes `tempUpdateLayer` into a React event handler.
+    let result: ToolResult;
+    try {
+      result = processor.imageProcessor({ bitmap, size: layer.pos } as CreatorToolParams | ProcessorToolParams)(
+        toolArgs
+      );
+    } catch (error) {
+      console.error(error);
+      return;
+    }
+
+    const [canvas, positionPatch] = result;
 
     const previewLayer = {
       ...layer,
@@ -529,15 +616,24 @@ export const useLayers = () => {
     const nextFrame = canvasRectToDocumentFrame({ x, y, width, height }, documentFrame);
     if (!isValidDocumentFrame(nextFrame) || documentFrameEquals(documentFrame, nextFrame)) return false;
 
+    // The append boundary derives the same durable entry as the adapter. The
+    // store publishes it only when its preconditions prove the durable shadow
+    // still describes this legacy append; otherwise it rebuilds the shadow.
+    const { entry, durableEntry } = planHistoryAppend({
+      item: {
+        layerId: 'document',
+        actionName: SET_DOCUMENT_FRAME_ACTION,
+        args: { previousFrame: documentFrame, nextFrame },
+      },
+      timeline: { entries: history, cursor: historyIndex, branchRevision },
+      currentFrame: documentFrame,
+    });
     dispatch({
       type: 'COMMIT_DOCUMENT_EDIT',
       payload: {
         updates: { documentFrame: nextFrame, totalSize: documentFrameSize(nextFrame) },
-        historyItem: createHistoryItem({
-          layerId: 'document',
-          actionName: SET_DOCUMENT_FRAME_ACTION,
-          args: { previousFrame: documentFrame, nextFrame },
-        }),
+        historyItem: entry,
+        durableEntry,
       },
     });
     return true;
@@ -574,6 +670,10 @@ export const useLayers = () => {
         }),
       },
     });
+    // The merged raster is created by a bare `createImageBitmap`, so this is the only
+    // registration it will ever get. It is aliased by `layer.bitmap`,
+    // `layer.source.bitmap` and the merge entry's `args` at once.
+    adoptLayerBitmaps([source.bitmap]);
     return layer;
   }
 
