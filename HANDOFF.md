@@ -998,7 +998,7 @@ replay authority.
 
 ---
 
-## 35. A drag with a non-square ratio set commits a rect the user was never shown
+## 38. A drag with a non-square ratio set commits a rect the user was never shown
 
 **Problem.** `adjustWidthRatio` (`useRect.ts:206-221`) enforces `width = height / ratio`
 (`const wantedWidth = height / _aspectRatio;`, `:210`), but the drag that produced the rect enforced
@@ -1049,7 +1049,7 @@ a test that derives the panel's refit from the hook's, or extracts one shared he
 
 ---
 
-## 36. Original / Free no longer restores the rect drawn before a ratio change
+## 41. Original / Free no longer restores the rect drawn before a ratio change
 
 **Problem.** This is a **regression caused by the fix** (`99ca9ba`), not a pre-existing bug — say so
 plainly, because the surrounding symptom looks like one. Before it, a ratio change only reshaped the
