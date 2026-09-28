@@ -574,7 +574,12 @@ export const CURATED = {
   },
   'board-entrypoint': {
     summary:
-      'A short-lived worktree on the board entrypoint fix, now merged: its branch is an ancestor of main and its working tree is clean.',
+      'Names which board the CLI is talking about and teaches `ready` to answer. Was merged once and then extended, so it is unmerged again.',
+    note: 'This entry said `landed: true` while git reported the branch off main. That contradiction is what the landed-claim test exists to catch, and it caught it.',
+  },
+  'fix-e2e-findings': {
+    summary:
+      'Moves e2e findings off their original branches and onto the documents, so the defects are recorded where an agent will read them.',
     landed: true,
   },
   'handoff-citation-rotation': {

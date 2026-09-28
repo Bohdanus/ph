@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-28T21:06:35.707Z",
+  "generatedAt": "2026-09-28T21:08:25.365Z",
   "generator": "scripts/worktree-inventory.mjs",
   "base": "main",
   "mainHead": "d16c228535740a0af807cf8635e772039c12d669",
@@ -23,7 +23,6 @@
     }
   },
   "readyToLand": [
-    "board-entrypoint",
     "e2ewt-adjustments",
     "e2ewt-file-roundtrip",
     "e2ewt-text-tool",
@@ -44,6 +43,7 @@
   ],
   "atRisk": [
     "agent-board",
+    "board-entrypoint",
     "board-file-index",
     "e2e-1-export-oracle",
     "e2e-2-draw-specs",
@@ -99,28 +99,28 @@
   "totals": {
     "worktrees": 70,
     "prunable": 5,
-    "readyToLand": 11,
+    "readyToLand": 10,
     "disposalCandidates": 5,
-    "atRisk": 52,
-    "salvage": 52,
+    "atRisk": 53,
+    "salvage": 53,
     "inUse": 2,
-    "holdingUncommittedWork": 22,
-    "withoutSummary": 4,
+    "holdingUncommittedWork": 24,
+    "withoutSummary": 3,
     "byStatus": {
       "uncommitted-only": 15,
       "unmerged-work": 49,
       "landed": 6
     },
     "byRecommendation": {
-      "salvage": 52,
+      "salvage": 53,
       "in-use": 2,
-      "ready-to-land": 11,
+      "ready-to-land": 10,
       "prune": 5
     },
     "byAction": {
-      "at-risk": 52,
+      "at-risk": 53,
       "in-use": 2,
-      "land": 11,
+      "land": 10,
       "dispose": 5
     },
     "byChatState": {
@@ -194,6 +194,85 @@
             "agentId": "feat/agent-board",
             "branch": "feat/agent-board",
             "lastSeenMs": 1790607407708,
+            "live": false
+          }
+        ],
+        "held": false
+      }
+    },
+    {
+      "name": "board-entrypoint",
+      "path": ".kilo/worktrees/board-entrypoint",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/board-entrypoint",
+      "branch": "fix/board-entrypoint",
+      "isPrimary": false,
+      "head": "ae15031b14a754ab21df36111e849853cb111db3",
+      "detached": false,
+      "status": "unmerged-work",
+      "recommendation": "salvage",
+      "action": "at-risk",
+      "prunable": false,
+      "mergeConflict": false,
+      "mergeConflictFiles": [],
+      "mergeChecked": true,
+      "riskScore": 90,
+      "statusReasons": [
+        "2 commit(s) ahead of main",
+        "the working tree holds uncommitted changes",
+        "the working tree holds changes that are in no commit on this branch"
+      ],
+      "ahead": 2,
+      "behind": 0,
+      "mergedIntoMain": false,
+      "dirty": 1,
+      "untracked": 0,
+      "dirtyPaths": ["scripts/lib/worktree-inventory/curated.mjs"],
+      "lastCommit": {
+        "sha": "ae15031b14a754ab21df36111e849853cb111db3",
+        "subject": "Merge branch 'main' into fix/board-entrypoint",
+        "date": "2026-09-28T23:05:59+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [
+        {
+          "sha": "ae15031",
+          "subject": "Merge branch 'main' into fix/board-entrypoint",
+          "date": "2026-09-28T23:05:59+02:00"
+        },
+        {
+          "sha": "fc97b0f",
+          "subject": "fix(board): name which board it is, and make `ready` able to answer",
+          "date": "2026-09-28T23:05:33+02:00"
+        }
+      ],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": "Names which board the CLI is talking about and teaches `ready` to answer. Was merged once and then extended, so it is unmerged again.",
+      "summarySource": "curated",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": "This entry said `landed: true` while git reported the branch off main. That contradiction is what the landed-claim test exists to catch, and it caught it.",
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [],
+        "agents": [
+          {
+            "agentId": "fix/board-entrypoint",
+            "branch": "fix/board-entrypoint",
+            "lastSeenMs": 1790625677855,
             "live": false
           }
         ],
@@ -3086,7 +3165,7 @@
             "id": "ses_f1b3877baffeulCrn1qWWgBo2p",
             "title": "Review selection baseline history replay fix",
             "state": "abandoned-midflight",
-            "idleMs": 84463330,
+            "idleMs": 84572988,
             "reasons": ["idle for 23h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 3,
             "creditsFailures": 0,
@@ -4624,7 +4703,7 @@
       "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/land-and-dispose",
       "branch": "feat/land-and-dispose",
       "isPrimary": false,
-      "head": "3c3c2ab8121005e80bbcc267c47b57d5f12299ef",
+      "head": "70f73b0a152b57fd859cbe9a0651a433e5845e52",
       "detached": false,
       "status": "unmerged-work",
       "recommendation": "in-use",
@@ -4635,22 +4714,28 @@
       "mergeChecked": true,
       "riskScore": 70,
       "statusReasons": [
-        "4 commit(s) ahead of main",
+        "5 commit(s) ahead of main",
+        "the working tree holds uncommitted changes",
         "the board saw agent feat/land-and-dispose in this worktree inside the last 30 minutes"
       ],
-      "ahead": 4,
+      "ahead": 5,
       "behind": 0,
       "mergedIntoMain": false,
-      "dirty": 0,
+      "dirty": 1,
       "untracked": 0,
-      "dirtyPaths": [],
+      "dirtyPaths": ["scripts/lib/worktree-inventory/curated.mjs"],
       "lastCommit": {
-        "sha": "3c3c2ab8121005e80bbcc267c47b57d5f12299ef",
-        "subject": "Merge branch 'main' into feat/land-and-dispose",
-        "date": "2026-09-28T23:05:49+02:00",
+        "sha": "70f73b0a152b57fd859cbe9a0651a433e5845e52",
+        "subject": "chore: refresh WORKTREES.json after re-merging main",
+        "date": "2026-09-28T23:07:13+02:00",
         "author": "Bohdan"
       },
       "commitsAhead": [
+        {
+          "sha": "70f73b0",
+          "subject": "chore: refresh WORKTREES.json after re-merging main",
+          "date": "2026-09-28T23:07:13+02:00"
+        },
         {
           "sha": "3c3c2ab",
           "subject": "Merge branch 'main' into feat/land-and-dispose",
@@ -4824,10 +4909,10 @@
       "chats": {
         "count": 60,
         "chatIds": [
-          "ses_f162b4452ffei0YUQf4OjQiJn7",
           "ses_f1678e1ecffeE6PmxFG4SH1MGO",
-          "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
           "ses_f1717029bffeO2Tgiso7XjVWvz",
+          "ses_f162b4452ffei0YUQf4OjQiJn7",
+          "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
           "ses_f167d43ebffenKG4aRh8qnMKN5",
           "ses_f1692fbb5ffe48aRfBKFyv739e",
           "ses_f1703646effe9LHAl5QgqHkEbj",
@@ -4893,18 +4978,18 @@
           "blocked": 1
         },
         "activeChatIds": [
-          "ses_f162b4452ffei0YUQf4OjQiJn7",
           "ses_f1678e1ecffeE6PmxFG4SH1MGO",
-          "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
           "ses_f1717029bffeO2Tgiso7XjVWvz",
+          "ses_f162b4452ffei0YUQf4OjQiJn7",
+          "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
           "ses_f167d43ebffenKG4aRh8qnMKN5",
           "ses_f1692fbb5ffe48aRfBKFyv739e"
         ],
         "unfinishedChatIds": [
-          "ses_f162b4452ffei0YUQf4OjQiJn7",
           "ses_f1678e1ecffeE6PmxFG4SH1MGO",
-          "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
           "ses_f1717029bffeO2Tgiso7XjVWvz",
+          "ses_f162b4452ffei0YUQf4OjQiJn7",
+          "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
           "ses_f167d43ebffenKG4aRh8qnMKN5",
           "ses_f1692fbb5ffe48aRfBKFyv739e",
           "ses_f174eec52ffedigagDe7uAkRob",
@@ -4913,35 +4998,15 @@
           "ses_f19365ab4ffefSJC5XwcDdHYDB",
           "ses_f1ba92bedffeb9De69jCNMC00Q"
         ],
-        "lastActivity": 1790629595707,
+        "lastActivity": 1790629705365,
         "unfinished": [
-          {
-            "id": "ses_f162b4452ffei0YUQf4OjQiJn7",
-            "title": "New session - 2026-09-28T21:03:48.144Z",
-            "state": "active",
-            "idleMs": 0,
-            "reasons": ["last message 0m ago"],
-            "toolErrors": 1,
-            "creditsFailures": 0,
-            "blockedOn": null
-          },
           {
             "id": "ses_f1678e1ecffeE6PmxFG4SH1MGO",
             "title": "Fix board service and launch as daemon",
             "state": "active",
-            "idleMs": 5764,
+            "idleMs": 0,
             "reasons": ["last message 0m ago"],
             "toolErrors": 0,
-            "creditsFailures": 1,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
-            "title": "Clean and merge stale worktrees into main",
-            "state": "active",
-            "idleMs": 49441,
-            "reasons": ["last message 1m ago"],
-            "toolErrors": 1,
             "creditsFailures": 1,
             "blockedOn": null
           },
@@ -4949,18 +5014,38 @@
             "id": "ses_f1717029bffeO2Tgiso7XjVWvz",
             "title": "Worktree inventory JSON and agents.md update",
             "state": "active",
-            "idleMs": 50001,
-            "reasons": ["last message 1m ago"],
+            "idleMs": 11255,
+            "reasons": ["last message 0m ago"],
             "toolErrors": 11,
             "creditsFailures": 17,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f162b4452ffei0YUQf4OjQiJn7",
+            "title": "New session - 2026-09-28T21:03:48.144Z",
+            "state": "active",
+            "idleMs": 21395,
+            "reasons": ["last message 0m ago"],
+            "toolErrors": 1,
+            "creditsFailures": 0,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
+            "title": "Clean and merge stale worktrees into main",
+            "state": "active",
+            "idleMs": 159099,
+            "reasons": ["last message 3m ago"],
+            "toolErrors": 1,
+            "creditsFailures": 1,
             "blockedOn": null
           },
           {
             "id": "ses_f167d43ebffenKG4aRh8qnMKN5",
             "title": "E2E orchestrator continuation next steps",
             "state": "active",
-            "idleMs": 71936,
-            "reasons": ["last message 1m ago"],
+            "idleMs": 181594,
+            "reasons": ["last message 3m ago"],
             "toolErrors": 6,
             "creditsFailures": 0,
             "blockedOn": null
@@ -4969,8 +5054,8 @@
             "id": "ses_f1692fbb5ffe48aRfBKFyv739e",
             "title": "Recent tool description audit",
             "state": "active",
-            "idleMs": 211624,
-            "reasons": ["last message 4m ago"],
+            "idleMs": 321282,
+            "reasons": ["last message 5m ago"],
             "toolErrors": 1,
             "creditsFailures": 1,
             "blockedOn": null
@@ -4979,7 +5064,7 @@
             "id": "ses_f174eec52ffedigagDe7uAkRob",
             "title": "-- del --",
             "state": "abandoned-midflight",
-            "idleMs": 18114974,
+            "idleMs": 18224632,
             "reasons": ["idle for 5h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 2,
             "creditsFailures": 0,
@@ -4989,7 +5074,7 @@
             "id": "ses_f18cb10c7ffeQyGIipjfTQJifF",
             "title": "-- e2e orchestrator",
             "state": "abandoned-midflight",
-            "idleMs": 27031926,
+            "idleMs": 27141584,
             "reasons": ["idle for 8h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 7,
             "creditsFailures": 0,
@@ -4999,7 +5084,7 @@
             "id": "ses_f183ab42cffeVdFwk5GNadKyhe",
             "title": "-- PNG todo --",
             "state": "abandoned-midflight",
-            "idleMs": 34302074,
+            "idleMs": 34411732,
             "reasons": ["idle for 10h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 2,
             "creditsFailures": 1,
@@ -5009,7 +5094,7 @@
             "id": "ses_f19365ab4ffefSJC5XwcDdHYDB",
             "title": "New session - 2026-09-28T06:52:49.867Z",
             "state": "abandoned-midflight",
-            "idleMs": 50642204,
+            "idleMs": 50751862,
             "reasons": ["idle for 14h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 4,
             "creditsFailures": 0,
@@ -5019,7 +5104,7 @@
             "id": "ses_f1ba92bedffeb9De69jCNMC00Q",
             "title": "$$$ History migration architecture and planning $$$",
             "state": "blocked",
-            "idleMs": 77245463,
+            "idleMs": 77355121,
             "reasons": [
               "last turn completed 21h ago and nothing has happened since",
               "an agent_manager call reported a managed session waiting for input"
@@ -5033,12 +5118,6 @@
       },
       "board": {
         "claims": [
-          {
-            "issueId": "ph-56",
-            "agentId": "main",
-            "branch": "main",
-            "leaseUntil": "2026-09-28T21:07:54.762Z"
-          },
           {
             "issueId": "ph-60",
             "agentId": "fix/e2e-transferred-findings",
@@ -5249,84 +5328,6 @@
           }
         ],
         "held": true
-      }
-    },
-    {
-      "name": "board-entrypoint",
-      "path": ".kilo/worktrees/board-entrypoint",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/board-entrypoint",
-      "branch": "fix/board-entrypoint",
-      "isPrimary": false,
-      "head": "ae15031b14a754ab21df36111e849853cb111db3",
-      "detached": false,
-      "status": "unmerged-work",
-      "recommendation": "ready-to-land",
-      "action": "land",
-      "prunable": false,
-      "mergeConflict": false,
-      "mergeConflictFiles": [],
-      "mergeChecked": true,
-      "riskScore": 30,
-      "statusReasons": [
-        "2 commit(s) ahead of main",
-        "the working tree is clean and the merge into the base branch applies with no conflict"
-      ],
-      "ahead": 2,
-      "behind": 0,
-      "mergedIntoMain": false,
-      "dirty": 0,
-      "untracked": 0,
-      "dirtyPaths": [],
-      "lastCommit": {
-        "sha": "ae15031b14a754ab21df36111e849853cb111db3",
-        "subject": "Merge branch 'main' into fix/board-entrypoint",
-        "date": "2026-09-28T23:05:59+02:00",
-        "author": "Bohdan"
-      },
-      "commitsAhead": [
-        {
-          "sha": "ae15031",
-          "subject": "Merge branch 'main' into fix/board-entrypoint",
-          "date": "2026-09-28T23:05:59+02:00"
-        },
-        {
-          "sha": "fc97b0f",
-          "subject": "fix(board): name which board it is, and make `ready` able to answer",
-          "date": "2026-09-28T23:05:33+02:00"
-        }
-      ],
-      "commitsAheadTruncated": false,
-      "claimedLanded": true,
-      "summary": "A short-lived worktree on the board entrypoint fix, now merged: its branch is an ancestor of main and its working tree is clean.",
-      "summarySource": "curated",
-      "issues": [],
-      "inferredBoardIssues": [],
-      "note": null,
-      "liveNote": null,
-      "mustNotPrune": false,
-      "chats": {
-        "count": 0,
-        "chatIds": [],
-        "subagentCount": 0,
-        "byState": {},
-        "activeChatIds": [],
-        "unfinishedChatIds": [],
-        "lastActivity": null,
-        "unfinished": [],
-        "dead": []
-      },
-      "board": {
-        "claims": [],
-        "fileLocks": [],
-        "agents": [
-          {
-            "agentId": "fix/board-entrypoint",
-            "branch": "fix/board-entrypoint",
-            "lastSeenMs": 1790625677855,
-            "live": false
-          }
-        ],
-        "held": false
       }
     },
     {
@@ -6154,9 +6155,9 @@
       },
       "commitsAhead": [],
       "commitsAheadTruncated": false,
-      "claimedLanded": null,
-      "summary": null,
-      "summarySource": "none",
+      "claimedLanded": true,
+      "summary": "Moves e2e findings off their original branches and onto the documents, so the defects are recorded where an agent will read them.",
+      "summarySource": "curated",
       "issues": [],
       "inferredBoardIssues": [],
       "note": null,
