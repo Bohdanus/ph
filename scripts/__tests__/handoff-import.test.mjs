@@ -113,16 +113,19 @@ describe('the three real documents', () => {
   });
 
   it('reads a numbered document as one item per number, in document order', () => {
-    expect(flakes.parsed.items.map((item) => item.origin)).toEqual([
-      'TEST-FLAKES.md#1',
-      'TEST-FLAKES.md#2',
-      'TEST-FLAKES.md#3',
-      'TEST-FLAKES.md#4',
-      'TEST-FLAKES.md#5',
-      'TEST-FLAKES.md#6',
-      'TEST-FLAKES.md#7',
-      'TEST-FLAKES.md#8',
-    ]);
+    /**
+     * Derived from the document, not transcribed from it. The hardcoded
+     * eight-element list this replaced was a tripwire on somebody else's prose
+     * and contradicted this file's own header: a section added to TEST-FLAKES.md
+     * failed the parser's own test. Deriving it is STRICTER, not looser — the
+     * list is now whatever the document actually says, so a parser that
+     * mis-numbered a heading, skipped one, or reordered them still fails.
+     */
+    const headingNumbers = [...flakes.text.matchAll(/^#{1,6}\s*(\d+)\b/gm)].map((match) => Number(match[1]));
+    expect(headingNumbers.length).toBeGreaterThan(0);
+    expect(flakes.parsed.items.map((item) => item.origin)).toEqual(
+      headingNumbers.map((number) => `TEST-FLAKES.md#${number}`)
+    );
   });
 
   it("keeps HANDOFF.md's own numbering, so every origin there is a number", () => {
@@ -256,6 +259,31 @@ describe('planning the import', () => {
     expect(parsed.items.map((item) => item.origin)).toEqual(['HANDOFF.md#1', 'HANDOFF.md#2']);
     // Nothing is retired, so planImport files both.
     expect(planImport([parsed], []).create.map((item) => item.origin)).toEqual(['HANDOFF.md#1', 'HANDOFF.md#2']);
+  });
+
+  it('keeps a live entry whose heading merely CONTAINS a dead word as a substring', () => {
+    /**
+     * The test above covers a heading that says the dead word. This one covers a
+     * heading that merely spells it inside an ordinary word: "abandoned"
+     * contains "done", "closed" and "fixed" are all common enough inside longer
+     * words to be a hazard. `DEAD_HEADING` used to be a SUBSTRING net, so a live
+     * item titled "A gesture abandoned by switching tools" was read as a heading
+     * that LISTS retired items — and since a section that lists numbers is a
+     * section about finished ones, `assemble` dropped the very entry it numbered.
+     * The symptom was silent and off-screen: `board import` filed one item fewer
+     * than the document has, with nothing but the count to notice it by.
+     */
+    for (const word of ['abandoned', 'understated', 'unresolvedly', 'supersededly', 'landowner']) {
+      const parsed = parseHandoffDoc({
+        file: 'HANDOFF.md',
+        text: `## 7. A gesture ${word} by switching tools leaves its preview\n\nIt is still open.\n`,
+      });
+      expect(
+        parsed.items.map((item) => item.origin),
+        word
+      ).toEqual(['HANDOFF.md#7']);
+      expect(parsed.dead, word).toEqual([]);
+    }
   });
 
   it('takes no item from the prose of a section the document has deleted', () => {

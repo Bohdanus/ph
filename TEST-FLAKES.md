@@ -363,7 +363,27 @@ already sets for section 1, and it applies here unchanged. A second observation,
 with the assertion text and whether it was a timeout or a value mismatch, is
 worth more than twenty green runs.
 
-## 9. Files
+## 9. An e2e mutation campaign run without `PLAYWRIGHT_PORT` reports every mutation as green
+
+**The trap.** `playwright.config.ts:118-120` sets `reuseExistingServer: false` only when `CI` or
+`PLAYWRIGHT_PORT` is set. A bare `npx playwright test` from a worktree under `.kilo/worktrees/`
+therefore falls back to :5173 with reuse ON, and attaches to whichever dev server got there first —
+which is another checkout. For an ordinary green/red run this is the trap `AGENTS.md` already
+records under "Worktrees and dev servers": "my change did nothing" is this, not a cache.
+
+**Why it is much worse for a mutation campaign.** A mutation campaign exists to answer "does this
+assertion actually assert anything?", and the answer it produces is a green run. A run that never
+executed the mutated code is indistinguishable from a test that cannot fail. Measured on
+`e2e/undo-redo.spec.ts`: seven consecutive product mutations all "passed", and the cause was that
+the driver ran without a port and had attached to a different worktree's dev server. Re-running with
+`PLAYWRIGHT_PORT` set and the port pinned turned the same seven into seven real reds.
+
+**The rule.** Any agent verifying that an assertion bites MUST pin the port, and before trusting a
+green result MUST confirm the served module actually contains the mutation — `curl` the mutated
+module off the dev server and look for the change, rather than assuming the local worktree is what
+is being tested. A mutation campaign that reports "all green" has most likely measured nothing.
+
+## 10. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -375,3 +395,5 @@ worth more than twenty green runs.
 - `e2e/erase-fill-eyedropper.spec.ts` — the spec behind section 8, and the commit that hardened it
 - `e2e/helpers/canvas-helpers.ts:411-429,515-540,656-699` — the predicate, the poll loop and the sampler
 - `src/hooks/usePointerPosition.ts:122-156` — the validators whose refusal is silent
+- `playwright.config.ts:118-120` — the `reuseExistingServer` condition behind section 9
+- `e2e/undo-redo.spec.ts` — the spec whose mutation campaign section 9 invalidated

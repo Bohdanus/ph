@@ -1273,3 +1273,86 @@ actually fired is not known** — this is an unstated invariant with no
 demonstrated occurrence, recorded as §63 is, and the cheapest thing that would
 settle it is a `console.warn` carrying the reason at each of the four early
 returns, which is a product decision rather than a test one.
+
+---
+
+## 67. Five of the six shape-family tools never receive the store colour
+
+**Problem.** `src/components/ToolbarsRight/Figures/Shape.tsx:31-34` mirrors the foreground and
+background swatches into the tool's args, but gates the mirror on `args.toolName === 'shape'`
+(the test is at `:32`). `src/tools/toolsMap.ts` routes all six shape-family tools to that one
+component — `shape` at `:62`, and `rectangle`, `ellipse`, `triangle`, `polygon`, `line` at
+`:153-157` — while `src/tools/settings.ts` gives each of those five its own `toolName` in its
+default args: `:270`, `:277`, `:284`, `:291`, `:298`. The guard therefore returns for every one of
+them, and their args stay frozen on the hardcoded `color: '#000000'`. Only `shape` itself, whose
+default is `toolName: 'shape'` at `src/tools/settings.ts:75`, passes. Moving the foreground swatch
+therefore changes the toolbar preview for `shape` and nothing at all for the other five, and the
+committed layer is black in all five cases.
+
+The fill half is the mirror's own doing, and it is the more visible half. For the one tool the
+effect does run on it mirrors **both** swatches, and `src/tools/shape.ts:144-145` fills with
+`backgroundColor` — `if (hasFill && backgroundColor) { ctx.fillStyle = backgroundColor; }` — where
+the store's background swatch defaults to `'#ffffff'` (`src/contexts/StoreContext.tsx:314`). So
+ticking "Filled" paints white, and the shape reads as an outline with a transparent interior on a
+white document. The only way to change the fill colour is to move the **background** swatch, which
+is shared with the eraser, the bucket and every other tool that uses it.
+
+`ShapeToolArea`'s preview draws from these same args, so a swatch that never arrives shows as a
+wrong preview before the commit as well as a wrong layer after it.
+
+**Fix.** Decide what a filled shape should fill with, then make the guard match. The obvious shape
+is to drop the `args.toolName === 'shape'` condition and mirror on `args.toolName` membership in
+the six-tool set, and to give the fill its own control rather than borrowing the background swatch.
+The second half is a product decision, not a bug fix — the operator has already ruled that shape
+fill should follow Photoshop's model, which is a dedicated Fill swatch, so this item reduces to
+implementing that and then widening the guard.
+
+**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx:31-34`, `src/tools/toolsMap.ts:62,153-157`,
+`src/tools/settings.ts:75,270,277,284,291,298`, `src/tools/shape.ts:144-145`,
+`src/contexts/StoreContext.tsx:314`
+
+---
+
+## 68. A committed shape is painted twice, and its preview and its commit use different coordinate spaces
+
+**Problem.** `src/components/Main/ShapeToolArea.tsx` never clears the tool overlay during a gesture,
+not even on a successful commit. `handlePointerUp` (`:140`) ends with a `flushDrawingFrame()`
+(`:174`) that redraws the shape, and `createLayerFromTool(fullArgs)` (`:200`) then commits it as a
+layer while the overlay keeps the painted shape. For as long as the shape tool stays selected the
+same shape exists twice: once in the document, once on the overlay above it. Unmount now clears it,
+so it disappears on a tool switch, which is not the same thing as not painting it.
+
+**The second half is the one that will bite a test.** `flushDrawingFrame` (`:70`) draws in CANVAS
+coordinates, while `handlePointerUp` translates the commit into DOCUMENT coordinates. Under a
+non-zero `documentFrame` the two can disagree, so the preview the user watches and the layer that
+lands are not necessarily in the same place. Every `ShapeToolArea` test runs with
+`documentFrame: null`, so nothing in the suite covers it.
+
+**Fix.** Clear the overlay as part of the commit, so the committed layer is the only copy; and draw
+the preview in the same space the commit uses, or convert the preview's geometry before drawing.
+
+**Files.** `src/components/Main/ShapeToolArea.tsx:70,140,174,200`
+
+---
+
+## 69. An eraser gesture abandoned by switching tools leaves its preview on the layer, with no history entry
+
+**Problem.** `EraserToolArea` previews through `tempUpdateLayer`, the sanctioned live-pixel writer,
+rather than the shared overlay — deliberately, and for a documented reason
+(`src/components/Main/EraserToolArea.tsx:20-31`): the overlay starts every frame empty and
+transparent, and `destination-out` computes `da' = da * (1 - sa)`, so with `da = 0` an overlay
+preview is arithmetically incapable of drawing a pixel. The consequence is that the preview IS the
+document. If the gesture is abandoned by switching tools mid-drag, the partial erase is left on the
+layer's pixels and no `TOOL_ACTION` is ever dispatched, so there is no history entry to undo. The
+same applies to any tool that previews by mutating the active layer.
+
+**Fix.** Roll the live pixels back on an abandoned gesture. That needs a pre-gesture pixel snapshot
+to restore from, which is a materially larger change than an overlay clear and should be decided
+deliberately rather than bolted on.
+
+**EraserToolArea owns no overlay canvas** — its props are `{ className?: string }`
+(`src/components/Main/EraserToolArea.tsx:11-13`); it ignores the `overlayCtxRef` that `Main.tsx`
+passes. The overlay-teardown fix deliberately leaves it alone, because clearing there would be
+clearing a canvas this area never painted.
+
+**Files.** `src/components/Main/EraserToolArea.tsx:11-13,20-31`

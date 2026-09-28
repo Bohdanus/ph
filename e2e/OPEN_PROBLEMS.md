@@ -617,3 +617,43 @@ loudly, which is the better of the two outcomes and is not guaranteed.
 `e2e/export/__tests__/helpers.unit.test.ts` pins the clip in page coordinates with literal
 values. Worth knowing before passing a custom clip anywhere in this suite: the two forms
 differ by the box origin and nothing in the types distinguishes them.
+
+## P1 — the document-space oracle was applied to one call site of eighty-three, so a 1px sidebar change still moves most of the suite
+
+`e2e/helpers/canvas-helpers.ts:48-51`
+
+**What exists.** `documentToCanvasOffset` maps a DOCUMENT point into the canvas box by reproducing
+the app's contain fit, and the export fixture uses it, so `e2e/export/visual-regression.spec.ts` no
+longer depends on where the app put the letterbox. That is the right idea and it works.
+
+**What does not.** The idea reached exactly one caller. `LINE_START_X`/`LINE_START_Y`/`LINE_END_X`/
+`LINE_END_Y` at `e2e/helpers/canvas-helpers.ts:48-51` are still "relative to the canvas box", and nine
+specs import them: `adjustments`, `color`, `document-dialogs`, `erase-fill-eyedropper`, `example`,
+`file-roundtrip`, `levels`, `paint-tool-pixels`, `select-move`. Beyond those, eighty-three sites
+across the suite write their gesture as `(box|Box|bandBox).(x|y) + <literal>` — six in
+`erase-fill-eyedropper.spec.ts`, six in `layers.spec.ts`, eight in `selection-tools.spec.ts`, four in
+`select-move.spec.ts`, two each in `paint-options.spec.ts` and `pen-types.spec.ts`, and the rest
+scattered. The ICO export path is still canvas-relative as well: `ICON_STROKE` at
+`e2e/export/helpers.ts:297` is a set of box offsets, used at `:326` and `:328`.
+
+**Why it matters, stated as a measurement rather than a worry.** These are not merely fragile, they
+are wrong in a specific direction. A `box.x + 150` gesture is a _window_-relative point: change the
+window and the point the mouse visits is a different point in the document. The document-space
+mapping has to be inverted before such a literal is meaningful, and it is not. So the suite still
+asserts against whatever geometry the current layout happens to produce, and a layout change
+silently changes what is being tested rather than failing.
+
+**Five assertions that fail outright on a 1px rail change**, all in `e2e/responsive-shell.spec.ts`:
+`:185` expects the collapsed rail at 56, `:206` and `:270` expect the right panel at 250, `:220`
+expects the panel's own width delta at 250, and `:285` expects the two-column rail at 108. Those are
+`toBeCloseTo(x, 0)`, so a single pixel fails them. They are the sharp end of the same defect: a
+number written into a test is a pin on the layout, and the layout is not the subject.
+
+**The pattern to copy is already in the tree.** `e2e/viewport-drawing.spec.ts:26-27` gestures at
+`box.x + box.width * 0.25` and `box.y + box.height * 0.35` — a fraction of the box, so it tracks the
+box instead of the window. That is the shape every one of the eighty-three should take, via
+`documentToCanvasOffset`.
+
+**Do not fix this by re-recording anything.** A re-record would bless the new layout, which is
+exactly the failure this campaign already made once: the seven export baselines were re-derived from
+a moving letterbox before `e8f17ba` specified the line in document space.

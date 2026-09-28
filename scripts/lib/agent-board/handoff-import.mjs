@@ -106,8 +106,17 @@ const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
  * alternation is deliberately the seven words the documents actually use. A
  * looser net (a bare `dead`, or `close`) would swallow live entries — one real
  * heading ends in the word "dead" and means it as prose.
+ *
+ * The `\b` on both ends is load-bearing, not decoration. Without it the net is
+ * a SUBSTRING net, and ordinary English words contain these seven: "abanDONEd"
+ * matches `done`, so a live entry titled "A gesture abandoned by switching
+ * tools" was read as a heading that LISTS retired items — and `assemble` then
+ * drops the entry it numbered, because a section that lists numbers is a
+ * section about finished ones. A live handoff item silently vanished from the
+ * board import, and the only symptom was `board import` filing one item fewer
+ * than the document has. Word boundaries keep the net on the seven words.
  */
-const DEAD_HEADING = /deleted|closed|done|resolved|fixed|landed|superseded/i;
+const DEAD_HEADING = /\b(?:deleted|closed|done|resolved|fixed|landed|superseded)\b/i;
 
 /**
  * A leading item number, with or without its dot and with or without the `Item`
