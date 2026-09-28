@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { StoreProvider, useStore, type StoreData, type StoreDispatch } from '../StoreContext.tsx';
 import { useLayers } from '../useLayer.ts';
 import { convertLegacyHistorySafely, deriveSetLayerPropertiesEntry } from '../history-adapter.ts';
+import { replayDurableDocument } from '../durable-replay.ts';
 import { freezeDurableDocument, type DurableHistoryEntry } from '../history-model.ts';
 import type { LayersRecord } from '../layer-types.ts';
 import type { HistoryItem } from '../history-types.ts';
@@ -138,6 +139,21 @@ function orderMap(store: StoreData) {
   return operation.kind === 'reorder-layers' ? operation.orderByLayerId : null;
 }
 
+/** The layer ids bottom first — the sequence the store derives a map from. */
+function sequence(layers: LayersRecord) {
+  return Object.values(layers)
+    .sort((left, right) => left.order - right.order)
+    .map((layer) => layer.id);
+}
+
+/** The same sequence, as the durable document itself orders its layers. */
+function durableSequence(store: StoreData) {
+  const replayed = replayDurableDocument(store.durableDocument!, store.durableDocument!.cursor);
+  return Object.values(replayed.layers)
+    .sort((left, right) => left.snapshot.order - right.snapshot.order)
+    .map((layer) => layer.snapshot.id);
+}
+
 /**
  * What a FULL conversion of the store's final legacy history produces, from the
  * same converter `buildDurableDocument` itself calls, over the same six inputs.
@@ -146,6 +162,15 @@ function orderMap(store: StoreData) {
  * so the oracle cannot inherit the one value it is meant to check. Everything
  * else — the baseline, the entry ids, the operation kinds, the order maps, the
  * cursor, and the `enabled` flags — comes from the conversion.
+ *
+ * ORDERING HAZARD, load-bearing: `convertLegacyHistorySafely` is the mocked spy
+ * at the top of this file, and this function calls it, so the oracle increments
+ * the same counter the tests count. Every `expect(conversions).toHaveBeenCalled…`
+ * must therefore be asserted BEFORE the `conversionOracle` call in its test, and
+ * each test that counts ends with a `toHaveBeenCalledTimes(n)` that is a
+ * positive control — it would fail if the mock were dead or the store stopped
+ * converting. The refusal tests are those controls; if one of them ever passes
+ * without a conversion having happened, the count assertion is not doing its job.
  */
 function conversionOracle(store: StoreData, durableRevision: number) {
   const converted = convertLegacyHistorySafely(store.history, {
@@ -415,8 +440,8 @@ describe('StoreContext REORDER_LAYERS through the append boundary', () => {
     conversions.mockClear();
 
     // Mover and anchor are in BOTH layer sets, so the derivation has an order map
-    // to publish and only the layer-set precondition can refuse it. The store
-    // record holds a fourth layer the shadow cannot name.
+    // to publish and only the order precondition can refuse it. The store record
+    // holds a fourth layer the shadow cannot name.
     reorder(result.current.dispatch, 'top', 'bottom');
 
     // The store cannot answer the question, which is a precondition and not a
@@ -434,6 +459,49 @@ describe('StoreContext REORDER_LAYERS through the append boundary', () => {
     // renumber the three layers the two models do agree on.
     expect(orders(store.layers)).toEqual({ bottom: 0, top: 1, middle: 3, extra: 5 });
     expect(orderMap(store)).toEqual({ bottom: 0, top: 1, middle: 2 });
+  });
+
+  it('refuses a reorder once a refused one has left the shadow and the document ordered differently', () => {
+    const result = setupWithDocument();
+    const before = result.current.store.durableDocument!;
+    const documentSequenceBefore = sequence(result.current.store.layers);
+    conversions.mockClear();
+
+    // A self-anchored move is the one intent where the converter and the document
+    // genuinely disagree: `reorderLayers` leaves the visible sequence alone and
+    // the converter records a move to the bottom. The append is refused, the
+    // fallback converts, and the shadow is now ordered the converter's way while
+    // the document is not.
+    reorder(result.current.dispatch, 'top', 'top');
+    const afterSelfAnchor = result.current.store;
+    expect(afterSelfAnchor.durableDocument).toEqual(conversionOracle(afterSelfAnchor, before.durableRevision + 1));
+    // The document's sequence did not move; the shadow's did. That gap is the
+    // thing the next append has to notice, and it is invisible to a membership
+    // check — the two models still name exactly the same layers.
+    expect(sequence(afterSelfAnchor.layers)).toEqual(documentSequenceBefore);
+    // The shadow now says something different about the same layers, which no
+    // membership check can see: both models still name exactly the same ids.
+    expect(durableSequence(afterSelfAnchor)).not.toEqual(documentSequenceBefore);
+    conversions.mockClear();
+
+    // The next reorder's layer SETS still match, so nothing but the order
+    // comparison can refuse it. This is the case that matters: publishing here
+    // would normalise the runtime order into the shadow and leave a durable
+    // document that no reconversion of this history would produce — the shadow
+    // would be laundered into a third answer and the conversion defect would
+    // stop being visible.
+    reorder(result.current.dispatch, 'bottom', 'middle');
+
+    // The refusal is a precondition: it converts, reports nothing, and still
+    // reorders the document.
+    expect(conversions).toHaveBeenCalledTimes(1);
+    const store = result.current.store;
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDiagnostics).toEqual([]);
+    // Two appends, two refused publications, so two whole-timeline conversions:
+    // the shadow is still exactly what a conversion produces, which is the
+    // property a publication would have destroyed.
+    expect(store.durableDocument).toEqual(conversionOracle(store, before.durableRevision + 2));
   });
 
   it('carries an earlier durable-append-mismatch into a published reorder', () => {

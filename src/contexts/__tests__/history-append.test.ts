@@ -996,7 +996,7 @@ describe('decideDurableAppend: reorder entries', () => {
       planned: deriveReorderLayersEntry(entry, preOrder),
       documentRevision: 4,
       preLayerOrder: preOrder,
-      durableLayerIds: new Set(preOrder),
+      durableLayerOrder: [...preOrder],
       ...overrides,
     });
   };
@@ -1018,10 +1018,19 @@ describe('decideDurableAppend: reorder entries', () => {
 
   it.each([
     ['no store order at all', { preLayerOrder: null }],
-    ['a store order of the wrong length', { durableLayerIds: new Set<LayerId>(['bottom', 'middle']) }],
-    ['a durable set with a layer the store does not hold', { durableLayerIds: new Set([...preOrder, 'ghost']) }],
-    ['a durable set missing a layer the store holds', { durableLayerIds: new Set<LayerId>(['bottom', 'top']) }],
-    ['a durable set that was not supplied', { durableLayerIds: null }],
+    ['a durable order that is not supplied', { durableLayerOrder: null }],
+    ['a durable order of the wrong length', { durableLayerOrder: ['bottom', 'middle'] }],
+    ['a durable order with a layer the store does not hold', { durableLayerOrder: [...preOrder, 'ghost'] }],
+    ['a durable order missing a layer the store holds', { durableLayerOrder: ['bottom', 'top'] }],
+    // Same length, same members, different sequence. This is the case a
+    // membership check cannot see, and it is the one that matters: a published
+    // map is a fresh normalisation of the order, so publishing while the models
+    // disagree about the order launders the disagreement into a document no
+    // reconversion will reproduce.
+    [
+      'a durable order that is the same set in a different sequence',
+      { durableLayerOrder: ['top', 'middle', 'bottom'] },
+    ],
   ] as const)('refuses to publish for %s', (_label, overrides) => {
     const decision = decide(reorderEntry(), overrides as Partial<DurableAppendInput>);
 

@@ -206,13 +206,25 @@ function translate(
  * layer's own order, shifts everything above it, and then re-assigns the layer —
  * so the resulting *sequence* is unchanged and only the sparse order values
  * move. The converter drops the mover from the list first, so its `indexOf` is
- * -1 and it records a move to the bottom. Those are different documents, and
- * this boundary is written to agree with the converter rather than to quietly
- * become a third opinion: the two implementations of the durable rule are pinned
+ * -1 and it records a move to the bottom. Executed, not assumed: on a
+ * three-layer stack the document reads bottom, middle, top and the converter
+ * records bottom-middle-top with the mover first. (The two agree when the mover
+ * is already the bottom layer, so the disagreement is a function of the stack,
+ * not a blanket one.)
+ *
+ * This boundary is written to agree with the converter rather than to become a
+ * third opinion, and the two implementations of the durable rule are pinned
  * against each other, so returning the sequence-preserving map here would break
- * that pin and make a published shadow differ from a reconverted one. It is
- * recorded in `HANDOFF.md` as a conversion defect; fixing it means changing the
- * converter and this function together, not this function alone.
+ * that pin. It is recorded in `HANDOFF.md` as a conversion defect; fixing it
+ * means changing the converter and this function together.
+ *
+ * Note what the refusal does and does not buy. It stops THIS append from
+ * publishing, and the reconversion it falls back to leaves the shadow ordered
+ * the converter's way while the document keeps the sequence it had — so the two
+ * models now disagree. That disagreement is caught by the `durableLayerOrder`
+ * precondition on the NEXT append, not by this refusal. The refusal is the
+ * first line; the order comparison is what actually keeps a publication and a
+ * reconversion interchangeable.
  */
 export function reorderOrderAfterIntent(
   preOrder: readonly LayerId[],
@@ -339,15 +351,23 @@ export type DurableAppendInput = Readonly<{
    */
   preLayerOrder?: readonly LayerId[] | null;
   /**
-   * The layer ids the durable document itself holds at its cursor.
+   * The layer ids the durable document itself holds at its cursor, in the order
+   * its own snapshots sort into.
    *
    * A reorder map is keyed on the whole layer set, and durable replay silently
    * skips ids it does not know (`durable-replay.ts`), so a map derived from a
    * layer set the shadow does not share would renumber the layers the two models
    * do agree on and leave the shadow ordered differently from the document. The
    * store supplies the comparison so this module never has to replay anything.
+   *
+   * The ORDER is compared, not just the membership, and the difference is the
+   * whole point. A published map is a fresh normalisation of the order, so it
+   * overwrites whatever order the shadow had; publishing it while the two models
+   * already disagree about the order launders that disagreement into a document
+   * no reconversion will reproduce. Sequence equality is what makes a publication
+   * and a reconversion interchangeable.
    */
-  durableLayerIds?: ReadonlySet<LayerId> | null;
+  durableLayerOrder?: readonly LayerId[] | null;
 }>;
 
 function sameFrame(left: unknown, right: unknown): boolean {
@@ -435,6 +455,11 @@ function sameOrderMap(left: Readonly<Record<LayerId, number>>, right: Readonly<R
   const leftIds = Object.keys(left);
   if (leftIds.length !== Object.keys(right).length) return false;
   return leftIds.every((id) => left[id] === right[id]);
+}
+
+/** Two layer sequences are equal when they name the same ids in the same order. */
+function sameLayerSequence(left: readonly LayerId[], right: readonly LayerId[]): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
 }
 
 /**
@@ -560,7 +585,7 @@ export function decideDurableAppend({
   planned,
   documentRevision,
   preLayerOrder,
-  durableLayerIds,
+  durableLayerOrder,
 }: DurableAppendInput): DurableAppendDecision {
   if (!planned) return { outcome: 'preconditions', reason: 'no durable entry was planned for this append' };
   if (!base) return { outcome: 'preconditions', reason: 'the durable document is unavailable' };
@@ -585,24 +610,24 @@ export function decideDurableAppend({
   }
 
   // A reorder is the only publication whose correctness depends on the whole
-  // layer set, so it is the only one that has to prove it. Both refusals are
-  // preconditions rather than mismatches: they describe a store that cannot
-  // answer the question, not a writer that answered it wrongly, and the
-  // conversion that replaces them already handles the no-op correctly.
+  // layer set, so it is the only one that has to prove it. The refusal is a
+  // precondition rather than a mismatch: it describes a store that cannot answer
+  // the question, not a writer that answered it wrongly, and the conversion that
+  // replaces it already handles the no-op correctly.
   if (entry.actionName === REORDER_ACTION) {
     if (!preLayerOrder) {
       return { outcome: 'preconditions', reason: 'a layer reorder needs the store layer order it was planned against' };
     }
-    if (!durableLayerIds) {
+    if (!durableLayerOrder) {
       return {
         outcome: 'preconditions',
-        reason: 'a layer reorder needs the durable layer set to compare the store order against',
+        reason: 'a layer reorder needs the durable layer order to compare the store order against',
       };
     }
-    if (durableLayerIds.size !== preLayerOrder.length || preLayerOrder.some((id) => !durableLayerIds.has(id))) {
+    if (!sameLayerSequence(durableLayerOrder, preLayerOrder)) {
       return {
         outcome: 'preconditions',
-        reason: 'the durable document holds a different set of layers than the store record',
+        reason: 'the durable document and the store record disagree about the layer order',
       };
     }
   }

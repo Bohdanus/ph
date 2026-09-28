@@ -308,6 +308,81 @@ describe('reorderOrderAfterIntent agrees with the converter', () => {
   });
 });
 
+/**
+ * The runtime order values are a separate concern from the order itself, and
+ * they are the values production actually has.
+ *
+ * `reorderLayers` writes `minOrder - 1` for a move to the bottom and `+= 2` for
+ * every layer above an anchor (`layer-utils.ts`), so a real stack's orders are
+ * sparse, can be negative, and keep their gaps. Every other case in this file
+ * runs against the single dense vector `0,1,2,3`, which the production sort
+ * cannot get wrong by accident. These cases vary the VALUES while holding the
+ * sequence fixed, which is what actually exercises the sort the store performs.
+ */
+describe('reorderOrderAfterIntent over real runtime order values', () => {
+  const intent = { layerToMoveId: 'layer-b' as LayerId, afterWhichLayerId: 'layer-c' as LayerId };
+
+  const stackWithOrders = (orderValues: readonly number[]): LayersRecord =>
+    Object.fromEntries(stackIds.map((id, index) => [id, blankLayer(id, orderValues[index] ?? 0)])) as LayersRecord;
+
+  it.each([
+    { label: 'the dense vector every other case uses', values: [0, 1, 2, 3] },
+    // A move to the bottom writes `minOrder - 1`; repeated moves keep going
+    // down. A later anchored move then leaves the gap behind.
+    { label: 'a stack driven negative by repeated moves to the bottom', values: [-6, -3, 0, 2] },
+    // `+= 2` above an anchor leaves a permanent gap at the anchor's old value.
+    { label: 'the gaps an anchored move leaves behind', values: [0, 1, 9, 11] },
+    { label: 'a large offset from a document scaled up', values: [100, 102, 104, 900] },
+    // Every layer ties. The sort must be stable for the sequence to survive, and
+    // the sequence is the only thing the whole feature is derived from.
+    { label: 'every order tied, where only a stable sort keeps the sequence', values: [0, 0, 0, 0] },
+  ] as const)('$label', ({ values }) => {
+    const preOrder = bottomFirst(stackWithOrders(values));
+
+    // The order values moved; the sequence did not, so every map below is the
+    // one the dense matrix already pins.
+    expect(preOrder).toEqual([...stackIds]);
+    expect(reorderOrderAfterIntent(preOrder, intent)).toEqual({
+      'layer-1': 0,
+      'layer-b': 2,
+      'layer-c': 1,
+      'layer-d': 3,
+    });
+  });
+
+  it('reads the sequence out of order values that do not follow the layer ids', () => {
+    // A negative value in the middle of the stack is a real outcome, and it
+    // means the runtime sequence is NOT the declaration order. Everything
+    // downstream is derived from the sequence, so a derivation that trusted the
+    // ids or the insertion order instead of the values would be wrong here.
+    const preOrder = bottomFirst(stackWithOrders([-4, 0, -2, 3]));
+
+    expect(preOrder).toEqual(['layer-1', 'layer-c', 'layer-b', 'layer-d']);
+    // `layer-b` moves to just above `layer-c`, which is now the second from the
+    // bottom — so it lands at index 2, not at index 1.
+    expect(reorderOrderAfterIntent(preOrder, intent)).toEqual({
+      'layer-1': 0,
+      'layer-c': 1,
+      'layer-b': 2,
+      'layer-d': 3,
+    });
+  });
+
+  it.each([
+    { label: 'moves to the bottom', intent: { layerToMoveId: 'layer-b' as LayerId, afterWhichLayerId: null } },
+    { label: 'moves to the bottom with no anchor at all', intent: { layerToMoveId: 'layer-b' as LayerId } },
+  ])('holds the dense map for a negative-order stack that $label', ({ intent: thisIntent }) => {
+    const preOrder = bottomFirst(stackWithOrders([-6, -3, 0, 2]));
+
+    expect(reorderOrderAfterIntent(preOrder, thisIntent)).toEqual({
+      'layer-b': 0,
+      'layer-1': 1,
+      'layer-c': 2,
+      'layer-d': 3,
+    });
+  });
+});
+
 describe('deriveReorderLayersEntry', () => {
   const preOrder = bottomFirst(runtimeStack());
 

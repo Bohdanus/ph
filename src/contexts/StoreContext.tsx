@@ -872,13 +872,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const timeline = updateHistoryTimeline(prior, { type: 'append', entry: historyItem });
       // A reorder's durable operation names the resulting order of every layer,
       // so it is planned here, where the pre-append record is authoritative, and
-      // it is checked against a second, independent copy of the rule. The store's
-      // own durable layer set is supplied too: durable replay skips ids it does
-      // not know, so a map derived from a set the shadow does not share would
-      // renumber the layers the two models do agree on.
+      // it is checked against a second, independent copy of the rule. The
+      // shadow's OWN layer order is supplied too, and compared as a sequence: a
+      // published map is a fresh normalisation of the order, so publishing one
+      // while the two models already disagree about the order would overwrite
+      // that disagreement with a document no reconversion would reproduce.
       const base = currentState.durableStatus === 'current' ? currentState.durableDocument : null;
       const preLayerOrder = layerOrderBottomFirst(currentState.layers);
-      const durableLayerIds = base ? new Set(Object.keys(replayDurableDocument(base, base.cursor).layers)) : null;
+      const durableLayerOrder = base
+        ? Object.values(replayDurableDocument(base, base.cursor).layers)
+            .sort((left, right) => left.snapshot.order - right.snapshot.order)
+            .map((layer) => layer.snapshot.id)
+        : null;
       // The record is reordered by `intent` while the durable map is derived from
       // the history item's args, because that is what a replay reads. Production
       // never supplies its own item, so the two are the same move by
@@ -899,7 +904,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         planned: itemMatchesIntent ? deriveReorderLayersEntry(historyItem, preLayerOrder) : null,
         documentRevision: currentState.documentRevision,
         preLayerOrder,
-        durableLayerIds,
+        durableLayerOrder,
       });
       const converted =
         decision.outcome === 'published'
