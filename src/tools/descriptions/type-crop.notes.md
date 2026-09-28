@@ -90,23 +90,38 @@ control is a real Photoshop control; what changed is where it lives. See `Unveri
 
 ### Options-bar control census
 
-Thirteen controls. `present` 2 · `partial` 4 · `inert` 0 · `missing` 7.
+Thirteen controls. `present` 1 · `partial` 4 · `inert` 0 · `missing` 8.
 
 | #   | Control                                   | Status    | `appRef`                                         |
 | --- | ----------------------------------------- | --------- | ------------------------------------------------ |
 | 1   | Tool preset                               | `missing` | —                                                |
 | 2   | Text Orientation (`T` + direction marker) | `missing` | —                                                |
-| 3   | Font family                               | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:122` |
-| 4   | Font Style                                | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:188` |
-| 5   | Size                                      | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:128` |
+| 3   | Font family                               | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:123` |
+| 4   | Font Style                                | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:189` |
+| 5   | Size                                      | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:136` |
 | 6   | Anti-Alias                                | `missing` | —                                                |
-| 7   | Text color                                | `present` | `src/components/ToolbarsRight/Text/Text.tsx:16`  |
-| 8   | Align Text Left / Center / Right          | `present` | `src/components/ToolbarsRight/Text/Text.tsx:167` |
+| 7   | Text color                                | `missing` | —                                                |
+| 8   | Align Text Left / Center / Right          | `present` | `src/components/ToolbarsRight/Text/Text.tsx:175` |
 | 9   | Toggle the type on a path                 | `missing` | —                                                |
 | 10  | Create Work Path                          | `missing` | —                                                |
 | 11  | Warp Text                                 | `missing` | —                                                |
 | 12  | Toggle the Character and Paragraph panels | `missing` | —                                                |
-| 13  | Commit / Cancel                           | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:209` |
+| 13  | Commit / Cancel                           | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:210` |
+
+**Every `appRef` in this table was re-derived from the control's meaning, not from the number
+the previous pass wrote.** All eight of the old numbers were off by a small amount, and all
+eight pointed at a wrapper rather than at the control: `:122` at the empty `<div>` the font
+select sits in rather than the select, `:188` at the `<div>` opening the bold/italic pair
+rather than a button, `:128` at the block wrapper above the size slider rather than the
+`input`, `:167` at the wrapper above the align control rather than the `<select>`, `:209` at
+the button-row opener rather than `Apply`, and in the crop family the same three shapes —
+`Crop.tsx:8` at the `aspectRatios` data array rather than the rendered `<select>`,
+`Crop.tsx:78` at the button-row opener rather than `Apply`, and `useRect.ts:254` at a bare
+`case 'inside':` label rather than the statements that translate the rect. A `file:line` is
+followed by an agent, so a line that lands one line early is a wrong answer dressed as a
+right one, and the test that checks these citations deliberately validates the path and the
+bound only (`scripts/__tests__/tool-descriptions.test.mjs:26-33` says so in its own
+comment), so nothing but re-derivation catches it.
 
 Why each verdict:
 
@@ -121,15 +136,20 @@ Why each verdict:
 - **Size — `partial`.** A range slider over 8–500, labelled in **px**, applied as
   `${fontSize}px`. Photoshop's default unit is points, the field is typed rather than slid,
   and it accepts a unit suffix.
-- **Text color — `present`.** The panel itself has no swatch: `Text.tsx:16-20` syncs the
-  args' `color` from the store's foreground color, and `TextToolArea` repaints the overlay
-  with it. That is the same effect Photoshop's swatch has.
+- **Text color — `missing`, not `present`.** This was the row's one false verdict, and it was
+  false in the direction that hides a defect: `Text.tsx` renders **no colour control at all**.
+  What it does is the opposite — `Text.tsx:16-20` copies the store's foreground `color` into
+  the tool args, one-way, so the bar is a _slave_ to the global foreground swatch in the left
+  rail (`SidebarLeft.tsx:515-522`) rather than a control of its own. There is no Color Picker
+  on the bar, and nothing here sets a per-layer type colour; a Photoshop user who expects the
+  swatch in the options bar will not find one.
 - **Align — `present`.** A `<select>` rather than three icon buttons, but the same three
   values, the same default (left), and the same effect. The Justify variants are not on the
   bar in Photoshop either.
 - **Commit / Cancel — `partial`.** `Apply` and `Clear` do what the check mark and the cross
-  do, and the draft is also committed implicitly when the tool changes. There is no keyboard
-  commit and no Escape.
+  do, and the draft is also committed implicitly when the tool changes (`goToTool` calls
+  `commitDirtyTool`, `src/hooks/useApp.ts:169`, whose text branch is
+  `src/contexts/useLayer.ts:349`). There is no keyboard commit and no Escape.
 
 **There is no `inert` control in this family, and that was checked rather than assumed.**
 `TextToolSettings` is `Omit<TextToolArgs, 'color' | 'text' | 'rect'>`, so the persisted
@@ -149,7 +169,7 @@ semantically different from Photoshop's leading.
 
 | Control                                                                     | Photoshop                                                                                | App                                                                                        | Status                                                       |
 | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
-| Leading                                                                     | absolute baseline-to-baseline distance in points; per-line, largest value in a line wins | unitless multiplier of the font size, 0.5–2.25, applied as `index * fontSize * lineHeight` | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:147` |
+| Leading                                                                     | absolute baseline-to-baseline distance in points; per-line, largest value in a line wins | unitless multiplier of the font size, 0.5–2.25, applied as `index * fontSize * lineHeight` | `partial` — `src/components/ToolbarsRight/Text/Text.tsx:155` |
 | Tracking                                                                    | loose/tight in 1/1000 em, cumulative with manual kerning                                 | —                                                                                          | `missing`                                                    |
 | Kerning                                                                     | None / Metrics / Optical / manual, cumulative with tracking                              | —                                                                                          | `missing`                                                    |
 | Baseline shift                                                              | points, positive up                                                                      | —                                                                                          | `missing`                                                    |
@@ -197,6 +217,33 @@ Photoshop type layer re-renders from the font at the new size and stays crisp.
 - **Content is typed in the panel.** The string comes from a `<textarea>` in the right-hand
   panel, and a canvas drag only sizes the box (`TextToolArea.tsx:24-39`). There is no caret,
   no insertion point, no selection and no per-character formatting.
+
+### Which Photoshop type keys the app actually binds
+
+**`T`, and only `T`.** The complete key table is
+`src/components/Common/AppKeyboardShortcuts.tsx` — the registrations at `:159-398` cover
+`z`, `y`, `c`, `v`, `i`, `j`, `b`, `u`, `t`, `l`, `w`, `g`, `o`, `e`, `s`, `m`, `p` and their
+shift/mod variants — plus three `Escape`/`Enter`/`Backspace`/`Delete` registrations in each of
+the two lasso tool areas (`PolygonClickToolArea.tsx:914-948`,
+`FeatherMagneticLassoToolArea.tsx:534-568`) and one `Escape` in the font popup
+(`FontSelect.tsx:54-62`). Those are every call site of that hook in `src/`; the raw `onKeyDown`
+handlers elsewhere (the transform box, the two dialogs, the sidebar's own fields) are not in it.
+Nothing else in `src/` calls `useKeyDownShortcut`. The four
+Photoshop rows the previous pass carried were all unbound, and two of them contradicted a
+sentence already in the same file:
+
+- `Shift+T` "cycle the type tools in the flyout group" — the type tile is a **single entry**
+  (`toolbar-mapping.ts:107`), and the `t` registration passes no `shift`, so `Shift+T` simply
+  re-selects the same tool.
+- `Ctrl+Enter` / `⌘+Return`, `Enter` and `Esc` — no registration anywhere. `Enter` inside the
+  focused textarea takes the textarea's own newline, and the only `Escape` handler the type
+  tool would have had is inside the commented-out `handleKeyDown`
+  (`TextToolArea.tsx:89-137`).
+
+One nuance the data file now states and this pass verified: `T` itself is only live when the
+textarea does **not** hold focus. `TextToolArea.tsx:41-43` focuses it as soon as the tool is
+selected, and `useKeyboardEvents.tsx:136` refuses any registration that has not opted into
+inputs while a field is focused — so a `T` pressed mid-edit types a letter.
 
 ### Sources
 
@@ -339,15 +386,18 @@ the row's own `detail` rather than presented as the setting's behaviour. They ar
 they are consistently reported, and `01-photoshop-reference.md` may well carry Adobe text for
 some of them — but "consistently reported" is what they are, and the row now says so. What is
 _not_ claimed anywhere is the app-side consequence, which is unaffected either way: the app
-implements the ON case and offers neither the setting nor a route back.
+implements the **OFF** case — the canvas shrinks and the pixels stay in the layer bitmaps —
+and offers neither the setting nor an `Image ▸ Reveal All` to change that. The earlier
+version of this section said the app implemented the ON case, which inverted Adobe's own
+delete-versus-hide contrast; see "Is the app's crop destructive?" below.
 
 ### Options-bar control census
 
-Twelve controls. `present` 0 · `partial` 4 · `inert` 0 · `missing` 8.
+Twelve controls. `present` 0 · `partial` 3 · `inert` 0 · `missing` 9.
 
 | #   | Control                                      | Status    | `appRef`                                        |
 | --- | -------------------------------------------- | --------- | ----------------------------------------------- |
-| 1   | Aspect ratio menu                            | `partial` | `src/components/ToolbarsRight/Crop/Crop.tsx:8`  |
+| 1   | Aspect ratio menu                            | `partial` | `src/components/ToolbarsRight/Crop/Crop.tsx:61` |
 | 2   | Swap Width and Height values                 | `missing` | —                                               |
 | 3   | Straighten / Curve / Content-Aware / Default | `missing` | —                                               |
 | 4   | Fill (incl. Content-Aware Fill)              | `missing` | —                                               |
@@ -358,7 +408,7 @@ Twelve controls. `present` 0 · `partial` 4 · `inert` 0 · `missing` 8.
 | 9   | Auto Center Preview                          | `missing` | —                                               |
 | 10  | Overlay (Rule of Thirds default)             | `missing` | —                                               |
 | 11  | Grid                                         | `missing` | —                                               |
-| 12  | Done / Cancel                                | `partial` | `src/components/ToolbarsRight/Crop/Crop.tsx:78` |
+| 12  | Done / Cancel                                | `partial` | `src/components/ToolbarsRight/Crop/Crop.tsx:79` |
 
 Why the four `partial` verdicts:
 
@@ -369,16 +419,36 @@ Why the four `partial` verdicts:
   matches, and `16:9` matches; **`4:5 (8:10)`, `5:7`, `2:3 (4:6)`, `Original Ratio`,
   `W × H × Resolution`, `Front Image`, `New Crop Preset` and `Delete Crop Preset` are all
   absent**, and `3:4` and `9:16` are entries Photoshop does not have.
-- **Show Cropped Area — `partial`.** `useRect.drawMask` fills the whole image with
-  `rgba(0, 0, 0, 0.7)` and then clears the crop rect, so the area outside is always dimmed
-  and the area inside always shows the image. The behaviour is right; there is no toggle, and
-  the value is hard-coded rather than chosen.
-- **Enable Crop Shield — `partial`,** same line of code and the same reason: the shield is
-  always on, its opacity is fixed at 0.7 rather than the adjustable figure Adobe documents,
-  and its color is not configurable.
+- **Enable Crop Shield — `partial`,** on the one line of code that draws the shield
+  (`useRect.ts:167`): it is always on, its opacity is fixed at 0.7 rather than the adjustable
+  figure Adobe documents, and its color is not configurable.
 - **Done / Cancel — `partial`.** `Apply` calls `applyDocumentCrop` and `Clear` drops the
   draft rect, which is the same pair of effects as the check mark and the cross. There is no
   Enter, no Return, no double-click and no Escape.
+
+**Show Cropped Area and Enable Crop Shield are both `partial` on the same line, and that is the
+finding, not a double-count.** Both attempts to file them separately were wrong in opposite
+directions. The first pass cited `useRect.ts:167` under both names, which made the app look two
+controls deep where it draws one overlay. A later pass therefore denied one of them, and wrote that
+"Photoshop's Show Cropped Area shades the discarded image inside the box, and nothing in the app
+draws that" — false twice over. The app does draw a dim: the mask at `useRect.ts:164-172` fills the
+whole canvas with `rgba(0, 0, 0, 0.7)` and then clears the crop rect, and `CropToolArea` passes no
+`hideBlend`, which is the only flag `drawMask` consults (`useRect.ts:164`), so that branch runs whenever
+there is a rect to draw. And the dimmed region is the one _outside_ the box, so "inside" was wrong about the
+app's own drawing whatever Photoshop does. It is also wrong about Photoshop: Adobe's own sentence for
+the control is "Displays the cropped-out area as a shaded overlay", with no region attached, and
+Adobe's sentence for Enable Crop Shield is "Applies a color overlay outside the crop area" — so the
+two cover the same region and differ in that this one is a plain shade and that one is a colour and
+an opacity you choose. The `detail` no longer says "inside the crop box", for the same reason.
+
+The correct reading is that one rendering backs two Photoshop controls, and each diverges from its
+own counterpart: the app's treatment is welded on with nothing on screen to change its colour,
+opacity or existence, and both its shade and its 0.7 are constants where the Crop Shield is the
+control Adobe documents as adjustable. So both rows are `partial`, both cite the same line, and
+`appNotes` says why one rendering backs two. The earlier reasoning — that two distinct
+Photoshop controls cannot both be `partial` on one statement — is sound as a rule about
+double-counting a _control_, and wrong as applied here, because the claim being filed is the
+behaviour, not the control.
 
 **No `inert` control here either, also checked rather than assumed.** `CropToolArgs` has
 three keys — `rect`, `preRatioRect`, `aspectRatio` — plus the seed in
@@ -390,20 +460,26 @@ regression-repair field, not a user-facing control, so it has no Photoshop count
 
 ### Is the app's crop destructive?
 
-Yes, and there is no off switch. `src/contexts/useLayer.ts:612-640` (`applyDocumentCrop`)
-trims the rect to the canvas, converts it to the next `documentFrame` via
-`canvasRectToDocumentFrame`, and dispatches `COMMIT_DOCUMENT_EDIT` with a
+**It is not — and the previous pass said the opposite.** `src/contexts/useLayer.ts:612-640`
+(`applyDocumentCrop`) trims the rect to the canvas, converts it to the next `documentFrame`
+via `canvasRectToDocumentFrame`, and dispatches `COMMIT_DOCUMENT_EDIT` with a
 `SET_DOCUMENT_FRAME_ACTION` history entry carrying both the previous and next frame. The
 document shrinks immediately; `layer-renderer.ts:78-81` subtracts the frame origin and the
 canvas is sized to the frame, so anything outside it stops rendering.
 
-The pixels are not actually gone — layer positions and sources are untouched, so the bitmaps
-still hold them, and undo restores the frame through the history entry. But that is precisely
-Photoshop's **Delete Cropped Pixels ON** case, and the app offers neither the setting nor
-`Image ▸ Reveal All` (`grep` for `Reveal All` across `src/` returns nothing). There is no
-route back except undo.
+But nothing is destroyed. Layer positions and sources are untouched, so the bitmaps still hold
+the pixels, and the history entry carries `previousFrame`, so undo puts the frame back. That
+is Photoshop's **Delete Cropped Pixels OFF** case — the canvas shrinks, the pixels are kept,
+the edit stays reversible — where the **ON** case permanently removes everything outside the
+crop. The earlier version of this section had it backwards, called the app "destructive",
+and then contradicted itself two sentences later by saying undo restores the frame.
 
-### Four interaction divergences
+What the app really lacks is the **setting** and the route back: there is no Delete Cropped
+Pixels control to offer or invert, and no `Image ▸ Reveal All` menu item (`grep` for
+`Reveal All` across `src/` returns nothing outside this notes file). Undo is the only way to
+see the discarded area again, and undo is not a control on the bar.
+
+### Five interaction divergences
 
 - **Dragging inside the box moves the box, not the image.** `useRect.ts:254-262` translates
   the rect by the drag delta for its `inside` edge, and the branch at `useRect.ts:347-354`
@@ -415,15 +491,52 @@ route back except undo.
   (`src/util/rect.ts:36-60`) clamps every edge to the document, so the extra area is simply
   cut off. In Photoshop, dragging a handle outward past the photo grows the canvas, and what
   fills it is what the `Fill` control selects.
-- **The pending rect survives a tool switch.** It lives on the tool args, which
-  `useCurrentTool` writes through to the persisted settings, so switching tools and coming
-  back restores the draft. Photoshop commits on a tool switch. The app neither commits nor
-  discards.
+- **The pending rect is DISCARDED by a tool switch, not written through.** The previous pass
+  claimed the draft "survives a tool switch", and the file's own comment said the opposite in
+  as many words. The crop arm of `saveLastSettings` (`src/util/settings.ts:33-38`) persists
+  `omit(args, 'rect', 'preRatioRect')` — the draft rect and the pre-ratio rect are stripped
+  before the write, with a comment saying they are "both presentation state" — so
+  `lastSavedSettings.crop` holds only the aspect ratio. `goToTool`
+  (`src/hooks/useApp.ts:169`) commits the dirty tool, and `useCurrentTool.tsx:49-50` re-seeds
+  the crop from those persisted settings, which no longer hold a rect. Switching away and back
+  therefore throws the draft away. Of Photoshop's two behaviours this is much closer to
+  cancel-on-Escape than to commit-on-switch, and the aspect ratio _is_ sticky, which is
+  probably what the earlier reading mistook for a surviving draft.
 - **Shift is honoured on any modifier.** `useRect.ts:96-99` locks the aspect ratio when
   `ctrlKey || metaKey || shiftKey` is set, and reads the lock at `useRect.ts:249`. So the
   `Shift` row of the `modifiers` array is `present` in substance but over-broad in binding,
   and there is no Alt from-center drag anywhere — which is why the `Alt` and `Alt+Shift` rows
   of that array are aspirational and are described as Photoshop's rather than the app's.
+- **The crop registers no keyboard shortcut of its own.** The only crop key is `C`
+  (`AppKeyboardShortcuts.tsx:255-260`); everything else Photoshop binds for the crop is
+  absent, and two of them are actively harmful to repeat. Detail in the next section.
+
+### Which Photoshop crop keys the app actually binds
+
+**`C`, and only `C`.** The `useKeyDownShortcut` table is the one given for the type tool above —
+`AppKeyboardShortcuts.tsx` (letters only: `b c e g i j l m o p s t u v w y z`, plus shift and mod
+variants), the two lasso tool areas and the font popup, and those are every call site of that hook in
+`src/`. It is not the whole of the app's key handling: the transform box, the two dialogs and the
+sidebar's own fields each attach a raw `onKeyDown`, which is why the `Esc` and `Enter` rows below
+name those rather than claiming the table is exhaustive. Against it, every non-`C` row the previous
+pass carried is false:
+
+| Photoshop key        | What the app actually does                                                                                                                                                                                                                        |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Shift+C`            | The crop tile is a **single entry** (`toolbar-mapping.ts:59`), and the `c` registration passes no `shift`, so this re-selects Crop. There is no flyout to cycle, and Perspective Crop, Slice and Slice Select are not in `ToolArgsByName` at all. |
+| `Enter` / `Return`   | Unbound for the crop. `Enter` is registered in `PolygonClickToolArea.tsx:922` and `FeatherMagneticLassoToolArea.tsx:542`, and handled raw in the sidebar's own fields; `CropToolArea` calls no `useKeyDownShortcut`.                              |
+| `Esc`                | Unbound for the crop. `Escape` is registered in those two lasso areas and in `FontSelect.tsx:54`, and handled raw by the transform box (`Transform.tsx:37`), the two dialogs and the layer-rename field.                                          |
+| `O`                  | **Switches tools.** `AppKeyboardShortcuts.tsx:329-334` binds `o` to `selectTonalTool`, whose group is `['dodge', 'burn']` (`:31`). Pressing it while cropping leaves the crop for the Dodge tool, which is the opposite of cycling an overlay.    |
+| `Shift+O`            | Same handler with `shift: true` (`:336-342`), so it also leaves the crop — it toggles between Dodge and Burn.                                                                                                                                     |
+| `X`                  | Unbound. There is no `x` registration anywhere in `src/`; `matchesShortcut` is case-insensitive, so this is not a capitalisation miss.                                                                                                            |
+| `Backspace`/`Delete` | Bound only in the two lasso tool areas (`PolygonClickToolArea.tsx:936-952`, `FeatherMagneticLassoToolArea.tsx:556-572`), and only to remove the last draft anchor.                                                                                |
+| `Ctrl`/`⌘` + drag    | `useRect.ts:96-99` reads Ctrl and Command to **lock the current aspect ratio** — the behaviour the `Shift` modifier row already describes. It never reaches a Straighten tool; there is none.                                                     |
+
+So the data file's `shortcuts` array now carries `C` alone, and `appNotes` states the absence
+of the other eight, with `O`/`Shift+O` called out as tool switches rather than as no-ops. The
+Photoshop-side provenance for these keys is unchanged and still in the source list: Adobe's
+CS6 shortcut list for `X` and `Shift+drag`, and the two third-party tutorials below for
+`Shift+C`, `O`, Alt-from-centre, Enter and Esc.
 
 ### Sources
 
