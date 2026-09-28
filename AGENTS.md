@@ -260,13 +260,60 @@ node scripts/worktree-inventory.mjs --check    # exit 1 if stale, write nothing
 node scripts/worktree-inventory.mjs --quiet    # totals only
 ```
 
-**Read `recommendation` and `prunable`, never `ahead`/`behind` on their own.**
-`prunable: true` means ALL of these hold: it is not the main worktree, the
-branch is an ancestor of `main`, the working tree is clean, and no curated
-finding protects it. `recommendation` is the decision — `prune`, `salvage`,
-`review-residue`, `in-use`, or `keep` (the main checkout, which is never a
-deletion candidate) — and `statusReasons` is why, in the generator's own words,
-so you can check the reasoning rather than trust it.
+**Read `action` first.** Every record carries one value, and it is the whole
+answer — which of the three things is it:
+
+| `action`    | meaning                                           | do this           |
+| ----------- | ------------------------------------------------- | ----------------- |
+| `land`      | clean tree, commits ahead of `main`, merges clean | merge it          |
+| `at-risk`   | work on no ref, or the merge needs a human        | save it           |
+| `dispose`   | on `main`, clean, nothing protects it             | delete it         |
+| `in-use`    | an agent or a session is active there             | leave it          |
+| `keep`      | the main checkout                                 | never a candidate |
+| `undecided` | cannot be told from what is known                 | do not remove     |
+
+**`land` is a point-in-time answer, not a licence.** It is true against the
+`mainHead` and the tree state recorded in this file, and is only as fresh as
+`generatedAt`. `main` moves, and a branch that merged cleanly stops doing so.
+Re-read `dirty` and `mergeConflict` before acting on a `land` you did not
+generate yourself — and note that a worktree with **no liveness signal at all**
+(`chats.count` 0 and `board.agents` empty) is the one most likely to have
+changed since, because nothing here can see that somebody walked away from it.
+That happened to a `land` entry within minutes of it being written.
+
+**`mustNotPrune` vetoes `land` as well as `dispose`.** It is a human claim that
+something here is not accounted for, and a merge recommendation is as much a
+claim about the contents as a prune recommendation is. A `land` entry carrying
+`mustNotPrune: true` is impossible by construction; if you see one, the flag is
+stale and belongs retracted in the same change that noticed it.
+
+`readyToLand`, `disposalCandidates` and `atRisk` are named at the top of the
+file so you do not have to filter the whole list to find them, and
+`node scripts/worktree-inventory.mjs` prints the first two before the
+evidence.
+
+**`land` and `at-risk` were one bucket, and that was the defect.** Every
+unmerged branch used to report `salvage`, so "a clean branch one commit ahead
+that merges cleanly" was indistinguishable from "a branch whose only work sits
+in a working tree on no ref at all". They call for **opposite** actions — go
+and merge, versus go and save — so they are separate values now.
+
+**"merges cleanly" is VERIFIED, not assumed.** `mergeConflict` comes from
+`git merge-tree --write-tree`, which performs the merge in a scratch object
+store and touches no working tree, index or ref, so it is safe to run across
+every worktree. `mergeConflictFiles` names the files that collide. It is
+`null` — never `false` — when the merge could not be attempted, because an
+unknown is not a licence to land. `mergeChecked` distinguishes "not checked"
+from "checked and unanswerable". `mergeConflictFiles` names the collisions,
+because "this branch conflicts" sends somebody to investigate and "it conflicts
+in these files" is the work. Roughly three quarters of the clean unmerged
+branches here conflict, which is not a fact you can guess from
+`ahead`/`behind`.
+
+`prunable: true` remains the strict disposal test: it is not the main worktree,
+the branch is an ancestor of `main`, the working tree is clean, and no curated
+finding protects it. `dispose` is derived from the same decision, so the two
+cannot disagree.
 
 ### "0 commits ahead of main" is NOT evidence that a worktree is disposable
 

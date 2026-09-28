@@ -45,7 +45,16 @@ export const STATUS = {
 export const RECOMMENDATION = {
   /** Safe to remove now, with or without --force. */
   PRUNE: 'prune',
-  /** Work here is not on main. Do not remove until it is landed or stashed. */
+  /**
+   * Clean tree, commits ahead of main, and the merge applies with no
+   * conflict. Nothing is at risk and nothing needs rescuing — it is only
+   * waiting for a merge.
+   */
+  READY_TO_LAND: 'ready-to-land',
+  /**
+   * Work here is not on main AND is not merely waiting: it is uncommitted, or
+   * the merge conflicts, so a human must act before anything can be lost.
+   */
   SALVAGE: 'salvage',
   /** Landed but still holds something. Remove after taking the remainder. */
   REVIEW_RESIDUE: 'review-residue',
@@ -55,6 +64,31 @@ export const RECOMMENDATION = {
   KEEP: 'keep',
   /** Cannot be classified from what is known. Do not remove. */
   UNKNOWN: 'unknown',
+};
+
+/**
+ * The single decision an operator opens this file to make, per worktree.
+ *
+ * `land` and `at-risk` are the two that used to be one bucket called
+ * `salvage`, and merging them was the defect: "a clean branch one commit
+ * ahead that merges cleanly" and "a branch whose only work sits in a working
+ * tree on no ref at all" both reported `salvage`, so a reader could not tell
+ * which to go and MERGE from which to go and SAVE. They call for opposite
+ * actions, so they are different values and different list entries.
+ */
+export const ACTION = {
+  /** Clean, unmerged, conflict-free: merge it. */
+  LAND: 'land',
+  /** Nothing here is on any ref, or the merge needs a human: do not remove. */
+  AT_RISK: 'at-risk',
+  /** Landed and clean: dispose of it. */
+  DISPOSE: 'dispose',
+  /** Somebody is working here right now. */
+  IN_USE: 'in-use',
+  /** The main checkout. */
+  KEEP: 'keep',
+  /** Cannot be decided from what is known. */
+  UNDECIDED: 'undecided',
 };
 
 /**
@@ -91,6 +125,23 @@ export function hasUnfinishedChats(sessions = []) {
   return sessions.filter((s) =>
     ['active', 'abandoned-midflight', 'died-at-birth', 'rejected-credits', 'orphaned', 'blocked'].includes(s.state)
   );
+}
+
+/**
+ * Normalise the merge answer to exactly one of three values.
+ *
+ * A MISSING `wt.merge` — the property absent, not present-and-null — used to
+ * fall through both the "conflicts" and the "could not be checked" branches
+ * and reach "applies with no conflict", because `undefined === null` is false
+ * and `undefined === true` is false. So a caller that never ran the check was
+ * handed a licence to land. An absent check and a failed check are the same
+ * thing for this decision: not verified, so not offered as ready.
+ */
+function mergeVerdict(wt) {
+  const conflict = wt.merge?.conflict;
+  if (conflict === true) return 'conflict';
+  if (conflict === false) return 'clean';
+  return 'unknown';
 }
 
 /**
@@ -147,6 +198,7 @@ export function classify(wt, { chatSummary, chatSessions, curated, nowMs, boardA
   // branch is landed, because a curated finding is a human claim about work
   // that may only exist in this directory.
   const curatedBlocksPrune = Boolean(curated?.mustNotPrune);
+  const mergeState = mergeVerdict(wt);
   let recommendation;
   if (wt.isPrimary) {
     // The main checkout is never a prune candidate, whatever git says about
@@ -167,9 +219,46 @@ export function classify(wt, { chatSummary, chatSessions, curated, nowMs, boardA
   } else if (status === STATUS.UNCOMMITTED_ONLY) {
     recommendation = RECOMMENDATION.SALVAGE;
     reasons.push('work here is not reachable from any commit on this branch');
-  } else if (status === STATUS.UNMERGED_WORK) {
+  } else if (status === STATUS.UNMERGED_WORK && mergeState === 'conflict') {
+    // A conflicting merge is NOT "waiting to be merged" — somebody has to
+    // resolve it by hand. It stays at-risk so it is not filed under the
+    // branches that need nothing but a fast-forward.
     recommendation = RECOMMENDATION.SALVAGE;
-    reasons.push('commits here are not on main');
+    reasons.push(
+      wt.merge?.files?.length
+        ? `merging into the base branch conflicts in ${wt.merge.files.join(', ')}, so it needs a rebase first`
+        : 'merging into the base branch conflicts, so it needs a rebase first'
+    );
+  } else if (status === STATUS.UNMERGED_WORK && mergeState === 'unknown') {
+    // The merge could not be attempted, or was never checked. That is not
+    // evidence of a clean merge, so this is not offered as ready — an unknown
+    // must never read as a licence to land.
+    recommendation = RECOMMENDATION.SALVAGE;
+    reasons.push(`the merge could not be verified (${wt.merge?.reason ?? 'not checked'})`);
+  } else if (status === STATUS.UNMERGED_WORK && mergeState === 'clean' && !uncommitted) {
+    // The distinction this whole split exists for: nothing is at risk, nothing
+    // needs saving, and the merge applies cleanly today. It only needs merging.
+    if (curatedBlocksPrune) {
+      // A curated `mustNotPrune` is a human claim that something here is not
+      // accounted for, and it has to veto a MERGE recommendation too, not only
+      // a prune one. Otherwise `fix-spray-cr` — whose own note calls the
+      // colour-replacement work "the salvage target" — is filed under "READY
+      // TO LAND" beside a summary saying the opposite, and nothing marks the
+      // contradiction.
+      recommendation = RECOMMENDATION.SALVAGE;
+      reasons.push(
+        'the tree and the merge are both clean, but a curated finding protects this worktree, so read its note before merging'
+      );
+    } else {
+      recommendation = RECOMMENDATION.READY_TO_LAND;
+      reasons.push('the working tree is clean and the merge into the base branch applies with no conflict');
+    }
+  } else if (status === STATUS.UNMERGED_WORK) {
+    // The last branch is "unmerged, tree holds changes": a clean merge says
+    // nothing about the uncommitted work, which is not on any ref and is the
+    // part that can actually be lost.
+    recommendation = RECOMMENDATION.SALVAGE;
+    reasons.push('the working tree holds changes that are in no commit on this branch');
   } else if (status === STATUS.LANDED && curatedBlocksPrune) {
     recommendation = RECOMMENDATION.REVIEW_RESIDUE;
     reasons.push('git says this is disposable, but a curated finding says otherwise');
@@ -186,9 +275,43 @@ export function classify(wt, { chatSummary, chatSessions, curated, nowMs, boardA
     wt.workingTree.modified === 0 &&
     wt.workingTree.untracked === 0;
 
+  // The one decision. Derived from the recommendation rather than restated, so
+  // the two cannot disagree.
+  let action;
+  switch (recommendation) {
+    case RECOMMENDATION.PRUNE:
+      // Read from `prunable`, the single expression that already encodes
+      // "not the main checkout, the branch is on main, the tree is clean, and
+      // nothing protects it" — not restated here as a second condition a later
+      // edit could quietly widen.
+      action = prunable ? ACTION.DISPOSE : ACTION.UNDECIDED;
+      break;
+    case RECOMMENDATION.READY_TO_LAND:
+      action = ACTION.LAND;
+      break;
+    case RECOMMENDATION.SALVAGE:
+    case RECOMMENDATION.REVIEW_RESIDUE:
+      action = ACTION.AT_RISK;
+      break;
+    case RECOMMENDATION.IN_USE:
+      action = ACTION.IN_USE;
+      break;
+    case RECOMMENDATION.KEEP:
+      action = ACTION.KEEP;
+      break;
+    default:
+      action = ACTION.UNDECIDED;
+  }
+
   return {
     status,
     recommendation,
+    action,
+    mergeConflict: wt.merge?.conflict ?? null,
+    // Disambiguates the two things `mergeConflict: null` means: the check was
+    // skipped (already on main, or detached), or attempted and unanswerable.
+    mergeChecked: mergeState !== 'unknown',
+    mergeConflictFiles: wt.merge?.files ?? [],
     prunable,
     reasons,
     live,
@@ -214,6 +337,10 @@ export function riskScore(verdict) {
       return 70;
     case RECOMMENDATION.UNKNOWN:
       return 60;
+    // Ready-to-land sorts below the things that need rescuing: nothing is at
+    // risk, it is only waiting, so it is not where a reader should start.
+    case RECOMMENDATION.READY_TO_LAND:
+      return 30;
     case RECOMMENDATION.KEEP:
       return 40;
     case RECOMMENDATION.PRUNE:

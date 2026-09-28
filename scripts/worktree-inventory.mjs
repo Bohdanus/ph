@@ -95,18 +95,33 @@ function repoRoot(cwd) {
 
 function printSummary(inventory, quiet) {
   const t = inventory.totals;
+  const byName = new Map(inventory.worktrees.map((w) => [w.name, w]));
+  const line = (n) => `  ${n.padEnd(40)} ${byName.get(n)?.branch ?? ''}`;
+
   process.stdout.write(
     `${inventory.worktrees.length} worktrees · ` +
-      `${t.prunable} prunable · ${t.salvage} salvage · ${t.inUse} in use · ` +
+      `${t.readyToLand} ready to land · ${t.disposalCandidates} to dispose · ` +
+      `${t.atRisk} at risk · ${t.inUse} in use · ` +
       `${t.holdingUncommittedWork} holding uncommitted work · ${t.withoutSummary} without a summary\n`
   );
+
+  // The two answers the file exists to give, listed before the evidence.
+  if (inventory.readyToLand.length > 0) {
+    process.stdout.write(`\nREADY TO LAND (clean, unmerged, merges with no conflict):\n`);
+    for (const n of inventory.readyToLand) process.stdout.write(`${line(n)}\n`);
+  }
+  if (inventory.disposalCandidates.length > 0) {
+    process.stdout.write(`\nREADY FOR DISPOSAL (on main, clean, nothing protected):\n`);
+    for (const n of inventory.disposalCandidates) process.stdout.write(`${line(n)}\n`);
+  }
   if (quiet) return;
 
+  process.stdout.write('\nALL WORKTREES:\n');
   for (const w of inventory.worktrees) {
     const dirty = w.dirty + w.untracked > 0 ? ` dirty=${w.dirty} untracked=${w.untracked}` : '';
     const chats = w.chats.unfinished.length > 0 ? ` unfinished-chats=${w.chats.unfinished.length}` : '';
     process.stdout.write(
-      `  ${String(w.riskScore).padStart(2)}  ${w.name.padEnd(38)} ${w.status.padEnd(20)} ` +
+      `  ${String(w.riskScore).padStart(2)}  ${w.name.padEnd(38)} ${w.action.padEnd(10)} ` +
         `ahead=${String(w.ahead).padStart(3)} behind=${String(w.behind).padStart(3)}` +
         `${dirty}${chats}\n`
     );
@@ -258,7 +273,23 @@ function describeDrift(currentText, nextText) {
   if (a.mainHead !== b.mainHead) lines.push(`  mainHead ${a.mainHead} -> ${b.mainHead}`);
 
   const before = new Map((a.worktrees ?? []).map((w) => [w.name, w]));
-  const watched = ['status', 'recommendation', 'prunable', 'ahead', 'behind', 'mergedIntoMain', 'dirty', 'untracked'];
+  // The merge verdict is the fastest-decaying field in the file: main moves,
+  // and a branch that merged cleanly yesterday stops doing so today. Without it
+  // here, a worktree flipping from `land` to `at-risk` reported "no
+  // per-worktree field changed" — the reporter failing at its one job.
+  const watched = [
+    'status',
+    'recommendation',
+    'action',
+    'prunable',
+    'ahead',
+    'behind',
+    'mergedIntoMain',
+    'dirty',
+    'untracked',
+    'mergeConflict',
+    'mergeConflictFiles',
+  ];
 
   for (const w of b.worktrees ?? []) {
     const prev = before.get(w.name);

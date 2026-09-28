@@ -128,13 +128,12 @@ export const CURATED = {
   },
   'fix-spray-cr': {
     summary:
-      'Merges the spray-dab fix with the Color Replacement tool onto main. The only branch carrying both, and colourReplacement.ts is uncommitted.',
+      'Merges the spray-dab fix with the Color Replacement tool onto main. The only branch carrying both, and the one to take the colour-replacement work from.',
     issues: [
       { ref: 'HANDOFF.md#48', title: 'stamp loop / dab accumulator is the named fix' },
       { ref: 'HANDOFF.md#58', title: 'color-replacement takes the legacy-tool route' },
     ],
-    mustNotPrune: true,
-    note: 'src/tools/colorReplacement.ts is modified relative to the index and exists on no ref. This is the salvage target for the colour-replacement work.',
+    note: 'The colour-replacement work that used to live only in this working tree is now committed here, so the earlier mustNotPrune flag is retracted. An earlier note said the tree was dirty and on no ref; git says it is clean and that file has two commits.',
   },
   'flake-paintbucket': {
     summary:
@@ -585,8 +584,13 @@ export const CURATED = {
     // is deliberately FALSE here — this branch is not on main — and the entry
     // goes away with the worktree when it lands.
     summary:
-      "The swarm board names which board it is (Kilo's built-in board_read is a different tool, empty by design) and ranks `ready` by provenance and contention, so the live work is not buried under the handoff imports.",
+      "The swarm board names which board it is (Kilo's built-in board_read is a different tool, empty by design), is renamed `swarm` so the two cannot be confused, and ranks `ready` by provenance and contention so the live work is not buried under the handoff imports.",
     landed: false,
+  },
+  'fix-e2e-findings': {
+    summary:
+      'Moves e2e findings off their original branches and onto the documents, so the defects are recorded where an agent will read them.',
+    landed: true,
   },
   'handoff-citation-rotation': {
     summary:
