@@ -635,7 +635,22 @@ describe('tool image processors', () => {
     it('clears the dash pattern for an undashed pen', () => {
       const [result] = draw({ size })({ ...defaultSettings.draw, lineDash: null, points: stroke });
 
-      expect(lastCanvas().ctx.setLineDash).not.toHaveBeenCalled();
+      // The context is shared between strokes, so the reset has to happen unconditionally.
+      expect(lastCanvas().ctx.setLineDash).toHaveBeenCalledWith([]);
+      expect(result).toBeTruthy();
+    });
+
+    it('ignores a dash pair a solid pen still carries and resets the pattern instead', () => {
+      const [result] = draw({ size })({
+        ...defaultSettings.draw,
+        penType: 'pen',
+        lineDash: [5, 30],
+        points: stroke,
+      });
+
+      const canvas = lastCanvas();
+      expect(canvas.ctx.setLineDash).not.toHaveBeenCalledWith([5, 30]);
+      expect(canvas.ctx.setLineDash).toHaveBeenCalledWith([]);
       expect(result).toBeTruthy();
     });
 

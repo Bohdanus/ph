@@ -34,7 +34,10 @@ export const setupDrawCtx = (ctx: Ctx2D, args: DrawToolArgs) => {
   ctx.lineCap = penType === 'pen' ? 'round' : 'square';
   ctx.globalAlpha = alpha;
 
-  if (lineDash) ctx.setLineDash(lineDash);
+  // The overlay context is shared between strokes and between tools, so the pattern is always
+  // set, never merely appended: an undashed pen must clear the previous stroke's dash.
+  if (penType === 'pen-dashed' && lineDash) ctx.setLineDash(lineDash);
+  else ctx.setLineDash([]);
 };
 
 export const draw =
