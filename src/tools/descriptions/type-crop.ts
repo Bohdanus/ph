@@ -25,21 +25,21 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'A combo box showing every font available to Photoshop in a WYSIWYG list, each entry rendered in its own face so the list previews the fonts.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:122',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:123',
       },
       {
         control: 'Font Style',
         detail:
           'A combo box over the styles the chosen family actually has — Regular, Italic, Bold, Bold Italic and family-specific variants — with Faux Bold and Faux Italic synthesized when the family lacks them.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:188',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:189',
       },
       {
         control: 'Size',
         detail:
           'The type size, entered in points by default and accepting a unit suffix (pt, px, mm, in, pica). 1 pt is 1/72 in. The value sets the em size, not the cap height.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:128',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:136',
       },
       {
         control: 'Anti-Alias',
@@ -51,15 +51,14 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         control: 'Text color',
         detail:
           'A color swatch that opens the Color Picker and sets the type fill, also reachable by Alt+Backspace for the foreground color and Ctrl+Backspace for the background color. Selecting characters rather than the layer limits the change to those characters.',
-        status: 'present',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:16',
+        status: 'missing',
       },
       {
         control: 'Align Text Left / Center Text / Align Text Right',
         detail:
           'A row of three buttons that set paragraph alignment, defaulting to Align Text Left. Justify Last Left, Justify Last Centered, Justify Last Right and Justify All live in the Paragraph panel.',
         status: 'present',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:167',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:175',
       },
       {
         control: 'Toggle the type on a path',
@@ -90,21 +89,11 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           "The check mark and the cancel cross, which appear only while a type layer is in edit mode. The check mark also fires on the numeric keypad's Enter and on Ctrl+Enter (Windows) or Command+Return (Mac OS); Esc commits by default and can be switched to cancel under Preferences > Type.",
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:209',
+        appRef: 'src/components/ToolbarsRight/Text/Text.tsx:210',
       },
     ],
     modifiers: [],
-    shortcuts: [
-      { keys: 'T', action: 'Select the Type tool.' },
-      { keys: 'Shift+T', action: 'Cycle the type tools in the flyout group.' },
-      { keys: 'Ctrl+Enter / ⌘+Return', action: 'Commit the type edit being made on the canvas.' },
-      { keys: 'Enter', action: 'Commit the type edit from the numeric keypad.' },
-      {
-        keys: 'Esc',
-        action:
-          'Commit the type edit by default; it cancels instead when Use Esc key to commit text is unchecked in Preferences > Type.',
-      },
-    ],
+    shortcuts: [{ keys: 'T', action: 'Select the Type tool.' }],
     implementation: 'partial',
     implementationRefs: [
       'src/tools/text.ts:22',
@@ -119,7 +108,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'toolbar-mapping.ts:107',
     ],
     appNotes:
-      "The app's type layer is baked pixels, not live type. renderText paints the string into a 2D context with fillText, and the text processor hands back a single OffscreenCanvas, so what reaches the Layers panel is a bitmap; the layer renderer re-runs a tool's creator only for the six shape tools, and text is not on that list, so its retained args are never re-rendered. Enlarging a text layer therefore rescales those pixels where a Photoshop type layer re-renders at the new size. There is no text box either: the app grows the rect to the widest line instead of wrapping, so a long line runs to the canvas edge rather than reflowing, and every newline is a hard break. Text is typed into a textarea in the right-hand panel rather than onto the canvas, so there is no caret, no text selection, no per-character formatting and no Escape; the draft is committed by Apply or implicitly by switching tools, and the commit creates a raster layer. Font size is a CSS pixel range of 8-500 rather than points, the font list is fourteen hard-coded families rather than the system enumeration, and leading is a unitless multiplier of the font size where Photoshop's is an absolute baseline-to-baseline distance in points.",
+      "The app's type layer is baked pixels, not live type. renderText paints the string into a 2D context with fillText, and the text processor hands back a single OffscreenCanvas, so what reaches the Layers panel is a bitmap; the layer renderer re-runs a tool's creator only for the six shape tools, and text is not on that list, so its retained args are never re-rendered. Enlarging a text layer therefore rescales those pixels where a Photoshop type layer re-renders at the new size. There is no text box either: the app grows the rect to the widest line instead of wrapping, so a long line runs to the canvas edge rather than reflowing, and every newline is a hard break. Text is typed into a textarea in the right-hand panel rather than onto the canvas, so there is no caret, no text selection and no per-character formatting; the draft is committed by Apply or implicitly by switching tools, and the commit creates a raster layer. There is no colour control on this bar at all: the type fill is slaved to the global foreground swatch in the left rail, which this panel only mirrors into the tool args and the overlay, so the colour is a whole-app choice rather than a per-type-layer one. Font size is a CSS pixel range of 8-500 rather than points, the font list is fourteen hard-coded families rather than the system enumeration, and leading is a unitless multiplier of the font size where Photoshop's is an absolute baseline-to-baseline distance in points. T is the only type key, and only while the textarea does not hold focus — the panel focuses it as soon as the tool is selected, and a shortcut that does not opt into inputs is refused while a field is focused, so a T pressed mid-edit types a letter rather than reselecting the tool. The type tile holds a single entry, so Shift+T re-selects the same tool instead of cycling a flyout. Nothing binds Ctrl+Enter, Enter or Esc to a type commit or cancel: Enter inside the focused textarea takes the textarea's own newline, and the one Escape handler the type tool would have had is commented out; the only live Escape near this bar belongs to the font popup, where it reverts the pending family and closes the list.",
     sources: [
       'https://helpx.adobe.com/photoshop/using/creating-type.html',
       'https://helpx.adobe.com/photoshop/using/editing-text.html',
@@ -151,7 +140,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'The leftmost control, holding Ratio, W x H x Resolution, Original Ratio, 1 : 1 (Square), 4 : 5 (8 : 10), 5 : 7, 2 : 3 (4 : 6), 16 : 9 and Front Image, plus New Crop Preset to save the current values and Delete Crop Preset to remove a saved one. Adobe names the first entry Ratio, not "Free", and defines it as cropping freely without a fixed ratio; clearing the two Width and Height fields is what returns the tool to unconstrained.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Crop/Crop.tsx:8',
+        appRef: 'src/components/ToolbarsRight/Crop/Crop.tsx:61',
       },
       {
         control: 'Swap Width and Height values',
@@ -180,8 +169,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       {
         control: 'Show Cropped Area',
         detail: 'Displays the cropped-out area as a shaded overlay inside the crop box.',
-        status: 'partial',
-        appRef: 'src/hooks/useRect.ts:167',
+        status: 'missing',
       },
       {
         control: 'Enable Crop Shield',
@@ -218,7 +206,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         detail:
           'The check mark and the cancel cross below the crop box. Done commits the crop, which is also Enter (Windows) or Return (Mac OS) and a double-click inside the box; Cancel discards it, which is also Esc.',
         status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Crop/Crop.tsx:78',
+        appRef: 'src/components/ToolbarsRight/Crop/Crop.tsx:79',
       },
     ],
     modifiers: [
@@ -233,28 +221,15 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       },
       { keys: 'Alt+Shift', action: 'Constrains the proportions and draws from the center at the same time.' },
     ],
-    shortcuts: [
-      { keys: 'C', action: 'Select the Crop tool.' },
-      {
-        keys: 'Shift+C',
-        action: 'Cycle the flyout group, which holds Perspective Crop, Slice and Slice Select alongside Crop.',
-      },
-      { keys: 'Enter / Return', action: 'Commit the crop.' },
-      { keys: 'Esc', action: 'Cancel the crop and restore the previous framing.' },
-      { keys: 'O', action: 'Cycle the crop overlay.' },
-      { keys: 'Shift+O', action: "Cycle the overlay's orientation, for the Triangle and Golden Spiral overlays." },
-      { keys: 'X', action: 'Switch the crop box between portrait and landscape.' },
-      { keys: 'Backspace / Delete', action: 'Reset the crop box.' },
-      { keys: 'Ctrl+drag / ⌘+drag', action: 'Invoke the Straighten tool without visiting the options bar.' },
-    ],
+    shortcuts: [{ keys: 'C', action: 'Select the Crop tool.' }],
     implementation: 'partial',
     implementationRefs: [
       'src/tools/crop.ts:26',
-      'src/components/ToolbarsRight/Crop/Crop.tsx:8',
+      'src/components/ToolbarsRight/Crop/Crop.tsx:61',
       'src/components/Main/CropToolArea.tsx:21',
       'src/hooks/useRect.ts:89',
       'src/hooks/useRect.ts:145',
-      'src/hooks/useRect.ts:254',
+      'src/hooks/useRect.ts:255',
       'src/util/rect.ts:36',
       'src/contexts/useLayer.ts:612',
       'src/tools/settings.ts:62',
@@ -262,7 +237,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'toolbar-mapping.ts:59',
     ],
     appNotes:
-      "The app's crop edits the document frame rather than a tool layer. applyDocumentCrop trims the rect to the canvas, converts it into the next documentFrame, and dispatches a SET_DOCUMENT_FRAME_ACTION history entry, so the document shrinks at once and everything outside the new frame stops rendering. The layer positions and sources are untouched, so the discarded pixels are still held in the layer bitmaps, but that is exactly Photoshop's Delete Cropped Pixels ON case and there is no control to turn it off and no Image > Reveal All to bring the area back. The rect may be dragged past the image edge, yet trimRect clamps it to the document, so extending a crop cannot add canvas the way Photoshop's Fill control does. Dragging inside the crop box moves the box rather than the image: useRect translates the rect for its inside edge, and CropToolArea never passes a layer under the pointer, so the branch that would pick up the layer never runs. The pending rect is held on the tool args and is written through to the persisted settings, so it survives a tool switch and comes back intact, which is neither Photoshop's commit-on-switch nor its cancel-on-Escape. On modifiers, Shift does lock the current aspect ratio, but it is honoured for any modifier the browser reports rather than Shift alone, and there is no Alt from-center drag, so the Alt and Alt+Shift rows of the table above are aspirational.",
+      "The app's crop edits the document frame rather than a tool layer. applyDocumentCrop trims the rect to the canvas, converts it into the next documentFrame, and dispatches a SET_DOCUMENT_FRAME_ACTION history entry, so the document shrinks at once and everything outside the new frame stops rendering. The layer positions and sources are untouched, so the discarded pixels are still held in the layer bitmaps, and the history entry carries the previous frame, so undo brings the area back. That is Photoshop's Delete Cropped Pixels OFF case — the canvas shrinks, the pixels are kept — not the ON case, which permanently removes them. What the app genuinely lacks is the setting itself, which it can neither offer nor invert, and the Image > Reveal All menu item, which does not exist anywhere in the app. The rect may be dragged past the image edge, yet trimRect clamps it to the document, so extending a crop cannot add canvas the way Photoshop's Fill control does. Dragging inside the crop box moves the box rather than the image: useRect translates the rect for its inside edge, and CropToolArea never passes a layer under the pointer, so the branch that would pick up the layer never runs. The pending rect is not written through to the persisted settings: the crop arm of the settings saver omits the rect and the pre-ratio rect before persisting, so the aspect ratio survives a tool switch and the draft does not, and switching away from the Crop tool and back discards the draft. That is closer to Photoshop's cancel-on-Escape than to its commit-on-switch. On modifiers, Shift does lock the current aspect ratio, but it is honoured for any modifier the browser reports rather than Shift alone, and there is no Alt from-center drag, so the Alt and Alt+Shift rows of the table above are aspirational. C is the only crop key. The crop tile holds a single entry, so Shift+C re-selects the Crop tool rather than cycling a flyout, and Perspective Crop, Slice and Slice Select are not in the tool registry at all. O and Shift+O are bound to the Dodge and Burn tonal group, so pressing either while cropping switches to another tool instead of cycling an overlay, and there is no overlay control to cycle. No X key is bound anywhere in the app. Backspace and Delete are bound only in the two lasso tool areas, and Enter and Escape only in those same two areas and in the font popup, so the crop registers no key handler of its own and the framing is committed or dropped with the panel's Apply and Clear buttons alone. Ctrl on Windows, or Command on Mac OS, is read by the app for the opposite purpose: it locks the current aspect ratio, which is the behaviour the Shift row describes, and it never invokes a Straighten tool. Finally, the app draws one crop overlay, not two: the mask fills the whole canvas with a fixed 0.7 black and then clears the crop rect, which is a single treatment outside the box, so it can stand in for Enable Crop Shield alone. Photoshop's Show Cropped Area shades the discarded image inside the box, and nothing in the app draws that.",
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html',
       'https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-photos.html',

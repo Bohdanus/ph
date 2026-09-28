@@ -88,7 +88,7 @@ therefore does. It is not dressed as a sourced claim, and it is item 4 in `Unver
 
 The app implements exactly that: `src/components/Main/EyedropperToolArea.tsx:121` is the only
 dispatch in the file, and it is a `SET_COLOR`. The reason is written down in the tree at
-`src/tools/toolProcessors.ts:69-79` and again at `src/components/Main/EyedropperToolArea.tsx:30-44`,
+`src/tools/toolProcessors.ts:69-79` and again at `src/components/Main/EyedropperToolArea.tsx:30-45`,
 and both attribute it to Adobe's rule.
 
 ### Options bar — control census
@@ -96,11 +96,10 @@ and both attribute it to Adobe's rule.
 | #   | Photoshop control | Status    | App rendering                                                                                                 | Note                                                                                                                                                                                       |
 | --- | ----------------- | --------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 1   | `Sample Size`     | `partial` | `src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:23`, options declared at `src/tools/eyedropper.ts:28` | Wired and behaving like Photoshop's (odd-sided square, centred, clipped at the border, arithmetic mean), but the list is three entries long: Point Sample, 3 by 3 Average, 5 by 5 Average. |
-| 2   | `Sample`          | `partial` | `src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:37` (input at `:41`)                                  | Rendered as the older `Sample All Layers` **checkbox**, with `checked={false}` and `disabled` on the DOM node, so the sample source cannot be changed at all.                              |
+| 2   | `Sample`          | `inert`   | `src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:37` (input at `:41`)                                  | Rendered as the older `Sample All Layers` **checkbox**, with `checked={false}`, `disabled` on the DOM node and no change handler, so the sample source cannot be changed at all.           |
 
-**Counts: present 0 · partial 2 · inert 0 · missing 0.** Two controls, both partial. Nothing in
-this bar is `present`, and nothing is `missing`, because Photoshop's eyedropper bar is only these
-two controls and the app renders both.
+**Counts: present 0 · partial 1 · inert 1 · missing 0.** Nothing in this bar is `present` or
+`missing`, because Photoshop's eyedropper bar is only these two controls and the app renders both.
 
 Three judgement calls worth stating, because each could reasonably have gone the other way:
 
@@ -109,14 +108,21 @@ Three judgement calls worth stating, because each could reasonably have gone the
   would double-count one Photoshop control. The row carries Adobe's current verbatim name
   (`Sample`, from Adobe's own page) and its `detail` records the historical checkbox form, so the
   census the brief asked for is answered without inflating the count.
-- **`Sample` is `partial`, not `inert`.** `inert` is defined in `types.ts` as _declared and persisted
-  in `settings.ts` but rendered by no component_, and a component does render this one. It is
-  visible, disabled, and permanent — a shell rather than a working control — which is what `partial`
-  is for. The value is genuinely inert in the everyday sense (`sampleAllLayers` is declared at
-  `src/tools/settings.ts:204` and can never become true), and if the coordinator prefers the stricter
-  reading this row becomes `inert` with no other change. The defence for the refusal path is at
+- **`Sample` is `inert`, and an earlier pass had this wrong.** It was filed `partial` on the
+  reading that `inert` meant "rendered by no component". That is not what the contract says:
+  `types.ts` defines `inert` as a control that is "declared or displayed, and nothing is wired
+  behind it", and names both qualifying shapes — state in `src/tools/settings.ts` that persists
+  and drives nothing, and a label on a placeholder chip no component reads. This control is the
+  first shape exactly. It is on screen, permanently unchecked and permanently disabled
+  (`Eyedropper.tsx:41`); the field is seeded `false` at `src/tools/settings.ts:204`; and a grep of
+  `sampleAllLayers` across `src/` finds no writer — the only `patchToolArgs` call in the bar
+  (`Eyedropper.tsx:16`) writes `sampleSize`. Nothing can make the read at
+  `src/components/Main/EyedropperToolArea.tsx:63` true in the app, so the settings state persists
+  and drives nothing. That is the defect `inert` exists to name, and a `partial` told a reader the
+  control diverges when it does not function at all. The defence for the refusal path is at
   `src/components/Main/EyedropperToolArea.tsx:63`, which reports a named reason instead of quietly
-  sampling the active layer.
+  sampling the active layer, and a test drives the field true to prove that path
+  (`src/components/Main/__tests__/EyedropperToolArea.test.tsx:291`).
 - **The tool-preset picker is not a row.** Every bar in the corpus's own table leads with
   `tool-preset`, and tool presets are a real Photoshop feature, but the Adobe page that was opened
   does not establish that a preset picker leads _this_ bar, so the row would be an unsourced claim.
@@ -140,7 +146,13 @@ shortcut: 'I' }`, its own single-tool tile. The runtime binding is
   is deliberate (the comment at `:344-347` explains that a single-tool tile gets no Shift twin), and
   `src/components/Common/__tests__/AppKeyboardShortcuts.test.tsx:492-503` pins that a shifted `I`
   still selects the eyedropper. **The app therefore has no `Shift+I` cycle and no spring-loaded
-  temporary `I`** — both are divergences, and both are now stated in `appNotes`.
+  temporary `I`** — both are divergences, and both are stated in `appNotes`. The `Shift+I` row is
+  **kept** in `shortcuts`: the binding is real in Photoshop, and this file's rule is to record
+  Photoshop's behaviour and disclose the app's divergence in `appNotes` rather than delete the claim.
+  An earlier pass of this file asserted here that the divergence was already disclosed when `appNotes`
+  did not mention the cycle at all; it does now. The same check applies to the four tools Photoshop
+  cycles to — Color Sampler, Ruler, Note and Count are in none of the `ToolName` union
+  (`src/contexts/tool-types.ts`), so the group has no members in the app to cycle through.
 - Defaults: `sampleSize: 1`, `sampleAllLayers: false` at `src/tools/settings.ts:202-206`, pinned by
   `src/tools/__tests__/eyedropper.test.ts:12-18`. **The app's defaults are not claimed to be
   Photoshop's.** This line previously read "Defaults match Photoshop's", which was a claim about
@@ -215,7 +227,15 @@ that settles it, in order:
    `pen-dashed` to `drawPen` (`:142`, a `beginPath`/`moveTo`/bezier/`stroke` of the path), `spray`
    to `drawSpray` (`:157`, a radial gradient per sampled point). There are no anchors, no handles and
    no fill, so it is not a path tool; and there is no tip, no hardness and no flow, so it is not a
-   brush.
+   brush. **The path is not resampled.** `drawLine` reads `args.points` and hands it to
+   `smoothStrokePoints` (`src/tools/brush.ts:101`), which returns _the same array instance_ whenever
+   the pull is zero (`:103`) and otherwise emits exactly one output point per input point. For the
+   legacy draw tool it always returns the same array: `defaultSettings.draw` (`settings.ts:63-69`)
+   carries no `smoothing` key, so the argument is `0`. The raw samples are whatever
+   `handlePointerMove` pushed (`DrawToolArea.tsx:103`), and the curve through them is drawn by
+   `bezierSmoothedLine` (`src/util/draw.ts:29`, called at `:153`). The data file's `purpose` used to
+   say "a drag is resampled as a path, bezier-smoothed, and stroked" — the bezier half is real, the
+   resampling half was not, and it has been corrected.
 5. `src/tools/toolProcessors.ts:151-157` — `draw: { commit: 'source', creator: true, ... }`. The
    `creator: true` is the decisive flag: **every stroke creates a layer.** Compare `:255-262`
    (`brush`, `commit: 'raster'`, no `creator`) and `:263-` (`pencil`, `commit: 'raster'`), which
@@ -231,6 +251,41 @@ that settles it, in order:
 
 So: a drag becomes a path, the path becomes ink, the ink becomes a layer. It is a **freehand stroke
 tool this app owns**, and the phrase is not a hedge.
+
+**The ink is the foreground colour, and that half of the old claim survived re-derivation.** It was
+worth checking rather than assuming, because the paint family records the same-sounding claim as
+false for Color Replacement. Here it is true, and two independent lines decide it: the bar reads the
+store's foreground out of `useStore()` (`Draw.tsx:14`) and writes it into the tool args in an effect
+whenever the two disagree (`Draw.tsx:29-33`), and the renderers consume `args.color` —
+`ctx.strokeStyle = color` for the two pen types (`src/tools/draw.ts:74`) and
+`hexToRgb(args.color)` inside `drawSpray` (`src/util/draw.ts:162`). So `appNotes` and `purpose` keep
+the foreground-colour statement and only the resampling clause was cut.
+
+**Two consequences of the one-stroke, one-layer design, which the data file now records.** The
+renderers issue a single `beginPath`/`moveTo`/`stroke()` per stroke at the tool's `globalAlpha`
+(`src/util/draw.ts:151-154`, `src/tools/draw.ts:77`), so a stroke that crosses itself does not
+compound within that stroke, and because every stroke is its own layer (`creator: true`,
+`src/tools/toolProcessors.ts:151-153`), a second stroke composites a second semi-transparent layer
+over the first rather than adding to the same one. The `Opacity` row's build-up sentence is
+Photoshop's, and `appNotes` is where the divergence is stated.
+
+### Modifiers and bracket keys, both absent
+
+Two Photoshop bindings this file used to assert as app behaviour are not implemented, and the data
+file no longer asserts either.
+
+- **`Shift` constraining a freehand stroke to a straight line.** `src/components/Main/DrawToolArea.tsx`
+  reads no modifier of any kind — a grep for `shiftKey`, `altKey`, `metaKey` and `ctrlKey` across
+  the file returns nothing — so a Shift-held drag produces the identical freehand path. The row has
+  been **removed from `modifiers`**, which is the field for what holding a key changes about _this
+  app's_ drag, and the absence is stated in `appNotes`. The claim survives as a Photoshop claim in
+  Adobe's painting-tools page (the source list records it, and the Sources section below attributes
+  "Shift-click for a straight line" to that page), which is the same split the sibling selection
+  family uses for its unbound keys.
+- **`[` and `]` for brush size.** These are real Photoshop bindings and the rows are kept, with the
+  absence disclosed in `appNotes` as the selection family discloses its own unbound keys. Nothing in
+  `src/` binds a bracket key: there is no `BracketLeft`/`BracketRight` and no `key: '['`
+  registration anywhere, and `AppKeyboardShortcuts.tsx` contains no `draw` key at all.
 
 ### Photoshop provenance: there is none
 
@@ -252,9 +307,18 @@ web evidence above; the audits are what make the _tone_ right, and the tone is n
 `photoshopName` therefore names no Adobe tool. It is `No Photoshop tool — this app's own tool
 (nearest Photoshop: Brush tool)`, and `summary` and `purpose` are written from the app's own
 semantics and say in the first sentence that there is no Photoshop tool. They name what a user
-should reach for instead: the **Brush tool** for the solid stroke, the **Brush's airbrush option**
-for the spray, and the **Pen tool family** if what is wanted is path work rather than freehand
-paint. There is no Photoshop equivalent to a dashed freehand ink stroke, and the file says so.
+should reach for instead: the **Brush tool** for the solid stroke, and the **Pen tool family** if
+what is wanted is path work rather than freehand paint. There is no Photoshop equivalent to a dashed
+freehand ink stroke, and the file says so.
+
+**The airbrush recommendation was a false pointer and has been cut.** This paragraph used to tell a
+user to reach for "the **Brush's airbrush option** for the spray". A grep for `airbrush` across
+`src/components` and `src/tools` returns nothing outside this directory's own files: the app renders
+no airbrush control on the Draw bar or on the Brush bar, which is the same finding the sibling paint
+family records as `Airbrush` `missing` on the brush. So the sentence pointed at a control that does
+not exist, in the one field a user reads first. `purpose` now says that the app renders no airbrush
+control on any tool and that the Spray pen is the nearest thing here, which is the same fact the
+airbrush row's `missing` status carries.
 
 The `options` array is a census of **the Brush Tool's bar against the app's Draw bar**, and is
 labelled as such here and in `appNotes` — so `control` holds Brush-bar names verbatim, and a
@@ -263,26 +327,38 @@ behavior", never "Photoshop's Draw tool has this".
 
 ### Options-bar control census (reference bar: the Photoshop Brush Tool)
 
-| #   | Brush bar control                        | Status    | App rendering                                                                      | Note                                                                                                                                                                                                                                                                                                                                    |
-| --- | ---------------------------------------- | --------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | `Brush Preset picker`                    | `missing` | —                                                                                  | No tip, no hardness, no presets. The per-pen records in `settings.ts:32-36` are three hardcoded strokes, not a preset system.                                                                                                                                                                                                           |
-| 2   | `Size`                                   | `present` | `src/components/ToolbarsRight/Draw/Draw.tsx:142`, handler `:44-47`                 | 0.5–500 px, step 0.5, written to `args.lineWidth` and used verbatim as `ctx.lineWidth` (`src/tools/draw.ts:74`).                                                                                                                                                                                                                        |
-| 3   | `Mode`                                   | `inert`   | declared `src/tools/draw.ts:43`                                                    | Declared on the args, set by no Draw-bar control, absent from `defaultSettings.draw` (`settings.ts:63-69`) — **and refused even if set**: `src/contexts/layer-utils.ts:148` returns `source-over` for any `toolName` other than `brush`/`pencil`/`color-replacement`, so a draw stroke's layer is forced to Normal.                     |
-| 4   | `Opacity`                                | `present` | `src/components/ToolbarsRight/Draw/Draw.tsx:204`, handler `:49-52`                 | 0–100% on `args.alpha`, applied as `ctx.globalAlpha` (`src/tools/draw.ts:77`). Default 90% for `pen`/`pen-dashed`, 50% for `spray` (`settings.ts:33-35`) against Photoshop's 100%.                                                                                                                                                      |
-| 5   | `Flow`                                   | `missing` | —                                                                                  | The app has a single `alpha` and no flow concept.                                                                                                                                                                                                                                                                                       |
-| 6   | `Enable airbrush-style build-up effects` | `partial` | `src/components/ToolbarsRight/Draw/Draw.tsx:129` (renderer `src/util/draw.ts:157`) | The `spray` pen is the nearest thing, and it does lay down a soft build (`drawSpray` stamps an `alpha/4` radial gradient per point). It diverges twice: it is reached from a Pen Type dropdown rather than a toggle, and it builds along the drag path instead of while the button is held still, so a stationary press paints nothing. |
+| #   | Brush bar control                        | Status    | App rendering                                                      | Note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --- | ---------------------------------------- | --------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `Brush Preset picker`                    | `missing` | —                                                                  | No tip, no hardness, no presets. The per-pen records in `settings.ts:32-36` are three hardcoded strokes, not a preset system.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 2   | `Size`                                   | `partial` | `src/components/ToolbarsRight/Draw/Draw.tsx:142`, handler `:44-47` | Wired and applied verbatim (`src/tools/draw.ts:74`), but the range diverges at **both** ends: 0.5–500 px, step 0.5, against Photoshop's 1–5000.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 3   | `Mode`                                   | `inert`   | declared `src/tools/draw.ts:43`                                    | Declared on the args, set by no Draw-bar control, absent from `defaultSettings.draw` (`settings.ts:63-69`) — **and refused even if set**: `src/contexts/layer-utils.ts:149` returns `source-over` for any `toolName` other than `brush`/`pencil`/`color-replacement`, so a draw stroke's layer is forced to Normal.                                                                                                                                                                                                                                                                |
+| 4   | `Opacity`                                | `present` | `src/components/ToolbarsRight/Draw/Draw.tsx:204`, handler `:49-52` | 0–100% on `args.alpha`, applied as `ctx.globalAlpha` (`src/tools/draw.ts:77`). Default 90% for `pen`/`pen-dashed`, 50% for `spray` (`settings.ts:33-35`) against Photoshop's 100% — the data file's `detail` now names both numbers. The build-up behavior Photoshop documents for this control is not reproduced: see the one-stroke, one-layer paragraph above.                                                                                                                                                                                                                  |
+| 5   | `Flow`                                   | `missing` | —                                                                  | The app has a single `alpha` and no flow concept.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 6   | `Enable airbrush-style build-up effects` | `missing` | —                                                                  | The bar renders Pen Type, Size, Dash, Gap, Opacity and a preview, and nothing else. The `spray` pen is the nearest thing and it diverges twice: it is reached from a Pen Type dropdown rather than a toggle, and it stamps one soft gradient per sampled point along the drag, so it builds while the pointer moves and a held press adds nothing after the single dot it laid. The old `partial` here carried an `appRef` into `Draw.tsx:129`, which is a Pen Type `<option>`, not an airbrush control — a citation to a line that does not contain the control the row is about. |
 
-**Counts: present 2 · partial 1 · inert 1 · missing 2.**
+**Counts: present 1 · partial 2 · inert 1 · missing 3.**
+
+`Size` and the airbrush toggle were both `present`/`partial` on the strength of "it does something
+nearby". Neither is that any more. `Size` is `partial` because `types.ts` defines the status as
+"its behaviour **or range** diverges", and both of this control's bounds diverge from Photoshop's
+1–5000; the sibling paint family files the same control `partial` for the same class of reason. The
+airbrush toggle is `missing` because the Draw bar contains no control that answers to it at all, and
+the nearest neighbour — the Spray pen — is a different Photoshop control reached a different way.
+Its old `detail` was the sharper defect: it ended "Click the button to toggle it", which would have
+told a user to click a control that does not exist.
 
 `Mode` is the one row where `inert` and `missing` were genuinely contestable. `inert` was chosen
 because the field exists on the args type and is read on the commit path, so the app _has_ the
 control and this bar simply does not expose it — which is what `inert` exists to name. It is
 reproduced correctly: the app's own paint bar renders a working `Mode` select at
 `src/components/ToolbarsRight/Paint/Paint.tsx:168-182`, and the brush family in this same repo
-therefore has the control the Draw bar lacks. The one qualification is that `types.ts` words `inert`
-as "declared **and persisted** in `src/tools/settings.ts`", and `defaultSettings.draw` persists
-neither `blendMode` nor `smoothing`. A stricter reading gives `missing` for this row and moves one
-count from `inert` to `missing`; nothing else in the table changes.
+therefore has the control the Draw bar lacks. The qualification recorded here is now settled rather
+than open: `types.ts` words `inert` as "declared **or displayed**, and nothing is wired behind it",
+and names two qualifying shapes, so a field that is neither persisted in `src/tools/settings.ts`
+(`defaultSettings.draw` at `settings.ts:63-69` has neither `blendMode` nor `smoothing`) nor rendered
+by this bar still qualifies on the display side — the declared `blendMode` is the paint family's
+control, and the blend-mode gate refuses it for this tool anyway
+(`src/contexts/layer-utils.ts:149`). The row stays `inert`.
 
 The tablet-pressure toggles that the corpus's Brush row lists are **not** enumerated. The Adobe
 page that was opened does not name them, so a row asserting them would be an unsourced claim. They
@@ -297,8 +373,10 @@ of what the bar actually renders: **Pen Type** (three pens, `Draw.tsx:122-131`),
 Two separate facts, and the second is sharper than the first.
 
 **The `shortcut` field on a toolbar entry is display-only.** Its only two consumers in the whole of
-`src/` are `src/components/SidebarLeft/SidebarLeft.tsx:209` (handed to `ToolTooltip`) and `:368`
-(rendered as `<kbd>` inside the flyout item). Nothing derives a key binding from it.
+`src/` are `src/components/SidebarLeft/SidebarLeft.tsx:258` (handed to `ToolTooltip`) and `:431`
+(rendered as `<kbd>` inside the flyout item). Nothing derives a key binding from it. (This file
+carried `:209` and `:368` for the two; both had moved, and the pair was re-derived from the
+`shortcut` property rather than nudged.)
 
 **One correction to the addendum's framing, verified against the tree.** The app _does_ implement
 single-letter tool activation, and it does not implement the spring-loaded _temporary_ switch. The

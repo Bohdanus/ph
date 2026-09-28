@@ -98,14 +98,25 @@ correction itself then over-corrected in the opposite direction.
 `Blur Radius` slider (`src/components/ToolbarsRight/Blur/Blur.tsx:101`, range 0–100 px) plus an
 `Undo Blur` button (`:121`), and its only argument is a radius handed to the canvas blur filter
 (`src/tools/blur.ts:11`) — a true Gaussian, so the closest thing in this editor to
-`Filter > Blur > Gaussian Blur`, wearing the Blur tool's name. There is no gesture surface: the
-Blur's canvas area is the same inert `display: none` surface the Sharpen uses
-(`src/components/Main/SharpenToolArea.tsx:33` documents this explicitly, and
-`SharpenToolArea.tsx:46` is the surface itself). It is registered as a `layer-operation`, not a
-`raster` (`src/tools/toolProcessors.ts:118`), and its single seeded arg is a radius
+`Filter > Blur > Gaussian Blur`, wearing the Blur tool's name. There is no gesture surface, and
+the surface it gets is **`DummyToolArea`**, not the Sharpen's: `Main`'s tool-area dispatch has no
+`blur` branch, so blur falls through to the default (`src/components/Main/Main.tsx:217`), which
+renders `display: none` (`src/components/Main/DummyToolArea.tsx:15`). The Sharpen is a different
+component that reaches the same rendering on purpose — it mounts its own `SharpenToolArea`
+(`src/components/Main/SharpenToolArea.tsx:46`), and that file's own JSDoc is what says blur "has no
+tool area at all and falls through to `DummyToolArea`" (`:33`). Identical rendering, two
+components; "the same surface the Sharpen uses" was wrong. It is registered as a `layer-operation`,
+not a `raster` (`src/tools/toolProcessors.ts:118`), and its single seeded arg is a radius
 (`src/tools/settings.ts:47`). All four recorded controls are `missing`, none `partial`: there is
 nothing here for a partial rating to attach to. The recovered `Flow` control is missing too, and
 structurally so — the app has no per-dab/per-stroke opacity pair to express one with.
+
+**The slider previews; it does not commit.** The bar routes through `tempUpdateLayer`
+(`src/components/ToolbarsRight/Blur/Blur.tsx:36`), the only writer of `previewLayersRef`, and the
+history entry is written later by `commitDirtyTool` (`src/contexts/useLayer.ts:345`) on tool switch
+(`src/hooks/useApp.ts:169`), on export (`src/components/DesktopHeader/DesktopHeader.tsx:234`) and
+in `mergeAllLayers` (`src/contexts/useLayer.ts:643`). "Blurred as soon as the slider moves"
+overstates it: the layer is blurred in a preview, and the undoable edit lands at the commit.
 
 **Sources**
 
@@ -165,12 +176,26 @@ neither is brushable or buildable.
 control names, not the tool's — and there is no brush and no gesture
 (`src/components/Main/SharpenToolArea.tsx:46`). The kernel is a two-pass separable **box** blur
 subtracted from the source (`src/tools/sharpen.ts:90` is the horizontal pass; `:243` is the
-`amount / 100` multiplier). That is the one place this implementation is furthest from the tool it
-claims to be, because the wider-radius unsharp-like falloff is exactly what distinguishes the
-Sharpen from the Blur and exactly what a box kernel is not. The one thing it does better than the
-reference filter is real: the blur runs on premultiplied colour with alpha unsharp-masked on its
-own 0–255 scale, so a transparent hole cannot bleed a ring into the opaque side. Registered as
-`raster` (`src/tools/toolProcessors.ts:225`).
+`amount / 100` multiplier), and `src/tools/sharpen.ts:76` says "THE KERNEL IS A BOX, NOT A
+GAUSSIAN, AND THAT IS THE POINT" in caps. That is where this implementation is furthest from the
+tool it claims to be, **but not for the reason a first reading suggests.** It is tempting to write
+that "a box kernel is the one thing this Sharpen does not have" — which is false and
+self-contradicting, because it has one, deliberately. The gap is the **falloff, not the kernel
+class**: a real unsharp mask subtracts a _Gaussian_-blurred copy, whose response decays smoothly
+away from an edge, whereas a box window responds flatly across its full width and stops dead at its
+boundary. At small radii the two are nearly interchangeable; at a wide one the app hardens a band
+the full width of the window with a step at its edge, where Photoshop tapers. So the wider-radius
+unsharp-like falloff the addendum says distinguishes the Sharpen from the Blur is exactly what the
+app does not reproduce, and the Blur/Sharpen pair differs here in radius and magnitude rather than
+in the shape of the kernel's response. The one thing it does better than the reference filter is
+real: the blur runs on premultiplied colour with alpha unsharp-masked on its own 0–255 scale, so a
+transparent hole cannot bleed a ring into the opaque side. Registered as `raster`
+(`src/tools/toolProcessors.ts:225`).
+
+**The slider previews; it does not commit.** Same route as the Blur: `tempUpdateLayer`
+(`src/components/ToolbarsRight/Sharpen/Sharpen.tsx:92`) then `commitDirtyTool` on tool switch, on
+export or in `mergeAllLayers`. "Sharpened when a slider moves" describes the preview; the history
+entry lands at the commit.
 
 **Sources**
 
@@ -214,20 +239,35 @@ affected**" — which is the rule the app's implementation already happens to fo
 | Sample All Layers   | Pick colour up from the composite; only the active layer is written either way                | off             | `missing`             | —                                                            |
 | _Flow_              | _reported on the shared bar; see `## Unverified`_                                             | _50%, 0–100_    | _omitted — unsourced_ | —                                                            |
 
-**App verdict: the only real tool in the family.** The processor reads every covered pixel from the
-untouched source raster at the texel one dab behind along the drag
-(`src/tools/smudge.ts:149`, called from `smudgeDab` at `:123`) and never from the buffer it is
-writing, so colour travels exactly one segment per dab rather than compounding into a single
-streak; the falloff is the shared engine's `tipAlphaAt`, the same edge every other paint-family
-tool stamps. `Strength` is a real 0–100% per-dab coverage seeded at 50%
+**App verdict: the closest match in the family, and `partial` on this file's own bar.** The
+processor reads every covered pixel from the untouched source raster at the texel one dab behind
+along the drag (`src/tools/smudge.ts:149`, called from `smudgeDab` at `:123`) and never from the
+buffer it is writing, so colour travels exactly one segment per dab rather than compounding into a
+single streak; the falloff is the shared engine's `tipAlphaAt`, the same edge every other
+paint-family tool stamps. `Strength` is a real 0–100% per-dab coverage seeded at 50%
 (`src/tools/settings.ts:233`), which is Photoshop's own default. The transport semantics are right,
 and the app matches Photoshop's layering rule without having been told to. The gesture is a real
 press/move/release on the active layer (`src/components/Main/SmudgeToolArea.tsx:62`), registered
-as `raster` (`src/tools/toolProcessors.ts:231`). Four controls are `missing` for structural reasons
-the component itself states: Mode because a layer's blend mode is a layer property here, Finger
-Painting because `SmudgeToolArgs` has no field for it, Sample All Layers because the processor is
-handed one layer's bitmap, and the preset picker because this editor has one tip shape. `Alt` is
-not bound, and there is no build-up while the button is held.
+as `raster` (`src/tools/toolProcessors.ts:231`).
+
+Four controls are `missing` for structural reasons the component itself states. **Mode** is missing
+because **no control anywhere in the app edits a layer's blend mode** — the earlier wording here
+said "a layer's blend mode is a layer property the Layers panel owns", and that was false: a grep
+for `blendMode` across `src/components/` returns only the paint tool's own `Mode` select
+(`src/components/ToolbarsRight/Paint/Paint.tsx:173`). `Layer.blendMode` is a data field written
+from paint-tool args (`src/tools/brush.ts:85`) and set by the PSD importer
+(`src/contexts/psd-utils.ts:161`), and nothing else can change it. Finger Painting is missing
+because `SmudgeToolArgs` has no field for it, Sample All Layers because the processor is handed one
+layer's bitmap, and the preset picker because this editor has one tip shape. `Alt` is not bound.
+
+**Why `partial` and not `implemented`.** There is no build-up while the button is held. The shared
+stroke hook appends a point to the gesture in `handlePointerMove`
+(`src/hooks/usePaintStroke.ts:202`) and nowhere else, and there is no `setInterval`, `setTimeout` or
+rAF dwell in the hook or in `SmudgeToolArea.tsx`, so holding the brush still deposits nothing. That
+is the _same_ absence this file calls "the tool's defining interaction" on the Dodge (`:265`) and
+the Burn (`:342`), and those two are `partial` for it. Applying one bar to one absence, the Smudge is
+`partial` too. The drag itself is otherwise faithful, which is what makes this `partial` and not
+`placeholder`.
 
 **Sources**
 
@@ -292,12 +332,17 @@ component is explicit that `Protect Tones` is a real omission, not an oversight:
 field, so the checkbox would be a switch that reads as on while doing nothing. `Mode` and
 `Airbrush` are missing for the same structural reason.
 
-The largest gap is not a control. **There is no build-up.** One stroke commits once at full
-Exposure, because a one-shot commit has to be a pure function of its args — which is also what
-makes the registry's `requiresRaster` replay reproduce it exactly. Holding the button still does
-nothing, and the tool's whole reason for existing is what happens while you hold it. Airbrush, which
-exists precisely to make that build-up automatic when you cannot hold still, is missing for the
-same reason.
+The largest gap is not a control. **There is no build-up.** One stroke commits once, at the slider's
+full Exposure value in a single pass, because a one-shot commit has to be a pure function of its
+args — which is also what makes the registry's `requiresRaster` replay reproduce it exactly. The
+phrase matters in one respect: the per-pixel amount a commit emits is a **curve** of the Exposure
+value, not the value itself. `tonalAmount` (`src/tools/dodgeBurn.ts:177`) returns
+`band ** (level * 4) * level * coverage`, so at the default Exposure of 50 the peak of the chosen
+band shifts a pixel by 0.5 and a quarter of the way down the band by a far smaller amount; the
+"full Exposure value" is the slider's setting being honoured end to end, not the whole value being
+written to every pixel. Holding the button still does nothing, and the tool's whole reason for
+existing is what happens while you hold it. Airbrush, which exists precisely to make that build-up
+automatic when you cannot hold still, is missing for the same reason.
 
 **Sources**
 
@@ -332,12 +377,15 @@ you reach the Burn tool from the Dodge.
 | Protect Tones       | Stop darkening raising saturation or clipping     | on              | `missing`  | —                                                          |
 | Airbrush            | Keep building while the brush rests               | off             | `missing`  | —                                                          |
 
-**App verdict: same processor, other endpoint, same gaps.** Burn is `applyDodgeBurn(..., false)`
-against the dodge's `true` (`src/tools/dodgeBurn.ts:394`), so the pixel rule is
-`c' = c - c * amount` where the dodge's is `c' = c + (255 - c) * amount`. Range and Exposure are
-genuinely wired to per-pixel work through the same band function. Registered as `raster`
-(`src/tools/toolProcessors.ts:243`); the gesture is `src/components/Main/BurnToolArea.tsx:56`, a
-deliberate duplicate of the Dodge's own file. The seeded args are `src/tools/settings.ts:242`.
+**App verdict: same processor, other endpoint, same gaps — including the `partial` verdict.** Burn
+is `applyDodgeBurn(..., false)` against the dodge's `true` (`src/tools/dodgeBurn.ts:394`), so the
+pixel rule is `c' = c - c * amount` where the dodge's is `c' = c + (255 - c) * amount`. Range and
+Exposure are genuinely wired to per-pixel work through the same band function. Registered as
+`raster` (`src/tools/toolProcessors.ts:243`); the gesture is
+`src/components/Main/BurnToolArea.tsx:56`, a deliberate duplicate of the Dodge's own file. The
+seeded args are `src/tools/settings.ts:242`. The absent build-up is the same absence and gets the
+same phrasing: one stroke, one commit, at the slider's full Exposure value in a single pass, with
+the emitted per-pixel amount a curve of that value rather than the value itself.
 
 **Sources**
 
@@ -427,7 +475,19 @@ to reset to.
 nothing else. There is no pointer-down handler for a handle anywhere in the component, and no
 second gesture surface. So once a fill is committed its geometry cannot be changed at all without
 painting a second gradient over it. Photoshop's live-preview gradient is not a refinement of that;
-it is the difference between a fill and an editable object. `Shift` and `Cmd` are not bound either.
+it is the difference between a fill and an editable object. `Shift` and `Cmd` are not bound either,
+and neither is any of the four preset keys: `[`, `]`, `,` and `.` are registered on no keyboard
+handler in the app, and the only `Delete` bindings belong to the two lasso tool areas
+(`src/components/Main/FeatherMagneticLassoToolArea.tsx:565` and
+`src/components/Main/PolygonClickToolArea.tsx:945`), so no key removes a gradient stop.
+
+**`G` does not select the Gradient, which the data file used to claim.** A plain `G` runs
+`selectFillTool(false)`, which lands on `'paint-bucket'`
+(`src/components/Common/AppKeyboardShortcuts.tsx:134`); the Gradient is what the second press of the
+cycle reaches, via `Shift+G` (`:322` → `:126-132`). The tile declarations agree: the Paint Bucket
+declares `shortcut: 'G'` (`toolbar-mapping.ts:79`) and the Gradient tile declares none at all
+(`toolbar-mapping.ts:91`). The data file's `shortcuts` row now says exactly that rather than
+"pressing it again cycles to that tool", which described a first press that selects the other tool.
 
 **Sources**
 

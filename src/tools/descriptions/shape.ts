@@ -97,7 +97,7 @@ const gearControl: ToolControl = {
 const shapeWHControl: ToolControl = {
   control: 'Shape W&H',
   detail:
-    'Exact width and height for the next shape. Clicking the canvas without dragging opens a Create <Shape> dialog offering the same Width, Height and Corner Radius fields plus From Center.',
+    'Exact width and height for the next shape. The app does ask for them, but it asks with two sequential `window.prompt` calls — Width, then Height — rather than a dialog, so there is no Corner Radius field and no From Center anywhere in that path, and a dismissed prompt or a value of zero or less commits nothing at all.',
   status: 'partial',
   appRef: 'src/components/Main/ShapeToolArea.tsx:181',
 };
@@ -151,10 +151,40 @@ const spaceRepositionModifier: ToolModifier = {
   action: 'Repositions the shape while the drag is still in progress, without changing its size.',
 };
 
-const shapeToolShortcuts: readonly ToolShortcut[] = [
-  { keys: 'U', action: 'Selects the shapes tool group.' },
-  { keys: 'Shift+U', action: 'Cycles to the next tool in the shapes tool group.' },
-];
+/**
+ * `U` and `Shift+U` are the group's own bindings, and both are narrower than the group.
+ *
+ * Plain `U` has a deliberate quirk worth stating rather than smoothing over: the five
+ * geometric figures all resolve to ONE app tool name and differ only by a `figure` field,
+ * so U from any of them keeps the figure it is already on. The Custom Shape tool is the
+ * exception, because it carries its own tool name, and U from there falls back to the
+ * rectangle. `Shift+U` cycles the four entries the app actually holds against a six-entry
+ * flyout, and an unlisted figure does not skip forward — it indexes to `-1` and comes back
+ * as the first entry, so the Triangle and the Polygon restart the cycle rather than
+ * advancing it.
+ */
+const shapeGroupShortcut: ToolShortcut = {
+  keys: 'U',
+  action:
+    'Selects the shapes tool group. The five geometric figures share one app tool name and differ only by their figure, so U keeps whichever of them is active rather than forcing the rectangle; the Custom Shape tool carries its own tool name, and U from there lands on the rectangle. Nothing happens until an image is open.',
+};
+
+const shapeCycleShortcut: ToolShortcut = {
+  keys: 'Shift+U',
+  action:
+    'Cycles to the next tool in the shapes tool group, through the four the app’s cycle holds: rectangle, ellipse, line and Custom Shape. The Triangle and the Polygon are in the rail’s flyout but not in the cycle, and an unlisted figure does not skip ahead — Shift+U from either of them restarts at the rectangle instead of advancing.',
+};
+
+const shapeToolShortcuts: readonly ToolShortcut[] = [shapeGroupShortcut, shapeCycleShortcut];
+
+/**
+ * The Custom Shape bar is the placeholder panel, so every control whose name is in this
+ * chip list renders as a static `<span>` on a panel with a TODO badge and nothing reads it.
+ * That is `inert` under the contract, not `missing` — the control name is on screen, which
+ * is exactly what makes it dangerous, and `missing` would deny a fact a screenshot shows.
+ * The controls with no chip in the list are `missing` and carry no `appRef` at all.
+ */
+const CUSTOM_SHAPE_CHIPS = 'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:28';
 
 export const shapeDescriptions: Record<
   'shape' | 'rectangle' | 'ellipse' | 'line' | 'triangle' | 'polygon' | 'custom-shape',
@@ -195,7 +225,7 @@ export const shapeDescriptions: Record<
       'The Rectangle tool draws a four-sided figure from two drag corners, and Shift holds it square while Alt/Option draws it from its centre outward. Radius rounds the corners before you draw, and the shape it produces is a Live Shape whose four corner radii can afterwards be set independently — Alt/Option-drag the on-canvas radius control to break one corner out of the link. The separate Rounded Rectangle tool was removed in Photoshop 22.3 because the Radius field on this tool subsumes it. Clicking the canvas with no drag opens a Create Rectangle dialog so an exact width, height and corner radius can be typed instead of dragged.',
     options: [...sharedFigureOptions, radiusControl],
     modifiers: [shiftSquareModifier, altFromCenterModifier, spaceRepositionModifier],
-    shortcuts: [{ keys: 'U', action: 'Selects the shapes tool group.' }],
+    shortcuts: [shapeGroupShortcut],
     implementation: 'partial',
     implementationRefs: [
       'src/tools/toolProcessors.ts:325',
@@ -205,7 +235,7 @@ export const shapeDescriptions: Record<
       'src/tools/settings.ts:265',
     ],
     appNotes:
-      'The drag geometry, Shift, Alt and the corner radius all behave as they do in Photoshop, and the radius is clamped to half the shorter side exactly as a rounded rectangle must be. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Rectangle verbatim: Path mode does not create a path, Pixels mode is byte-identical to Shape mode, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Rectangle adds two divergences of its own, and the first is a default rather than a gap: it seeds a 5 px stroke where Photoshop seeds 1 px, so an untouched rectangle is drawn five times as heavy as Photoshop would draw it. The Radius slider runs 0–250 px with no numeric entry, and only the rectangle gets a radius — the app gates the whole control on this figure. Everything else on the Rectangle bar, from the separate Fill and Stroke swatches down to the path-operation icons, is absent.',
+      'The drag geometry, Shift, Alt and the corner radius all behave as they do in Photoshop, and the radius is clamped to half the shorter side exactly as a rounded rectangle must be. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Rectangle verbatim: Path mode does not create a path, Pixels mode is byte-identical to Shape mode, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Rectangle adds two divergences of its own, and the first is a default rather than a gap: it seeds a 5 px stroke where Photoshop seeds 1 px, so an untouched rectangle is drawn five times as heavy as Photoshop would draw it. The Radius slider runs 0–250 px with no numeric entry, and only the rectangle gets a radius — the app gates the whole control on this figure. Fill and Stroke are on the bar, then, and `partial` in the table above is the honest reading of them: what the app renders is a single wired `Filled` checkbox over its one shared colour, and it is the separate swatches with their None / Solid / Gradient / Pattern menu that are missing, not the controls. The mode group, the stroke width, the stroke type, the opacity and the W/H prompt each diverge from Photoshop’s control in the same way, and the path weight, the pixel-mode blend mode, the anti-alias control, the three path-operation rows and the gear are absent outright. A click with no drag asks for width and then height through two `window.prompt` calls rather than a dialog, so the Create Rectangle dialog’s corner-radius field and its From Center field have no counterpart here.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/modify-shapes.html',
       'https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/',
@@ -222,17 +252,17 @@ export const shapeDescriptions: Record<
       'The Ellipse tool inscribes an ellipse in the drag box; Shift holds it a circle, and Alt/Option draws it from its centre outward. It has no Corner Radius, because an ellipse has no corners, and the field does not appear in the bar. No desktop Adobe page enumerating the Ellipse tool’s bar was found, so that this matches Photoshop is a judgment rather than a documented match. The result is a Live Shape whose width, height and angle stay editable in the Properties panel. Clicking without dragging opens a Create Ellipse dialog for exact dimensions.',
     options: sharedFigureOptions,
     modifiers: [shiftSquareModifier, altFromCenterModifier, spaceRepositionModifier],
-    shortcuts: [{ keys: 'U', action: 'Selects the shapes tool group.' }],
+    shortcuts: [shapeGroupShortcut],
     implementation: 'partial',
     implementationRefs: [
       'src/tools/toolProcessors.ts:326',
       'src/tools/shape.ts:225',
       'src/tools/shape.ts:71',
-      'src/components/ToolbarsRight/Figures/Shape.tsx:17',
+      'src/components/ToolbarsRight/Figures/Shape.tsx:13',
       'src/tools/settings.ts:272',
     ],
     appNotes:
-      'The geometry matches: the ellipse is drawn as a real ctx.ellipse from the half-extents of the drag box, and Shift produces a true circle rather than a square-boxed oval. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Ellipse verbatim: Path mode does not create a path, Pixels mode is byte-identical to Shape mode, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Ellipse then carries the same wrong default as every other figure, a 5 px stroke where Photoshop seeds 1 px, and keeps a cornerRadius: 0 key in its persisted defaults for a control its own bar withholds. Withholding Radius is the app’s rectangle-only gate, and that is a judgment about Photoshop rather than a documented match, since the only evidence for it is a third-party page and no desktop Adobe page enumerating the Ellipse tool’s bar was found. Everything the bar offers beyond the tool mode, thickness, dash and opacity is missing.',
+      'The geometry matches: the ellipse is drawn as a real ctx.ellipse from the half-extents of the drag box, and Shift produces a true circle rather than a square-boxed oval. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Ellipse verbatim: Path mode does not create a path, Pixels mode is byte-identical to Shape mode, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Ellipse then carries the same wrong default as every other figure, a 5 px stroke where Photoshop seeds 1 px, and keeps a cornerRadius: 0 key in its persisted defaults for a control its own bar withholds. Withholding Radius is the app’s rectangle-only gate, and that is a judgment about Photoshop rather than a documented match, since the only evidence for it is a third-party page and no desktop Adobe page enumerating the Ellipse tool’s bar was found. The bar itself is the shared one — the Ellipse gets no control of its own, so the options bar names it and shows the same five controls every figure gets: tool mode, thickness, the dashed toggle and its dash and gap sliders, the Filled checkbox, the opacity slider, and the live preview. That is the same set the rectangle has minus the radius, so the same reading applies to each: fill and stroke are on the bar as a wired Filled checkbox over one shared colour rather than as Photoshop’s two swatches, the mode group, the stroke type, the opacity and the W/H prompt each diverge from Photoshop’s control, and the path weight, the pixel-mode blend mode, the anti-alias control, the three path-operation rows and the gear are absent outright. A click with no drag asks for width and then height through two `window.prompt` calls, not a Create Ellipse dialog, and takes no From Center.',
     sources: [
       'https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/',
       'https://helpx.adobe.com/photoshop/using/draw-and-edit-shapes-web.html',
@@ -262,15 +292,8 @@ export const shapeDescriptions: Record<
         status: 'missing',
       },
     ],
-    modifiers: [
-      {
-        keys: 'Shift',
-        action: 'Constrains the segment to a multiple of 45 degrees, so it lands on a compass bearing.',
-      },
-      altFromCenterModifier,
-      spaceRepositionModifier,
-    ],
-    shortcuts: [{ keys: 'U', action: 'Selects the shapes tool group.' }],
+    modifiers: [altFromCenterModifier, spaceRepositionModifier],
+    shortcuts: [shapeGroupShortcut],
     implementation: 'partial',
     implementationRefs: [
       'src/tools/toolProcessors.ts:329',
@@ -280,7 +303,7 @@ export const shapeDescriptions: Record<
       'src/tools/settings.ts:293',
     ],
     appNotes:
-      'The segment itself is correct, and the app is right not to square a line, but the one modifier that defines this tool is the one it declines to implement: normalizeShapeGeometry explicitly skips the Shift constraint for the line figure, so a Shift-drag keeps its free angle and can never snap to 45 degrees. Arrowheads are absent outright — drawShape strokes a bare moveTo/lineTo pair, with no start or end cap geometry — which is why a line here can never become an arrow. The Cap select the app renders for this figure offers Photoshop’s three cap styles but only the Line figure gets one, where Photoshop offers caps for any stroked path.',
+      'The segment itself is correct, and the app is right not to square a line, but the one modifier that defines this tool is the one it declines to implement: normalizeShapeGeometry explicitly skips the Shift constraint for the line figure, so a Shift-drag keeps its free angle and can never snap to 45 degrees. Shift is therefore absent from the `modifiers` table above rather than listed as one — in this app it changes nothing about a line drag — while Alt, which the app does implement, is listed. Arrowheads are absent outright — drawShape strokes a bare moveTo/lineTo pair, with no start or end cap geometry — which is why a line here can never become an arrow. The Cap select the app renders for this figure offers Photoshop’s three cap styles but only the Line figure gets one, where Photoshop offers caps for any stroked path.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/line-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/draw-an-arrow.html',
@@ -305,7 +328,7 @@ export const shapeDescriptions: Record<
       altFromCenterModifier,
       spaceRepositionModifier,
     ],
-    shortcuts: [{ keys: 'U', action: 'Selects the shapes tool group.' }],
+    shortcuts: [shapeGroupShortcut],
     implementation: 'partial',
     implementationRefs: [
       'src/tools/toolProcessors.ts:327',
@@ -347,17 +370,9 @@ export const shapeDescriptions: Record<
         action: 'Constrains proportions while the shape is drawn; the constraint is off by default in the gear menu.',
       },
       altFromCenterModifier,
-      {
-        keys: 'Control',
-        action: 'Changes the angle of the polygon, rotating it, while drawing.',
-      },
       spaceRepositionModifier,
     ],
-    shortcuts: [
-      { keys: 'U', action: 'Selects the shapes tool group.' },
-      { keys: '[', action: 'Decreases the number of sides by one; hold Shift to step by ten.' },
-      { keys: ']', action: 'Increases the number of sides by one; hold Shift to step by ten.' },
-    ],
+    shortcuts: [shapeGroupShortcut],
     implementation: 'partial',
     implementationRefs: [
       'src/tools/toolProcessors.ts:328',
@@ -367,7 +382,7 @@ export const shapeDescriptions: Record<
       'src/tools/settings.ts:286',
     ],
     appNotes:
-      "The load-bearing premise is right here: the app builds a regular n-gon in the drag box, so the drag-defined model is already correct and the side count is 5 by default, matching Photoshop — though the regularity itself is an inference from Adobe's drag instruction rather than something Adobe states. Everything after that is missing. The side count is a hardcoded three-way ternary — figure === 'triangle' ? 3 : 5 — so there is no Sides field and no way to draw a hexagon; and the star is not this tool's to draw in the current release, so there is nothing here to compare a star Ratio against. The Radius field is withheld from the bar for this figure, matching the app's rectangle-only gate but not Photoshop, which third-party sources say offers it. Shift squares the drag box rather than constraining the polygon's own proportions, and the Control-drag rotation the Polygon tool has over every other figure is not implemented.",
+      "The load-bearing premise is right here: the app builds a regular n-gon in the drag box, so the drag-defined model is already correct and the side count is 5 by default, matching Photoshop — though the regularity itself is an inference from Adobe's drag instruction rather than something Adobe states. Everything after that is missing. The side count is a hardcoded three-way ternary — figure === 'triangle' ? 3 : 5 — so there is no Sides field and no way to draw a hexagon; and the star is not this tool's to draw in the current release, so there is nothing here to compare a star Ratio against. That same hardcoding is why the `[` and `]` rows Photoshop gives this tool are gone from the table above: they change a side count that does not exist at runtime, and no bracket key is bound anywhere in the app, so there was nothing to record but the Photoshop behaviour. The Radius field is withheld from the bar for this figure, matching the app's rectangle-only gate but not Photoshop, which third-party sources say offers it. Shift squares the drag box rather than constraining the polygon's own proportions, and the Control-drag rotation the Polygon tool has over every other figure is not implemented — which is why `Control` is absent from the `modifiers` table above: in this app holding it while drawing a polygon changes nothing.",
     sources: [
       'https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/',
       'https://www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/',
@@ -383,31 +398,39 @@ export const shapeDescriptions: Record<
     purpose:
       'The Custom Shape tool draws any of the vector presets in Photoshop’s shape library — a library that includes the Leaf Trees, Wild Animals, Boats and Flowers groups, with the full set reached through Legacy Shapes and More in the Shapes panel. Those four were the default loaded groups in a 2020 account, and Adobe Community threads from 2019–2021 report that the picker changed and moved them behind Legacy Shapes and More, so what a current install shows on first launch is not established here. Third-party accounts, not Adobe’s own documentation, say this is the only shape tool whose Shift constraint preserves the drawn shape’s own aspect ratio rather than squaring the drag box, so a recognisable graphic comes out undistorted. Its Path Operations menu is where the boolean work happens: New Shape Layer, Combine Shapes, Subtract Front Shape — which Adobe’s 2022 wording calls Subtract From Shape Area — Intersect Shape Areas, Exclude Overlapping Shapes, and Merge Shape Components, which converts the live shape into a plain path and warns you that it can no longer be edited component by component. No single Adobe page enumerates that whole set. Any path — drawn with the Pen tool, made from a shape layer, or produced by converting text to a path — becomes a new preset through Edit ▸ Define Custom Shape, and Preset Manager saves and loads the result as a `.csh` file.',
     options: [
-      modeControl,
+      { ...modeControl, status: 'inert', appRef: CUSTOM_SHAPE_CHIPS },
       {
         control: 'Fill',
         detail:
           'The interior colour of the shape, as a swatch offering None, Solid Color, Gradient or Pattern. Fill and Stroke are independent: a shape can have a fill and no stroke, or the reverse.',
-        status: 'missing',
+        status: 'inert',
+        appRef: CUSTOM_SHAPE_CHIPS,
       },
-      strokeControl,
-      strokeWidthControl,
-      strokeTypeControl,
-      weightControl,
-      opacityControl,
-      pixelBlendModeControl,
-      antiAliasControl,
+      { ...strokeControl, status: 'inert', appRef: CUSTOM_SHAPE_CHIPS },
+      { ...strokeWidthControl, status: 'missing', appRef: undefined },
+      { ...strokeTypeControl, status: 'missing', appRef: undefined },
+      { ...weightControl, status: 'missing', appRef: undefined },
+      { ...opacityControl, status: 'missing', appRef: undefined },
+      { ...pixelBlendModeControl, status: 'missing', appRef: undefined },
+      { ...antiAliasControl, status: 'missing', appRef: undefined },
       {
         control: 'Shape Picker',
         detail:
           'Opens the shape library as a grid of thumbnails, grouped by theme, with a fly-out that reaches Preset Manager, the Reset Shapes command and the Legacy Shapes and More set. Shift while dragging is reported to draw the preset at its own aspect ratio, on third-party authority.',
-        status: 'missing',
+        status: 'inert',
+        appRef: CUSTOM_SHAPE_CHIPS,
       },
-      shapeWHControl,
-      pathOperationsControl,
-      pathArrangementControl,
-      pathAlignmentControl,
-      gearControl,
+      {
+        ...shapeWHControl,
+        detail:
+          'Exact width and height for the next shape. The app puts this name on the chip list, but nothing reads it: this tool has no canvas gesture, so the pair of `window.prompt` calls the other six figures get never runs for it.',
+        status: 'inert',
+        appRef: CUSTOM_SHAPE_CHIPS,
+      },
+      { ...pathOperationsControl, status: 'inert', appRef: CUSTOM_SHAPE_CHIPS },
+      { ...pathArrangementControl, status: 'missing', appRef: undefined },
+      { ...pathAlignmentControl, status: 'missing', appRef: undefined },
+      { ...gearControl, status: 'missing', appRef: undefined },
     ],
     modifiers: [
       {
@@ -418,16 +441,18 @@ export const shapeDescriptions: Record<
       altFromCenterModifier,
       spaceRepositionModifier,
     ],
-    shortcuts: [{ keys: 'U', action: 'Selects the shapes tool group.' }],
+    shortcuts: [shapeGroupShortcut],
     implementation: 'placeholder',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:330',
-      'src/tools/toolsMap.ts:158',
+      'src/tools/toolProcessors.ts:333',
+      'src/tools/toolProcessors.ts:109',
+      'src/tools/toolsMap.ts:161',
+      'src/components/Main/Main.tsx:67',
       'src/tools/settings.ts:300',
       'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:28',
     ],
     appNotes:
-      "Registered, selectable, and a dead button. The processor row declares commit: 'unimplemented' and wires the shared unimplemented rasterizer, the tools map renders PlaceholderTool with a TODO badge, and the only state the settings hold is the tool name — no shape preset, no fill, no geometry. The placeholder panel does list Photoshop’s real control names for this bar, so the six chips a user sees are the genuine Photoshop set rather than placeholders for placeholders: Tool Mode, Fill, Stroke, W/H, Shape Picker, Path Operations. Subtract needs a multi-subpath model with a fill rule, which a single convex outline cannot express, so the boolean operations are not a bar toggle away; they are a data-model decision first.",
+      "Registered, selectable, and a dead button. The processor row declares commit: 'unimplemented' and wires the shared unimplemented rasterizer, the tools map renders PlaceholderTool with a TODO badge, and the only state the settings hold is the tool name — no shape preset, no fill, no geometry. The placeholder panel does list Photoshop’s real control names for this bar, so the six chips a user sees are the genuine Photoshop set rather than placeholders for placeholders: Tool Mode, Fill, Stroke, W/H, Shape Picker, Path Operations. That is why those six rows read `inert` and not `missing` — the names are on screen and nothing is wired behind any of them, which is the exact shape the `inert` status exists for. The three rows that were `partial` above are also `missing` rather than partial, but for the opposite reason: Stroke width, Stroke type and Opacity have no chip in this tool's list at all, and the real shape bar that carries them never renders here, because this tool is absent from the canvas dispatch that gives the other six figures their gesture surface. It is a `display: none` area, so the three modifiers named above — Shift, Alt and Space — are bound to nothing either, and the app’s Shift constraint, which squares the drag box for every figure except the line, has no drag to apply to. Subtract needs a multi-subpath model with a fill rule, which a single convex outline cannot express, so the boolean operations are not a bar toggle away; they are a data-model decision first.",
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-custom-shapes.html',
       'https://www.photoshopessentials.com/basics/how-to-draw-custom-shapes-in-photoshop/',
