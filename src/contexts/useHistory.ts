@@ -1,13 +1,12 @@
 import { useStore } from './StoreContext.tsx';
 import type { LayersRecord } from './layer-types.ts';
-import type { HistoryItem, NewHistoryItem } from './history-types.ts';
+import type { HistoryItem } from './history-types.ts';
 import type { ToolArgs } from './tool-types.ts';
-import { toolProcessors } from '../tools/toolProcessors.ts';
+import { findToolProcessor } from '../tools/toolProcessors.ts';
 import { createLayerSource, getSortedLayersArray } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
 import { replayHistory } from './history-replay.ts';
 import { SET_DOCUMENT_FRAME_ACTION, TOOL_ACTION } from '../util/constants.ts';
-import { createHistoryItem } from './history-utils.ts';
 import { updateHistoryTimeline } from './history-timeline.ts';
 import { documentFrameFromSize, type DocumentFrame } from './document-frame.ts';
 import type { MigrationDiagnostic } from './history-adapter.ts';
@@ -43,14 +42,6 @@ export const useHistory = () => {
     },
     dispatch,
   ] = useStore();
-
-  const setHistoryIndex = (index: number) => {
-    resetHistoryTo(index);
-  };
-
-  const addHistoryEntry = (inputItem: NewHistoryItem) => {
-    dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { historyItem: createHistoryItem(inputItem) } });
-  };
 
   function canUndo() {
     return historyIndex > 0;
@@ -98,7 +89,11 @@ export const useHistory = () => {
           applyRasterTool: (layer, args) => {
             const bitmap = layer.tmpCanvas ?? layer.bitmap;
             if (!bitmap) return layer;
-            const [canvas, patch] = toolProcessors[args.toolName].imageProcessor({ bitmap, size: layer.pos })(args);
+            // A tool with no processor (see `PIXEL_FREE_TOOLS`) rasterizes nothing, so the layer is
+            // left exactly as it was rather than replaced with an empty canvas.
+            const processor = findToolProcessor(args.toolName);
+            if (!processor) return layer;
+            const [canvas, patch] = processor.imageProcessor({ bitmap, size: layer.pos })(args);
             return {
               ...layer,
               pos: patch ? { ...layer.pos, ...patch } : layer.pos,
@@ -163,13 +158,11 @@ export const useHistory = () => {
   }
 
   return {
-    addHistoryEntry,
     canUndo,
     undo,
     canRedo,
     redo,
     resetHistoryTo,
-    setHistoryIndex,
     toggleDisabled,
   };
 };

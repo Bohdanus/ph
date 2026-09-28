@@ -1,19 +1,27 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { AssetRegistry } from '../asset-registry.ts';
+import { replayDurableDocument } from '../durable-replay.ts';
 import {
   UnsupportedHistoryFeatureError,
   appendDurableEntry,
   convertLegacyHistory,
   convertLegacyHistorySafely,
   createDurableDocument,
+  deriveSetLayerPropertiesEntry,
+  isSetLayerPropertiesAction,
   legacyHistoryToDurable,
   setDurableCursor,
   toggleDurableEntry,
 } from '../history-adapter.ts';
-import { DURABLE_SCHEMA_VERSION, collectDurableAssetIds, type DurableDocument } from '../history-model.ts';
+import {
+  DURABLE_SCHEMA_VERSION,
+  collectDurableAssetIds,
+  type DurableDocument,
+  type DurableLayerPropertyPatch,
+} from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
-import type { Layer, LayerSource } from '../layer-types.ts';
+import type { Layer, LayerId, LayerSource } from '../layer-types.ts';
 import {
   HIDE_LAYER_ACTION,
   MERGE_ACTION,
@@ -770,6 +778,92 @@ describe('conversion entry points', () => {
   });
 });
 
+describe('deriveSetLayerPropertiesEntry', () => {
+  it.each([
+    { label: 'show', actionName: SHOW_LAYER_ACTION },
+    { label: 'hide', actionName: HIDE_LAYER_ACTION },
+    { label: 'rename', actionName: RENAME_LAYER_ACTION },
+  ] satisfies ReadonlyArray<{ label: string; actionName: ActionType }>)('accepts $label', ({ actionName }) => {
+    expect(isSetLayerPropertiesAction(actionName)).toBe(true);
+  });
+
+  it.each([
+    { label: 'a tool action', actionName: TOOL_ACTION },
+    { label: 'a new layer', actionName: NEW_LAYER_ACTION },
+    { label: 'a removal', actionName: REMOVE_ACTION },
+    { label: 'a merge', actionName: MERGE_ACTION },
+    { label: 'a reorder', actionName: REORDER_ACTION },
+    { label: 'a selection change', actionName: SELECTION_ACTION },
+    { label: 'a document frame change', actionName: SET_DOCUMENT_FRAME_ACTION },
+    { label: 'a document open', actionName: OPEN_DOCUMENT_ACTION },
+  ] satisfies ReadonlyArray<{ label: string; actionName: ActionType }>)('refuses $label', ({ actionName }) => {
+    // The whitelist is what stops a writer from turning an arbitrary action into
+    // a durable patch, so it is closed in both directions.
+    expect(isSetLayerPropertiesAction(actionName)).toBe(false);
+    expect(
+      deriveSetLayerPropertiesEntry({ id: 'x', actionName, layerId: 'layer-1', args: { name: 'Renamed' } })
+    ).toBeNull();
+  });
+
+  it.each([
+    { label: 'show', actionName: SHOW_LAYER_ACTION, patch: { visible: true } },
+    { label: 'hide', actionName: HIDE_LAYER_ACTION, patch: { visible: false } },
+    { label: 'a rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' }, patch: { name: 'Renamed' } },
+    { label: 'a rename to an empty name', actionName: RENAME_LAYER_ACTION, args: { name: '' }, patch: { name: '' } },
+  ] satisfies ReadonlyArray<{
+    label: string;
+    actionName: ActionType;
+    args?: object;
+    patch: DurableLayerPropertyPatch;
+  }>)('derives $label as the one property the action owns', ({ actionName, args, patch }) => {
+    const derived = deriveSetLayerPropertiesEntry({
+      id: 'prop-1',
+      actionName,
+      layerId: 'layer-1',
+      ...(args ? { args } : {}),
+    });
+
+    expect(derived).toEqual({
+      id: 'prop-1',
+      schemaVersion: DURABLE_SCHEMA_VERSION,
+      enabled: true,
+      operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch },
+    });
+    const operation = derived?.operation;
+    const derivedPatch = operation?.kind === 'set-layer-properties' ? operation.patch : null;
+    expect(Object.isFrozen(operation)).toBe(true);
+    expect(Object.isFrozen(derivedPatch)).toBe(true);
+  });
+
+  it('derives nothing from a rename that carries no string name', () => {
+    const derive = (args?: object) =>
+      deriveSetLayerPropertiesEntry({
+        id: 'rename',
+        actionName: RENAME_LAYER_ACTION,
+        layerId: 'layer-1',
+        ...(args ? { args } : {}),
+      });
+
+    expect(derive({ name: null })).toBeNull();
+    expect(derive({ name: ['Renamed'] })).toBeNull();
+    expect(derive({ name: { text: 'Renamed' } })).toBeNull();
+    expect(derive({ opacity: 1 })).toBeNull();
+    expect(derive()).toBeNull();
+  });
+
+  it('carries the disabled state of the legacy item onto the derived entry', () => {
+    const derived = deriveSetLayerPropertiesEntry({
+      id: 'hide-disabled',
+      actionName: HIDE_LAYER_ACTION,
+      layerId: 'layer-1',
+      disabled: true,
+    });
+
+    expect(derived).toMatchObject({ id: 'hide-disabled', enabled: false });
+    expect(derived?.operation).toEqual({ kind: 'set-layer-properties', layerId: 'layer-1', patch: { visible: false } });
+  });
+});
+
 describe('legacyHistoryToDurable layer bookkeeping actions', () => {
   it.each([
     { label: 'show', actionName: SHOW_LAYER_ACTION, expectedVisible: true },
@@ -809,6 +903,106 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
     registry.shutdown();
   });
 
+  it('records a disabled rename without applying it to the running layer set', () => {
+    const registry = new AssetRegistry();
+
+    const converted = convert(
+      [
+        {
+          id: 'rename',
+          actionName: RENAME_LAYER_ACTION,
+          layerId: 'layer-1',
+          args: { name: 'Renamed' },
+          disabled: true,
+        },
+      ],
+      registry
+    );
+
+    // The entry is still recorded, so an undo that re-enables it replays the name
+    // the legacy timeline describes. `enabled` is the only gate on it, and the
+    // running layer set is left alone.
+    expect(converted.diagnostics).toEqual([]);
+    expect(converted.document.history[0]).toMatchObject({
+      enabled: false,
+      operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Renamed' } },
+    });
+    expect(converted.document.baseline.layers[0].name).toBe('layer-1');
+    registry.shutdown();
+  });
+
+  it('records exactly one property per entry and leaves the pre-history baseline alone', () => {
+    const registry = new AssetRegistry();
+
+    const converted = convert(
+      [
+        { id: 'hide', actionName: HIDE_LAYER_ACTION, layerId: 'layer-1' },
+        { id: 'rename', actionName: RENAME_LAYER_ACTION, layerId: 'layer-1', args: { name: 'Renamed' } },
+      ],
+      registry
+    );
+
+    expect(converted.diagnostics).toEqual([]);
+    // One property per entry: a hide that also renamed, or a rename that also
+    // hid, would move a property the legacy item never described.
+    expect(converted.document.history.map((entry) => entry.operation)).toEqual([
+      { kind: 'set-layer-properties', layerId: 'layer-1', patch: { visible: false } },
+      { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Renamed' } },
+    ]);
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1, 0, 1]);
+    // The baseline is the state those entries replay from, so it holds the
+    // pre-history layer rather than the renamed and hidden one.
+    expect(converted.document.baseline.layers[0]).toMatchObject({
+      name: 'layer-1',
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      pos: { x: 0, y: 0, width: 100, height: 80 },
+    });
+    registry.shutdown();
+  });
+
+  it('keeps recording a property action for a layer an earlier entry removed', () => {
+    const registry = new AssetRegistry();
+
+    const converted = convert(
+      [
+        { id: 'remove', actionName: REMOVE_ACTION, layerId: 'layer-1' },
+        { id: 'hide', actionName: HIDE_LAYER_ACTION, layerId: 'layer-1' },
+        { id: 'rename', actionName: RENAME_LAYER_ACTION, layerId: 'layer-1', args: { name: 'Renamed' } },
+      ],
+      registry
+    );
+
+    // A property action resolves no layer, so it must not turn a rename of a
+    // removed layer into the `Layer is unavailable` failure that voids the whole
+    // conversion: the legacy timeline replays all three.
+    expect(converted.diagnostics).toEqual([]);
+    expect(converted.document.history.map((entry) => entry.operation)).toEqual([
+      { kind: 'remove-layer', layerId: 'layer-1' },
+      { kind: 'set-layer-properties', layerId: 'layer-1', patch: { visible: false } },
+      { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Renamed' } },
+    ]);
+    registry.shutdown();
+  });
+
+  it('resolves the layer for a tool action that follows a property action', () => {
+    const registry = new AssetRegistry();
+
+    const converted = convert(
+      [
+        { id: 'hide', actionName: HIDE_LAYER_ACTION, layerId: 'layer-1' },
+        { id: 'blur', actionName: TOOL_ACTION, layerId: 'layer-1', args: { toolName: 'blur', radius: 2 } },
+      ],
+      registry
+    );
+
+    expect(converted.diagnostics).toEqual([]);
+    expect(converted.document.history[1]?.operation).toMatchObject({ kind: 'apply-filter' });
+    registry.shutdown();
+  });
+
   it('reorders a layer after an explicit anchor', () => {
     const registry = new AssetRegistry();
     const source = blankSource;
@@ -833,6 +1027,111 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
       'layer-c': 1,
       'layer-1': 2,
     });
+    registry.shutdown();
+  });
+
+  it('records no operation for a reorder whose named anchor is absent, as legacy replay skips it', () => {
+    const registry = new AssetRegistry();
+    const source = blankSource;
+
+    const converted = convert(
+      [
+        { id: 'new-b', actionName: NEW_LAYER_ACTION, layerId: 'layer-b', layerSource: source },
+        { id: 'new-c', actionName: NEW_LAYER_ACTION, layerId: 'layer-c', layerSource: source },
+        {
+          id: 'reorder-ghost-anchor',
+          actionName: REORDER_ACTION,
+          layerId: 'document',
+          args: { layerToMoveId: 'layer-c', afterWhichLayerId: 'ghost' },
+        },
+      ],
+      registry
+    );
+
+    expect(converted.diagnostics).toEqual([]);
+    // `replayHistory` `continue`s on a named-but-absent anchor
+    // (`history-replay.ts:127`), so the shadow records no entry at all. The
+    // tolerated alternative would be a fabricated move to index 0, which the
+    // document never performs.
+    expect(converted.document.history.map((entry) => entry.id)).toEqual(['new-b', 'new-c']);
+    expect(converted.document.history.map((entry) => entry.operation.kind)).toEqual(['create-layer', 'create-layer']);
+    // Before the fix this recorded a move of layer-c to index 0. The converted
+    // order must still be the one replay leaves in place.
+    const replayed = replayDurableDocument(converted.document);
+    const ordered = Object.values(replayed.layers)
+      .sort((left, right) => left.snapshot.order - right.snapshot.order)
+      .map((layer) => layer.snapshot.id);
+    expect(ordered).toEqual(['layer-1', 'layer-b', 'layer-c']);
+    registry.shutdown();
+  });
+
+  it('maps a reorder skipped for an absent anchor to the preceding durable cursor', () => {
+    const registry = new AssetRegistry();
+    const source = blankSource;
+
+    const converted = convert(
+      [
+        { id: 'new-b', actionName: NEW_LAYER_ACTION, layerId: 'layer-b', layerSource: source },
+        {
+          id: 'reorder-ghost-anchor',
+          actionName: REORDER_ACTION,
+          layerId: 'document',
+          args: { layerToMoveId: 'layer-1', afterWhichLayerId: 'ghost' },
+        },
+        {
+          id: 'reorder-real-anchor',
+          actionName: REORDER_ACTION,
+          layerId: 'document',
+          args: { layerToMoveId: 'layer-1', afterWhichLayerId: 'layer-b' },
+        },
+      ],
+      registry
+    );
+
+    expect(converted.document.history.map((entry) => entry.id)).toEqual(['new-b', 'reorder-real-anchor']);
+    // Legacy cursors: [baseline(0), new-b(1), skipped reorder(2), reorder(3)].
+    // The baseline seeds the document, so it maps to -1. `new-b` and the
+    // surviving reorder own durable entries 0 and 1. The skipped reorder owns
+    // none, so it maps to the durable entry that precedes it — 0, the same rule
+    // a dropped rename uses — and never to the tip (1) it does not own.
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1, 0, 0, 1]);
+    registry.shutdown();
+  });
+
+  it.each([
+    {
+      label: 'moves a layer to the bottom when no anchor is named',
+      afterWhichLayerId: null,
+      expectedOrder: { 'layer-1': 0, 'layer-b': 1 },
+    },
+    {
+      label: 'places a layer directly after a present anchor',
+      afterWhichLayerId: 'layer-b',
+      expectedOrder: { 'layer-b': 0, 'layer-1': 1 },
+    },
+  ] satisfies ReadonlyArray<{
+    label: string;
+    afterWhichLayerId: LayerId | null;
+    expectedOrder: Record<LayerId, number>;
+  }>)('$label', ({ afterWhichLayerId, expectedOrder }) => {
+    const registry = new AssetRegistry();
+    const source = blankSource;
+
+    const converted = convert(
+      [
+        { id: 'new-b', actionName: NEW_LAYER_ACTION, layerId: 'layer-b', layerSource: source },
+        {
+          id: 'reorder',
+          actionName: REORDER_ACTION,
+          layerId: 'document',
+          args: { layerToMoveId: 'layer-1', afterWhichLayerId },
+        },
+      ],
+      registry
+    );
+
+    const operation = converted.document.history[1]?.operation;
+    expect(operation?.kind === 'reorder-layers' && operation.orderByLayerId).toEqual(expectedOrder);
     registry.shutdown();
   });
 

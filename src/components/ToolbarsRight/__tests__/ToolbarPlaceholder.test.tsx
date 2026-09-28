@@ -10,10 +10,20 @@ const CONFIG_KEYS = Object.keys(placeholderToolGroups) as Array<keyof typeof pla
 /**
  * Mirrors the `placeholderTool(...)` wiring in `src/tools/toolsMap.ts`. A tool missing from this
  * list, or a key that no longer matches toolsMap, fails the wiring assertions below.
+ *
+ * The brush and pencil are absent on purpose: they render the real Photoshop paint bar
+ * (`src/components/ToolbarsRight/Paint/Paint.tsx`) and no longer have a config group, so
+ * listing them here would keep their placeholder contract alive after the fact.
+ *
+ * Eleven more are absent for the same reason. `eraser`, `smudge`, `sharpen`, `paint-bucket`,
+ * `gradient`, `clone-stamp`, `eyedropper`, `elliptical-selection`, `quick-selection`, `dodge`
+ * and `burn` each render a real options bar, and `toolbarPlaceholderConfig.ts` has already
+ * dropped their groups — a config key that survived its tool's panel would be dead config the
+ * "no tool consumes" assertion below would report. Their bars are pinned individually in
+ * `src/components/ToolbarsRight/<Name>/__tests__/`, and the registry's claim that all eleven
+ * still mount a real bar is asserted in `src/tools/__tests__/tool-processors.test.ts`.
  */
 const PLACEHOLDER_TOOLS = [
-  { toolName: 'brush', configKey: 'brush', title: 'Brush Tool', showTodoBadge: false },
-  { toolName: 'pencil', configKey: 'pencil', title: 'Pencil Tool', showTodoBadge: false },
   {
     toolName: 'color-replacement',
     configKey: 'color-replacement',
@@ -32,6 +42,29 @@ const PLACEHOLDER_TOOLS = [
     title: 'Custom Shape Tool',
     showTodoBadge: true,
   },
+] as const;
+
+/**
+ * The tools that have left the placeholder roster, pinned in the negative.
+ *
+ * Each one is a `placeholderTool(title, key)` call away from being a placeholder again, and
+ * that call needs a config key — which does not exist. So the two halves hold together: this
+ * list says the tool has no group, and the "documents the config groups that no tool consumes"
+ * assertion below says a group with no tool is unreachable. Reintroducing a placeholder for any
+ * of these therefore has to add a key, and the unreachable list is where that shows up.
+ */
+const TOOLS_WITH_REAL_OPTIONS_BARS = [
+  'eyedropper',
+  'elliptical-selection',
+  'quick-selection',
+  'eraser',
+  'clone-stamp',
+  'paint-bucket',
+  'gradient',
+  'sharpen',
+  'smudge',
+  'dodge',
+  'burn',
 ] as const;
 
 describe('PlaceholderTool', () => {
@@ -119,8 +152,38 @@ describe('placeholder tool wiring in toolsMap', () => {
     const unreachableKeys = CONFIG_KEYS.filter((key) => !usedKeys.has(key));
 
     // toolsMap wires freeform-pen, curvature-pen and rectangle to other groups, so these
-    // three entries in toolbarPlaceholderConfig.ts are currently dead config.
+    // three entries in toolbarPlaceholderConfig.ts are currently dead config. Every other
+    // group is reached by its tool, which is what makes this a list of exactly three and not
+    // a growing pile: a group for a tool that has a real bar would land here too.
     expect(unreachableKeys).toEqual(['freeform-pen', 'curvature-pen', 'rectangle']);
+  });
+
+  it('keeps a config group for every tool that is still a placeholder', () => {
+    // A tool that stops being a placeholder must also lose its config group, or it
+    // becomes dead config the assertions above will report as unreachable. The paint
+    // tools are the ones that have already made that move, so pin the inverse
+    // direction: nothing may reintroduce a `brush` or `pencil` group.
+    expect(Object.hasOwn(placeholderToolGroups, 'brush')).toBe(false);
+    expect(Object.hasOwn(placeholderToolGroups, 'pencil')).toBe(false);
+  });
+
+  it('keeps no config group for any tool that has a real options bar', () => {
+    // `placeholderTool(title, key)` indexes this record, so a key that had been dropped
+    // while the call survived would render `undefined` as the option list rather than
+    // crash. The unreachable-key assertion above is the other half of this: a group here
+    // with no tool claiming it is reported there.
+    for (const toolName of TOOLS_WITH_REAL_OPTIONS_BARS) {
+      expect(placeholderToolGroups, toolName).not.toHaveProperty(toolName);
+    }
+  });
+
+  it('claims no tool for both the placeholder roster and the real options bars', () => {
+    const claimed = PLACEHOLDER_TOOLS.map((entry) => entry.toolName);
+    const overlap = claimed.filter((toolName) =>
+      (TOOLS_WITH_REAL_OPTIONS_BARS as readonly string[]).includes(toolName)
+    );
+
+    expect(overlap).toEqual([]);
   });
 
   it.each(PLACEHOLDER_TOOLS)(

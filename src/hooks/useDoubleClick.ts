@@ -22,7 +22,7 @@ export const useDoubleClick = (onDoubleClick: () => void, options: UseDoubleClic
   } = options;
 
   const isDoubleClick = (coords: Point, pointsRef: RefObject<Point[]>): boolean => {
-    if (pointsRef.current?.length <= minPointsForDetection || !lastClickPosRef.current) {
+    if (!pointsRef.current || pointsRef.current.length <= minPointsForDetection || !lastClickPosRef.current) {
       return false;
     }
 

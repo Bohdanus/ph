@@ -108,7 +108,7 @@ vi.mock('../../../tools/text.ts', async () => {
 });
 
 const renderArea = (overlayCtxRef: { current: CanvasRenderingContext2D | null } = { current: null }) =>
-  render(<TextToolArea canvasCtxRef={{ current: null }} overlayCtxRef={overlayCtxRef} />);
+  render(<TextToolArea overlayCtxRef={overlayCtxRef} />);
 
 describe('TextToolArea', () => {
   beforeEach(() => {
@@ -140,7 +140,7 @@ describe('TextToolArea', () => {
 
     act(() => {
       toolArgs = makeTextArgs({ toolName: 'text' });
-      rerender(<TextToolArea canvasCtxRef={{ current: null }} overlayCtxRef={{ current: null }} />);
+      rerender(<TextToolArea overlayCtxRef={{ current: null }} />);
     });
 
     expect(focus).toHaveBeenCalledTimes(1);
@@ -153,9 +153,7 @@ describe('TextToolArea', () => {
   });
 
   it('renders a div carrying the supplied className and the text cursor', () => {
-    const { container } = render(
-      <TextToolArea className="my-text" canvasCtxRef={{ current: null }} overlayCtxRef={{ current: null }} />
-    );
+    const { container } = render(<TextToolArea className="my-text" overlayCtxRef={{ current: null }} />);
     const el = container.firstElementChild as HTMLElement;
 
     expect(el).toBeInTheDocument();
@@ -248,7 +246,7 @@ describe('TextToolArea', () => {
 
       toolArgs = makeTextArgs({ text: 'hi' });
       act(() => {
-        rerender(<TextToolArea canvasCtxRef={{ current: null }} overlayCtxRef={{ current: null }} />);
+        rerender(<TextToolArea overlayCtxRef={{ current: null }} />);
       });
 
       expect(h.redraw).toHaveBeenCalledTimes(1);

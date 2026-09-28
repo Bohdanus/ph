@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useApp } from '../useApp.ts';
 import type { PsdDocument } from '../../contexts/psd-utils.ts';
 import type { ToolArgs } from '../../contexts/tool-types.ts';
+import type { ImageLayerSource } from '../../contexts/layer-types.ts';
 import type { StoreData } from '../../contexts/StoreContext.tsx';
 import { OPEN_DOCUMENT_ACTION } from '../../util/constants.ts';
 
@@ -12,7 +13,6 @@ function createMockStoreData(): StoreData {
     rectOverlayRef: { current: null },
     containerRef: { current: null },
     textareaRef: { current: null },
-    canvasCtxRef: { current: null },
     currentArgs: {
       current: { toolName: 'draw', alpha: 0.9, lineWidth: 10, color: '#000000', points: [], penType: 'pen' },
     } as { current: ToolArgs },
@@ -24,7 +24,6 @@ function createMockStoreData(): StoreData {
     totalSize: { width: 100, height: 100 },
     documentFrame: { x: 0, y: 0, width: 100, height: 100 },
     toolName: 'draw',
-    isToolDirty: false,
     layers: {},
     deletedLayers: {},
     history: [],
@@ -49,24 +48,40 @@ vi.mock('../../contexts/StoreContext.tsx', () => ({ useStore: mocks.useStore }))
 vi.mock('../../contexts/useLayer.ts', () => ({ useLayers: () => mocks }));
 
 function setup(warnings: string[] = []) {
-  const layer = {
-    id: 'top',
-    name: 'Imported top',
-    isBedrock: false,
-    tmpCanvas: null,
-    bitmap: { width: 20, height: 30, close: vi.fn() } as ImageBitmap,
-    visible: false,
-    opacity: 0.4,
-    locked: true,
-    blendMode: 'multiply' as const,
-    order: 9,
-    pos: { x: -3, y: 7, width: 20, height: 30 },
-    operations: [],
+  // An image `source` is what makes the import a raster import: it is the field
+  // the re-encoding step and the bitmap adoption both read. `source.bitmap` and
+  // `bitmap` are the SAME object, because a published layer aliases its raster
+  // through both. Each imported layer owns a distinct raster, as two rasters in
+  // one PSD are two rasters.
+  const makeLayer = (id: string, order: number) => {
+    const raster = { width: 20, height: 30, close: vi.fn() } as ImageBitmap;
+    return {
+      id,
+      name: `Imported ${id}`,
+      isBedrock: false,
+      tmpCanvas: null,
+      bitmap: raster,
+      source: {
+        kind: 'image',
+        bitmap: raster,
+        name: `Imported ${id}`,
+        isBedrock: true,
+        size: { width: 20, height: 30 },
+      } as ImageLayerSource,
+      visible: false,
+      opacity: 0.4,
+      locked: true,
+      blendMode: 'multiply' as const,
+      order,
+      pos: { x: -3, y: 7, width: 20, height: 30 },
+      operations: [],
+    };
   };
+  const layer = makeLayer('top', 9);
   const document: PsdDocument = {
     size: { width: 320, height: 180 },
     warnings,
-    layers: { top: layer, bottom: { ...layer, id: 'bottom', order: 2, pos: { ...layer.pos } } },
+    layers: { top: layer, bottom: makeLayer('bottom', 2) },
   };
   const state = {
     ...createMockStoreData(),
@@ -98,7 +113,11 @@ describe('useApp PSD replacement', () => {
     await useApp().setImageFromUpload({ fileName: 'design.psd', document });
 
     expect(confirm).not.toHaveBeenCalled();
-    expect(dispatch).toHaveBeenCalledTimes(1);
+    // The replacement, then the adoption of the rasters it published. The order is
+    // load-bearing: the presentation scope is keyed by the owning document, so an
+    // adoption published first would be filed under the outgoing document id and
+    // closed by its release.
+    expect(dispatch.mock.calls.map(([action]) => action.type)).toEqual(['REPLACE_DOCUMENT', 'ADOPT_LAYER_BITMAPS']);
     const action = dispatch.mock.calls[0][0];
     expect(action).toEqual({
       type: 'REPLACE_DOCUMENT',
@@ -121,7 +140,6 @@ describe('useApp PSD replacement', () => {
           deletedLayers: {},
           hasImage: true,
           hasUnsavedChanges: false,
-          isToolDirty: false,
           toolName: 'reposition',
           selections: [],
           activeSelectionId: null,
@@ -151,6 +169,13 @@ describe('useApp PSD replacement', () => {
     expect(mocks.createBlankLayer).not.toHaveBeenCalled();
     expect(mocks.createLayerFromBitmap).not.toHaveBeenCalled();
     expect(mocks.commitDirtyTool).not.toHaveBeenCalled();
+    // The adopted rasters are the imported layers' own, by identity: the
+    // re-encoding above reuses an already immutable bitmap rather than copying it.
+    const sourceBitmap = (id: 'top' | 'bottom') => (document.layers[id].source as ImageLayerSource).bitmap;
+    expect(dispatch.mock.calls[1][0]).toEqual({
+      type: 'ADOPT_LAYER_BITMAPS',
+      payload: { bitmaps: [sourceBitmap('top'), sourceBitmap('bottom')] },
+    });
   });
 
   it('leaves the old document, dirty tool, and canvases untouched when warnings are declined', () => {
@@ -172,7 +197,7 @@ describe('useApp PSD replacement', () => {
     const { document, dispatch } = setup(['Text is rasterized']);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     await useApp().setImageFromUpload({ fileName: 'design.psd', document });
-    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls[0][0].type).toBe('REPLACE_DOCUMENT');
     expect(dispatch.mock.calls[0][0].payload.updates.layers).toEqual(document.layers);
   });
 

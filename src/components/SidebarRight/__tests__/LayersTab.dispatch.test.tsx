@@ -1,22 +1,22 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import LayersTab from '../LayersTab.tsx';
-import {
-  HIDE_LAYER_ACTION,
-  REMOVE_ACTION,
-  RENAME_LAYER_ACTION,
-  REORDER_ACTION,
-  SHOW_LAYER_ACTION,
-} from '@/util/constants.ts';
+import { HIDE_LAYER_ACTION, REMOVE_ACTION, RENAME_LAYER_ACTION, SHOW_LAYER_ACTION } from '@/util/constants.ts';
 import { createMockStoreState, type MockStoreState } from '@/__tests__/fixtures/store.ts';
 import { createMockLayer, createMockLayers } from '@/__tests__/fixtures/layer.ts';
 import { createMockCanvas } from '@/__tests__/fixtures/canvas.ts';
+import { DURABLE_SCHEMA_VERSION } from '@/contexts/history-model.ts';
 
 /**
  * `LayersTab` owns no dispatch of its own: every mutation it performs is delegated to
  * `useLayers()`. These tests therefore keep the **real** `useLayer` hook and replace only
  * the store boundary, so each assertion names the exact action object that reaches the
- * reducer — action type, `updates` patch, and the appended history entry.
+ * reducer — action type, `updates` patch, the appended history entry, and the durable
+ * entry `useLayer.updateLayer` plans alongside it for every layer-property action.
+ *
+ * The durable entry is the canonical `set-layer-properties` operation derived from the
+ * action name, not the raw `Partial<Layer>` patch, so it is asserted in full here: an
+ * inexact matcher would let a drifting `layerId`, `enabled` flag, or schema version pass.
  *
  * `createHistoryItem` mints a random uuid, so `uuid` is stubbed to keep the history
  * entries byte-for-byte comparable.
@@ -142,6 +142,16 @@ describe('LayersTab actions reaching the store', () => {
           actionName: HIDE_LAYER_ACTION,
           args: { visible: false },
         },
+        durableEntry: {
+          id: 'history-id',
+          schemaVersion: DURABLE_SCHEMA_VERSION,
+          enabled: true,
+          operation: {
+            kind: 'set-layer-properties',
+            layerId: 'layer-3',
+            patch: { visible: false },
+          },
+        },
       },
     });
   });
@@ -172,6 +182,16 @@ describe('LayersTab actions reaching the store', () => {
           layerId: 'only-layer',
           actionName: SHOW_LAYER_ACTION,
           args: { visible: true },
+        },
+        durableEntry: {
+          id: 'history-id',
+          schemaVersion: DURABLE_SCHEMA_VERSION,
+          enabled: true,
+          operation: {
+            kind: 'set-layer-properties',
+            layerId: 'only-layer',
+            patch: { visible: true },
+          },
         },
       },
     });
@@ -205,6 +225,16 @@ describe('LayersTab actions reaching the store', () => {
           layerId: 'layer-3',
           actionName: RENAME_LAYER_ACTION,
           args: { name: 'Sky' },
+        },
+        durableEntry: {
+          id: 'history-id',
+          schemaVersion: DURABLE_SCHEMA_VERSION,
+          enabled: true,
+          operation: {
+            kind: 'set-layer-properties',
+            layerId: 'layer-3',
+            patch: { name: 'Sky' },
+          },
         },
       },
     });
@@ -289,7 +319,7 @@ describe('LayersTab actions reaching the store', () => {
     expect(updates.activeLayerId).toBeNull();
   });
 
-  it('dispatches REORDER_ACTION naming both layer ids when a row is dropped on another row', () => {
+  it('dispatches reorder intent naming both layer ids when a row is dropped on another row', () => {
     vi.useFakeTimers();
     render(<LayersTab />);
     const dataTransfer = createDataTransfer();
@@ -307,17 +337,16 @@ describe('LayersTab actions reaching the store', () => {
       vi.advanceTimersByTime(400);
     });
 
-    const action = onlyDispatched();
-    expect(action.type).toBe('COMMIT_DOCUMENT_EDIT');
-    expect(action.payload.historyItem).toEqual({
-      id: 'history-id',
-      layerId: 'layer-3',
-      actionName: REORDER_ACTION,
-      args: { layerToMoveId: 'layer-3', afterWhichLayerId: 'layer-1' },
+    // Intent only: the store owns the layer record and mints the history item,
+    // so a component that dispatches after its 200 ms deferral cannot ship a
+    // stale snapshot of the layers it rendered.
+    expect(onlyDispatched()).toEqual({
+      type: 'REORDER_LAYERS',
+      payload: { layerToMoveId: 'layer-3', afterWhichLayerId: 'layer-1' },
     });
   });
 
-  it('dispatches REORDER_ACTION without a placement id for a drop on the bottom zone', () => {
+  it('dispatches reorder intent without a placement id for a drop on the bottom zone', () => {
     vi.useFakeTimers();
     render(<LayersTab />);
     const dataTransfer = createDataTransfer();
@@ -332,12 +361,9 @@ describe('LayersTab actions reaching the store', () => {
       vi.advanceTimersByTime(400);
     });
 
-    const action = onlyDispatched();
-    expect(action.payload.historyItem).toEqual({
-      id: 'history-id',
-      layerId: 'layer-3',
-      actionName: REORDER_ACTION,
-      args: { layerToMoveId: 'layer-3', afterWhichLayerId: undefined },
+    expect(onlyDispatched()).toEqual({
+      type: 'REORDER_LAYERS',
+      payload: { layerToMoveId: 'layer-3', afterWhichLayerId: undefined },
     });
   });
 });

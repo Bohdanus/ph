@@ -15,8 +15,7 @@ import {
   DARK_GRAY,
   SPRAY_GRAY,
   WHITE,
-  createPageMock,
-  createScreenshotSpy,
+  createScrollablePage,
   createTestImage,
   type ScreenshotSpy,
 } from './canvas-helpers.fixtures';
@@ -53,17 +52,20 @@ interface PollingPage {
  */
 function createPollingPage(result: Buffer = SCREENSHOT): PollingPage {
   let elapsed = 0;
-  const screenshot = createScreenshotSpy(result);
   const waitForTimeout: WaitForTimeoutSpy = vi.fn(async (ms: number) => {
     elapsed += ms;
     vi.advanceTimersByTime(ms);
   });
+  // The default geometry is a window that holds its whole page, so every clip here is
+  // already on screen and the reads are the clips the tests pass in. What the scroll model
+  // buys is `evaluate` at all: the wait reads the window to decide that.
+  const scrollable = createScrollablePage({ result, waitForTimeout });
   return {
-    page: createPageMock({ screenshot, waitForTimeout }),
-    screenshot,
+    page: scrollable.page,
+    screenshot: scrollable.screenshot,
     waitForTimeout,
     elapsed: () => elapsed,
-    clips: () => screenshot.mock.calls.map(([options]) => options.clip),
+    clips: scrollable.clips,
   };
 }
 
@@ -282,6 +284,165 @@ describe('waitForCanvasPixels', () => {
     await expect(waitForCanvasPixels(harness.page, STANDALONE_CLIP, always(true))).rejects.toBe(failure);
 
     expect(harness.waitForTimeout).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A clip can only be photographed where it is on screen: Playwright trims it against the
+ * viewport, so a region entirely below the fold collapses to zero height and the capture
+ * throws `Clipped area is either empty or outside the resulting image`. These pin what the
+ * wait does about that — and, just as load-bearing, what it does when nothing is wrong.
+ *
+ * The geometry is the app's, measured: 1177px of page in a 720px window, and
+ * `paint-options.spec.ts` reads its 60px stroke from 0.7 of the canvas box height, which
+ * lands at page y=748 — 28px below the fold.
+ */
+describe('waitForCanvasPixels on a region that is not in view', () => {
+  const VIEWPORT_HEIGHT = 720;
+  const DOCUMENT_HEIGHT = 1177;
+  const MAX_SCROLL_Y = DOCUMENT_HEIGHT - VIEWPORT_HEIGHT;
+
+  /** The measured wide stroke: page y 748..908, inside a 720px window. */
+  const BELOW_THE_FOLD: Required<ClipOptions> = { x: 176, y: 748, width: 320, height: 160 };
+
+  function scrolledPage(overrides: Parameters<typeof createScrollablePage>[0] = {}) {
+    // The clock is faked for this file, and the deadline is read from `Date.now()`. A
+    // `waitForTimeout` that does not advance it turns every wait that is meant to run out
+    // into an unbounded loop, so it advances the clock the way the polling harness does.
+    const waitForTimeout: WaitForTimeoutSpy = vi.fn(async (ms: number) => {
+      vi.advanceTimersByTime(ms);
+    });
+    return createScrollablePage({
+      viewportHeight: VIEWPORT_HEIGHT,
+      documentHeight: DOCUMENT_HEIGHT,
+      waitForTimeout,
+      ...overrides,
+    });
+  }
+
+  it('reads a region below the fold instead of letting the capture throw', async () => {
+    const harness = scrolledPage();
+
+    await waitForCanvasPixels(harness.page, BELOW_THE_FOLD, always(true), { timeoutMs: 1_000 });
+
+    expect(harness.clips()).toHaveLength(1);
+    // Scrolled to the maximum the page allows (457), which puts the region at 291..451.
+    expect(harness.clips()[0]).toEqual({ x: 176, y: 291, width: 320, height: 160 });
+    expect(harness.clips()[0].y).toBeGreaterThanOrEqual(0);
+    expect(harness.clips()[0].y + BELOW_THE_FOLD.height).toBeLessThanOrEqual(VIEWPORT_HEIGHT);
+  });
+
+  it('scrolls a region above the fold back into view', async () => {
+    // The measured `pen-types` shape, not a hypothetical one: the window is at 440 and the
+    // clip sits at -240, i.e. the region is 200px above the top of the window. Note that
+    // only a NEGATIVE viewport origin can be off screen this way — a clip at y=20 with the
+    // window at 457 is at page 477, well inside the 457..1177 the viewport covers, and is
+    // correctly left alone.
+    const harness = scrolledPage({ initialScrollY: 440 });
+    const aboveTheFold: Required<ClipOptions> = { x: 156, y: -240, width: 320, height: 120 };
+
+    await waitForCanvasPixels(harness.page, aboveTheFold, always(true), { timeoutMs: 1_000 });
+
+    // Read at page 200..320, and then put the window back where the caller had it rather
+    // than stranding the rest of the test at the top of the page.
+    expect(harness.clips()[0]).toEqual({ x: 156, y: 200, width: 320, height: 120 });
+    expect(harness.scroll.scrollRequests()).toEqual([
+      { x: 0, y: 0 },
+      { x: 0, y: 440 },
+    ]);
+    expect(harness.scroll.scrollY()).toBe(440);
+  });
+
+  it('leaves a clip that is off neither edge alone, even with the window scrolled', async () => {
+    const harness = scrolledPage({ initialScrollY: 440 });
+    const inView: Required<ClipOptions> = { x: 176, y: 372, width: 320, height: 80 };
+
+    await waitForCanvasPixels(harness.page, inView, always(true), { timeoutMs: 1_000 });
+
+    expect(harness.scroll.scrollRequests()).toEqual([]);
+    expect(harness.clips()).toEqual([inView]);
+  });
+
+  it('keeps reading the region it adjusted to on every later poll, not the original clip', async () => {
+    const harness = scrolledPage();
+
+    await waitForCanvasPixels(harness.page, BELOW_THE_FOLD, sequence(false, false, true), {
+      timeoutMs: 10_000,
+      pollIntervalMs: 100,
+    });
+
+    expect(harness.clips()).toHaveLength(3);
+    for (const clip of harness.clips()) expect(clip).toEqual(harness.clips()[0]);
+  });
+
+  it('leaves the window where it found it once the read succeeds', async () => {
+    const harness = scrolledPage({ initialScrollX: 12, initialScrollY: 0 });
+
+    await waitForCanvasPixels(harness.page, BELOW_THE_FOLD, always(true), { timeoutMs: 1_000 });
+
+    // The last request is the undo, and it restores BOTH axes to the pre-read position.
+    expect(harness.scroll.scrollRequests().at(-1)).toEqual({ x: 12, y: 0 });
+    expect(harness.scroll.scrollY()).toBe(0);
+    expect(harness.scroll.scrollX()).toBe(12);
+  });
+
+  it('restores the window when the read gives up, so a later mouse drag is not moved', async () => {
+    const harness = scrolledPage({ initialScrollY: 40 });
+
+    await expect(
+      waitForCanvasPixels(harness.page, BELOW_THE_FOLD, always(false), { timeoutMs: 300, pollIntervalMs: 100 })
+    ).rejects.toThrow(/did not render/);
+
+    expect(harness.scroll.scrollY()).toBe(40);
+  });
+
+  it('restores the window when the predicate itself throws', async () => {
+    const harness = scrolledPage();
+    const failure = new Error('bad clip');
+
+    await expect(
+      waitForCanvasPixels(harness.page, BELOW_THE_FOLD, () => {
+        throw failure;
+      })
+    ).rejects.toBe(failure);
+
+    expect(harness.scroll.scrollY()).toBe(0);
+  });
+
+  it('asks for no scroll at all when the region is already fully in view', async () => {
+    const harness = scrolledPage();
+    const inView: Required<ClipOptions> = { x: 176, y: 372, width: 320, height: 80 };
+
+    await waitForCanvasPixels(harness.page, inView, always(true), { timeoutMs: 1_000 });
+
+    expect(harness.scroll.scrollRequests()).toEqual([]);
+    expect(harness.clips()).toEqual([inView]);
+  });
+
+  it('treats a region that only partly fits as out of view', async () => {
+    // 700 + 80 = 780, past the 720px window. Trimming would silently return a 20px-tall
+    // capture, which is a wrong answer rather than an error.
+    const harness = scrolledPage();
+    const straddling: Required<ClipOptions> = { x: 176, y: 700, width: 320, height: 80 };
+
+    await waitForCanvasPixels(harness.page, straddling, always(true), { timeoutMs: 1_000 });
+
+    expect(harness.scroll.scrollRequests()).not.toEqual([]);
+    expect(harness.clips()[0].y + straddling.height).toBeLessThanOrEqual(VIEWPORT_HEIGHT);
+  });
+
+  it('does not ask the page for a scroll it cannot perform', async () => {
+    // A region taller than the window can never be fully in view; the request must still
+    // land on the page's real scroll extent rather than somewhere unreachable.
+    const harness = scrolledPage();
+    const tallerThanTheWindow: Required<ClipOptions> = { x: 0, y: 0, width: 1280, height: 900 };
+
+    await waitForCanvasPixels(harness.page, tallerThanTheWindow, always(true), { timeoutMs: 1_000 });
+
+    for (const request of harness.scroll.scrollRequests()) {
+      expect(request.y).toBeGreaterThanOrEqual(0);
+      expect(request.y).toBeLessThanOrEqual(MAX_SCROLL_Y);
+    }
   });
 });
 

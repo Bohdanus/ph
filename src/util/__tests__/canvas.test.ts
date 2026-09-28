@@ -136,4 +136,39 @@ describe('resetOverlayAlpha', () => {
 
     expect(ctx.setLineDash).not.toHaveBeenCalled();
   });
+
+  it('corrects the paint inside a bracket but cannot heal the context after it', () => {
+    // `useAnts.animate` calls the reset between its own `save()` and `restore()`, so the `restore()`
+    // puts the leaked alpha straight back and the next painter still inherits it. That is why the
+    // reset is a per-paint discipline for the painter that runs it and not a property of the
+    // context — and why bracketing the WRITERS is the only thing that stops the leak at the source.
+    // A `vi.fn()` context cannot show this, so the stack is modelled.
+    let state = { globalAlpha: 0.2 };
+    const stack: { globalAlpha: number }[] = [];
+    const ctx = {
+      get globalAlpha() {
+        return state.globalAlpha;
+      },
+      set globalAlpha(value: number) {
+        state.globalAlpha = value;
+      },
+      save: () => {
+        stack.push({ ...state });
+      },
+      restore: () => {
+        const popped = stack.pop();
+        if (popped) state = { ...popped };
+      },
+      setLineDash: vi.fn(),
+    } as unknown as Ctx2D;
+
+    ctx.save();
+    resetOverlayAlpha(ctx);
+    // The paint inside the bracket is correct.
+    expect(ctx.globalAlpha).toBe(1);
+
+    ctx.restore();
+    // And the context is exactly as dirty as it was before.
+    expect(ctx.globalAlpha).toBe(0.2);
+  });
 });

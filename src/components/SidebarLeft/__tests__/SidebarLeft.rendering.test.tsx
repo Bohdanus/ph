@@ -40,10 +40,21 @@ vi.mock('../toolIcons.tsx', () => {
     toolIcons: {
       reposition: Icon,
       'rectangular-selection': Icon,
+      'elliptical-selection': Icon,
       'freehand-lasso': Icon,
       'polygonal-lasso': Icon,
       'feather-magnetic-lasso': Icon,
       'magic-wand': Icon,
+      'quick-selection': Icon,
+      eyedropper: Icon,
+      eraser: Icon,
+      'clone-stamp': Icon,
+      'paint-bucket': Icon,
+      gradient: Icon,
+      sharpen: Icon,
+      smudge: Icon,
+      dodge: Icon,
+      burn: Icon,
       crop: Icon,
       draw: Icon,
       shape: Icon,
@@ -55,6 +66,7 @@ vi.mock('../toolIcons.tsx', () => {
       brush: Icon,
       pencil: Icon,
       'color-replacement': Icon,
+      'magic-eraser': Icon,
       pen: Icon,
       'freeform-pen': Icon,
       'curvature-pen': Icon,
@@ -113,10 +125,14 @@ describe('SidebarLeft rendering', () => {
       'rectangular-selection',
       'freehand-lasso',
       'magic-wand',
+      'eyedropper',
       'crop',
       'color',
       'brush',
+      'clone-stamp',
       'blur',
+      'gradient',
+      'dodge',
       'draw',
       'pen',
       'text',
@@ -148,9 +164,13 @@ describe('SidebarLeft rendering', () => {
     expect(toolbarButtonByName('freehand-lasso')).toHaveAccessibleName('Lasso Tool');
     expect(toolbarButtonByName('magic-wand')).toHaveAccessibleName('Magic Wand Tool');
     expect(toolbarButtonByName('crop')).toHaveAccessibleName('Crop Tool');
+    expect(toolbarButtonByName('eyedropper')).toHaveAccessibleName('Eyedropper Tool');
     expect(toolbarButtonByName('color')).toHaveAccessibleName('Colors');
     expect(toolbarButtonByName('brush')).toHaveAccessibleName('Brush Tool');
+    expect(toolbarButtonByName('clone-stamp')).toHaveAccessibleName('Clone Stamp Tool');
     expect(toolbarButtonByName('blur')).toHaveAccessibleName('Blur Tool');
+    expect(toolbarButtonByName('gradient')).toHaveAccessibleName('Gradient Tool');
+    expect(toolbarButtonByName('dodge')).toHaveAccessibleName('Dodge Tool');
     expect(toolbarButtonByName('draw')).toHaveAccessibleName('Draw Tool');
     expect(toolbarButtonByName('pen')).toHaveAccessibleName('Pen Tool');
     expect(toolbarButtonByName('text')).toHaveAccessibleName('Horizontal Type Tool');
@@ -168,11 +188,24 @@ describe('SidebarLeft rendering', () => {
     expect(hasFlyoutIndicator('brush')).toBe(true);
     expect(hasFlyoutIndicator('pen')).toBe(true);
     expect(hasFlyoutIndicator('shape')).toBe(true);
+    // The marquee, quick-selection, focus and tonal tiles are multi-item flyouts, so each
+    // one carries the corner indicator.
+    expect(hasFlyoutIndicator('rectangular-selection')).toBe(true);
+    expect(hasFlyoutIndicator('magic-wand')).toBe(true);
+    expect(hasFlyoutIndicator('blur')).toBe(true);
+    expect(hasFlyoutIndicator('dodge')).toBe(true);
 
     expect(hasFlyoutIndicator('reposition')).toBe(false);
     expect(hasFlyoutIndicator('crop')).toBe(false);
-    expect(hasFlyoutIndicator('blur')).toBe(false);
+    expect(hasFlyoutIndicator('eyedropper')).toBe(false);
+    // The Stamp flyout carries only the clone stamp for now: Photoshop's pattern and
+    // patch stamps are not implemented, so the group has length 1 and stays plain.
+    expect(hasFlyoutIndicator('clone-stamp')).toBe(false);
     expect(hasFlyoutIndicator('draw')).toBe(false);
     expect(hasFlyoutIndicator('text')).toBe(false);
+    // The Gradient is its own single-tool tile. The Paint Bucket is NOT listed anywhere as a
+    // tile because it is a flyout item of the erase-and-fill group, which is where main keeps
+    // it and what `erase-fill-eyedropper.spec.ts` drives it by.
+    expect(hasFlyoutIndicator('gradient')).toBe(false);
   });
 });
