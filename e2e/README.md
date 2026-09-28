@@ -13,7 +13,7 @@ The tree, at the level of shape rather than of inventory. New spec files land he
 constantly, so read the directory instead of a list, and keep no counts in this
 comment — a count here is only correct until the next merge.
 
-```
+````
 e2e/
 ├── *.spec.ts            # top-level app specs
 ├── export/              # export-format specs + committed visual-regression baselines
@@ -21,14 +21,39 @@ e2e/
 │   │                    #   __tests__/ and a Playwright spec beside the
 │   │                    #   browser-facing ones
 │   └── __tests__/       # Node-environment unit tests for the helper modules
-└── global-setup.ts      # refuses --headed / --ui / --debug before a window exists
-```
+└── global-setup.ts      # refuses --headed / --ui / --debug before a window exists```
+
+### What the top-level specs are organised by
+
+`ls e2e/*.spec.ts` is alphabetical because that is how the directory is. What is not
+alphabetical is what each one is responsible for, and several of them overlap on
+purpose:
+
+| Concern                       | Specs                                                                                               |
+| ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| Keyboard                      | `keyboard-shortcuts`, `sidebar-keyboard`                                                            |
+| The left rail and its flyouts | `sidebar-flyout`, `sidebar-keyboard`, `sidebar-layout`                                              |
+| Layers and the panel          | `layers`, `layers-panel`                                                                            |
+| History and its panel         | `keyboard-shortcuts`, `history-panel`                                                               |
+| Dialogs and the document      | `document-dialogs`, `select-move` (crop)                                                            |
+| Pixel-affecting tools         | `paint-tools`, `paint-options`, `pen-types`, `shape-tools`, `filter-tools`, `erase-fill-eyedropper` |
+| Selections                    | `selection-tools`, `select-move`                                                                    |
+| Shell and viewport            | `responsive-shell`, `mobile-shell`, `viewport-drawing`, `check-dpr`                                 |
+
+The table is a map of overlaps, not an index: a spec with no second entry here is
+simply one nothing else contends with. Several of the top-level specs are not listed,
+and the list is not maintained as one — read the directory for the current inventory,
+per the note at the top.
+
+`layers.spec.ts` and `layers-panel.spec.ts` overlap deliberately: the first is
+about the stack a tool sees, the second about the panel that edits it. Splitting
+them by file would have hidden that they describe one feature from two sides.
 
 ## Run it headless
 
 ```bash
 npm run test:e2e
-```
+````
 
 `npm run test:e2e` is **headless by default. Keep it that way.**
 
@@ -301,6 +326,33 @@ primary `<canvas>` in `src/components/Main/Main.tsx`. There is no positional fal
 a document index put the locator on the Draw preview canvas, or on a hidden overlay
 once a tool change unmounted it. `getWorkspaceCanvas` is a single-selector locator
 precisely so it can only ever match one element.
+
+### Name every coordinate in document space
+
+An 800x600 document is contained into the canvas element with a uniform scale and a
+centred letterbox, so one CSS pixel on the canvas is not one document pixel and the
+canvas box has no fixed size. `drawLine` takes **box-relative** offsets, and
+`documentToCanvasOffset` / `canvasOffsetToDocument` convert between the two spaces.
+
+Everything a test _asserts_ on has to be named in document space, and any
+spec that both places a gesture and reads a pixel back has to convert in the
+right direction at each end. Getting it backwards is silent: a sample 200 units
+"beyond" a drag that started 131 units into the document lands off the document
+entirely, and the checkerboard behind it reads as a plausible value. The failure
+is a wrong number, not an error.
+
+Two more consequences of the same geometry, both of which have bitten a spec here:
+
+- **Measure the box per sample, not once per test.** A tool change swaps the
+  options bar, the toolbar row changes height, the canvas box moves, and every
+  cached coordinate is now pointing somewhere else. `filter-tools.spec.ts` and
+  `shape-tools.spec.ts` re-measure inside their sampling helper for this reason.
+- **A layer's own bounds are not the document's.** A stroke commits a layer the
+  size of the stroke, so an adjustment that spreads, fills or blurs is only
+  observable from outside the shape if the layer is bigger than the gesture. Both
+  of those specs draw a corner-to-corner stroke first, because that is the only
+  cheap way to get a full-document layer (`GradientToolArea` also refuses to run
+  on the bedrock layer at all).
 
 2 tests are declared `test.skip`: the Photopea PSD round-trip (needs the external
 photopea.com) and one right-click flyout case.

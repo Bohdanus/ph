@@ -1589,3 +1589,157 @@ it, and three `file:line` citations into this file in the description record wer
 the current numbering.
 
 Fix is deleting line 16, then re-deriving any citation into `src/tools/draw.ts` below it.
+
+---
+
+## 73. Two Colors sliders moved in one frame: the first change is silently dropped
+
+**Problem.** `Color.tsx`'s `throttledOnChange` (`src/components/ToolbarsRight/Colors/Color.tsx:28-41`)
+stashes the whole args object in `pendingUpdateRef` and writes it from a
+`requestAnimationFrame` callback. Each of the three handlers builds that object from
+the **render-time** `args` closure — `handleGrayscaleChange` at `:43-46`,
+`handleSepiaChange` at `:48-51`, `handleSaturationChange` at `:53-56` — and none of
+them reads the pending value. So two slider changes that land in the same frame are
+both built from the same stale `args`: the second object carries the new second
+value over the **old** first value, and the first change is gone. The rAF does not
+queue, so nothing merges them either.
+
+Reproduced in a real browser as well, but that reproduction is not the evidence —
+it is a single observation, not a deterministic one. Two `page.locator().fill()`
+calls on a range input are two CDP round trips, so whether a frame lands between
+them is timing, and a run that happens to straddle one will not lose the edit. In
+one measured run the first pass lost the grayscale value and the second and third
+kept it, which is the shape a race has and is worth knowing for. **The evidence is
+the jsdom tests below**, which drive the handlers directly and cannot miss it.
+
+**The behaviour is already pinned, and pinned on purpose.** Two tests in
+`src/components/ToolbarsRight/Colors/__tests__/Color.test.tsx` assert the loss:
+
+- `'coalesces a burst of changes across different sliders into one frame'`
+  (`:187`) fires all three sliders before the stubbed rAF and expects
+  `{ grayscale: 0, sepia: 0, saturation: 30 }` — the first two gone. Its own
+  comment says this documents the lost-update behaviour "rather than a merge".
+- `'drops the earlier in-frame edit when two different sliders move before the
+frame runs'` (`:213`) fires grayscale and sepia and expects
+  `{ grayscale: 0, sepia: 20 }`.
+
+So **fixing this turns both tests red, and flipping those two assertions is part
+of the fix rather than a gate being weakened** — they currently encode the defect
+as the expected result, which is what a characterisation test does. Whoever does
+this should say so in the commit, because "two unrelated Colors tests started
+failing" otherwise reads as a regression.
+
+**Fix.** Make the pending object the source of truth for the next one, rather than
+the render closure:
+
+```ts
+const base = pendingUpdateRef.current ?? args;
+pendingUpdateRef.current = { ...base, grayscale };
+```
+
+Every handler builds on `base`, so a second change in the same frame inherits the
+first instead of discarding it. `pendingUpdateRef.current` is cleared in the rAF
+itself (`:36`) and in `discardAdjustment` (`:115`), so it holds exactly the
+unpublished edits, and `args` is the right fallback for the first change of a
+frame. Worth checking `Blur.tsx` and `Levels.tsx` for the same shape — they were
+not audited here.
+
+**Test that fails without the fix.** The two above. A test that waits on each
+control's accessible name between the two changes cannot see this, and must not:
+it is a race, and the test for a race is the one that does not wait.
+
+**Files.** `src/components/ToolbarsRight/Colors/Color.tsx:28-56`,
+`src/components/ToolbarsRight/Colors/__tests__/Color.test.tsx:187,210`
+
+---
+
+## 74. The toolbar is a Photoshop clone, and 45 of 49 rail entries are wrong
+
+**Not a defect — a standing product requirement, recorded with its cost.** `AGENTS.md` now carries
+"The toolbar is a Photoshop clone — HARD REQUIREMENT". This entry is the implementable target, the
+corrections to the research behind it, and the sequencing.
+
+**The requirement.** The Tools rail must mirror Adobe's Tools panel: same tools, same rendered
+names, same groups, same letters. A tool Photoshop does not have is **deleted, not relabelled** —
+the app already has the Brush, which is `draw`'s nearest. Adjustments and transforms are
+`Image ▸ Adjustments` and `Edit ▸ Transform` commands and leave the rail entirely. The registry
+identifier stays free (`reposition` for the Move tool is fine); the **rendered label** does not.
+
+**Shape of the work: 41 `ToolName`s → 70, in 21 tiles. 36 present, 34 to add, 5 to delete.**
+
+**Four corrections to the inventory in `AGENTS.md`, from a second research pass. Read these before
+building the target list — the list as written ships a rail that is still not a clone.**
+
+| `AGENTS.md` says                                                              | Actually                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Selection Brush is "Photoshop on the web, not the desktop panel" — exclude it | Adobe's own **desktop** page says "Select the Selection Brush tool **from the toolbar**". Include it.                                                                                                                                                                                                                                                                                  |
+| Adjustment Brush has "zero Adobe pages" — exclude it                          | Two Adobe pages, "Select Adjustment Brush Tool **from the toolbar**". Include it; it is a large _feature_, which is a different decision from membership.                                                                                                                                                                                                                              |
+| —                                                                             | **Remove tool** and **Content-Aware Tracing tool** are absent from the list entirely. Both are Adobe-documented, and the Remove tool's page says "In the Tools panel, select Remove tool." A sweep of Adobe's _overview tables_ misses both, because each has its own page instead. Content-Aware Tracing's own page confirms its **group**: "from the Pen tool group in the toolbar". |
+| —                                                                             | **Artboard, Frame, Perspective Crop, Slice, Slice Select, Ruler** are also absent. All are in Adobe's own shortcut PDF.                                                                                                                                                                                                                                                                |
+| §68 below points at this section                                              | The `AGENTS.md` pointer named a section that did not exist. It exists now.                                                                                                                                                                                                                                                                                                             |
+
+Two that must **not** be added despite appearing in the shortcut PDF: **3D Material Eyedropper** and
+**3D Material Drop** (the removed 3D feature), and **Rounded Rectangle** (CC-era, in neither 2026
+enumeration). And the trap that produced the Clone Source false positive: **Adobe's Clone Source is
+a panel** (`Window ▸ Clone Source`), not a Tools-panel entry. A name appearing in a panel's title is
+how a tool gets miscounted.
+
+**Group order is a hypothesis, and the requirement says so.** Adobe publishes no page that
+enumerates the Tools panel top-to-bottom. The 21-tile order is reconstructed from two independent
+third-party 2026 diagrams, cross-checked against Adobe for **membership only**. Four placements are
+unresolved and a screenshot of a restored PS 27.x default workspace settles all four: the Frame
+tool's separator (its own tile, but does it close the Crop band or open Measurement?);
+Content-Aware Tracing's slot inside the Pen flyout; **Line before Star or Star before Line** in the
+Shape flyout (one line, and a line a user's hand learns); and whether Note and Count are in the
+default panel or sitting in Extra Tools.
+
+**`toolbar-mapping.ts:30-36` says "Unsupported Photoshop tools are intentionally omitted rather
+than represented by placeholder values." That sentence IS the requirement, and it has to be
+deleted, not kept.** Separately: `SidebarLeft.tsx:27` does `toolbarMap.flat()`, which discards the
+map's section boundaries entirely, so the five current sections are not Photoshop's separators and
+the new layout has to decide deliberately whether a section concept survives at all.
+
+**Deletions, cheapest first.** `color`, `levels` and `transform` become menu commands; their
+processors are reused unchanged, so this is a **routing** change, not a processing change, and the
+history and durable paths are untouched. `shape` dissolves into the five figure `ToolName`s that
+already have processors and are already dispatched. `draw` is last and is the expensive one: it is
+the suite's default way to make a mark, **25 call sites across 14 e2e specs**, and
+`e2e/pen-types.spec.ts` is specifically about it and dies with the tool. Its engine does not die —
+`brush`, `pencil` and `color-replacement` are all built on `buildDrawArgs` and `draw()` — only the
+tool goes, and the engine should be renamed to stop pretending to be one.
+
+**Cheapest real additions**, and they are parallelisable because they touch disjoint files: Single
+Row and Single Column Marquee (two lines of geometry reusing `rectangularSelection`), Sponge, Red
+Eye, and Star (a new `FigureType` member plus a star-ratio branch). Next cheapest architecturally
+is the measurement band — Color Sampler, Ruler, Note, Count — because these are `PIXEL_FREE_TOOLS`
+like the Eyedropper, committing no pixels and needing no durable operation.
+
+**Largest, and they need a primitive the app does not have:** Object Selection, Spot Healing,
+Content-Aware Move, Remove (a generative backend), History Brush and Art History Brush (a read-out
+across the whole history array, which touches the replay boundary), Vertical Type and its two
+masks (glyph→selection rasterisation), Path Selection and Direct Selection (a path model absent
+from `src/tools/shape.ts` entirely), and Artboard and Frame (layer kinds the app has no type for).
+
+**One step is a baseline hazard and belongs on its own branch:** Hand, Zoom and Rotate View. The
+app's zoom state is commented out (`StoreContext.tsx:1171-1175`; `ZoomData` survives only as a
+type), so the seam exists and the state does not. It is small in lines and large in blast radius,
+because it touches the renderer and every e2e screenshot baseline.
+
+**The first step is the highest-value thing in the plan and it is not a feature:** land the target
+as data, and add a test asserting the **set of rail labels** equals the target set — not the order,
+not the tiles. Any future invented tool fails it. It is cheap, and it is the tripwire that makes the
+other eight steps safe.
+
+**What this costs in tests, before a single tool is added.** The hand-copied lists are the expense,
+and they are already drifted: `src/util/__tests__/constants.test.ts:106-136` holds a hand-copied
+29-name list that is **12 short of the real 41** and passes only because its assertion is
+`toContain`. `toolIcons.test.tsx:25-72` holds a 46-name union by hand; `tool-processors.test.ts`
+carries four separate 41-name and 10-name rosters; `SidebarLeft.rendering.test.tsx:123-140` pins
+the exact 16-tile order by name; and `toolbar-mapping.test.ts:101-103` compares a hand-copied
+expected shape flyout with `toEqual`, so **an added key on any shape entry breaks it**.
+`AppKeyboardShortcuts.tsx:9-16` asserts in prose that its cycle groups match the mapping's groups;
+**three of its seven do not** — the Pen tile is six wide and its cycle is three, the shape tile is
+six wide and its `Shift+U` cycle is four, and `Shift+U` from the Triangle or Polygon does not skip
+them but **restarts** at the rectangle. Nothing tests that claim. And `availableTools` /
+`extraTools` have **no production consumer at all** — only tests read them — so a silent omission
+there produces three green tests over an incomplete app.

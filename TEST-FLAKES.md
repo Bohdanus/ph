@@ -305,8 +305,50 @@ long-press one "both surface under CPU contention" and that a failure reported b
 a subagent is "very likely contention, not a regression". Every reproduction
 attempt below was made with nothing else running, and every one was green. **The
 difference between the two experiments is the contention, not the code.** A full
-suite under deliberate CPU load is the one experiment that would settle it; it
-has not been run, and it is the first thing to try.
+suite under deliberate CPU load is the one experiment that would settle it.
+
+**That experiment has now been run, and the flake recurred — at a DIFFERENT
+assertion than the one this section records.** On 2026-09-28, a serial full-suite
+run on `integration/e2e-campaign-final` at `210ace6`, on a host with other agents
+running Playwright, reported 291 passed, 2 skipped and this test failed. The
+recovered `playwright-report/data/` artifact for the failure names the wait that
+gave up:
+
+```
+Error: the blank base layer to be composed
+Timeout 5000ms exceeded while waiting on the predicate
+  at e2e/erase-fill-eyedropper.spec.ts:146-148   (inside openWorkspace)
+```
+
+So the failure is in the test's FIRST act, before `drawSlab` is ever called, and
+it is the seed's composition poll running out of its default 5s budget — not the
+`Canvas did not render the #cc0000 line within 10000ms` at `drawSlab` that the
+observation above records. The refused-commit mechanism below cannot be what
+happened, and on this tree it cannot be produced at all: `drawSlab` now asserts
+the commit first (`erase-fill-eyedropper.spec.ts:277-280`), so a refused commit
+names itself as a `toBeEnabled()` failure on the undo button instead of
+surfacing later as a bare pixel timeout. The page snapshot at failure showed the
+document WAS published (a `Blank 1` Layers row, a `new layer` History row, undo
+and redo disabled) while the pixel poll never returned — which is the
+readiness-budget class of section 9, not a paint-bucket defect.
+
+**It still does not reproduce.** Attempts after that run, all headless on the
+same tree with the port pinned and server reuse off:
+
+| attempt                                                 | result                       |
+| ------------------------------------------------------- | ---------------------------- |
+| the test alone, `--repeat-each=5`                       | `5 passed` (24.4s)           |
+| the whole `erase-fill-eyedropper.spec.ts`               | `10 passed` (23.6s)          |
+| the test alone, `--repeat-each=20` under 10 CPU burners | `20 passed` (3.6m), 3.3-8.1s |
+| the test alone, 3 cold-Vite runs under 10 CPU burners   | `3 passed`                   |
+
+So the entry stays OPEN and its class is unchanged — intermittent, load-sensitive,
+never reproduced on demand — but **both the mechanism and the error signature
+recorded here are stale for this tree**, and the next hunter should start at
+`openWorkspace`'s 5s composition poll rather than at the Draw commit. Nothing
+here is closed: the specific 5s-budget exhaustion is still unexplained, and
+`readPixel` returning null a hundred times in a row on a document the snapshot
+shows as published is not something the reproduction attempts above can answer.
 
 **It did not reproduce again.** Attempts, all on `cc7b647` in a dedicated worktree
 with `PLAYWRIGHT_PORT=5711` and `reuseExistingServer` off, all headless:
