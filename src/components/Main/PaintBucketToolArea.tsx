@@ -4,7 +4,7 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { usePaintStroke } from '../../hooks/usePaintStroke.ts';
 import { isPointInSize } from '../../util/pixels.ts';
-import { type PaintBucketSeedArgs } from '../../tools/paintBucket.ts';
+import { type PaintBucketToolArgs } from '../../tools/paintBucket.ts';
 import type { Point } from '../../contexts/general-types.ts';
 
 type paintBucketToolAreaProps = {
@@ -18,16 +18,18 @@ type paintBucketToolAreaProps = {
  *
  * ## The seed
  *
- * `PaintBucketToolArgs` has no field to carry the clicked coordinate, and the click is the only
- * thing that distinguishes one fill from another. This is the architectural gap documented at
- * length in `src/tools/paintBucket.ts`; the short version is that the seed is attached to the
- * args object as an undeclared `seed`, which the processor reads off. Attaching it HERE rather
- * than reading it out of a module-level ref is what keeps the gesture replayable: the args
- * object is what `updateLayerByTool` hands to the `TOOL_ACTION` history entry, so a replay
- * re-runs the processor with the same seed instead of filling wherever the user last clicked.
- * The widening is a local type only — `PaintBucketToolArgs` itself is unchanged, and the object
- * below is built as a `const` precisely so that no `as` cast is needed to hand the extra field
- * to `tempUpdateLayer`/`updateLayerByTool`.
+ * `PaintBucketToolArgs.seed` is a DECLARED field, `Point | null`, and this component is where
+ * its value is produced: the click `usePaintStroke` seeds the gesture with. A bucket is a
+ * click, so unlike every stroke tool in the family it has no `points` to carry the gesture,
+ * and the seed is the only thing that distinguishes one fill from another.
+ *
+ * It is attached HERE rather than read out of a module-level ref because that is what keeps
+ * the gesture replayable: the args object is what `updateLayerByTool` hands to the
+ * `TOOL_ACTION` history entry, so a replay re-runs the processor with the same seed instead of
+ * filling wherever the user last clicked. `Point | null` rather than `Point` because
+ * `defaultSettings['paint-bucket']` is seeded with `null` and the tool-settings and
+ * tool-processors suites dispatch on that literal, so "no click yet" has to be a value the
+ * processor can be handed rather than an absent one.
  *
  * ## Why `updateLayerByTool` and not `tempUpdateLayer`
  *
@@ -67,7 +69,7 @@ export const PaintBucketToolArea = ({ className }: paintBucketToolAreaProps) => 
    * layer before the processor is ever called, which is Photoshop's behaviour: clicking beside
    * the active layer fills nothing.
    */
-  const buildArgs = (documentPoint: Point): PaintBucketSeedArgs | null => {
+  const buildArgs = (documentPoint: Point): PaintBucketToolArgs | null => {
     if (!args || !activeLayer) return null;
 
     const seed = { x: documentPoint.x - activeLayer.pos.x, y: documentPoint.y - activeLayer.pos.y };

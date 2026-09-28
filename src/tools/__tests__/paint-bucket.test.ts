@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { defaultSettings } from '../settings.ts';
-import { paintBucket, type PaintBucketSeedArgs } from '../paintBucket.ts';
+import { paintBucket } from '../paintBucket.ts';
 import { makeMockImageData } from '../../__tests__/canvas-mock.ts';
 import { createMockCanvasContext } from '../../__tests__/fixtures/canvas.ts';
 import { createMagicWandSelectionFromImageData } from '../../util/magicWand.ts';
-import type { BitmapSource, Point } from '../../contexts/general-types.ts';
+import type { BitmapSource } from '../../contexts/general-types.ts';
 import type { PaintBucketToolArgs } from '../paintBucket.ts';
 
 type MockCtx = ReturnType<typeof createMockCanvasContext>;
@@ -149,14 +149,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-/** The seeded options-bar defaults, with the undeclared seed field the tool area adds. */
-const bucketArgs = (overrides: Partial<PaintBucketToolArgs> & { seed?: Point | null } = {}): PaintBucketSeedArgs => ({
+/** The seeded options-bar defaults, with a `seed` supplied for the case under test. */
+const bucketArgs = (overrides: Partial<PaintBucketToolArgs> = {}): PaintBucketToolArgs => ({
   ...defaultSettings['paint-bucket'],
   ...overrides,
 });
 
 /** Runs the processor and returns the single full-size canvas it must have produced. */
-const runBucket = (source: ImageData, overrides: Partial<PaintBucketToolArgs> & { seed?: Point | null } = {}) => {
+const runBucket = (source: ImageData, overrides: Partial<PaintBucketToolArgs> = {}) => {
   const result = paintBucket({ size: { width: source.width, height: source.height }, bitmap: createRaster(source) })(
     bucketArgs(overrides)
   );

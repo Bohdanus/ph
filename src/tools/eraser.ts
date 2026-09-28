@@ -9,7 +9,17 @@ export type EraserToolArgs = {
   alpha: number;
   spacing: number;
   /**
-   * The stroke, in DOCUMENT space, as `usePaintStroke` hands it over.
+   * The stroke, in the ACTIVE LAYER's own pixel space (layer-local, no document origin).
+   *
+   * `usePaintStroke` collects the gesture in DOCUMENT space, and the tool area rebases it
+   * before it gets here: `EraserToolArea` maps every sample through
+   * `documentPointsToLayerLocal` (`src/util/layer-space.ts`) at the callback boundary, which
+   * is the last point where the component still knows which layer it is editing. It has to
+   * be rebased there because this processor does not speak document space at all:
+   * `tempUpdateLayer` hands it the layer's OWN raster with `size: layer.pos`
+   * (`src/contexts/useLayer.ts:544`), so the frame it addresses is layer-local and carries no
+   * document origin. Taking the points as they arrived would shift the stroke by the layer's
+   * origin, and for a layer that is not at `(0, 0)` would erase off the raster entirely.
    *
    * Stroke geometry rather than a setting, and REQUIRED for exactly the reason it is
    * required on `smudge`, `dodge`, `burn` and `clone-stamp`: no tool in this brush
@@ -214,11 +224,12 @@ const eraseStroke = (
  * labels that control `Flow`. On the Eraser it is the erase amount, which is the same
  * quantity, so the rename is a mapping and not a reinterpretation.
  *
- * The returned canvas is always FULL DOCUMENT SIZE and always freshly allocated, even
- * for an empty path. `tempUpdateLayer` (`src/contexts/useLayer.ts:560`) assigns the
- * result straight to `layer.tmpCanvas`, so handing back the source bitmap instead
- * would leave the layer's `tmpCanvas` holding the very object it already had, and the
- * preview would show no edit at all.
+ * The returned canvas is always the FULL SIZE of the raster it was handed, and always
+ * freshly allocated, even for an empty path. `size` is the LAYER's own extent, not the
+ * document's — `tempUpdateLayer` passes `size: layer.pos` (`src/contexts/useLayer.ts:544`) —
+ * and it assigns the result straight to `layer.tmpCanvas` (`src/contexts/useLayer.ts:560`),
+ * so handing back the source bitmap instead would leave the layer's `tmpCanvas` holding the
+ * very object it already had, and the preview would show no edit at all.
  */
 export const eraser =
   ({ bitmap, size }: ProcessorToolParams) =>

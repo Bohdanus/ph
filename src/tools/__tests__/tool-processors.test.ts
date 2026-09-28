@@ -57,6 +57,72 @@ class RecordingOffscreenCanvas {
 
 const asRecord = toolProcessors as unknown as Record<string, ToolProcessorDefinition | undefined>;
 
+/**
+ * The `toolsMap wiring` suite renders `toolsMap[*].toolboxComponent` directly, which is the
+ * point: it walks the registry rather than a hand-picked subset. Eleven of those components
+ * are now real options bars that read the store, the tool args, the layer preview writer and
+ * the selection hooks, so the walk needs the same context treatment every `ToolbarsRight`
+ * suite uses.
+ *
+ * `vi.mock` on the hooks, NOT a `StoreProvider` wrapper. The provider pulls in the durable
+ * replay/materialization path, which does not survive jsdom, and mocking the hooks is what
+ * `ToolbarsRight/Draw/__tests__/Draw.test.tsx` and `ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx`
+ * do for the same reason. Nothing under `src/tools/` or `src/util/` imports any of these
+ * modules, so mocking them cannot perturb the processor behaviour asserted above.
+ *
+ * Every shared mutable is `vi.hoisted` because a `vi.mock` factory is hoisted above the
+ * imports, and a factory argument evaluated at hoist time would be a TDZ read.
+ */
+const optionsBarStore = vi.hoisted(() => ({ color: '#000000', toolName: 'brush' as string }));
+const optionsBarSetToolArgs = vi.hoisted(() => vi.fn());
+const optionsBarPatchToolArgs = vi.hoisted(() => vi.fn());
+const optionsBarReset = vi.hoisted(() => vi.fn());
+const optionsBarTempUpdateLayer = vi.hoisted(() => vi.fn());
+const optionsBarDispatch = vi.hoisted(() => vi.fn());
+const optionsBarCopySelection = vi.hoisted(() => vi.fn());
+const optionsBarPasteSelection = vi.hoisted(() => vi.fn());
+const optionsBarClearSelections = vi.hoisted(() => vi.fn());
+
+vi.mock('../../contexts/StoreContext.tsx', () => ({
+  useStore: () => [optionsBarStore, optionsBarDispatch],
+}));
+
+vi.mock('../../contexts/useCurrentTool.tsx', async () => {
+  // `await import` rather than a top-level binding: `toolsMap` is imported before
+  // `../settings.ts` in this file, so the factory — which runs while that import graph is
+  // still being evaluated — would read `defaultSettings` in its temporal dead zone.
+  const { defaultSettings: seeded } = await import('../settings.ts');
+  return {
+    useCurrentTool: () => ({
+      toolArgs: seeded.brush,
+      isToolDirty: false,
+      setToolArgs: optionsBarSetToolArgs,
+      // The seeded defaults are real args for every one of the eleven, so a bar that
+      // renders at all is a bar that mounted on a well-formed args object.
+      getToolArgs: (toolName: string) => seeded[toolName as keyof typeof seeded],
+      patchToolArgs: optionsBarPatchToolArgs,
+      resetToLastSavedArgs: optionsBarReset,
+    }),
+  };
+});
+
+vi.mock('../../contexts/useLayer.ts', () => ({
+  useLayers: () => ({ tempUpdateLayer: optionsBarTempUpdateLayer }),
+}));
+
+vi.mock('../../contexts/useSelectionClipboard.ts', () => ({
+  useSelectionClipboard: () => ({
+    activeSelection: null,
+    copyActiveSelection: optionsBarCopySelection,
+    hasSelectionClipboard: false,
+    pasteSelectionClipboard: optionsBarPasteSelection,
+  }),
+}));
+
+vi.mock('../../contexts/useSelectionHistory.ts', () => ({
+  useSelectionHistory: () => ({ clearSelections: optionsBarClearSelections }),
+}));
+
 describe('toolProcessors registry', () => {
   it('registers exactly one processor for every ToolName', () => {
     expect(Object.keys(toolProcessors).sort()).toEqual([...toolNames].sort());
@@ -399,6 +465,39 @@ describe('paint tool raster processors', () => {
   });
 });
 
+/**
+ * Every tool that has left the placeholder roster and now mounts a real options bar.
+ *
+ * Asserted disjoint from `placeholderNames` below, and each name is mounted by the
+ * `renders a real options bar` test, so a wiring entry reverted to `placeholderTool(...)`
+ * fails rather than quietly going untested.
+ */
+const realBarNames = [
+  'eyedropper',
+  'elliptical-selection',
+  'quick-selection',
+  'eraser',
+  'clone-stamp',
+  'paint-bucket',
+  'gradient',
+  'sharpen',
+  'smudge',
+  'dodge',
+  'burn',
+] as const satisfies readonly ToolName[];
+
+/** The tools whose toolbox component is still `placeholderTool(...)` in `toolsMap.ts`. */
+const placeholderNames = [
+  'color-replacement',
+  'pen',
+  'freeform-pen',
+  'curvature-pen',
+  'add-anchor-point',
+  'delete-anchor-point',
+  'convert-point',
+  'custom-shape',
+] as const satisfies readonly ToolName[];
+
 describe('toolsMap wiring', () => {
   it('mirrors every processor entry and adds an icon plus a toolbox component', () => {
     for (const toolName of toolNames) {
@@ -420,29 +519,23 @@ describe('toolsMap wiring', () => {
     expect(new Set(icons)).not.toContain('');
   });
 
-  it('renders the placeholder toolbox components with their configured options', () => {
-    const placeholderNames = [
-      'color-replacement',
-      'pen',
-      'freeform-pen',
-      'curvature-pen',
-      'add-anchor-point',
-      'delete-anchor-point',
-      'convert-point',
-      'custom-shape',
-      'eyedropper',
-      'elliptical-selection',
-      'quick-selection',
-      'eraser',
-      'clone-stamp',
-      'paint-bucket',
-      'gradient',
-      'sharpen',
-      'smudge',
-      'dodge',
-      'burn',
-    ] as const;
+  it('claims no tool for both the placeholder roster and the real options bars', () => {
+    // Both lists are hand-written, so this is what stops either of them rotting into a
+    // contradictory picture. The roster is wider than their union — the brush, the levels
+    // and the lasso family were never placeholders — so the claim is disjointness plus
+    // membership, not coverage: a name in both lists would have the placeholder test below
+    // asserting a TODO badge for a bar that has none.
+    const claimed = [...placeholderNames, ...realBarNames];
+    const unknown = claimed.filter((toolName) => !toolNames.includes(toolName as ToolName));
 
+    expect(unknown).toEqual([]);
+    expect(new Set(claimed).size, 'a tool is claimed by both lists').toBe(claimed.length);
+  });
+
+  it('renders the placeholder toolbox components with their configured options', () => {
+    // `PlaceholderTool` reads no context, so a true placeholder mounts bare. Every name
+    // below is wired to one in `toolsMap.ts`, and `/TODO|Tool/i` is the placeholder's own
+    // contract — its title ends in `Tool` and it carries a `TODO` badge.
     for (const toolName of placeholderNames) {
       const Component = toolsMap[toolName].toolboxComponent;
       const { unmount } = render(React.createElement(Component));
@@ -450,6 +543,31 @@ describe('toolsMap wiring', () => {
       expect(screen.getAllByText(/TODO|Tool/i).length, toolName).toBeGreaterThan(0);
       unmount();
     }
+  });
+
+  it('renders a real options bar for every tool that left the placeholder roster', () => {
+    // The inverse of the assertion above, and the reason the real bars are mounted through
+    // the hoisted context mocks at the top of this file rather than through `StoreProvider`:
+    // the provider pulls in the durable replay/materialization path, which does not survive
+    // jsdom, so rendering these bare would throw `useStore must be used within
+    // StoreProvider` before reaching a single assertion.
+    for (const toolName of realBarNames) {
+      // `Tonal` decides which of its two tools it is from `useStore().toolName`, and the
+      // other ten read their args by name, so the store has to agree with the tool under test.
+      optionsBarStore.toolName = toolName;
+      const Component = toolsMap[toolName].toolboxComponent;
+      const { container, unmount } = render(React.createElement(Component));
+
+      // A `PlaceholderTool` is recognisable by exactly what it renders: a TODO badge, the
+      // "not implemented yet" description, and no other content. None of the three can be
+      // present once the bar is real, and this fails loudly the moment a wiring entry is
+      // pointed back at `placeholderTool(...)`.
+      expect(container.textContent, toolName).not.toBe('');
+      expect(screen.queryByText('TODO'), toolName).toBeNull();
+      expect(screen.queryByText('TODO: tool behavior not implemented yet.'), toolName).toBeNull();
+      unmount();
+    }
+    optionsBarStore.toolName = 'brush';
   });
 
   it('shows a TODO badge on the placeholder toolbox components', () => {
@@ -588,11 +706,13 @@ describe('toolProcessors declared inner-processor arity', () => {
     }
   });
 
-  it('declares zero inner parameters only for the type lies, the unimplemented set and the placeholders', () => {
-    // Every placeholder processor also ignores its args, so it lands here too. The set is
-    // the registry's own cast list plus the unimplemented stub: a processor that declares
-    // a zero-arity inner function is one whose published args type the registry cannot
-    // reach from its generic `(args: ToolArgs) => ToolResult` signature.
+  it('declares zero inner parameters only for the type lies, the unimplemented set and the creators', () => {
+    // A zero-arity inner function is one whose published args type the registry cannot reach
+    // from its generic `(args: ToolArgs) => ToolResult` signature. The unimplemented stub is
+    // zero-arity too and needs no cast, because a function with fewer parameters is assignable
+    // to a wider one. The three selection creators publish an args type the registry also cannot
+    // name, but they declare their parameter anyway, so they need no cast either — the arity and
+    // the castability are separate facts and this suite pins both of them independently.
     const zeroArity = toolNames.filter((toolName) => toolProcessors[toolName].imageProcessor(params).length === 0);
 
     expect(zeroArity.sort()).toEqual(
@@ -603,14 +723,6 @@ describe('toolProcessors declared inner-processor arity', () => {
         'rectangular-selection',
         'elliptical-selection',
         'quick-selection',
-        'eraser',
-        'paint-bucket',
-        'gradient',
-        'sharpen',
-        'smudge',
-        'dodge',
-        'burn',
-        'clone-stamp',
       ].sort()
     );
   });
@@ -618,7 +730,9 @@ describe('toolProcessors declared inner-processor arity', () => {
   it('makes the zero-arity non-unimplemented processors the exact set needing a registry cast', () => {
     // These are the entries the registry has to silence with @ts-expect-error
     // (src/tools/toolProcessors.ts) because their published args type is not reachable
-    // from the generic `(args: ToolArgs) => ToolResult` signature.
+    // from the generic `(args: ToolArgs) => ToolResult` signature. The eight raster tools
+    // that used to sit here now declare their args parameter, so they join the casted set's
+    // complement and are asserted by the arity test above instead.
     const casted = toolNames.filter(
       (toolName) =>
         toolProcessors[toolName].commit !== 'unimplemented' &&
@@ -632,14 +746,6 @@ describe('toolProcessors declared inner-processor arity', () => {
         'rectangular-selection',
         'elliptical-selection',
         'quick-selection',
-        'eraser',
-        'paint-bucket',
-        'gradient',
-        'sharpen',
-        'smudge',
-        'dodge',
-        'burn',
-        'clone-stamp',
       ].sort()
     );
   });
@@ -684,16 +790,21 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['brush', 'canvas', 40, 24],
     ['pencil', 'canvas', 40, 24],
     ['color-replacement', 'canvas', 40, 24],
-    // The eleven placeholders below have no raster implementation yet, so each hands the
-    // source bitmap straight back instead of allocating a canvas.
-    ['eraser', 'source-bitmap', 0, 0],
-    ['paint-bucket', 'source-bitmap', 0, 0],
-    ['gradient', 'source-bitmap', 0, 0],
-    ['sharpen', 'source-bitmap', 0, 0],
-    ['smudge', 'source-bitmap', 0, 0],
-    ['dodge', 'source-bitmap', 0, 0],
-    ['burn', 'source-bitmap', 0, 0],
-    ['clone-stamp', 'source-bitmap', 0, 0],
+    // The eight raster tools below now own real processors, and every one of them allocates a
+    // FRESH full-`size` canvas rather than handing the source bitmap back. That is the whole
+    // reason they are `commit: 'raster'`: `tempUpdateLayer` assigns the result straight to
+    // `layer.tmpCanvas`, so returning `[bitmap]` would leave the layer holding the very object
+    // it already had and the edit would render as nothing at all. `transform` is the one other
+    // `canvas` row that allocates twice, which is why the assertion below checks `toContain`
+    // rather than the identity of the last instance.
+    ['eraser', 'canvas', 40, 24],
+    ['paint-bucket', 'canvas', 40, 24],
+    ['gradient', 'canvas', 40, 24],
+    ['sharpen', 'canvas', 40, 24],
+    ['smudge', 'canvas', 40, 24],
+    ['dodge', 'canvas', 40, 24],
+    ['burn', 'canvas', 40, 24],
+    ['clone-stamp', 'canvas', 40, 24],
     ['eyedropper', 'null', 0, 0],
     ['pen', 'null', 0, 0],
     ['freeform-pen', 'null', 0, 0],

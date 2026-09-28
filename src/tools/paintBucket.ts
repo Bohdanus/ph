@@ -49,16 +49,6 @@ export type PaintBucketToolArgs = {
   toolName: 'paint-bucket';
 };
 
-/**
- * @deprecated Superseded by `PaintBucketToolArgs`, which now carries `seed` itself.
- * This name used to be the widening `PaintBucketToolArgs & { seed?: Point | null }` —
- * the runtime shape the processor actually accepted, published under a name the
- * registry did not know about. Nothing should refer to it any more; it is retained only
- * because `src/tools/__tests__/paint-bucket.test.ts` imports it, and that file belongs to
- * a different phase. Delete both the import and this alias together.
- */
-export type PaintBucketSeedArgs = PaintBucketToolArgs;
-
 /** `{ size }` reduced to the integer extents a pixel buffer can hold, matching `pixels.ts`. */
 const rasterSize = (size: { width: number; height: number }): { width: number; height: number } => ({
   width: Number.isFinite(size.width) ? Math.max(0, Math.floor(size.width)) : 0,
