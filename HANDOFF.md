@@ -219,54 +219,38 @@ kind and its four test blocks.
 
 ---
 
-## 15. `reorder-layers` remains conversion-only, and it is not the last one
+## 15. `reorder-layers` is the next append-boundary writer, and it is now unblocked
 
 **Problem.** The append boundary translates `set-document-frame`, `set-selection`, and the canonical
-`show`/`hide`/`rename` layer-property actions. `useLayer.moveLayerAfter` (`useLayer.ts:461-479`)
-still supplies no `durableEntry`, so each reorder reconverts the whole timeline.
+`show`/`hide`/`rename` layer-property actions. `REORDER_LAYERS` still rebuilds the shadow through
+`buildDurableDocument` on every drag, so a reorder is the next candidate to publish.
 
-Reorder is the one remaining writer whose durable operation **cannot be derived from the history
-item alone**: the item carries intent (`layerToMoveId`, `afterWhichLayerId`), not the resulting
-order. Two verified reasons it is not safe to publish yet:
+It could not be published before, for a reason specific to this action: **the durable operation
+cannot be derived from the history item alone.** The item carries intent (`layerToMoveId`,
+`afterWhichLayerId`), not the resulting order, so `validatePlannedDurableEntry` has nothing to check
+an `orderByLayerId` map against. Two preconditions that the slice has now satisfied:
 
-- **The producer's order cannot be trusted.** The layer list defers the move by 200 ms
-  (`LayersTab.tsx:52-69`), so any order captured in the hook is stale by dispatch time, and
-  `validatePlannedDurableEntry` cannot recompute an `orderByLayerId` map without the authoritative
-  logical order immediately before the append.
-- **The delayed writer overwrites concurrent edits.** `moveLayerAfter` builds its record from the
-  `layers` value captured in its render closure (`useLayer.ts:462-470`, from `useStore()` at
-  `:107`) and dispatches the whole record as `updates.layers`, which the projection spreads over
-  state. The `setTimeout` in `LayersTab` holds the closure from the render that scheduled it, so a
-  rename, visibility change, or deletion that lands during those 200 ms is reverted when the reorder
-  commits — while the legacy timeline still contains it, so undo and the visible document disagree.
-  This is a live defect independent of the durable migration, and it is the reason the pre-state has
-  to be owned by the store rather than trusted from the hook.
+- **The store owns the pre-state.** `REORDER_LAYERS` takes intent only and the reducer applies the
+  move to `state.layers` (`StoreContext.tsx:368`, `reorderLayersFromState`), so the authoritative
+  logical order immediately before the append is available at the boundary instead of being carried
+  out of a 200 ms-stale hook closure.
+- **A missing anchor no longer disagrees.** Legacy replay skips the move
+  (`history-replay.ts:127`) and `reorderLayers` refuses it with "Target layer not found"
+  (`layer-utils.ts:259-262`); conversion used to be the lone outlier, checking only the _moving_
+  layer and computing `remaining.indexOf(anchor) + 1` — which is `0` for an absent anchor, recording
+  a move to the bottom the document never performs, and rewriting every layer's `order` so the
+  divergence poisoned all later entries. It now skips like the other two, leaving `operation` null,
+  which is the "record nothing" path a dropped rename already takes and needs no cursor-map change
+  (`legacyCursorToDurableCursor` is appended outside the `if (operation)` push,
+  `history-adapter.ts:691-692`).
 
-**Already resolved, and the shape of the fix for the rest.** The third disagreement is gone:
-conversion used to check only that the _moving_ layer existed and then computed
-`remaining.indexOf(anchor) + 1`, which is `0` for an anchor it cannot find — recording a move to the
-bottom that `replayHistory` never performs (`history-replay.ts:127`) and that `reorderLayers`
-itself refuses `layer-utils.ts:259-262`, "Target layer not found"). Conversion now skips the move
-like the other two, leaving `operation` null and `currentLayers` untouched, which is the same
-"record nothing" path a dropped rename takes. `legacyCursorToDurableCursor` is appended outside the
-`if (operation)` push (`history-adapter.ts:691-692`), so a skipped entry maps to the _preceding_
-durable cursor rather than the tip, and that mapping needed no change.
-
-**What is _not_ the obstacle.** The presentation-promotion hazard named in `AGENTS.md` does not
-apply: `PROMOTE_LAYER_PRESENTATIONS` only swaps `bitmap`/`tmpCanvas`
-(`StoreContext.tsx:463`), and `PUBLISH_RUNTIME_PRESENTATION` is refused unless
-`layersDifferOnlyByPresentation` holds, which compares everything outside
-`PRESENTATION_FIELDS = ['bitmap', 'tmpCanvas']` (`layer-presentation.ts:70,96-112`) — so `order`
-and `pos` cannot change outside a reducer transition. `saveLayerCanvas` has no production caller
-at all and never writes into a `Layer`.
-
-**One asymmetry left in the same area.** `history-replay.ts:127` destructures
-`args as { layerToMoveId, afterWhichLayerId }` with no guard, so a `REORDER_ACTION` carrying no
-`args` throws there, while conversion's `args?.` tolerates the same item and records nothing. Not
-reachable from production today — the only writer always supplies both fields, and `addHistoryEntry`
-has no caller (item 14) — but it is a crash in the authority path against a tolerant shadow, which
-is the same asymmetry shape as the one just fixed. Worth closing whenever the reorder writer next
-moves.
+**Fix.** Take the authoritative layer order from the store at the boundary, recompute the expected
+`orderByLayerId` there **independently** of `legacyHistoryToDurable`'s copy, and route the writer
+through the existing `published` / `preconditions` / `mismatch` decision. Reusing conversion's own
+helper would reproduce a bug in it rather than catching one; an independent copy can drift, so pin
+the two against each other in a parity test. On a missing anchor or mover, return `preconditions` and
+let conversion run — do not manufacture an order map, and do not collapse the three-way decision to a
+boolean.
 
 ### The remaining conversion-only writers
 
@@ -275,29 +259,28 @@ Reorder is the _next_ slice, not the last one. These production sites still pass
 `durableEntry` is necessary but not sufficient: the store publishes only on
 `outcome === 'published'` and otherwise reconverts.
 
-| Site                                   | Action             | Why                                           |
-| -------------------------------------- | ------------------ | --------------------------------------------- |
-| `useLayer.ts:166` `_addLayer`          | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
-| `useLayer.ts:296` `updateLayerByTool`  | `TOOL_ACTION`      | asset-bearing                                 |
-| `useLayer.ts:313` `updateLayerByTool`  | `TOOL_ACTION`      | asset-bearing                                 |
-| `useLayer.ts:377` `commitDirtyTool`    | `TOOL_ACTION`      | asset-bearing; one commit per pending edit    |
-| `useLayer.ts:411` `removeLayer`        | `REMOVE_ACTION`    | needs layer retirement, see §54               |
-| `useLayer.ts:652` `mergeAllLayers`     | `MERGE_ACTION`     | asset-bearing, retires layers                 |
-| `useLayer.ts:461-479` `moveLayerAfter` | `REORDER_ACTION`   | this item                                     |
-| `useSelectionHistory.ts:149`           | `SELECTION_ACTION` | `catch` fallback when planning throws         |
-| `useSelectionHistory.ts:305`           | `SELECTION_ACTION` | `catch` fallback when planning throws         |
-| `useHistory.ts:52` `addHistoryEntry`   | any                | no production caller at all, see item 14      |
+| Site                                  | Action             | Why                                           |
+| ------------------------------------- | ------------------ | --------------------------------------------- |
+| `useLayer.ts:165` `_addLayer`         | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
+| `useLayer.ts:295` `updateLayerByTool` | `TOOL_ACTION`      | asset-bearing                                 |
+| `useLayer.ts:312` `updateLayerByTool` | `TOOL_ACTION`      | asset-bearing                                 |
+| `useLayer.ts:376` `commitDirtyTool`   | `TOOL_ACTION`      | asset-bearing; one commit per pending edit    |
+| `useLayer.ts:410` `removeLayer`       | `REMOVE_ACTION`    | needs layer retirement, see §54               |
+| `useLayer.ts:639` `mergeAllLayers`    | `MERGE_ACTION`     | asset-bearing, retires layers                 |
+| `useLayer.ts:461` `REORDER_LAYERS`    | `REORDER_ACTION`   | this item                                     |
+| `useSelectionHistory.ts:149`          | `SELECTION_ACTION` | `catch` fallback when planning throws         |
+| `useSelectionHistory.ts:305`          | `SELECTION_ACTION` | `catch` fallback when planning throws         |
+| `useHistory.ts:52` `addHistoryEntry`  | any                | no production caller at all, see item 14      |
 
 Three sites have no `durableEntry` concept and reconvert unconditionally: `useHistory.ts:126`
 `resetHistoryTo` (`APPLY_HISTORY_REPLAY`), `useLayer.ts:140` and `useApp.ts:116` (both
 `REPLACE_DOCUMENT`).
 
-**Fix.** Two separate problems, in this order. First, add store-side pre-state derivation and
-validation for `reorder-layers` — take the authoritative logical order at the store boundary, and
-fall back to conversion rather than manufacturing an order map when the anchor is missing. Do not
-collapse the three-way decision to a boolean. Second, the asset-bearing operations
-(`create-layer`, `remove-layer`, `merge-document`, the tool operations) cannot be published until
-§54's registry transaction exists; that single gap is what keeps the majority of writers here.
+**Fix, in order.** `reorder-layers` first — see this item above; the store now owns its pre-state,
+so all that is left is the independent recomputation and the `published` / `preconditions` /
+`mismatch` decision. The asset-bearing operations (`create-layer`, `remove-layer`,
+`merge-document`, the tool operations) cannot be published at all until §54's registry transaction
+exists, and that single gap is what keeps the majority of these writers here.
 
 **Files.** `src/contexts/history-adapter.ts`, `src/contexts/history-append.ts`,
 `src/contexts/StoreContext.tsx`, `src/contexts/useLayer.ts`, `src/components/SidebarRight/LayersTab.tsx`
