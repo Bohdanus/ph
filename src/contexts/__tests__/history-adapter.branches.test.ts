@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { AssetRegistry } from '../asset-registry.ts';
+import { replayDurableDocument } from '../durable-replay.ts';
 import {
   UnsupportedHistoryFeatureError,
   appendDurableEntry,
@@ -20,7 +21,7 @@ import {
   type DurableLayerPropertyPatch,
 } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
-import type { Layer, LayerSource } from '../layer-types.ts';
+import type { Layer, LayerId, LayerSource } from '../layer-types.ts';
 import {
   HIDE_LAYER_ACTION,
   MERGE_ACTION,
@@ -1026,6 +1027,111 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
       'layer-c': 1,
       'layer-1': 2,
     });
+    registry.shutdown();
+  });
+
+  it('records no operation for a reorder whose named anchor is absent, as legacy replay skips it', () => {
+    const registry = new AssetRegistry();
+    const source = blankSource;
+
+    const converted = convert(
+      [
+        { id: 'new-b', actionName: NEW_LAYER_ACTION, layerId: 'layer-b', layerSource: source },
+        { id: 'new-c', actionName: NEW_LAYER_ACTION, layerId: 'layer-c', layerSource: source },
+        {
+          id: 'reorder-ghost-anchor',
+          actionName: REORDER_ACTION,
+          layerId: 'document',
+          args: { layerToMoveId: 'layer-c', afterWhichLayerId: 'ghost' },
+        },
+      ],
+      registry
+    );
+
+    expect(converted.diagnostics).toEqual([]);
+    // `replayHistory` `continue`s on a named-but-absent anchor
+    // (`history-replay.ts:127`), so the shadow records no entry at all. The
+    // tolerated alternative would be a fabricated move to index 0, which the
+    // document never performs.
+    expect(converted.document.history.map((entry) => entry.id)).toEqual(['new-b', 'new-c']);
+    expect(converted.document.history.map((entry) => entry.operation.kind)).toEqual(['create-layer', 'create-layer']);
+    // Before the fix this recorded a move of layer-c to index 0. The converted
+    // order must still be the one replay leaves in place.
+    const replayed = replayDurableDocument(converted.document);
+    const ordered = Object.values(replayed.layers)
+      .sort((left, right) => left.snapshot.order - right.snapshot.order)
+      .map((layer) => layer.snapshot.id);
+    expect(ordered).toEqual(['layer-1', 'layer-b', 'layer-c']);
+    registry.shutdown();
+  });
+
+  it('maps a reorder skipped for an absent anchor to the preceding durable cursor', () => {
+    const registry = new AssetRegistry();
+    const source = blankSource;
+
+    const converted = convert(
+      [
+        { id: 'new-b', actionName: NEW_LAYER_ACTION, layerId: 'layer-b', layerSource: source },
+        {
+          id: 'reorder-ghost-anchor',
+          actionName: REORDER_ACTION,
+          layerId: 'document',
+          args: { layerToMoveId: 'layer-1', afterWhichLayerId: 'ghost' },
+        },
+        {
+          id: 'reorder-real-anchor',
+          actionName: REORDER_ACTION,
+          layerId: 'document',
+          args: { layerToMoveId: 'layer-1', afterWhichLayerId: 'layer-b' },
+        },
+      ],
+      registry
+    );
+
+    expect(converted.document.history.map((entry) => entry.id)).toEqual(['new-b', 'reorder-real-anchor']);
+    // Legacy cursors: [baseline(0), new-b(1), skipped reorder(2), reorder(3)].
+    // The baseline seeds the document, so it maps to -1. `new-b` and the
+    // surviving reorder own durable entries 0 and 1. The skipped reorder owns
+    // none, so it maps to the durable entry that precedes it — 0, the same rule
+    // a dropped rename uses — and never to the tip (1) it does not own.
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1, 0, 0, 1]);
+    registry.shutdown();
+  });
+
+  it.each([
+    {
+      label: 'moves a layer to the bottom when no anchor is named',
+      afterWhichLayerId: null,
+      expectedOrder: { 'layer-1': 0, 'layer-b': 1 },
+    },
+    {
+      label: 'places a layer directly after a present anchor',
+      afterWhichLayerId: 'layer-b',
+      expectedOrder: { 'layer-b': 0, 'layer-1': 1 },
+    },
+  ] satisfies ReadonlyArray<{
+    label: string;
+    afterWhichLayerId: LayerId | null;
+    expectedOrder: Record<LayerId, number>;
+  }>)('$label', ({ afterWhichLayerId, expectedOrder }) => {
+    const registry = new AssetRegistry();
+    const source = blankSource;
+
+    const converted = convert(
+      [
+        { id: 'new-b', actionName: NEW_LAYER_ACTION, layerId: 'layer-b', layerSource: source },
+        {
+          id: 'reorder',
+          actionName: REORDER_ACTION,
+          layerId: 'document',
+          args: { layerToMoveId: 'layer-1', afterWhichLayerId },
+        },
+      ],
+      registry
+    );
+
+    const operation = converted.document.history[1]?.operation;
+    expect(operation?.kind === 'reorder-layers' && operation.orderByLayerId).toEqual(expectedOrder);
     registry.shutdown();
   });
 

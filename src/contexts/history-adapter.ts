@@ -583,24 +583,31 @@ export function legacyHistoryToDurable(
         }
       } else if (item.actionName === REORDER_ACTION) {
         const args = item.args as { layerToMoveId?: LayerId; afterWhichLayerId?: LayerId | null } | undefined;
-        if (args?.layerToMoveId && currentLayers.has(args.layerToMoveId)) {
+        const layerToMoveId = args?.layerToMoveId;
+        const afterWhichLayerId = args?.afterWhichLayerId;
+        // `replayHistory` skips the move entirely when either id is absent
+        // (`history-replay.ts:127`), leaving the order untouched, so conversion
+        // records nothing and leaves `currentLayers` alone. A named but missing
+        // anchor is not a placement at the bottom: `remaining.indexOf` would be
+        // -1, and `+ 1` would record a move to index 0 that the document never
+        // performs. The cursor map above already treats a null operation as
+        // "map to the preceding durable cursor", the same as a dropped rename.
+        const anchorPresent = !afterWhichLayerId || currentLayers.has(afterWhichLayerId);
+        if (layerToMoveId && currentLayers.has(layerToMoveId) && anchorPresent) {
           const order = Object.fromEntries(
             [...currentLayers.values()]
               .sort((left, right) => left.order - right.order)
               .map((layer, index) => [layer.id, index])
           );
-          const moving = order[args.layerToMoveId];
-          const remaining = Object.keys(order).filter((id) => id !== args.layerToMoveId);
-          const targetIndex = args.afterWhichLayerId ? remaining.indexOf(args.afterWhichLayerId) + 1 : 0;
-          remaining.splice(Math.max(0, targetIndex), 0, args.layerToMoveId);
+          const remaining = Object.keys(order).filter((id) => id !== layerToMoveId);
+          const targetIndex = afterWhichLayerId ? remaining.indexOf(afterWhichLayerId) + 1 : 0;
+          remaining.splice(Math.max(0, targetIndex), 0, layerToMoveId);
           const orderByLayerId = Object.fromEntries(remaining.map((id, index) => [id, index]));
-          if (moving !== undefined) {
-            operation = Object.freeze({ kind: 'reorder-layers', orderByLayerId });
-            if (enabled) {
-              for (const [id, nextOrder] of Object.entries(orderByLayerId)) {
-                const layer = currentLayers.get(id);
-                if (layer) currentLayers.set(id, cloneLayerSnapshot({ ...layer, order: nextOrder }));
-              }
+          operation = Object.freeze({ kind: 'reorder-layers', orderByLayerId });
+          if (enabled) {
+            for (const [id, nextOrder] of Object.entries(orderByLayerId)) {
+              const layer = currentLayers.get(id);
+              if (layer) currentLayers.set(id, cloneLayerSnapshot({ ...layer, order: nextOrder }));
             }
           }
         }

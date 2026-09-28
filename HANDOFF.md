@@ -229,12 +229,6 @@ Reorder is the one remaining writer whose durable operation **cannot be derived 
 item alone**: the item carries intent (`layerToMoveId`, `afterWhichLayerId`), not the resulting
 order. Two verified reasons it is not safe to publish yet:
 
-- **The two authorities genuinely disagree on a missing anchor.** Legacy replay skips the move
-  entirely when the anchor is absent (`history-replay.ts:127`). Conversion only checks that the
-  _moving_ layer exists (`history-adapter.ts:586`), then computes
-  `remaining.indexOf(anchor) + 1`, which is `0` for an anchor it cannot find
-  (`history-adapter.ts:594`) — so it moves the layer to the bottom instead of doing nothing.
-  Publishing a fast path here means choosing one of those, not reproducing both.
 - **The producer's order cannot be trusted.** The layer list defers the move by 200 ms
   (`LayersTab.tsx:52-69`), so any order captured in the hook is stale by dispatch time, and
   `validatePlannedDurableEntry` cannot recompute an `orderByLayerId` map without the authoritative
@@ -248,6 +242,16 @@ order. Two verified reasons it is not safe to publish yet:
   This is a live defect independent of the durable migration, and it is the reason the pre-state has
   to be owned by the store rather than trusted from the hook.
 
+**Already resolved, and the shape of the fix for the rest.** The third disagreement is gone:
+conversion used to check only that the _moving_ layer existed and then computed
+`remaining.indexOf(anchor) + 1`, which is `0` for an anchor it cannot find — recording a move to the
+bottom that `replayHistory` never performs (`history-replay.ts:127`) and that `reorderLayers`
+itself refuses `layer-utils.ts:259-262`, "Target layer not found"). Conversion now skips the move
+like the other two, leaving `operation` null and `currentLayers` untouched, which is the same
+"record nothing" path a dropped rename takes. `legacyCursorToDurableCursor` is appended outside the
+`if (operation)` push (`history-adapter.ts:691-692`), so a skipped entry maps to the _preceding_
+durable cursor rather than the tip, and that mapping needed no change.
+
 **What is _not_ the obstacle.** The presentation-promotion hazard named in `AGENTS.md` does not
 apply: `PROMOTE_LAYER_PRESENTATIONS` only swaps `bitmap`/`tmpCanvas`
 (`StoreContext.tsx:463`), and `PUBLISH_RUNTIME_PRESENTATION` is refused unless
@@ -255,6 +259,14 @@ apply: `PROMOTE_LAYER_PRESENTATIONS` only swaps `bitmap`/`tmpCanvas`
 `PRESENTATION_FIELDS = ['bitmap', 'tmpCanvas']` (`layer-presentation.ts:70,96-112`) — so `order`
 and `pos` cannot change outside a reducer transition. `saveLayerCanvas` has no production caller
 at all and never writes into a `Layer`.
+
+**One asymmetry left in the same area.** `history-replay.ts:127` destructures
+`args as { layerToMoveId, afterWhichLayerId }` with no guard, so a `REORDER_ACTION` carrying no
+`args` throws there, while conversion's `args?.` tolerates the same item and records nothing. Not
+reachable from production today — the only writer always supplies both fields, and `addHistoryEntry`
+has no caller (item 14) — but it is a crash in the authority path against a tolerant shadow, which
+is the same asymmetry shape as the one just fixed. Worth closing whenever the reorder writer next
+moves.
 
 ### The remaining conversion-only writers
 
