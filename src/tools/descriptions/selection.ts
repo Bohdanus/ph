@@ -237,7 +237,7 @@ export const selectionDescriptions: Record<
     summary:
       'Click to lay straight-edged anchors around a shape, then click the first anchor, double-click, or press Enter to close.',
     purpose:
-      'The Polygonal Lasso tool draws a selection border out of straight segments, which is the right tool for anything with corners: a building edge, a piece of type, a flat geometric shape. You do not hold the mouse button down; you click to add a corner anchor, move, and click again. Closing the border is explicit and has three ways in: click the starting anchor, double-click, or press Enter or Return, the last of which closes with a segment the tool finds rather than a straight one. Clicking the mouse down and dragging instead of clicking lays a curved segment, and holding Alt/Option while dragging draws a freehand segment between two clicked points. This description is of Photoshop 2023 through 2026.',
+      'The Polygonal Lasso tool draws a selection border out of straight segments, which is the right tool for anything with corners: a building edge, a piece of type, a flat geometric shape. You do not hold the mouse button down; you click to add a corner anchor, move, and click again. Closing the border is explicit and has four ways in: click the starting anchor, Ctrl-click on Windows or Command-click on Mac OS, double-click, or press Enter or Return, the last of which closes with a segment the tool finds rather than a straight one. Clicking the mouse down and dragging instead of clicking lays a curved segment, and holding Alt/Option while dragging draws a freehand segment between two clicked points. This description is of Photoshop 2023 through 2026.',
     options: [
       {
         control: 'New / Add To / Subtract From / Intersect With',
@@ -274,6 +274,10 @@ export const selectionDescriptions: Record<
         action:
           'Double-clicking while Alt is held closes the border with a straight segment rather than a magnetic one.',
       },
+      {
+        keys: 'Shift',
+        action: 'Draws a straight line at a multiple of 45°, held as you move to select the next segment.',
+      },
       { keys: 'Shift', action: 'Sets the gesture to Add to Selection.' },
       { keys: 'Alt', action: 'Set as the combination mode, sets the gesture to Subtract From Selection.' },
       { keys: 'Shift+Alt', action: 'Sets the gesture to Intersect With Selection.' },
@@ -300,7 +304,7 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:46',
     ],
     appNotes:
-      'The click-to-add-anchor gesture, the double-click close, the right-click close, the Enter close, the Backspace and Delete anchor removal and the Escape abort are all implemented, which makes this the most faithful of the seven. Its options bar, however, is the thinnest component in the family: forty lines rendering one app-invented Outline/Fill toggle and a hint sentence, and — unlike the freehand and magnetic lasso bars beside it — no Copy, Paste or Clear buttons. It shares LassoToolArgs with the freehand lasso, so neither Photoshop control on this bar has a field to live in. Because the app has no Select > Modify > Feather and no Refine Edge, a feather set on any selection tool is only reachable by re-making the selection with the tool.',
+      'The click-to-add-anchor gesture, the double-click close, the right-click close, the Enter close, the Delete anchor removal and the Escape abort are all implemented, which makes this the most faithful of the seven. Its options bar, however, is the thinnest component in the family: forty lines rendering one app-invented Outline/Fill toggle and a hint sentence, and — unlike the freehand and magnetic lasso bars beside it — no Copy, Paste or Clear buttons. It shares LassoToolArgs with the freehand lasso, so neither Photoshop control on this bar has a field to live in. Because the app has no Select > Modify > Feather and no Refine Edge, a feather set on any selection tool is only reachable by re-making the selection with the tool.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/polygonal-lasso-tool.html',
@@ -352,7 +356,7 @@ export const selectionDescriptions: Record<
       {
         control: 'Frequency',
         detail:
-          'The rate at which the lasso sets fastening points, from 0 to 100. A higher value lays fastening points down more densely and anchors the border in place more quickly, so moving the slider right adds anchors.',
+          'The rate at which the lasso sets fastening points, from 0 to 100. Adobe states it as "A higher value anchors the selection border in place more quickly"; that a higher value also lays fastening points down more densely is the third-party reading this description’s inversion finding rests on, not Adobe’s wording.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx:291',
       },
@@ -418,7 +422,7 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:47',
     ],
     appNotes:
-      'The magnetic machinery is real: Width, Contrast and Snap feed a gradient-snapping edge detector, Frequency gates automatic fastening points, Smooth simplifies the traced path, and Feather and Anti-alias reach the copied alpha mask through the selection’s metadata. Three things diverge. Frequency is inverted — the app stores it as a maximum path length in pixels and its own help text says lower values add more anchors, where Photoshop’s 0–100 rate means a higher value lays fastening points down more densely, so the same gesture on the two sliders does opposite things. Contrast allows 0% where Photoshop’s documented range starts at 1%. And Feather means the same thing here as on the marquee tools but is capped at 100 pixels, applies to the copied mask rather than to the selection, and has no Select > Modify > Feather behind it. Three of the app’s controls have no Photoshop counterpart at all: Snap, which the toolbar’s own help text describes as cursor pull toward a detected edge, Smooth, and the Preview feather outline. The bracket and comma/period keys that Photoshop binds live are not bound here, and the app’s toolbar badge for this tool reads Shift+L, which is the app’s own binding for one item in a flyout rather than a Photoshop shortcut — in Photoshop all three lasso tools share L and are cycled by repeated presses.',
+      'The magnetic machinery is real: Width, Contrast and Snap feed a gradient-snapping edge detector, Frequency gates automatic fastening points, Smooth simplifies the traced path, and Feather and Anti-alias reach the copied alpha mask through the selection’s metadata. Three things diverge. Frequency is inverted — the app stores it as a maximum path length in pixels and its own help text says lower values add more anchors, where Photoshop’s 0–100 rate is documented as "A higher value anchors the selection border in place more quickly" and, on the third-party reading that a higher value also lays fastening points down more densely, means the opposite thing to the app. Contrast allows 0% where Photoshop’s documented range starts at 1%. And Feather means the same thing here as on the marquee tools but is capped at 100 pixels, applies to the copied mask rather than to the selection, and has no Select > Modify > Feather behind it. Three of the app’s controls have no Photoshop counterpart at all: Snap, which the toolbar’s own help text describes as cursor pull toward a detected edge, Smooth, and the Preview feather outline. The bracket and comma/period keys that Photoshop binds live are not bound here, and the app’s toolbar badge for this tool reads Shift+L, which is the app’s own binding for one item in a flyout rather than a Photoshop shortcut — in Photoshop all three lasso tools share L and are cycled by repeated presses.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/magnetic-lasso-tool.html',
@@ -435,7 +439,7 @@ export const selectionDescriptions: Record<
     summary:
       'Click a color to select every pixel within Tolerance of it — only the adjacent ones, or the whole image if Contiguous is off.',
     purpose:
-      'The Magic Wand tool selects by color and tone rather than by shape: one click takes every pixel whose value falls within Tolerance of the pixel you clicked. With Contiguous on, that flood is limited to the connected region around the click; with it off, the same color range is taken everywhere in the image, which is how a sky repeated in a reflection is caught in one click. It is at its best on large flat areas such as a plain background, and it is not available on Bitmap or 32-bits-per-channel images. Each click within one tool session adds to or subtracts from the selection, so the same tolerance can be dialled in and re-clicked until the region is right. It shares its keyboard key and its Tools-panel flyout with the Quick Selection tool, and the two are the two ways to take the same contiguous region: the Wand takes it by color similarity from a single click, the Quick Selection takes it by following an image edge with a brush, which is why the Wand is better on a flat area and the brush is better on a soft one. This description is of Photoshop 2025 through 2026.',
+      'The Magic Wand tool selects by color and tone rather than by shape: one click takes every pixel whose value falls within Tolerance of the pixel you clicked. With Contiguous on, that flood is limited to the connected region around the click; with it off, the same color range is taken everywhere in the image, which is how a sky repeated in a reflection is caught in one click. It is at its best on large flat areas such as a plain background, and it is widely reported as unavailable on Bitmap and 32-bits-per-channel images — an exclusion Adobe states for the Magnetic Lasso, not for this tool. Each click within one tool session adds to or subtracts from the selection, so the same tolerance can be dialled in and re-clicked until the region is right. It shares its keyboard key and its Tools-panel flyout with the Quick Selection tool, and the two are the two ways to take the same contiguous region: the Wand takes it by color similarity from a single click, the Quick Selection takes it by following an image edge with a brush, which is why the Wand is better on a flat area and the brush is better on a soft one. This description is of Photoshop 2025 through 2026.',
     options: [
       {
         control: 'New / Add To / Subtract From / Intersect With',
@@ -452,31 +456,32 @@ export const selectionDescriptions: Record<
       {
         control: 'Tolerance',
         detail:
-          'The range of selected color values, from 0 (narrow, exact match only) to 255 (broad), defaulting to 32. A low value selects colors very similar to the pixel you click; a higher value selects a broader range either side of it.',
+          'The range of selected color values, from 0 (narrow, exact match only) to 255 (broad). Adobe states the range and no default; the 32 default is a third-party claim, and one of the pages carrying it is Adobe’s Photoshop Elements documentation, which is a different product. A low value selects colors very similar to the pixel you click; a higher value selects a broader range either side of it.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/MagicWand/MagicWand.tsx:54',
       },
       {
         control: 'Anti-alias',
-        detail: 'On by default. Smooths the stair-stepped edge a pixel-accurate selection leaves behind.',
+        detail:
+          'On by default, per the third-party and Elements pages that state it — Adobe’s current page describes the effect without naming a default. Smooths the stair-stepped edge a pixel-accurate selection leaves behind.',
         status: 'missing',
       },
       {
         control: 'Contiguous',
         detail:
-          'On by default. When selected, only adjacent areas of similar color are taken; when deselected, every pixel using the same colors is selected throughout the entire image.',
+          'On by default, on the same third-party and Elements authority rather than an Adobe desktop sentence. When selected, only adjacent areas of similar color are taken; when deselected, every pixel using the same colors is selected throughout the entire image.',
         status: 'missing',
       },
       {
         control: 'Sample All Layers',
         detail:
-          'Off by default. When selected, colors are sampled from all the visible layers; when deselected, only the active layer is sampled.',
+          'Reported off by default, which is a CS5-era third-party claim and not an Adobe sentence. When selected, colors are sampled from all the visible layers; when deselected, only the active layer is sampled.',
         status: 'missing',
       },
       {
         control: 'Select and Mask',
         detail:
-          "A button on the options bar of every selection tool that opens the Select and Mask workspace, where the result is refined with a Refine Edge Brush for soft edges such as hair, a plain Brush for manual touch-ups, and Radius, Smooth, Contrast, Shift Edge and Decontaminate Colors in the Properties panel, then output as a selection, a layer mask, a new layer or a new document. The Wand's own page names it as the way to further refine or preview the selection as a mask.",
+          'A button on the options bar of every selection tool that opens the Select and Mask workspace, where the result is refined with a Refine Edge Brush for soft edges such as hair, a plain Brush for manual touch-ups, and Radius, Smooth, Contrast, Shift Edge and Decontaminate Colors in the Properties panel, then output as a selection, a layer mask, a new layer or a new document. The Wand\'s own page ends by naming it: "Select Select and Mask to further refine or preview the selection as a mask."',
         status: 'missing',
       },
     ],
@@ -549,13 +554,7 @@ export const selectionDescriptions: Record<
       {
         control: 'Select and Mask',
         detail:
-          'Opens the Select and Mask workspace, where the quick selection is refined: a Refine Edge Brush for soft edges such as hair or fur, a plain Brush to add and remove by hand, and Radius, Smart Radius, Smooth, Feather, Contrast, Shift Edge and Decontaminate Colors in the Properties panel, then output as a selection, a layer mask, a new layer or a new document.',
-        status: 'missing',
-      },
-      {
-        control: 'Mask',
-        detail:
-          'Converts the current selection into a layer mask on the active layer instead of leaving it as a selection, so the result can be edited non-destructively. Sits immediately after Select and Mask and before the two checkboxes.',
+          'Opens the Select and Mask workspace, where the quick selection is refined: a Refine Edge Brush for soft edges such as hair or fur, a plain Brush to add and remove by hand, and Radius, Smart Radius, Smooth, Feather, Contrast, Shift Edge and Decontaminate Colors in the Properties panel, then output as a selection, a layer mask, a new layer or a new document. This tool’s own page ends by naming it: "Select Select and Mask to refine the selection further."',
         status: 'missing',
       },
       {
@@ -599,7 +598,7 @@ export const selectionDescriptions: Record<
       'toolbar-mapping.ts:53',
     ],
     appNotes:
-      "The stroke, the re-seeding along the path and the marching-ants preview are all implemented, and the arc-length re-seeding is a better answer than one seed per pointer event. The region grow underneath, though, is not an edge detector: each seed hands the seed pixel to the same flood fill the Magic Wand uses, with Contiguous forced on, so a stroke selects a color range around every dab rather than following the image edge the way Photoshop's does. That is why the bar carries a Tolerance slider at all — Photoshop's Quick Selection has no such control, and the two are the same mechanism under different names. The mode dropdown offers only Add and Subtract, so there is no way to start a fresh selection and no Intersect, and Sample All Layers, Select and Mask, Mask, Auto-Enhance and the tool-preset picker are all absent — Sample All Layers because the stroke reads the merged composite canvas, and the rest because there is no implementation. The committed selection also has no route into Quick Mask mode, which is how Photoshop converts a selection into an editable mask: paint the tool's result, and the only mask the app can produce is the bitmap its Copy button renders. The region is committed as a single traced contour, so a grown region with an enclosed hole is refused rather than committed, and the committed selection carries no brush hardness, spacing, angle or roundness and no live size and opacity keys. On the keyboard, the app badges the Magic Wand with W — the same key Photoshop binds, on the same flyout, because the two tools share it — and the Quick Selection tile carries no badge of its own.",
+      "The stroke, the re-seeding along the path and the marching-ants preview are all implemented, and the arc-length re-seeding is a better answer than one seed per pointer event. The region grow underneath, though, is not an edge detector: each seed hands the seed pixel to the same flood fill the Magic Wand uses, with Contiguous forced on, so a stroke selects a color range around every dab rather than following the image edge the way Photoshop's does. That is why the bar carries a Tolerance slider at all — Photoshop's Quick Selection has no such control, and the two are the same mechanism under different names. The mode dropdown offers only Add and Subtract, so there is no way to start a fresh selection and no Intersect, and Sample All Layers, Select and Mask, Auto-Enhance and the tool-preset picker are all absent — Sample All Layers because the stroke reads the merged composite canvas, and the rest because there is no implementation. The committed selection also has no route into Quick Mask mode, which is how Photoshop converts a selection into an editable mask: paint the tool's result, and there is no route from a selection to a layer mask at all, the only mask the app can produce being the bitmap its Copy button renders. The region is committed as a single traced contour, so a grown region with an enclosed hole is refused rather than committed, and the committed selection carries no brush hardness, spacing, angle or roundness and no live size and opacity keys. On the keyboard, the app badges the Magic Wand with W — the same key Photoshop binds, on the same flyout, because the two tools share it — and the Quick Selection tile carries no badge of its own.",
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/make-selections/automatic-color-based-selections/paint-a-selection-with-quick-selection-tool.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/quick-selection-tool.html',

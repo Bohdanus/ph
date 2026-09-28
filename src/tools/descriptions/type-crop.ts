@@ -6,7 +6,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
     summary:
       'Creates live, resolution-independent type as a heading, a wrapped paragraph, or type flowing along a path.',
     purpose:
-      "Photoshop's Type tools create live, vector-based type: glyph outlines re-rendered from the font, so a type layer stays resolution-independent and editable until you deliberately rasterize it. Clicking places point type, whose lines are independent and never wrap; dragging a bounding box places paragraph type, whose lines wrap and reflow as you resize the box. Type can also flow along an open or closed work path, or fill the inside of a closed shape. Paragraph settings — alignment, justification, indents and hyphenation — apply to paragraph type only, because with point type each line is its own paragraph. This describes Photoshop 2024-2026, where the anti-aliasing pull-down was removed from the type options bar in 26.10 and is reached through the Character panel, the layer's properties, or the Type menu instead.",
+      "Photoshop's Type tools create live, vector-based type: glyph outlines re-rendered from the font, so a type layer stays resolution-independent and editable until you deliberately rasterize it. Clicking places point type, whose lines are independent and never wrap; dragging a bounding box places paragraph type, whose lines wrap and reflow as you resize the box. Type can also flow along an open or closed work path, or fill the inside of a closed shape. Paragraph settings — alignment, justification, indents and hyphenation — apply to paragraph type only, because with point type each line is its own paragraph. The anti-aliasing pull-down is no longer on the type options bar; it is reached from the Character panel, the layer's properties and the Type menu instead. When exactly it left the bar is community-reported only and is not asserted here.",
     options: [
       {
         control: 'Tool preset',
@@ -44,7 +44,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       {
         control: 'Anti-Alias',
         detail:
-          'Five presets — None, Sharp (type appears at its sharpest), Crisp (somewhat sharp), Strong (heavier) and Smooth (smoother) — that control how the glyph edges are rendered into pixels. Present in the type options bar before 26.10; in 2024-2026 it lives in the Character panel, the layer properties and the Type > Anti-Alias menu.',
+          'Five presets — None, Sharp (type appears at its sharpest), Crisp (somewhat sharp), Strong (heavier) and Smooth (smoother) — that control how the glyph edges are rendered into pixels. It is no longer on the type options bar, and is reached from the Character panel, the layer’s properties and the Layer > Type menu instead; when it left the bar is community-reported only, and no Adobe page states a version boundary.',
         status: 'missing',
       },
       {
@@ -134,6 +134,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'https://www.adobe.com/products/photoshop/rasterize.html',
       'https://community.adobe.com/bug-reports-711/p-bring-back-font-anti-aliasing-pulldown-in-the-type-tool-bar-658044',
       'https://theiviaxx.github.io/photoshop-docs/Photoshop/AntiAlias.html',
+      'http://www.underwaterphotography.com/photoshop/photoshop/1_16_3_4.html',
       'http://www.photoshopforphotographers.com/CC_2013/Help_guide/tp/Character_palette.html',
       'https://www.dummies.com/article/technology/software/adobe-products/photoshop/text-options-for-photoshop-cc-163691',
     ],
@@ -148,14 +149,14 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       {
         control: 'Aspect ratio menu',
         detail:
-          'The leftmost control, holding Ratio (free), W x H x Resolution, Original Ratio, 1 : 1 (Square), 4 : 5 (8 : 10), 5 : 7, 2 : 3 (4 : 6), 16 : 9 and Front Image, plus New Crop Preset to save the current values and Delete Crop Preset to remove a saved one.',
+          'The leftmost control, holding Ratio, W x H x Resolution, Original Ratio, 1 : 1 (Square), 4 : 5 (8 : 10), 5 : 7, 2 : 3 (4 : 6), 16 : 9 and Front Image, plus New Crop Preset to save the current values and Delete Crop Preset to remove a saved one. Adobe names the first entry Ratio, not "Free", and defines it as cropping freely without a fixed ratio; clearing the two Width and Height fields is what returns the tool to unconstrained.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Crop/Crop.tsx:8',
       },
       {
         control: 'Swap Width and Height values',
         detail:
-          'A button that flips the active ratio between its landscape and portrait forms, so the current crop can keep its size and change its orientation.',
+          'The double-arrow button beside the Width and Height fields, which swaps them and so changes the crop orientation without changing its size. Adobe states it directly: "To swap Width and Height values, click the Swap icon in the options bar." The older `Rotate Crop Box` button it replaced is gone, and the `X` key does the same swap.',
         status: 'missing',
       },
       {
@@ -173,7 +174,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       {
         control: 'Delete Cropped Pixels',
         detail:
-          'On by default. On, it permanently removes everything outside the crop and the Background layer survives. Off, the canvas shrinks but the pixels are only hidden, the Background is demoted to a regular layer so Photoshop can keep them, they can be brought back by Image > Reveal All or by dragging the crop box out again, and the file grows.',
+          'Decides whether a committed crop is reversible. On, it permanently removes everything outside the crop; off, the pixels are kept and the canvas simply shrinks. Adobe states the setting only as "Permanently removes areas outside the crop, but allows editing when turned off" — the on-by-default state, the Background layer being demoted so Photoshop can hold the hidden pixels, the Image > Reveal All route back and the resulting file growth are third-party observations, not Adobe text.',
         status: 'missing',
       },
       {
@@ -269,6 +270,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/transform-perspective-while-cropping.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/crop-tool.html',
       'https://helpx.adobe.com/photoshop/using/crop-straighten-photos.html',
+      'https://helpx.adobe.com/photoshop-elements/using/cropping.html',
       'https://helpx.adobe.com/in/photoshop/using/new-shortcuts-cs6.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/content-aware-crop-fill.html',
       'https://www.adobe.com/products/photoshop/crop-image.html',

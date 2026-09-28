@@ -73,8 +73,27 @@ export type ToolModifier = {
 /**
  * How much of the tool the application actually implements.
  *
- * `placeholder` is not a quality judgement: it is the literal state of a tool that is listed
- * in `toolbar-mapping.ts`, selectable, and renders `PlaceholderTool` with a TODO badge.
+ * The three values are about **what the tool does to the document**, never about what its
+ * options bar looks like. That distinction is load-bearing and it was originally got wrong
+ * here: an earlier version of this comment defined `placeholder` as "renders `PlaceholderTool`
+ * with a TODO badge", which is a property of the BAR. The Color Replacement Tool renders
+ * exactly such a bar and is not a placeholder — it has a live gesture surface, a `raster`
+ * commit and a real replayable processor, and a drag commits a visible layer. Filing it as
+ * `placeholder` said "this tool does nothing" about a tool that paints.
+ *
+ * - `placeholder` — selectable, but it commits nothing. No gesture surface, `commit:
+ *   'unimplemented'`, an `imageProcessor` that returns `null`. Nothing reaches the document.
+ * - `implemented` — the tool's primary gesture behaves as Photoshop's, and nothing the app
+ *   renders contradicts Photoshop. Gaps are allowed, and they are recorded per control as
+ *   `missing`; a missing control is a capability the app lacks, not a divergence.
+ * - `partial` — the app does something Photoshop's tool also does, but **not the same
+ *   something**: a wrong default, a wrong algorithm, a control welded to one of its states, a
+ *   gesture that does something else. Narrowness is not partiality; getting it wrong is.
+ *
+ * The `implemented` / `partial` line is the one that has to be written down, because leaving
+ * it undefined does not leave the agents neutral — it leaves each of them to invent a bar,
+ * and the verdicts diverge. When a tool has no Photoshop counterpart at all, there is no
+ * contract to diverge from, and the verdict describes the app's own behaviour instead.
  */
 export type ToolImplementationStatus = 'implemented' | 'partial' | 'placeholder';
 

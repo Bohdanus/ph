@@ -11,14 +11,14 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
       {
         control: 'Sample Size',
         detail:
-          'Sets the sampling footprint. Point Sample reads the precise value of the single pixel clicked; every other entry reads the average value of the specified number of pixels within the area clicked. Default: Point Sample.',
+          'Sets the sampling footprint, and Adobe enumerates the whole menu: Point Sample "Reads the exact value of the clicked pixel", and 3 by 3 / 5 by 5 / 11 by 11 / 31 by 31 / 51 by 51 / 101 by 101 Average "Reads the average color value within the selected pixel area". There are no Median entries in it. Default: Point Sample.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:23',
       },
       {
         control: 'Sample',
         detail:
-          'Chooses which layers a sample is read from (All Layers, Current Layer, Current & Below, and the No Adjustments variants), and defaults to sampling every layer. Earlier versions expressed this as a `Sample All Layers` checkbox.',
+          'Chooses which layers a sample is read from: All Layers, Current Layer, Current & Below, and the No Adjustments variants. Adobe enumerates that menu and states no default for it. Earlier versions expressed this as a `Sample All Layers` checkbox.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:37',
       },
@@ -27,7 +27,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
       {
         keys: 'Alt',
         action:
-          'Sets the sampled color as the background color instead of the foreground color. These are click modifiers, not drag modifiers: the Eyedropper has no drag.',
+          'Sets the sampled color as the background color instead of the foreground color — "Select a new background color by holding Alt (Windows) or Option (macOS) and clicking the desired area in the image." These are click modifiers, not drag modifiers: the Eyedropper has no drag.',
       },
     ],
     shortcuts: [
@@ -52,6 +52,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
       'The app implements the tool without a processor: it is the sole member of the pixel-free set, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. A click dispatches a color change and nothing else, so the app records no history entry for a sample and a sample is not undoable — the same class as a zoom, a panel move or a tool switch. Three behaviors diverge. Sample Size offers only Point Sample, 3 by 3 Average and 5 by 5 Average, where Photoshop lists a longer set. `Sample All Layers` renders as a permanently unchecked, permanently disabled checkbox, so the sample source cannot be changed at all; the value is declared in settings, and a click that found it set refuses loudly rather than silently sampling the active layer. And the sample is always read from the composited canvas, with no modifier that can redirect it to the background swatch or to a single layer. The app also omits Photoshop’s spring-loaded switch: `I` here selects the tool outright and there is no temporary mode.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html',
+      'https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/set-foreground-and-background-colors.html',
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/spring-loaded-shortcuts.html',
       'https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=126',

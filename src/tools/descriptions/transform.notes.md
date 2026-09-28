@@ -12,25 +12,64 @@ editor with no menu bar needs somewhere to hang a command — but it does mean t
 because there is no Tools-panel entry to quote. They say so in the string itself rather than
 papering over it, which is why they read the way they do.
 
-The two command-not-tool claims, verified independently:
+**The trailing "Tool" in those three strings is a historical constraint, not a style choice, and
+an adversarial review asked for it to be removed. It was left in place, deliberately.** The
+premise is correct — the assertion that forced the ending has gone, and
+`src/tools/descriptions/__tests__/toolDescriptions.test.ts` no longer constrains the string in any
+way. Three reasons not to change it here. The strings are not contortions: "Levels — the
+`Image > Adjustments` command, not a Tools panel Tool" is an accurate, informative sentence, and
+the capital `T` is what distinguishes Photoshop's own "Tool" from the app's generic tile label. And
+the three strings are **consumed by a generated artifact outside this family's ownership**:
+`docs/TOOLS.md` prints them verbatim, and
+`scripts/__tests__/tool-descriptions.test.mjs:111` byte-compares that file against the generator's
+output, so editing the string without regenerating the doc is a failing test rather than a tidy-up.
+`docs/TOOLS.md` has to be regenerated for the substantive edits in this pass anyway, so if the
+coordinator wants the wording changed it should be changed there, once, deliberately — not as a
+side effect of a prose fix.
 
-- **Free Transform is the `Edit > Transform > Free Transform` command (`Cmd+T`), not a tool.**
+The two command-not-tool claims, verified independently. **Both are now led by a negative, and a
+complete version-stamped Tools-panel enumeration is a far better citation for a negative than a
+menu-path argument**, so each is stated from the inventory first and the menu routing second.
+
+- **Two complete Tools-panel inventories contain no Free Transform tool.** `https://glensmith.co.uk/photoshop/tools`
+  is stamped twice — "every tool in the Photoshop 2026 toolbar" and a "Page updated: 21 September
+  2026" line — and enumerates the whole bar in toolbar order (Move, Artboard, the marquees,
+  Selection Brush, the lassos, Object Selection, Quick Selection, Magic Wand, Crop, Perspective
+  Crop, Slice, Slice Select, Frame, Eyedropper, Color Sampler, Ruler, Note, Count, the retouching and
+  painting group, the pen family, the type tools, Path Selection, Direct Selection, the shape tools,
+  Hand, Rotate View, Zoom). There is no Transform entry, and no Transform-derived entry under any
+  other name. `https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview` is the
+  second, and says of itself that it is "a complete summary of the nearly 70 tools available in
+  Photoshop"; it also has none.
+- **Free Transform is reached as a command (`Edit > Transform > Free Transform`, `Cmd+T`).**
   `https://helpx.adobe.com/photoshop/using/free-transformations-images-shapes-paths.html` — "Choose
   Edit > Free Transform." and, in the very next bullet, "If you are transforming a selection,
   pixel-based layer, or selection border, choose the **Move tool**. Then select Show Transform
-  Controls in the options bar." Adobe's own routing sends a pixel layer to the **Move** tool,
-  which is the strongest available evidence that the transform state has no tool of its own.
-  Corroborated by `https://helpx.adobe.com/photoshop/using/tool-techniques/move-tool.html`,
-  which does say "Select the Move tool (V)" — the Tools-panel phrasing Free Transform never gets.
+  Controls in the options bar." Adobe's own routing sends a pixel layer to the **Move** tool, which
+  is the strongest available positive evidence that the transform state has no tool of its own.
+  Corroborated by `https://helpx.adobe.com/photoshop/using/tool-techniques/move-tool.html`, which
+  does say "Select the Move tool (V)" — the Tools-panel phrasing Free Transform never gets.
+  - **The counter-sentence, and why it does not carry.** Adobe's own marketing copy on
+    `https://www.adobe.com/products/photoshop/resize-image.html` says "Select the Transform tool by
+    pressing Ctrl + T (Cmd + T for Mac)." That is the sentence a hostile reviewer will find, so it
+    is named in `appNotes` rather than left for them. It does not survive the same paragraph: the
+    next clause of the same page is "You can also go to Edit > Free Transform." The page names the
+    menu route itself, uses "tool" for the interactive state rather than for a Tools-panel entry,
+    and is marketing copy rather than an enumeration. The enumeration is the primary citation
+    because it is the one that can be wrong; a sentence about a shortcut is not.
 - **Levels and Black and White are `Image > Adjustments` commands (or adjustment layers), not
-  tools.** `https://helpx.adobe.com/photoshop/using/color-adjustments.html` enumerates them under
+  tools.** The same two inventories carry the negative, which is what a negative needs:
+  `https://glensmith.co.uk/photoshop/tools` and
+  `https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview` each list every
+  Tools-panel entry and neither has a Levels or a Black and White tool in it. The positive half is
+  `https://helpx.adobe.com/photoshop/using/color-adjustments.html`, which enumerates them under
   the heading "Color adjustment commands" — "Levels command", "Color Balance command",
-  "Hue/Saturation command" — and says presets are applied "using an adjustment layer".
+  "Hue/Saturation command" — and says presets are applied "using an adjustment layer";
   `https://helpx.adobe.com/photoshop/using/levels-adjustment.html` gives the two routes: "In the
   Adjustments panel, click the Levels icon or choose Levels from the panel menu", and
   `https://www.adobe.com/learn/photoshop/web/photoshop-improve-tones-levels` gives the other
   half: "The first step is to add a Levels adjustment layer so you can apply levels
-  nondestructively." Nowhere in either is a Tools-panel entry.
+  nondestructively."
 
 A fifth correction fell out of this pass and is folded into the data file: **`X` is not the reset
 key for Black and White.** Adobe's documented route is a control: "To return the adjustment to its
@@ -120,10 +159,14 @@ space, on a surface with a known engine gap".
 
 | tool         | options rows | present | partial | inert | missing |
 | ------------ | ------------ | ------- | ------- | ----- | ------- |
-| `reposition` | 9            | 0       | 2       | 0     | 7       |
+| `reposition` | 8            | 0       | 2       | 0     | 6       |
 | `transform`  | 10           | 1       | 6       | 0     | 3       |
 | `levels`     | 12           | 0       | 3       | 0     | 9       |
 | `color`      | 7            | 0       | 1       | 0     | 6       |
+
+`reposition` was 9 rows and is 8: the `Align to` row was removed, not downgraded. It is recorded
+under "The align buttons" below — there is no Adobe page naming a bar control for the align target,
+and the menu sentence does not imply one.
 
 No row is `inert`. `inert` is for state declared in `src/tools/settings.ts` and rendered by no
 component, and all four of these tools' declared state is read by a component that renders it —
@@ -150,7 +193,6 @@ about other features.
 | Show Transform Controls    | Checkbox that puts the transform box and handles on the selected layer _without_ entering transform mode; dragging a handle is what starts it | partial | `src/components/Main/MoveToolArea.tsx:117` |
 | Align                      | Six buttons at 2+ selected: Top Edges, Vertical Centers, Bottom Edges, Left Edges, Horizontal Centers, Right Edges                            | missing |                                            |
 | Distribute                 | The distribute row at 3+ selected: the same six commands to space layers evenly, plus the Horizontally and Vertically spacing buttons         | missing |                                            |
-| Align to                   | The target the buttons measure against — selection border, canvas, a chosen layer, or a group                                                 | missing |                                            |
 | Width                      | Numeric percent text box for layer width, with the Link icon on by default since 21.0                                                         | missing |                                            |
 | Height                     | Numeric percent text box for layer height, linked to Width                                                                                    | missing |                                            |
 
@@ -179,11 +221,28 @@ behaviour, and the behaviour is the interesting part:
 - The distribute row has **two members beyond the six**, Horizontally and Vertically, which space
   the gaps rather than the centres (same Adobe page; the two-button current form is described at
   `https://design.tutsplus.com/tutorials/how-to-auto-align-in-photoshop--cms-40982`, third party).
-- The **target is separate from the command**: Adobe splits it as two submenus, `Layer > Align`
-  (align to the selected layers) and `Layer > Align Layers To Selection` (align to a selection
-  border), and then says "These same commands are available as Alignment buttons in the Move tool
-  options bar" — which is the sentence that ties the menu to the bar. The bar's own expression of
-  the choice is the `Align to` target, Selection / Canvas / Layer / Group.
+- The **target is separate from the command, and the bar does not express the choice**. Adobe
+  splits it as two submenus, `Layer > Align` (align to the selected layers) and `Layer > Align
+Layers To Selection` (align to a selection border), and then says "These same commands are
+  available as Alignment buttons in the Move tool options bar" — which is the sentence that ties
+  the menu to the bar. That sentence names the two targets as **menu** submenus and says nothing
+  about a bar control for choosing between them. **There was an `Align to` row here and it was
+  removed**: it described a four-way target menu (Selection / Canvas / Layer / Group) whose only
+  source is the third-party `https://www.photoshopbuzz.com/how-to-align-layers`, which names an
+  `Align To:` setting in the bar as a selection rather than as a modifier. One third-party page is
+  not enough to put a control in the data file, and no Adobe page corroborates it. The content is
+  folded into the `Align` row as the fact it actually is — two targets, chosen in the menu — and
+  the data file records that no Adobe page names a bar control for it. Do not re-add the row
+  without an Adobe page.
+- **The Alignment-buttons sentence was read on mirrors, not on Adobe's own host, and the omission
+  of the modifier bindings is deliberate.** `https://helpx.adobe.com/ie/photoshop/using/aligning-layers.html`
+  answers `webfetch` with HTTP 403. The verbatim sentence "These same commands are available as
+  Alignment buttons in the Move tool options bar" was read on five independent mirrors of that
+  localized page, which is why it is quoted at all; the `Layer > Align` / `Layer > Align Layers To
+Selection` split comes from the same source. Because the page is Adobe-authored but unreadable at
+  its Adobe URL, nothing on it is treated as establishing a **binding**: `modifiers` carries no
+  `Shift` and no `Alt` row for the align buttons, and that absence is a sourcing decision, not an
+  oversight. Do not "fix" it by guessing a modifier.
 - **A group aligns as a single object.** Selecting three layers and aligning their horizontal
   centers stacks them on one axis and destroys the spacing you built; grouping first is what
   preserves it, because a group aligns as one unit. This is the most common way the align buttons
@@ -354,6 +413,8 @@ operation, which is the property the command exists for.
 - https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/manage-image-states.html
 - https://jkost.com/blog/2019/06/new-free-transform-preference-in-photoshop.html _(Adobe blog)_
 - https://morris-photographics.com/photoshop/shortcuts/downloads/PSCS3_Keyboard_Shortcuts_Mac.pdf _(third-party mirror of Adobe's shipped shortcut sheet; the only route to `Cmd+T` / `Cmd+Option+T` / `Enter`, since Adobe's own default-shortcuts page describes the dialog rather than listing the bindings)_
+- https://glensmith.co.uk/photoshop/tools _(third party, but the load-bearing citation for the command-not-tool claim: a complete, version-stamped — "every tool in the Photoshop 2026 toolbar", page updated 21 September 2026 — enumeration of the whole Tools panel in toolbar order, containing no Transform entry under any name)_
+- https://www.adobe.com/products/photoshop/resize-image.html _(Adobe marketing copy, and the source of the counter-sentence "Select the Transform tool by pressing Ctrl + T (Cmd + T for Mac)" — the same paragraph's next clause is "You can also go to Edit > Free Transform", which is why the sentence does not carry a Tools-panel claim)_
 
 ## `levels` — Levels
 
@@ -361,20 +422,20 @@ Levels is the tonal tool, and the app's `levels` is Brightness/Contrast under it
 the corpus's Note B and it survives inspection of the current tree unchanged: two sliders, no
 histogram, and a filter string of `brightness() contrast()`.
 
-| control                     | what it is in Photoshop                                                                                                              | status  | appRef                                               |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------- | ---------------------------------------------------- |
-| Preset                      | Menu of saved settings, with Save Preset beside it                                                                                   | missing |                                                      |
-| Channel                     | RGB, or an individual Red / Green / Blue channel, or a combination selected in the Channels panel. Defaults to RGB                   | missing |                                                      |
-| Histogram                   | The distribution graph drawn behind the three input sliders; the guide you read to decide where the points belong                    | missing |                                                      |
-| Input Levels: black point   | Left slider, default level 0. At level 5, everything at 5 and below maps to 0                                                        | partial | `src/components/ToolbarsRight/Levels/Levels.tsx:109` |
-| Input Levels: midtone gamma | Middle slider, default 1.00, adjusting gamma rather than either extreme                                                              | missing |                                                      |
-| Input Levels: white point   | Right slider, default level 255. At level 243, everything at 243 and above maps to 255                                               | partial | `src/components/ToolbarsRight/Levels/Levels.tsx:127` |
-| Output Levels: black        | Left output slider, default 0, the level the black point maps to                                                                     | missing |                                                      |
-| Output Levels: white        | Right output slider, default 255, the level the white point maps to                                                                  | missing |                                                      |
-| Auto                        | Clips a small fraction of shadows and highlights per channel and maps the remaining extremes to pure black and white                 | missing |                                                      |
-| Auto Options                | Opens Auto Color Correction Options: chooses the algorithm and sets the clipping percentages                                         | missing |                                                      |
-| Eyedroppers                 | Set Black Point, Set Gray Point, Set White Point. Using them discards any adjustment already made, so Adobe advises using them first | missing |                                                      |
-| Reset                       | Returns the adjustment to its original settings                                                                                      | partial | `src/components/ToolbarsRight/Levels/Levels.tsx:138` |
+| control                     | what it is in Photoshop                                                                                                                                           | status  | appRef                                               |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------- |
+| Preset                      | Menu of saved settings, with Save Preset beside it                                                                                                                | missing |                                                      |
+| Channel                     | RGB, or an individual Red / Green / Blue channel, or a combination selected in the Channels panel. Defaults to RGB                                                | missing |                                                      |
+| Histogram                   | The distribution graph drawn behind the three input sliders; the guide you read to decide where the points belong                                                 | missing |                                                      |
+| Input Levels: black point   | Left slider on the 0–255 domain, at 0 — a default Adobe does not state. At level 5, everything at 5 and below maps to 0 (this description's own case)             | partial | `src/components/ToolbarsRight/Levels/Levels.tsx:109` |
+| Input Levels: midtone gamma | Middle slider, "adjusts the gamma in the image"; at 1.00, a default Adobe does not state; left lightens, right darkens                                            | missing |                                                      |
+| Input Levels: white point   | Right slider, at 255 — a default Adobe does not state. Adobe's own case: at 243, everything at 243 and above maps to 255                                          | partial | `src/components/ToolbarsRight/Levels/Levels.tsx:127` |
+| Output Levels: black        | Left output slider, default 0 — Adobe's stated Output-slider default; the level the black point maps to                                                           | missing |                                                      |
+| Output Levels: white        | Right output slider, default 255 — the other half of Adobe's stated Output-slider defaults                                                                        | missing |                                                      |
+| Auto                        | Clips a small fraction of shadows and highlights per channel and maps the remaining extremes to pure black and white. Adobe: 0.1% clipping, 0–255 domain          | missing |                                                      |
+| Auto Options                | Opens Auto Color Correction Options: chooses the algorithm and sets the clipping percentages. Adobe recommends 0.0%–1%. Three of four algorithm names are Adobe's | missing |                                                      |
+| Eyedroppers                 | Set Black Point, Set Gray Point, Set White Point. Using them discards any adjustment already made, so Adobe advises using them first                              | missing |                                                      |
+| Reset                       | Returns the adjustment to its original settings                                                                                                                   | partial | `src/components/ToolbarsRight/Levels/Levels.tsx:138` |
 
 The two `partial` input rows are `partial` by association, not by resemblance, and the
 distinction matters. The app's nearest analogue to the black point is its **Brightness** slider,
@@ -413,12 +474,22 @@ The app binds no shortcut for `levels` (`toolbar-mapping.ts:63`).
 
 - https://helpx.adobe.com/photoshop/using/levels-adjustment.html
 - https://helpx.adobe.com/photoshop/using/adjust-color-tone-levels-curves.html
-- https://helpx.adobe.com/photoshop/using/making-quick-tonal-adjustments.html
+- https://helpx.adobe.com/photoshop/using/making-quick-tonal-adjustments.html _(the 0–255 domain verbatim; the 0.1% clipping default, twice; the 0.0%–1% recommendation for the Clip boxes)_
 - https://helpx.adobe.com/photoshop/using/viewing-histograms-pixel-values.html
 - https://helpx.adobe.com/photoshop/using/color-adjustments.html
 - https://helpx.adobe.com/ca/photoshop/web/edit-images/color--tone--and-lighting/modify-tones-with-levels-adjustment.html _(localized mirror; the `RGB, Red, Green, or Blue` channel list)_
 - https://www.adobe.com/learn/photoshop/web/photoshop-improve-tones-levels _(Adobe Learn; the non-destructive adjustment-layer half)_
 - https://morris-photographics.com/photoshop/shortcuts/downloads/PSCS3_Keyboard_Shortcuts_Mac.pdf _(third-party mirror of Adobe's shipped shortcut sheet; `Cmd+L`)_
+- https://glensmith.co.uk/photoshop/tools _(third party; the negative — a complete Photoshop 2026 Tools-panel enumeration with no Levels tool in it)_
+- https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview _(third party; the second negative — "nearly 70 tools", also with no Levels tool)_
+
+Note on `levels-adjustment.html`, which carries more of the table than the other Adobe pages: "The
+outer two Input Levels sliders map the black point and white point to the settings of the Output
+sliders. By default, the Output sliders are at level 0, where the pixels are black, and level 255,
+where the pixels are white… if you move the white point slider to the left at level 243, Photoshop
+maps all pixels at level 243 and higher to level 255", and "The middle Input slider adjusts the
+gamma in the image." It states the **Output** defaults and the level-243 case, and states no
+default for the three **input** sliders.
 
 ## `color` — Black and White
 
@@ -462,6 +533,8 @@ found in any source. That is a finding, not a gap in the research — see `## Un
 - https://helpx.adobe.com/photoshop/using/color-monochrome-adjustments-using-channels.html _(the contrast case — monochrome via Channel Mixer presets, not Black & White)_
 - https://www.photoshopessentials.com/photo-editing/black-and-white-cs3 _(third party; the sextant order and the 40 / 60 / 40 / 60 / 20 / 80 defaults, which Adobe's own page does not print)_
 - https://www.photoshopessentials.com/photo-effects/easy-selective-color-effect-with-photoshop _(third party; the six sliders named as three primaries plus three secondaries)_
+- https://glensmith.co.uk/photoshop/tools _(third party; the negative — a complete Photoshop 2026 Tools-panel enumeration with no Black and White tool in it)_
+- https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview _(third party; the second negative — "nearly 70 tools", also with no Black and White tool)_
 
 ## Unverified
 
@@ -471,14 +544,22 @@ found in any source. That is a finding, not a gap in the research — see `## Un
    menu commands on one page — `Layer > Align` and `Layer > Align Layers To Selection` — and then
    makes the tie to the bar explicit: "These same commands are available as Alignment buttons in
    the Move tool options bar"
-   (`https://helpx.adobe.com/ie/photoshop/using/aligning-layers.html`). That establishes that the
-   buttons have two targets, and that the second one is the active selection border. It does not
-   say which modifier selects which, and no page opened in this pass says that `Shift` picks
-   Align-Layers-To-Selection. The `Alt`-click-duplicates-the-layer variant is likewise unsourced;
-   Adobe's `Alt`-drag duplicate on the canvas is a different control and is asserted in the data
-   file, not this. Both are omitted from `modifiers` rather than guessed. Closest URL for the
-   binding itself: `https://www.photoshopbuzz.com/how-to-align-layers` (third party), which
-   describes the `Align To:` setting in the bar as a selection, not as a modifier.
+   `https://helpx.adobe.com/ie/photoshop/using/aligning-layers.html`). **That page is unread at its
+   Adobe URL — `webfetch` returns HTTP 403 — and the sentence was read on five independent mirrors
+   of it.** Adobe's own routing, from a page that does open, sends a pixel layer to the Move tool
+   with Show Transform Controls rather than to any transform tool
+   (`https://helpx.adobe.com/photoshop/using/free-transformations-images-shapes-paths.html`), so
+   the counter-argument is recorded there rather than left to be found. The quoted sentence
+   establishes that the buttons have two targets, and that the second one is the active selection
+   border. It does not say which modifier selects which, and no page opened in this pass says that
+   `Shift` picks Align-Layers-To-Selection. The `Alt`-click-duplicates-the-layer variant is likewise
+   unsourced; Adobe's `Alt`-drag duplicate on the canvas is a different control and is asserted in
+   the data file, not this. Both are omitted from `modifiers` rather than guessed, and that
+   omission is deliberate — see "The align buttons" above. Closest URL for the binding itself:
+   `https://www.photoshopbuzz.com/how-to-align-layers` (third party), which describes the
+   `Align To:` setting in the bar as a selection, not as a modifier, and which is the only page
+   anywhere that names that control — which is why the `Align to` row was removed rather than
+   kept.
 2. **The "Auto-Align dropdown" as a control in the Move tool's options bar.** Named in the
    addendum and in the corpus's pre-existing Move row, and not confirmed. What is confirmed is that
    Photoshop's Auto-Align is `Edit > Auto-Align Layers` — a **command** with a dialog, not a
@@ -559,11 +640,30 @@ found in any source. That is a finding, not a gap in the research — see `## Un
    current form is Properties-panel-based, where the equivalent of an old modal Preview checkbox
    is the Toggle Layer Visibility button. Closest URL:
    `https://helpx.adobe.com/photoshop/desktop/adjust-color/color-effects-techniques/convert-a-color-image-to-black-and-white.html`.
-10. **The `levels` clipping percentage default (0.1%) and the four Auto algorithm names in the
-    data file.** Sourced for the algorithms' existence and naming from
-    `https://helpx.adobe.com/photoshop/using/making-quick-tonal-adjustments.html` ("By default, the
-    Auto option and the Auto Tone command clip the white and black pixels by 0.1%") and from a
-    third-party walkthrough of the Auto Color Correction Options dialog for the fourth algorithm,
-    Enhance Brightness and Contrast, which Adobe's page does not name. The `0.1%` figure is
-    therefore single-sourced and the fourth algorithm is not Adobe-sourced; both are stated in the
-    control's `detail` and neither is load-bearing for the app comparison.
+10. **The four `Auto Options` algorithm names, and the input-slider defaults — not the 0.1%
+    clipping default, which is confirmed.** An earlier version of this list called the whole
+    `Auto` row single-sourced and stale, including the `0.1%`. That was wrong and is now corrected.
+    Adobe states the clipping default **twice on one page**
+    (`https://helpx.adobe.com/photoshop/using/making-quick-tonal-adjustments.html`): once for
+    Auto Color — "By default, Photoshop clips the black and white pixels by 0.1%—that is, it
+    ignores the first 0.1% of either extreme when identifying the lightest and darkest pixels in
+    the image" — and once for the command the `Auto` button belongs to — "By default, the Auto
+    option and the Auto Tone command clip the white and black pixels by 0.1%—that is, it ignores
+    the first 0.1% of either extreme when identifying the lightest and darkest pixels in the
+    image. The default settings for the Auto option can be changed in the Auto Color Correction
+    Options dialog box." Both sentences are in the data file's `Auto` row. What is still
+    third-party is the **fourth algorithm name, Enhance Brightness and Contrast**, which Adobe's
+    page does not name, and it is marked inline in that row as well as here. What Adobe does not
+    state anywhere is the **default position of the three input sliders** (0, 1.00, 255); the rows
+    now say so rather than presenting the defaults as Adobe's. The `Output` slider defaults _are_
+    Adobe's, verbatim, from `https://helpx.adobe.com/photoshop/using/levels-adjustment.html`: "By
+    default, the Output sliders are at level 0, where the pixels are black, and level 255, where
+    the pixels are white." The `0.1%` figure and the recommended `0.0%`–`1%` range are Adobe's;
+    the black-point worked example at level 5 is this description's own, mirroring Adobe's own
+    level-243 example on the white point.
+11. **The 0 to 255 domain sentence attributes to the Auto option what the row needs for the
+    sliders.** Adobe's wording — "This clips a portion of the shadows and highlights in each
+    channel and maps the lightest and darkest pixels in each color channel to pure white (level 255) and pure black (level 0)" — is written about the Auto option for Levels and Curves and
+    the Auto Tone command, not about the input sliders' resting positions. It establishes the
+    **domain**; it does not establish a default. The rows were rewritten to keep those two apart
+    rather than to attribute the sentence to the sliders wholesale.

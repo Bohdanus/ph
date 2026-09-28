@@ -65,7 +65,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   'color-replacement': {
     summary:
       'Recolors the pixels it paints over with the foreground color while keeping their luminosity and texture, rather than covering them.',
-    implementation: 'placeholder',
+    implementation: 'partial',
   },
   eraser: {
     summary:
@@ -124,22 +124,24 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   rectangle: {
     summary:
       'Drag-defined rectangle or square with an optional corner radius, drawn as a shape layer, path, or filled pixels.',
-    implementation: 'implemented',
+    implementation: 'partial',
   },
   ellipse: {
     summary: 'Drag-defined ellipse or circle drawn as a shape layer, a work path, or a filled pixel region.',
-    implementation: 'implemented',
+    implementation: 'partial',
   },
   line: {
     summary: 'Drag-defined straight line or arrow, drawn as a shape layer, a work path, or a filled pixel region.',
     implementation: 'partial',
   },
   triangle: {
-    summary: 'Drag-defined isosceles triangle; hold Shift while dragging to constrain it to an equilateral triangle.',
+    summary:
+      'Drag-defined triangle with its apex at the top-centre of the drag box; hold Shift while dragging to constrain it to an equilateral triangle.',
     implementation: 'partial',
   },
   polygon: {
-    summary: 'Drag-defined regular polygon of any number of sides, which can also be drawn as a star.',
+    summary:
+      'Drag-defined polygon of any number of sides, with the side count set before the draw; the star of a given point count is a separate tool.',
     implementation: 'partial',
   },
   'custom-shape': {
@@ -186,7 +188,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   reposition: {
     summary:
       "Photoshop's Move tool (V) drags layers, selections and artboards around the document, and hosts the transform box Free Transform hangs off.",
-    implementation: 'implemented',
+    implementation: 'partial',
   },
   transform: {
     summary:

@@ -14,9 +14,15 @@ export const paintDescriptions: Record<
       {
         control: 'Brush Preset Picker',
         detail:
-          'The tip thumbnail and the chevron beside it. Clicking it opens a popout from which the tip’s Size and Hardness can be changed temporarily, plus an Angle/Roundness drag widget, a settings gear, a New Preset button and a grid of tip thumbnails. There is no separate top-bar Hardness control in current Photoshop; Hardness lives here and in the Brush Settings panel. Photoshop has no Tool Preset Picker on this bar any more — that dropdown was folded into the Brush Settings and Presets interfaces — so the settings-snapshot picker this app renders in the same position is its own addition rather than a stand-in for a control Photoshop still shows.',
+          'The tip thumbnail and the chevron beside it. Clicking it opens a popout from which the tip’s Size and Hardness can be changed temporarily, plus an Angle/Roundness drag widget, a settings gear, a New Preset button and a grid of tip thumbnails. There is no separate top-bar Hardness control in current Photoshop; Hardness lives here and in the Brush Settings panel. The Tool Preset Picker is a separate control at the far left of the bar — see its own row — so the settings-snapshot picker this app renders is not standing in for it.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:123',
+      },
+      {
+        control: 'Tool Preset Picker',
+        detail:
+          'A dropdown at the far left of the options bar, beside the tool icon, that saves and recalls a whole options-bar state for the active tool. Adobe’s own current documentation places it explicitly: "You can also select the Tool Presets dropdown menu next to the tool at the upper-left of the Options bar", with a Create New Tool Preset icon on it. It is also the only per-tool reset on the bar, offering Reset Tool and Reset All Tools — which is what makes it the escape hatch from per-tool stickiness.',
+        status: 'missing',
       },
       {
         control: 'Size',
@@ -121,13 +127,17 @@ export const paintDescriptions: Record<
       'A real painting tool, and the closest of the seven: a drag paints the foreground colour, one mouse-up is one history state, and Opacity behaves as Photoshop’s per-stroke ceiling because the stroke is a single alpha-weighted pass over the whole path. The divergences are structural. There is no Flow and therefore no within-stroke build-up; there is no tip, so no Hardness, Spacing, angle, roundness, shape dynamics, scattering or texture; there is no Airbrush, no stylus pressure, no symmetry and no Brush Settings panel. Mode offers sixteen canvas compositing operations rather than Photoshop’s thirty-plus, and it is applied to the layer the stroke creates rather than to the stroke’s own pixels. Size is capped at 500 px, not 5000, because a stroke is rasterized into a canvas padded by the full tip width and committed as its own layer. Smoothing is real but a different algorithm: it pulls each sampled interior point toward the midpoint of its neighbours, whereas Photoshop’s is a trailing anchor over the raw input stream, so the app has no catch-up and no pulled-string slack. The largest divergence is not in the bar at all — a brush stroke is committed by creating a NEW layer rather than by painting the active one.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
+      'https://asktimgrey.com/2023/09/01/flow-versus-opacity-for-brushes',
+      'https://photoshopcafe.com/use-flow-opacity-photoshop-brushes',
       'https://community.wacom.com/en-us/guide-to-photoshop-brushes-pt-1/',
       'https://flylib.com/books/en/4.462.1.114/1/',
       'https://asktimgrey.com/2017/03/21/pencil-brush-shape/',
       'https://web.archive.org/web/20201111235536/https:/helpx.adobe.com/photoshop/using/whats-new/2018.html',
       'https://helpx.adobe.com/photoshop/using/paint-symmetry.html',
       'https://www.tipsquirrel.com/5-awesome-icon-buttons-might-know-photoshop/',
-      'https://clippingpathca.com/photoshop-tool-presets/',
+      'https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/create-tool-preset.html',
+      'http://www.jkost.com/pdf/photoshop/cs3/PSTips&Tech.pdf',
+      'https://community.adobe.com/questions-712/changing-brush-size-shortcuts-ctrl-alt-second-click-and-drag-1167556',
     ],
   },
   pencil: {
@@ -140,7 +150,7 @@ export const paintDescriptions: Record<
       {
         control: 'Brush Preset Picker',
         detail:
-          'The tip thumbnail and its chevron, opening a popout whose Size and Hardness change the tip temporarily, plus an Angle/Roundness widget, a settings gear, a New Preset button and a grid of tips. The Pencil offers hard-edged tips only, so its Hardness is fixed. Photoshop has no Tool Preset Picker on this bar any more — that dropdown was folded into the Brush Settings and Presets interfaces — so the settings-snapshot picker this app renders in the same position is its own addition.',
+          'The tip thumbnail and its chevron, opening a popout whose Size and Hardness change the tip temporarily, plus an Angle/Roundness widget, a settings gear, a New Preset button and a grid of tips. The Pencil offers hard-edged tips only, so its Hardness is fixed. The Tool Preset Picker is a separate control at the far left of the bar — see its own row — so the settings-snapshot picker this app renders is not standing in for it.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:123',
       },
@@ -265,13 +275,13 @@ export const paintDescriptions: Record<
       {
         control: 'Sampling',
         detail:
-          'Three small icons. Continuous (default) resamples the color under the crosshair as you drag; Once locks the color of the first click for the whole stroke; Background Swatch replaces only areas containing the current background color.',
+          'Three small icons. Continuous resamples the color under the crosshair as you drag; Once locks the color of the first click for the whole stroke; Background Swatch replaces only areas containing the current background color. Adobe does not state which is the default.',
         status: 'missing',
       },
       {
         control: 'Limits',
         detail:
-          'A dropdown. Contiguous (default) replaces colors contiguous with the pixel under the pointer; Discontiguous replaces the sampled color wherever it occurs under the pointer; Find Edges replaces connected areas containing the sampled color while preserving the sharpness of shape.',
+          'A dropdown. Contiguous replaces colors contiguous with the pixel under the pointer; Discontiguous replaces the sampled color wherever it occurs under the pointer; Find Edges replaces connected areas containing the sampled color while preserving the sharpness of shape. Adobe does not state which is the default.',
         status: 'missing',
       },
       {
@@ -288,7 +298,7 @@ export const paintDescriptions: Record<
     ],
     modifiers: [],
     shortcuts: [],
-    implementation: 'placeholder',
+    implementation: 'partial',
     implementationRefs: [
       'src/tools/toolsMap.ts:116',
       'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:13',
@@ -298,10 +308,11 @@ export const paintDescriptions: Record<
       'src/components/Common/AppKeyboardShortcuts.tsx:18',
     ],
     appNotes:
-      'The tool is listed, selectable, and given a processor, but its options bar is a PlaceholderTool: six disabled chips naming Brush Preset Picker, Blend Mode, Sampling, Limits, Tolerance and Anti-alias render where the real controls belong, and none of them reads or writes anything. Nothing in the tool’s state corresponds to any of them — there is no tolerance, no sampling mode, no limits mode and no anti-alias flag, and the app has no background color for Background Swatch to name. What the tool actually paints is a spray-can stroke of the foreground color with `source-over` compositing, which is the opposite of the tool’s contract: it covers texture and luminosity instead of preserving them, and it replaces nothing. Its blend Mode control is absent, and the `blendMode` field its args do carry seeds to Normal and is read only for a layer a paint tool creates, so the Color blend mode that makes this tool a replacement is unreachable. It also has no keyboard shortcut: the app reaches it only by cycling the Brush tile with Shift+B, where Photoshop binds it separately.',
+      'Not a placeholder, and the bar is exactly what used to make it look like one. Its options bar IS a PlaceholderTool — six disabled chips naming Brush Preset Picker, Blend Mode, Sampling, Limits, Tolerance and Anti-alias render where the real controls belong, and none of them reads or writes anything — but the tool itself is routed into the same live gesture surface as the Brush, the Pencil and the Draw, and it has a `raster` commit and a real replayable processor, so a drag deposits a visible, undoable, replayable layer. That combination is why the verdict is `partial` and not `placeholder`: a placeholder options bar coexists here with a live gesture that paints the wrong pixels. What the tool paints is a spray-can stroke of the foreground color with `source-over` compositing, which is the opposite of the tool’s contract — it covers texture and luminosity where Photoshop preserves them, and it replaces nothing at all. Nothing in the tool’s state corresponds to any of the six chips either: there is no tolerance, no sampling mode, no limits mode and no anti-alias flag, and the app has no background color for Background Swatch to name. The `blendMode` field its args do carry seeds to Normal and is read only for a layer a paint tool creates, so the Color blend mode that makes this tool a replacement is unreachable. It also has no keyboard shortcut of its own: the app reaches it only by cycling the Brush tile with Shift+B, where Photoshop binds it separately.',
     sources: [
-      'https://helpx.adobe.com/photoshop/using/painting-tools.html',
+      'https://www.photoshopessentials.com/photo-editing/photoshop-color-replacement-tool-tutorial',
       'https://adobe.manymanuals.com/software/photoshop-cs4/user-manual-35148/215',
+      'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://www.photoshopessentials.com/photo-editing/color-replacement-tool/',
       'https://www.creativebloq.com/how-to/photoshop-colour-change',
       'https://design.tutsplus.com/tutorials/how-to-use-the-color-replacement-tool-in-photoshop--cms-39825',
@@ -408,12 +419,12 @@ export const paintDescriptions: Record<
     summary:
       'Erases every pixel similar to the one you click, to transparency, in a single click, bounded by Tolerance, Anti-alias and Contiguous.',
     purpose:
-      'The Magic Eraser is the Paint Bucket run in reverse: one click erases every pixel whose color falls within Tolerance of the pixel clicked, rather than a dragged tip erasing a stroke. It works like the Magic Wand without the preview, which is its whole cost — there is no marching ants, so the region it will remove is visible only in the History panel afterwards. Tolerance sets how far a color may differ and still count, Contiguous limits the erase to the region connected to the click rather than every match in the layer, Anti-alias smooths the boundary, and Opacity sets how completely the matched pixels are cleared. On a Background layer, or one with transparency locked, the matched pixels change to the background color instead of becoming transparent.',
+      'The Magic Eraser is the Paint Bucket run in reverse: one click erases every pixel whose color falls within Tolerance of the pixel clicked, rather than a dragged tip erasing a stroke. It works like the Magic Wand without the preview, which is its whole cost — there is no marching ants, so the region it will remove is visible only in the History panel afterwards. Tolerance sets how far a color may differ and still count, Contiguous limits the erase to the region connected to the click rather than every match in the layer, Anti-alias smooths the boundary, and Opacity sets how completely the matched pixels are cleared. On a layer whose transparency is locked the matched pixels change to the background color instead of becoming transparent; on a Background layer Photoshop converts it to a normal layer first and then clears the matched pixels to transparency.',
     options: [
       {
         control: 'Tolerance',
         detail:
-          'A slider, 0 to 255. A low tolerance erases only pixels within a very narrow range of the clicked pixel; a high tolerance erases within a broader range. Default 32.',
+          'A slider, 0 to 255. A low tolerance erases only pixels within a very narrow range of the clicked pixel; a high tolerance erases within a broader range. Adobe does not document a default; a widely-cited third-party value is 32.',
         status: 'present',
         appRef: 'src/components/ToolbarsRight/MagicEraser/MagicEraser.tsx:34',
       },
@@ -456,9 +467,10 @@ export const paintDescriptions: Record<
       'src/tools/settings.ts:184',
     ],
     appNotes:
-      'A working flood-based eraser: one click, one atomic commit, a hard 0–255 tolerance on Adobe’s scale rather than the Magic Wand’s 0–100, a default of 32 that matches Adobe’s seeded value, 4-connected Contiguous as a real 4-neighbor scan, and an Opacity that scales the alpha removed per pixel so a partial erase is a partial erase. It shares its args type with the Paint Bucket and both run the same mask code, which is why Contiguous and Tolerance are genuinely wired for both. Anti-aliased is the finding: it renders with Photoshop’s real label and Photoshop’s real checked state, but the input carries `disabled` and the flood fill’s test is a hard threshold producing a boolean mask, so there is no coverage to anti-alias. Sample All Layers is absent, and the tool is structurally active-layer-only — `FillToolArea` reads the active layer’s own raster and refuses the Bedrock layer outright, so there is no merged data to sample. As in Photoshop there is no preview of the region about to be removed, and the tool has no keyboard shortcut of its own: the app’s fill shortcut group contains the Paint Bucket and the Gradient only.',
+      'A working flood-based eraser: one click, one atomic commit, a hard 0–255 tolerance on Adobe’s scale rather than the Magic Wand’s 0–100, a default of 32 that matches the value third parties report as Adobe’s own, 4-connected Contiguous as a real 4-neighbor scan, and an Opacity that scales the alpha removed per pixel so a partial erase is a partial erase. It shares its args type with the Paint Bucket and both run the same mask code, which is why Contiguous and Tolerance are genuinely wired for both. Anti-aliased is the finding: it renders with Photoshop’s real label and Photoshop’s real checked state, but the input carries `disabled` and the flood fill’s test is a hard threshold producing a boolean mask, so there is no coverage to anti-alias. Sample All Layers is absent, and the tool is structurally active-layer-only — `FillToolArea` reads the active layer’s own raster and refuses the Bedrock layer outright, so there is no merged data to sample. As in Photoshop there is no preview of the region about to be removed, and the tool has no keyboard shortcut of its own: the app’s fill shortcut group contains the Paint Bucket and the Gradient only.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/magic-eraser-tool.html',
+      'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/change-similar-pixels-with-the-magic-eraser-tool.html',
       'https://www.manualsdir.com/manuals/753900/adobe-photoshop-cs3.html?page=335',
       'https://www.glensmith.co.uk/photoshop/magic-eraser',
       'https://www.ephotozine.com/article/introduction-to-photoshop-s-magic-eraser-tool-18410',
@@ -497,7 +509,7 @@ export const paintDescriptions: Record<
       {
         control: 'Tolerance',
         detail:
-          'A slider, 0 to 255. Lower values such as 10 to 20 fill only similar colors; values of 100 or more fill a broader range. Default 32.',
+          'A slider, 0 to 255. Lower values such as 10 to 20 fill only similar colors; values of 100 or more fill a broader range. Adobe does not document a default; a widely-cited third-party value is 32.',
         status: 'present',
         appRef: 'src/components/ToolbarsRight/MagicEraser/MagicEraser.tsx:34',
       },
@@ -557,7 +569,7 @@ export const paintDescriptions: Record<
       {
         control: 'Brush Preset Picker',
         detail:
-          'The tip thumbnail and its chevron, opening a popout whose Size and Hardness change the tip temporarily, plus a settings gear and a grid of tips. Current Photoshop has no separate top-bar Size or Hardness for this tool — both live here and in the Brush Settings panel — so in this app the two sliders it renders directly on the bar are the app’s own addition. There is no Tool Preset Picker on the bar at all; that dropdown was folded into the Brush Settings and Presets interfaces.',
+          'The tip thumbnail and its chevron, opening a popout whose Size and Hardness change the tip temporarily, plus a settings gear and a grid of tips. Current Photoshop has no separate top-bar Size or Hardness for this tool — both live here and in the Brush Settings panel — so in this app the two sliders it renders directly on the bar are the app’s own addition. The Tool Preset Picker is a separate control at the far left of the bar, beside the tool icon, with a Create New Tool Preset icon on it; Adobe’s own current documentation places it explicitly: "You can also select the Tool Presets dropdown menu next to the tool at the upper-left of the Options bar."',
         status: 'missing',
       },
       {
@@ -639,6 +651,7 @@ export const paintDescriptions: Record<
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/heal-clone/retouch-images-with-the-clone-stamp-tool.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/clone-stamp-tool.html',
+      'https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/create-tool-preset.html',
       'https://adobe.manymanuals.com/software/photoshop-cs4/user-manual-35148/209',
       'https://www.manualsdir.com/manuals/753896/adobe-photoshop-cs4.html?page=211',
       'https://www.properproof.com/digital/Photoshop/photoshop_cs3s_clone_tool_adds_ignore_adjustment_layers_option.html',

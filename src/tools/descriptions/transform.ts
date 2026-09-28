@@ -37,19 +37,13 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       {
         control: 'Align',
         detail:
-          'Six buttons, enabled once two or more layers or groups are selected: Top Edges, Vertical Centers, Bottom Edges, Left Edges, Horizontal Centers and Right Edges. Each moves the selected layers so the named edge or center coincides — with the extreme of the selection, or with the selection border. They are the same commands as the Layer > Align submenu.',
+          'Six buttons, enabled once two or more layers or groups are selected: Top Edges, Vertical Centers, Bottom Edges, Left Edges, Horizontal Centers and Right Edges. Each moves the selected layers so the named edge or center coincides with the extreme of the selection, or with the selection border. Photoshop expresses that choice as two menu targets rather than a bar control — Layer > Align against the selected layers, Layer > Align Layers To Selection against the selection border — and no Adobe page names a bar control for making it.',
         status: 'missing',
       },
       {
         control: 'Distribute',
         detail:
           'The distribute row, enabled only at three or more selected layers: the same six edge and center commands to space the layers evenly between the outermost two, plus the Horizontally and Vertically spacing buttons. The two outermost layers are treated as fixed and only the ones between them move.',
-        status: 'missing',
-      },
-      {
-        control: 'Align to',
-        detail:
-          'The target the align and distribute buttons measure against: the active selection border, the canvas, a chosen layer, or a group. Choosing a single layer and using it as the target is how the other layers align to it without the key layer moving.',
         status: 'missing',
       },
       {
@@ -98,7 +92,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
           'Select the Move tool. Tapping the key selects it; holding it springs the Move tool onto the currently active tool for as long as the key is down, and releasing returns to the tool you were on. Spring-loaded switching is a preference (Preferences > Tools > Spring-loaded Tool Shortcuts) and is on by default. The exception list is the Hand, Slice, Slice Select, Pen and Path Selection tools, which never spring-load.',
       },
     ],
-    implementation: 'implemented',
+    implementation: 'partial',
     implementationRefs: [
       'src/components/Main/MoveToolArea.tsx:85',
       'src/components/Main/MoveToolArea.tsx:132',
@@ -113,7 +107,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'toolbar-mapping.ts:39',
     ],
     appNotes:
-      "The app's Move tool moves and resizes, and the whole gesture is one committed history entry, but almost nothing of Photoshop's bar survives. There is no Auto-Select checkbox and no Group/Layer choice: the tool always resolves the layer under the pointer by hit test and always makes it active, which is Auto-Select: Layer with the toggle welded on and the group mode removed — so a grouped child cannot be dragged out of its group, and a click that lands on a transparent part of a layer finds whatever is underneath instead of nothing. There is no Show Transform Controls checkbox either, and the difference is more than cosmetic, because the overlay that does render is a plain resize rectangle: eight handles, no rotation outside the box, no numeric W/H, no reference point, so the geometric half of the tool — which is where Free Transform normally lives — is absent from the Move tool entirely. The align and distribute rows, the Align to target, the Alt-drag duplicate, the Shift axis constraint, the Shift-click-to-extend and the arrow-key nudge are all missing, which together mean the app can place one layer but cannot line several up. The one divergence that is not a missing feature is the refusal: the app refuses a press on a bedrock layer, and it does not consult the locked flag that its own layer model carries, so a layer marked locked is still draggable. The keyboard is a divergence too, and it is a strange one because the badge looks right. The Move tile declares V in the toolbar mapping, and the app does bind V — but the badge is not what binds it, and the letter-key layer is a separate hand-written table rather than anything derived from the toolbar. Spring-loaded switching does not exist here at all: the handler switches the tool on keydown and nothing listens for the keyup, so holding V cannot borrow the Move tool for one gesture and hand it back. Auto-Align is a different matter, because it is not this tool's control to lose: in Photoshop it is the Edit > Auto-Align Layers command, a dialog with a Projection choice, and the app has no equivalent of it at all. The panel the app does render is its own: the active layer's name, a Merge all button and a hint, none of which Photoshop's Move bar has.",
+      "The app's Move tool moves and resizes, and the whole gesture is one committed history entry, but almost nothing of Photoshop's bar survives, and what is left is not merely narrower than Photoshop's: one control is welded to a state the user cannot choose, and the transform box is a resize box. Those two are divergences rather than gaps, and they are why the verdict is `partial` and not `implemented`. There is no Auto-Select checkbox and no Group/Layer choice: the tool always resolves the layer under the pointer by hit test and always makes it active, which is Auto-Select: Layer with the toggle welded on and the group mode removed — so a grouped child cannot be dragged out of its group, and a click that lands on a transparent part of a layer finds whatever is underneath instead of nothing. There is no Show Transform Controls checkbox either, and the difference is more than cosmetic, because the overlay that does render is a plain resize rectangle drawn by the shared useRect hook — four painted corner handles sitting on eight draggable edges, no rotation zone at all outside the box, no numeric W/H, no reference point — so the geometric half of the tool, which is where Free Transform normally lives, is absent from the Move tool entirely. The align and distribute rows, the Alt-drag duplicate, the Shift axis constraint, the Shift-click-to-extend and the arrow-key nudge are all missing, which together mean the app can place one layer but cannot line several up. A third divergence is the refusal, which is not a missing feature: the app refuses a press on a bedrock layer, and it does not consult the locked flag that its own layer model carries, so a layer marked locked is still draggable. The keyboard is a divergence too, and it is a strange one because the badge looks right. The Move tile declares V in the toolbar mapping, and the app does bind V — but the badge is not what binds it, and the letter-key layer is a separate hand-written table rather than anything derived from the toolbar. Spring-loaded switching does not exist here at all: the handler switches the tool on keydown and nothing listens for the keyup, so holding V cannot borrow the Move tool for one gesture and hand it back. Auto-Align is a different matter, because it is not this tool's control to lose: in Photoshop it is the Edit > Auto-Align Layers command, a dialog with a Projection choice, and the app has no equivalent of it at all. The panel the app does render is its own: the active layer's name, a Merge all button and a hint, none of which Photoshop's Move bar has.",
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/move-tool.html',
       'https://helpx.adobe.com/photoshop/using/moving-stacking-locking-layers.html',
@@ -259,7 +253,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'toolbar-mapping.ts:64',
     ],
     appNotes:
-      "Free Transform is a command, not a tool: Photoshop reaches it through Edit > Transform > Free Transform or Cmd+T, and Adobe's own routing sends a pixel layer to the Move tool with Show Transform Controls rather than to any transform tool, because no Photoshop tool set contains one. The app registers it as a toolbar entry next to Colors and Levels, and none of the three has a Photoshop toolbar slot. That is a defensible choice, but it makes the panel in the options bar a different thing from Free Transform's bar, and the two should not be described as the same control set. What the app builds is a fixed-parameter panel for the Image > Transform operations — rotate 90 degrees left, 180 and 90 degrees right, a continuous rotation slider clamped to plus or minus 90, skew X and skew Y in plus or minus 45 degrees, scale X and Y in 10 to 300 percent, and horizontal and vertical flip — plus one projective operation the app calls Trapezoid, a percentage taper that narrows the top or the bottom of the layer about its horizontal centerline. Photoshop's nearest counterpart for that taper is the Perspective mode of Free Transform, reached by Cmd+Option+Shift-drag rather than by a slider, and it is mutually exclusive with every other parameter here: setting Trapezoid resets rotation, both skews and both scales to their defaults, and the processor refuses a trapezoid combined with any retained affine transform rather than composing them. The panel is not a live transform either. There is no bounding box, no handles, no reference point and no commit-on-click-outside; the sliders write a preview through the transient update path and the geometry is only baked, as one history entry, when the dirty tool is committed — on Apply, on Escape-cancel, on tool switch or on export. Of Free Transform's own bindings, only Escape is wired; Enter does not commit, and there is no intra-transform undo. Warp, Distort and Perspective-as-a-drag have no implementation at all, and the composite order the app declares — scale, then rotation, then skew, all about the untransformed layer center — is fixed, where Photoshop composes handle drags in the order they happen.",
+      'Free Transform is a command, not a tool. The primary evidence is a negative one and it is a good one: a complete, version-stamped inventory of the Photoshop 2026 Tools panel lists every entry in the bar — Move, the marquees, the crop, the pen family, the type tools, the shape tools, Hand, Zoom — and has no Transform entry in it, while Photoshop reaches the operation through Edit > Transform > Free Transform or Cmd+T. Adobe\'s own routing agrees, sending a pixel layer to the Move tool with Show Transform Controls rather than to any transform tool. One counter-sentence exists on Adobe\'s marketing copy — "Select the Transform tool by pressing Ctrl + T (Cmd + T for Mac)" — but the very next clause of the same page is "You can also go to Edit > Free Transform": the page names the menu route itself, and uses "tool" for the interactive state rather than for a Tools-panel entry. The app registers it as a toolbar entry next to Colors and Levels, and none of the three has a Photoshop toolbar slot. That is a defensible choice, but it makes the panel in the options bar a different thing from Free Transform\'s bar, and the two should not be described as the same control set. What the app builds is a fixed-parameter panel for the Image > Transform operations — rotate 90 degrees left, 180 and 90 degrees right, a continuous rotation slider clamped to plus or minus 90, skew X and skew Y in plus or minus 45 degrees, scale X and Y in 10 to 300 percent, and horizontal and vertical flip — plus one projective operation the app calls Trapezoid, a percentage taper that narrows the top or the bottom of the layer about its horizontal centerline. Photoshop\'s nearest counterpart for that taper is the Perspective mode of Free Transform, reached by Cmd+Option+Shift-drag rather than by a slider, and it is mutually exclusive with every other parameter here: setting Trapezoid resets rotation, both skews and both scales to their defaults, and the processor refuses a trapezoid combined with any retained affine transform rather than composing them. The panel is not a live transform either. There is no bounding box, no handles, no reference point and no commit-on-click-outside; the sliders write a preview through the transient update path and the geometry is only baked, as one history entry, when the dirty tool is committed — on Apply, on Escape-cancel, on tool switch or on export. Of Free Transform\'s own bindings, only Escape is wired; Enter does not commit, and there is no intra-transform undo. Warp, Distort and Perspective-as-a-drag have no implementation at all, and the composite order the app declares — scale, then rotation, then skew, all about the untransformed layer center — is fixed, where Photoshop composes handle drags in the order they happen.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/free-transformations-images-shapes-paths.html',
       'https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/transform-manipulate-reshape/adjust-scale-rotation-and-perspective.html',
@@ -270,6 +264,8 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/manage-image-states.html',
       'https://jkost.com/blog/2019/06/new-free-transform-preference-in-photoshop.html',
       'https://morris-photographics.com/photoshop/shortcuts/downloads/PSCS3_Keyboard_Shortcuts_Mac.pdf',
+      'https://glensmith.co.uk/photoshop/tools',
+      'https://www.adobe.com/products/photoshop/resize-image.html',
     ],
   },
 
@@ -301,44 +297,45 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       {
         control: 'Input Levels: black point',
         detail:
-          'Leftmost input slider, default level 0. Moving it to the right sets clipping: a black point at level 5 maps every pixel at level 5 and lower to level 0.',
+          'Leftmost input slider, on the 0 to 255 level domain Adobe states for the adjustment. It sits at level 0, which Adobe does not state as a default; what Adobe does state is that with the Output sliders in their default positions "moving the black input slider maps the pixel value to level 0". Dragging it right sets clipping: a black point at level 5, this description’s symmetric case to Adobe’s own 243 example on the white point, maps every pixel at level 5 and lower to level 0.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Levels/Levels.tsx:109',
       },
       {
         control: 'Input Levels: midtone gamma',
         detail:
-          'Middle input slider, default 1.00, which adjusts gamma rather than either extreme. Left makes the image lighter, right makes it darker, and the pivot is the midpoint level between the output sliders rather than the center of the range.',
+          'Middle input slider, which "adjusts the gamma in the image" rather than either extreme. It sits at 1.00 by default, which Adobe does not state; moving it left lightens the image and right darkens it, and the pivot is the midpoint level between the output sliders rather than the center of the range.',
         status: 'missing',
       },
       {
         control: 'Input Levels: white point',
         detail:
-          'Rightmost input slider, default level 255. Moving it left sets clipping the other way: a white point at level 243 maps every pixel at level 243 and higher to level 255.',
+          'Rightmost input slider, sitting at level 255 by default, which Adobe does not state as a default. Adobe does print the worked case on this slider: "if you move the white point slider to the left at level 243, Photoshop maps all pixels at level 243 and higher to level 255."',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Levels/Levels.tsx:127',
       },
       {
         control: 'Output Levels: black',
         detail:
-          'Left output slider, default level 0, the level the black point maps to. The output pair is what the two input points are defined against, so moving it changes where black lands without touching where it is read from.',
+          'Left output slider, the level the black point maps to, and its default is Adobe’s: "By default, the Output sliders are at level 0, where the pixels are black, and level 255, where the pixels are white." The output pair is what the two input points are defined against, so moving it changes where black lands without touching where it is read from.',
         status: 'missing',
       },
       {
         control: 'Output Levels: white',
-        detail: 'Right output slider, default level 255, the level the white point maps to.',
+        detail:
+          'Right output slider, default level 255, the level the white point maps to — the other half of Adobe’s stated Output-slider defaults.',
         status: 'missing',
       },
       {
         control: 'Auto',
         detail:
-          'Button that clips a small fraction of the shadows and highlights in every channel and maps the remaining extremes to pure black and pure white, as a starting point to refine by hand.',
+          'Button that clips a small fraction of the shadows and highlights in every channel and maps the remaining extremes to pure black and pure white, as a starting point to refine by hand. Adobe states both halves of it: the domain is 0 to 255, and "By default, the Auto option and the Auto Tone command clip the white and black pixels by 0.1% — that is, it ignores the first 0.1% of either extreme."',
         status: 'missing',
       },
       {
         control: 'Auto Options',
         detail:
-          'Menu command opening the Auto Color Correction Options dialog, which chooses the algorithm Auto runs and sets the shadow and highlight clipping percentages. The four algorithms are Enhance Monochromatic Contrast, Enhance Per Channel Contrast, Find Dark and Light Colors, and Enhance Brightness and Contrast.',
+          'Menu command opening the Auto Color Correction Options dialog, which chooses the algorithm Auto runs and sets the shadow and highlight clipping percentages. Adobe’s guidance for those Clip boxes is that a value between 0.0% and 1% is recommended. Three of the four algorithms are Adobe-named — Enhance Monochromatic Contrast, Enhance Per Channel Contrast and Find Dark and Light Colors — and the fourth, Enhance Brightness and Contrast, is third-party only.',
         status: 'missing',
       },
       {
@@ -393,6 +390,8 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'https://helpx.adobe.com/ca/photoshop/web/edit-images/color--tone--and-lighting/modify-tones-with-levels-adjustment.html',
       'https://www.adobe.com/learn/photoshop/web/photoshop-improve-tones-levels',
       'https://morris-photographics.com/photoshop/shortcuts/downloads/PSCS3_Keyboard_Shortcuts_Mac.pdf',
+      'https://glensmith.co.uk/photoshop/tools',
+      'https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview',
     ],
   },
 
@@ -469,6 +468,8 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'https://helpx.adobe.com/photoshop/using/color-monochrome-adjustments-using-channels.html',
       'https://www.photoshopessentials.com/photo-editing/black-and-white-cs3',
       'https://www.photoshopessentials.com/photo-effects/easy-selective-color-effect-with-photoshop',
+      'https://glensmith.co.uk/photoshop/tools',
+      'https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview',
     ],
   },
 };

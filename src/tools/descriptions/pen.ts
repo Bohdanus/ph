@@ -9,6 +9,7 @@ const PEN_SOURCES = [
   'https://helpx.adobe.com/photoshop/using/editing-paths.html',
   'https://helpx.adobe.com/photoshop/using/paths.html',
   'https://helpx.adobe.com/photoshop/using/tool-techniques/pen-tool.html',
+  'https://helpx.adobe.com/photoshop/using/drawing.html',
   'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/drawing-tools-overview.html',
   'https://www.adobe.com/products/photoshop/pen-tool.html',
 ] as const;
@@ -41,12 +42,12 @@ export const penDescriptions: Record<
     summary:
       'Draws precise vector paths from click-placed anchor points, with draggable direction handles for the curves between them.',
     purpose:
-      'The Pen tool builds a path of straight and curved segments by clicking to place anchor points and dragging to pull out the direction handles that shape each curve. It draws no pixels: in Path mode the result is a work path that lives in the Paths panel and stays invisible until it is filled, stroked, loaded as a selection, or turned into a vector mask or shape layer. The drawing mode group decides which of those you get — Shape makes a filled, stroked shape layer, Path makes the work path, Pixels rasterizes straight onto the current layer. Every path-construction decision the tool makes is a decision about vector geometry, which is why it stays sharp at any zoom and survives scaling that would blur a painted line.',
+      'The Pen tool builds a path of straight and curved segments by clicking to place anchor points and dragging to pull out the direction handles that shape each curve. It draws no pixels: Path mode creates a work path in the Paths panel, which draws nothing on the canvas and can be stroked, filled or loaded as a selection later. The drawing mode group decides which of those you get — Shape makes a filled, stroked shape layer, Path makes the work path, Pixels rasterizes straight onto the current layer. Every path-construction decision the tool makes is a decision about vector geometry, which is why it stays sharp at any zoom and survives scaling that would blur a painted line.',
     options: [
       {
         control: 'Mode',
         detail:
-          'The three-button drawing-mode group at the left of the bar, and the control that decides what the rest of the bar shows. Shape creates a shape layer with a vector mask; Path creates a work path that can be stroked or filled later; Pixels creates a rasterized shape directly on the current layer. The Fill, Stroke and Stroke width controls exist in Shape mode; the Operation, Path arrangement and Path alignment controls exist in Path mode. The app names this chip "Tool Mode".',
+          'The three-button drawing-mode group at the left of the bar, and the control that decides what the rest of the bar shows. The current Pen settings page tabulates the values as Shape, Path and Pixels, and Adobe’s older drawing page names the same three buttons Shape Layers, Paths and Fill Pixels. Shape creates a shape layer with a vector mask; Path creates a work path that can be stroked or filled later; Pixels creates a rasterized shape directly on the current layer. The Fill, Stroke and Stroke width controls exist in Shape mode; the Operation, Path arrangement and Path alignment controls exist in Path mode. The app names this chip "Tool Mode".',
         status: 'inert',
         appRef: PEN_PLACEHOLDER_CHIPS,
       },
@@ -194,7 +195,7 @@ export const penDescriptions: Record<
       {
         control: 'Magnetic',
         detail:
-          'The checkbox that turns edge snapping on. With it off the tool is a plain freehand pen; with it on, the last active segment snaps to the strongest edge in the image, using the Magnetic Lasso’s own settings — Width in pixels, Contrast as a percentage, Frequency, and Stylus Pressure for tablet input. The cursor carries a magnet while it is active.',
+          'The checkbox that turns edge snapping on. With it off the tool is a plain freehand pen; with it on, the last active segment snaps to the strongest edge in the image, using the same Width / Contrast / Frequency / Stylus Pressure controls the Magnetic Lasso documents. The cursor carries a magnet while it is active.',
         status: 'missing',
       },
       {

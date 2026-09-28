@@ -59,27 +59,39 @@ six are visually indistinguishable in the rail.
 
 ## Status tally
 
-Across the family: **0 `present`, 0 `partial`, 15 `inert`, 11 `missing`, 26 control rows.** The three
+Across the family: **0 `present`, 0 `partial`, 16 `inert`, 11 `missing`, 27 control rows.** The three
 anchor-point tools contribute no rows, for the reason under "Add / Delete / Convert".
 
 | Tool            | Controls | present | partial | inert | missing |
 | --------------- | -------- | ------- | ------- | ----- | ------- |
 | `pen`           | 11       | 0       | 0       | 8     | 3       |
 | `freeform-pen`  | 8        | 0       | 0       | 4     | 4       |
-| `curvature-pen` | 7        | 0       | 0       | 3     | 4       |
+| `curvature-pen` | 8        | 0       | 0       | 4     | 4       |
 | the three below | 0        | 0       | 0       | 0     | 0       |
 
-**A deliberate deviation, flagged for review.** `types.ts:23-29` defines `inert` as "_state_ is declared
-and persisted (`src/tools/settings.ts`) but no component renders it". That does not fit this family, in
-which no state is declared at all — the args type _is_ the tool name. I used `inert` anyway, for the
-controls whose **name is on screen as a chip** and `missing` for the controls with no chip, because
-`missing` is defined as "the app does not render this control" and a rendered label is not that. The
-alternative — calling all 25 `missing` — loses the fact that seven of the standard Pen's control names
-are literally visible in the app's bar, which is the claim most likely to be mistaken for "the app has
-it". The brief's own instruction ("do not round up to `present` because a placeholder renders a panel")
-puts both of these below `present`, so the choice is between two equally non-`present` values. If the
-coordinator prefers the strict reading, the change is mechanical: every `inert` becomes `missing` and
-`appRef` is dropped.
+**The `inert` count was 15 until an independent audit recounted it, and this table carried the
+error.** The `curvature-pen` row was tallied as three when it is four — it has Mode, Fill, Stroke and
+Selection…/Mask/Shape. Recounted mechanically from `pen.ts`, the family total is 16, and the
+repository-wide total is 20: pen 16, paint 3 (eraser `Flow`, magic-eraser `Anti-aliased`,
+paint-bucket `Anti-aliased`), draw 1 (`Mode`), and zero in selection, focus, shape, type-crop and
+transform. A hand-maintained tally in a prose file is the one number in this directory with nothing
+holding it to the code beside it.
+
+**This family is what the `inert` definition is for.** It originally read "_state_ is declared and
+persisted (`src/tools/settings.ts`) but no component renders it", which does not fit here: no state is
+declared at all, the args type _is_ the tool name. The definition was widened to "declared **or
+displayed**, and nothing is wired behind it", with the second shape spelled out as "a label on a
+placeholder chip that no component ever reads" — which is these 16 controls exactly. So `inert` is used
+for the controls whose **name is on screen as a chip** and `missing` for the controls with no chip,
+because `missing` is defined as "the app does not render this control" and a rendered label is not
+that. The alternative — calling all 27 `missing` — loses the fact that eight of the standard Pen's
+control names are literally visible in the app's bar, which is the claim most likely to be mistaken for
+"the app has it".
+
+**`inert` is not `present`, and the reason is worth stating because it is the whole point of the
+status.** A screenshot of this bar shows eleven control names and looks like a working Pen. Nothing
+reads any of them. `inert` is the status that survives a screenshot, and `present` is the only status
+that does not.
 
 Controls that surprised me, in the order they surprised me:
 
@@ -88,16 +100,29 @@ Controls that surprised me, in the order they surprised me:
    Overlapping Path Areas — plus `Merge Shape Components` on the Path Operations menu. This matches
    correction log entry 6 in the corpus, and I re-derived it rather than taking it.
 2. **The Pen's four `Mode` values are Shape / Path / Pixels, not Select / Add / Remove / Free.** Adobe's
-   own Pen settings page tabulates exactly three, and a second Adobe page enumerates them again. The
-   `Select / Add / Remove / Free` quartet belongs to Illustrator's Pen, not Photoshop's — and note that
-   where Photoshop and Illustrator genuinely do differ, the converter tool has a _different name_ in
-   each (`Convert Point` here, `Anchor Point` in Illustrator, `Convert Direction Point` in InDesign),
-   which is a reliable tell that the two products' option vocabularies are not interchangeable.
-3. **There is no `Curvature` slider.** The Curvature Pen's options bar carries the Path Options flyout
-   (path thickness and color), Rubber Band, and the Shape/Path/Pixels mode group. Nothing named
-   `Curvature`. See `Unverified`.
-4. **`Magnetic` is a checkbox, not a strength control.** Snapping strength is Width / Contrast /
-   Frequency, which Adobe documents for the Magnetic Lasso and which the Freeform Pen shares.
+   own Pen settings page tabulates exactly three, and a second Adobe page enumerates them again.
+   **Adobe documents no Select/Add/Remove/Free Pen mode in any product.** The earlier version of
+   this note claimed the quartet "belongs to Illustrator's Pen", and that attribution has been
+   dropped: Illustrator's own Pen page shows no `Mode` dropdown at all, and no Adobe page opened
+   names a Select/Add/Remove/Free mode for any product. What the evidence does carry is that
+   Photoshop's four overlap operations exist under different names and a different control —
+   `Add To Path Area`, `Subtract From Path Area`, `Intersect Path Areas` and `Exclude Overlapping
+Path Areas` are **Path Operation** controls in the Pen's Path mode, not Pen modes. Note also
+   that where Photoshop and Illustrator genuinely do differ, the converter tool has a _different
+   name_ in each (`Convert Point` here, `Anchor Point` in Illustrator, `Convert Direction Point` in
+   InDesign), which is a reliable tell that the two products' option vocabularies are not
+   interchangeable.
+3. **There is no `Curvature` slider — stated as a limit, not as an absence.** No control named
+   `Curvature` appears in any Adobe page located. The documented bar is the Path Options flyout
+   (path thickness — `Weight` in newer releases) and Rubber Band. This was previously written as a
+   flat "there is no `Curvature` slider", which rested on absence-of-mention in pages that do not
+   enumerate the bar at all — most of what the crawler returns for "Curvature tool" is
+   **Illustrator's** tool, and a page that never lists the bar cannot establish what is not in it.
+   See `Unverified` for what is still open.
+4. **`Magnetic` is a checkbox, not a strength control.** The strength controls are Width /
+   Contrast / Frequency, the ones Adobe documents for the Magnetic Lasso; the data file now says the
+   Freeform Pen uses "the same Width / Contrast / Frequency / Stylus Pressure controls the Magnetic
+   Lasso documents", which stops short of asserting that the two tools share one settings object.
 5. **The three anchor-point tools have no options bar of their own at all** — see below. So the brief's
    "for EVERY control in Photoshop's options bar" has an empty subject for one third of the family, and
    that is the finding rather than an omission.
@@ -109,16 +134,29 @@ Controls that surprised me, in the order they surprised me:
 Click to place an anchor point, click again for a straight segment, drag to pull out direction handles
 and get a curve. `Mode` decides what the result _is_: `Shape` makes a shape layer with a vector mask,
 `Path` makes a work path that can be stroked or filled later, `Pixels` rasterizes onto the current layer
-(`overview-of-pen-tool-settings.html`; `shape-path-and-pixel-mode-options.html`).
+(`overview-of-pen-tool-settings.html`; `shape-path-and-pixel-mode-options.html`). **The group's two
+label sets are both real, and the data file states both.** The current Pen settings page tabulates the
+values as `Shape` / `Path` / `Pixels`; Adobe's `About drawing` page names the same three buttons
+**"Shape Layers"**, **"Paths"** and **"Fill Pixels"**, with the figure caption "A. Shape Layers B. Paths
+C. Fill Pixels" (`https://helpx.adobe.com/photoshop/using/drawing.html`). The short forms are what the
+current page uses and what most third-party sources repeat; the long forms are what the older
+Adobe-authored material uses. Nothing turns on which a user sees — the three modes and their order
+are the same — but a description that prints only one set is making a choice the evidence does not
+force.
 
 The load-bearing behaviour, and the reason the tool is not a brush: **a Pen path is not a stroke until
-you make it one.** In Path mode the tool adds no color to the canvas; what it leaves is vector geometry
-in the Paths panel. It becomes pixels only through one of four explicit acts — `Fill Path`, `Stroke
-Path`, load as a selection, or convert to a vector mask or shape layer — all of which Adobe lists
-between the pen-tool feature page and `adding-color-paths.html`. Adobe's own phrasing is that Path mode
-"creates a work path that can be stroked or filled later", and that "to view a path, you must first
-select it in the Paths panel" (`paths.html`); "stays invisible until…" in the data file is my
-paraphrase of those two statements, not a quote.
+you make it one.** In Path mode the tool adds no color to the canvas; what it leaves is vector
+geometry in the Paths panel. Adobe's own statement is the one the data file now uses nearly
+verbatim, and it is on the `About drawing` page rather than an inference from it: Path mode
+"**Draws a work path on the current layer that you can then use to make a selection, create a
+vector mask, or fill and stroke with color** to create raster graphics (much as you would using a
+painting tool). A work path is temporary unless you save it"
+(`https://helpx.adobe.com/photoshop/using/drawing.html`). That sentence is also the correction of
+this file's own worst sentence: the earlier data-file wording said a work path "stays invisible
+until it is filled, stroked, loaded as a selection, or turned into a vector mask or shape layer",
+which (a) is a paraphrase — Adobe never uses the word "hidden" or "invisible" — and (b) mixes
+operations **on** a work path with operations **from** one. See `Unverified` item 13, which is now
+closed by the same sentence.
 
 Path semantics, all sourced:
 
@@ -138,19 +176,19 @@ Path semantics, all sourced:
 
 ### Options bar
 
-| Control                     | Photoshop detail                                                                  | Status    | appRef                                                    |
-| --------------------------- | --------------------------------------------------------------------------------- | --------- | --------------------------------------------------------- |
-| `Mode`                      | Shape / Path / Pixels three-button group; gates which other controls exist        | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Tool Mode")       |
-| `Fill`                      | Fill color; Shape mode                                                            | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Fill")            |
-| `Stroke`                    | Stroke color, width, type; Shape mode                                             | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Stroke")          |
-| `Operation`                 | Path mode: Add To / Subtract From / Intersect / Exclude Overlapping Path Area     | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Path Operations") |
-| `Path Operations`           | Path Selection tool's menu: Combine Shapes … + Merge Shape Components             | `inert`   | `toolbarPlaceholderConfig.ts:14` (same chip)              |
-| `Path alignment`            | Align and distribute path components                                              | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Alignment")       |
-| `Path arrangement`          | Stacking order of multiple paths                                                  | `missing` | —                                                         |
-| `Path thickness (Weight)`   | On-canvas path line width; display only, lives in the additional-options flyout   | `missing` | —                                                         |
-| `Selection… / Mask / Shape` | Converts the _already drawn_ path to a selection, a vector mask, or a shape layer | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Make Selection")  |
-| `Auto Add/Delete`           | On by default; Pen morphs to Add/Delete Anchor over an existing path              | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Auto Add/Delete") |
-| `Rubber Band`               | Live segment preview; in the additional-options flyout                            | `missing` | —                                                         |
+| Control                     | Photoshop detail                                                                                                                                    | Status    | appRef                                                    |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | --------------------------------------------------------- |
+| `Mode`                      | Shape / Path / Pixels three-button group — named Shape Layers / Paths / Fill Pixels on Adobe's older drawing page; gates which other controls exist | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Tool Mode")       |
+| `Fill`                      | Fill color; Shape mode                                                                                                                              | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Fill")            |
+| `Stroke`                    | Stroke color, width, type; Shape mode                                                                                                               | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Stroke")          |
+| `Operation`                 | Path mode: Add To / Subtract From / Intersect / Exclude Overlapping Path Area                                                                       | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Path Operations") |
+| `Path Operations`           | Path Selection tool's menu: Combine Shapes … + Merge Shape Components                                                                               | `inert`   | `toolbarPlaceholderConfig.ts:14` (same chip)              |
+| `Path alignment`            | Align and distribute path components                                                                                                                | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Alignment")       |
+| `Path arrangement`          | Stacking order of multiple paths                                                                                                                    | `missing` | —                                                         |
+| `Path thickness (Weight)`   | On-canvas path line width; display only, lives in the additional-options flyout                                                                     | `missing` | —                                                         |
+| `Selection… / Mask / Shape` | Converts the _already drawn_ path to a selection, a vector mask, or a shape layer                                                                   | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Make Selection")  |
+| `Auto Add/Delete`           | On by default; Pen morphs to Add/Delete Anchor over an existing path                                                                                | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Auto Add/Delete") |
+| `Rubber Band`               | Live segment preview; in the additional-options flyout                                                                                              | `missing` | —                                                         |
 
 `Operation` and `Path Operations` share one chip. That is honest — the app has one `Path Operations`
 label standing in for two distinct Adobe controls on two distinct tools — and it is why both rows carry
@@ -181,6 +219,7 @@ the same `appRef`.
 - https://helpx.adobe.com/photoshop/using/editing-paths.html
 - https://helpx.adobe.com/photoshop/using/paths.html
 - https://helpx.adobe.com/photoshop/using/tool-techniques/pen-tool.html
+- https://helpx.adobe.com/photoshop/using/drawing.html _(the three drawing modes under their older Adobe names, Shape Layers / Paths / Fill Pixels; and the sourced statement of what a work path is for)_
 - https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/drawing-tools-overview.html
 - https://www.adobe.com/products/photoshop/pen-tool.html
 
@@ -191,7 +230,11 @@ the same `appRef`.
 One drag becomes a path. Adobe's feature page: "Use the Freeform Pen tool to draw freehand and anchor
 points will automatically appear", with `Curve Fit` set "between 0.5 and 10.0 pixels". `Magnetic` turns
 the trace into an edge-following one — the Freeform Pen is the Pen-family member with a
-`Magnetic` checkbox in its bar, sharing the Magnetic Lasso's snapping machinery.
+`Magnetic` checkbox in its bar, and its snapping strength uses the same Width / Contrast /
+Frequency / Stylus Pressure controls the Magnetic Lasso documents. That last clause was previously
+written as "sharing the Magnetic Lasso's snapping machinery", which claimed more than the evidence
+carries: no Adobe page documents the Freeform Pen's own `Magnetic` flyout, so what can be said is
+which controls it uses, not that it shares one settings object with another tool.
 
 Introduced in **Photoshop 5.0 (May 1998)**, alongside the Magnetic Lasso and the Magnetic Pen. Two
 independent sources agree and the corpus's "5.5" is wrong: the Photoshop release history lists 5.0
@@ -316,10 +359,15 @@ panel to select a path in.
 Verbatim, and none of it is in the data file.
 
 1. **The Pen tool's four `Mode` values as `Select / Add / Remove / Free`.** The brief asserted these.
-   No Adobe Photoshop page opened names them; Adobe's Pen settings page tabulates `Mode` as
-   `Shape` / `Path` / `Pixels`, and a second Adobe page enumerates the same three. The positive claim —
-   that the quartet is Illustrator's Pen path-construction modes — is unverified: no Adobe page opened
-   names it either. Closest URLs:
+   **Adobe documents no Select/Add/Remove/Free Pen mode in any product** — not Photoshop, and not
+   Illustrator either, whose Pen page shows no `Mode` dropdown at all. Adobe's Pen settings page
+   tabulates `Mode` as `Shape` / `Path` / `Pixels`, and a second Adobe page enumerates the same
+   three. Add, Subtract, Intersect and Exclude do exist in Photoshop, but as **Path Operation**
+   controls in the Pen's Path mode (`Add To Path Area`, `Subtract From Path Area`, `Intersect Path
+Areas`, `Exclude Overlapping Path Areas`), not as a Pen `Mode`. An earlier version of this item
+   attributed the quartet to Illustrator's Pen; that attribution is withdrawn, because it was
+   itself unsourced in the same way the brief's version is. What is still genuinely unknown is
+   where the quartet came from. Closest URLs:
    https://helpx.adobe.com/illustrator/using/tool-techniques/pen-tool.html (no modes listed) and
    https://helpx.adobe.com/ca/illustrator/desktop/draw-shapes-and-paths/learn-drawing-basics/drawing-modes-overview.html
    (turned out to document Illustrator's three _toolbar_ drawing modes, not the Pen's).
@@ -327,14 +375,24 @@ Verbatim, and none of it is in the data file.
    comes from — the research corpus attributes it to Illustrator's Pathfinder, which I did not verify —
    is unverified. Closest: https://helpx.adobe.com/photoshop/using/paths.html, which lists the four
    operations Photoshop does have.
-3. **A `Curvature` slider on the Curvature Pen.** No Adobe page names a control called `Curvature`.
-   Adobe documents the Path Options flyout (path `Thickness` and `Color`, the latter named `Weight` in
-   newer releases) and `Rubber Band`. Closest:
+3. **A `Curvature` slider on the Curvature Pen.** **No control named `Curvature` appears in any
+   Adobe page located**, and the documented bar is the Path Options flyout (path `Thickness` and
+   `Color`, the thickness later named `Weight`) plus `Rubber Band`. That is a statement about what
+   the sources contain, and it is deliberately weaker than "there is no `Curvature` slider",
+   because it rests on absence-of-mention in pages that mostly do not enumerate the bar: nearly
+   every "Curvature tool" page the crawler returns is **Illustrator's** tool, and a page that never
+   lists a bar cannot establish what is not on it. Establishing the negative properly needs one
+   Adobe page that enumerates the Curvature Pen's whole bar, and none was found. Closest:
    https://helpx.adobe.com/ph_fil/photoshop/how-to/draw-edit-curves-curvature-tool.html and
    https://photoshoptrainingchannel.com/photoshop-cc-2018-tutorials.
-4. **`Magnetic` as a snapping-_strength_ control on the Freeform Pen.** It is a checkbox. The strength
-   is `Width` / `Contrast` / `Frequency` / `Stylus Pressure`, which Adobe documents for the Magnetic
-   Lasso and which the Freeform Pen shares. No Adobe page documents the Freeform Pen's own `Magnetic`
+   The **CC 2018 (19.0) introduction date is not part of this item** and remains properly sourced
+   from four independent sources; it is untouched.
+4. **`Magnetic` as a snapping-_strength_ control on the Freeform Pen.** It is a checkbox. The
+   strength controls are the same `Width` / `Contrast` / `Frequency` / `Stylus Pressure` that
+   Adobe documents for the Magnetic Lasso, and the data file now says exactly that — that the
+   Freeform Pen uses those same controls — rather than asserting that the two tools share one set
+   of settings, which is an inference from the Lasso's documentation rather than a statement about
+   the Freeform Pen's own flyout. No Adobe page documents the Freeform Pen's own `Magnetic`
    flyout. Closest: https://helpx.adobe.com/photoshop/desktop/make-selections/freehand-selections/snap-to-image-edges-using-magnetic-lasso-tool.html.
 5. **`Align Edges` for the Freeform Pen and the Curvature Pen.** Listed as a control with status
    `missing` in both tables, so no status depends on the behaviour — but the behaviour itself is
@@ -361,8 +419,17 @@ Verbatim, and none of it is in the data file.
     moment of the drag.** Adobe states only that dragging away from a corner point "make[s] direction
     lines appear". The brief's phrase "the Convert Point Tool's automatic handles" is therefore rendered
     as the sourced gesture, not as a claim about handle geometry.
-13. **That a path is "hidden" from the canvas.** Adobe says you must select a path in the Paths panel to
-    view it, and that Path mode makes a work path "that can be stroked or filled later". It does not use
-    the word hidden. The data file's "stays invisible until…" is my paraphrase of those two statements.
+13. **That a path is "hidden" from the canvas — now closed, do not re-raise it.** This item used to
+    warn that the data file's "stays invisible until…" was a paraphrase, because Adobe never uses
+    the word hidden. Both halves of that are now settled: the paraphrase is **gone** from the data
+    file, and the sourced statement has been found. `https://helpx.adobe.com/photoshop/using/drawing.html`
+    says what Path mode produces and what it is for: "Draws a work path on the current layer that you
+    can then use to make a selection, create a vector mask, or fill and stroke with color to create
+    raster graphics (much as you would using a painting tool). A work path is temporary unless you
+    save it." Adobe never needed the word "hidden" — a work path drawing nothing on the canvas is
+    what "a work path" means, and the page says what the work path does instead. The data file now
+    reads "Path mode creates a work path in the Paths panel, which draws nothing on the canvas and
+    can be stroked, filled or loaded as a selection later", which is that sentence rendered, and no
+    longer mixes operations on a work path with operations from one.
 14. **Pen history granularity** — one history state per completed path rather than per anchor. A corpus
     claim I did not re-verify. Deliberately not in the data file.

@@ -71,7 +71,7 @@ const antiAliasControl: ToolControl = {
 const pathOperationsControl: ToolControl = {
   control: 'Path Operations',
   detail:
-    'How a new shape combines with the shapes already on the selected vector mask: New Shape Layer, Combine Shapes, Subtract Front Shape, Intersect Shape Areas, or Exclude Overlapping Shapes, with Merge Shape Components available afterwards.',
+    'How a new shape combines with the shapes already on the selected vector mask: New Shape Layer, Combine Shapes, Subtract Front Shape, Intersect Shape Areas, or Exclude Overlapping Shapes, with Merge Shape Components available afterwards. The subtract entry is labelled Subtract Front Shape in Adobe Community and Subtract From Shape Area in Adobe’s 2022 wording; no single Adobe page opened here enumerates the whole set.',
   status: 'missing',
 };
 
@@ -90,7 +90,7 @@ const pathAlignmentControl: ToolControl = {
 const gearControl: ToolControl = {
   control: 'Set additional shape and path options',
   detail:
-    'The gear at the right of the bar. Holds the on-screen Path Options (path colour and width), the Live Shapes controls, the Import Shapes command and the per-tool geometry options such as Unconstrained, Square, Circle, Fixed Size, Proportional, From Center, Equilateral and the Arrowheads panel.',
+    'The gear at the right of the bar. Holds the on-screen Path Options (path colour and width), the Live Shapes controls, the Import Shapes command and the per-tool geometry options such as Unconstrained, Square, Circle, Fixed Size, Proportional, From Center and Equilateral. The per-tool settings Adobe documents in the Contextual Task Bar are not in it.',
   status: 'missing',
 };
 
@@ -119,18 +119,19 @@ const sharedFigureOptions: readonly ToolControl[] = [
   shapeWHControl,
 ];
 
+const radiusDetail =
+  'Rounds the shape corners in pixels, default 0 px. Adobe documents the control on the Rectangle tool ("Radius of rounded corners: Manually set the radius…") and on the Triangle tool ("specify Width, Height, and Corner Radius"); the Ellipse and Line tools have no rounded corners. The Rectangle tool keeps four independent radii and the Triangle tool a single value that rounds every corner at once. Whether the Polygon tool offers it is third-party only — no Adobe page listing the Polygon tool’s bar was found — so the polygon half of that gap is a judgment, not a match.';
+
 const radiusControl: ToolControl = {
   control: 'Radius',
-  detail:
-    'Rounds the shape corners in pixels, default 0 px. Offered by the Rectangle, Triangle and Polygon tools; the Ellipse and Line tools have no rounded corners. The Rectangle tool keeps four independent radii, the Triangle and Polygon tools a single value that rounds every corner at once.',
+  detail: radiusDetail,
   status: 'present',
   appRef: 'src/tools/shape.ts:216',
 };
 
 const missingRadiusControl: ToolControl = {
   control: 'Radius',
-  detail:
-    'Rounds the shape corners in pixels, default 0 px. Offered by the Rectangle, Triangle and Polygon tools; the Ellipse and Line tools have no rounded corners. The Rectangle tool keeps four independent radii, the Triangle and Polygon tools a single value that rounds every corner at once.',
+  detail: radiusDetail,
   status: 'missing',
 };
 
@@ -163,7 +164,7 @@ export const shapeDescriptions: Record<
     photoshopName: 'Shape Tool',
     summary: 'Draws a vector shape, a path, or a filled pixel region, and stamps it onto its own shape layer.',
     purpose:
-      'The Shape tool is the group every geometric figure hangs off in the Tools panel: press U and you get the rectangle, hold U and the fly-out offers the ellipse, line, polygon and custom shape. Whichever figure is active, the three-button Mode group at the left of the options bar decides what a drag commits — a filled shape layer with a vector mask, a work path with no pixels at all, or a rasterized region painted straight into the active layer. Fill and Stroke are set independently of each other and of the drawing mode, so the same rectangle can be a solid block, a hairline outline, or an outline over a gradient. The drawn shape stays a Live Shape, so its fill, stroke, corner radius and dimensions remain editable from the Properties panel long after the drag.',
+      'The Shape tool is the group every geometric figure hangs off in the Tools panel: press U and you get the rectangle, hold U and the fly-out offers the triangle, ellipse, line, polygon and custom shape — and, in the current release, a separate star. Whichever figure is active, the three-button Mode group at the left of the options bar decides what a drag commits — a filled shape layer with a vector mask, a work path with no pixels at all, or a rasterized region painted straight into the active layer. Fill and Stroke are set independently of each other and of the drawing mode, so the same rectangle can be a solid block, a hairline outline, or an outline over a gradient. The drawn shape stays a Live Shape, so its fill, stroke, corner radius and dimensions remain editable from the Properties panel long after the drag.',
     options: sharedFigureOptions,
     modifiers: [shiftSquareModifier, altFromCenterModifier, spaceRepositionModifier],
     shortcuts: shapeToolShortcuts,
@@ -195,7 +196,7 @@ export const shapeDescriptions: Record<
     options: [...sharedFigureOptions, radiusControl],
     modifiers: [shiftSquareModifier, altFromCenterModifier, spaceRepositionModifier],
     shortcuts: [{ keys: 'U', action: 'Selects the shapes tool group.' }],
-    implementation: 'implemented',
+    implementation: 'partial',
     implementationRefs: [
       'src/tools/toolProcessors.ts:325',
       'src/tools/shape.ts:201',
@@ -204,7 +205,7 @@ export const shapeDescriptions: Record<
       'src/tools/settings.ts:265',
     ],
     appNotes:
-      'The closest match in the family. Drag geometry, Shift, Alt, and the corner radius all behave as they do in Photoshop, and the radius is clamped to half the shorter side exactly as a rounded rectangle must be. It defaults to a 5 px stroke where Photoshop defaults to 1 px, the Radius slider runs 0–250 px with no numeric entry, and only the rectangle gets a radius — the app gates the whole control on this figure. The other Rectangle-tool options bar, from the separate Fill and Stroke swatches down to the path-operation icons, is absent.',
+      'The drag geometry, Shift, Alt and the corner radius all behave as they do in Photoshop, and the radius is clamped to half the shorter side exactly as a rounded rectangle must be. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Rectangle verbatim: Path mode does not create a path, Pixels mode is byte-identical to Shape mode, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Rectangle adds two divergences of its own, and the first is a default rather than a gap: it seeds a 5 px stroke where Photoshop seeds 1 px, so an untouched rectangle is drawn five times as heavy as Photoshop would draw it. The Radius slider runs 0–250 px with no numeric entry, and only the rectangle gets a radius — the app gates the whole control on this figure. Everything else on the Rectangle bar, from the separate Fill and Stroke swatches down to the path-operation icons, is absent.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/modify-shapes.html',
       'https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/',
@@ -218,20 +219,20 @@ export const shapeDescriptions: Record<
     photoshopName: 'Ellipse Tool',
     summary: 'Drag-defined ellipse or circle drawn as a shape layer, a work path, or a filled pixel region.',
     purpose:
-      'The Ellipse tool inscribes an ellipse in the drag box; Shift holds it a circle, and Alt/Option draws it from its centre outward. It has no Corner Radius, because an ellipse has no corners — the field simply does not appear in the bar, which is a difference from the Rectangle tool and not an omission. The result is a Live Shape whose width, height and angle stay editable in the Properties panel. Clicking without dragging opens a Create Ellipse dialog for exact dimensions.',
+      'The Ellipse tool inscribes an ellipse in the drag box; Shift holds it a circle, and Alt/Option draws it from its centre outward. It has no Corner Radius, because an ellipse has no corners, and the field does not appear in the bar. No desktop Adobe page enumerating the Ellipse tool’s bar was found, so that this matches Photoshop is a judgment rather than a documented match. The result is a Live Shape whose width, height and angle stay editable in the Properties panel. Clicking without dragging opens a Create Ellipse dialog for exact dimensions.',
     options: sharedFigureOptions,
     modifiers: [shiftSquareModifier, altFromCenterModifier, spaceRepositionModifier],
     shortcuts: [{ keys: 'U', action: 'Selects the shapes tool group.' }],
-    implementation: 'implemented',
+    implementation: 'partial',
     implementationRefs: [
       'src/tools/toolProcessors.ts:326',
       'src/tools/shape.ts:225',
       'src/tools/shape.ts:71',
-      'src/tools/shape.ts:17',
+      'src/components/ToolbarsRight/Figures/Shape.tsx:17',
       'src/tools/settings.ts:272',
     ],
     appNotes:
-      'Geometry matches. The ellipse is drawn as a real ctx.ellipse from the half-extents of the drag box, and Shift produces a true circle, not a square-boxed oval. As in Photoshop the Radius control is correctly withheld — the app gates it on the rectangle figure, so the absence is faithful rather than a gap, even though the persisted per-figure defaults still carry a cornerRadius: 0 key for the oval. Everything the bar offers beyond the tool mode, thickness, dash and opacity is missing.',
+      'The geometry matches: the ellipse is drawn as a real ctx.ellipse from the half-extents of the drag box, and Shift produces a true circle rather than a square-boxed oval. That is the whole of what is right, and the divergences below are why the verdict is `partial` and not `implemented`. The three the group carries apply to the Ellipse verbatim: Path mode does not create a path, Pixels mode is byte-identical to Shape mode, and the options bar shares one colour with the rest of the app rather than carrying its own Fill and Stroke swatches, so the fill is whatever the global background colour currently is and there is no way to turn the stroke off at all. The Ellipse then carries the same wrong default as every other figure, a 5 px stroke where Photoshop seeds 1 px, and keeps a cornerRadius: 0 key in its persisted defaults for a control its own bar withholds. Withholding Radius is the app’s rectangle-only gate, and that is a judgment about Photoshop rather than a documented match, since the only evidence for it is a third-party page and no desktop Adobe page enumerating the Ellipse tool’s bar was found. Everything the bar offers beyond the tool mode, thickness, dash and opacity is missing.',
     sources: [
       'https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/',
       'https://helpx.adobe.com/photoshop/using/draw-and-edit-shapes-web.html',
@@ -244,7 +245,7 @@ export const shapeDescriptions: Record<
     photoshopName: 'Line Tool',
     summary: 'Drag-defined straight line or arrow, drawn as a shape layer, a work path, or a filled pixel region.',
     purpose:
-      'The Line tool drags a single straight segment between two points, and Shift snaps the segment to the nearest multiple of 45 degrees so it lands on a compass bearing. Its colour is the Stroke, not the Fill, because a line is an open path with a stroke and no interior to fill. The gear menu adds arrowheads: Start and End toggles, with Width, Length and Concavity to size them, and those values stay editable from the Properties panel after the line is drawn. The end caps are Butt, Round or Square.',
+      'The Line tool drags a single straight segment between two points, and Shift snaps the segment to the nearest multiple of 45 degrees so it lands on a compass bearing. Its colour is the Stroke, not the Fill, because a line is an open path with a stroke and no interior to fill. The Arrowheads panel adds Start and End toggles, with Width, Length and Concavity to size them; Adobe documents it as a section of the Contextual Task Bar (Window > Contextual Task Bar), not a field in the options bar. The end caps are Butt, Round or Square.',
     options: [
       ...sharedFigureOptions,
       {
@@ -257,7 +258,7 @@ export const shapeDescriptions: Record<
       {
         control: 'Arrowheads',
         detail:
-          'Start and End toggles that put an arrowhead on either or both ends of the line, sized by Width, Length and Concavity (default 0%). The panel is reachable before the draw and from the Properties panel afterwards, never as a bar field.',
+          'Start and End toggles that put an arrowhead on either or both ends of the line, sized by Width, Length and Concavity. Adobe places the panel in the Arrowheads section of the Contextual Task Bar (Window > Contextual Task Bar) with the tool selected; it is never a field in the options bar, and the Concavity default could not be sourced to a current Adobe page.',
         status: 'missing',
       },
     ],
@@ -282,7 +283,7 @@ export const shapeDescriptions: Record<
       'The segment itself is correct, and the app is right not to square a line, but the one modifier that defines this tool is the one it declines to implement: normalizeShapeGeometry explicitly skips the Shift constraint for the line figure, so a Shift-drag keeps its free angle and can never snap to 45 degrees. Arrowheads are absent outright — drawShape strokes a bare moveTo/lineTo pair, with no start or end cap geometry — which is why a line here can never become an arrow. The Cap select the app renders for this figure offers Photoshop’s three cap styles but only the Line figure gets one, where Photoshop offers caps for any stroked path.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/line-tool.html',
-      'https://community.adobe.com/questions-712/quick-tip-how-to-create-lines-and-arrows-in-photoshop-1150333',
+      'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/draw-an-arrow.html',
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html',
       'https://www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/',
       'https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/',
@@ -291,9 +292,10 @@ export const shapeDescriptions: Record<
 
   triangle: {
     photoshopName: 'Triangle Tool',
-    summary: 'Drag-defined isosceles triangle; hold Shift while dragging to constrain it to an equilateral triangle.',
+    summary:
+      'Drag-defined triangle with its apex at the top-centre of the drag box; hold Shift while dragging to constrain it to an equilateral triangle.',
     purpose:
-      'The Triangle tool, added in Photoshop 22.0, draws a three-sided figure whose apex sits at the top-centre of the drag box and whose base spans its bottom, which makes it an isosceles triangle rather than a regular one. Shift while dragging is the equilateral constraint — it forces the height to √3⁄2 of the width — and it is not a square-drag aspect snap. Alt/Option draws from the centre, and a single Radius control rounds all three corners together, because this tool has no per-corner radius handles. The tool is a shortcut for the Polygon tool at three sides, not a separate shape vocabulary.',
+      'The Triangle tool, added in Photoshop 2021 (v22), draws a three-sided figure whose apex sits at the top-centre of the drag box and whose base spans its bottom. Adobe states the drag and the Shift constraint but never the resulting geometry, so reading that box as an isosceles triangle rather than a regular one is this description’s inference, not Adobe’s wording. Shift while dragging is the equilateral constraint — it forces the height to √3⁄2 of the width — and it is not a square-drag aspect snap. Alt/Option draws from the centre, and a single Radius control rounds all three corners together, because this tool has no per-corner radius handles. The tool is a shortcut for the Polygon tool at three sides, not a separate shape vocabulary.',
     options: [...sharedFigureOptions, missingRadiusControl],
     modifiers: [
       {
@@ -313,9 +315,10 @@ export const shapeDescriptions: Record<
       'src/tools/settings.ts:279',
     ],
     appNotes:
-      'The geometry is wrong in the specific way the premise correction warns about. The app inscribes a regular three-sided polygon in the drag box, so a wide drag yields a squat isosceles-looking triangle only by accident, and Shift squares the drag box instead of forcing equilateral — for a 3-gon inscribed in a square box, that is not h = √3⁄2 · w. Because the figure is built by the shared triangle/polygon branch, its Radius field is both absent from the bar and unimplemented in the renderer, so its corners can never be rounded. The Shift behaviour is version-dependent in wording only: the equilateral constraint has been the tool’s Shift since 22.0, and later versions add the persistent Equilateral checkbox to the gear menu.',
+      'The geometry is wrong in the specific way the premise correction warns about. The app inscribes a regular three-sided polygon in the drag box, so a wide drag yields a squat isosceles-looking triangle only by accident, and Shift squares the drag box instead of forcing equilateral — for a 3-gon inscribed in a square box, that is not h = √3⁄2 · w. Because the figure is built by the shared triangle/polygon branch, its Radius field is both absent from the bar and unimplemented in the renderer, so its corners can never be rounded. The Shift behaviour is version-dependent in wording only: the equilateral constraint has been the tool’s Shift since 2021 (v22), and later versions add the persistent Equilateral checkbox to the gear menu.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/triangle-tool.html',
+      'https://jkost.com/blog/2020/10/adobe-announces-updates-to-photoshop-2021-v22.html',
       'https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/',
       'https://www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/',
       'https://helpx.adobe.com/photoshop/using/modify-shapes.html',
@@ -324,15 +327,16 @@ export const shapeDescriptions: Record<
 
   polygon: {
     photoshopName: 'Polygon Tool',
-    summary: 'Drag-defined regular polygon of any number of sides, which can also be drawn as a star.',
+    summary:
+      'Drag-defined polygon of any number of sides, with the side count set before the draw; the star of a given point count is a separate tool.',
     purpose:
-      'The Polygon tool is drag-defined, not a click-to-place-vertices tool: it inscribes a regular n-gon in the drag box, which is what makes the same drag produce a hexagon, an octagon or a five-pointed star. Sides sets the n before the draw and defaults to 5; turning the star Ratio down from 100% pulls the inner vertices toward the centre and indents every other edge. Shift constrains proportions, Alt/Option draws from the centre — though a polygon is already centred in its drag box — and Control/Cmd while dragging rotates it. A single Radius control rounds every corner at once. The result is a Live Shape whose side count and star attributes stay editable in the Properties panel.',
+      'The Polygon tool is drag-defined, not a click-to-place-vertices tool: Adobe says to click and drag on the canvas, and the ordinary reading of that is a regular n-gon inscribed in the drag box — the regularity is this description’s inference, not Adobe’s wording. Sides sets the n before the draw and defaults to 5. The star is not this tool’s to draw in the current release: Adobe’s tools list puts a separate Star tool in the same shapes group, and the star attributes — the number of points, the Inner Radius that sets the depth of the indents and the Outer Radius that sets the length of the spikes — are documented on that tool, in the Contextual Task Bar and the Properties panel. Shift constrains proportions, Alt/Option draws from the centre — though a polygon is already centred in its drag box — and Control/Cmd while dragging rotates it. A single Radius control rounds every corner at once. The result is a Live Shape whose side count stays editable in the Properties panel.',
     options: [
       ...sharedFigureOptions,
       {
         control: 'Sides',
         detail:
-          'Number of sides the drag inscribes, default 5. Lowering the star Ratio below 100% indents the alternate edges, which is what turns the same n-gon into a star.',
+          'Number of sides the drag produces, default 5. The star’s indent control is not on this tool’s bar in the current release: Adobe lists a separate Star tool in the same group, and carries the point count and the inner and outer radii there.',
         status: 'missing',
       },
       missingRadiusControl,
@@ -363,11 +367,11 @@ export const shapeDescriptions: Record<
       'src/tools/settings.ts:286',
     ],
     appNotes:
-      "The load-bearing premise is right here: the app inscribes a regular n-gon in the drag box, so the drag-defined model is already correct and the side count is 5 by default, matching Photoshop. Everything after that is missing. The side count is a hardcoded three-way ternary — figure === 'triangle' ? 3 : 5 — so there is no Sides field and no way to draw a hexagon, let alone a star; the star Ratio has no representation at all. The Radius field is withheld from the bar for this figure, matching the app's rectangle-only gate but not Photoshop, which offers it. Shift squares the drag box rather than constraining the polygon's own proportions, and the Control-drag rotation the Polygon tool has over every other figure is not implemented.",
+      "The load-bearing premise is right here: the app builds a regular n-gon in the drag box, so the drag-defined model is already correct and the side count is 5 by default, matching Photoshop — though the regularity itself is an inference from Adobe's drag instruction rather than something Adobe states. Everything after that is missing. The side count is a hardcoded three-way ternary — figure === 'triangle' ? 3 : 5 — so there is no Sides field and no way to draw a hexagon; and the star is not this tool's to draw in the current release, so there is nothing here to compare a star Ratio against. The Radius field is withheld from the bar for this figure, matching the app's rectangle-only gate but not Photoshop, which third-party sources say offers it. Shift squares the drag box rather than constraining the polygon's own proportions, and the Control-drag rotation the Polygon tool has over every other figure is not implemented.",
     sources: [
       'https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/',
       'https://www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/',
-      'https://developer.adobe.com/xd/uxp/develop/reference/polygon',
+      'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html',
       'https://jkost.com/blog/2021/07/working-with-the-shape-tools-in-photoshop.html',
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html',
     ],
@@ -377,7 +381,7 @@ export const shapeDescriptions: Record<
     photoshopName: 'Custom Shape Tool',
     summary: "Draws a preset vector graphic from Photoshop's shape library, or one you define from a path.",
     purpose:
-      'The Custom Shape tool draws any of the vector presets in Photoshop’s shape library — the default groups are Leaf Trees, Wild Animals, Boats and Flowers, and the rest ship behind Legacy Shapes and More in the Shapes panel. It is the only shape tool whose Shift constraint preserves the drawn shape’s own aspect ratio rather than squaring the drag box, so a recognisable graphic comes out undistorted. Its Path Operations menu is where the boolean work happens: Combine Shapes, Subtract Front Shape, Intersect Shape Areas, Exclude Overlapping Shapes, and Merge Shape Components, which converts the live shape into a plain path and warns you that it can no longer be edited component by component. Any path — drawn with the Pen tool, made from a shape layer, or produced by converting text to a path — becomes a new preset through Edit ▸ Define Custom Shape, and Preset Manager saves and loads the result as a `.csh` file.',
+      'The Custom Shape tool draws any of the vector presets in Photoshop’s shape library — a library that includes the Leaf Trees, Wild Animals, Boats and Flowers groups, with the full set reached through Legacy Shapes and More in the Shapes panel. Those four were the default loaded groups in a 2020 account, and Adobe Community threads from 2019–2021 report that the picker changed and moved them behind Legacy Shapes and More, so what a current install shows on first launch is not established here. Third-party accounts, not Adobe’s own documentation, say this is the only shape tool whose Shift constraint preserves the drawn shape’s own aspect ratio rather than squaring the drag box, so a recognisable graphic comes out undistorted. Its Path Operations menu is where the boolean work happens: New Shape Layer, Combine Shapes, Subtract Front Shape — which Adobe’s 2022 wording calls Subtract From Shape Area — Intersect Shape Areas, Exclude Overlapping Shapes, and Merge Shape Components, which converts the live shape into a plain path and warns you that it can no longer be edited component by component. No single Adobe page enumerates that whole set. Any path — drawn with the Pen tool, made from a shape layer, or produced by converting text to a path — becomes a new preset through Edit ▸ Define Custom Shape, and Preset Manager saves and loads the result as a `.csh` file.',
     options: [
       modeControl,
       {
@@ -396,7 +400,7 @@ export const shapeDescriptions: Record<
       {
         control: 'Shape Picker',
         detail:
-          'Opens the shape library as a grid of thumbnails, grouped by theme, with a fly-out that reaches Preset Manager, the Reset Shapes command and the Legacy Shapes and More set. Shift while dragging draws the preset at its own aspect ratio.',
+          'Opens the shape library as a grid of thumbnails, grouped by theme, with a fly-out that reaches Preset Manager, the Reset Shapes command and the Legacy Shapes and More set. Shift while dragging is reported to draw the preset at its own aspect ratio, on third-party authority.',
         status: 'missing',
       },
       shapeWHControl,
@@ -408,7 +412,8 @@ export const shapeDescriptions: Record<
     modifiers: [
       {
         keys: 'Shift',
-        action: 'Draws the preset at its own original width-to-height ratio instead of filling the drag box.',
+        action:
+          'Draws the preset at its own original width-to-height ratio instead of filling the drag box — a third-party account, not a sentence from Adobe’s current documentation.',
       },
       altFromCenterModifier,
       spaceRepositionModifier,
@@ -431,6 +436,7 @@ export const shapeDescriptions: Record<
       'https://www.makeuseof.com/photoshop-path-operations-add-subtract-intersect-exclude/',
       'https://www.pcworld.com/article/399355/photoshop-shapes-what-they-are-and-how-to-use-them.html',
       'https://community.adobe.com/questions-712/where-do-i-get-photoshop-custom-shapes-it-needs-csh-files-1137992',
+      'https://glensmith.co.uk/photoshop/custom-shape-tool',
     ],
   },
 };

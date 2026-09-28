@@ -35,9 +35,20 @@ Photoshop's type is **live**. A type layer holds vector glyph outlines that are 
 from the font, which is what makes the edges resolution-independent; rasterizing is the
 explicit, user-invoked destroy step (`Layer ▸ Rasterize ▸ Type`) and it warns first. The
 operations a type layer supports **without** rasterizing are Adobe's own list, and they are
-the load-bearing part of the tool's behaviour: change the orientation, apply anti-aliasing,
-convert between point and paragraph type, create a work path from the type, apply any Edit
-menu transform except Perspective and Distort, and use layer styles.
+the load-bearing part of the tool's behaviour. Adobe's bullets verbatim: "You can make the
+following changes to a type layer and still edit the type: **Change the orientation of type. /
+Apply anti-aliasing. / Convert between point type and paragraph type. / Create a work path
+from type. / Apply transformation commands from the Edit menu, except for Perspective and
+Distort. / Use layer styles.**" — with one Note that matters as much as the list: "**To
+transform part of the type layer, you must first rasterize the type layer.**"
+
+That is deliberately more precise than "most transforms survive", and the precision is in
+three places. It is the **Edit menu's transformation commands**, not transforms in general —
+so a filter, a content-aware scale or a perspective warp is not what this sentence is about.
+The **exceptions are named**: Perspective and Distort, and only those two. And the part-type
+limiter is Adobe's own Note, not an inference: transforming _part_ of a live type layer
+requires rasterizing first, which is a different and stronger restriction than the exception
+list.
 
 There are three ways to enter type, and the difference between the first two is the one that
 matters most:
@@ -68,6 +79,14 @@ appear only once a work path is selected. `01-photoshop-reference.md` §5.3 list
 _set_ without an order; `03-ui-chrome-spec.md:193` gives an order that omits the colour and
 the orientation toggle, so the order used here is the one above, and the
 Character/Paragraph panel settings are listed separately below rather than folded in.
+
+**This is a CC-era enumeration and one of its ten slots no longer holds.** That page is
+`/CC_2013/`, and the anti-aliasing pull-down it places between Size and colour is, by every
+source in this file, no longer there. That is a statement about the passage of time rather
+than a contradiction of the page, and it is why the data file's `purpose` no longer says
+"this describes Photoshop 2024-2026" — the version claim was doing work the bar-order claim
+cannot do. The control stays in the census with the routes that replaced it, because the
+control is a real Photoshop control; what changed is where it lives. See `Unverified` item 3.
 
 ### Options-bar control census
 
@@ -199,6 +218,11 @@ Adobe Community (a user report, not a specification):
 
 - https://community.adobe.com/bug-reports-711/p-bring-back-font-anti-aliasing-pulldown-in-the-type-tool-bar-658044
 
+Adobe-authored, mirrored (the CS-era help text; the source of the `Layer > Type` anti-aliasing
+route and the only place Adobe itself shows anti-aliasing applied to a live type layer):
+
+- http://www.underwaterphotography.com/photoshop/photoshop/1_16_3_4.html — "To apply anti-aliasing to a type layer: Select the type layer… Choose an option from the anti-aliasing menu in the options bar or the Character palette. Or, choose Layer > Type"
+
 Third party, labelled as such:
 
 - http://www.photoshopforphotographers.com/CC_2013/Help_guide/tp/Character_palette.html — the only page found that enumerates the options bar left to right; an Adobe-training site, not Adobe
@@ -249,9 +273,18 @@ The task brief asked me to verify the preset list "Ratio, W x H x Resolution, 1 
 
 Two premises in the brief are wrong, and both matter for how the app's control is described:
 
-1. **There is no `8.5 x 11` crop preset.** US Letter is a _new document_ preset; the app
-   already has it, in `src/constants/imagePresets.ts:21`, where it belongs. The crop preset
-   list has no paper sizes.
+1. **There is no `8.5 x 11` crop preset — now established against the current Adobe list, not
+   inferred from its absence.** The correction below was originally filed as a settled
+   observation from the brief, which is the wrong kind of evidence: `grep 8.5` over the data
+   files returned nothing, so the data file neither claimed nor sourced the absence, and one
+   third-party page hints Adobe offers "a list of some commonly used specific sizes for
+   prints". Re-read on this pass, Adobe's own table is an **enumeration of the menu's
+   contents**, not a passing mention: the ten rows above, and no paper sizes among them
+   (`crop-tool-options.html`, last updated Feb 23, 2026). That is a different kind of claim
+   from "no page mentions 8.5 x 11" — the page is claiming to list the menu. US Letter is a
+   _new document_ preset; the app already has it, in `src/constants/imagePresets.ts:21`,
+   where it belongs. A user who wants a paper size in a crop makes one through **New
+   Crop Preset…**, which is the last row of Adobe's own table.
 2. **There are no per-preset orientation variants.** Photoshop has a **Swap Width and Height
    values** button next to the menu, which flips the active ratio, rather than a doubled list
    of portrait and landscape entries. The app instead ships both orientations as separate
@@ -259,20 +292,54 @@ Two premises in the brief are wrong, and both matter for how the app's control i
    of one.
 
 The entry is named **Ratio**, not "Free". `01-photoshop-reference.md:568-569` has the right
-list; the brief's version does not.
+list; the brief's version does not. The data file's row said `Ratio (free)`, which welded a
+behaviour onto the name: Adobe's table gives `Ratio` as a **name** and "Crops freely without a
+fixed ratio" as its **function**, and what actually returns the tool to unconstrained is
+clearing the two Width and Height fields, not the item's name. The row now says both halves
+separately.
+
+**The swap button, and where its citation comes from.** An adversarial review noted that the
+file has the control but a description rather than a source. It does now, and the source is
+Adobe rather than the third party that was carrying it:
+`https://helpx.adobe.com/photoshop-elements/using/cropping.html` — "**To swap Width and Height
+values, click the Swap icon in the options bar.**" That is a different product, so it is
+labelled as one; the control is the same, and Adobe's CS6 shortcut list independently gives
+the same operation as a key: "**X | Switch crop box orientation between portrait and
+landscape**" (`new-shortcuts-cs6.html`). The review also quoted a CS6-era Adobe reference
+captioning its own screenshot "B. Swap Width and Height values" with the sentence "Clicking
+the double-arrow icon changes the crop orientation by swapping the Width and Height values" —
+**that exact caption could not be re-verified through the crawler in this pass**, so it is not
+quoted in either file; the Elements sentence above carries the same claim and is verified.
+`https://helpx.adobe.com/photoshop/using/tool-techniques/crop-tool.html` names the adjacent
+fields ("setting the aspect ratio or width and height values") without naming the button.
 
 ### Delete Cropped Pixels
 
 The one setting that decides whether a committed crop is reversible, and the app has no
 counterpart for it at all.
 
-- **On (the default)** — everything outside the crop is permanently removed, and the
-  Background layer survives the crop.
-- **Off** — the canvas shrinks but nothing is deleted. The Background is demoted to an
-  ordinary layer, specifically so Photoshop can hang on to the hidden pixels, and they can be
-  recovered by `Image ▸ Reveal All` or by dragging the crop box back out. The file gets
-  larger. Adobe's own options page states the setting "Permanently removes areas outside the
-  crop, but allows editing when turned off."
+**What is Adobe's.** One sentence, and it is the whole of Adobe's text on the setting: the
+options page describes Delete Cropped Pixels as "**Permanently removes areas outside the
+crop, but allows editing when turned off**" (`crop-tool-options.html`). That establishes the
+delete-versus-hide contrast, which is the part of the row that is well attested, and it is
+what the data file now leads with.
+
+**What is not Adobe's — and was asserted anyway.** Four clauses were in the data file's row
+and all four are third-party:
+
+- that the setting is **on by default**;
+- that the **Background layer is demoted** to a regular layer so Photoshop can keep the
+  hidden pixels (this is the most specific and the most checkable of the four);
+- that the pixels come back through **`Image ▸ Reveal All`** or by dragging the crop box out
+  again;
+- that **the file grows**.
+
+None of the four was reached at Adobe in this pass, so all four are now marked third-party in
+the row's own `detail` rather than presented as the setting's behaviour. They are plausible,
+they are consistently reported, and `01-photoshop-reference.md` may well carry Adobe text for
+some of them — but "consistently reported" is what they are, and the row now says so. What is
+_not_ claimed anywhere is the app-side consequence, which is unaffected either way: the app
+implements the ON case and offers neither the setting nor a route back.
 
 ### Options-bar control census
 
@@ -368,6 +435,7 @@ Adobe official help:
 - https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/transform-perspective-while-cropping.html
 - https://helpx.adobe.com/photoshop/using/tool-techniques/crop-tool.html
 - https://helpx.adobe.com/photoshop/using/crop-straighten-photos.html
+- https://helpx.adobe.com/photoshop-elements/using/cropping.html — Adobe, but Elements: "To swap Width and Height values, click the Swap icon in the options bar", the control the current Photoshop pages do not name
 - https://helpx.adobe.com/in/photoshop/using/new-shortcuts-cs6.html — Adobe's crop shortcut list; **note it is the CS6 list**, and it is the oldest source used in this family
 - https://helpx.adobe.com/ph_fil/photoshop/how-to/content-aware-crop-fill.html
 
@@ -388,24 +456,41 @@ Third party, labelled as such:
 Listed because they could not be sourced, or could be sourced only weakly. None of these
 appears as an assertion in `type-crop.ts`.
 
-1. **"Anti-aliasing takes effect only on rasterization."** The brief asked for this with two
-   sources. It could not be sourced, and the available evidence points the _other_ way:
-   Adobe lists "Apply anti-aliasing" among the operations a live type layer supports without
-   rasterizing it (`creating-type.html`), and a third-party tutorial shows a visible
-   Crisp-versus-Sharp difference in the document, not only in a rasterized result
-   (photoshopcafe.com). **Not asserted.** The closest URL is
-   https://helpx.adobe.com/photoshop/using/creating-type.html
+1. **REFUTED, not open: "Anti-aliasing takes effect only on rasterization."** This was filed here
+   as merely unsourced, and the available evidence already pointed the _other_ way. It is now
+   closed. Two independent Adobe texts put anti-aliasing on a **live, un-rasterized** type layer:
+   - `https://helpx.adobe.com/photoshop/using/creating-type.html` lists "**Apply anti-aliasing**"
+     among the changes "You can make … to a type layer and **still edit the type**", in the same
+     list as point/paragraph conversion and work-path creation.
+   - The CS-era Adobe help (mirrored at
+     `http://www.underwaterphotography.com/photoshop/photoshop/1_16_3_4.html`) gives the
+     procedure: "**To apply anti-aliasing to a type layer: Select the type layer… Choose an option
+     from the anti-aliasing menu in the options bar or the Character palette. Or, choose
+     Layer > Type**."
+     The third-party tutorial that showed a visible Crisp-versus-Sharp difference in the
+     document, rather than only in a rasterized result, is corroboration rather than the reason.
+     **Do not re-raise this.** The claim is wrong, not unverified, and the data file never made it.
+     The one thing that _is_ still open is item 3 below, which is a different question — when the
+     control left the bar, not whether it works on live type.
 2. **Photoshop's font size range.** The research corpus gives 1–1296 pt. No Adobe page
    states a range, and none was found in this pass. The _default unit being points_ is
    sourced (a Photoshop community answer notes "the default unit for type layers in Points");
    the range is not. The app's 8–500 px is therefore described as diverging without claiming
    what Photoshop's bounds are.
-3. **When exactly the anti-aliasing pull-down left the type options bar.** The only evidence
-   is an Adobe Community bug report dated August 2025 saying it is "gone since Photoshop
-   26.10", corroborated by a Reddit thread. No Adobe release note or "What's new" page was
-   found. The data file describes the 2024–2026 position as "removed in 26.10, available in
-   the Character panel, layer properties and the Type menu", which is what both sources say,
-   but the boundary is community-reported rather than Adobe-published.
+3. **When exactly the anti-aliasing pull-down left the type options bar — and the version number
+   is now out of the data file entirely.** The only evidence was an Adobe Community bug report
+   dated August 2025 saying it is "gone since Photoshop 26.10", corroborated by a Reddit thread.
+   No Adobe release note or "What's new" page was found. A version boundary asserted from a bug
+   report is the most likely thing in this file to be wrong, and it was wrong twice: the data file
+   asserted "removed in 26.10" in **both** the `purpose` prose and the `Anti-Alias` control's
+   `detail`, and the notes here simultaneously conceded that the boundary is community-reported.
+   That is the file's own rule broken — an unsourced claim in the data file, a concession in the
+   notes — so **the number is gone from both places**. What the data file says now is only what
+   every source agrees on: the pull-down is no longer on the type options bar, and it is reached
+   from the Character panel, the layer's properties and the `Layer > Type` menu — the last of
+   which is Adobe's own route, quoted in item 1. Where the data file mentions timing at all it
+   says "community-reported only". Do not reintroduce a version number without an Adobe release
+   note.
    Closest: https://community.adobe.com/bug-reports-711/p-bring-back-font-anti-aliasing-pulldown-in-the-type-tool-bar-658044
 4. **The two path buttons' Photoshop names and bar positions.** "Align to Path" and "Create
    Work Path" could not be confirmed from any Adobe page. What _is_ sourced: type flows along
@@ -437,6 +522,23 @@ appears as an assertion in `type-crop.ts`.
 11. **Whether `W × H × Resolution` accepts a single dimension** with the other left empty, as
     a third-party tutorial describes. Only third-party; not asserted.
     Closest: https://jkost.com/blog/2017/05/essential-tips-for-cropping-in-photoshop-cc.html
-12. **Any runtime measurement.** No browser was executed and no test was run for this family.
+12. **The four `Delete Cropped Pixels` clauses that are not Adobe's.** The setting's on-by-default
+    state, the Background layer being demoted so the hidden pixels can be kept, the `Image ▸
+Reveal All` route back, and the file growth are third-party throughout; Adobe's own options
+    page gives one sentence, "Permanently removes areas outside the crop, but allows editing when
+    turned off". All four were asserted in the data file's row and all four are now marked
+    third-party inside that row. They are not deleted, because they are consistently reported and
+    the delete-versus-hide contrast built on them is the well-attested part — but they are
+    **not** Adobe text and the row no longer implies that they are. See the section under "Delete
+    Cropped Pixels" for the split.
+    Closest: https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html
+13. **Whether clearing the two Width and Height fields is what returns the crop to unconstrained.**
+    The data file says so, on the strength of third-party walkthroughs describing the CLEAR
+    button; Adobe's own table defines `Ratio` as "Crops freely without a fixed ratio" and does not
+    describe the CLEAR button's effect. The two are consistent but they are not the same claim,
+    and the "free" half of the old `Ratio (free)` gloss — which attached the behaviour to the
+    item's _name_ — is what has been taken out. Closest:
+    https://www.photoshopessentials.com/basics/how-to-crop-images-photoshop-cc
+14. **Any runtime measurement.** No browser was executed and no test was run for this family.
     Every claim about the app's behaviour above is read off the source in this worktree, not
     observed at runtime.

@@ -29,15 +29,27 @@ Photoshop's Eyedropper is a click, not a drag: it reads pixels under the pointer
 result into the app's color controls. A plain click sets the foreground color; Alt-click (Windows) /
 Option-click (macOS) sets the background color. Adobe's own page states both halves — "Select the
 Eyedropper tool (I)", "Use the Options Bar to customize tool settings, like Sample Size and Sample",
-"The sampled color will become the foreground color and be added to your Swatches panel" — and the
-Adobe CS4 user manual states the background half as a rule of the tool: "To select a new background
-color, Alt-click (Windows) or Option-click (Mac OS) in the image." The Adobe-authored _Photoshop
-CS5 On Demand_ text says it the same way.
+"The sampled color will become the foreground color and be added to your Swatches panel" — and
+Adobe's **current** set-colors page states the background half as a rule of the tool, and replaces
+the CS4 mirror this file used to lean on: "**Select a new background color by holding Alt (Windows)
+or Option (macOS) and clicking the desired area in the image**"
+(`https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/set-foreground-and-background-colors.html`).
+The Adobe-authored _Photoshop CS5 On Demand_ text says it the same way, and that source is kept.
 
-Sample Size is the footprint. Adobe's own wording is the definition: Point Sample "Reads the precise
-value of the pixel you click"; the average settings "Read the average value of the specified number
-of pixels within the area you click." So a point sample is one pixel and every other entry is a
-neighbourhood mean — which is the distinction the app's own comment on the field is making.
+Sample Size is the footprint, and **the claim here is better sourced than this file used to admit.**
+Adobe's current page enumerates the entire menu, and enumerates it with **no Median entries at
+all**: "Select a sample size from the Sample Size menu in the Options bar: **Point Sample : Reads
+the exact value of the clicked pixel. / 3 by 3 Average , 5 by 5 Average , 11 by 11 Average , 31 by 31
+Average , 51 by 51 Average , 101 by 101 Average : Reads the average color value within the selected
+pixel area**" (same page as above). So a point sample is one pixel and every other entry is a
+neighbourhood mean — which is the distinction the app's own comment on the field is making — and
+the full list is Adobe's rather than assembled out of an older mirror plus a blog. The narrowing
+that used to be necessary here is gone; see `Unverified` item 1 for what is now closed.
+
+The same page also settles the `Sample` menu's membership: "Select a sampling option from the Sample
+menu in the Options bar: **All Layers : Sample color from all layers.**" and so on through Current
+Layer, Current & Below and the two No Adjustments variants. **It states no default**, which is the
+whole of the problem with that row — see `Unverified` item 10.
 
 Holding Alt/Option from **any** painting tool reaches the Eyedropper temporarily and samples the
 foreground color, at the eyedropper's current Sample Size. That is on Adobe's painting-tools page,
@@ -129,8 +141,12 @@ shortcut: 'I' }`, its own single-tool tile. The runtime binding is
   `src/components/Common/__tests__/AppKeyboardShortcuts.test.tsx:492-503` pins that a shifted `I`
   still selects the eyedropper. **The app therefore has no `Shift+I` cycle and no spring-loaded
   temporary `I`** — both are divergences, and both are now stated in `appNotes`.
-- Defaults match Photoshop's: `sampleSize: 1`, `sampleAllLayers: false` at
-  `src/tools/settings.ts:202-206`, pinned by `src/tools/__tests__/eyedropper.test.ts:12-18`.
+- Defaults: `sampleSize: 1`, `sampleAllLayers: false` at `src/tools/settings.ts:202-206`, pinned by
+  `src/tools/__tests__/eyedropper.test.ts:12-18`. **The app's defaults are not claimed to be
+  Photoshop's.** This line previously read "Defaults match Photoshop's", which was a claim about
+  Photoshop that nothing sourced — Adobe states the `Sample` menu but no default for it (item 10),
+  and states no default for `Sample Size` either. What is true and is what the line now says is
+  that the app's two defaults are these values.
 
 ### Sources — Eyedropper
 
@@ -138,6 +154,12 @@ shortcut: 'I' }`, its own single-tool tile. The runtime binding is
   accelerator, the `Sample Size` and `Sample` control names, foreground on click, added to Swatches.
   `webfetch` on this URL returns HTTP 403; the text was read through the live search crawler, which
   is the route the research brief prescribes for `helpx.adobe.com`.
+- https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/set-foreground-and-background-colors.html
+  — Adobe, current. The **complete** `Sample Size` menu, with no Median entries in it; the
+  `Sample` menu; and the background-color rule, "Select a new background color by holding Alt
+  (Windows) or Option (macOS) and clicking the desired area in the image". This is the primary
+  citation for the `Sample Size` row and the `Alt` modifier, and it supersedes the CS4 mirrors
+  that used to carry both.
 - https://helpx.adobe.com/photoshop/using/painting-tools.html — Adobe. Alt/Option held from a
   painting tool reaches the Eyedropper temporarily.
 - https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/spring-loaded-shortcuts.html
@@ -329,22 +351,38 @@ through these tools by pressing Shift+B."
 Claims the research could not source. None of these appear in the data file as sourced fact, and each
 is listed with the URL that came closest.
 
-1. **The exact current Photoshop `Sample Size` list, and the `Median` entries.** The brief
-   specifies Point Sample, 3 by 3 Average, 5 by 5 Average, 11 by 11 Average, 31 by 31 Average,
-   3 by 3 Median, 5 by 5 Median. No source was found for `3 by 3 Median` or `5 by 5 Median`, and
-   none was found showing the 51 by 51 and 101 by 101 Average entries being removed. Every list
-   that was actually read is the older one: Point Sample through 101 by 101 Average
-   (photoshopforphotographers CC_2013; the Adobe CS4 manual; jkost). Four searches, including two
-   aimed at the release that added Median, returned nothing about it. **The data file therefore
-   asserts only the sourced part** — that Point Sample is the single pixel and every other entry is
-   an average — and says nothing about how many entries there are or whether any are median.
-   Closest: https://www.photoshopforphotographers.com/CC_2013/Help_guide/tp/Eyedropper_tool.html
+1. **CLOSED, and the `Median` entries are REFUTED rather than unverified — do not re-raise them.**
+   This item used to say that the exact current `Sample Size` list could not be sourced and that
+   no source was found for `3 by 3 Median` or `5 by 5 Median`. Both halves were wrong, because the
+   search had been aimed at the wrong place: Adobe's **current** set-colors page enumerates the
+   whole menu
+   (`https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/set-foreground-and-background-colors.html`):
+   "**Point Sample : Reads the exact value of the clicked pixel.** / **3 by 3 Average , 5 by 5
+   Average , 11 by 11 Average , 31 by 31 Average , 51 by 51 Average , 101 by 101 Average : Reads
+   the average color value within the selected pixel area.**"
+   - **The claim has moved out of this file and into the data file's citations.** The `Sample Size`
+     row now quotes that enumeration, and
+     `https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/set-foreground-and-background-colors.html`
+     is in the data file's `sources` array.
+   - **`3 by 3 Median` and `5 by 5 Median` are refuted.** The brief supplied them; Adobe's
+     enumeration of the entire menu contains no Median entry of any size. That is an enumeration
+     of the control's contents, not a passing mention, so the absence carries real weight here —
+     which is exactly the reasoning that was refused for the Curvature Pen's `Curvature` slider in
+     `pen.notes.md`, and the distinction is the presence or absence of an enumeration, not how the
+     claim is worded.
+   - What is **not** thereby established is Photoshop's default for `Sample Size`. Adobe's page
+     lists the menu, not which entry ships selected; the data file's "Default: Point Sample" is
+     unverified and is item 10's sibling rather than part of this item.
 2. **`Cmd`-click to sample the background layer, and `Alt`-click to sample a layer's composite.**
    Neither could be sourced, and both conflict with what every source says: Alt/Option-click sets
    the **background color**, not a layer's composite. The data file records Alt-click as the
    background-color modifier and makes no claim about `Cmd` at all. It is possible the brief means
    `Option` where it writes `Alt`, in which case the two claims collapse into the one that is
-   sourced. Closest: https://adobe.manymanuals.com/software/photoshop-cs4/user-manual-35148/127
+   sourced. The Alt/Option half is now carried by Adobe's **current** page rather than the CS4
+   mirror this item used to point at: "Select a new background color by holding Alt (Windows) or
+   Option (macOS) and clicking the desired area in the image"
+   (`https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/set-foreground-and-background-colors.html`).
+   The `Cmd` half stays unverified.
 3. **A `Cmd`-click that opens the Sample Size list, or any other eyedropper click modifier beyond
    Alt/Option.** Several third-party pages mention holding Ctrl/Cmd to reach sample-size options,
    but none is Adobe's and none was corroborated twice, so the data file's `modifiers` array holds
@@ -383,16 +421,29 @@ is listed with the URL that came closest.
    table and in O'Reilly's _Photoshop CS4 Bible_, and the five-tool group is confirmed by two
    independent inventories, so the shortcut is in the data file — but no Adobe page establishing it
    was opened. Closest: https://bruceblinn.com/1-Photography/UsingPhotoshopCS3.pdf
-10. **Photoshop's default `Sample` value.** Two third-party sources say the eyedropper samples all
-    layers by default and that this can be narrowed, but no Adobe page states the default. The
-    data file's `Sample` row says it "defaults to sampling every layer" on that basis; the app's own
-    default is `sampleAllLayers: false`, which it _also_ has to be, because the app samples one
-    composited canvas either way. Closest:
-    https://enviragallery.com/guide-to-the-eyedropper-tool-in-photoshop/
+10. **Photoshop's default `Sample` value — and the data file no longer claims one.** Two third-party
+    sources say the eyedropper samples all layers by default and that this can be narrowed, and
+    Adobe's current page enumerates the menu — "All Layers : Sample color from all layers" and
+    the rest — **and states no default for it**. The data file's `Sample` row used to say it
+    "defaults to sampling every layer" on the strength of the third party alone, which is this
+    file's own rule broken: a default is the cheapest claim in the file for anyone to disprove.
+    **"Defaults to" has been dropped**; the row now enumerates the menu and says outright that
+    Adobe states no default. The app's own default is `sampleAllLayers: false`, which it has to
+    be, because the app samples one composited canvas either way.
 11. **The Brush bar's tablet-pressure toggles** (`Stylus Pressure Controls Opacity` / `Size`), which
     the corpus's Brush row lists. Not enumerated in the census because the Adobe page that was
     opened does not name them, and the app has no pointer-pressure handling to map them onto in any
     case. Closest: https://helpx.adobe.com/photoshop/using/painting-tools.html
+12. **Photoshop's default `Sample Size` value, and the `Show Sampling Ring` default.** Added by this
+    pass, not by the review, and of exactly the same class as item 10. The data file's `Sample Size`
+    row ends "Default: Point Sample." Adobe's current page enumerates the menu and does not say
+    which entry ships selected; a third-party tutorial says "By default, it's set to 'Point Sample'",
+    which is one source. **The default is left in the data file and is recorded here as the one
+    remaining unsourced default in the `eyedropper` description** — a judgement call, since it is a
+    conventional first-entry default and the app's own value is 1, but it is the same shape of claim
+    that item 10's "defaults to" was and it should be treated as one. Remove it or source it in a
+    later pass. Closest:
+    http://phlearn.com/tutorial/photoshop-basics-how-to-use-the-eyedropper-tool/
 
 ## Incidental observation, not fixed here
 

@@ -20,15 +20,21 @@ corpus was written against an older revision and is not reused.
 Both were already folded into the brief, and both were re-verified against a live source rather
 than transcribed.
 
-**1. "The Polygon Tool is click-to-place-vertices" — wrong.** The Polygon tool is drag-defined
-and inscribes a regular n-gon in the drag box. The click-to-place-vertices model is the Pen tool.
-Adobe's own Shape-tool pages describe the whole group as click-and-drag
+**1. "The Polygon Tool is click-to-place-vertices" — wrong.** The Polygon tool is drag-defined.
+The click-to-place-vertices model is the Pen tool. Adobe's own Shape-tool pages describe the whole
+group as click-and-drag
 (`helpx.adobe.com/photoshop/using/draw-and-edit-shapes-web.html`: "Click and drag on the canvas to
 draw a shape with your selected shape tool"), and the polygon's Sides field is a pre-draw
 parameter of a drag, not a click counter
 (`photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/`: "Click and drag in the
 document to draw the polygon shape"). The app already does the right thing here —
 `src/tools/shape.ts:181-200` inscribes a regular n-gon.
+
+**What Adobe does _not_ say is that the n-gon is _regular_.** That word is this campaign's reading of
+"click and drag": a regular polygon inscribed in the drag box is the ordinary outcome of a drag
+defined by a bounding box, and it is what the app builds, but no Adobe sentence opened here states
+it. The data file now marks the regularity as an inference in the `polygon` `purpose` and drops
+"regular" from its `summary`. See Unverified.
 
 **2. "The Triangle Tool draws a regular inscribed triangle" — wrong twice over.** It is a
 drag-defined **isosceles** triangle (apex at top-centre of the drag box, base across the bottom),
@@ -37,18 +43,26 @@ and **Shift means equilateral, not aspect-snap**. Adobe states the second half v
 create an equilateral triangle." The first half is the default behaviour of a drag-defined figure
 and is confirmed by the same page's drag instruction plus the third-party walkthrough
 (`glensmith.co.uk/photoshop/triangle-tool`: "The triangle that was created. It is an isosceles
-triangle, which means that two sides are of equal length"). The app's `src/tools/shape.ts:186`
-shares one branch with the polygon and hardcodes `figure === 'triangle' ? 3 : 5`, so it inscribes
-a regular triangle — the disproved behaviour — and `src/tools/shape.ts:79` squares the drag box
-for it, which is neither equilateral nor the equilateral constraint.
+triangle, which means that two sides are of equal length"). As with the polygon above, **Adobe
+states the drag and the Shift half and never the resulting geometry**, so the isosceles reading is
+third-party plus inference; the data file's `summary` now describes the box (apex at top-centre,
+base across the bottom) rather than the classification, and the `purpose` labels the isosceles
+reading as this description's inference. The app's `src/tools/shape.ts:186` shares one branch with
+the polygon and hardcodes `figure === 'triangle' ? 3 : 5`, so it inscribes a regular triangle — the
+disproved behaviour — and `src/tools/shape.ts:79` squares the drag box for it, which is neither
+equilateral nor the equilateral constraint.
 
-**Version note on the Triangle tool.** The tool did not exist before Photoshop 22.0 (2021); before
-that a triangle was the Polygon tool at three sides
-(`photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/`: "The Triangle Tool was
-first introduced in Photoshop 2021"). The drag-defined isosceles geometry and the
-Shift-equals-equilateral constraint are what that tool has had since introduction, per Adobe's page
-and the current options-bar guidance. The `detail` text on the `Mode` and `Radius` controls is
-therefore version-scoped to 22.0 and later.
+**Version note on the Triangle tool.** The tool did not exist before Photoshop 2021 (v22), and that
+is now Adobe-attributed rather than third-party: Adobe's own launch announcement, via Julieanne
+Kost, 2020-10-20, is titled "Adobe Announces Updates to Photoshop 2021 (v22)" and names
+"a new Triangle tool" among the release's additions
+(`https://jkost.com/blog/2020/10/adobe-announces-updates-to-photoshop-2021-v22.html`). The
+third-party page that previously carried this — `photoshopessentials.com`'s "The Triangle Tool was
+first introduced in Photoshop 2021" — is now a corroborating rather than a load-bearing source.
+What the announcement does **not** say is what the tool's Shift did at introduction; see
+Unverified. The drag-defined geometry and the Shift-equals-equilateral constraint are documented
+on Adobe's current page. The `detail` text on the `Mode` and `Radius` controls is therefore
+version-scoped to 2021 (v22) and later.
 
 ---
 
@@ -80,22 +94,31 @@ Radius), then the mode-by-mode contents of the bar
 
 Per-figure deltas:
 
-| Photoshop control | rectangle                    | ellipse                  | triangle           | polygon                                  | line                                  |
-| ----------------- | ---------------------------- | ------------------------ | ------------------ | ---------------------------------------- | ------------------------------------- |
-| `Radius`          | **present** (`shape.ts:216`) | not offered in Photoshop | **missing**        | **missing**                              | not offered in Photoshop              |
-| `Sides`           | —                            | —                        | —                  | **missing** (`shape.ts:186` hardcodes 5) | —                                     |
-| `Caps`            | inside Stroke type           | inside Stroke type       | inside Stroke type | inside Stroke type                       | **partial** (`Figures/Shape.tsx:189`) |
-| `Arrowheads`      | —                            | —                        | —                  | —                                        | **missing**                           |
+| Photoshop control | rectangle                    | ellipse                   | triangle           | polygon                                  | line                                  |
+| ----------------- | ---------------------------- | ------------------------- | ------------------ | ---------------------------------------- | ------------------------------------- |
+| `Radius`          | **present** (`shape.ts:216`) | not offered (third-party) | **missing**        | **missing**                              | not offered (third-party)             |
+| `Sides`           | —                            | —                         | —                  | **missing** (`shape.ts:186` hardcodes 5) | —                                     |
+| `Caps`            | inside Stroke type           | inside Stroke type        | inside Stroke type | inside Stroke type                       | **partial** (`Figures/Shape.tsx:189`) |
+| `Arrowheads`      | —                            | —                         | —                  | —                                        | **missing**                           |
 
-**The Radius row is the one that looks like a bug and is not.** Photoshop offers `Radius` on the
-Rectangle, Triangle and Polygon tools only — "the Ellipse Tool and Line Tool do not allow rounded
-corners at all"
-(`photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/`). The app gates the
-slider on `figure === 'rectangle'` (`Figures/Shape.tsx:165`), so withholding it from the ellipse
-and the line is faithful. Withholding it from the triangle and the polygon is a real gap. The
-persisted per-figure defaults still carry `cornerRadius: 0` for the oval
-(`settings.ts:41`) because the saved-args record is shared across all five figures; that key is
-never read on that path.
+**The Radius row is the one that looks like a bug and is not — and the "not" is itself
+third-party.** Adobe confirms the control on two of the five figures and no more: the Rectangle
+tool ("Radius of rounded corners: Manually set the radius…") and the Triangle tool ("specify
+Width, Height, and Corner Radius"). The two figures this table marks "not offered in Photoshop" —
+the Ellipse and the Line — rest entirely on
+`photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/`: "since elliptical shapes
+have no corners, you won't find any options to adjust them", and "the Ellipse Tool and Line Tool do
+not allow rounded corners at all". The one Adobe page that enumerates per-tool shape options is
+`photoshop-elements/using/creating-shapes.html`, which is a **different product** and cannot stand
+in for the desktop bar.
+
+So the app's gate at `figure === 'rectangle'` (`Figures/Shape.tsx:165`) is a **judgment**, not a
+match, and the data file now says so: withholding `Radius` from the ellipse and the line is
+probable but undocumented, and withholding it from the triangle is a real gap against an Adobe
+sentence while withholding it from the polygon is a real gap against a third-party one. The app
+is right about the ellipse for a reason nobody has cited. The persisted per-figure defaults still
+carry `cornerRadius: 0` for the oval (`settings.ts:41`) because the saved-args record is shared
+across all five figures; that key is never read on that path.
 
 **Align, Caps and Corners live in the Stroke Options panel, not the bar.** The bar has a single
 `Stroke type` icon that opens the panel, and the panel is where Inside/Center/Outside alignment,
@@ -132,7 +155,7 @@ Sources:
 
 - `https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html` — the three modes and what each commits; Stroke Align/Caps/Corners; the bar's icon set
 - `https://helpx.adobe.com/photoshop/using/modify-shapes.html` — Rectangle bar contents in bar order
-- `https://helpx.adobe.com/photoshop/using/draw-and-edit-shapes-web.html` — the group is Rectangle, Ellipse, Triangle, Polygon, Line; Shift = proportional
+- `https://helpx.adobe.com/photoshop/using/draw-and-edit-shapes-web.html` — the group; Shift = proportional. **This list now also carries a Star tool** between Polygon and Line, which is the counter-evidence that moved the star off the Polygon tool — see Unverified.
 - `https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/` — Path outline is display-only; per-tool corner radius rules
 - `https://www.photoshopessentials.com/basics/how-to-draw-custom-shapes-in-photoshop/` — 1 px default black stroke; stroke alignment defaults to centered
 
@@ -178,7 +201,9 @@ dedicated tools", and `legacyFigureMap` at `shape.ts:9-12` maps the persisted `c
 figure values onto `oval` and `rectangle` rather than discarding them. That is a faithful reading
 of Photoshop, and it is why there is no separate circle tool here.
 
-App verdict: **implemented** on behaviour. The withheld Radius is correct, not a gap.
+App verdict: **implemented** on behaviour. The withheld Radius is a judgment, not a documented
+match — the only evidence for it is a third-party page, and no desktop Adobe page enumerating the
+Ellipse tool's bar was found. See the shared-surface section above and Unverified.
 
 Sources:
 
@@ -203,11 +228,17 @@ would forbid shallow angles"), which is a defensible design opinion and a diverg
 it is imitating. `src/tools/shape.ts:176-180` strokes a bare `moveTo`/`lineTo` pair, so there is no
 arrowhead geometry of any kind.
 
-Arrowheads: Start and End toggles with Width, Length and Concavity, from the gear before the draw
-and from the Properties panel afterwards
-(`community.adobe.com/questions-712/quick-tip-how-to-create-lines-and-arrows-in-photoshop-1150333`;
-`helpx.adobe.com/photoshop/using/line-tool.html` for the 45° sentence). Concavity defaults to 0%
-(`photoshopessentials.com/basics/shapes/photoshop-shape-essentials/`).
+Arrowheads: Start and End toggles with Width, Length and Concavity, and the panel is in the
+**Contextual Task Bar**, not the options bar and not the gear. Adobe verbatim,
+`https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/draw-an-arrow.html`
+(last updated 2026-02-23): "Select Start or End in the **Arrowheads section of the Contextual Task
+Bar** (Window > Contextual Task Bar)." The same pattern holds for the Star tool, whose points and
+inner/outer radii Adobe also places in the Contextual Task Bar
+(`.../create-shapes/draw-star-shapes.html`), which is independent confirmation that per-tool shape
+settings migrated out of the gear. **This replaces the previous citation**, a 2015 Adobe _community_
+post that placed the panel in the Properties panel after the draw; the data file's gear row no
+longer claims the Arrowheads panel, and the `purpose` no longer says the values stay editable from
+the Properties panel. Concavity's 0% default is unverified and has been removed from the data file.
 
 The line's colour comes from Stroke, not Fill, because a line is an open path with no interior —
 `www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/`.
@@ -217,21 +248,23 @@ App verdict: **partial**. The segment is right; the 45° snap and the arrowheads
 Sources:
 
 - `https://helpx.adobe.com/photoshop/using/line-tool.html` — Shift = multiple of 45°
-- `https://community.adobe.com/questions-712/quick-tip-how-to-create-lines-and-arrows-in-photoshop-1150333` — arrowhead Start/End, Width/Length/Concavity; Shift = nearest 45°
+- `https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/draw-an-arrow.html` — the Arrowheads panel lives in the Contextual Task Bar (Window > Contextual Task Bar)
 - `https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html` — the bar; Corners explicitly not applicable to the Line tool
-- `https://www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/` — Concavity default 0%; Weight default 1 px
+- `https://www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/` — Concavity default 0% (2012 page, unverified); Weight default 1 px
 - `https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/` — line colour is the stroke; no rounding options
 
 ---
 
 ## `triangle` — Triangle Tool
 
-Established in the two-premises section above. The `Radius` row matters here: Photoshop gives the
-Triangle tool a single corner-radius control that rounds all three corners at once, and there are
-no individual radius handles
-(`glensmith.co.uk/photoshop/triangle-tool`; `jkost.com`: "the Triangle and Polygon tools have a
-single Corner Radius control point handle which modifies the roundness of all corners equally").
-The app's `drawShape` builds the triangle inside the branch shared with the polygon
+Established in the two-premises section above. The `Radius` row matters here: Adobe gives the
+Triangle tool a corner-radius control — its click dialog takes "Width, Height, and Corner Radius" —
+that rounds all three corners at once, and there are no individual radius handles
+(`helpx.adobe.com/photoshop/using/triangle-tool.html`; `glensmith.co.uk/photoshop/triangle-tool`;
+`jkost.com`: "the Triangle and Polygon tools have a single Corner Radius control point handle which
+modifies the roundness of all corners equally" — note that this last quote is the only source for
+the _polygon_ half, since no Adobe page listing the polygon bar was found). The app's `drawShape`
+builds the triangle inside the branch shared with the polygon
 (`src/tools/shape.ts:181-200`), which never reads `cornerRadius`, so even if the field were
 rendered it would do nothing. It is not rendered either.
 
@@ -245,7 +278,8 @@ App verdict: **partial**. Both disproved premises land on this figure at once.
 Sources:
 
 - `https://helpx.adobe.com/photoshop/using/triangle-tool.html` — Shift = equilateral; click dialog with W/H/Corner Radius/Equilateral/From Center
-- `https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/` — introduced in Photoshop 2021; Radius in the bar; Alt = from centre
+- `https://jkost.com/blog/2020/10/adobe-announces-updates-to-photoshop-2021-v22.html` — Adobe's launch announcement, 2020-10-20: "a new Triangle tool" in Photoshop 2021 (v22)
+- `https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/` — Radius in the bar; Alt = from centre
 - `https://www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/` — the persistent geometry checkboxes
 - `https://helpx.adobe.com/photoshop/using/modify-shapes.html` — the Rectangle bar's shape, for contrast
 
@@ -260,26 +294,55 @@ these options at their defaults (sides = 5, radius = 0 px)"), and the app hardco
 `src/tools/shape.ts:186`. The default matches; nothing else about the control does, because there
 is no control.
 
-The star is a ratio on the same shape, not a separate mode: lower the star Ratio from 100% and
-the inner vertices pull inward, indenting every other edge
-(`developer.adobe.com/xd/uxp/develop/reference/polygon` — "the ratio of the smaller circle's
-diameter to the outer circle's diameter, expressed as a percentage", range 1.0 to 100.0, where 100
-is a plain convex polygon). The Properties panel carries the side count, the indent percentage and
-the smooth-radius value (`jkost.com`). The app has no representation of either.
+**The star is not the Polygon tool's any more, and the data file no longer says it is.** The
+previous version of this file described the star as a ratio on the same shape — "lower the star
+Ratio from 100% and the inner vertices pull inward" — sourced to
+`developer.adobe.com/xd/uxp/develop/reference/polygon` ("the ratio of the smaller circle's diameter
+to the outer circle's diameter, expressed as a percentage", range 1.0 to 100.0). That is the XD/UXP
+document object model, not the desktop tool's bar, and it is the only source that ever carried the
+claim. The counter-evidence is now positive and Adobe's own:
+
+- Adobe's current drawing-tools overview enumerates the group as "Rectangle tool | Ellipse tool |
+  Triangle tool | Polygon tool | **Star tool** | Draw star shapes | Line tool | Custom Shape tool" —
+  a **Star tool in the same group**, which is what a star moved _out_ of the Polygon tool's bar looks
+  like.
+- Adobe's star page instructs "Select the **Star tool** from the shapes tool group in the Tools
+  panel" and documents the star attributes there: "Set number of sides (or points on a star)",
+  "Corner radius", "**Inner Radius**: Defines the depth of the indents between the spikes", "**Outer
+  Radius**: Defines the length of the star's spikes" — in the Contextual Task Bar, and "You can also
+  adjust the points, corner radius, and inner/outer radii from the Options panel"
+  (`https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html`).
+- Adobe Community's 26.10 announcement thread describes the same split: "You can now create
+  customizable star polygons directly on the canvas using the Star tool, **located within the Shapes
+  tool group in the Tools panel**."
+
+The honest counter-counter-evidence, recorded rather than hidden: Adobe's own marketing page
+`https://www.adobe.com/products/photoshop/make-stars.html` still leads with "Make a star shape with
+the Polygon tool", and an undated StackExchange question records a 2013 user choosing "star" in the
+Polygon's own options. So the Polygon tool may still reach a star in some builds; what no current
+Adobe desktop page documents is a star control **on the Polygon tool's bar**. The data file's
+`summary`, `purpose` and `Sides` row now attribute the star to the separate tool rather than
+promising it here, and the `Sides` row says the indent control is not on this bar. The UXP
+reference has been dropped from the data file's source list, since the claim it supported is gone;
+it stays here in Unverified.
+
+Pre-Star-tool builds carried the side count, the indent percentage and the smooth-radius value in
+the Properties panel (`jkost.com`, 2021); those are now the Star tool's fields. The app has no
+representation of any of it.
 
 Modifiers: Shift constrains proportions, off by default; Alt/Option draws from the centre, though a
 polygon is already centred in its drag box; Control/Cmd while dragging rotates it; Spacebar
 repositions. The app implements Space and the square-box Shift, and neither the from-centre
 modifier's distinct meaning nor the Control-drag rotation.
 
-App verdict: **partial**. The drag-defined model is right; the side count, the star and the
-rotation are not there.
+App verdict: **partial**. The drag-defined model is right; the side count and the rotation are not
+there, and the star is not this tool's to draw.
 
 Sources:
 
 - `https://www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/` — drag-defined; Sides default 5, Radius default 0 px; Shift = symmetrical
 - `https://www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/` — polygon always drawn from its centre; Shift limits the angles
-- `https://developer.adobe.com/xd/uxp/develop/reference/polygon` — `cornerCount`, `starRatio` 1.0–100.0, `setAllCornerRadii`
+- `https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html` — the separate Star tool and its points / Inner Radius / Outer Radius
 - `https://jkost.com/blog/2021/07/working-with-the-shape-tools-in-photoshop.html` — `[`/`]` change the side count, by 10 with Shift; Control-drag rotates; star attributes in the Properties panel
 - `https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html` — the bar
 
@@ -304,14 +367,33 @@ for the Merge warning). **`Minus Back` is not one of them** — it is an Illustr
 Pathfinder term, and the previous campaign's corpus listed it as a Photoshop path operation without
 a source that supports it. See Unverified.
 
-**The shape library.** The default loaded groups are Leaf Trees, Wild Animals, Boats and Flowers
-(`www.pcworld.com/article/399355/photoshop-shapes-what-they-are-and-how-to-use-them.html`, which
-also names the twelve categories the `All` set adds: Animals, Arrows, Banners, Frames, Music,
-Nature, Objects, Ornaments, Shapes, Symbols, Talk Bubbles, Tiles). Those defaults are no longer what
-a current install shows: since the Shapes panel arrived, the old groups live behind
-**Legacy Shapes and More** in the panel's fly-out
-(`community.adobe.com/questions-712/where-do-i-get-photoshop-custom-shapes-it-needs-csh-files-1137992`;
-`versluis.com/2020/09/how-to-bring-back-legacy-shapes-in-photoshop/`).
+**Two Adobe names for the same subtract, and no single Adobe page for the set.** The entry is
+"Subtract Front Shape" in Adobe Community (2012) and "**Subtract From Shape Area**" in Adobe's own
+2022 wording; no Adobe page opened here enumerates all five together, so the data file's
+`pathOperationsControl` row and the `custom-shape` `purpose` both name the variant rather than
+picking one silently, and the `purpose` now carries **New Shape Layer** — which the control row had
+and the prose dropped, so the enumeration was incomplete in the most-read field of the entry.
+
+**The shape library, and the "default" the data file must not assert.** A 2020 PCWorld article
+gives the default loaded groups as Leaf Trees, Wild Animals, Boats and Flowers (and names the twelve
+categories the `All` set adds: Animals, Arrows, Banners, Frames, Music, Nature, Objects, Ornaments,
+Shapes, Symbols, Talk Bubbles, Tiles). Those defaults are no longer what a current install shows:
+since the Shapes panel arrived, the old groups live behind **Legacy Shapes and More** in the panel's
+fly-out (`community.adobe.com/questions-712/where-do-i-get-photoshop-custom-shapes-it-needs-csh-files-1137992`;
+`versluis.com/2020/09/how-to-bring-back-legacy-shapes-in-photoshop/`), and Adobe's own overview
+carries a separate "Add legacy custom shapes" nav item. The data file previously called these four
+"the default groups" flatly, which **contradicted this section**. It now says the library includes
+those groups, dates the "default" to a 2020 account, and states that what a current install shows
+was not established. Data file and notes now agree.
+
+**Shift means something different here — on third-party authority only.** For every geometric
+figure Shift constrains the drag box; for a custom shape it is reported to preserve the shape's
+_own_ aspect ratio (`glensmith.co.uk/photoshop/custom-shape-tool`; `photoshop-zon.blogspot.com`).
+No Adobe page opened in this pass states it, and the claim appears **three times** in the data file
+— `purpose`, the Shape Picker row and the Shift `modifiers` entry — where it read as though Adobe
+had said it. All three now carry the third-party marker.
+`normalizeShapeGeometry` squares the box for every non-line figure with no per-figure branch, so
+this is a divergence that no existing setting expresses.
 
 **The round trip.** Draw a path or a shape layer, or convert text to a path, then `Edit ▸ Define
 Custom Shape` and name it; the new preset appears in the picker
@@ -322,11 +404,9 @@ preferences file `CustomShapes.psp` carries `8BPF` and is read at launch and wri
 reaches them, and Adobe's own page documents the download-and-Load route
 (`www.adobe.com/products/photoshop/shapes.html`).
 
-**Shift means something different here.** For every geometric figure Shift constrains the drag box;
-for a custom shape it preserves the shape's _own_ aspect ratio
-(`glensmith.co.uk/photoshop/custom-shape-tool`; `photoshop-zon.blogspot.com`).
-`normalizeShapeGeometry` squares the box for every non-line figure with no per-figure branch, so
-this is a divergence that no existing setting expresses.
+**Shift means a different thing here.** See the third-party caveat above: `normalizeShapeGeometry`
+squares the box for every non-line figure with no per-figure branch, so the reported
+aspect-preserving behaviour is a divergence that no existing setting expresses.
 
 **Why the booleans are not a toggle away.** Subtract needs a multi-subpath model with a fill rule,
 so a single convex outline is structurally insufficient — a `Path2D` with `evenodd` handles a
@@ -342,8 +422,9 @@ Sources:
 - `https://www.adobe.com/products/photoshop/shapes.html` — `.csh` via Preset Manager; Define Custom Shape
 - `https://tonton-pixel.codeberg.page/photoshop-file-formats/custom-shapes-file-format.html` — Cumulus `8BCS` / `8BPF`
 - `https://www.makeuseof.com/photoshop-path-operations-add-subtract-intersect-exclude/` — the six path operations
-- `https://www.pcworld.com/article/399355/photoshop-shapes-what-they-are-and-how-to-use-them.html` — the four default groups
+- `https://www.pcworld.com/article/399355/photoshop-shapes-what-they-are-and-how-to-use-them.html` — the four default groups (2020; no longer current)
 - `https://community.adobe.com/questions-712/where-do-i-get-photoshop-custom-shapes-it-needs-csh-files-1137992` — Shapes panel and Legacy Shapes and More
+- `https://glensmith.co.uk/photoshop/custom-shape-tool` — third party: Shift preserves the preset's own aspect ratio
 
 ---
 
@@ -376,23 +457,61 @@ Claims that could not be sourced to a URL that was opened. None of them appear i
   no Minus Back.
 - **The version that split a dedicated Star tool out of the Polygon tool.** Adobe documents a Star
   tool with Points, Corner radius, Inner Radius and Outer Radius
-  (`https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html`,
-  dated 2026-02-23; the same content at `https://helpx.adobe.com/photoshop/using/create-star-shape.html`,
-  dated 2025-08-20), but neither page states which release introduced it. The previous corpus says
-  26.10 with no source that names the number. Because it is version-dependent it is deliberately
-  absent from the `polygon` description rather than asserted.
+  (`https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html`;
+  the same content at `https://helpx.adobe.com/photoshop/using/create-star-shape.html`), but neither
+  page states which release introduced it. The previous corpus's 26.10 figure now has **a page that
+  names the number** — an Adobe Community announcement thread titled "Photoshop v26.10 | Create the
+  perfect star shape for your designs and multiple enhancements"
+  (`https://community.adobe.com/questions-712/photoshop-v26-10-create-the-perfect-star-shape-for-your-designs-and-multiple-enhancements-1181840`),
+  which is a community post and not an Adobe release note, so 26.10 remains a well-attributed
+  account rather than a sourced fact. **The star is now absent from the `polygon` description for a
+  different and stronger reason: it is documented on another tool, not because the version is
+  uncertain.**
 - **Whether star generation is still reachable from the Polygon tool itself, or only from the Star
-  tool, in the current release.** `https://developer.adobe.com/xd/uxp/develop/reference/polygon`
-  shows a Polygon _node_ with a `starRatio` property, but that is the XD/UXP document object model,
-  not the desktop tool's bar. The current desktop bar is only evidenced for the separate Star tool.
+  tool, in the current release — and the counter-evidence is now positive, not merely absent.**
+  `https://developer.adobe.com/xd/uxp/develop/reference/polygon` shows a Polygon _node_ with a
+  `starRatio` property, but that is the XD/UXP document object model, not the desktop tool's bar.
+  Against that: Adobe's current drawing-tools overview enumerates the group as "Rectangle tool |
+  Ellipse tool | Triangle tool | Polygon tool | **Star tool** | Draw star shapes | Line tool |
+  Custom Shape tool" — a Star tool in the same group — and Adobe's star page opens "Select the
+  **Star tool** from the shapes tool group in the Tools panel" and documents the star attributes
+  (points, Corner radius, Inner Radius, Outer Radius) in the Contextual Task Bar
+  (`https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-star-shapes.html`;
+  the same content at `https://helpx.adobe.com/photoshop/using/create-star-shape.html`). Adobe
+  Community's 26.10 thread places the new Star tool "within the Shapes tool group in the Tools
+  panel". For the other side, Adobe's own marketing page
+  `https://www.adobe.com/products/photoshop/make-stars.html` still leads with "Make a star shape
+  with the Polygon tool". **The previous version of the data file asserted the star on the Polygon
+  tool anyway, on the UXP reference alone, while this list called the question unresolvable — the
+  assertion has been withdrawn** and the star is attributed to the separate Star tool throughout.
+- **That the Polygon tool inscribes a _regular_ n-gon.** The drag is Adobe's; the regularity is
+  this campaign's reading of it, and it is also what the app builds. Closest Adobe sentence:
+  `https://helpx.adobe.com/photoshop/using/draw-and-edit-shapes-web.html` — "Click and drag on the
+  canvas to draw a shape with your selected shape tool". The data file keeps the geometry and labels
+  it an inference.
+- **That the Polygon tool's bar carries a `Radius` control.** Adobe documents `Radius` on the
+  Rectangle and Triangle tools; **no Adobe page listing the Polygon tool's options bar was found**,
+  so the "missing" verdict for the polygon rests on
+  `www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/` and on
+  `jkost.com`'s "the Triangle and Polygon tools have a single Corner Radius control point handle".
+  The data file's `Radius` row says so.
+- **That the Ellipse and Line tools withhold `Radius`, and therefore that the app's
+  rectangle-only gate is faithful.** No **desktop** Adobe page enumerating the Ellipse tool's bar was
+  found. The one Adobe page that lists per-tool shape options is
+  `https://helpx.adobe.com/photoshop-elements/using/creating-shapes.html`, which is a **different
+  product**. The whole of the exoneration rests on
+  `www.photoshopessentials.com/basics/how-to-draw-shapes-with-the-shape-tools/`: "since elliptical
+  shapes have no corners, you won't find any options to adjust them". The data file's `ellipse`
+  `purpose` and `appNotes` now call the withholding a judgment rather than a match.
 - **The documented numeric range of the Polygon tool's `Sides` field** (3–100, from
   `www.photoshopessentials.com/basics/shapes/photoshop-shape-essentials/`, a 2012 page). The default
   of 5 is corroborated by a 2022 page; the range is not restated on any page of currency.
 - **The numeric ranges of the Line tool's arrowhead `Width` (10–1000% of line width) and `Length`
   (10–5000%)**, and `Concavity`'s −50% to +50%. The closest URL,
   `http://www.underwaterphotography.com/photoshop/photoshop/1_11_3_1.html`, is an ImageReady-era
-  page and describes the pop-up dialog box as the Photoshop control, which it no longer is. Only
-  the 0% Concavity default and the three control names are asserted anywhere.
+  page and describes the pop-up dialog box as the Photoshop control, which it no longer is. The 0%
+  Concavity default appears only on a 2012 page and **has been removed from the data file**; only
+  the three control names are asserted there.
 - **The Line tool's `Weight` default of 1 px in the current release.** Sourced only to the 2012 and
   2015 third-party pages above, not to a current Adobe sentence. The 1 px default _stroke_ is
   separately and more recently sourced (2022, `www.photoshopessentials.com/basics/how-to-draw-custom-shapes-in-photoshop/`).
@@ -401,13 +520,23 @@ Claims that could not be sourced to a URL that was opened. None of them appear i
   current bar page lists the three alignment values without naming a default.
 - **The current default shape groups in the Custom Shape picker.** The four groups
   (Leaf Trees, Wild Animals, Boats, Flowers) are from a 2020 PCWorld article; the 2019–2021 Adobe
-  Community threads say the picker changed and those groups moved behind "Legacy Shapes and More".
-  What a given 2024–2026 install shows on first launch was not established, so the description says
-  what the library contains and where the legacy set lives rather than asserting a default.
-- **Whether Photoshop 22.0's Triangle tool shipped with the Shift-equals-equilateral constraint
-  unchanged.** Adobe's triangle page carries a 2023 crawl date and does not state an introduction
-  version; the "introduced in Photoshop 2021" claim is third-party. The behaviour itself is directly
-  sourced to Adobe and is asserted; only the version-of-introduction is soft.
+  Community threads say the picker changed and those groups moved behind "Legacy Shapes and More",
+  and Adobe's overview carries a separate "Add legacy custom shapes" nav item. What a given
+  2024–2026 install shows on first launch was not established. The data file previously called
+  those four "the default groups" flatly, which **contradicted this entry**; it now names the
+  library's contents, dates the "default" to the 2020 article, and says the current install is
+  unestablished.
+- **That the Custom Shape tool's Shift preserves the preset's own width-to-height ratio.** Carried
+  entirely by `https://glensmith.co.uk/photoshop/custom-shape-tool` and a second blog; no Adobe page
+  opened in this pass states it. It appears three times in the data file, and all three now say so.
+- **Whether Photoshop 2021 (v22)'s Triangle tool shipped with the Shift-equals-equilateral constraint
+  unchanged, and what its geometry was at introduction.** The version of introduction is no longer
+  open — Adobe's launch announcement of 2020-10-20 names "a new Triangle tool" in Photoshop 2021
+  (v22) (`https://jkost.com/blog/2020/10/adobe-announces-updates-to-photoshop-2021-v22.html`), and
+  that claim has moved out of this list and into the data file. What the announcement does not say
+  is what Shift did on day one, and Adobe's triangle page carries a 2023 crawl date and no
+  introduction version. The behaviour itself is directly sourced to Adobe and is asserted; only the
+  behaviour **at introduction** is unverified.
 - **The exact maximum of Photoshop's `Radius` field** for Rectangle, Triangle or Polygon. No source
   states one. The app's 0–250 px is its own number and is not presented as Photoshop's.
 - **Whether the Star tool's `Points`, `Inner Radius` and `Outer Radius` replaced the pre-22.0

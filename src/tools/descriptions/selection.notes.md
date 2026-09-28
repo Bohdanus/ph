@@ -22,20 +22,25 @@ this pass, the source wins, and the two places it loses are recorded at the end.
 
 - **Combination modes.** `New / Add To / Subtract From / Intersect With` appears on the marquee
   tools, the lasso tools and the Magic Wand. The Quick Selection is the exception, with three —
-  New, Add to and Subtract from, and no Intersect. That is a real divergence, confirmed twice
-  below, and the one place in the family where a selection tool's bar has fewer modes than its
-  siblings.
+  New, Add to and Subtract from, and no Intersect. That is a real divergence, confirmed below, and
+  the one place in the family where a selection tool's bar has fewer modes than its siblings. One
+  Adobe page contradicts it and is disclosed in the Quick Selection section rather than argued
+  away.
 - **The app has no `Select` menu.** There is no `Select All`, `Deselect`, `Inverse`,
   `Color Range`, `Modify > Feather/Expand/Contract/Border/Smooth`, `Grow`, `Similar`,
   `Refine Edge`, `Select and Mask` or `Transform Selection` anywhere in the application. The
   only deselect is the `Clear` button the elliptical, freehand, magnetic, wand and quick-selection
   bars render, bound to `clearSelections`. This removes Photoshop's two most important
   follow-ups for the wand and the quick selection outright.
-- **`Select and Mask` is on every bar, not just the wand's.** Adobe's Select-and-Mask tutorial
+- **`Select and Mask` is on every bar, not just the wand's.** Adobe's 2022 Select-and-Mask tutorial
   puts it this way: "Open the Select and Mask workspace by choosing Select > Select and Mask, or
-  by clicking Select and Mask in the Options bar **for any of the selection tools**." It is
+  by clicking Select and Mask in the Options bar **for any of the selection tools**." Two
+  **current desktop pages** also name it on their own tools' bars — the Quick Selection's ("Select
+  Select and Mask to refine the selection further") and the Magic Wand's ("Select Select and Mask to
+  further refine or preview the selection as a mask"), both 2025-11-04. It is
   therefore recorded as a `missing` control on all seven tools rather than on the one whose own
-  page happens to name it. The workspace it opens is documented by Adobe
+  page happens to name it. The seven-tool generalization still rests on the 2022 sentence; see the
+  Quick Selection section. The workspace it opens is documented by Adobe
   (`refine-your-selection-and-mask.html`, last updated February 2026) as carrying a Refine Edge
   Brush for soft edges, a plain Brush for manual work, View Modes of `On Black`, `On White`,
   `Black and White`, `On Layers` and `Show Edge`, and an `Output To` menu that can produce a
@@ -148,10 +153,18 @@ field, so a feather can be typed before the next trace. Nothing in the app binds
 
 Identical three-control bar. The gesture is where this tool lives, and Adobe's page is
 complete about it: click to set the starting point; `Alt`/`Option`-drag to draw a freehand
-segment; `Delete` to erase recently drawn straight segments; and three documented ways to
-close — click the starting point (a closed circle appears next to the pointer), `Ctrl`-click
-or `Cmd`-click, or double-click / `Enter` / `Return` for a magnetic segment, with
+segment; `Delete` to erase recently drawn straight segments; and **four** documented ways to
+close — click the starting point (a closed circle appears next to the pointer),
+`Ctrl`-click or `Cmd`-click, double-click / `Enter` / `Return` for a magnetic segment, with
 `Alt`-double-click closing on a straight one.
+
+**Two gestures the data file was missing, both Adobe's, both now added.** (a) The 45° constraint:
+"To draw a straight line at a multiple of 45°, hold down Shift as you move to select the next
+segment." The data file's `modifiers` listed only "Shift — Sets the gesture to Add to Selection",
+which is also true and also documented, so Shift now carries **two** entries rather than one. (b)
+The fourth close gesture: "If the pointer is not over the starting point, double-click… or
+**Ctrl-click (Windows) or Command-click (Mac OS)**." The data file's `purpose` said the border "has
+three ways in" and enumerated three; it now says four and carries the modifier-click.
 
 ### Options table
 
@@ -163,8 +176,8 @@ or `Cmd`-click, or double-click / `Enter` / `Return` for a magnetic segment, wit
 | Select and Mask                               | on every selection tool's bar                                     | `missing`  | —       |
 
 **App fidelity: partial**, and this is the most _gesturally_ faithful tool in the family — the
-click-to-add-anchor, double-click close, right-click close, `Enter` close, `Backspace`/`Delete`
-anchor removal and `Escape` abort are all registered in `PolygonClickToolArea` — against the
+click-to-add-anchor, double-click close, right-click close, `Enter` close, `Delete` anchor
+removal and `Escape` abort are all registered in `PolygonClickToolArea` — against the
 least complete bar. The bar is forty lines: one Outline/Fill toggle and a hint. It is also the
 only bar in the family with no Copy, Paste or Clear buttons, which the freehand and magnetic
 lasso bars beside it both render.
@@ -174,8 +187,11 @@ a click-and-drag that produces a _smooth anchor with drag-set tangent handles_, 
 The current Adobe page does not say that: it says to hold `Alt`/`Option` **and drag** to draw a
 freehand **segment**, and to hold `Alt`/`Option` and double-click to close with a **straight
 segment**. The drag-handle claim was not re-established from a live source and has been left
-out of the data file. The corpus's own `Alt` + drag freehand-segment claim, its three closing
-gestures and its `Backspace` claim all survived re-verification.
+out of the data file. The corpus's own `Alt` + drag freehand-segment claim and its closing
+gestures survived re-verification; its `Backspace` wording did **not** — Adobe says "To erase
+recently drawn straight segments, press the **Delete** key", and `Backspace` is the Mac keyboard's
+name for that key rather than Adobe's word. The data file's `appNotes` and this section both
+said "Backspace and Delete"; both now say `Delete`.
 
 ## Magnetic Lasso Tool — `feather-magnetic-lasso`
 
@@ -201,7 +217,7 @@ option. The tool is "not available for 32-bits-per-channel images".
 | Anti-alias                                    | on by default                                                            | `present`  | `FeatherMagneticLasso.tsx:331` |
 | Width                                         | pixel detection radius; `[`/`]` adjust; `Caps Lock` shows it as a circle | `present`  | `FeatherMagneticLasso.tsx:265` |
 | Contrast                                      | 1%–100%                                                                  | `partial`  | `FeatherMagneticLasso.tsx:278` |
-| Frequency                                     | 0–100 rate; **higher = more fastening points**                           | `partial`  | `FeatherMagneticLasso.tsx:291` |
+| Frequency                                     | 0–100 rate; **higher anchors the border sooner**                         | `partial`  | `FeatherMagneticLasso.tsx:291` |
 | Stylus Pressure                               | checkbox; narrows Width under stylus pressure                            | `missing`  | —                              |
 | Select and Mask                               | on every selection tool's bar                                            | `missing`  | —                              |
 
@@ -211,11 +227,19 @@ option. The tool is "not available for 32-bits-per-channel images".
 look.** The app stores `frequency` as a maximum path length in pixels and uses it as
 `if (pathLength(segment.path) < args.frequency) return false;` in the auto-fastening-point
 predicate: longer spacing means _fewer_ anchors. Its own options-bar help text says "Lower
-values add more anchors and track detailed edges more tightly." Adobe's `Frequency` is a rate
-on 0–100 where a higher value lays fastening points down more densely. Both readings are
-internally consistent; they are not the same control, and a user who transfers a muscle memory
-from one slider to the other gets the opposite result. This is marked `partial` rather than
-`missing` because the control is rendered and genuinely wired — it just means something else.
+values add more anchors and track detailed edges more tightly." Adobe's sentence is narrower than
+the finding: **"A higher value anchors the selection border in place more quickly."** The step from
+that to "a higher value lays fastening points down more densely" is **this campaign's inference**,
+corroborated by two third parties — `photoshopessentials.com` gives a default Frequency of 57 and
+states "The higher the value, the more anchor points will be added", and `lifewire.com` documents
+the same `Feather / Width / Contrast / Frequency` set and the `[`/`]` width keys — but not by Adobe.
+
+The data file now quotes Adobe and labels the density reading, in the `Frequency` row and in
+`appNotes`, so the inversion is a documented divergence plus a stated inference rather than a
+finding dressed as a citation. The two readings are internally consistent; they are not the same
+control, and a user who transfers a muscle memory from one slider to the other gets the opposite
+result. This is marked `partial` rather than `missing` because the control is rendered and
+genuinely wired — it just means something else.
 
 **The other two `partial` verdicts.** `Contrast` allows 0% where Adobe's documented range
 starts at 1%. `Feather` is the same _meaning_ as the marquee Feather but is capped at 100
@@ -238,21 +262,33 @@ This is the tool whose bar changed most in the corpus's window and where the cur
 is the better source. The 2025-11-04 page lists the bar in full — `Sample Size`, `Tolerance`
 ("from 0 (narrow) to 255 (broad)"), `Anti-alias`, `Contiguous`, `Sample All Layers` — while the
 2023 how-to page lists only `Tolerance`, `Anti-aliased`, `Sample All Layers` and `Contiguous`
-alongside the four combination modes. The defaults come from `photoshopessentials.com` and
-Adobe's Photoshop Elements page, which agree: `Tolerance` 0–255 defaulting to 32, `Contiguous`
-on, `Anti-alias` on, `Sample All Layers` off.
+alongside the four combination modes.
+
+**Every default on this bar is the weak half of the entry, and the data file now says so.**
+`photoshopessentials.com` and Adobe's **Photoshop Elements** page agree that `Tolerance` runs 0–255
+defaulting to 32, `Contiguous` on, `Anti-alias` on and `Sample All Layers` off — but neither is a
+desktop Photoshop page, and Adobe's current 2025-11-04 desktop page gives the Tolerance **range and
+no default at all**. The `Tolerance` row, the `Sample All Layers` row and — for consistency,
+since the identical evidence gap applies — the `Contiguous` and `Anti-alias` rows each now name
+their own provenance inline instead of asserting a default flatly. The four _ranges_ and
+_effects_ are Adobe's and are stated without qualification.
+
+The `32` also sits in a source list that is otherwise Adobe-first, which is what made it read as
+sourced. The closest Adobe-desktop statement of any of these four defaults was not found; the
+Elements page is `https://helpx.adobe.com/ca/photoshop-elements/using/making-selections.html`, and
+it is a different product. See `## Unverified`.
 
 ### Options table
 
-| Control                                       | Photoshop                                             | App status | App ref            |
-| --------------------------------------------- | ----------------------------------------------------- | ---------- | ------------------ |
-| New / Add To / Subtract From / Intersect With | four modes; `Shift`-click adds, `Alt`-click subtracts | `missing`  | —                  |
-| Sample Size                                   | how much image is sampled for sensitivity             | `missing`  | —                  |
-| Tolerance                                     | 0–255, default 32                                     | `partial`  | `MagicWand.tsx:54` |
-| Anti-alias                                    | on by default                                         | `missing`  | —                  |
-| Contiguous                                    | on by default; off = same colors throughout the image | `missing`  | —                  |
-| Sample All Layers                             | off by default                                        | `missing`  | —                  |
-| Select and Mask                               | on every selection tool's bar                         | `missing`  | —                  |
+| Control                                       | Photoshop                                                                     | App status | App ref            |
+| --------------------------------------------- | ----------------------------------------------------------------------------- | ---------- | ------------------ |
+| New / Add To / Subtract From / Intersect With | four modes; `Shift`-click adds, `Alt`-click subtracts                         | `missing`  | —                  |
+| Sample Size                                   | how much image is sampled for sensitivity                                     | `missing`  | —                  |
+| Tolerance                                     | 0–255 (Adobe); the 32 default is third-party                                  | `partial`  | `MagicWand.tsx:54` |
+| Anti-alias                                    | on by default, third-party / Elements                                         | `missing`  | —                  |
+| Contiguous                                    | on by default, third-party / Elements; off = same colors throughout the image | `missing`  | —                  |
+| Sample All Layers                             | reported off by default, CS5-era third-party                                  | `missing`  | —                  |
+| Select and Mask                               | on every selection tool's bar                                                 | `missing`  | —                  |
 
 **App fidelity: partial.**
 
@@ -297,8 +333,28 @@ describes "a series of three icons which let us switch between the tool's three 
 (from left to right - New selection, Add to selection and Subtract from selection)". Every other
 tool in this family is documented by Adobe with four: "New Selection, Add to Selection, Subtract
 from Selection, or Intersect with Selection" appears verbatim on the marquee, lasso, magnetic
-lasso, polygonal lasso, wand and quick-selection how-to pages — the quick-selection page
-included, which is why the divergence is worth stating rather than inferring.
+lasso and polygonal lasso pages and on the wand's.
+
+**Counter-evidence, disclosed rather than argued away.** Two things pull the other way, and the
+previous version of this file handled both badly.
+
+1. **A claim of confirmation that the page does not carry.** That version said the four-mode list
+   "appears verbatim on the marquee, lasso, magnetic lasso, polygonal lasso, wand and
+   quick-selection how-to pages — **the quick-selection page included**, which is why the
+   divergence is worth stating rather than inferring." A later read of
+   `https://helpx.adobe.com/photoshop/using/tool-techniques/quick-selection-tool.html` in full
+   found **no four-mode list on it**. The sentence is withdrawn. It is worth stating plainly that
+   this was a confirmation claimed and not found, which is the failure mode the `## Unverified`
+   list exists to prevent.
+2. **An Adobe page that says the opposite.** `https://helpx.adobe.com/ph_fil/photoshop/how-to/add-to-subtract-from-selections.html`
+   names the Quick Selection in the set of tools that can be combined and then instructs the
+   reader to use **Intersect with selection** on it.
+
+Neither was retracted by Adobe, and neither is enough to overturn the 2025-11-04 desktop page that
+enumerates the three. The finding is therefore stated as what it is: **a documented divergence, not
+an inference from a bar nobody enumerated** — the Quick Selection's own bar _is_ enumerated, and it
+has three. The data file's three-mode claim is unchanged; what changed is the argument under it.
+The `ph_fil` add-to-subtract page is also older and in a different locale line than the 2025 page.
 
 The likely source of the "four modes" misconception is a general options-bar diagram in a
 textbook that lists `New/Add/Subtract/Intersect` for selection tools collectively, immediately
@@ -412,13 +468,25 @@ evidence it does not start enabled. The default state itself is in `## Unverifie
 
 ### `Select and Mask` and `Mask`
 
-**`Select and Mask`** is sourced by Adobe twice and is on every selection tool's bar, so it is
+**`Select and Mask`** is sourced by Adobe three times and is on every selection tool's bar, so it is
 recorded on all seven:
 
 - "Open the Select and Mask workspace by choosing Select > Select and Mask, or by clicking
-  Select and Mask in the Options bar **for any of the selection tools**." — Adobe, 2022-12-28.
+  Select and Mask in the Options bar **for any of the selection tools**." — Adobe, 2022-12-28. This
+  is the sentence that generalises it to all seven, and it is the weakest of the three because it is
+  a **2022 `ph_fil` tutorial**: a beginner how-to, not a current desktop reference page, and on a
+  different locale line from the 2025 documentation this entry otherwise rests on.
 - "In the options bar, click Select and Mask to open the Select and Mask workspace." — Adobe
   Learn, _Make selections_.
+- **Current desktop pages, which is what this claim should have leaned on.** The Quick Selection
+  page ends "Select **Select and Mask** to refine the selection further"
+  (`paint-a-selection-with-quick-selection-tool.html`, 2025-11-04), and the Magic Wand page ends
+  "Select **Select and Mask** to further refine or preview the selection as a mask"
+  (`select-areas-by-color-with-the-magic-wand-tool.html`, 2025-11-04). Both tools' own current
+  desktop pages therefore name the control on their own bars, and both quotes are now in the data
+  file's two `Select and Mask` rows. Neither page says "for any of the selection tools", so the
+  seven-tool generalization still rests on the 2022 sentence; what changed is that the two tools
+  whose rows a reader is most likely to check no longer rest on it.
 
 The workspace it opens is the refinement surface the quick selection feeds: "Use the Quick
 Selection tool to select automatically based on similar tones and image edges. Use the **Refine
@@ -430,14 +498,20 @@ unwanted color at a soft edge, and an `Output To` menu. Adobe's current page for
 `On Black`, `On White`, `Black and White`, `On Layers`, `Show Edge` — which is the current
 replacement for the old Refine Edge dialog.
 
-**`Mask`** — the button that converts the selection to a layer mask — is the weakest claim in this
-addendum. It is in the mined bar row, and a layer mask is certainly an output of this workflow
-(Adobe documents `Output To > Layer Mask`, and the Layers-panel `Add layer mask` button in
-`fine-tune-layer-masks.html`: "The resulting layer mask is black where there was no selection,
-hiding the background around the subject"). But **no Adobe page opened in this pass documents a
-`Mask` button on a selection tool's options bar**, and the Outputs enumerated by the third-party
-Select-and-Mask guides are the workspace's `Output To` menu, not an options-bar button. The row is
-in the data file on the strength of the mined bar row alone and is listed in `## Unverified` item 10.
+**`Mask`** — the button that converts the selection to a layer mask — was the weakest claim in
+this addendum, and the data file has now dropped it. It is in the mined bar row, and a layer mask
+is certainly an output of this workflow (Adobe documents `Output To > Layer Mask`, and the
+Layers-panel `Add layer mask` button in `fine-tune-layer-masks.html`: "The resulting layer mask is
+black where there was no selection, hiding the background around the subject"). But **no Adobe page
+opened in this pass documents a `Mask` button on a selection tool's options bar**, and what Adobe
+documents is the **Layers panel's** button. The row also asserted a **position** — "Sits
+immediately after Select and Mask and before the two checkboxes" — which no source of any kind
+supports and which is the part most likely to be a reconstruction of a bar someone had in front of
+them. Rather than keep a half-sourced control, the `Mask` row is removed from the data file, the
+positional clause goes with it, and the surviving fact is now a sentence in the Quick Selection's
+`appNotes`: there is no route from a selection to a layer mask, and the only mask the app can
+produce is the bitmap its Copy button renders. The claim itself stays in `## Unverified` item 10,
+which is where an unsourced claim belongs.
 
 ### Quick Mask
 
@@ -474,11 +548,12 @@ the app binds nothing.
 | New / Add to / Subtract from | **three** modes, no Intersect; auto-switches to Add after the first stroke          | `partial`  | `QuickSelection.tsx:138` |
 | Size                         | brush diameter, from the preset picker, with Hardness / Spacing / Angle / Roundness | `partial`  | `QuickSelection.tsx:104` |
 | Select and Mask              | opens the Select and Mask workspace to refine the result                            | `missing`  | —                        |
-| Mask                         | converts the selection to a layer mask on the active layer                          | `missing`  | —                        |
 | Sample All Layers            | makes the selection from all visible layers, not just the current one               | `missing`  | —                        |
 | Auto-Enhance (Enhance Edge)  | smoother, more refined edges; flows toward image edges; slower                      | `missing`  | —                        |
 
-**App fidelity: partial**, and the gap is the algorithm, not the bar.
+**App fidelity: partial**, and the gap is the algorithm, not the bar. (The `Mask` row that used to
+sit between `Select and Mask` and `Sample All Layers` is gone from this table and from the data
+file; see the `Mask` subsection above and `## Unverified` item 10.)
 
 **The `Tolerance` slider is not a Photoshop control.** This remains the single most important
 correction in this pass. Photoshop's Quick Selection has **no** `Tolerance`; Tim Grey's
@@ -502,8 +577,8 @@ in the `options` array; it is recorded here and in `appNotes`.
 
 **Also divergent.** The `Mode` dropdown offers only `Add` and `Subtract`, so there is no way to
 start a fresh selection and no `Intersect`. `Sample All Layers` is absent and the stroke reads
-the merged composite canvas. `Select and Mask`, `Mask`, `Auto-Enhance` and the tool-preset picker
-are absent. The brush is flat — no hardness, spacing, angle or roundness — and `[`/`]`, the
+the merged composite canvas. `Select and Mask`, `Auto-Enhance` and the tool-preset picker
+are absent, and there is no route from a selection to a layer mask at all. The brush is flat — no hardness, spacing, angle or roundness — and `[`/`]`, the
 Alt-drag size gesture and the live size/opacity readout are not bound. The committed region is one
 traced contour, so a grown region containing an enclosed hole is refused outright rather than
 committed, and a `Selection` cannot express the hole.
@@ -578,9 +653,11 @@ absent from the data file or hedged inside it, and each names the URL that came 
    `https://www.photoshopessentials.com/basics/selections/magnetic-lasso-tool` for the 57, and
    `https://www.lifewire.com/magnetic-lasso-tool-in-adobe-photoshop-4077747` plus a CS3-era
    `http://www.jkost.com/pdf/photoshop/cs3/PSTips&Tech.pdf` for the keys. Adobe documents the
-   keys' existence nowhere in a page this pass opened. The direction of `Frequency` is Adobe's
-   own and is the load-bearing half of the inversion finding; the default value is not, and the
-   data file states neither.
+   keys' existence nowhere in a page this pass opened. Adobe's own sentence is narrower than the
+   finding built on it — "A higher value **anchors the selection border in place more quickly**" —
+   and the step from that to _lays fastening points down more densely_ is third-party. The data
+   file now quotes Adobe and labels the density reading as the inference it is; the default value
+   is stated nowhere.
 
 7. **The default state of `Sample All Layers` on the Magic Wand and the Quick Selection, and of
    `Auto-Enhance` / `Enhance Edge` on the Quick Selection.** None of the three is given a default
@@ -588,9 +665,10 @@ absent from the data file or hedged inside it, and each names the URL that came 
    file now says: Adobe's 2022 tutorial instructs the user to _add_ a checkmark to
    `Auto-Enhance`, which is evidence it does not start enabled but is not a statement of its
    default; "unchecked by default" for the wand's `Sample All Layers` is
-   `photoshopessentials.com`'s claim alone (CS5-era). **No source found in this pass — Adobe or
-   otherwise — says `Auto-Enhance` is on by default**, which is the premise the addendum asked
-   about and which this pass could not confirm. My first version of this file asserted "off by
+   `photoshopessentials.com`'s claim alone (CS5-era), and the data file's `Sample All Layers`
+   row now says exactly that instead of asserting it flatly. **No source found in this pass —
+   Adobe or otherwise — says `Auto-Enhance` is on by default**, which is the premise the addendum
+   asked about and which this pass could not confirm. My first version of this file asserted "off by
    default" for all of these from an inference about a drawn-unticked checkbox; that inference is
    withdrawn. Closest: `https://helpx.adobe.com/ph_fil/photoshop/how-to/use-quick-selection-tool.html`
    and `https://www.photoshopessentials.com/basics/selections/quick-selection-tool`.
@@ -611,20 +689,22 @@ absent from the data file or hedged inside it, and each names the URL that came 
    confirmed from any opened source, and the data file treats it as a selection feather
    accordingly.
 
-10. **The `Mask` button on a selection tool's options bar.** The `Mask` row in the quick
-    selection's table rests on the recovered corpus bar row and on the general fact that a layer
-    mask is an output of this workflow, not on an opened Adobe page. No Adobe page found in this
-    pass documents a `Mask` button on a selection tool's options bar; what Adobe documents is the
+10. **The `Mask` button on a selection tool's options bar.** No Adobe page found in this pass
+    documents a `Mask` button on a selection tool's options bar; what Adobe documents is the
     **Layers panel's** `Add layer mask` button ("The resulting layer mask is black where there was
     no selection, hiding the background around the subject" —
     `https://helpx.adobe.com/ph_fil/photoshop/how-to/fine-tune-layer-masks.html`) and the Select
     and Mask workspace's `Output To` menu, which the third-party guides enumerate as `Selection`,
     `Layer Mask`, `New Layer`, `New Layer with Layer Mask`, `New Document`, `New Document with
-Layer Mask`
+ Layer Mask`
     (`https://www.howtogeek.com/289255/how-to-make-more-precise-selections-with-photoshops-select-and-mask`).
-    The `Select and Mask` row beside it is solidly Adobe-sourced; this one is not. For the same
-    reason the `Mask` row appears only on the quick selection and not on the other six tools,
-    even though the bar is almost certainly identical.
+    The `Mask` row also asserted a **position** on the bar that no source supports.
+    **The row has been removed from the data file** rather than kept on the mined bar row, since
+    a control with no page documenting it and an invented position is not a claim the file should
+    carry; the surviving fact is in the Quick Selection's `appNotes` — the app has no route from a
+    selection to a layer mask. The `Select and Mask` row beside it is solidly Adobe-sourced; this
+    one is not. It was also the only tool carrying the row, which was itself an artifact of the
+    mined corpus rather than of a documented difference.
 
 11. **A `Tool presets` picker as a per-tool options-bar control.** The recovered corpus row
     opens with `[Tool presets]`, and a preset picker is present on every Photoshop tool bar, but
@@ -633,3 +713,25 @@ Layer Mask`
     specific to the tool being used."
     (`https://cod.pressbooks.pub/photoshopmastery1250/chapter/selections`). The row is in the data
     file on that source alone.
+
+12. **The Magic Wand being unavailable on Bitmap and 32-bits-per-channel images.** The data file
+    stated this flatly and **in none of its own sources**. Adobe states the 32-bit exclusion for
+    the **Magnetic Lasso** — "not available for 32-bits-per-channel images",
+    `https://helpx.adobe.com/photoshop/using/tool-techniques/magnetic-lasso-tool.html` — and says
+    nothing of the kind for the Wand on either the 2023 how-to page or the 2025-11-04 desktop page.
+    The Wand is greyed out on a 32-bit document in practice, which is almost certainly why the
+    claim reads as verified, but "almost certainly" is not a source. The `magic-wand` `purpose` now
+    attributes the exclusion rather than asserting it. The closest statement found is the UXP
+    reference's own Bitmap/32-bit exclusion list for `Grow` and related commands:
+    `https://developer.adobe.com/photoshop/uxp/2022/ps_reference/classes/selection/`.
+
+13. **The Magic Wand's four defaults — `Tolerance` 32, `Contiguous` on, `Anti-alias` on,
+    `Sample All Layers` off.** Adobe's 2025-11-04 desktop page gives the `Tolerance` **range**
+    ("from 0 (narrow) to 255 (broad)") and **no default**, and describes the other three by effect
+    without stating a default. The four values come from `photoshopessentials.com` and Adobe's
+    **Photoshop Elements** page
+    (`https://helpx.adobe.com/ca/photoshop-elements/using/making-selections.html`), which is a
+    **different product**. The data file's four rows now name that provenance inline instead of
+    asserting a default flatly; the ranges and effects, which are Adobe's, are stated without
+    qualification. Item 7 above covers the same ground for the Quick Selection's `Sample All
+Layers` and `Auto-Enhance`.
