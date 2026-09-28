@@ -91,7 +91,8 @@ const Harness = ({
  * anchor's `getBoundingClientRect` reads on every call, so a test can move the anchor and
  * fire one event rather than re-rendering. `resize` re-renders with new content and, by
  * default, a new `measureKey` — the key is how a caller says its content changed, so a
- * re-render that keeps it is expected NOT to re-measure.
+ * re-render that keeps it is expected NOT to re-measure. `commit` re-renders with everything
+ * unchanged, for a contract that React only re-evaluates when it renders.
  */
 const renderOverlay = ({
   anchor,
@@ -105,12 +106,17 @@ const renderOverlay = ({
   gap?: number;
   align?: 'start' | 'center';
   measureKey?: string;
-}): { anchor: Box; resize: (size: Size, nextMeasureKey?: string) => void } => {
+}): {
+  anchor: Box;
+  resize: (size: Size, nextMeasureKey?: string) => void;
+  commit: () => void;
+} => {
   measuredSize = overlaySize;
   const { rerender } = render(<Harness align={align} anchor={anchor} gap={gap} measureKey={measureKey} />);
 
   return {
     anchor,
+    commit: () => rerender(<Harness align={align} anchor={anchor} gap={gap} measureKey={measureKey} />),
     resize: (size, nextMeasureKey = measureKey) => {
       measuredSize = size;
       rerender(<Harness align={align} anchor={anchor} gap={gap} measureKey={nextMeasureKey} />);
@@ -268,6 +274,56 @@ describe('AnchoredOverlay', () => {
     });
 
     expect(position()).toEqual({ position: 'fixed', left: 1164, top: 100 });
+  });
+
+  it('clamps against the layout viewport, not the window box a scrollbar widens', () => {
+    // `setViewport` writes only `documentElement.client*`; it never touches
+    // `window.inner*`, so those keep jsdom's own default of 1024x768 and the two measures
+    // differ from the very first test. This one makes the difference deliberate and small,
+    // the shape a classic scrollbar actually takes: it occupies layout space, so the
+    // containing block of a `position: fixed` box is the 640px left after its 80px gutter
+    // while `window.innerHeight` keeps reporting the full window.
+    setViewport(1280, 720);
+    Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, value: 640 });
+
+    renderOverlay({
+      // Low in the rail, so the vertical clamp is what places it. The horizontal axis cannot
+      // pin this: a left-rail tile sits at x 0-56, so the leading side always has room and
+      // the left clamp never binds.
+      anchor: { left: 0, top: 600, width: 56, height: 44 },
+      overlaySize: { width: 200, height: 200 },
+    });
+
+    // 640 - 200 - 8 = 432 against the layout viewport. Measured, the other branch gives
+    // 560 — which is jsdom's untouched `innerHeight` of 768 less the same 200 and 8, not
+    // the 720 `setViewport` was passed. That number is why the assertion cannot be satisfied
+    // by any viewport argument in this file, which is the point of it.
+    expect(position().top).toBe(432);
+  });
+
+  it('renders nothing once its anchor leaves the document', () => {
+    const { commit } = renderOverlay({
+      anchor: { ...RAIL_TILE, top: 500 },
+      overlaySize: { width: 200, height: 120 },
+    });
+    expect(position().top).toBe(500);
+
+    // A detached element's `getBoundingClientRect()` is an all-zero box, so the clamp would
+    // pin the overlay into the top-left corner at the viewport padding: a real, painted,
+    // clickable menu attached to nothing. This is the case a caller cannot prevent by
+    // clearing its own state — the tile is unmounted, not closed.
+    act(() => {
+      screen.getByTestId('anchor').remove();
+    });
+    expect(screen.queryByTestId('overlay')).not.toBeNull();
+
+    // The commit is explicit because that is the contract: the guard is derived from the
+    // anchor on every render, not stored state something has to push. A detach on its own
+    // changes no state, and the layout effect no longer forces a render for a detached
+    // anchor — correct, since there is no position to update for an overlay not on screen.
+    commit();
+
+    expect(screen.queryByTestId('overlay')).toBeNull();
   });
 
   it('renders nothing while the anchor is unresolved', () => {

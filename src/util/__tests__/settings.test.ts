@@ -371,7 +371,7 @@ describe('saveLastSettings across a tool switch', () => {
 
 /**
  * The Photoshop paint bar publishes every control through `setToolArgs`, which lands
- * in `saveLastSettings` on the same tick (`src/contexts/useCurrentTool.tsx:71`). The
+ * in `saveLastSettings` on the same tick (`src/contexts/useCurrentTool.tsx:62`). The
  * paint tools used to share the arm that persists a bare `{ toolName }` with the pen
  * and shape families, so a brush Size change was written and then thrown away before
  * the next tool switch, and the bar re-seeded with every control at `undefined`.

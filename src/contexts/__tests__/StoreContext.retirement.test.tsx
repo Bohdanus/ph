@@ -206,6 +206,151 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/**
+ * A layer that reports every read of its `tmpCanvas`.
+ *
+ * `tmpCanvas` is the liveness walk's private read: the durable conversion's
+ * `convertLayer` reads a layer's `bitmap` and `source` and never its preview
+ * canvas. A counter on the `history` array itself could not separate the two —
+ * the conversion iterates the same array — so this pins the walk rather than
+ * "somebody walked history".
+ */
+function watchedLayer(live: { reads: number }): Layer {
+  const staged = canvas();
+  const layer: Layer = { ...layerWithCanvas(layerId, staged) };
+  Object.defineProperty(layer, 'tmpCanvas', {
+    configurable: true,
+    enumerable: true,
+    get: () => {
+      live.reads += 1;
+      return staged;
+    },
+  });
+  return layer;
+}
+
+/**
+ * Opens a document whose opening entry carries the watched layer, so every walk
+ * of the timeline touches it at least once.
+ *
+ * The watched layer is a DISTINCT object from the live record's, so a read of the
+ * published record can never be mistaken for a read of the baseline's snapshot.
+ */
+function openWithWatchedBaseline(
+  dispatch: StoreDispatch,
+  live: { reads: number },
+  layers: LayersRecord,
+  documentId = 'doc-1'
+) {
+  const baseline: HistoryItem = {
+    id: 'baseline',
+    actionName: OPEN_DOCUMENT_ACTION,
+    layerId,
+    documentSource: {
+      layers: { ...layers, [layerId]: watchedLayer(live) },
+      size: initialSize,
+      frame: defaultFrame,
+    },
+  };
+  act(() => {
+    dispatch({
+      type: 'REPLACE_DOCUMENT',
+      payload: {
+        documentId,
+        history: [baseline],
+        historyIndex: 0,
+        updates: { layers, totalSize: initialSize, documentFrame: defaultFrame },
+      },
+    });
+  });
+}
+
+describe('the liveness walk is deferred behind the ownership check', () => {
+  it('does not touch history at all when the scope has published nothing for the document', () => {
+    // The defect: the liveness set was an ARGUMENT, so the whole unbounded history
+    // walk ran on every commit, undo, redo and layer mutation — including the
+    // commits of a document whose scope owns nothing and therefore cannot retire
+    // anything. Ownership is the scope's, so ownership has to be able to refuse
+    // the walk, which is what the thunk is for.
+    const live = { reads: 0 };
+    const { store, dispatch } = renderWithProbe();
+    openWithWatchedBaseline(dispatch(), live, { [layerId]: layerWithCanvas(layerId, null) });
+    // A document replacement publishes a fresh document instead of retiring, so
+    // nothing has walked the baseline yet: the counter starts from a known zero.
+    expect(live.reads).toBe(0);
+
+    // A commit that renames a layer and leaves every cache exactly where it was:
+    // the transition is published, so it is not a no-op dispatch, only nothing is
+    // retirable and no raster was ever adopted or promoted.
+    commit(
+      dispatch(),
+      { layers: { [layerId]: { ...layerAt(store, layerId), name: 'Renamed by commit' } } },
+      RENAME_LAYER_ACTION
+    );
+
+    expect(store().layers[layerId].name).toBe('Renamed by commit');
+    expect(live.reads).toBe(0);
+  });
+
+  it('does ask when the scope owns a raster nothing names any more', () => {
+    // The control for the case above, without which "0 reads" would also be what a
+    // walk that never runs at all produces.
+    const live = { reads: 0 };
+    const adopted = createMockImageBitmap(100, 80);
+    const { store, dispatch } = renderWithProbe();
+    // The opening baseline deliberately names a DIFFERENT raster, so nothing in the
+    // timeline aliases the one adopted below.
+    openWithWatchedBaseline(dispatch(), live, {
+      [layerId]: { ...layerWithCanvas(layerId, null), bitmap: createMockImageBitmap(100, 80) },
+    });
+    commit(
+      dispatch(),
+      { layers: { [layerId]: { ...layerAt(store, layerId), bitmap: adopted, tmpCanvas: null } } },
+      MERGE_ACTION
+    );
+    act(() => {
+      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [adopted] } });
+    });
+    // Registration is ownership bookkeeping and dispatches no transition, so it
+    // walks nothing either — the scope now owns a raster it has not been asked to
+    // retire yet.
+    expect(live.reads).toBe(0);
+
+    // Now something is retirable: the layer carrying it is gone from the record and
+    // no history entry names it, so the scope has to ask.
+    commit(dispatch(), { layers: { [secondLayerId]: layerWithCanvas(secondLayerId, null) } }, REMOVE_ACTION);
+
+    expect(live.reads).toBeGreaterThan(0);
+    expect(closeOf(adopted)).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ADOPT_LAYER_BITMAPS is a deliberate no-op transition', () => {
+  it('leaves the store state identical and still registers the raster with the scope', () => {
+    // The contract, stated so it survives either implementation of the reducer arm:
+    // identity rather than equality, because "no state moved" is the claim and a
+    // re-render that rebuilt the state object would satisfy `toEqual` while still
+    // being a transition. Registration is the one thing that must NOT be a no-op,
+    // so the second half proves the action still reaches the presentation scope.
+    const opened = createMockImageBitmap(100, 80);
+    const adopted = createMockImageBitmap(100, 80);
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: { ...layerWithCanvas(layerId, null), bitmap: opened } });
+    const before = store();
+
+    act(() => {
+      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [adopted] } });
+    });
+
+    expect(store()).toBe(before);
+
+    commit(dispatch(), { layers: { [secondLayerId]: layerWithCanvas(secondLayerId, null) } }, REMOVE_ACTION);
+
+    expect(closeOf(adopted)).toHaveBeenCalledTimes(1);
+    expect(closeOf(opened)).not.toHaveBeenCalled();
+  });
+});
+
 describe('retirement at the APPLY_HISTORY_REPLAY call site', () => {
   it('closes a cache a replayed removal dropped, and never closes the one a redo re-creates the layer with', async () => {
     const cacheA = createMockImageBitmap(100, 80);
