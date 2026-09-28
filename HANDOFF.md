@@ -960,8 +960,8 @@ one real entry through `commitSelection` / `clearSelections` / `appendSelectionC
 | Clear/Deselect control, and the tool switch                      | `useSelectionHistory.ts:212`, `useSelectionHistory.ts:95` (`useApp.ts:172`) |
 | magic-wand click                                                 | `MagicWandToolArea.tsx:93`                                                  |
 | rectangle drag end                                               | `RectangularSelectionToolArea.tsx:83`                                       |
-| polygonal / freehand lasso close, feathered magnetic lasso close | `PolygonClickToolArea.tsx:251`, `FeatherMagneticLassoToolArea.tsx:407`      |
-| polygon's committed anchor or body drag                          | `PolygonClickToolArea.tsx:559`                                              |
+| polygonal / freehand lasso close, feathered magnetic lasso close | `PolygonClickToolArea.tsx:253`, `FeatherMagneticLassoToolArea.tsx:409`      |
+| polygon's committed anchor or body drag                          | `PolygonClickToolArea.tsx:561`                                              |
 
 So every selection change in a session adds a row, and **one gesture can add more than one kind**: a
 lasso gesture appends a creation and a later drag appends a separate move, both labelled identically.
@@ -1042,7 +1042,7 @@ publish decision is downstream.
 
 ## 34. A polygon selection drag released outside the surface is discarded, unlike the rectangle's
 
-**Problem.** `handlePointerLeave` (`PolygonClickToolArea.tsx:569`) calls `abortSelectionDrag()` and
+**Problem.** `handlePointerLeave` (`PolygonClickToolArea.tsx:571`) calls `abortSelectionDrag()` and
 returns, so a committed selection the user dragged out of the surface loses the move with **no history
 entry at all** — not an entry describing a discard, simply nothing. The rectangle behaves the opposite
 way: `usePointerPosition.isPointerDownValid` takes a capture (`usePointerPosition.ts:130`), so the
@@ -1056,13 +1056,13 @@ position and releasing outside the window is a completed, intended move in the r
 discarding it in the polygon loses work the user can see they did. The reason the polygon discards is
 real too: it takes no capture for a selection drag, so `pointerleave` is genuinely terminal — there is
 no later `up` to tell "let go here" apart from "left the surface", and the only event that currently
-means "this move happened" is release (`PolygonClickToolArea.tsx:528`). The operator chooses between
+means "this move happened" is release (`PolygonClickToolArea.tsx:530`). The operator chooses between
 parity (commit when the drag leaves and is released outside) and the current behaviour (discard).
 
 **Fix, if parity is chosen.** Take a capture on `handlePointerDown`'s selection/anchor branches only,
-the way the freehand branch already does at `PolygonClickToolArea.tsx:284`, and make
+the way the freehand branch already does at `PolygonClickToolArea.tsx:286`, and make
 `handlePointerLeave` commit rather than abort. **That is not a one-line change**: the freehand
-gesture is finished on `pointerleave` _by design_ (`PolygonClickToolArea.tsx:577-579`, and the
+gesture is finished on `pointerleave` _by design_ (`PolygonClickToolArea.tsx:579-581`, and the
 `LassoToolArea`/`FreehandLasso` tests pin it), and the same `handlePointerLeave` serves both modes,
 so capturing the selection drag has to be scoped to a branch that knows whether a selection drag is
 running — not added to the surface wholesale. Then add the parity test to
@@ -1071,7 +1071,7 @@ running — not added to the surface wholesale. Then add the parity test to
 and would have to be changed in the same change. `usePointerPosition`'s first-pointer-wins guard
 (`usePointerPosition.ts:126`) is the model for the "one pointer owns this drag" rule.
 
-**Files.** `src/components/Main/PolygonClickToolArea.tsx:284,456,528,569-580`,
+**Files.** `src/components/Main/PolygonClickToolArea.tsx:286,458,530,571-582`,
 `src/components/Main/RectangularSelectionToolArea.tsx:46-84`,
 `src/hooks/usePointerPosition.ts:122-133`, `src/hooks/useRect.ts:383-403`
 
@@ -1079,10 +1079,10 @@ and would have to be changed in the same change. `usePointerPosition`'s first-po
 
 ## 35. `resetInteractionState` clears the overlay and only repaints when a drag happened to be running
 
-**Problem.** `resetInteractionState` (`PolygonClickToolArea.tsx:442-454`) calls `clearOverlay()`
+**Problem.** `resetInteractionState` (`PolygonClickToolArea.tsx:444-456`) calls `clearOverlay()`
 (`:448`) and then `abortSelectionDrag()` (`:453`), which returns `null` and repaints nothing when no
 drag was running (`:433-440`). The only unconditional repaint in the component is the effect at
-`PolygonClickToolArea.tsx:732-734`, keyed on `redrawOverlay`, whose identity depends on `selections`
+`PolygonClickToolArea.tsx:734-736`, keyed on `redrawOverlay`, whose identity depends on `selections`
 (`:403-418`) — and the dispatch that usually accompanies a reset does not change it:
 `CANCEL_SELECTION_DRAFT` returns the **same `selections` array reference**
 (`StoreContext.tsx:532-537`, which touches `selectionDraft` alone), so the effect provably cannot
@@ -1091,7 +1091,7 @@ until something unrelated repaints.
 
 **Currently unreachable with a visible effect, and for two compounding reasons.** A draft can only be
 opened when no selection is active: `handlePointerDown` returns early on
-`selections.some((selection) => selection.isActive)` (`PolygonClickToolArea.tsx:503-505`), so by the
+`selections.some((selection) => selection.isActive)` (`PolygonClickToolArea.tsx:505-507`), so by the
 time `resetInteractionState` runs with a draft open every stored selection has `isActive: false`, and
 `drawSelectionOutline` returns immediately for those (`selection.ts:142`). And the one route that
 does leave an active selection in the store — `finishSelection`, which commits the new polygon before
@@ -1104,11 +1104,101 @@ disappear with no state change to bring them back.
 
 **Fix.** Make the reset unconditional rather than drag-conditional: have `resetInteractionState` call
 `redrawOverlay()` after `clearOverlay()` (or drop `clearOverlay` entirely, since `redrawOverlay` →
-`drawPolygonOverlay` already clears the canvas at `PolygonClickToolArea.tsx:77`). Then
-`abortSelectionDrag`'s repaint at `:437` is redundant on this path and can be narrowed to the routes
+`drawPolygonOverlay` already clears the canvas at `PolygonClickToolArea.tsx:78`). Then
+`abortSelectionDrag`'s repaint at `:439` is redundant on this path and can be narrowed to the routes
 that actually need it (`handlePointerLeave`, `handlePointerCancel`, `handlePointerDown`). The
-`// After the clear, never before` comment at `:449-452` currently reads as a guarantee that the
+`// After the clear, never before` comment at `:451-454` currently reads as a guarantee that the
 outlines are always restored; it is not one, and the fix is what makes it true.
 
-**Files.** `src/components/Main/PolygonClickToolArea.tsx:77,403-418,433-454,503-505,732-734`,
+**Files.** `src/components/Main/PolygonClickToolArea.tsx:78,405-420,435-456,505-507,734-736`,
 `src/contexts/StoreContext.tsx:532-537`, `src/util/selection.ts:142`
+
+---
+
+## 39. Two unbracketed writers leave the shared tool overlay context dirty, and two painters still inherit `globalAlpha`
+
+**Problem.** `Main.tsx:87` hands every tool area the _same_ `2d` context: the overlay canvas is
+mounted unconditionally and only its `display` is toggled (`Main.tsx:180-198`), so `getContext('2d')`
+returns one object for the whole session. Nothing resets it. `resizeCanvas`
+(`src/util/canvas.ts:3-6`) only assigns `canvas.width` when it differs, and the layout effect that
+would re-derive the context keys on `[rectOverlayRef, toolOverlayRef, totalSize]`
+(`Main.tsx:82-102`), none of which change on a tool switch — so the last state a writer left is the
+state the next tool paints in. The default brush alpha is 0.9 (`src/tools/settings.ts:115`), which
+is why a session that has drawn _anything_ leaves the next tool wrong, not just one where the user
+dragged the Opacity slider to 20 %.
+
+**Root cause — the two writers, and both are still unbracketed.** This is the part that must not be
+skipped, because fixing the two painters below without it leaves the cause exactly where it is.
+
+1. `setupDrawCtx` (`src/tools/draw.ts:26-38`) writes `strokeStyle` (`:31`), `lineWidth` (`:32`),
+   `lineJoin` (`:33`), `lineCap` (`:34`), `globalAlpha` (`:35`) and, for a dashed pen, `setLineDash`
+   (`:37`), with no `save()`/`restore()` anywhere in the function.
+2. `setShapeCtx` (`src/tools/shape.ts:120-131`) does the same, ending at `globalAlpha` (`:129`) and
+   an unconditional `setLineDash` (`:130`).
+
+Neither call site brackets the call either: `DrawToolArea.tsx:51` and `ShapeToolArea.tsx:73`. The
+codebase's own precedent for precisely this hazard is `src/contexts/layer-renderer.ts:93-98`, which
+brackets the identical `globalAlpha` write on the main canvas in a `try`/`finally` — the asymmetry
+between the two is the defect.
+
+`resetOverlayAlpha` (`src/util/canvas.ts:8-10`) now runs at the entry of the overlay paints that
+could be reached legally, so four of the six reachable painters are correct. That is a **per-paint
+discipline, not a property of the context**: any painter added later without the reset re-opens the
+same leak, and `restore()` inside `useAnts.animate` (`src/hooks/useAnts.ts:56-70`) puts the leaked
+alpha straight back after painting, so that path does not even heal the context for the next painter.
+**This entry cannot be closed while the two writers remain unbracketed, even after both painters
+below are fixed** — a session that patches the two victims and deletes this section has fixed the
+symptoms and left the cause.
+
+_Fix for the writers:_ bracket each writer's work in `save()`/`restore()` at `DrawToolArea.tsx:51`
+and `ShapeToolArea.tsx:73`, or inside the two writers — **in addition to** the per-paint reset, not
+instead of it, because a bracket only protects what is inside it and a tool that is entered after a
+leak and never sets the value is still wrong. `DrawToolArea.tsx` and `ShapeToolArea.tsx` are EXCLUDED
+(lines 11 and 16) and `src/tools/shape.ts` is EXCLUDED (line 126); `src/tools/draw.ts` is **not** in
+`.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt`, but its `:37` is
+rank 3's hunk in the same function (branch `rev2/draw-pen-dash-inherit`), so it needs coordination
+rather than a solo edit. Do **not** neutralise this by writing `ctx.globalAlpha = 1` at the top of
+`setupDrawCtx`: `draw()` (`src/tools/draw.ts:40-54`) runs `setupDrawCtx` on a fresh `OffscreenCanvas`
+at the slider's alpha, and the committed layer would flatten to 1.
+
+**Two painters are still wrong, both behind
+`.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt`:**
+
+1. **`useRect.drawMask` — the crop / rectangular-selection / text dim. This is the headline symptom
+   of the whole defect, and it needs an owner, not another shrug.**
+   `src/hooks/useRect.ts:155-163` fills `rgba(0, 0, 0, 0.7)` and never sets `globalAlpha`, so the dim
+   renders at `0.7 × stroke alpha`: 0.63 after any default brush stroke, 0.14 at 20 % opacity, and
+   the crop boundary becomes effectively invisible. The committed layer is at full opacity, so
+   nothing else in the UI contradicts it. Reached from `CropToolArea.tsx:26`,
+   `TextToolArea.tsx:29` and `RectangularSelectionToolArea.tsx:45`, all three of which pass
+   `overlayRef: toolOverlayRef` and none of which sets `hideBlend`.
+   _Fix:_ one call to `resetOverlayAlpha(ctx)` immediately after the `if (!ctx) return;` guard at
+   `useRect.ts:146`, before the `if (!hideBlend)` block at `:155` — the dash at `:167`/`:169` is
+   already owned by `drawMask` and must stay after the reset.
+   _To land it:_ `useRect.ts` is EXCLUDED (line 114) and `useRect.test.ts` (line 109) is EXCLUDED, so
+   no test covers the hook and a fixer who honours the manifest cannot reach it. Either lift
+   `useRect.ts` from the manifest, or have the operator name an owner for it. Until one of those two
+   things happens this stays open — it will not be fixed by being recorded a fifth time.
+2. **The magic-wand selection outline.** `drawSelectionOutline`
+   (`src/util/selection.ts:141`) is in the EXCLUDED list (line 135), so the reset had to be added at
+   its callers instead: `PolygonClickToolArea.drawPolygonOverlay` and
+   `FeatherMagneticLassoToolArea` now call it, but `MagicWandToolArea.tsx:35` and `:102`
+   (EXCLUDED, line 12) do not, so a magic-wand selection outline still renders at the leaked alpha.
+   _Fix:_ either the two `drawSelectionOutline` loops in `MagicWandToolArea`, or one
+   `resetOverlayAlpha` inside `drawSelectionOutline` itself — which retires the per-caller resets in
+   all three areas at once and is the better shape.
+
+The Text tool is the one place the leak is partly self-healing, so the symptom there looks
+inconsistent rather than constant: `TextToolArea.tsx:30` passes `onRepaint: redrawText` and
+`renderText` leaves the context at 1 with no `restore()`, so the first frame after entering the tool
+dims at the leaked alpha and every frame after it at 0.7 (`useRect.ts:182` fires the repaint after
+the dim). Crop and Rectangular Selection pass no `onRepaint` and are wrong on every frame. Do not
+read the difference as a flaky fix.
+
+`usePolylineAnts.ts` looks like a third victim and is not: `useMarchingPath` has no production
+caller, so its context is never the shared overlay.
+
+**Files.** `src/tools/draw.ts:26-38`, `src/tools/shape.ts:120-131`,
+`src/components/Main/DrawToolArea.tsx:51`, `src/components/Main/ShapeToolArea.tsx:73`,
+`src/hooks/useAnts.ts:56-70`, `src/hooks/useRect.ts:143-163`,
+`src/components/Main/MagicWandToolArea.tsx:35,102`, `src/util/selection.ts:141`
