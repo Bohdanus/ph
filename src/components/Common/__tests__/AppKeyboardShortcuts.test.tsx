@@ -405,11 +405,28 @@ describe('AppKeyboardShortcuts tool cycling', () => {
     expect(goToTool).toHaveBeenCalledExactlyOnceWith('pencil');
   });
 
+  it('keeps the eraser on a bare B, because the eraser is a brush group member', () => {
+    // `toolbar-mapping.ts` puts the eraser in the Brush flyout, so `AppKeyboardShortcuts.tsx:18`
+    // lists it in `brushGroup` as well. It additionally owns a bare `E`; both are correct,
+    // and a bare `B` from the eraser has to stay on the eraser rather than snapping to the
+    // brush.
+    storeState.toolName = 'eraser';
+    renderShortcuts();
+
+    press('b');
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith('eraser');
+  });
+
   it.each([
     ['brush', 'pencil'],
     ['pencil', 'color-replacement'],
-    ['color-replacement', 'brush'],
+    ['color-replacement', 'eraser'],
+    ['eraser', 'brush'],
   ])('cycles Shift+B from %s to %s', (from, to) => {
+    // The brush group is four members now, so the cycle has to close: without the
+    // `eraser -> brush` row a regression that dropped the eraser out of the array would
+    // leave the other three rows green.
     storeState.toolName = from as ToolName;
     renderShortcuts();
 
@@ -450,15 +467,76 @@ describe('AppKeyboardShortcuts tool cycling', () => {
   });
 
   it.each([
-    ['rectangular-selection', 'magic-wand'],
-    ['magic-wand', 'rectangular-selection'],
+    ['rectangular-selection', 'elliptical-selection'],
+    ['elliptical-selection', 'rectangular-selection'],
   ])('cycles Shift+M from %s to %s', (from, to) => {
+    // `M` is the MARQUEE tile, and the marquee tile holds the rectangular and elliptical
+    // marquees. The magic wand moved to the object-selection tile on `W` when the quick
+    // selection joined it, so `M` no longer reaches it — `AppKeyboardShortcuts.tsx:25`.
     storeState.toolName = from as ToolName;
     renderShortcuts();
 
     press('m', { shiftKey: true });
 
     expect(goToTool).toHaveBeenCalledExactlyOnceWith(to);
+  });
+
+  it.each([
+    ['magic-wand', 'quick-selection'],
+    ['quick-selection', 'magic-wand'],
+  ])('cycles Shift+W from %s to %s', (from, to) => {
+    storeState.toolName = from as ToolName;
+    renderShortcuts();
+
+    press('w', { shiftKey: true });
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith(to);
+  });
+
+  it.each([
+    ['paint-bucket', 'gradient'],
+    ['gradient', 'paint-bucket'],
+  ])('cycles Shift+G from %s to %s', (from, to) => {
+    // `G` is the fill tile: one click against one drag, sharing the pair of options bars.
+    storeState.toolName = from as ToolName;
+    renderShortcuts();
+
+    press('g', { shiftKey: true });
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith(to);
+  });
+
+  it.each([
+    ['dodge', 'burn'],
+    ['burn', 'dodge'],
+  ])('cycles Shift+O from %s to %s', (from, to) => {
+    // `O` is the dodge/burn tile, whose two tools share one options bar.
+    storeState.toolName = from as ToolName;
+    renderShortcuts();
+
+    press('o', { shiftKey: true });
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith(to);
+  });
+
+  it.each([
+    ['eyedropper', 'I'],
+    ['eraser', 'E'],
+    ['clone-stamp', 'S'],
+  ] as const)('selects %s with a bare %s and with Shift+%s', (toolName, key) => {
+    // The three single-tool tiles get one plain registration each and no `shift: true` twin.
+    // `matchesShortcut` only compares a modifier the registration actually declares
+    // (`src/hooks/useKeyboardEvents.tsx:70`), so these keys are unshifted-only by DEFAULT
+    // rather than by an explicit `shift: false` — a shifted press falls through to the same
+    // registration and selects the tool once, which is the whole reason a twin would be
+    // redundant rather than load-bearing here.
+    storeState.toolName = 'text';
+    renderShortcuts();
+
+    press(key);
+    press(key, { shiftKey: true });
+
+    expect(goToTool.mock.calls).toEqual([[toolName], [toolName]]);
   });
 
   it('falls back to the rectangular selection for a bare M from another tool', () => {
@@ -524,9 +602,15 @@ describe('AppKeyboardShortcuts tool cycling', () => {
 });
 
 describe('AppKeyboardShortcuts group fallbacks', () => {
+  // `b` and `m` are absent from the table because two dedicated tests above already pin their
+  // anchors from the same non-member (`text`); every OTHER group is table-driven here, so a
+  // new flyout tile has to add its row rather than go untested.
   it.each([
     ['l', 'freehand-lasso'],
     ['p', 'pen'],
+    ['w', 'magic-wand'],
+    ['g', 'paint-bucket'],
+    ['o', 'dodge'],
   ] as const)('falls back to the group anchor %s -> %s for a bare key from a non-member tool', (key, anchor) => {
     storeState.toolName = 'text';
     renderShortcuts();
@@ -536,20 +620,58 @@ describe('AppKeyboardShortcuts group fallbacks', () => {
     expect(goToTool).toHaveBeenCalledExactlyOnceWith(anchor);
   });
 
+  it.each([
+    ['w', 'quick-selection'],
+    ['g', 'gradient'],
+    ['o', 'burn'],
+  ] as const)('keeps the current %s group member for a bare key', (key, member) => {
+    // The second half of the group contract, and the one that caught the old map: a bare key
+    // from a MEMBER keeps the member, so a key whose group gained a tool (`W` with the quick
+    // selection, `G` with the gradient, `O` with the burn) has to keep the second member too.
+    storeState.toolName = member as ToolName;
+    renderShortcuts();
+
+    press(key);
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith(member);
+  });
+
   it('keeps the current marquee member for a bare M', () => {
+    // The elliptical marquee is the marquee group's second member. The magic wand used to sit
+    // here and no longer does, which is what this row now has to name.
+    storeState.toolName = 'elliptical-selection';
+    renderShortcuts();
+
+    press('m');
+
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith('elliptical-selection');
+  });
+
+  it('falls back to the group anchor for a bare M from the magic wand, which left the marquee group', () => {
+    // The inverse of the row above: the wand is not a marquee member any more, so a bare `M`
+    // from it lands on the marquee anchor rather than preserving the wand. This is the
+    // assertion the previous map got exactly backwards — it asserted the wand was kept.
     storeState.toolName = 'magic-wand';
     renderShortcuts();
 
     press('m');
 
-    expect(goToTool).toHaveBeenCalledExactlyOnceWith('magic-wand');
+    expect(goToTool).toHaveBeenCalledExactlyOnceWith('rectangular-selection');
   });
 
   it.each([
     ['b', 'pencil'],
-    ['m', 'magic-wand'],
+    ['m', 'elliptical-selection'],
     ['p', 'freeform-pen'],
+    ['l', 'polygonal-lasso'],
+    ['w', 'quick-selection'],
+    ['g', 'gradient'],
+    ['o', 'burn'],
   ] as const)('starts the Shift+%s cycle at the group anchor and advances once', (key, expected) => {
+    // `cycleToolGroup` starts at index 0 for a non-member and then advances one step, so the
+    // result is the group's SECOND member rather than its anchor. The anchor itself is pinned
+    // by the bare-key table above, which is what makes these two together a description of a
+    // cycle rather than two unrelated expectations.
     storeState.toolName = 'text';
     renderShortcuts();
 

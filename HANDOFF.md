@@ -1642,7 +1642,7 @@ point of the entry.
 
 ---
 
-## 50. The bucket has no blend mode, and the per-layer blend seam is not in `main`
+## 50. The bucket has no blend mode
 
 **Problem.** Photoshop's Paint Bucket `Mode` is a full blend-mode list. It is not
 rendered here at all, so a bucket fill always composites `source-over`. The
@@ -1650,23 +1650,22 @@ rendered here at all, so a bucket fill always composites `source-over`. The
 offers `Foreground` enabled and `Pattern` disabled, which is correct and complete
 for what the app supports — the gap is the blend mode, not the fill source.
 
-**Why it is not a wiring bug.** Per-layer blend resolution has no home in `main`.
-The seam that makes an options-bar `Mode` reach a committed layer — resolving the
-blend when the layer is created rather than while drawing, because the layer
-exists before the stroke is rasterized — was written for the brush bar on the
-unmerged `brush-toolbar` branch (`git show brush-toolbar:src/contexts/layer-utils.ts`,
-the `toolLayerBlendMode` function) and has never landed. Re-implementing it here
-would duplicate an in-flight change and produce two seams that will disagree.
+**The seam this entry used to be blocked on has landed.** The eight-tool tranche
+brought `toolLayerBlendMode` into `src/contexts/layer-utils.ts`, so an options-bar
+`Mode` now reaches a committed layer for the paint tools. There is one seam and it
+is in `main`, which removes the two-seams hazard this entry previously described.
+`ps/brush-engine` and `ps-tools-spine` also carry a copy of that seam; they are now
+redundant with `main` and should be dropped rather than merged.
 
-**Fix — needs a call, not a patch.** Land `brush-toolbar` first, then extend its
-gate from the paint tool names to include `paint-bucket`, and add the blend
-control to the shared fill bar. The gate is load-bearing: it exists so a stray
-`blendMode` key on a text or shape args object cannot decide how that layer
-composites. Doing it the other way round produces two gates and one of them will
-be wrong.
+**What remains.** The gate is deliberately scoped to `brush`, `pencil` and
+`color-replacement`, so `paint-bucket` is still excluded and its fill composites
+Normal. Widening the gate is a one-line change, but it needs the blend control
+added to the shared fill bar first, and the gate is load-bearing: it exists so a
+stray `blendMode` key on a text or shape args object cannot decide how that layer
+composites. Widening it to every tool name would silently let that happen.
 
 **Files.** `src/components/ToolbarsRight/MagicEraser/MagicEraser.tsx`,
-`src/contexts/layer-utils.ts` (after the merge)
+`src/contexts/layer-utils.ts:160-166,244`
 
 ---
 
@@ -1758,3 +1757,51 @@ agent not checked `Main.tsx:53`.
 
 **Files.** `src/tools/toolProcessors.ts:103,237,268`,
 `src/components/Main/Main.tsx:53,177`, `toolbar-mapping.ts:47-71`
+
+## 54. The eight-tool tranche cannot merge while the seven visual baselines encode the old toolbar height
+
+**Problem.** The `ps/tool-expansion` tranche adds eight tools to the left
+toolbar — `elliptical-selection`, `quick-selection`, `clone-stamp`, `sharpen`,
+`smudge`, `dodge`, `burn`, `gradient`. Every one of them is fully wired: a
+`ToolName` key, a `toolProcessors` entry, a `toolsMap` entry, an icon, a
+`ToolbarsRight` panel, a `Main` tool area, an options bar, and e2e coverage. The
+merge is done and every non-visual gate is green. What blocks it is the toolbar
+getting taller, which moves the canvas, which invalidates recorded pixels.
+
+The mechanism, verified rather than inferred. `html, body, #root` are
+`height: 100%`, so the page is viewport-pinned, and `<main>` already declares
+`overflow-y-auto` (`src/components/Main/Main.tsx:296`). The left `<aside>`
+declares **no** `overflow` (`src/components/SidebarLeft/SidebarLeft.tsx:319-323`),
+so its min-content height is the whole toolbar, that becomes the grid row floor,
+and the `h-full` canvas (`Main.tsx:231,241`) is dragged up with it. The page
+overflows the 1280x720 viewport, `canvas.boundingBox()` shifts, and everything
+addressed in document space moves. `compareScreenshots` spends a budget of
+`DEFAULT_MAX_DIFF_PIXELS = 100` (`e2e/helpers/image-comparison.ts:28`, applied at
+`:95`), and the seven `comparePixels` formats in `e2e/export/helpers.ts:59-66`
+measure about 2250 differing pixels each — roughly 0.0047 of the frame.
+
+**This is a pre-existing overflow made visible, not a broken layout.** Before this
+tranche the page was already 257px taller than the viewport and the baselines
+already encoded that. The tranche did not create the bug; it grew the number.
+
+**Fix — needs a call, not a patch.** Two options, and the choice is the
+operator's:
+
+1. **Add `min-h-0 overflow-y-auto` to the `<aside>`.** This is the real fix: the
+   toolbar scrolls inside its own column, the page stops growing, and the canvas
+   box lands at its natural height instead of being floored by the toolbar. It
+   also fixes the coordinate-dependent tests that fail for the same reason. The
+   cost is that all seven baselines change, because the canvas box moves — so
+   this is a **re-record, not a repair**, and per `AGENTS.md` a re-record is not
+   an agent's call.
+2. **Leave the overflow and re-record nothing.** The suite stays as it is on
+   `main` and this tranche waits for a viewport/layout decision.
+
+**Do not** fix it by raising `DEFAULT_MAX_DIFF_PIXELS`, by re-recording with
+`--update-snapshots` to make the run green, or by shrinking the toolbar to hide
+tiles. All three are gate-weakening, and the first two are explicitly forbidden.
+
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:319-323`,
+`src/components/Main/Main.tsx:231,241,296`,
+`e2e/helpers/image-comparison.ts:28,95`, `e2e/export/helpers.ts:59-66`,
+`toolbar-mapping.ts:37-118`

@@ -2,7 +2,7 @@ import { type Page, type Locator, type TestInfo } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
-import { imageBoundsToCss } from './screenshot-scale';
+import { imageBoundsToCss, viewportRectToPageRect } from './screenshot-scale';
 
 export interface BoundingBox {
   x: number;
@@ -52,6 +52,13 @@ export const LINE_END_Y = 150;
 
 export const CANVAS_REDRAW_TIMEOUT_MS = 10_000;
 export const CANVAS_REDRAW_POLL_INTERVAL_MS = 100;
+
+/**
+ * Slack around a stroke when asking whether it fits on screen. It only decides how much of
+ * the page has to be scrollable for a stroke to count as in view, never where the stroke
+ * lands, so it is deliberately not a measurement of anything.
+ */
+const STROKE_VIEWPORT_MARGIN_PX = 40;
 
 export interface DominantColor {
   red: number;
@@ -188,6 +195,103 @@ export function getWorkspaceCanvas(page: Page): Locator {
   return page.getByTestId('workspace-canvas');
 }
 
+/**
+ * The window's scroll offset, read at the moment a caller needs it.
+ *
+ * The one place in the helpers that reads page state rather than deriving geometry from a
+ * box, and shaped like `getDevicePixelRatio` (cdp-helpers.ts): a page function, read at the
+ * call site. Caching it would be wrong rather than merely stale — `clickToolButton` scrolls
+ * the window by 440px in this build, so an offset read once is wrong by a different amount
+ * before and after any tool click.
+ */
+export async function getPageScroll(page: Page): Promise<{ x: number; y: number }> {
+  return page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
+}
+
+/**
+ * A clip positioned so the region it names is actually rendered, plus the undo for
+ * whatever scrolling that took.
+ */
+interface OnScreenClip {
+  clip: Required<ClipOptions>;
+  restore: () => Promise<void>;
+}
+
+/** Viewport size and the page's scrollable extent, read together so they cannot disagree. */
+interface PageViewport {
+  width: number;
+  height: number;
+  scrollX: number;
+  scrollY: number;
+  maxScrollY: number;
+}
+
+async function readPageViewport(page: Page): Promise<PageViewport> {
+  return page.evaluate(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+    scrollX: window.scrollX,
+    scrollY: window.scrollY,
+    maxScrollY: Math.max(0, document.documentElement.scrollHeight - window.innerHeight),
+  }));
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(value, max));
+}
+
+/**
+ * Returns a `page.screenshot`-ready clip for a region that is not currently in view, and
+ * puts the window back when the caller is done with it.
+ *
+ * `page.screenshot({ clip })` can only photograph what is on screen: Playwright trims the
+ * clip against the viewport, and a region that is entirely above or below it collapses to
+ * zero height and throws `Clipped area is either empty or outside the resulting image`.
+ * That is a real outcome, not a misconfiguration — this app is 1177px tall in Playwright's
+ * 720px window, and `paint-options.spec.ts` reads its 60px stroke from 0.7 of the canvas
+ * box height, which measures to y=748: measured, the clip throws as given and captures
+ * correctly once the window is scrolled to 448. A spec cannot express that scroll, because
+ * the clip it built is a viewport rect and the page may move under it, so the read does it
+ * itself and gives the scroll back.
+ *
+ * The scroll is restored rather than left in place because a caller's later
+ * `page.mouse` coordinates are viewport-relative and were built against the window it
+ * expects to still be in — `select-move.spec.ts` drags from a box it measured earlier, and
+ * a capture that quietly left the page scrolled would move that drag by the same 440px.
+ */
+async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<OnScreenClip> {
+  const viewport = await readPageViewport(page);
+  const pageRect = viewportRectToPageRect(clip, { x: viewport.scrollX, y: viewport.scrollY });
+  const alreadyVisible =
+    pageRect.y >= viewport.scrollY && pageRect.y + pageRect.height <= viewport.scrollY + viewport.height;
+
+  if (alreadyVisible) return { clip, restore: async () => undefined };
+
+  // Centre the region in the viewport, then let the page clamp it — near the top or the
+  // bottom of a tall document the ideal position is not reachable, and a request the
+  // browser cannot satisfy must not be sent as if it had been.
+  const targetY = clamp(pageRect.y - Math.round((viewport.height - pageRect.height) / 2), 0, viewport.maxScrollY);
+  await page.evaluate((y) => window.scrollTo(0, y), targetY);
+  const scrolledTo = await page.evaluate(() => window.scrollY);
+
+  return {
+    clip: { ...clip, y: pageRect.y - scrolledTo },
+    restore: async () => {
+      await page.evaluate(({ x, y }) => window.scrollTo(x, y), { x: viewport.scrollX, y: viewport.scrollY });
+    },
+  };
+}
+
+/**
+ * Captures the `clip` region and attaches it under `name`.
+ *
+ * `box` and `clip` are viewport-relative, and that is the space `page.screenshot` wants:
+ * Playwright trims the clip against the viewport and adds `window.scrollX/Y` itself before
+ * it reaches CDP. Do NOT run this clip through `viewportRectToPageRect` — see the note
+ * there. `captureCanvasScreenshot` in cdp-helpers.ts is the one that DOES need it, because
+ * it bypasses Playwright and speaks CDP directly. A region that is off screen is scrolled
+ * to for the capture and scrolled back afterwards, on the same terms as `waitForCanvasPixels`.
+ */
 export async function takeLineScreenshot(
   page: Page,
   box: BoundingBox,
@@ -209,10 +313,16 @@ export async function takeLineScreenshot(
   }
   const screenshotPath = path.join(outputDir, `${name}.png`);
   await fs.mkdir(outputDir, { recursive: true });
-  const screenshot = await page.screenshot({
-    path: screenshotPath,
-    clip: actualClip,
-  });
+  const onScreen = await onScreenClip(page, actualClip);
+  let screenshot: Buffer;
+  try {
+    screenshot = await page.screenshot({
+      path: screenshotPath,
+      clip: onScreen.clip,
+    });
+  } finally {
+    await onScreen.restore();
+  }
   await testInfo.attach(name, { path: screenshotPath, contentType: 'image/png' });
   return screenshot;
 }
@@ -322,14 +432,37 @@ export async function drawLine(
   endY: number,
   options: DrawLineOptions = {}
 ): Promise<void> {
-  await page.mouse.move(box.x + startX, box.y + startY);
-  await page.mouse.down();
-  if (options.steps === undefined) {
-    await page.mouse.move(box.x + endX, box.y + endY);
-  } else {
-    await page.mouse.move(box.x + endX, box.y + endY, { steps: interpolationSteps(options.steps) });
+  const from = { x: box.x + startX, y: box.y + startY };
+  const to = { x: box.x + endX, y: box.y + endY };
+  // A stroke outside the window is not drawn at all: `page.mouse` is viewport-relative
+  // and Chrome never delivers an event below the fold, so the app never sees the pointer
+  // and the read that follows waits out its timeout on a region nothing was painted into.
+  // `paint-options.spec.ts` measures its 60px stroke to y=880 in a 720px window for exactly
+  // this reason. Scrolling the stroke into view and back keeps the point on the canvas in
+  // the same place — only the window moves — and `onScreenClip` returns the SAME rect when
+  // it is already in view, so every stroke that draws today is dispatched identically.
+  const strokeRect: Required<ClipOptions> = {
+    x: Math.min(from.x, to.x) - STROKE_VIEWPORT_MARGIN_PX,
+    y: Math.min(from.y, to.y) - STROKE_VIEWPORT_MARGIN_PX,
+    width: Math.abs(to.x - from.x) + STROKE_VIEWPORT_MARGIN_PX * 2,
+    height: Math.abs(to.y - from.y) + STROKE_VIEWPORT_MARGIN_PX * 2,
+  };
+  const onScreen = await onScreenClip(page, strokeRect);
+  const shiftX = onScreen.clip.x - strokeRect.x;
+  const shiftY = onScreen.clip.y - strokeRect.y;
+
+  try {
+    await page.mouse.move(from.x + shiftX, from.y + shiftY);
+    await page.mouse.down();
+    if (options.steps === undefined) {
+      await page.mouse.move(to.x + shiftX, to.y + shiftY);
+    } else {
+      await page.mouse.move(to.x + shiftX, to.y + shiftY, { steps: interpolationSteps(options.steps) });
+    }
+    await page.mouse.up();
+  } finally {
+    await onScreen.restore();
   }
-  await page.mouse.up();
 }
 
 /**
@@ -365,6 +498,12 @@ export interface WaitForCanvasPixelsOptions {
  *
  * The single poll loop: every redraw wait below is a specialization of it, so the
  * timeout, the interval and the error wording can only be changed in one place.
+ *
+ * `clip` is viewport-relative — the space `boundingBox()` reports and the space
+ * `page.screenshot` takes, because Playwright applies the scroll offset itself. It is
+ * forwarded unconverted on purpose; see `viewportRectToPageRect` for the measurement that
+ * says so and for the one capture path that needs the opposite. What it does need is for
+ * the region to be ON SCREEN, which is what `onScreenClip` arranges.
  */
 export async function waitForCanvasPixels(
   page: Page,
@@ -375,13 +514,18 @@ export async function waitForCanvasPixels(
   const timeoutMs = options.timeoutMs ?? CANVAS_REDRAW_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? CANVAS_REDRAW_POLL_INTERVAL_MS;
   const deadline = Date.now() + timeoutMs;
+  const onScreen = await onScreenClip(page, clip);
 
-  for (;;) {
-    if (await predicate(await page.screenshot({ clip }))) return;
-    if (Date.now() >= deadline) {
-      throw new Error(`Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms`);
+  try {
+    for (;;) {
+      if (await predicate(await page.screenshot({ clip: onScreen.clip }))) return;
+      if (Date.now() >= deadline) {
+        throw new Error(`Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms`);
+      }
+      await page.waitForTimeout(pollIntervalMs);
     }
-    await page.waitForTimeout(pollIntervalMs);
+  } finally {
+    await onScreen.restore();
   }
 }
 

@@ -67,26 +67,50 @@ vi.mock('../MagicWandToolArea.tsx', () => ({ MagicWandToolArea: marker('magic-wa
 vi.mock('../RectangularSelectionToolArea.tsx', () => ({
   RectangularSelectionToolArea: marker('rectangular-selection'),
 }));
-vi.mock('../EraserToolArea.tsx', () => ({ EraserToolArea: marker('eraser') }));
-vi.mock('../FillToolArea.tsx', () => ({ FillToolArea: marker('fill') }));
+vi.mock('../EllipticalSelectionToolArea.tsx', () => ({
+  EllipticalSelectionToolArea: marker('elliptical-selection'),
+}));
+vi.mock('../QuickSelectionToolArea.tsx', () => ({ QuickSelectionToolArea: marker('quick-selection') }));
 vi.mock('../EyedropperToolArea.tsx', () => ({ EyedropperToolArea: marker('eyedropper') }));
+vi.mock('../EraserToolArea.tsx', () => ({ EraserToolArea: marker('eraser') }));
+vi.mock('../CloneStampToolArea.tsx', () => ({ CloneStampToolArea: marker('clone-stamp') }));
+vi.mock('../SharpenToolArea.tsx', () => ({ SharpenToolArea: marker('sharpen') }));
+vi.mock('../SmudgeToolArea.tsx', () => ({ SmudgeToolArea: marker('smudge') }));
+vi.mock('../DodgeToolArea.tsx', () => ({ DodgeToolArea: marker('dodge') }));
+vi.mock('../BurnToolArea.tsx', () => ({ BurnToolArea: marker('burn') }));
+vi.mock('../FillToolArea.tsx', () => ({ FillToolArea: marker('fill') }));
+vi.mock('../GradientToolArea.tsx', () => ({ GradientToolArea: marker('gradient') }));
+
+/**
+ * Every mocked tool area, in the order the routing table names them. `toolAreaTestId` walks this
+ * list, so an area mounted by a tool the table does not expect is still detected rather than
+ * passing as "no tool area at all".
+ */
+const TOOL_AREA_IDS = [
+  'move',
+  'crop',
+  'draw',
+  'shape',
+  'text',
+  'lasso',
+  'feather-magnetic-lasso',
+  'magic-wand',
+  'rectangular-selection',
+  'elliptical-selection',
+  'quick-selection',
+  'eyedropper',
+  'eraser',
+  'clone-stamp',
+  'sharpen',
+  'smudge',
+  'dodge',
+  'burn',
+  'fill',
+  'gradient',
+] as const;
 
 const toolAreaTestId = () => {
-  const ids = [
-    'move',
-    'crop',
-    'draw',
-    'shape',
-    'text',
-    'lasso',
-    'feather-magnetic-lasso',
-    'magic-wand',
-    'rectangular-selection',
-    'eraser',
-    'fill',
-    'eyedropper',
-  ];
-  return ids.map((id) => screen.queryByTestId(`tool-area-${id}`)).findIndex((el) => el !== null);
+  return TOOL_AREA_IDS.map((id) => screen.queryByTestId(`tool-area-${id}`)).findIndex((el) => el !== null);
 };
 
 const canvases = (container: HTMLElement) => Array.from(container.querySelectorAll('canvas'));
@@ -129,13 +153,23 @@ describe('Main tool-area routing', () => {
     ['feather-magnetic-lasso', 'feather-magnetic-lasso'],
     ['magic-wand', 'magic-wand'],
     ['rectangular-selection', 'rectangular-selection'],
-    // The eraser is a drag area that is NOT `DrawToolArea`, so it gets its own mode and its own
-    // area rather than riding on the 'draw' arm. The two fill tools share one area because they
-    // differ only in what their processor writes into the fill mask.
+    // Each of the new tools got its own tool area rather than sharing the `draw` one, so each
+    // row below pins a DISTINCT area: a tool accidentally pointed at a neighbour's component
+    // would render that neighbour's marker and fail here. The eraser is a drag area that is NOT
+    // `DrawToolArea`, so it gets its own mode too. The two fill tools share one area because
+    // they differ only in what their processor writes into the fill mask.
+    ['elliptical-selection', 'elliptical-selection'],
+    ['quick-selection', 'quick-selection'],
+    ['eyedropper', 'eyedropper'],
     ['eraser', 'eraser'],
+    ['clone-stamp', 'clone-stamp'],
+    ['sharpen', 'sharpen'],
+    ['smudge', 'smudge'],
+    ['dodge', 'dodge'],
+    ['burn', 'burn'],
     ['magic-eraser', 'fill'],
     ['paint-bucket', 'fill'],
-    ['eyedropper', 'eyedropper'],
+    ['gradient', 'gradient'],
   ])('routes the %s tool to the %s tool area', (toolName, expected) => {
     storeState.toolName = toolName;
 
@@ -144,7 +178,70 @@ describe('Main tool-area routing', () => {
     expect(screen.getByTestId(`tool-area-${expected}`)).toBeTruthy();
   });
 
-  it.each(['zoom', 'custom-shape', 'transform'] as const)('falls back to the hidden dummy area for %s', (toolName) => {
+  it('mounts exactly one tool area for every tool that has one', () => {
+    // The routing table above checks the expected marker is present, which would still pass
+    // if `Main` rendered a SECOND area alongside it. Every tool-area branch is an `else if`
+    // over a single `interactionMode`, so one is the only correct number.
+    const routed = [
+      'reposition',
+      'crop',
+      'draw',
+      'brush',
+      'pencil',
+      'color-replacement',
+      'shape',
+      'rectangle',
+      'ellipse',
+      'triangle',
+      'polygon',
+      'line',
+      'text',
+      'polygonal-lasso',
+      'freehand-lasso',
+      'feather-magnetic-lasso',
+      'magic-wand',
+      'rectangular-selection',
+      'elliptical-selection',
+      'quick-selection',
+      'eyedropper',
+      'eraser',
+      'clone-stamp',
+      'sharpen',
+      'smudge',
+      'dodge',
+      'burn',
+      'paint-bucket',
+      'gradient',
+    ] as const;
+
+    for (const toolName of routed) {
+      storeState.toolName = toolName;
+      const { container, unmount } = render(<Main />);
+
+      const mounted = TOOL_AREA_IDS.map((id) => container.querySelector(`[data-testid="tool-area-${id}"]`)).filter(
+        (element) => element !== null
+      );
+      expect(mounted, toolName).toHaveLength(1);
+      unmount();
+    }
+  });
+
+  it.each([
+    'zoom',
+    'custom-shape',
+    'transform',
+    // These are the only tools left with no tool area at all: the zoom is a store-driven
+    // viewport control, `custom-shape` is still a placeholder panel, and `transform` is a
+    // one-shot operation the canvas route drives rather than a gesture surface. The eleven
+    // Photoshop tools that used to sit in this list have each left it for a real area, so
+    // this table is the deliberate allow-list of what may still fall through to the dummy.
+    'pen',
+    'freeform-pen',
+    'curvature-pen',
+    'add-anchor-point',
+    'delete-anchor-point',
+    'convert-point',
+  ] as const)('falls back to the hidden dummy area for %s', (toolName) => {
     storeState.toolName = toolName;
 
     const { container } = render(<Main />);

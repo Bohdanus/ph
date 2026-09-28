@@ -38,8 +38,11 @@ breakage or unmaintainable. **P3** = cosmetic / robustness.
 **Run the suite headless** — `npm run test:e2e`. That is the default, and the
 reason is the first entry below.
 
-On the default (headless) configuration **nothing fails**: 97 pass, 2 are skipped by
-declaration, and that is stable across repeated full runs.
+On the default (headless) configuration the only failures are the export
+baselines and one `pen-types` case, and they share the single layout cause
+recorded in the first entry below — not a defect in the app, and not a defect in
+the specs. Everything else is green, and that has been stable across repeated
+full runs.
 
 Three defect groups used to fail here and have been fixed in this repository. Their
 evidence is kept below rather than deleted, because each explains a shape the suite
@@ -53,8 +56,8 @@ must not drift back into:
 
 All of these were introduced with the specs and were independent of how they were
 moved into this repository: each was reproducible with no changes to the specs or
-to `src/`. The remaining entries below are latent defects that no current run
-trips — none of them is a known failure.
+to `src/`. Apart from the layout entry below, the remaining entries in this file
+are latent defects that no current run trips.
 
 ### Invariant — headless is the default, and the refusal is structural
 
@@ -106,6 +109,194 @@ so the tradeoff is visible at the moment it is accepted.
 `npm run test:e2e:ui` and `npm run test:e2e:debug` all bypass `use.headless` and open
 a real window, because that is what they are for. The rule applies to
 `npm run test:e2e` and to anyone interpreting its result.
+
+## P1 — the taller toolbar overflows the viewport, and the recorded baselines encode the old layout
+
+**This is a recording decision, not a defect, and it is left failing on purpose.**
+`AGENTS.md` forbids an agent from re-recording a visual baseline or weakening a
+gate to get a suite green, so the operator has to choose. Nothing here is being
+fixed by an agent, and no assertion was changed to make room for the new layout.
+
+**What fails.** `e2e/export/visual-regression.spec.ts:37`, once per format, for
+the seven `comparePixels` formats in `e2e/export/helpers.ts:59-66`. And
+`e2e/pen-types.spec.ts:78`, the parameterized test body, in its solid-pen case
+(`y: 150` at `:44`).
+
+**One cause.** The left toolbar gained tools, which made the toolbar taller,
+which made the app taller than Playwright's 1280x720 viewport. Measured on this
+branch, the workspace canvas box height went from 840 to 1040 and the page height
+from 977 to 1177. `screenshot-scale.ts:53` and `cdp-helpers.ts:60` already record
+the post-branch page height in-tree, so the two agree.
+
+The document is `object-contain` (`src/components/Main/Main.tsx:241`), so the
+scale is width-limited and **did not change** — the document's rendered size is
+the same before and after. What moved is its vertical centre, by the difference
+in the letterbox: the document's top edge in box-relative coordinates is
+`(boxHeight - 600 * scale) / 2`, which is 54.75 at a 840 box and 154.75 at a 1040
+box, so the document moved down 100px inside the box while its scale held.
+
+**Why that breaks the export baselines.** The export fixture draws in BOX
+coordinates, not document coordinates: `setupExportTest` takes
+`canvas.boundingBox()` and calls `drawLine(page, box, LINE_START_X, LINE_START_Y, …)`
+(`e2e/export/helpers.ts:103-109`) with `LINE_START_Y = 150`
+(`e2e/helpers/canvas-helpers.ts:49`). `drawLine` adds the box origin and nothing
+else (`canvas-helpers.ts:435-436`), so the app maps that through the letterbox
+into document space, and the export — which is the document, 800x600, as the
+committed baselines confirm — carries the line wherever the layout put it.
+Pre-branch the line landed at document row 78; it now lands at row 0 and is
+clipped. Every one of the seven baselines encodes the old position, and
+`compareScreenshots` compares against a budget of `DEFAULT_MAX_DIFF_PIXELS = 100`
+pixels (`e2e/helpers/image-comparison.ts:28`, applied at `:95`). The ratio cap
+beside it is 1% of 800x600 (`image-comparison.ts:29`) and is not the binding
+constraint.
+
+**Why `pen-types` misreads rather than merely shifting.** The solid case clips
+`y - 50` to `y + 70` (`e2e/pen-types.spec.ts:93-96`, with `CLIP_Y_OFFSET = -50`
+at `:18`), so the clip's top 55 box-relative rows now sit ABOVE the document's top
+edge at 154.75 and land on the workspace checkerboard (`Main.tsx:226-227`,
+`#f3f3f3` at `src/index.scss:68-72`). `getStrokeAnalysis` counts a pixel that is
+neither dark nor near-white, bright enough and unsaturated enough, as spray
+(`canvas-helpers.ts:720-724`, thresholds at `:154-155`) — and 243/243/243 is
+exactly that: not near-white, luminance 243 over 200, saturation 0 under 30. So
+`top` is driven to the clip's top edge, `verticalSpread` passes
+`SPRAY_VERTICAL_SPREAD_THRESHOLD` (30, `:158`), and `type` is `'spray'` (`:756`).
+The test then asserts the wrong pen type at `:110`.
+
+**Why the pre-branch layout was itself wrong, which is the part that reframes
+this.** A 720px viewport with a 977px page and an 840px canvas box is 257px of
+overflow, and the recorded baselines encode the 840. This is not a branch that
+broke a good layout; it is a branch that made a pre-existing overflow visible.
+The mechanism is in the grid, and it is not a bug in the toolbar:
+
+- The page is viewport-pinned: `html, body, #root { height: 100% }`
+  (`src/index.scss:46-49`) and the shell is `grid h-full grid-rows-[auto_auto_1fr_auto]`
+  (`src/App.tsx:40`).
+- A `1fr` track is `minmax(auto, 1fr)`, so its floor is the largest min-content
+  contribution of the items in it.
+- `<main>` already declares `overflow-y-auto` (`src/components/Main/Main.tsx:296`),
+  which zeroes its automatic minimum, so it contributes nothing to that floor.
+- The left `<aside>` declares no `overflow` (`src/components/SidebarLeft/SidebarLeft.tsx:319-323`),
+  so its min-content height is the whole toolbar, that becomes the row floor, and
+  the `h-full` canvas at `Main.tsx:231,241` is dragged up with it.
+
+**Three options, and they are not equivalent.**
+
+1. **Keep the overflow.** Nothing in the suite changes and the baselines stay
+   valid, at the cost of an eleven-tool toolbar that permanently overflows a 720px
+   viewport. This is the status quo before the toolbar grew.
+2. **Fix the layout and re-record.** Add `min-h-0 overflow-y-auto` to the
+   `<aside>`, which removes the overflow entirely and fixes `pen-types`. The
+   canvas box then lands at 583 rather than 840, so all seven baselines change
+   and must be re-recorded once. The diff is larger than the current failure
+   (4283 against a 100-pixel budget), which is a re-record, not a repair.
+3. **Decouple the fixture from layout.** Make the export fixture draw in DOCUMENT
+   space — compute the contain transform and offset, the same arithmetic the
+   letterbox already implies, and pass document coordinates through it — so the
+   baseline stops depending on the toolbar's height at all. This is the only
+   option under which a future toolbar change cannot invalidate the export
+   baselines, and it is the largest change of the three.
+
+**Fix.** Operator's call, options above. If option 3, the transformation belongs in
+one helper next to `drawLine` rather than in the fixture, and `drawLine`'s own
+contain-scale gap (the next entry) is the same arithmetic and should be fixed in
+the same change.
+
+**Measured on the merged tree (eight tools, not eleven).** The eight-tool merge
+into `main` reproduces this exactly and adds no new cause. `npm run test:e2e` on
+the merge is **148 passed / 12 failed / 2 skipped**, against 145/24 before the
+tranche's own spec coupling was repaired. The twelve are:
+
+- the seven `visual-regression` baselines, each about **2256 differing pixels at a
+  0.0047 ratio** against the 100-pixel budget — the P1 mechanism;
+- `e2e/pen-types.spec.ts:78`, the same mechanism;
+- `e2e/erase-fill-eyedropper.spec.ts:487` (paint bucket tolerance) and
+  `:603` (eyedropper 3x3 average), and
+  `e2e/selection-tools.spec.ts:453` (eyedropper refuses a transparent sample).
+
+Those last three are worth separating from the seven. They **pass when their three
+specs are run together** (51/51) and **fail in the full 169-test run**, and they
+all assert by polling a document-space pixel that has moved. So they are the same
+geometry, not a second defect, but they are additionally sensitive to the time
+budget the full run leaves them: a taller page means more layout and paint per
+poll. They should be re-measured after whichever option above is chosen, and they
+are the earliest signal that option 1 would have fixed the class.
+
+Two failures in the same run are **not** this entry: both AVIF cases fail with
+`The request id .../avif_enc.wasm is outside of Vite serving allow list`, which is
+the documented worktree trap (`AGENTS.md`, "Worktrees and dev servers") — Vite
+does not walk up to the ancestor checkout's `node_modules`, so the codec 404s.
+`npm ci` in the worktree, or running from the root checkout, clears both.
+
+## P2 — `drawLine` applies no contain scale, so its arguments are not document coordinates
+
+`e2e/helpers/canvas-helpers.ts:426-436`
+
+A spec must not drift into the assumption that `drawLine`'s arguments are
+document coordinates. They are not. `drawLine` computes
+`{ x: box.x + startX, y: box.y + startY }` and nothing else, while the document it
+addresses is **contained** in that box (`object-contain`,
+`src/components/Main/Main.tsx:241`): the CSS origin of document `(0,0)` is
+
+```text
+scale    = min(boxWidth / 800, boxHeight / 600)
+offsetX  = (boxWidth  - 800 * scale) / 2
+offsetY  = (boxHeight - 600 * scale) / 2
+cssX     = box.x + offsetX + documentX * scale
+cssY     = box.y + offsetY + documentY * scale
+```
+
+so a document point reaches `page.mouse` as
+`(x / scale, (y - offsetY) / scale)` once the box origin is added. At the Desktop
+Chrome default in a 1280px viewport the scale is 1.2175, and `offsetY` is 54.75
+at a 840px box and 154.75 at a 1040px box — which is why the previous entry moves
+the export fixture's line by more than 80 document rows upward while its box
+coordinates do not change at all.
+
+Existing specs survive this only because their strokes need to land SOMEWHERE, not
+where they were asked to land. `levels.spec.ts`, `color.spec.ts`, `select-move.spec.ts`
+and `example.spec.ts` all pass `LINE_START_*`/`LINE_END_*` and then assert colour,
+presence or a bounding box wide enough to absorb the error. A new spec that asserts
+a specific pixel position, a specific row, or a stroke that must fall inside the
+document will be tens of pixels off, and the failure will look like an app bug.
+
+Fix: add a contain-aware coordinate helper next to `drawLine` — the arithmetic is
+the four lines above — and migrate the specs that need document precision onto it.
+Do not change `drawLine`'s existing behaviour: the specs that call it today are
+written around box-relative coordinates, and changing the meaning of the argument
+breaks all of them at once.
+
+## P2 — `boundingBox()` is viewport-relative and a CDP capture clip is page-relative
+
+`e2e/helpers/screenshot-scale.ts:46-68`, `e2e/helpers/cdp-helpers.ts:55-74`
+
+The hazard, for whoever refactors this next. The app is taller than Playwright's
+720px window, so the window scrolls. `Locator.boundingBox()` measures against the
+VIEWPORT and goes negative as soon as it does — a canvas scrolled 440px down
+reports `y: -340` where it reported `y: 100` before. `page.mouse` shares that
+space. But `page.screenshot({ clip })` and CDP `Page.captureScreenshot`, which
+this suite calls directly, take their clip against the DOCUMENT origin. The two
+take **opposite** conventions from each other for the same numbers: Playwright
+takes a viewport clip and adds the scroll offset itself, so converting there moves
+the clip the wrong way; raw CDP takes a page clip, so converting nothing moves the
+capture 440px away from the region the caller measured. Neither direction throws.
+A clip derived from a scrolled `boundingBox()` and handed to CDP untranslated
+either returns the wrong region or lands off-canvas, where the failure surfaces as
+`Clipped area is either empty or outside the resulting image` and reads as a
+capture bug rather than a coordinate bug.
+
+**The helper-level fix is done, and it is recorded here so a refactor does not
+undo it.** The conversion is the pure function `viewportRectToPageRect`
+(`screenshot-scale.ts:69-76`), it is applied **at the CDP site only**
+(`cdp-helpers.ts:66-74`) and not in the callers, the scroll offset is read per
+capture rather than cached (`getPageScroll`, `canvas-helpers.ts:207-209`, because
+the window scrolls between captures — `clickToolButton` alone scrolls 440px, which
+is what `preservingScroll` exists to undo, `toolbar-helpers.ts:117-121,128,150`),
+and the rule is unit-tested for a non-zero offset at
+`e2e/helpers/__tests__/screenshot-scale.unit.test.ts:306-323`.
+
+What is left is a rule for new code: a spec that mixes `boundingBox()` with a CDP
+capture must not assume the two agree, and must not introduce a second conversion
+somewhere that already has one.
 
 ## P2 — an empty CDP capture is reported as a successful capture
 
@@ -387,10 +578,11 @@ single-tool groups`.
 
 **Verified by running the suite against a real browser:**
 
-- The 7 comparison formats match the committed baselines.
-  `e2e/export/visual-regression.spec.ts` passes, so every baseline the spec reads
-  decodes and matches its committed pixels on this host. The ICO spec passes
-  in-browser against the source canvas.
+- The 7 comparison formats matched the committed baselines, before the toolbar
+  grew. `e2e/export/visual-regression.spec.ts` passed, so every baseline the spec
+  reads decoded and matched its committed pixels on this host. The ICO spec passes
+  in-browser against the source canvas. They no longer match — see the P1 entry
+  above for the one layout change that moved them and the three ways out.
 
   **This was not true until the `updateSnapshots` guard was fixed — see that entry
   above.** The check that produced this claim was `if (testInfo.config.updateSnapshots)`,

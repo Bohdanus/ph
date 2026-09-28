@@ -1,4 +1,5 @@
 import type { CreatorToolParams } from './toolProcessors.ts';
+import type { PaintBlendMode, PaintSettings, PaintToolName } from './brush.ts';
 import { drawLine } from '../util/draw.ts';
 import type { Ctx2D, Point } from '../contexts/general-types.ts';
 
@@ -11,6 +12,7 @@ export type DrawToolArgs = {
   lineWidth: number;
   lineDash?: null | number[];
   points?: Point[];
+  /**
   /**
    * Erase instead of paint: the stroke subtracts alpha from whatever is already there.
    *
@@ -27,15 +29,33 @@ export type DrawToolArgs = {
    * the single renderer every stroke reaches. Absent means the stroked path, unchanged.
    */
   blockStamp?: boolean;
+  /**
+   * Photoshop `Smoothing`, 0-100, applied to the sampled path by
+   * `smoothStrokePoints`. Optional because the legacy `draw` tool's per-pen presets
+   * (`src/tools/settings.ts:21-25`) predate it; an absent value is no smoothing,
+   * which is exactly what those presets render today.
+   */
+  smoothing?: number;
+  /**
+   * Photoshop `Mode`, applied when a paint stroke's layer is created. Optional for
+   * the same reason as `smoothing`; an absent value composites as Normal.
+   */
+  blendMode?: PaintBlendMode;
 
   toolName: 'draw';
 };
 
-export type PaintToolName = 'brush' | 'pencil' | 'color-replacement';
+export type { PaintToolName };
 
-export type PaintToolArgs = Omit<DrawToolArgs, 'toolName'> & {
-  toolName: PaintToolName;
-};
+/**
+ * A paint tool carries the Photoshop options-bar settings as required, so the bar
+ * can read them without a guard and a `draw`-era args object can never satisfy the
+ * type by omission.
+ */
+export type PaintToolArgs = Omit<DrawToolArgs, 'toolName' | 'smoothing' | 'blendMode'> &
+  PaintSettings & {
+    toolName: PaintToolName;
+  };
 
 export type DrawToolSettings = Omit<DrawToolArgs, 'color' | 'points'>;
 

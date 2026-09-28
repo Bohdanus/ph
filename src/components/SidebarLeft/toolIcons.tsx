@@ -2,16 +2,21 @@ import type { SvgIconFactory, ToolIconName } from './types';
 
 import { BlurIcon } from './icons/BlurIcon';
 import { BrushToolIcon } from './icons/BrushToolIcon';
+import { BurnIcon } from './icons/BurnIcon';
+import { CloneStampIcon } from './icons/CloneStampIcon';
 import { ColorIcon } from './icons/ColorIcon';
 import { ColorReplacementIcon } from './icons/ColorReplacementIcon';
 import { CropIcon } from './icons/CropIcon';
+import { DodgeIcon } from './icons/DodgeIcon';
 import { DrawIcon } from './icons/DrawIcon';
 import { EllipseShapeIcon } from './icons/EllipseShapeIcon';
+import { EllipticalSelectionIcon } from './icons/EllipticalSelectionIcon';
 import { EraserIcon } from './icons/EraserIcon';
 import { EyedropperIcon } from './icons/EyedropperIcon';
 import { FeatherMagneticLassoIcon } from './icons/FeatherMagneticLassoIcon';
 import { FreeformPenIcon } from './icons/FreeformPenIcon';
 import { FreehandLassoIcon } from './icons/FreehandLassoIcon';
+import { GradientIcon } from './icons/GradientIcon';
 import { LevelsIcon } from './icons/LevelsIcon';
 import { LineShapeIcon } from './icons/LineShapeIcon';
 import { MagicEraserIcon } from './icons/MagicEraserIcon';
@@ -20,9 +25,12 @@ import { MoveIcon } from './icons/MoveIcon';
 import { PaintBucketIcon } from './icons/PaintBucketIcon';
 import { PenToolIcon } from './icons/PenToolIcon';
 import { PolygonalLassoIcon } from './icons/PolygonalLassoIcon';
+import { QuickSelectionIcon } from './icons/QuickSelectionIcon';
 import { RectangularSelectionIcon } from './icons/RectangularSelectionIcon';
 import { RectangleShapeIcon } from './icons/RectangleShapeIcon';
 import { ShapeIcon } from './icons/ShapeIcon';
+import { SharpenIcon } from './icons/SharpenIcon';
+import { SmudgeIcon } from './icons/SmudgeIcon';
 import { TextIcon } from './icons/TextIcon';
 import { TransformIcon } from './icons/TransformIcon';
 
@@ -46,6 +54,14 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
   'feather-magnetic-lasso': FeatherMagneticLassoIcon,
   'magic-wand': MagicWandIcon,
   'rectangular-selection': RectangularSelectionIcon,
+  'elliptical-selection': EllipticalSelectionIcon,
+  'quick-selection': QuickSelectionIcon,
+  'clone-stamp': CloneStampIcon,
+  gradient: GradientIcon,
+  sharpen: SharpenIcon,
+  smudge: SmudgeIcon,
+  dodge: DodgeIcon,
+  burn: BurnIcon,
   brush: BrushToolIcon,
   pencil: BrushToolIcon,
   'color-replacement': ColorReplacementIcon,

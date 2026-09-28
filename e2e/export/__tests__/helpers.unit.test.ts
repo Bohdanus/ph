@@ -30,6 +30,7 @@ import {
   LINE_START_X,
   LINE_START_Y,
 } from '../../helpers/canvas-helpers';
+import { createScrollModel } from '../../helpers/__tests__/canvas-helpers.fixtures';
 
 const mocks = vi.hoisted(() => {
   const context: { received: unknown; message: string | undefined } = {
@@ -371,6 +372,9 @@ function createPageMock(overrides: Partial<PageSurface> = {}): {
   page: Page;
 } {
   const fallback = createLocatorMock();
+  // A window tall enough to hold its whole page at scroll 0: the export specs stroke
+  // inside the viewport, so nothing here needs the stroke helpers to scroll.
+  const scrollModel = createScrollModel();
   const surface: PageSurface = {
     goto: vi.fn().mockResolvedValue(null),
     getByTestId: byKey({}, fallback),
@@ -379,7 +383,17 @@ function createPageMock(overrides: Partial<PageSurface> = {}): {
     waitForEvent: vi.fn().mockRejectedValue(new Error('waitForEvent was not configured for this test')),
     once: vi.fn().mockReturnValue(undefined),
     waitForFunction: vi.fn().mockResolvedValue(true),
-    evaluate: vi.fn().mockResolvedValue({ ok: true }),
+    // `page.evaluate` serves two callers here with opposite answers. The pixel comparison
+    // hands the function a payload, so it arrives as `evaluate(compare, payload)` — two
+    // arguments. The stroke helpers use the same method to read and restore the window
+    // scroll, with a function that closes over the page and takes nothing from the
+    // argument list, so it arrives as `evaluate(fn)`. Dispatching on the argument count is
+    // what lets the scroll callers run for real against a window instead of receiving the
+    // comparison's `{ ok: true }` and handing `drawLine` a `NaN` origin.
+    evaluate: vi.fn(async (fn: unknown, ...rest: unknown[]) => {
+      if (rest.length > 0) return { ok: true };
+      return scrollModel.evaluate(fn as () => unknown);
+    }) as unknown as PageSurface['evaluate'],
     screenshot: vi.fn(async () => strokePng(true)),
     waitForTimeout: vi.fn().mockResolvedValue(undefined),
     mouse: {
