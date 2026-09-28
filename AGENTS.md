@@ -76,7 +76,7 @@ npm run board -- help   # the swarm board: who has what, and which files are tak
 `npm run board -- <command>` is the LIVE coordination layer: who has claimed
 what, which file two agents are about to edit, what one agent found that another
 needs, and what nobody claimed because the worktree is gone. `npm run board --
-help` is the full command list; `--json` works on every command except `watch`.
+help` is the full command list; `--json` works on every command except `watch`, `help` and `--version`.
 `ready` is the queue an agent works from: it sorts by priority, and the FILES
 column is the files the issue is _about_ (from its own create event) annotated
 with who is currently in them — not the locks it happens to hold, which is why an
@@ -91,7 +91,7 @@ once, keyed on their own numbering (`HANDOFF.md#12`), so re-running files only
 what is new.
 
 - **Where it lives:** `$(git rev-parse --git-common-dir)/agent-board/board.db`
-  — the one path all 137 worktrees resolve to, so there is one board and no
+  — the one path every worktree resolves to, so there is one board and no
   daemon, no server, and no per-worktree copy. `AGENT_BOARD_DIR` or `--dir`
   moves it; the tests use both. **It is machine-local and gitignored, exactly
   like `.kilo/`.** Nothing durable belongs only there.

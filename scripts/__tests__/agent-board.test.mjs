@@ -440,26 +440,20 @@ describe('file locks make one-file-one-agent real', () => {
     b.close();
   });
 
-  it('does not collapse a sibling directory whose name starts with the worktree', () => {
+  it('refuses a path outside every worktree, in both commands that take one', () => {
     const a = boardFor('a');
-    const sibling = `${a.identity.worktree}-two/src/x.ts`;
-    a.holdFiles([sibling]);
-    const stored = a.locksHeldBy('a').map((lock) => lock.path);
-    // `/wt` must not chew `-two/src/x.ts` out of `/wt-two/src/x.ts`, and a path
-    // that does not exist is canonicalised through its deepest EXISTING
-    // ancestor — which must re-attach every component below it, or the lock
-    // lands on a file the caller never named.
-    expect(stored).toHaveLength(1);
-    expect(stored[0].endsWith('/wt-a-two/src/x.ts')).toBe(true);
-    expect(stored[0]).not.toBe('src/x.ts');
-    a.close();
-    const b = boardFor('b');
-    // Same string in, same lock found: the two ends agree.
-    expect(b.checkPath(sibling).holders.map((holder) => holder.agent_id)).toEqual(['a']);
-    expect(b.checkPath('src/x.ts').free).toBe(true);
-    b.close();
+    const outside = `${a.identity.worktree}-two/src/x.ts`;
+    // Not locked, and not reported free either. A path the board cannot compare
+    // with any lock is not a free file — it is a path this board does not cover,
+    // and saying `free` there is how a shell gates on the wrong answer.
+    expect(() => a.holdFiles([outside])).toThrow(/not inside this repository/);
+    const report = a.checkPath(outside);
+    expect(report.free).toBe(false);
+    expect(report.outside).toBe(true);
+    // A directory whose name merely STARTS with a worktree's is not that
+    // worktree, and the separator is what says so.
+    expect(a.locksHeldBy('a')).toHaveLength(0);
   });
-
   it('refuses a path that is nothing but the worktree, rather than locking nothing', () => {
     const a = boardFor('a');
     // The prefix strips to the empty string, and a lock on "" is a lock on a
@@ -467,6 +461,56 @@ describe('file locks make one-file-one-agent real', () => {
     expect(() => a.holdFiles([`${a.identity.worktree}/`])).toThrow(/no file paths/);
     expect(a.locksHeldBy('a')).toHaveLength(0);
     a.close();
+  });
+
+  it('keeps a file held for an UNCLAIMED issue, which is the normal case', () => {
+    /**
+     * The invariant B1 was about, at the layer it actually failed. The first fix
+     * counted pairings with a LIVE CLAIM, so `board hold src/x.ts --issue ph-2`
+     * — reserving a file for work not yet started, the documented workflow —
+     * did not count, and `release ph-1` freed a file the agent was in. Silent,
+     * in normal use, with no error anywhere.
+     */
+    const a = boardFor('a');
+    const first = a.createIssue({ title: 'first' });
+    const second = a.createIssue({ title: 'not claimed yet' });
+    a.claimIssue(first.id, { leaseMs: 600_000 });
+    a.holdFiles(['src/x.ts'], { issueId: first.id });
+    a.holdFiles(['src/x.ts'], { issueId: second.id });
+
+    a.releaseClaim(first.id);
+    expect(a.checkPath('src/x.ts', { agent: 'rival' }).free).toBe(false);
+    // And it is freed once the last issue that named it is CLOSED, because a
+    // closed issue is the one state in which nobody is editing its files.
+    a.releaseClaim(second.id);
+    expect(a.checkPath('src/x.ts', { agent: 'rival' }).free).toBe(false);
+    a.claimIssue(second.id, { leaseMs: 600_000 });
+    a.resolveIssue(second.id);
+    a.closeIssue(second.id, { agent: 'verifier' });
+    expect(a.checkPath('src/x.ts', { agent: 'rival' }).free).toBe(true);
+  });
+
+  it('finds a held file through a path that walks out and back', () => {
+    const a = boardFor('a');
+    a.holdFiles(['src/held.ts']);
+    a.close();
+    const b = boardFor('b');
+    // `src/../src/held.ts` is the same file, and it used to answer FREE: the one
+    // answer this board must never get wrong, from a spelling an agent's own
+    // tooling produces.
+    for (const spelling of ['src/../src/held.ts', './src/../src/held.ts', 'src/./held.ts']) {
+      expect(b.checkPath(spelling).free, spelling).toBe(false);
+    }
+    expect(() => b.holdFiles(['src/../src/held.ts'])).toThrow(/held by another agent/);
+    b.close();
+  });
+
+  it('does not truncate `list`, the command an agent greps to ask if work is filed', () => {
+    const board = boardFor('a');
+    for (let index = 0; index < 240; index += 1) board.createIssue({ title: `issue ${index}` });
+    // 240 issues and a 200-row answer: a false negative here files a DUPLICATE of
+    // work already tracked, and nothing tells the reader the list was cut.
+    expect(board.listIssues()).toHaveLength(240);
   });
 
   it('lets two issues of ONE agent share a file, and keeps it when one is released', () => {
@@ -724,6 +768,10 @@ describe('the event log is the swarm talking', () => {
       'issue.comment',
       'lock.hold',
       'issue.resolve',
+      // A close releases the claim's files, so the lock's release is in the
+      // thread between the resolution and the close, and a reader can see that
+      // the files went back at the moment the work was declared finished.
+      'lock.release',
       'issue.close',
     ]);
     expect(events.map((event) => event.seq)).toEqual([...events.map((event) => event.seq)].sort((a, b) => a - b));
@@ -745,6 +793,94 @@ describe('the event log is the swarm talking', () => {
     const [event] = board.events({ since: 0, kind: 'note' });
     expect(event.issue_id).toBeNull();
     expect(event.message).toBe('I am touching StoreContext for the next hour');
+  });
+});
+
+describe('the schema this script writes', () => {
+  /**
+   * A v1 board, built by hand from the old shape.
+   *
+   * Three things here were wrong before they were pinned. The version row was
+   * only ever INSERTed, so a migrated board stayed at v1 and re-migrated on
+   * every open; then the fix that corrected that stamped the version even when
+   * no migration had run; and then that one discarded the migration's return
+   * value, which put the first bug back. A lock whose `issue_id` named a missing
+   * issue — which v1 accepted, because that column had no foreign key — aborted
+   * the whole migration under v2's foreign keys, leaving a board no command
+   * could open, and therefore no way to repair it.
+   */
+  const buildV1Board = (target) => {
+    const db = new DatabaseSync(join(target, 'board.db'));
+    db.exec(`
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE issues (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+        scope TEXT NOT NULL DEFAULT 'prod', status TEXT NOT NULL DEFAULT 'open',
+        priority TEXT NOT NULL DEFAULT 'normal', origin TEXT, created_by TEXT NOT NULL,
+        resolver TEXT, resolved_at TEXT, verified_by TEXT, verified_at TEXT,
+        defer_reason TEXT, defer_until TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE file_locks (
+        path TEXT NOT NULL, agent_id TEXT NOT NULL, issue_id TEXT, worktree TEXT,
+        acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL, released_at TEXT,
+        PRIMARY KEY (path, agent_id));
+      CREATE TABLE events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, agent_id TEXT NOT NULL,
+        kind TEXT NOT NULL, issue_id TEXT, path TEXT, message TEXT, data TEXT);
+    `);
+    const now = new Date().toISOString();
+    const future = new Date(Date.now() + 3_600_000).toISOString();
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '1')").run();
+    db.prepare('INSERT INTO issues (id, title, created_by, created_at, updated_at) VALUES (?,?,?,?,?)').run(
+      'ph-1',
+      'a v1 defect',
+      'old',
+      now,
+      now
+    );
+    db.prepare('INSERT INTO file_locks (path, agent_id, issue_id, acquired_at, expires_at) VALUES (?,?,?,?,?)').run(
+      'src/good.ts',
+      'old',
+      'ph-1',
+      now,
+      future
+    );
+    // What v1 accepted and v2 must survive: a lock naming an issue that is gone.
+    db.prepare('INSERT INTO file_locks (path, agent_id, issue_id, acquired_at, expires_at) VALUES (?,?,?,?,?)').run(
+      'src/orphan.ts',
+      'old',
+      'ph-404',
+      now,
+      future
+    );
+    db.close();
+  };
+
+  it('migrates a v1 board once, advances the version, and survives a dangling id', () => {
+    buildV1Board(dir);
+    const first = boardFor('a');
+    expect(first.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('2');
+    // The attribution v1 DID know about is carried forward, and the dangling one
+    // is named in the log rather than silently dropped or fatally re-attempted.
+    expect(first.locksFor('ph-1').map((lock) => lock.path)).toEqual(['src/good.ts']);
+    const migration = first.events({ kind: 'board.migrate' });
+    expect(migration).toHaveLength(1);
+    expect(JSON.parse(migration[0].data)).toMatchObject({ moved: 1, dropped_dangling_issue: 1 });
+    first.close();
+
+    // A second open must not re-migrate, or every command anyone ever runs
+    // repeats the work.
+    const second = boardFor('a');
+    expect(second.events({ kind: 'board.migrate' })).toHaveLength(1);
+    expect(second.locksFor('ph-1').map((lock) => lock.path)).toEqual(['src/good.ts']);
+    second.close();
+  });
+
+  it('refuses a board written by a newer script, before touching it', () => {
+    buildV1Board(dir);
+    const raw = new DatabaseSync(join(dir, 'board.db'));
+    raw.prepare("UPDATE meta SET value = '99' WHERE key = 'schema_version'").run();
+    raw.close();
+    expect(() => boardFor('a')).toThrow(/schema is v99/);
   });
 });
 

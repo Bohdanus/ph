@@ -36,17 +36,27 @@
  */
 
 import { pathToFileURL } from 'node:url';
-import { Board, BoardError, DEFAULT_LEASE_MS, parseDuration, resolveBoardDir } from './lib/agent-board/db.mjs';
+import {
+  Board,
+  BoardError,
+  DEFAULT_LEASE_MS,
+  NO_LIMIT,
+  parseDuration,
+  priorityFromTitle,
+  resolveBoardDir,
+} from './lib/agent-board/db.mjs';
 import { resolveIdentity } from './lib/agent-board/identity.mjs';
 
 const USAGE = `agent board — live coordination for a swarm of agents on one repository
 
   new <title>            file an issue          --body --scope --priority --files --dep --origin
+                           (the title is everything BEFORE the first flag)
+  init                   create the board if it is not there yet
   ready                  unblocked, unclaimed work, most urgent first
   list                   the whole board        --status --scope --files --claimed-by --limit
   show <id>              one issue: claim, locks, deps, full thread
   claim <id>             take it, and its files --lease --note --force
-  heartbeat <id>         extend your lease      --lease
+  heartbeat <id>         extend your lease      --lease   (alias: hb)
   release <id>           give it back, locks released with it
   hold <path...>         claim a file           --issue --lease --force
   unlock <path...>       release a file         --force
@@ -64,7 +74,7 @@ const USAGE = `agent board — live coordination for a swarm of agents on one re
   import                 the handoff documents into the board     --dry-run --file
   export                 dump the board as JSON
 
-  --json                 machine-readable output on every command
+  --json                 machine-readable output on every command except help and --version
   --agent <id>           act as somebody else (default: the current git branch)
   --dir <path>           use another board database (default: $(git rev-parse --git-common-dir)/agent-board)
 
@@ -119,6 +129,9 @@ const LIST_FLAGS = new Set(['files', 'dep', 'file']);
 export function parseArgs(argv) {
   const flags = {};
   const positional = [];
+  /** The positional arguments that appeared BEFORE the first flag. */
+  const leading = [];
+  let seenFlag = false;
   let i = 0;
   while (i < argv.length) {
     const token = argv[i];
@@ -127,6 +140,7 @@ export function parseArgs(argv) {
       break;
     }
     if (token.startsWith('--')) {
+      seenFlag = true;
       const eq = token.indexOf('=');
       const name = eq === -1 ? token.slice(2) : token.slice(2, eq);
       const key = name.replace(/-/g, '_');
@@ -157,10 +171,11 @@ export function parseArgs(argv) {
       }
     } else {
       positional.push(token);
+      if (!seenFlag) leading.push(token);
     }
     i += 1;
   }
-  return { flags, positional };
+  return { flags, positional, leading };
 }
 
 /**
@@ -172,7 +187,8 @@ export function parseArgs(argv) {
 const list = (value) => {
   if (value === undefined || value === null || value === true || value === false) return [];
   return (Array.isArray(value) ? value : [value])
-    .flatMap((entry) => String(entry).split(','))
+    .filter((entry) => typeof entry === 'string')
+    .flatMap((entry) => entry.split(','))
     .map((entry) => entry.trim())
     .filter(Boolean);
 };
@@ -242,7 +258,10 @@ export async function run(
   argv,
   { cwd = process.cwd(), env = process.env, out = process.stdout, err = process.stderr } = {}
 ) {
-  const { flags, positional } = parseArgs(argv);
+  const { flags, positional, leading } = parseArgs(argv);
+  // `leading` is every bare token before the first flag, which includes the
+  // command name. The title of `new` is the rest of that run.
+  const leadingArgs = leading.slice(1);
   const command = positional[0] ?? (flags.help || flags.h ? 'help' : 'status');
   const args = positional.slice(1);
 
@@ -283,13 +302,20 @@ export async function run(
       }
 
       case 'new': {
-        const title = args.join(' ').trim();
+        // Everything BEFORE the first flag is the title. Otherwise a flag this
+        // script does not know about donates its value to it: `--verified-by bob`
+        // filed an issue called "clean title bob", which is reachable by copying
+        // any command line that once worked.
+        const title = (typeof flags.title === 'string' ? flags.title : leadingArgs.join(' ')).trim();
         if (!title) throw new BoardError('new needs a title', { code: 1 });
         const result = board.createIssue({
           title,
           body: flags.body ? String(flags.body) : '',
           scope: flags.scope ? String(flags.scope) : 'prod',
-          priority: flags.priority ? String(flags.priority) : 'normal',
+          // A title that states its own P-level gets that level, on both filing
+          // paths. Two commands reading the same title differently is one defect
+          // with two urgencies depending on how it was filed.
+          priority: flags.priority ? String(flags.priority) : (priorityFromTitle(title) ?? 'normal'),
           origin: flags.origin ? String(flags.origin) : null,
           files: list(flags.files),
           deps: list(flags.dep),
@@ -318,7 +344,7 @@ export async function run(
           scope: flags.scope ? list(flags.scope) : null,
           files: flags.files ? list(flags.files) : null,
           claimedBy: typeof flags.claimed_by === 'string' ? flags.claimed_by : null,
-          limit: flags.limit ? Number(flags.limit) : 200,
+          limit: flags.limit ? Number(flags.limit) : NO_LIMIT,
         });
         const rows = issues.map((issue) => [
           issue.id,
@@ -341,9 +367,14 @@ export async function run(
         // ABOUT, not the locks it happens to hold — an imported item holds none,
         // and a column that only ever said `-` told the reader nothing.
         const foreignLocks = board.liveLocks().filter((lock) => lock.agent_id !== identity.agentId);
+        const detail = new Map();
         const rows = issues.map((issue) => {
           const named = board.issueFiles(issue.id);
           const held = foreignLocks.filter((lock) => named.includes(lock.path));
+          detail.set(issue.id, {
+            files: named,
+            held: held.map((lock) => ({ path: lock.path, agent_id: lock.agent_id })),
+          });
           return [
             issue.id,
             issue.priority,
@@ -363,7 +394,7 @@ export async function run(
           ];
         });
         emit(
-          { issues },
+          { issues: issues.map((issue) => ({ ...issue, ...detail.get(issue.id) })) },
           issues.length === 0
             ? 'nothing ready: everything open is claimed, blocked, or closed'
             : columns(rows, ['ID', 'PRIORITY', 'SCOPE', 'ORIGIN', 'FILES', 'TITLE'])
@@ -489,16 +520,27 @@ export async function run(
 
       case 'check': {
         const paths = args.length > 0 ? args : list(flags.files);
+        if (paths.length === 0) {
+          // It used to print `free: ` and exit 0 — the exit code the table
+          // reserves for a FREE FILE, for a command that checked nothing.
+          throw new BoardError('check needs at least one path', { code: 1 });
+        }
         const report = paths.map((path) => board.checkPath(path));
         const busy = report.filter((entry) => !entry.free);
         emit(
           { report },
           busy.length
-            ? busy.map((entry) => `${entry.path} held by ${entry.holders.map((h) => h.agent_id).join(', ')}`).join('\n')
+            ? busy
+                .map((entry) =>
+                  entry.outside
+                    ? `${entry.path} is not inside this repository`
+                    : `${entry.path} held by ${entry.holders.map((h) => h.agent_id).join(', ')}`
+                )
+                .join('\n')
             : // The NORMALISED paths, not the ones typed: the free line quoted a
               // /tmp/… spelling while the JSON beside it carried /private/tmp/…,
               // and the two answers disagreed about the same file.
-              `free: ${report.map((entry) => entry.path ?? path).join(', ')}`
+              `free: ${report.map((entry) => entry.path).join(', ')}`
         );
         return busy.length === 0 ? 0 : 1;
       }

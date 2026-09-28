@@ -15,7 +15,7 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { BoardError } from './db.mjs';
+import { BoardError, foldTitle, priorityFromTitle } from './db.mjs';
 import { SCOPE_BY_FILE, parseHandoffDoc, planImport } from './handoff-import.mjs';
 
 const DEFAULT_FILES = Object.keys(SCOPE_BY_FILE);
@@ -24,10 +24,19 @@ const DEFAULT_FILES = Object.keys(SCOPE_BY_FILE);
  * Numbered sections in these documents that are not defects and must not become
  * board issues. `HANDOFF.md`'s section 0 is the branch-state preamble an agent
  * reads before the problem list; no parser can tell a numbered section from a
- * numbered defect, and a handful of named origins is more honest than a heuristic
- * that guesses.
+ * numbered defect, and a handful of named origins is more honest than a
+ * heuristic that guesses.
+ *
+ * Matched on TITLE as well as origin, because an origin alone fails open in the
+ * worst direction: renumber the preamble from `## 0.` to `## 1.` and a
+ * sixty-line section of repository state files itself as a claimable defect,
+ * while the real item 1 is filed a second time under a new number. A title
+ * survives renumbering, so the pair is what actually holds.
  */
-const NOT_ITEMS = new Set(['HANDOFF.md#0']);
+const NOT_ITEMS = [
+  { origin: 'HANDOFF.md#0', title: 'branch state' },
+  { origin: 'HANDOFF.md#0', title: 'branch' },
+];
 
 /**
  * The documents carry their own urgency in the heading — `P0 — the durable
@@ -41,15 +50,6 @@ const NOT_ITEMS = new Set(['HANDOFF.md#0']);
  * board's four levels directly; anything unlabelled stays `normal` rather than
  * being promoted or buried on a guess.
  */
-const SEVERITY_HEADING = /^P(\d)\b/i;
-const SEVERITY_TO_PRIORITY = { 0: 'critical', 1: 'high', 2: 'normal', 3: 'low' };
-
-export function priorityOf(title) {
-  const match = SEVERITY_HEADING.exec(String(title ?? '').trim());
-  if (!match) return null;
-  return SEVERITY_TO_PRIORITY[match[1]] ?? null;
-}
-
 export async function importDocuments({ board, files = null, dryRun = false, cwd = process.cwd() } = {}) {
   const targets = files && files.length > 0 ? files : DEFAULT_FILES;
   const read = [];
@@ -92,8 +92,10 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
   const drifted = [...(plan.drift ?? [])];
   const dead = read.flatMap((entry) => (entry.parsed.dead ?? []).map((number) => `${entry.file}#${number}`));
   const notItems = [];
+  const isNotItem = (item) =>
+    NOT_ITEMS.some((entry) => entry.origin === item.origin && foldTitle(item.title).includes(foldTitle(entry.title)));
   const fileable = plan.create.filter((item) => {
-    if (!NOT_ITEMS.has(item.origin)) return true;
+    if (!isNotItem(item)) return true;
     notItems.push(item.origin);
     return false;
   });
@@ -123,7 +125,7 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
         title: item.title,
         body: item.body,
         scope,
-        priority: priorityOf(item.title) ?? 'normal',
+        priority: priorityFromTitle(item.title) ?? 'normal',
         origin: item.origin,
         files: item.files ?? [],
         // The files an item names are context, not an intention to edit them

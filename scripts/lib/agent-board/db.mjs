@@ -6,7 +6,7 @@
  * WHY SQLITE IN THE COMMON GIT DIRECTORY
  * --------------------------------------
  * `git rev-parse --git-common-dir` is the one path every worktree of a
- * repository agrees on: 137 of them share `.git/`, and each resolves to it, so
+ * repository agrees on: they all share `.git/`, and each resolves to it, so
  * a single database file is visible from all of them without a symlink, a
  * server, or a copy per worktree. `AGENT_BOARD_DIR` overrides it for tests and
  * for a board that should outlive a reclone.
@@ -44,7 +44,7 @@ const SCHEMA_VERSION = 2;
 export const DEFAULT_LEASE_MS = 45 * 60 * 1000;
 
 /** "No cap" for an internal aggregation, as opposed to a displayed page. */
-const NO_LIMIT = Number.MAX_SAFE_INTEGER;
+export const NO_LIMIT = Number.MAX_SAFE_INTEGER;
 
 const PRIORITY_ORDER = { critical: 0, high: 1, normal: 2, low: 3 };
 export const PRIORITIES = Object.keys(PRIORITY_ORDER);
@@ -382,18 +382,52 @@ export class Board {
    */
   migrate() {
     const existing = this.currentSchemaVersion();
-    this.db.exec(SCHEMA);
-    if (existing === 1) this.migrateFileLockAttribution();
-    this.db
-      .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING')
-      .run('schema_version', String(SCHEMA_VERSION));
-    const row = this.db.prepare('SELECT value FROM meta WHERE key = ?').get('schema_version');
-    if (Number(row.value) > SCHEMA_VERSION) {
+    // BEFORE `exec(SCHEMA)`, not after. A board written by a NEWER script threw
+    // here — correctly — but only after CREATE TABLE IF NOT EXISTS had already
+    // re-created whatever the newer version had, which is the worst way to lose
+    // a board: it half-adopts a schema it is about to refuse.
+    if (existing > SCHEMA_VERSION) {
       throw new BoardError(
-        `board schema is v${row.value}, this script writes v${SCHEMA_VERSION}; update the board script, not the database`,
+        `board schema is v${existing}, this script writes v${SCHEMA_VERSION}; update the board script, not the database`,
         { code: 1 }
       );
     }
+    this.db.exec(SCHEMA);
+    const migrated = existing > 0 && existing < SCHEMA_VERSION ? this.runMigrations(existing) : false;
+    if (existing === 0) {
+      this.db
+        .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING')
+        .run('schema_version', String(SCHEMA_VERSION));
+    } else if (migrated) {
+      /**
+       * The version advances ONLY when a migration actually ran.
+       *
+       * An unconditional `UPDATE … WHERE value < 2` looked harmless and was a
+       * trap: `currentSchemaVersion()` returns 0 when the read fails for ANY
+       * reason, the migration is then skipped, and the stamp lands anyway — so
+       * the board announces v2 with every lock's attribution still sitting in a
+       * column nothing reads, and there is no error to send anyone back.
+       */
+      this.db
+        .prepare('UPDATE meta SET value = ? WHERE key = ? AND CAST(value AS INTEGER) < ?')
+        .run(String(SCHEMA_VERSION), 'schema_version', SCHEMA_VERSION);
+    }
+  }
+
+  /**
+   * Migrations in order, each from the version it actually follows.
+   *
+   * Returns whether a migration actually ran, and that return value is load
+   * bearing: it is the ONLY thing that permits the version row to advance. A
+   * version that advances without a migration is a board that claims to be
+   * current while its data is not, and there is no error to send anyone back.
+   */
+  runMigrations(fromVersion) {
+    const steps = { 1: () => this.migrateFileLockAttribution() };
+    const step = steps[fromVersion];
+    // RETURNED, not just called: `if (step) step();` discarded it, the version
+    // row never advanced, and every open re-ran the migration.
+    return step ? step() : false;
   }
 
   currentSchemaVersion() {
@@ -408,25 +442,56 @@ export class Board {
   /**
    * v1 → v2: a lock's `issue_id` became a row in `issue_locks`.
    *
-   * Best-effort by necessity and not by choice: a v1 board could only record
-   * ONE issue per lock, so for an agent working two issues with one file it
-   * recorded the first and silently lost the second. The migration carries
-   * forward what v1 believed, which is the most that was ever written down.
+   * Best-effort by necessity, and safe by construction, because a v1 board
+   * could only record ONE issue per lock: an agent working two issues with one
+   * file had the second silently dropped, and the most that was ever written
+   * down is what can be carried forward.
+   *
+   * Two things make this survivable on a board nobody can inspect first. v1's
+   * `file_locks.issue_id` had NO foreign key and `holdFiles` never validated
+   * it, so `board hold x --issue ph-404` was accepted; v2 turns foreign keys on
+   * before this runs, and a straight `INSERT … SELECT` then aborts the whole
+   * migration on the first dangling id — leaving a board that cannot be opened
+   * by any command, with no repair path, because you cannot open it to fix it.
+   * Hence: JOIN the issues table, and count what was dropped.
    */
   migrateFileLockAttribution() {
     const columns = this.db.prepare('PRAGMA table_info(file_locks)').all();
-    if (!columns.some((column) => column.name === 'issue_id')) return;
-    this.db
-      .prepare(
-        `INSERT OR IGNORE INTO issue_locks (issue_id, path, agent_id, created_at)
-         SELECT issue_id, path, agent_id, acquired_at FROM file_locks
-         WHERE issue_id IS NOT NULL AND released_at IS NULL`
-      )
-      .run();
-    this.addEvent('board.migrate', {
-      message: 'v1 → v2: file-lock attribution moved to issue_locks',
-      data: { from: 1, to: 2 },
-    });
+    if (!columns.some((column) => column.name === 'issue_id')) return true;
+    this.db.exec('PRAGMA foreign_keys = OFF');
+    try {
+      const result = this.db
+        .prepare(
+          `INSERT OR IGNORE INTO issue_locks (issue_id, path, agent_id, created_at)
+           SELECT f.issue_id, f.path, f.agent_id, f.acquired_at
+           FROM file_locks f
+           JOIN issues i ON i.id = f.issue_id
+           WHERE f.issue_id IS NOT NULL AND f.released_at IS NULL`
+        )
+        .run();
+      const dangling = this.db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM file_locks f
+           WHERE f.issue_id IS NOT NULL AND f.released_at IS NULL
+             AND NOT EXISTS (SELECT 1 FROM issues i WHERE i.id = f.issue_id)`
+        )
+        .get();
+      this.addEvent('board.migrate', {
+        message: `v1 → v2: ${result.changes} file-lock attribution(s) moved to issue_locks`,
+        data: {
+          from: 1,
+          to: 2,
+          moved: Number(result.changes),
+          // Named rather than dropped silently: these were locks on files whose
+          // issue no longer exists, and the operator is the only one who can say
+          // whether the lock or the issue was the mistake.
+          dropped_dangling_issue: Number(dangling?.n ?? 0),
+        },
+      });
+      return true;
+    } finally {
+      this.db.exec('PRAGMA foreign_keys = ON');
+    }
   }
 
   /**
@@ -595,7 +660,7 @@ export class Board {
            * Recorded, never corrected. Only an agent reading both documents
            * knows whether item 2 was renumbered, re-titled, or replaced.
            */
-          if (existing.title !== String(title).trim()) {
+          if (foldTitle(existing.title) !== foldTitle(title)) {
             this.recordDrift(existing.id, {
               origin,
               boardTitle: existing.title,
@@ -720,7 +785,7 @@ export class Board {
    * Lists issues, most urgent first. `only` narrows to a set of statuses; the
    * default is the whole board because `board list` is also a status report.
    */
-  listIssues({ status = null, scope = null, files = null, claimedBy = null, origin = null, limit = 200 } = {}) {
+  listIssues({ status = null, scope = null, files = null, claimedBy = null, origin = null, limit = NO_LIMIT } = {}) {
     const where = [];
     const params = [];
     if (status) {
@@ -998,6 +1063,18 @@ export class Board {
     if (!who) throw new BoardError('no agent identity to hold with', { code: 1 });
     const list = this.canonicalPaths(paths);
     if (list.length === 0) throw new BoardError('no file paths given', { code: 1 });
+    // A path outside every worktree of this repository cannot be compared with
+    // any lock, so holding it would create a row nothing can ever collide with —
+    // a lock that protects nothing while looking like protection. `check`
+    // refuses the same path for the same reason, and the two must agree.
+    const outside = list.filter((path) => path.startsWith('/'));
+    if (outside.length > 0) {
+      throw new BoardError(
+        `not inside this repository: ${outside.join(', ')}. Locks cover this repository's files; ` +
+          'pass a path relative to the worktree you are in.',
+        { code: 1 }
+      );
+    }
     try {
       return this.transaction(() => {
         // The clock is sampled inside the transaction, not before it. A claim
@@ -1109,22 +1186,34 @@ export class Board {
 
   /**
    * Undoes one issue's hold on its files — and releases the underlying lock
-   * ONLY for the paths this issue was the last user of.
+   * ONLY when no other pairing still needs it.
    *
-   * An agent working two issues with one file holds one lock and two pairings.
-   * Releasing the first pairing must not free the file out from under the
-   * second: that is the bug where the next agent is told, truthfully, that
-   * nobody has a file somebody is in the middle of editing.
+   * A lock exists because an agent is IN a file. A pairing says which issues
+   * that is for, and the lock outlives any one of them.
+   *
+   * "Still in use" therefore means a surviving pairing whose issue is not
+   * CLOSED — not one that happens to hold a live claim. The claim-based version
+   * looked right and was wrong in normal use: `board hold src/x.ts --issue ph-2`
+   * on an issue the agent has not claimed yet is a documented workflow, and a
+   * predicate that only counts claimed issues let `release ph-1` free a file the
+   * agent was still in, with no error anywhere. An unclaimed issue is precisely
+   * the common case for a file an agent has just reserved.
+   *
+   * Closed is the right cut-off because closing releases the pairings itself:
+   * verified, finished work is the one state in which nobody is editing.
    */
-  releaseIssueLocksInTransaction(issueId, at = this.now()) {
+  releaseIssueLocksInTransaction(issueId) {
     const pairings = this.db.prepare('SELECT * FROM issue_locks WHERE issue_id = ?').all(issueId);
     const freed = [];
     for (const pairing of pairings) {
       this.db.prepare('DELETE FROM issue_locks WHERE issue_id = ? AND path = ?').run(issueId, pairing.path);
       const stillInUse = this.db
-        .prepare('SELECT issue_id FROM issue_locks WHERE path = ? AND agent_id = ?')
-        .all(pairing.path, pairing.agent_id)
-        .filter((row) => this.liveClaimOrNull(row.issue_id, at));
+        .prepare(
+          `SELECT l.issue_id FROM issue_locks l
+           JOIN issues i ON i.id = l.issue_id
+           WHERE l.path = ? AND l.agent_id = ? AND i.status != 'closed'`
+        )
+        .all(pairing.path, pairing.agent_id);
       if (stillInUse.length > 0) continue;
       this.db
         .prepare('UPDATE file_locks SET released_at = ? WHERE path = ? AND agent_id = ? AND released_at IS NULL')
@@ -1152,14 +1241,35 @@ export class Board {
           this.db
             .prepare('UPDATE file_locks SET released_at = ? WHERE path = ? AND agent_id = ?')
             .run(this.iso(), path, row.agent_id);
+          /**
+           * The pairings go with the lock. Leaving them is not a harmless leak:
+           * the "still in use" predicate counts a surviving pairing on a
+           * non-closed issue, so an orphan pairing would keep this agent's lock
+           * alive for ever with no lock row to explain it — the file would be
+           * un-takeable and no command would say why.
+           */
+          const pairings = this.db
+            .prepare('SELECT issue_id FROM issue_locks WHERE path = ? AND agent_id = ?')
+            .all(path, row.agent_id);
+          this.db.prepare('DELETE FROM issue_locks WHERE path = ? AND agent_id = ?').run(path, row.agent_id);
           released.push(path);
-          this.addEvent('lock.release', {
-            issue: row.issue_id,
-            agent: row.agent_id,
-            path,
-            message: 'released',
-            data: { by: who, forced: Boolean(force) },
-          });
+          for (const pairing of pairings) {
+            this.addEvent('lock.release', {
+              issue: pairing.issue_id,
+              agent: row.agent_id,
+              path,
+              message: 'released',
+              data: { by: who, forced: Boolean(force) },
+            });
+          }
+          if (pairings.length === 0) {
+            this.addEvent('lock.release', {
+              agent: row.agent_id,
+              path,
+              message: 'released',
+              data: { by: who, forced: Boolean(force) },
+            });
+          }
         }
       }
       return { released: [...new Set(released)] };
@@ -1294,13 +1404,24 @@ export class Board {
    * board has never seen. An event, so it survives the command that saw it.
    */
   recordDrift(issueId, { origin, boardTitle, docTitle, agent } = {}) {
+    /**
+     * Idempotent for an unchanged disagreement. Otherwise a single reworded
+     * heading appends one `origin.drift` row to every import that ever runs,
+     * for ever — an unbounded log entry about a thing nobody is acting on, which
+     * is how a signal stops being read.
+     */
+    const data = { origin, board_title: boardTitle, doc_title: docTitle };
+    const already = this.db
+      .prepare("SELECT 1 FROM events WHERE kind = 'origin.drift' AND data = ? LIMIT 1")
+      .get(JSON.stringify(data));
+    if (already) return { issue: issueId, origin, boardTitle, docTitle, recorded: false };
     this.addEvent('origin.drift', {
       issue: issueId,
       agent: agent ?? this.identity?.agentId ?? 'unknown',
       message: `the document's ${origin} is now "${docTitle}"; the board has "${boardTitle}"`,
-      data: { origin, board_title: boardTitle, doc_title: docTitle },
+      data,
     });
-    return { issue: issueId, origin, boardTitle, docTitle };
+    return { issue: issueId, origin, boardTitle, docTitle, recorded: true };
   }
 
   issueFiles(issueId) {
@@ -1332,6 +1453,14 @@ export class Board {
     const who = agent ?? this.identity?.agentId;
     const normalized = this.toRepoPath(path);
     if (normalized === undefined) return { path, free: true, holders: [] };
+    // An absolute path that survived the prefix strip is OUTSIDE every worktree
+    // of this repository, so the board has no lock on it and cannot say it is
+    // free — `hold` refuses such a path outright, and `check` answering "free"
+    // where `hold` answers "no" is the disagreement that lets a shell gate on
+    // the wrong one.
+    if (normalized.startsWith('/')) {
+      return { path: normalized, free: false, holders: [], outside: true };
+    }
     const holders = this.liveLocks(at).filter((lock) => lock.path === normalized && lock.agent_id !== who);
     return { path: normalized, free: holders.length === 0, holders };
   }
@@ -1413,6 +1542,20 @@ export class Board {
       this.db
         .prepare('UPDATE issues SET status = ?, verified_by = ?, verified_at = ?, updated_at = ? WHERE id = ?')
         .run('closed', verifier, this.iso(), this.iso(), id);
+      /**
+       * A closed issue is finished and VERIFIED, so nobody is editing its files
+       * any more — and holding them until the lease runs out reserves work that
+       * is already done for up to 45 minutes, after which `doctor` has to be
+       * run to give the files back. Closing is the right place to release: not
+       * at `resolve`, where the fixer may still be running tests, and not later.
+       */
+      const claim = this.liveClaimOrNull(id);
+      if (claim) {
+        this.db
+          .prepare('UPDATE claims SET released_at = ?, lease_until = ? WHERE issue_id = ?')
+          .run(this.iso(), this.iso(), id);
+      }
+      this.releaseIssueLocksInTransaction(id);
       this.addEvent('issue.close', {
         issue: id,
         agent: who,
@@ -1542,6 +1685,71 @@ function existsDir(path) {
 }
 
 /**
+ * Collapses `.` and `..` segments lexically.
+ *
+ * `src/../src/held.ts` and `src/held.ts` are the same file, and a lock that
+ * treats them as two lets the second agent take a file the first is in. This is
+ * lexical on purpose — `resolve` would touch the filesystem, and the point of
+ * comparing paths is that the file may not exist yet.
+ */
+/**
+ * A title, folded to the form two spellings of the same sentence share.
+ *
+ * Drift is a comparison of titles, so anything a word processor or a later hand
+ * changes incidentally — an em-dash for a hyphen, a curly quote, a trailing
+ * period, a re-wrapped heading — turns a routine rewording into "the document's
+ * item 2 is a different defect", permanently, reported on every import. The
+ * comparison has to see through typography or it will cry wolf until an agent
+ * stops reading it.
+ */
+export function foldTitle(title) {
+  return String(title ?? '')
+    .replace(/[‐-―−]/g, '-')
+    .replace(/[‘’‛]/g, "'")
+    .replace(/[“”‟]/g, '"')
+    .replace(/[.]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * The priority a title states for itself, if any.
+ *
+ * The handoff documents label their entries `P0`–`P3`, and the board has four
+ * levels, so the mapping is direct. It lives here rather than in the import
+ * because it is a property of a TITLE, not of where the title came from: when
+ * `board new` and `board import` disagreed about `P0 — …`, the same defect had
+ * two urgencies depending on which command filed it.
+ */
+const SEVERITY_HEADING = /^P(\d{1,3})\b/i;
+const SEVERITY_TO_PRIORITY = { 0: 'critical', 1: 'high', 2: 'normal', 3: 'low' };
+
+export function priorityFromTitle(title) {
+  const match = SEVERITY_HEADING.exec(String(title ?? '').trim());
+  if (!match) return null;
+  return SEVERITY_TO_PRIORITY[Number(match[1])] ?? null;
+}
+
+function collapseSegments(path) {
+  const segments = [];
+  for (const segment of path.split('/')) {
+    if (segment === '.' || segment === '') {
+      if (segments.length === 0 && segment === '') segments.push('');
+      continue;
+    }
+    if (segment === '..') {
+      if (segments.length > 0 && segments.at(-1) !== '..') segments.pop();
+      else segments.push('..');
+      continue;
+    }
+    segments.push(segment);
+  }
+  const collapsed = segments.join('/');
+  return collapsed === '' ? '.' : collapsed;
+}
+
+/**
  * Paths are recorded as repo-relative, POSIX-separated, so that a lock taken
  * in one worktree matches the same file named in another.
  *
@@ -1573,9 +1781,14 @@ export function normalizePaths(paths, { worktree = null, roots = null } = {}) {
         break;
       }
     }
-    // A bare worktree path normalises to nothing, and a lock on the empty string
-    // is a lock on a file no agent can name — so it is dropped, not stored.
-    if (normalized === '') continue;
+    // AFTER the prefix strip, so `a/b/../b/c` inside a worktree collapses too.
+    // Skipping this let `check src/../src/held.ts` report a held file as FREE,
+    // which is the one answer this board must never get wrong.
+    normalized = collapseSegments(normalized);
+    // A bare worktree path collapses to nothing, and a lock on `.` — or on the
+    // empty string — is a lock on a file no agent can name, so both are dropped
+    // rather than stored.
+    if (normalized === '' || normalized === '.') continue;
     if (!out.includes(normalized)) out.push(normalized);
   }
   return out;
