@@ -41,20 +41,8 @@ reason is the first entry below.
 On the default (headless) configuration **nothing fails**: 97 pass, 2 are skipped by
 declaration, and that is stable across repeated full runs.
 
-Three defect groups used to fail here and have been fixed in this repository. Their
-evidence is kept below rather than deleted, because each explains a shape the suite
-must not drift back into:
-
-| was failing                           | was                                     | now                                            |
-| ------------------------------------- | --------------------------------------- | ---------------------------------------------- |
-| `e2e/helpers/cdp-helpers.spec.ts`     | 2 headless, 5 headed, disjoint per mode | scale-agnostic contract; mode-independent      |
-| `e2e/sidebar-keyboard.spec.ts:76, 88` | 0–2, ~42% of headless runs              | root-caused to an rAF focus race, then awaited |
-| `e2e/levels.spec.ts:64, 109`          | 2, both modes                           | canvas found by test id, not document order    |
-
-All of these were introduced with the specs and were independent of how they were
-moved into this repository: each was reproducible with no changes to the specs or
-to `src/`. The remaining entries below are latent defects that no current run
-trips — none of them is a known failure.
+The entries below are latent defects that no current run trips — none of them is a
+known failure.
 
 ### Invariant — headless is the default, and the refusal is structural
 
@@ -79,10 +67,10 @@ then get recorded as "flaky" and neither gets fixed.
 operator-input-caused failure has been reproduced in this suite: the one
 intermittent failure on record before headless became the default
 (`sidebar-keyboard.spec.ts:88`) turned out to be a real race that fires in headless
-runs with no operator input at all — see the Enter entry below. The hazard is
-reported as recurring across this project's test work generally, which is why the
-default is structural rather than procedural: it removes the failure class instead
-of relying on everyone to remember.
+runs with no operator input at all; the mechanism is recorded at
+`sidebar-keyboard.spec.ts:5-10`. The hazard is reported as recurring across this
+project's test work generally, which is why the default is structural rather than
+procedural: it removes the failure class instead of relying on everyone to remember.
 
 Headless is also simply better for this suite, and that part is measured. The
 failure sets are disjoint per mode and deterministic across repeats:
@@ -92,8 +80,7 @@ failure sets are disjoint per mode and deterministic across repeats:
 | CDP, deriving expected size from `getDevicePixelRatio()` (`:113` `:129` `:146` `:163` `:195`) | 5 fail | pass     |
 | CDP, explicit `deviceScaleFactor: 2` block (`:220` `:239`)                                    | pass   | 2 fail   |
 
-So headless was the better mode even then, and both sets have since been fixed
-(below).
+So headless was the better mode even then, and both sets have since been fixed.
 
 **Headed runs are for looking at, not for gating on.** If you must run headed, a
 headless result is what CI will produce. The five CDP failures in the table above
@@ -106,185 +93,6 @@ so the tradeoff is visible at the moment it is accepted.
 `npm run test:e2e:ui` and `npm run test:e2e:debug` all bypass `use.headless` and open
 a real window, because that is what they are for. The rule applies to
 `npm run test:e2e` and to anyone interpreting its result.
-
-### Fixed — CDP capture size did not match `window.devicePixelRatio` (was P1)
-
-`e2e/helpers/cdp-helpers.spec.ts:113, 129, 146, 163, 195` (headed) and
-`:220, 239` (headless)
-
-The specs derive the expected capture size from the page's own
-`window.devicePixelRatio`:
-
-```ts
-const IMAGE_PIXELS_PER_CSS_PIXEL = await getDevicePixelRatio(page);
-expect(imageData.width).toBe(box.width * IMAGE_PIXELS_PER_CSS_PIXEL);
-```
-
-That assumes a CDP `Page.captureScreenshot` honours the _emulated_ DPR. It does
-not. Measured on a retina host against a 240x160 CSS canvas, headed, with
-`devices['Desktop Chrome']` (`deviceScaleFactor: 1`) in effect:
-
-```
-dpr=1  actual=480x320  css=240x160  ratio=2
-```
-
-The emulated ratio says 1, the capture is 2x, and the five assertions above are off
-by exactly the host's backing scale. The helper's own comment
-(`e2e/helpers/cdp-helpers.ts:39-51`) used to assert the opposite, that the result
-is `clip_size x clip.scale x deviceScaleFactor`.
-
-**The multiplier is not a function of the emulated ratio.** Forcing the emulation to
-match the host does not fix the specs; it changes which ones fail. Sweeping the
-project-level `deviceScaleFactor` over 1, 2 and 3 on this host gave the same capture
-width (480 for a 240px clip) in all three cases, while a run with the emulation
-pinned to 2 turned 5 failures into 8 — the three specs in the
-`deviceScaleFactor: 2` block, which pass at the default configuration, started
-failing too.
-
-**What is deterministic is the mode**, and the two modes fail on disjoint subsets:
-
-| specs                                                     | headed | headless |
-| --------------------------------------------------------- | ------ | -------- |
-| `:113` `:129` `:146` `:163` `:195` (derive from live DPR) | 5 fail | pass     |
-| `:220` `:239` (explicit `deviceScaleFactor: 2`)           | pass   | 2 fail   |
-
-Each column was reproduced identically across repeats, so this is a stable property
-of the mode, not flakiness. Headless is the better default and still leaves 2
-failures: with no emulated override the capture matches `devicePixelRatio` (so the
-five pass), but the block that _forces_ `deviceScaleFactor: 2` and then expects 2x
-does not get it.
-
-Fix direction: assert against the decoded image's own dimensions instead of
-`window.devicePixelRatio`, which makes the specs independent of host scale and of
-mode entirely. `screenshotBoundsToCss` and `screenshot-scale.ts` already derive
-scale from the decoded dimensions, so this also makes the specs consistent with the
-rest of the suite. The helper's comment at `cdp-helpers.ts:39-51` needed correcting
-either way.
-
-**How it was fixed.** The contract `imageWidth === rect.width * devicePixelRatio` was
-deleted rather than re-derived, because the quantity it names is not a property of
-this code — it is Chrome's surface scale, which is mode- and host-dependent. Asserting
-it is what kept the suite red in exactly the modes it was written to protect.
-
-Replacing it with "the scale is whatever the decoded image says" would have been
-tautological, so the replacement asserts the three things that are true everywhere
-and that consumers depend on: the capture is exactly the requested rect, at one
-integral scale shared by both axes, with the correct pixels (`expectFaithfulCaptureOf`,
-plus the existing colour assertions, which carry the spatial guarantee because the
-fixture is red on blue). A fourth property - that the helper adds no rescaling of its
-own - is pinned against a reference rather than a constant, by comparing the capture
-to `page.screenshot({ scale: 'device' })` on the same clip. That is what a
-self-referential size check cannot see: a uniform 2x rescale survived every other
-assertion until that test was added.
-
-Verified by mutation, not by the green bar:
-
-| mutation                                        | caught by                           |
-| ----------------------------------------------- | ----------------------------------- |
-| helper ignores the clip, captures the viewport  | 8 of 13 tests (colour assertions)   |
-| width captured at a different scale than height | 8 of 13 tests (`scaleY === scaleX`) |
-| uniform `clip.scale: 2`                         | the Playwright-reference test alone |
-
-The helper's comment was corrected in the same change; it now says the capture is
-native device pixels and that the scale must not be assumed.
-
-## Fixed since the suite moved into this repository
-
-- **The workspace canvas was resolved by document index** (was P1; it broke
-  `levels.spec.ts:64, 109` in both browser modes). `data-testid="workspace-canvas"`
-  is now published on the primary `<canvas>` in `src/components/Main/Main.tsx`, and
-  `getWorkspaceCanvas` is that single selector. Both specs pass, measured headless.
-  There is deliberately no positional fallback: a document index lands on the Draw
-  toolbar's 96x48 preview canvas, or on a `display: none` overlay once selecting
-  Levels unmounts it, which is what made `boundingBox()` null. The helper's comment
-  carries that reasoning.
-- **`.or()` is a union, not a priority** (was P1). Publishing the test id alone did
-  not fix the specs - `.or()` returns every element matched by _either_ side, so
-  `getByTestId(...).or(locator('canvas').nth(1))` resolved to 2 elements and every
-  `boundingBox()` raised a strict-mode violation. A single-selector locator matches
-  at most one element, which is why the test id and the helper could ship as one
-  change.
-- **The locator test double collapsed the union** (was P2). `resolveFakeLocator` took
-  `?.[0]`, so a correctly built union read as a clean single-element hit and the
-  intended-priority pins passed against semantics Playwright does not provide - which
-  is how the defect above survived the e2e helper unit suite. It is replaced by
-  `resolveFakeMatches`, which returns the whole match list; the five pins were
-  rewritten to the real contract and a sixth pins `.or()` as a union.
-
-`data-testid="reposition-hint-text"` was published on the Move hint in the same change,
-replacing two `getByText('Drag or resize on canvas')` lookups in `select-move.spec.ts`.
-
-- **The visual-regression comparison never ran** (was P1, and it made the committed
-  baselines disposable). `e2e/export/visual-regression.spec.ts` gated the
-  record-vs-compare branch on `if (testInfo.config.updateSnapshots)`, but that option
-  is a string union `'all' | 'changed' | 'missing' | 'none'` whose **default is
-  `'missing'`** (`playwright/lib/common/index.js`, `takeFirst(..., "missing")`), and
-  `'missing'` is truthy. `playwright.config.ts` never overrides it, so on every run the
-  branch was taken: `writeFile` overwrote the committed baseline and the test returned
-  three lines before `readFile(baselineFilePath)`, `compareScreenshots` and the
-  `expect`. All 7 comparison formats were a no-op that reported success.
-
-  The failure was invisible in `git status` because re-encoding the same export
-  produced byte-identical files. It was not visible in any test either: the 8 specs
-  passed, and `OPEN_PROBLEMS.md` recorded that as evidence the baselines matched.
-
-  Fixed to `if (testInfo.config.updateSnapshots === 'all')`, so only an explicit
-  `--update-snapshots` may re-record. Verified by mutation, not by the green bar:
-  corrupting a baseline now fails the spec (sharp decode error), and substituting a
-  valid-but-different PNG fails it with
-  `Visual mismatch for PNG: 480000 diff pixels (ratio: 1.0000)` - every pixel of
-  800x600. Under the old check both mutations were silently overwritten. The
-  baselines were confirmed untouched by a post-fix run (identical mtimes, `git status`
-  clean), which is the direct evidence that the compare path is now the one running.
-
----
-
-## Fixed before this suite was moved into the application repository
-
-Recorded so the same ground is not re-audited. Each was verified by mutation
-testing, not inspection.
-
-- `waitForFunction(fn, { timeout })` passed options in Playwright's `arg`
-  position, so the intended 60 s / 10 s budgets never applied
-  (`e2e/export/helpers.ts`). Fixed, and the mock signature was corrected so
-  the test file can no longer express the buggy call shape.
-- `visual-regression.spec.ts` read baselines from a per-run, gitignored path
-  while the committed baselines live in the snapshot dir — every one of the 7
-  comparison formats failed on a clean checkout. Fixed to
-  `testInfo.snapshotDir` (deliberately **not** `snapshotPath`, which appends
-  the project name and the OS and would make a baseline committed on one
-  machine read as missing on another).
-- `cdp-helpers.spec.ts` asserted a 120x80 CSS clip decodes to 120x80 at
-  `deviceScaleFactor: 2`. Chromium returns `clip x clip.scale x deviceScaleFactor`,
-  so all 3 tests in that block would have failed. Now scale-derived.
-- `levels.spec.ts` contrast test was empirically red (3 of 4 recorded attempts,
-  all-white capture). The redraw wait had been added to the first read but not
-  the second, and the bounding box was captured before opening the flyout, so
-  the clip could miss the stroke entirely. Both reads now poll after a fresh box.
-- `resolveToolName` indexed a plain object literal, so `constructor`,
-  `toString`, `__proto__` and friends resolved to inherited functions and threw
-  `TypeError: name.toLowerCase is not a function` — defeating the actionable
-  error message that had just been added. Both maps are now null-prototype
-  (`e2e/helpers/toolbar-helpers.ts:13`).
-- `npm test` set `CI=true`, which silently flipped `forbidOnly`, `retries: 2`,
-  headless mode and the reporter on a developer's machine.
-- `reuseExistingServer` defaulted to `true` in CI, so CI reused whatever was
-  listening on :5173 and the webServer gate never ran.
-- Two `page.evaluate` pixel-comparison closures were never invoked by any test;
-  mutation testing showed both could `return true` unconditionally with the
-  suite still green. Now executed against a stubbed canvas.
-- Threshold constants were pinned only against the symbols the source itself
-  used, so `50_000 -> 500_000` passed. Now pinned to literals.
-- `verifyHoverDoesNotOpenFlyout` could not fail: the fake's `hover` invoked no
-  handler, so the flyout was closed for any implementation. The fake is now
-  wired, and a positive control proves the threshold is real.
-- `waitForCanvasRedraw` — a 28-line poll loop with 4 direct call sites across 3 spec
-  files (`e2e/example.spec.ts:26`, `e2e/viewport-drawing.spec.ts:33`,
-  `e2e/select-move.spec.ts:39` and `:72`) plus 2 indirect ones in
-  `e2e/export/helpers.ts:110` and `:263`, had zero unit coverage. Now 32 tests,
-  and it delegates to a single shared implementation.
-
----
 
 ## P2 — an empty CDP capture is reported as a successful capture
 
@@ -361,7 +169,7 @@ opaque. Callers must reject empty images first.
 
 ## P3 — transparent pixels weighted as fully opaque (low confidence)
 
-`e2e/helpers/canvas-helpers.ts:231` and `:507` **[pinned]**
+`e2e/helpers/canvas-helpers.ts:231` and `:525` **[pinned]**
 
 `dominantRed` and `getColorAtPoint` skip only `alpha === 0`, so a nearly
 invisible pixel counts at full weight. A weighting concern rather than a
@@ -423,7 +231,7 @@ The guard exists and is the same shape as `canvas-helpers.ts:207-209`, but it is
 the module's only uncovered statement: `npm run test:e2e:unit:coverage` reports
 `cdp-helpers.ts` at 93.75% statements and 93.33% lines with line 34 — the `throw` —
 uncovered, against 100% of its functions. The sibling guard is pinned
-(`e2e/helpers/__tests__/canvas-interaction.unit.test.ts:192-216`), so nothing fails
+(`e2e/helpers/__tests__/canvas-interaction.unit.test.ts:199-223`), so nothing fails
 if this one is deleted, and the raw V8 failure it exists to replace
 (`The "path" argument must be of type string. Received undefined`) returns with it.
 
@@ -432,57 +240,6 @@ Fix: add the two cases to `e2e/helpers/__tests__/cdp-helpers.unit.test.ts` — a
 own message and that no CDP session was opened. `createTestInfoMock()`
 (`e2e/helpers/__tests__/canvas-helpers.fixtures.ts:121`) already makes `outputDir`
 optional, so the double needs no change.
-
-## Fixed — Enter did not reliably close the flyout (was P2, a real race)
-
-`e2e/sidebar-keyboard.spec.ts:76` and `:88`
-
-`expect(locator).toBeHidden() failed — waiting for getByRole('menu')`, at the
-assertion that follows `page.keyboard.press('Enter')`.
-
-Observed in **4 of 5 headless runs** (individual test failures: 1, 2, 1, 1, 0),
-with no operator input of any kind. That is what establishes this as a genuine race
-rather than the headed-input hazard above, and it means **headless does not fix
-it**. It was previously recorded only as "flaky at roughly 1 run in 5" from a single
-headed observation; headless is what showed the real rate.
-
-Headed rate is not established: 0 failures in 2 observed headed runs, which is not
-enough to claim it is mode-independent. It is only established that the race fires
-headless.
-
-**The mechanism was never "the flyout closes asynchronously".** That was the reading
-this entry used to stop at. It is diagnosed, and the diagnosis is elsewhere:
-`SidebarLeft.tsx` focuses the flyout's first item from a `requestAnimationFrame`
-callback in the tool button's keydown handler, _not_ in the React commit that mounts
-the menu. "The menu is visible" and "an item holds focus" are therefore two different
-moments, one animation frame apart.
-
-`openToolFlyoutViaKeyboard` waited only on visibility, so it could return inside that
-gap. The test's next `ArrowDown`/`Enter` then landed on the **tool button** handler
-again, which re-opens the flyout rather than navigating or activating it - so Enter
-left the flyout open, and the following `toBeHidden()` timed out after 5 s.
-
-**Fixed** by waiting for the app to actually take focus before returning. Measured
-on the same host, same command, 12 consecutive runs of the two Enter tests:
-
-| variant                            | failures |
-| ---------------------------------- | -------- |
-| wait on visibility only (previous) | 5 of 12  |
-| wait on the promised item's focus  | 0 of 12  |
-
-Two details the fix had to get right, both found by the first version failing:
-
-- The readiness wait belongs to the keyboard opener, not to `waitForFlyout`. The
-  right-click path never focuses an item, so a shared assertion would break it.
-- `ArrowUp` focuses the **last** item, not the first (`SidebarLeft.tsx`:
-  `event.key === 'ArrowUp' ? items.length - 1 : ...`). A single `.first()` assertion
-  is simply wrong for that key and was caught by running the file.
-
-Since the race was the suite's last intermittent failure, `openToolFlyoutViaKeyboard`'s
-unit pins were extended to cover the new contract: a two-item flyout so "first" and
-"last" are distinguishable, the correct end asserted per key, single-valued focus in
-the double, and a case that rejects when the flyout opens but nothing takes focus.
-Removing the readiness wait fails that last one.
 
 ## Known-skip tests
 
@@ -503,8 +260,7 @@ single-tool groups`.
   decodes and matches its committed pixels on this host. The ICO spec passes
   in-browser against the source canvas.
 
-  **This was not true until the `updateSnapshots` guard was fixed — see that entry
-  above.** The check that produced this claim was `if (testInfo.config.updateSnapshots)`,
+  The check that produced this claim was `if (testInfo.config.updateSnapshots)`,
   and Playwright's default for that option is the string `'missing'`, so the branch was
   always taken: every run re-recorded the baseline and returned before
   `compareScreenshots`. The comparison below it was unreachable, so "matches the
@@ -513,14 +269,6 @@ single-tool groups`.
   with a sharp decode error, and a valid-but-different baseline fails with
   `Visual mismatch for PNG: 480000 diff pixels (ratio: 1.0000)`. Before the fix both
   were silently overwritten and the spec passed.
-
-- The CDP failing set used to be deterministic per browser mode with disjoint sets:
-  headed failed `:113 :129 :146 :163 :195`, headless failed `:220 :239`,
-  reproduced identically across repeats. Both sets are now empty, and the new
-  assertions are mode-independent by construction rather than by observation.
-- `levels.spec.ts:64` and `:109` used to fail in both modes, 2/2 each, which is
-  what established the `getWorkspaceCanvas` index shift as a real defect rather
-  than a mode artifact. Both pass now that the canvas is found by test id.
 
 **Not verified:**
 

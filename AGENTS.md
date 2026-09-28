@@ -156,11 +156,10 @@ assertions, no re-recorded visual baselines.
 On the default headless run **no e2e test fails**: 97 pass, 2 are skipped by
 declaration. That is stable across repeated full runs. Three defect groups used to
 fail here and have since been fixed in this repository — the CDP capture-size
-assertions, the keyboard flyout race, and the `levels.spec.ts` canvas lookup. Their
-pin survives in `e2e/OPEN_PROBLEMS.md` rather than being deleted, because each
-explains a shape the suite must not drift back into. That pin is the whole of the
-allowed residue: it lives only as long as the tripwire does, and the fix that
-removes the tripwire removes the entry with it.
+assertions, the keyboard flyout race, and the `levels.spec.ts` canvas lookup. Each
+explains a shape the suite must not drift back into, and that shape is now held by a
+tripwire in the test code rather than by a paragraph in a doc: the fix removed the
+entry and pinned the replacement contract in the same change.
 
 The remaining `e2e/OPEN_PROBLEMS.md` entries are **latent** defects that no current
 run trips. Read it before investigating a failure; if a test does fail, the answer is
