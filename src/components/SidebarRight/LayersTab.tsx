@@ -86,7 +86,7 @@ export default function LayersTab() {
       {sortedLayers.length === 0 ? (
         <div className="text-sm text-gray-500 dark:text-gray-400">No layers yet.</div>
       ) : (
-        <ul className="flex flex-col list-none p-0 pt-1 gap-1 overflow-y-auto min-h-0">
+        <ul data-testid="layers-list" className="flex flex-col list-none p-0 pt-1 gap-1 overflow-y-auto min-h-0">
           {sortedLayers.map((layer, index) => {
             const isActive = activeLayerId === layer.id;
             const isPickedLayer = draggedLayerId === layer.id;
@@ -99,6 +99,7 @@ export default function LayersTab() {
             return (
               <li
                 key={layer.id}
+                data-testid="layer-row"
                 ref={(el) => {
                   listItemRefs.current[layer.id] = el;
                 }}
@@ -185,6 +186,7 @@ export default function LayersTab() {
 
                   <div className="flex-1 min-w-0" onClick={(e) => isEditable && e.stopPropagation()}>
                     <span
+                      data-testid="layer-name"
                       contentEditable={isEditable}
                       suppressContentEditableWarning
                       onMouseDown={(e: React.MouseEvent<HTMLDivElement>) => {
