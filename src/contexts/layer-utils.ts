@@ -3,9 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Layer, LayerId, LayerOperation, LayerOperationArgs, LayerSource, LayersRecord } from './layer-types.ts';
 import { type CreatorToolParams, findToolProcessor } from '../tools/toolProcessors.ts';
 import { isPaintBlendMode } from '../tools/brush.ts';
-import type { BitmapSource, Point, Pos } from './general-types.ts';
+import type { Point, Pos } from './general-types.ts';
 import { ellipsify } from '../util/string.ts';
-import { materializePresentationBitmap } from './layer-presentation.ts';
 import type { AffineTransform } from './affine-transform.ts';
 import { isPointInLayer } from './affine-transform.ts';
 import type { ToolArgs } from './tool-types.ts';
@@ -105,19 +104,6 @@ export const maxLayerOrder = (layers: LayersRecord) => {
 //
 //   return { bitmap: canvas, historyLength, size: newSize };
 // }
-
-/**
- * Materializes a layer's disposable presentation canvas into an ImageBitmap.
- *
- * The bitmap is returned to the caller and is never written into `Layer`. A
- * published runtime layer is owned by the store, so promoting a cache into it is
- * a reducer publication rather than a late mutation of a record the caller
- * already dispatched.
- */
-export function saveLayerCanvas(layer: Layer): Promise<BitmapSource | undefined> | undefined {
-  if (!layer.tmpCanvas) return undefined;
-  return materializePresentationBitmap(layer.tmpCanvas);
-}
 
 export function createLayerOperation(args: LayerOperationArgs, id = uuidv4()): LayerOperation {
   // Keep the legacy filter shape readable; the optional `kind: 'filter'`

@@ -38,10 +38,10 @@ function cycleToolGroup(currentTool: ToolName, group: readonly ToolName[]) {
 }
 
 export const AppKeyboardShortcuts = () => {
-  const [{ hasImage, isToolDirty, toolName }] = useStore();
+  const [{ hasImage, toolName }] = useStore();
   const { canUndo, undo, canRedo, redo } = useHistory();
   const { goToTool } = useApp();
-  const { toolArgs, patchToolArgs, resetToLastSavedArgs } = useCurrentTool();
+  const { toolArgs, patchToolArgs } = useCurrentTool();
   const { copyActiveSelection, pasteSelectionClipboard, layerViaCopy } = useSelectionClipboard();
 
   const selectBrushTool = (shiftKey = false) => {
@@ -162,11 +162,6 @@ export const AppKeyboardShortcuts = () => {
     preventDefault: true,
     enabled: hasImage,
     onKeyDown: () => {
-      if (isToolDirty) {
-        resetToLastSavedArgs();
-        return;
-      }
-
       if (canUndo()) {
         undo();
       }

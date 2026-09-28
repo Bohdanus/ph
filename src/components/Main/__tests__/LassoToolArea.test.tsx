@@ -501,7 +501,14 @@ describe('PolygonClickToolArea', () => {
     });
   });
 
-  it('drops an abandoned drag when the pointer leaves the surface', () => {
+  it('commits the drag on the release that follows a pointer leave', () => {
+    // §34 parity. This used to be 'drops an abandoned drag when the pointer
+    // leaves the surface', which pinned the OPPOSITE of the rectangle: the
+    // rectangle captures its pointer, so a release outside the surface still
+    // reaches `useRect` and commits, while this surface aborted on
+    // `pointerleave` and the move was lost with no history entry at all. The drag
+    // now takes the surface's capture on `pointerdown`, so leaving is an
+    // interruption the browser follows with a release here.
     storeState.activeSelectionId = 'selection-1';
     storeState.selections = [
       {
@@ -522,16 +529,28 @@ describe('PolygonClickToolArea', () => {
     );
     const toolArea = container.firstElementChild as HTMLDivElement;
 
-    fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 40 });
-    fireEvent.pointerMove(toolArea, { clientX: 90, clientY: 55 });
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 80, clientY: 40 });
+    fireEvent.pointerMove(toolArea, { pointerId: 1, clientX: 90, clientY: 55 });
     vi.mocked(mockCtx.moveTo).mockClear();
 
-    fireEvent.pointerLeave(toolArea, { clientX: 90, clientY: 55 });
+    fireEvent.pointerLeave(toolArea, { pointerId: 1, clientX: 90, clientY: 55 });
 
-    // No history, and the overlay is back to the stored geometry: the move only
-    // ever lived in the drag ref, so dropping it needs no rollback.
+    // The leave is not the end of the gesture, so nothing is written yet — the
+    // drag is still running and the preview still stands.
     expect(selectionEdits()).toHaveLength(0);
-    expect(mockCtx.moveTo).toHaveBeenCalledWith(10, 10);
+
+    fireEvent.pointerUp(toolArea, { pointerId: 1, clientX: 90, clientY: 55 });
+
+    // The move the user watched happen commits, as one `'move'` entry. The
+    // previous comment here claimed the drop "needs no rollback" because the move
+    // only ever lived in the drag ref; that was true of the geometry and false
+    // about the consequence — the work was gone, and no entry recorded it.
+    expect(selectionEdits()).toHaveLength(1);
+    expect(committedSelection()).toMatchObject({
+      id: 'selection-1',
+      metadata: { movedAtVersion: 1 },
+      pos: { x: 19, y: 24, width: 92, height: 92 },
+    });
   });
 
   it('changes cursor when hovering a committed anchor point', () => {

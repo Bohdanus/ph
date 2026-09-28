@@ -56,7 +56,6 @@ export type ToolCommitKind =
 
 export type ToolProcessorDefinition = {
   creator?: boolean;
-  flattenRequired?: boolean;
   commit: ToolCommitKind;
   replay: Readonly<{
     kind: ToolReplayKind;

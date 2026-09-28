@@ -1,6 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { KeyboardEventsProvider, useKeyDownShortcut, type KeyboardShortcut } from '../useKeyboardEvents';
+import {
+  claimDocumentGesture,
+  isDocumentGestureOpen,
+  releaseDocumentGesture,
+  resetDocumentGestures,
+} from '../document-gesture';
 
 const ShortcutProbe = ({ shortcut }: { shortcut: KeyboardShortcut }) => {
   useKeyDownShortcut(shortcut);
@@ -342,6 +348,157 @@ describe('useKeyboardEvents', () => {
       fireEvent.keyDown(slider, { key: 'Delete' });
 
       expect(onKeyDown).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /**
+   * §47: a gesture that commits on release holds the document, and a
+   * document-mutating shortcut pressed in that window corrupts it — undo/redo
+   * replaces `selections` from the SAME `history` array, so `history.length`
+   * never moves and the pending commit's truncate then destroys the redo tail
+   * with no other symptom. The gate is the input layer, so the refusal is
+   * observable here as the handler never running.
+   */
+  describe('document gesture gate', () => {
+    // The gesture slot is module-level and outlives every mount, so a case that
+    // leaks a claim would refuse every later keystroke in this file — and a
+    // failure in one case would read as a failure in all of them. Torn down
+    // after every case, deliberately.
+    afterEach(() => {
+      resetDocumentGestures();
+    });
+
+    it('refuses a document-mutating shortcut while a gesture is open', () => {
+      const onKeyDown = vi.fn();
+
+      render(
+        <KeyboardEventsProvider>
+          <ShortcutProbe shortcut={{ key: 'z', mod: true, onKeyDown }} />
+        </KeyboardEventsProvider>
+      );
+
+      claimDocumentGesture('rectangular-selection', 1);
+      fireEvent.keyDown(document, { key: 'z', metaKey: true });
+
+      expect(onKeyDown).not.toHaveBeenCalled();
+    });
+
+    it('runs the same shortcut again once the gesture is released', () => {
+      const onKeyDown = vi.fn();
+
+      render(
+        <KeyboardEventsProvider>
+          <ShortcutProbe shortcut={{ key: 'z', mod: true, onKeyDown }} />
+        </KeyboardEventsProvider>
+      );
+
+      claimDocumentGesture('rectangular-selection', 1);
+      fireEvent.keyDown(document, { key: 'z', metaKey: true });
+      releaseDocumentGesture('rectangular-selection', 1);
+      fireEvent.keyDown(document, { key: 'z', metaKey: true });
+
+      // The gate is a window, not a one-way switch: with no gesture open the
+      // shortcut is the ordinary registration again.
+      expect(onKeyDown).toHaveBeenCalledTimes(1);
+    });
+
+    it('refuses a registration that never mentions mutatesDocument, because the default is safe', () => {
+      const onKeyDown = vi.fn();
+
+      render(
+        <KeyboardEventsProvider>
+          <ShortcutProbe shortcut={{ key: 'v', onKeyDown }} />
+        </KeyboardEventsProvider>
+      );
+
+      claimDocumentGesture('polygon-selection', 4);
+      fireEvent.keyDown(document, { key: 'v' });
+
+      expect(onKeyDown).not.toHaveBeenCalled();
+    });
+
+    it('runs a registration that opted out, so a gesture can still be ended by the keyboard', () => {
+      const onKeyDown = vi.fn();
+
+      render(
+        <KeyboardEventsProvider>
+          <ShortcutProbe shortcut={{ key: 'Escape', allowInInput: true, mutatesDocument: false, onKeyDown }} />
+        </KeyboardEventsProvider>
+      );
+
+      // The exemption is what keeps the gate from bricking a gesture: `Escape` is
+      // the designed way out of the draft the gesture is drawing, and `Enter` is
+      // its end. Refusing either would leave the user holding a pointer they
+      // cannot finish.
+      claimDocumentGesture('polygon-selection', 4);
+      fireEvent.keyDown(document, { key: 'Escape' });
+
+      expect(onKeyDown).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the browser default alone and falls through to a lower-priority match, exactly like a disabled shortcut', () => {
+      const refused = vi.fn();
+      const lowerPriority = vi.fn();
+
+      render(
+        <KeyboardEventsProvider>
+          {/* Registered first, so the refused one is the later match. The
+              fall-through is only observable for a registration that is not
+              itself gated, which is the real shape: a component's own `Escape`
+              (exempt) loses the key to a refused document-mutating match and
+              then gets it back. */}
+          <ShortcutProbe shortcut={{ key: 'k', mutatesDocument: false, onKeyDown: lowerPriority }} />
+          <ShortcutProbe shortcut={{ key: 'k', preventDefault: true, onKeyDown: refused }} />
+        </KeyboardEventsProvider>
+      );
+
+      claimDocumentGesture('layer-transform', 2);
+      const keyDownEvent = new KeyboardEvent('keydown', { key: 'k', cancelable: true, bubbles: true });
+      document.dispatchEvent(keyDownEvent);
+
+      expect(refused).not.toHaveBeenCalled();
+      // The gate sits NEXT TO `enabled`, not after `preventDefault`, so a refusal
+      // never hands the browser a default it has not had — the app has to keep
+      // cancelling it for the lifetime of a press it might legitimately claim
+      // later, and `preventDefault` here would be exactly that claim.
+      expect(keyDownEvent.defaultPrevented).toBe(false);
+      // And it is a `continue`, not a `break`: the loop keeps looking, so a
+      // registration the gesture does not gate is still reachable.
+      expect(lowerPriority).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts with no gesture open, so a claim leaked by a previous mount cannot gate this one', () => {
+      const onKeyDown = vi.fn();
+
+      // Leaked from a mount that is already gone — the hazard a module-level slot
+      // creates, and the reason the provider clears it on mount.
+      claimDocumentGesture('brush-stroke', 3);
+
+      render(
+        <KeyboardEventsProvider>
+          <ShortcutProbe shortcut={{ key: 'v', onKeyDown }} />
+        </KeyboardEventsProvider>
+      );
+
+      fireEvent.keyDown(document, { key: 'v' });
+
+      expect(isDocumentGestureOpen()).toBe(false);
+      expect(onKeyDown).toHaveBeenCalledTimes(1);
+    });
+
+    it('drops the claim when the provider unmounts, so a dead mount cannot leave the keyboard dead', () => {
+      const onKeyDown = vi.fn();
+
+      const { unmount } = render(
+        <KeyboardEventsProvider>
+          <ShortcutProbe shortcut={{ key: 'v', onKeyDown }} />
+        </KeyboardEventsProvider>
+      );
+
+      claimDocumentGesture('shape-draw', 6);
+      unmount();
+
+      expect(isDocumentGestureOpen()).toBe(false);
     });
   });
 });

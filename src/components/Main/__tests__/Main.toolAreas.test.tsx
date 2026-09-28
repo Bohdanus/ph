@@ -121,6 +121,8 @@ beforeEach(() => {
   storeState.hasImage = true;
   storeState.hasUnsavedChanges = false;
   storeState.toolName = 'reposition';
+  storeState.totalSize = { width: 640, height: 480 };
+  storeState.documentFrame = { x: 0, y: 0, width: 640, height: 480 };
   storeState.currentArgs = { current: { toolName: 'brush' } as ToolArgs };
   loadDocumentFile.mockResolvedValue({ fileName: 'photo.png' });
   setImageFromUpload.mockResolvedValue(undefined);
@@ -320,15 +322,38 @@ describe('Main tool-area routing', () => {
     }
   });
 
-  it('sizes both overlays to the document and enables smoothing on the main canvas', () => {
+  it('sizes both overlays to the document', () => {
     render(<Main />);
 
-    const [canvas, toolOverlay, rectOverlay] = canvases(document.body);
-    expect([canvas, toolOverlay, rectOverlay].map((el) => [el.width, el.height])).toEqual([
-      [300, 150],
+    const [, toolOverlay, rectOverlay] = canvases(document.body);
+    expect([toolOverlay, rectOverlay].map((el) => [el.width, el.height])).toEqual([
       [640, 480],
       [640, 480],
     ]);
+  });
+
+  it('leaves the workspace canvas to the CSS box and to useApp, never sizing it from the document', () => {
+    // `Main`'s `useLayoutEffect` sizes the two overlays from `totalSize`. The workspace canvas is
+    // deliberately absent from it: the drawing surface is CSS-sized to its container
+    // (`h-full w-full object-contain`) and `useApp` owns its backing store, so a `resizeCanvas`
+    // call here would fight that and resize a buffer nothing reads.
+    //
+    // The guard is relational on purpose. The old form asserted `[300, 150]`, which is jsdom's
+    // default and a value no one in this app chose — it would pin an environment artefact as
+    // though it were a product decision, and it would only say anything at all because `Main`
+    // happens not to write those attributes. So instead: the workspace canvas's backing store
+    // must not follow the document size, and the overlays are asserted to have followed it, which
+    // is what stops "unchanged" from passing merely because the sizing effect never ran.
+    const { rerender } = render(<Main />);
+    const [workspace, toolOverlay, rectOverlay] = canvases(document.body);
+    const untouched = [workspace.width, workspace.height];
+
+    storeState.totalSize = { width: 800, height: 600 };
+    rerender(<Main />);
+
+    expect([workspace.width, workspace.height]).toEqual(untouched);
+    expect([toolOverlay.width, toolOverlay.height]).toEqual([800, 600]);
+    expect([rectOverlay.width, rectOverlay.height]).toEqual([800, 600]);
   });
 
   it('repaints every layer when the document frame changes', () => {

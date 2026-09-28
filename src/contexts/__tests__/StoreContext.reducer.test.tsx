@@ -170,35 +170,17 @@ describe('StoreContext scalar and tool actions', () => {
     expect(store().durableStatus).toBe('stale');
   });
 
-  it('SET_TOOL_DIRTY ignores an unchanged flag and applies a real change', () => {
-    const { getProbe, store, dispatch } = renderWithProbe();
-
-    const before = getProbe().store;
-    act(() => {
-      dispatch()({ type: 'SET_TOOL_DIRTY', payload: false });
-    });
-    expect(getProbe().store).toBe(before);
-
-    act(() => {
-      dispatch()({ type: 'SET_TOOL_DIRTY', payload: true });
-    });
-    expect(store().isToolDirty).toBe(true);
-  });
-
-  it('SET_TOOL_NAME clears the dirty flag in the same atomic transition', () => {
+  it('SET_TOOL_NAME publishes the tool name without flagging unsaved changes', () => {
     const { store, dispatch } = renderWithProbe();
-
-    act(() => {
-      dispatch()({ type: 'SET_TOOL_DIRTY', payload: true });
-    });
-    expect(store().isToolDirty).toBe(true);
 
     act(() => {
       dispatch()({ type: 'SET_TOOL_NAME', payload: 'draw' });
     });
 
     expect(store().toolName).toBe('draw');
-    expect(store().isToolDirty).toBe(false);
+    // Selecting a tool is not a document edit, and it writes no durable input.
+    expect(store().hasUnsavedChanges).toBe(false);
+    expect(store().durableStatus).toBe('unavailable');
   });
 
   it('SET_COLOR and SET_BACKGROUND_COLOR are independent', () => {
@@ -256,7 +238,7 @@ describe('StoreContext layer action table', () => {
     expect(getProbe().store.durableStatus).toBe('stale');
   });
 
-  it('UPDATE_LAYERS flags unsaved changes and marks a converted sidecar stale', () => {
+  it('COMMIT_DOCUMENT_EDIT flags unsaved changes and publishes the append against a converted sidecar', () => {
     const { getProbe, store, dispatch } = renderWithProbe();
 
     act(() => {
@@ -267,14 +249,20 @@ describe('StoreContext layer action table', () => {
     });
     expect(store().durableStatus).toBe('current');
     expect(store().hasUnsavedChanges).toBe(false);
+    expect(store().durableDocument!.history).toHaveLength(0);
 
     act(() => {
-      dispatch()({ type: 'UPDATE_LAYERS', payload: { [layerId]: makeLayer() } });
+      dispatch()({ type: 'COMMIT_DOCUMENT_EDIT', payload: { historyItem: toolItem('blur-edit', 'blur') } });
     });
 
     expect(store().hasUnsavedChanges).toBe(true);
-    expect(store().durableStatus).toBe('stale');
-    expect(getProbe().store.durableStatus).toBe('stale');
+    expect(store().history).toHaveLength(2);
+    // The three document writers are the only paths that leave `stale` behind:
+    // a commit either publishes the planned append or reconverts the timeline,
+    // and each of those writes the status the conversion produced. The durable
+    // shadow therefore stays an exact projection across a document edit.
+    expect(getProbe().store.durableStatus).toBe('current');
+    expect(getProbe().store.durableDocument!.history).toHaveLength(1);
   });
 
   it('SET_ACTIVE_LAYER ignores the already focused layer and applies a change', () => {
@@ -313,7 +301,7 @@ describe('StoreContext layer action table', () => {
     expect(store().durableStatus).toBe('current');
   });
 
-  it('BATCH_UPDATES applies every field and marks a converted sidecar stale', () => {
+  it('BATCH_UPDATES applies its metadata fields and marks a converted sidecar stale', () => {
     const { store, dispatch } = renderWithProbe();
 
     act(() => {
@@ -322,13 +310,12 @@ describe('StoreContext layer action table', () => {
     act(() => {
       dispatch()({
         type: 'BATCH_UPDATES',
-        payload: { fileName: 'batch.psd', hasImage: true, isToolDirty: true, color: '#0f0f0f' },
+        payload: { fileName: 'batch.psd', hasImage: true, color: '#0f0f0f' },
       });
     });
 
     expect(store().fileName).toBe('batch.psd');
     expect(store().hasImage).toBe(true);
-    expect(store().isToolDirty).toBe(true);
     expect(store().color).toBe('#0f0f0f');
     expect(store().durableStatus).toBe('stale');
   });
@@ -623,7 +610,6 @@ describe('StoreContext durable staleness matrix', () => {
     ['SET_SIZE', { width: 123, height: 45 }],
     ['SET_LAYERS', { [layerId]: makeLayer() }],
     ['ADD_LAYER', { layers: { [layerId]: makeLayer() }, activeLayerId: layerId }],
-    ['UPDATE_LAYERS', { [layerId]: makeLayer() }],
   ] as const)('downgrades a converted sidecar to stale for %s', (actionType, payload) => {
     const { store, dispatch } = renderWithProbe();
 
@@ -1036,7 +1022,6 @@ describe('StoreContext provider-owned transient surface', () => {
     expect(second.rectOverlayRef).toBe(first.rectOverlayRef);
     expect(second.containerRef).toBe(first.containerRef);
     expect(second.textareaRef).toBe(first.textareaRef);
-    expect(second.canvasCtxRef).toBe(first.canvasCtxRef);
     expect(second.currentArgs).toBe(first.currentArgs);
     expect(second.previewLayers).toBe(first.previewLayers);
   });

@@ -5,7 +5,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useApp } from '../../hooks/useApp.ts';
 import type { ToolbarTool } from '../../../toolbar-mapping.ts';
-import { findMobileToolGroup } from './mobile-tools.ts';
+import { findMobileToolGroup, makeSelectTool } from './mobile-tools.ts';
 
 export interface MobileToolSheetProps {
   isOpen: boolean;
@@ -14,7 +14,7 @@ export interface MobileToolSheetProps {
 
 export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onToggle }) => {
   const [{ hasImage, toolName }] = useStore();
-  const { isToolDirty, toolArgs, patchToolArgs } = useCurrentTool();
+  const { toolArgs, patchToolArgs } = useCurrentTool();
   const { goToTool } = useApp();
 
   if (!toolName || !hasImage) return null;
@@ -29,19 +29,7 @@ export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onTogg
   const isToolSelected = (tool: ToolbarTool) =>
     tool.name === toolName && (!tool.figure || (toolArgs.toolName === 'shape' && toolArgs.figure === tool.figure));
 
-  const selectTool = (tool: ToolbarTool) => {
-    if (tool.figure) {
-      // Select first, then patch — the order `DesktopHeader.handleToolSelection`
-      // uses, and deliberately not the order `SidebarLeft.selectTool` uses:
-      // `goToTool` runs `commitDirtyTool()` against the OUTGOING tool, so
-      // patching the incoming tool's args first clobbers the args the commit
-      // needs to read.
-      goToTool(tool.name);
-      patchToolArgs('shape', { figure: tool.figure });
-      return;
-    }
-    goToTool(tool.name);
-  };
+  const selectTool = makeSelectTool(goToTool, patchToolArgs);
 
   return (
     <div
@@ -65,11 +53,6 @@ export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onTogg
             <span className="truncate text-xs font-semibold text-gray-800 dark:text-gray-200 capitalize">
               {toolName.replace(/-/g, ' ')} Options
             </span>
-            {isToolDirty && (
-              <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium">
-                Modified
-              </span>
-            )}
           </span>
           <span aria-hidden="true" className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
             {isOpen ? '▼ Hide' : '▲ Options'}

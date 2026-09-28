@@ -1,6 +1,7 @@
 import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PointerEvent } from 'react';
+import { isDocumentGestureOpen, readDocumentGesture, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 import { ShapeToolArea } from '../ShapeToolArea.tsx';
 import { normalizeShapeGeometry, shapeGeometryBounds, type FigureType } from '../../../tools/shape.ts';
 
@@ -8,7 +9,11 @@ const createLayerFromToolMock = vi.hoisted(() => vi.fn());
 const drawShapeMock = vi.hoisted(() => vi.fn());
 const setShapeCtxMock = vi.hoisted(() => vi.fn());
 
-const createPointerState = vi.hoisted(() => () => ({ isMouseDown: { current: false }, moveValid: true }));
+const createPointerState = vi.hoisted(() => () => ({
+  isMouseDown: { current: false },
+  moveValid: true,
+  activePointer: null as number | null | undefined,
+}));
 const createToolArgsState = vi.hoisted(() => () => ({
   toolArgs: {
     toolName: 'shape',
@@ -75,17 +80,32 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   }),
 }));
 
+/**
+ * The pointer capture contract, faithfully: the first press claims the pointer and only that
+ * pointer's move and release are valid. A mock that accepted every event would make "a foreign
+ * pointer's release must not hand the document back" unobservable, which is one of the things the
+ * gesture gate pins.
+ *
+ * The `button` check on the release mirrors `usePointerPosition.isPointerUpValid`, which now
+ * refuses a non-primary release exactly as `isPointerDownValid` refuses a non-primary press. The
+ * check used to be stricter than the real hook, which made a suite asserting a non-primary release
+ * as ignored a guard for behaviour the product did not have; the hook was made symmetric instead.
+ */
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
   usePointerPosition: () => ({
     pointerIdRef: { current: null },
     isPointerDownValid: vi.fn((event: PointerEvent) => {
       if (event.button !== 0) return false;
+      if (pointerState.activePointer !== null) return false;
       pointerState.isMouseDown.current = true;
+      pointerState.activePointer = event.pointerId;
       return true;
     }),
     isPointerMoveValid: vi.fn(() => pointerState.isMouseDown.current && pointerState.moveValid),
     isPointerUpValid: vi.fn((event: PointerEvent) => {
       if (event.button !== 0) return false;
+      if (pointerState.activePointer !== event.pointerId) return false;
+      pointerState.activePointer = null;
       pointerState.isMouseDown.current = false;
       return true;
     }),
@@ -308,7 +328,8 @@ describe('ShapeToolArea', () => {
       expect(setShapeCtxMock).not.toHaveBeenCalled();
     });
 
-    it('sets shape context and stores refs on valid pointer down', () => {
+    it('configures the shape context for the preview paint, not once at pointer down', () => {
+      vi.useFakeTimers();
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
@@ -316,8 +337,48 @@ describe('ShapeToolArea', () => {
         fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
       });
 
+      // Nothing is painted yet, so nothing is configured yet either. The bracket that keeps
+      // `setShapeCtx`'s alpha off the shared overlay lives around the paint, which is what makes
+      // per-paint bracketing possible at all.
+      expect(setShapeCtxMock).not.toHaveBeenCalled();
+
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
       expect(setShapeCtxMock).toHaveBeenCalledTimes(1);
-      expect(setShapeCtxMock).toHaveBeenCalledWith(storeMocks.ctx, expect.objectContaining({ toolName: 'shape' }));
+      expect(setShapeCtxMock).toHaveBeenCalledWith(
+        storeMocks.ctx,
+        expect.objectContaining({ toolName: 'shape', start: { x: 10, y: 20 }, end: { x: 50, y: 60 } })
+      );
+    });
+
+    it('brackets the preview paint so setShapeCtx cannot leave its alpha on the shared overlay', () => {
+      vi.useFakeTimers();
+      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      const saves = vi.mocked(storeMocks.ctx.save).mock.invocationCallOrder;
+      const restores = vi.mocked(storeMocks.ctx.restore).mock.invocationCallOrder;
+      expect(saves).toHaveLength(1);
+      expect(restores).toHaveLength(1);
+      // `setShapeCtx` runs INSIDE the bracket, not before it: configured outside, the `restore()`
+      // would discard exactly the stroke settings `drawShape` reads.
+      expect(vi.mocked(setShapeCtxMock).mock.invocationCallOrder[0]).toBeGreaterThan(saves[0]);
+      expect(vi.mocked(drawShapeMock).mock.invocationCallOrder[0]).toBeLessThan(restores[0]);
     });
 
     it('stores fromCenter flag based on altKey', () => {
@@ -678,7 +739,10 @@ describe('ShapeToolArea', () => {
       expect(fullArgs.args.end).toEqual({ x: preview.end.x - fullArgs.pos.x, y: preview.end.y - fullArgs.pos.y });
     });
 
-    it('drops the previewed constraint when Shift is released before pointer up', () => {
+    it('commits the previewed square when Shift is released before pointer up', () => {
+      // Releasing Shift before the button comes up used to re-run normalizeShapeGeometry with the
+      // RELEASE event's shiftKey, so a square the user watched being previewed committed as an
+      // unconstrained rectangle. The commit now takes the previewed geometry as it stands.
       vi.useFakeTimers();
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
@@ -708,11 +772,72 @@ describe('ShapeToolArea', () => {
       expect(preview.end).toEqual({ x: 70, y: 80 });
       expect(preview.end.x - preview.start.x).toBe(preview.end.y - preview.start.y);
 
-      // handlePointerUp re-runs normalizeShapeGeometry with the release event's
-      // shiftKey, so the committed layer is the unconstrained 10,20 -> 50,80
-      // drag and no longer matches the square the preview drew.
-      expect(fullArgs.pos).toEqual({ x: 8, y: 18, width: 44, height: 64 });
-      expect(fullArgs.pos.width).not.toBe(fullArgs.pos.height);
+      // The committed layer is that same square.
+      expect(fullArgs.pos).toEqual({ x: 8, y: 18, width: 64, height: 64 });
+      expect(fullArgs.args.start).toEqual({ x: 2, y: 2 });
+      expect(fullArgs.args.end).toEqual({ x: 62, y: 62 });
+      expect(committedGeometry(fullArgs)).toEqual({ start: { x: 10, y: 20 }, end: { x: 70, y: 80 } });
+    });
+
+    it('flushes the pending preview frame on pointer up', () => {
+      // The frame pointer up cancels is the one that would have painted the final geometry, so it
+      // is painted synchronously before the commit instead of being thrown away.
+      vi.useFakeTimers();
+      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      expect(drawShapeMock).not.toHaveBeenCalled();
+
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+
+      expect(drawShapeMock).toHaveBeenCalledTimes(1);
+      expect(drawShapeMock).toHaveBeenCalledWith(
+        storeMocks.ctx,
+        expect.objectContaining({ start: { x: 10, y: 20 }, end: { x: 50, y: 60 } })
+      );
+    });
+
+    it('previews a second drag after a first one was committed', () => {
+      // The frame slot has to be released on pointer up. It used to be cancelled but never nulled,
+      // so it stayed non-null for the component's lifetime and `handlePointerMove` short-circuited
+      // on it: after the very first drag, every later drag showed nothing until it was released.
+      vi.useFakeTimers();
+      const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 200, clientY: 200 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 260, clientY: 240 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      expect(drawShapeMock).toHaveBeenLastCalledWith(
+        storeMocks.ctx,
+        expect.objectContaining({ start: { x: 200, y: 200 }, end: { x: 260, y: 240 } })
+      );
     });
 
     it('creates a layer from a bare pointer-up without prompting or previewing', () => {
@@ -741,7 +866,7 @@ describe('ShapeToolArea', () => {
       expect(fullArgs.args.end).toEqual({ x: 192, y: 242 });
     });
 
-    it('keeps fractional drag geometry inside the fractional layer box', () => {
+    it('rounds a fractional drag outward to an integral layer box', () => {
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
 
@@ -758,20 +883,28 @@ describe('ShapeToolArea', () => {
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
       const { width, height } = fullArgs.pos;
 
-      // shapeGeometryBounds returns the raw padded extent, so a zoomed drag
-      // commits a fractional box rather than rounding to whole pixels.
-      expect(fullArgs.pos.x).toBeCloseTo(8.4, 10);
-      expect(fullArgs.pos.y).toBeCloseTo(18.6, 10);
-      expect(width).toBeCloseTo(43.8, 10);
-      expect(height).toBeCloseTo(64.3, 10);
+      // shapeGeometryBounds rounds outward — the origin down, the far edge up — so all four
+      // fields are integers. The box sizes the layer bitmap via `new OffscreenCanvas(w, h)`,
+      // whose constructor truncates, so a fractional box declared an extent its own raster
+      // disagreed with. `pad = 2 / 2 + 1 = 2`, so the near edge is (8.4, 18.6) floored and the far
+      // edge is (52.2, 82.9) ceiled.
+      expect(fullArgs.pos.x).toBe(8);
+      expect(fullArgs.pos.y).toBe(18);
+      expect(width).toBe(45);
+      expect(height).toBe(65);
+      expect(Number.isInteger(fullArgs.pos.x)).toBe(true);
+      expect(Number.isInteger(fullArgs.pos.y)).toBe(true);
+      expect(Number.isInteger(width)).toBe(true);
+      expect(Number.isInteger(height)).toBe(true);
 
-      // The layer-local geometry stays inside [0, width] x [0, height].
+      // The rebase subtracts the same box the bounds were measured with, so the layer-local
+      // geometry is still the fractional drag, and it still sits inside the box.
       const localStart = fullArgs.args.start as { x: number; y: number };
       const localEnd = fullArgs.args.end as { x: number; y: number };
-      expect(localStart.x).toBeCloseTo(2, 10);
-      expect(localStart.y).toBeCloseTo(2, 10);
-      expect(localEnd.x).toBeCloseTo(41.8, 10);
-      expect(localEnd.y).toBeCloseTo(62.3, 10);
+      expect(localStart.x).toBeCloseTo(2.4, 10);
+      expect(localStart.y).toBeCloseTo(2.6, 10);
+      expect(localEnd.x).toBeCloseTo(42.2, 10);
+      expect(localEnd.y).toBeCloseTo(62.9, 10);
       expect(localStart.x).toBeGreaterThanOrEqual(0);
       expect(localStart.y).toBeGreaterThanOrEqual(0);
       expect(localEnd.x).toBeLessThanOrEqual(width);
@@ -1045,8 +1178,16 @@ describe('ShapeToolArea', () => {
       const fullArgs = dragOnce(toolArea, anchor, pointer);
 
       const geometry = { start: anchor, end: pointer };
-      expect(fullArgs.pos).toEqual({ x: 25.25, y: 35.25, width: 69.5, height: 39.5 });
+      // `pad = 7.5 / 2 + 1 = 4.75`, so the near edge is (25.25, 35.25) floored and the far edge is
+      // (94.75, 74.75) ceiled. The extent is the difference of the two rounded edges, which is
+      // what keeps a half-pixel line width from declaring a fractional bitmap size.
+      expect(fullArgs.pos).toEqual({ x: 25, y: 35, width: 70, height: 40 });
       expect(fullArgs.pos).toEqual(shapeGeometryBounds(geometry, 7.5));
+      // Still contains the padded geometry, so the rounding did not clip the stroke.
+      expect(fullArgs.pos.x).toBeLessThanOrEqual(anchor.x - 4.75);
+      expect(fullArgs.pos.y).toBeLessThanOrEqual(anchor.y - 4.75);
+      expect(fullArgs.pos.x + fullArgs.pos.width).toBeGreaterThanOrEqual(pointer.x + 4.75);
+      expect(fullArgs.pos.y + fullArgs.pos.height).toBeGreaterThanOrEqual(pointer.y + 4.75);
       view.unmount();
     });
 
@@ -1177,6 +1318,92 @@ describe('ShapeToolArea', () => {
       expect(nextGeometry).toEqual({ start: { x: 100, y: 100 }, end: { x: 200, y: 260 } });
       expect(nextArgs.pos).toEqual(shapeGeometryBounds(nextGeometry, toolArgsState.toolArgs.lineWidth));
       view.unmount();
+    });
+  });
+
+  describe('document gesture gate', () => {
+    beforeEach(() => {
+      // The slot is module-level, so a leaked claim would refuse every later claim in this file and
+      // read as a dozen unrelated failures.
+      resetDocumentGestures();
+    });
+
+    it('claims the document for a shape drag and releases it on the release', () => {
+      // A shape commits from `createLayerFromTool` on release, so a document-mutating shortcut
+      // pressed mid-drag mutates the document behind the gesture's back, and an undo there replaces
+      // `selections` from the SAME history array, so the pending commit then truncates the redo tail
+      // with no other symptom.
+      const { toolArea } = renderToolArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
+      expect(isDocumentGestureOpen()).toBe(true);
+      expect(readDocumentGesture()).toEqual({ kind: 'shape-draw', pointerId: 4 });
+
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 4, clientX: 200, clientY: 260 });
+
+      expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('releases the claim before the commit path, so a release that commits nothing still frees the keyboard', () => {
+      // The release is the first statement inside the `isPointerUpValid` branch, which is what covers
+      // the prompt early-return below: a click the user dismisses must not leave the keyboard dead.
+      promptMock.mockReturnValue(null);
+      const { toolArea } = renderToolArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
+
+      expect(createLayerFromToolMock).not.toHaveBeenCalled();
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('does not let a foreign pointer release the claim it never took', () => {
+      const { toolArea } = renderToolArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      // The claim is released inside the `isPointerUpValid` branch, so a release the validator
+      // refuses cannot hand the document back on the first pointer's behalf.
+      fireEvent.pointerUp(toolArea, { button: 0, pointerId: 42, clientX: 200, clientY: 260 });
+
+      expect(createLayerFromToolMock).not.toHaveBeenCalled();
+      expect(isDocumentGestureOpen()).toBe(true);
+    });
+
+    it('releases the claim on a pointer cancel, which is the abort route', () => {
+      const { toolArea } = renderToolArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      fireEvent.pointerCancel(toolArea, { button: 0, pointerId: 4 });
+
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('releases the claim on unmount, so a gesture that dies mid-drag cannot leave the keyboard dead', () => {
+      const { view, toolArea } = renderToolArea();
+
+      fireEvent.pointerDown(toolArea, { button: 0, pointerId: 4, clientX: 100, clientY: 100 });
+      expect(isDocumentGestureOpen()).toBe(true);
+
+      view.unmount();
+
+      expect(isDocumentGestureOpen()).toBe(false);
+    });
+
+    it('claims nothing for a press the pointer validator refuses', () => {
+      // `isPointerDownValid` has already refused a non-primary button and a second pointer, and the
+      // claim is taken after it, so a refused press starts no gesture to wait on.
+      const { toolArea } = renderToolArea();
+
+      fireEvent.pointerDown(toolArea, { button: 2, pointerId: 4, clientX: 100, clientY: 100 });
+
+      expect(isDocumentGestureOpen()).toBe(false);
     });
   });
 });

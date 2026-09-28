@@ -9,7 +9,14 @@ import type { GradientToolArgs } from '../../tools/gradient.ts';
 
 type gradientToolAreaProps = {
   className?: string;
-  canvasCtxRef: RefObject<CanvasRenderingContext2D | null>;
+  /**
+   * Optional: accepted so every tool area in the union can be rendered with one prop set, and
+   * read from the store rather than the prop when it is needed. `Main` passes only
+   * `overlayCtxRef`, so a required declaration here is a type error at the call site and an
+   * `undefined` at runtime. `EllipticalSelectionToolArea` and `QuickSelectionToolArea` already
+   * declare it this way.
+   */
+  canvasCtxRef?: RefObject<CanvasRenderingContext2D | null>;
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
 };
 

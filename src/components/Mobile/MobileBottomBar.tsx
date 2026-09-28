@@ -2,8 +2,9 @@ import React from 'react';
 
 import type { ToolName } from '../../contexts/tool-types.ts';
 import { useStore } from '../../contexts/StoreContext.tsx';
+import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { useApp } from '../../hooks/useApp.ts';
-import { mobileToolGroups } from './mobile-tools.ts';
+import { makeSelectTool, mobileToolGroups } from './mobile-tools.ts';
 
 export interface MobileBottomBarProps {
   onToggleToolSheet: () => void;
@@ -18,6 +19,8 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
 }) => {
   const [{ toolName, hasImage }] = useStore();
   const { goToTool } = useApp();
+  const { patchToolArgs } = useCurrentTool();
+  const selectTool = makeSelectTool(goToTool, patchToolArgs);
 
   return (
     <nav
@@ -39,7 +42,7 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
             <button
               type="button"
               disabled={!hasImage}
-              onClick={() => goToTool(group.primaryTool)}
+              onClick={() => selectTool(group.primary)}
               data-testid={group.id}
               aria-label={group.tools[0].label}
               aria-pressed={isActive}

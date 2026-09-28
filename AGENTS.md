@@ -16,7 +16,7 @@ Delegate **first**, not after you get stuck. Fan-out signals: every caller of X,
 2. **A PAID SESSION MAY LAUNCH PAID SUBAGENTS** on the model the turn is already on — already authorised. Escaping to a _different_ paid model still needs the user to name it in that request. Rule 1 is the other direction.
 3. **ALWAYS PASS `provider` TOGETHER WITH `model`.** A bare name is matched leniently (case, punctuation, word order ignored) and can resolve to a different provider's model; with no `provider` it falls back to the **Kilo Gateway**, which returns a GPT model under a `~`-prefixed id — `~openai/gpt-luna-latest` is a gateway substitution, not the `openai` model of that name. **A `~` id is a GPT model, so it is paid.**
 4. `model: 'Space Bunny Alpha (new)', provider: 'kilo', variant: 'max'` — free, nearly as good as GPT Luna, the default for nearly every subagent. Other free models are useless; do not spend a turn sampling them.
-5. Cost roughly doubles past ~260k of context. Keep the main turn lean; push fan-out into fresh contexts.
+5. **Double billing starts earlier on GPT Luna than on the other paid GPT models: past ~200k of context on Luna, past ~270k on GPT Sol and GPT Terra.** Keep the main turn lean; push fan-out into fresh contexts.
 6. `agent_manager` too: a managed session inherits the current turn's model, so a main turn on a paid model spawns paid worktrees unless `model` and `provider` are both set.
 
 ```ts
@@ -72,6 +72,7 @@ npm run build           # production bundle, and a real CI step
 
 - **RUN FROM THE REPO ROOT** (`ph`), via the shell tool's `workdir`. A parent directory silently resolves the wrong package and the wrong tsconfig.
 - **`npm run tsc` IS THE ONLY TRUSTWORTHY TYPECHECK. NEVER GATE ON `npx tsc --noEmit`.** `tsc -b` covers `tsconfig.app/node/e2e.json`, so it also checks the Playwright specs and the test files. `npx tsc --noEmit` resolves the app tsconfig alone, which excludes tests: it exits 0 while the tests do not compile.
+- **The bare `npx tsc` type-checks ZERO files and always exits 0.** The root `tsconfig.json` is a solution stub — `"files": []`, no `include`, three `references` — so `npx tsc --showConfig -p tsconfig.json` prints `{"compilerOptions": {}}` and the references. It is indistinguishable from a pass, and `.claude/settings.local.json` in the operator's ROOT checkout carries a `"allow": ["Bash(npx tsc:*)"]` wildcard that auto-approves exactly that command. That file is untracked and globally gitignored (`~/.config/git/ignore` has `**/.claude/settings.local.json`), so no worktree, `git status` or `git ls-files` can see it — its absence from your worktree is not its absence from the machine. Only `npm run tsc` (`tsc -b`) type-checks anything.
 - `npm run test` is `pool: 'vmThreads'`, `maxWorkers: 4` — a timing-sensitive test that only fails in a full run is usually the pool, not the code.
 - `npm run test:e2e` starts Vite on :5173 itself. Pass `--retries=1` for a trace; `trace: 'on-first-retry'` yields nothing at the local `retries: 0`.
 
@@ -105,15 +106,15 @@ Five traps that cost real debugging time:
 
 Two hooks, each a one-line wrapper over a `package.json` script, so the hook and the command a developer or CI can run by hand cannot drift:
 
-| hook                | script        | runs                                                                                                 |
-| ------------------- | ------------- | ---------------------------------------------------------------------------------------------------- |
-| `.husky/pre-commit` | `gate:commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` (`tsc` -> `build` -> `test:e2e:unit`) |
-| `.husky/pre-push`   | `gate:push`   | `npm run test` — the full app suite                                                                  |
+| hook                | script        | runs                                                                              |
+| ------------------- | ------------- | --------------------------------------------------------------------------------- |
+| `.husky/pre-commit` | `gate:commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` (`tsc` -> `build`) |
+| `.husky/pre-push`   | `gate:push`   | `npm run test` — the full app suite                                               |
 
 Both are reached through a shared entry point in the common git dir, not through husky; see "Worktrees and dev servers". `HUSKY=0 git commit` is the escape hatch.
 
 - **The commit gate and these docs carry NO wall-clock numbers.** Every cost figure written into a hook comment or a doc in this repo has gone stale, and one of them — "the app suite is likely minutes" — was never measured at all and was the stated reason for a design decision that then shipped. Measure before you design; do not leave a number behind.
-- `test:e2e:unit` is **not** an e2e run: `vitest --config vitest.e2e.config.ts`, node environment, no browser. It is the **only** commit-path coverage of the e2e helper functions, because `vitest.config.ts` excludes `e2e/**`. Deleting it silently loses that coverage.
+- `test:e2e:unit` is **not** an e2e run — `vitest --config vitest.e2e.config.ts`, node environment, no browser — and it is **not in the commit gate**. It is the only coverage of the e2e helper functions, because `vitest.config.ts` excludes `e2e/**`, and that coverage is not optional: the `e2e-unit` CI job runs it as its own blocking step, and a separate blocking job so a break in the app pipeline cannot remove the only gate on `e2e/`. Run it by hand when you touch anything under `e2e/`, the way `test:e2e` is run when a change is user-visible. `test:e2e:unit:coverage` re-runs it under `--coverage` and is CI-only.
 - **The commit gate runs no app unit test, and that is deliberate.** `npm run test` is the whole-tree check: run it on demand, and `gate:push` runs it for you. The scoped fan-out that used to sit in the gate is a command now — see below. Accepted cost: a test that was already failing before the commit started is caught at push, in CI, or when someone runs `npm run test` — and this repo's worktrees are full of commits that needed exactly that catch.
 - `*.{ts,tsx}` uses ESLint + Prettier; `*.{js,jsx,mjs,cjs,scss,css,jsonc,yml,yaml,md,json}` uses Prettier only. **Do not add ESLint for the latter group**: no config covers it, and doing so breaks Markdown/SCSS commits. `scripts/*.js` is in that second group.
 - **`lint:check` lints `git ls-files`, not `.`.** `scripts/lint-tracked.js` is the only place the two extension lists live, and they are the same rule on both sides: `lint:check` covers every tracked file of those types, `.husky/pre-commit` covers the staged subset. A filesystem-scoped command took `.kilo/`'s 121 worktrees, `dist/`, and generated e2e output as input, and needed a hand-maintained `.prettierignore` to stop `npm run format` rewriting them — that file is gone because nothing it listed is tracked. The tracked images, `src/components/SidebarLeft/snippet.txt`, `index.html` and the dotfiles are **not** linted, deliberately; the globs in the script are where that decision is written down. **Legacy files being outside the linted set is not a problem to solve.**

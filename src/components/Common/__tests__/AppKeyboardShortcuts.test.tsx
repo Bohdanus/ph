@@ -12,7 +12,6 @@ import type { ToolArgs, ToolName } from '../../../contexts/tool-types.ts';
 
 const goToTool = vi.hoisted(() => vi.fn());
 const patchToolArgs = vi.hoisted(() => vi.fn());
-const resetToLastSavedArgs = vi.hoisted(() => vi.fn());
 const copyActiveSelection = vi.hoisted(() => vi.fn());
 const pasteSelectionClipboard = vi.hoisted(() => vi.fn());
 const layerViaCopy = vi.hoisted(() => vi.fn());
@@ -25,9 +24,8 @@ const storeState = vi.hoisted(
   () =>
     ({
       hasImage: true,
-      isToolDirty: false,
       toolName: 'brush' as ToolName,
-    }) as { hasImage: boolean; isToolDirty: boolean; toolName: ToolName }
+    }) as { hasImage: boolean; toolName: ToolName }
 );
 
 const toolState = vi.hoisted(() => ({ toolArgs: { toolName: 'brush' } as ToolArgs }));
@@ -44,7 +42,6 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs: toolState.toolArgs,
     patchToolArgs,
-    resetToLastSavedArgs,
   }),
 }));
 
@@ -71,7 +68,6 @@ beforeEach(() => {
   canUndo.mockReturnValue(false);
   canRedo.mockReturnValue(false);
   storeState.hasImage = true;
-  storeState.isToolDirty = false;
   storeState.toolName = 'brush';
   toolState.toolArgs = { toolName: 'brush' } as ToolArgs;
 });
@@ -190,34 +186,21 @@ describe('AppKeyboardShortcuts guards', () => {
 });
 
 describe('AppKeyboardShortcuts undo and redo', () => {
-  it('resets a dirty tool instead of undoing history', () => {
-    storeState.isToolDirty = true;
-    canUndo.mockReturnValue(true);
-    renderShortcuts();
-
-    press('z', { metaKey: true });
-
-    expect(resetToLastSavedArgs).toHaveBeenCalledTimes(1);
-    expect(undo).not.toHaveBeenCalled();
-  });
-
-  it('undoes history when the tool is clean and history allows it', () => {
+  it('undoes history when the history allows it', () => {
     canUndo.mockReturnValue(true);
     renderShortcuts();
 
     press('z', { metaKey: true });
 
     expect(undo).toHaveBeenCalledTimes(1);
-    expect(resetToLastSavedArgs).not.toHaveBeenCalled();
   });
 
-  it('does nothing when the tool is clean and history cannot undo', () => {
+  it('does nothing when the history cannot undo', () => {
     renderShortcuts();
 
     press('z', { metaKey: true });
 
     expect(undo).not.toHaveBeenCalled();
-    expect(resetToLastSavedArgs).not.toHaveBeenCalled();
   });
 
   it('redoes on Meta+Shift+Z only when redo is available', () => {
@@ -230,27 +213,14 @@ describe('AppKeyboardShortcuts undo and redo', () => {
     expect(redo).toHaveBeenCalledTimes(1);
   });
 
-  it('redoes on Ctrl+Y without shifting the dirty tool', () => {
-    storeState.isToolDirty = true;
+  it('redoes on Ctrl+Y without touching undo', () => {
     canRedo.mockReturnValue(true);
     renderShortcuts();
 
     press('y', { ctrlKey: true });
 
     expect(redo).toHaveBeenCalledTimes(1);
-    expect(resetToLastSavedArgs).not.toHaveBeenCalled();
-  });
-
-  it('keeps redo availability independent of the dirty flag', () => {
-    canRedo.mockReturnValue(false);
-    renderShortcuts();
-
-    press('y', { metaKey: true });
-    expect(redo).not.toHaveBeenCalled();
-
-    storeState.isToolDirty = true;
-    press('y', { metaKey: true });
-    expect(redo).not.toHaveBeenCalled();
+    expect(undo).not.toHaveBeenCalled();
   });
 
   it('propagates a throwing canUndo() out of the keydown handler (AppKeyboardShortcuts.tsx:117 has no try/catch)', () => {

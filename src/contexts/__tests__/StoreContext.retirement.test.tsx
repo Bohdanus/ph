@@ -179,10 +179,22 @@ function replay(dispatch: StoreDispatch, updates: StoreUpdates, cursor = 0) {
   });
 }
 
-function commit(dispatch: StoreDispatch, updates: StoreUpdates, actionName: ActionType = MERGE_ACTION) {
+/**
+ * One commit, with the history entry it appends.
+ *
+ * `args` is exposed because a `MERGE_ACTION` retains the merged `LayerSource`
+ * there, which is one of the aliases that keeps a raster reachable after the
+ * layer record has stopped naming it.
+ */
+function commit(
+  dispatch: StoreDispatch,
+  updates: StoreUpdates,
+  actionName: ActionType = MERGE_ACTION,
+  args: HistoryItem['args'] = {}
+) {
   const payload: CommitPayload = {
     updates,
-    historyItem: { id: `commit-${actionName}`, actionName, layerId, args: {} },
+    historyItem: { id: `commit-${actionName}`, actionName, layerId, args },
   };
   act(() => {
     dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload });
@@ -600,5 +612,193 @@ describe('retirement at the COMMIT_DOCUMENT_EDIT call site', () => {
     expect(store().layers[secondLayerId]).toBeUndefined();
     expect(closeOf(borrowed)).not.toHaveBeenCalled();
     expect(closeOf(owned)).not.toHaveBeenCalled();
+  });
+});
+
+describe('retirement against every alias of a raster, not only layer.bitmap', () => {
+  it('closes an adopted raster a commit removed once no live history entry names it', async () => {
+    // The control for the two cases below, and the only proof that `ADOPT_LAYER_BITMAPS`
+    // registers anything at all: the store never materializes an import's or a merge's
+    // raster, so this is the one route by which those become scope-owned. A retirement
+    // keyed on the layer record alone would leave this open forever.
+    const opened = createMockImageBitmap(100, 80);
+    const adopted = createMockImageBitmap(100, 80);
+    const { store, dispatch } = renderWithProbe();
+    // The opening baseline names a different raster, so nothing in the timeline
+    // aliases the one adopted below.
+    replaceDocument(dispatch(), { [layerId]: { ...layerWithCanvas(layerId, null), bitmap: opened } });
+
+    // The order a merge uses: the commit publishes the layer record, and the writer
+    // registers the raster it built itself only afterwards.
+    commit(
+      dispatch(),
+      { layers: { [layerId]: { ...layerAt(store, layerId), bitmap: adopted, tmpCanvas: null } } },
+      MERGE_ACTION
+    );
+    act(() => {
+      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [adopted] } });
+    });
+    expect(layerAt(store, layerId).bitmap).toBe(adopted);
+
+    commit(dispatch(), { layers: { [secondLayerId]: layerWithCanvas(secondLayerId, null) } }, REMOVE_ACTION);
+
+    expect(store().layers[layerId]).toBeUndefined();
+    expect(closeOf(adopted)).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a registered raster open while a live merge entry still names it in args', async () => {
+    const cache = createMockImageBitmap(100, 80);
+    const staged = createMockOffscreenCanvas(100, 80);
+    stubPromotion(new Map([[staged, cache]]));
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, staged) });
+    await publish(store(), [{ layerId, canvas: staged }]);
+    expect(layerAt(store, layerId).bitmap).toBe(cache);
+
+    // `mergeAllLayers` retains the merged `LayerSource` in the entry's `args`, and
+    // `history-replay` reads that same raster back on undo. The layer record no
+    // longer names it after the merge, but history does, so closing it here would
+    // be a use-after-close on the production replay authority, not a leak.
+    commit(dispatch(), { layers: { [secondLayerId]: layerWithCanvas(secondLayerId, null) } }, MERGE_ACTION, {
+      kind: 'image',
+      bitmap: cache,
+      name: 'Merged',
+      pos: { x: 0, y: 0, width: 100, height: 80 },
+      isBedrock: false,
+    });
+
+    expect(store().layers[layerId]).toBeUndefined();
+    expect(closeOf(cache)).not.toHaveBeenCalled();
+  });
+
+  it('leaves a registered raster open while the opening entry still names it in documentSource', async () => {
+    const cache = createMockImageBitmap(100, 80);
+    const { store, dispatch } = renderWithProbe();
+    // The opening baseline is the `documentSource` every undo back to the start of
+    // the document replays from, so a raster it names stays reachable however many
+    // commits drop it from the layer record.
+    replaceDocument(dispatch(), { [layerId]: { ...layerWithCanvas(layerId, null), bitmap: cache } });
+    act(() => {
+      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [cache] } });
+    });
+
+    commit(dispatch(), { layers: { [secondLayerId]: layerWithCanvas(secondLayerId, null) } }, REMOVE_ACTION);
+
+    expect(store().layers[layerId]).toBeUndefined();
+    expect(closeOf(cache)).not.toHaveBeenCalled();
+  });
+});
+
+describe('retirement when a promotion replaces an adopted raster', () => {
+  it('leaves the replaced raster open while the import entry that names it is still in history', async () => {
+    // The regression: the promotion call site used to retire the cache it replaced
+    // BY NAME, with no liveness question. For a cache the store materialized that
+    // was safe. For an ADOPTED raster it is not — the import's history entry
+    // retains the same object, so closing it made the next undo of the import draw
+    // from a closed bitmap, and `useHistory` swallowed that as a durable
+    // conversion failure rather than an undo failure.
+    const imported = createMockImageBitmap(100, 80);
+    const staged = createMockOffscreenCanvas(100, 80);
+    const promoted = createMockImageBitmap(100, 80);
+    stubPromotion(new Map([[staged, promoted]]));
+    const { store, dispatch } = renderWithProbe();
+
+    // An import: the layer carries the raster, the opening entry names it, and the
+    // writer registers it with the scope after the layer is published.
+    replaceDocument(dispatch(), { [layerId]: { ...layerWithCanvas(layerId, staged), bitmap: imported } });
+    act(() => {
+      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [imported] } });
+    });
+
+    // The first raster edit on that layer promotes a fresh cache over it. The
+    // promoted cache is the live layer's own, so it stays open; the raster it
+    // replaced is named by the import entry, so it must stay open too.
+    commit(dispatch(), { layers: { [layerId]: { ...layerAt(store, layerId), tmpCanvas: staged } } });
+    await publish(store(), [{ layerId, canvas: staged }]);
+    expect(layerAt(store, layerId).bitmap).toBe(promoted);
+    expect(closeOf(promoted)).not.toHaveBeenCalled();
+    expect(closeOf(imported)).not.toHaveBeenCalled();
+
+    // Promote once more, so the cache the first promotion installed is itself
+    // unreferenced. That one goes; the import's raster still does not, which is
+    // the whole point — the promotion call site must not be the one place that
+    // retires a replaced cache by name.
+    const again = canvas();
+    const promotedAgain = createMockImageBitmap(100, 80);
+    stubPromotion(new Map([[again, promotedAgain]]));
+    commit(dispatch(), { layers: { [layerId]: { ...layerAt(store, layerId), tmpCanvas: again } } });
+    await publish(store(), [{ layerId, canvas: again }]);
+
+    expect(layerAt(store, layerId).bitmap).toBe(promotedAgain);
+    expect(closeOf(promoted)).toHaveBeenCalledTimes(1);
+    expect(closeOf(imported)).not.toHaveBeenCalled();
+  });
+
+  it('closes an adopted raster that a promotion replaced and no history entry names', async () => {
+    // The control for the case above, and the proof the new liveness check is not
+    // simply refusing to close anything: with no alias left, the replaced adopted
+    // raster is exactly as retirable as a materialized one.
+    const adopted = createMockImageBitmap(100, 80);
+    const staged = createMockOffscreenCanvas(100, 80);
+    const promoted = createMockImageBitmap(100, 80);
+    stubPromotion(new Map([[staged, promoted]]));
+    const { store, dispatch } = renderWithProbe();
+
+    // The opening baseline deliberately names a DIFFERENT raster, so nothing in
+    // the timeline aliases the one adopted below.
+    replaceDocument(dispatch(), {
+      [layerId]: { ...layerWithCanvas(layerId, null), bitmap: createMockImageBitmap(100, 80) },
+    });
+    commit(
+      dispatch(),
+      { layers: { [layerId]: { ...layerAt(store, layerId), bitmap: adopted, tmpCanvas: staged } } },
+      MERGE_ACTION
+    );
+    act(() => {
+      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [adopted] } });
+    });
+
+    commit(dispatch(), { layers: { [layerId]: { ...layerAt(store, layerId), tmpCanvas: staged } } });
+    await publish(store(), [{ layerId, canvas: staged }]);
+
+    expect(layerAt(store, layerId).bitmap).toBe(promoted);
+    expect(closeOf(adopted)).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes an adopted raster nothing names, even when the previous layer record never named it', () => {
+    // Candidacy comes from the scope's own published set, not from a diff of the
+    // layer record, so "nothing names this any more" is sufficient on its own.
+    //
+    // NOT a fails-first proof. The reachable sequences that orphan an adopted
+    // raster all drop it from `layer.bitmap` in a transition whose PREVIOUS record
+    // still held it, which the old record-diff rule also caught — so this test pins
+    // the RULE, not a reachable leak, and a change to candidacy has something to
+    // fail against. The reachable use-after-close is the promotion case above,
+    // which does fail without the fix.
+    const adopted = createMockImageBitmap(100, 80);
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), { [layerId]: layerWithCanvas(layerId, null) });
+    commit(
+      dispatch(),
+      { layers: { [layerId]: { ...layerAt(store, layerId), bitmap: adopted, tmpCanvas: null } } },
+      MERGE_ACTION
+    );
+    act(() => {
+      dispatch()({ type: 'ADOPT_LAYER_BITMAPS', payload: { bitmaps: [adopted] } });
+    });
+    expect(closeOf(adopted)).not.toHaveBeenCalled();
+
+    // Undo the merge, then append on that cursor so the tail the merge entry was
+    // part of is truncated. Neither the layer record nor any surviving entry names
+    // the raster afterwards.
+    replay(dispatch(), { layers: { [layerId]: layerWithCanvas(layerId, null) } });
+    // `updates.layers` REPLACES the record, so the surviving layer is named here too
+    // or this would read as "the layer is gone" rather than "the raster is".
+    commit(dispatch(), {
+      layers: { [layerId]: layerWithCanvas(layerId, null), [secondLayerId]: layerWithCanvas(secondLayerId, null) },
+    });
+
+    expect(store().layers[layerId].bitmap).not.toBe(adopted);
+    expect(closeOf(adopted)).toHaveBeenCalledTimes(1);
   });
 });

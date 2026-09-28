@@ -45,7 +45,6 @@ const layers = vi.hoisted(() => ({
 }));
 
 const currentTool = vi.hoisted(() => ({
-  isToolDirty: false,
   resetToLastSavedArgs: vi.fn(),
   patchToolArgs: vi.fn(),
 }));
@@ -117,7 +116,6 @@ beforeEach(() => {
   history.canUndo.mockReturnValue(false);
   history.canRedo.mockReturnValue(false);
   layers.commitDirtyTool.mockReturnValue(committedLayers);
-  currentTool.isToolDirty = false;
   themeState.theme = 'light';
 });
 
@@ -126,7 +124,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   Object.assign(storeState, { ...defaultStore });
-  currentTool.isToolDirty = false;
   themeState.theme = 'light';
 });
 
@@ -831,19 +828,5 @@ describe('DesktopHeader history controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
 
     expect(history.redo).toHaveBeenCalledTimes(1);
-  });
-
-  it('resets a dirty tool from the header undo button even when history is empty', () => {
-    currentTool.isToolDirty = true;
-    history.canUndo.mockReturnValue(false);
-    render(<DesktopHeader />);
-
-    const undoButton = screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement;
-    expect(undoButton.disabled).toBe(false);
-
-    fireEvent.click(undoButton);
-
-    expect(currentTool.resetToLastSavedArgs).toHaveBeenCalledTimes(1);
-    expect(history.undo).not.toHaveBeenCalled();
   });
 });

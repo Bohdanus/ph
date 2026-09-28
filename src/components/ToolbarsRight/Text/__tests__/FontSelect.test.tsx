@@ -475,3 +475,83 @@ describe('FontSelect popup portal', () => {
     expect(removed).toContain('scroll');
   });
 });
+
+describe('FontSelect viewport fit', () => {
+  /** jsdom reports a zero rect for everything, so the trigger's geometry is stubbed. */
+  function stubTriggerRect(rect: Partial<DOMRect>) {
+    const full = { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, ...rect } as DOMRect;
+    vi.spyOn(HTMLButtonElement.prototype, 'getBoundingClientRect').mockReturnValue(full);
+  }
+
+  const withInnerHeight = (height: number, run: () => void) => {
+    const original = window.innerHeight;
+    Object.defineProperty(window, 'innerHeight', { value: height, configurable: true, writable: true });
+    try {
+      run();
+    } finally {
+      Object.defineProperty(window, 'innerHeight', { value: original, configurable: true, writable: true });
+    }
+  };
+
+  it('caps the list to the room below when neither side fits', () => {
+    // A 300px window with the trigger at y=100 leaves 200px below and 100px above — neither
+    // is the 240px the list wants. The old rule opened downward at a fixed `top` and let the
+    // tail run below the fold, unreachable.
+    withInnerHeight(300, () => {
+      stubTriggerRect({ top: 100, left: 40, bottom: 136, width: 200 });
+      renderFontSelect('Arial');
+      fireEvent.click(trigger());
+
+      const list = popupList() as HTMLElement;
+      const maxHeight = Number.parseFloat(list.style.maxHeight);
+      // Room below is innerHeight - bottom - GUTTER = 300 - 136 - 4 = 160; room above is
+      // top - GUTTER - margin = 100 - 4 - 8 = 88. The side with more room wins.
+      expect(maxHeight).toBe(160);
+      expect(maxHeight, 'the list must fit the space it opens into').toBeLessThanOrEqual(160);
+    });
+  });
+
+  it('flips upward and caps to the room above when the room above is larger', () => {
+    // Trigger near the bottom: 80px below, 300px above. Flipped, and the 240px cap applies.
+    withInnerHeight(400, () => {
+      stubTriggerRect({ top: 300, left: 40, bottom: 320, width: 200 });
+      renderFontSelect('Arial');
+      fireEvent.click(trigger());
+
+      const list = popupList() as HTMLElement;
+      expect(list.style.bottom).not.toBe('');
+      expect(list.style.top).toBe('');
+      expect(Number.parseFloat(list.style.maxHeight)).toBe(240);
+    });
+  });
+
+  it('never positions the list further from an edge than the room available', () => {
+    // The general property: whatever the geometry, the list's height cannot exceed the space
+    // on the side it opens into, or part of it is off-viewport with no way to scroll it in.
+    for (const [height, top, bottom] of [
+      [300, 100, 136],
+      [400, 300, 320],
+      [800, 700, 716],
+      [200, 20, 60],
+    ] as const) {
+      withInnerHeight(height, () => {
+        vi.restoreAllMocks();
+        stubTriggerRect({ top, left: 40, bottom, width: 200 });
+        renderFontSelect('Arial');
+        fireEvent.click(trigger());
+
+        const list = popupList() as HTMLElement;
+        const maxHeight = Number.parseFloat(list.style.maxHeight);
+        const openedUp = list.style.top === '';
+
+        expect(maxHeight, `height ${height}, trigger at ${top}`).toBeGreaterThan(0);
+        expect(maxHeight).toBeLessThanOrEqual(240);
+        const room = openedUp ? top - 12 : height - bottom - 4;
+        expect(maxHeight, `list must fit the ${openedUp ? 'above' : 'below'} space`).toBeLessThanOrEqual(
+          Math.max(0, room)
+        );
+        cleanup();
+      });
+    }
+  });
+});

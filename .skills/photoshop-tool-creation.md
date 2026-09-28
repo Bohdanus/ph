@@ -3306,7 +3306,8 @@ task({
 - **Never put a GPT model in a subagent unless there is genuinely no alternative.** They cost real
   money by the token on every call, and "this one is hard" is not an alternative — that is the
   judgement you were delegating away (`AGENTS.md:15`).
-- **Cost roughly doubles past ~260k of context** (`AGENTS.md:19`). Keep the main turn lean and
+- **Double billing starts earlier on GPT Luna than on the other paid GPT models: past ~200k of context
+  on Luna, past ~270k on GPT Sol and GPT Terra** (`AGENTS.md:19`). Keep the main turn lean and
   push fan-out into subagents that each start at zero.
 - **Do not escalate to a paid model on your own** for "hard" or "risky" work. Override only when the
   operator named a model, and say so when you do (`AGENTS.md:33`).
@@ -3595,7 +3596,7 @@ npm run test:e2e        # playwright, headless                  package.json:19
 
 | Command       | Contents                                                   |
 | ------------- | ---------------------------------------------------------- |
-| `gate:verify` | `tsc` → `build` → `test:e2e:unit`                          |
+| `gate:verify` | `tsc` → `build`                                            |
 | `gate:commit` | `lint-staged --fail-on-changes --no-stash` → `gate:verify` |
 | `gate:push`   | `test` — the full app suite, and nothing else              |
 
@@ -3603,7 +3604,7 @@ Neither file is reached by husky any more. `core.hooksPath` points at `<common g
 
 `build` is in the commit hook because it is **not** redundant with `tsc`: `vite build` runs Babel and esbuild, which strip types without checking them, so it alone catches Sass, wasm resolution, PostCSS and import resolution. `--fail-on-changes` is what makes the hook trustworthy: without it lint-staged re-adds whatever `eslint --fix` and `prettier --write` changed and the commit lands code that was never staged and never read; with it the fix stays in the working tree, the index is untouched, and the commit is blocked so you can read the change and stage it deliberately. `--no-stash` is not optional — without it lint-staged keeps its backup stash every time it declines to revert, leaving a `WIP on <branch>` entry per blocked commit; `npm run format` removes the extra round trip. See AGENTS.md, "Gates", for both.
 
-The commit gate runs **no app unit test at all**, and that is deliberate: a `vitest related` fan-out over the staged files was tried and removed because its cost is not bounded by the change — it selects anywhere from 10 to 115 of the repository's 180 test files depending on the file touched, so its worst case is the full run it was meant to replace. `npm run test` is the whole-tree check; `gate:push` runs it once per push. The pre-push hook does not repeat `gate:commit` either: a push can follow a `git commit --no-verify`, a rebase, or a cherry-pick, but the `ci` job catches a broken build in about a minute, and re-running deterministic checks at push is how a gate gets `--no-verify`'d along with everything else.
+The commit gate runs **no app unit test at all** — and no e2e helper test either: `test:e2e:unit` is CI-only, in the separate blocking `e2e-unit` job — and that is deliberate: a `vitest related` fan-out over the staged files was tried and removed because its cost is not bounded by the change — it selects anywhere from 10 to 115 of the repository's 180 test files depending on the file touched, so its worst case is the full run it was meant to replace. `npm run test` is the whole-tree check; `gate:push` runs it once per push. The pre-push hook does not repeat `gate:commit` either: a push can follow a `git commit --no-verify`, a rebase, or a cherry-pick, but the `ci` job catches a broken build in about a minute, and re-running deterministic checks at push is how a gate gets `--no-verify`'d along with everything else.
 
 `lint-staged` covers `*.{ts,tsx}` (ESLint fix + Prettier) and `*.{js,jsx,mjs,cjs,scss,css,jsonc,yml,yaml,md,json}` (Prettier only, because no ESLint config covers them). The two lists are the same rule as `scripts/lint-tracked.js`, which is what `lint:check` runs: it lints `git ls-files`, not `.`, so the 121 worktrees under `.kilo/`, `dist/` and generated e2e output are not inputs, and `.prettierignore` no longer exists to keep them out. **No `lint:check` in any local gate** — `ci` runs the full tracked set on every push, and locally only the staged subset is formatted, so a file already committed unformatted, a rule-changing branch switch, or a bad rebase surface in `ci`. Run `npm run format` before you commit, not after the hook blocks you.
 
@@ -4563,7 +4564,7 @@ Source: `docs/ps-tool-playbook.md` at `docs/ps-tool-playbook`, authored against 
 
 **§0 — the one-page shape**
 
-- `7. gates  lint:check → tsc → test → test:e2e:unit → build → test:e2e` — not the order any gate runs. `gate:verify` is `tsc` → `build` → `test:e2e:unit` (`package.json:30`); `lint:check` and `test` are pre-push/CI only (`package.json:32`); `test:e2e` is its own CI job (`ci.yml:205`), not a step in that chain.
+- `7. gates  lint:check → tsc → test → test:e2e:unit → build → test:e2e` — not the order any gate runs. `gate:verify` is `tsc` → `build` (`package.json:31`), with `test:e2e:unit` CI-only; `lint:check` and `test` are pre-push/CI only (`package.json:32-33`); `test:e2e` is its own CI job (`ci.yml:205`), not a step in that chain.
 - `ps/<tool>-<slug>` as the observed taxonomy — `.kilo/agent-manager.json:2` registers 38 worktrees and only 3 use `ps/`. Convention, not policy.
 
 **§1 — Phase 0**
@@ -4585,7 +4586,7 @@ Source: `docs/ps-tool-playbook.md` at `docs/ps-tool-playbook`, authored against 
 - `.github/workflows/ci.yml:48-79` for the "tracked file in a project" step → that step is `ci.yml:59-90` (`:70-89` shell body, `:84` the `comm` that yields the uncovered list).
 - `AGENTS.md:101-104` for the typecheck — verified unchanged, but `tsconfig.json:1-14` says a bare `npx tsc` resolves **zero** files, where `AGENTS.md:102-103` says it "resolves the app tsconfig alone". Same conclusion; `tsconfig.e2e.json:44` is what makes it safe.
 - `08-merge-plan.md:75-86` extras — range still correct, but `npx tsc -b --force` is obsolete (`tsconfig.app.json:3-8`, `tsconfig.node.json:3-5`: `tsc -b` re-checks every run), and `npx eslint . && npx prettier --check .` → `npm run lint:check` (`package.json:12`).
-- Missing entirely: `gate:commit` / `gate:verify` / `gate:push` (`package.json:30-32`), `.husky/pre-commit`, `.husky/pre-push`, and the fact that **no `npm run audit` script exists** — CI runs `npm audit --audit-level=high` directly (`ci.yml:52`). All added after the playbook was written, in `1c9c8de`.
+- Missing entirely: `gate:commit` / `gate:verify` / `gate:push` (`package.json:31-33`), `.husky/pre-commit`, `.husky/pre-push`, and the fact that **no `npm run audit` script exists** — CI runs `npm audit --audit-level=high` directly (`ci.yml:52`). All added after the playbook was written, in `1c9c8de`.
 
 **§11 — Phase 10**
 

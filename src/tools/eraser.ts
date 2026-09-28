@@ -68,8 +68,20 @@ export const eraser =
     if ('bitmap' in params) ctx.drawImage(params.bitmap, 0, 0, size.width, size.height);
 
     const strokeArgs = buildEraseArgs(args);
-    setupDrawCtx(ctx, strokeArgs);
-    drawLine({ args: strokeArgs, ctx });
+
+    // `setupDrawCtx` writes the composite operator, stroke and alpha and deliberately leaves them on
+    // the context, so the caller owns the bracket — the same contract `draw()` and `shape()` honour.
+    // It cannot live inside `setupDrawCtx`: `drawLine` reads exactly the values it wrote. The alpha
+    // is written at the tool's own value and never forced to 1, so a fresh canvas here still commits
+    // a faded stroke.
+    ctx.save();
+    try {
+      setupDrawCtx(ctx, strokeArgs);
+
+      drawLine({ args: strokeArgs, ctx });
+    } finally {
+      ctx.restore();
+    }
 
     return [canvas];
   };

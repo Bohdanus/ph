@@ -12,7 +12,14 @@ type sharpenToolAreaProps = {
    * painting by hand — which is the un-undoable defect `usePaintStroke`'s JSDoc warns about,
    * and the reason a Sharpen may not reach for the shared stroke hook.
    */
-  canvasCtxRef: RefObject<CanvasRenderingContext2D | null>;
+  /**
+   * Optional: accepted so every tool area in the union can be rendered with one prop set, and
+   * read from the store rather than the prop when it is needed. `Main` passes only
+   * `overlayCtxRef`, so a required declaration here is a type error at the call site and a
+   * `undefined` at runtime. `EllipticalSelectionToolArea` and `QuickSelectionToolArea` already
+   * declare it this way.
+   */
+  canvasCtxRef?: RefObject<CanvasRenderingContext2D | null>;
   /** The sibling of `canvasCtxRef`, unused for the same reason. */
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
 };

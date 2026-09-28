@@ -180,6 +180,21 @@ describe('saveLastSettings', () => {
     expect(crop.aspectRatio).toBe(1.5);
   });
 
+  it('stores crop settings without the pre-ratio rect', () => {
+    // `aspectRatio` IS persisted while `rect` is not, so a restored session arrives with a ratio and
+    // no rect. A persisted `preRatioRect` would fill that gap from a DIFFERENT document: choosing
+    // `Free` would then restore a framing the user never drew on this one. Both are presentation
+    // state, and presentation state is exactly what this arm drops.
+    saveLastSettings({
+      rect: { x1: 0, y1: 0, x2: 100, y2: 100 },
+      preRatioRect: { x1: 5, y1: 6, x2: 200, y2: 150 },
+      aspectRatio: 1.5,
+      toolName: 'crop',
+    });
+
+    expect(lastSavedSettings.crop.preRatioRect).toBeUndefined();
+  });
+
   it('stores transform settings verbatim', () => {
     const args = {
       rotate: 90,
