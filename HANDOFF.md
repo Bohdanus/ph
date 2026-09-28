@@ -998,7 +998,7 @@ replay authority.
 
 ---
 
-## 34. `isToolDirty` has no production writer, so every reader of it is on its dead branch
+## 37. `isToolDirty` has no production writer, so every reader of it is on its dead branch
 
 **Problem.** `isToolDirty` has a type (`StoreContext.tsx:174`), a reducer arm (`:358-362`) and three
 readers — but **nothing dispatches `SET_TOOL_DIRTY` with `true`**. A grep for `SET_TOOL_DIRTY` alone
@@ -1014,7 +1014,7 @@ reader's `isToolDirty` arm is unreachable:
 - `src/components/Common/UndoButton.tsx:11-22` — **no production caller left.** The Blur, Color and
   Levels panels used it for a button labelled "Undo Blur" / "Reset" that discarded an _uncommitted_
   adjustment; they now do that panel-locally, gated on a live preview so it cannot claim a reset it
-  cannot perform (item 35). Only `src/components/Common/__tests__/UndoControls.test.tsx` still
+  cannot perform (item 40). Only `src/components/Common/__tests__/UndoControls.test.tsx` still
   renders it, so the component and its `isToolDirty` arm are kept alive by a test alone.
 
 The flag's arm is also not a harmless no-op even if it were reachable: `resetToLastSavedArgs` clones
@@ -1046,7 +1046,7 @@ branch, and the flag's deletion removes no live behaviour.
 
 ---
 
-## 35. A committed Blur/Color/Levels adjustment has no panel affordance, only document undo
+## 40. A committed Blur/Color/Levels adjustment has no panel affordance, only document undo
 
 **Problem.** The three panels' discard button removes an **uncommitted** preview and nothing else.
 `commitDirtyTool` (`useLayer.ts:323`) bakes the preview into a real layer, empties the preview map
@@ -1074,7 +1074,7 @@ is committed" — and they go red if the gate is removed.
 
 **Fix.** Only if the operator wants the panel to own the committed case too. It must be a **typed
 store action**, not a call to `undo()`: routing a panel button at the document timeline is the
-defect item 34's `UndoButton` was, and `resetHistoryTo` would discard unrelated later edits along
+defect item 37's `UndoButton` was, and `resetHistoryTo` would discard unrelated later edits along
 with the adjustment. The shape to add is a single-writer action that reverts the newest
 `TOOL_ACTION` entry for the active layer when that entry's `args.toolName` matches the panel's
 tool — appended through the same boundary as every other history write, not spliced — with the
