@@ -5,7 +5,7 @@ import { deriveReorderLayersEntry, reorderOrderAfterIntent, validatePlannedDurab
 import { legacyHistoryToDurable } from '../history-adapter.ts';
 import { DURABLE_SCHEMA_VERSION, type DurableHistoryEntry } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
-import { reorderLayers } from '../layer-utils.ts';
+import { getSortedLayersArray, reorderLayers } from '../layer-utils.ts';
 import type { Layer, LayerId, LayerSource, LayersRecord } from '../layer-types.ts';
 import { NEW_LAYER_ACTION, OPEN_DOCUMENT_ACTION, RENAME_LAYER_ACTION, REORDER_ACTION } from '../../util/constants.ts';
 
@@ -80,11 +80,15 @@ function runtimeStack(ids: readonly string[] = stackIds): LayersRecord {
   return Object.fromEntries(ids.map((id, index) => [id, blankLayer(id, index)])) as LayersRecord;
 }
 
-/** `layerOrderBottomFirst` from `StoreContext.tsx`, applied to `runtimeStack`. */
+/**
+ * The runtime record's own order, bottom first, through the SAME helper the
+ * store uses. This was a hand-copy of the comparator while the production sort
+ * was private, which meant a reversed production sort left this whole file
+ * green; it is now `getSortedLayersArray` because the sequence this reads is
+ * the feature.
+ */
 function bottomFirst(layers: LayersRecord): LayerId[] {
-  return Object.values(layers)
-    .sort((left, right) => left.order - right.order)
-    .map((layer) => layer.id);
+  return getSortedLayersArray(layers).map((layer) => layer.id);
 }
 
 function newLayerEntries(ids: readonly string[] = stackIds): HistoryItem[] {

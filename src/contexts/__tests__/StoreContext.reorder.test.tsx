@@ -10,6 +10,7 @@ import type { LayersRecord } from '../layer-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import { documentFrameFromSize } from '../document-frame.ts';
 import { createMockLayer } from '../../__tests__/fixtures/layer.ts';
+import { getSortedLayersArray } from '../layer-utils.ts';
 import { OPEN_DOCUMENT_ACTION, RENAME_LAYER_ACTION, REORDER_ACTION } from '../../util/constants.ts';
 
 /**
@@ -139,11 +140,9 @@ function orderMap(store: StoreData) {
   return operation.kind === 'reorder-layers' ? operation.orderByLayerId : null;
 }
 
-/** The layer ids bottom first — the sequence the store derives a map from. */
+/** The layer ids bottom first, through the same helper the store uses. */
 function sequence(layers: LayersRecord) {
-  return Object.values(layers)
-    .sort((left, right) => left.order - right.order)
-    .map((layer) => layer.id);
+  return getSortedLayersArray(layers).map((layer) => layer.id);
 }
 
 /** The same sequence, as the durable document itself orders its layers. */

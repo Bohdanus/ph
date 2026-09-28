@@ -206,11 +206,11 @@ function translate(
  * layer's own order, shifts everything above it, and then re-assigns the layer —
  * so the resulting *sequence* is unchanged and only the sparse order values
  * move. The converter drops the mover from the list first, so its `indexOf` is
- * -1 and it records a move to the bottom. Executed, not assumed: on a
- * three-layer stack the document reads bottom, middle, top and the converter
- * records bottom-middle-top with the mover first. (The two agree when the mover
- * is already the bottom layer, so the disagreement is a function of the stack,
- * not a blanket one.)
+ * -1 and it records a move to the bottom. Executed, not assumed: on a stack
+ * ordered bottom-first as `a, b, c`, a self-anchored move of `c` leaves the
+ * document reading `a, b, c` and the converter recording `c, a, b`. (The two
+ * agree when the mover is already the bottom layer, so the disagreement is a
+ * function of the stack, not a blanket one.)
  *
  * This boundary is written to agree with the converter rather than to become a
  * third opinion, and the two implementations of the durable rule are pinned
@@ -610,10 +610,16 @@ export function decideDurableAppend({
   }
 
   // A reorder is the only publication whose correctness depends on the whole
-  // layer set, so it is the only one that has to prove it. The refusal is a
+  // layer order, so it is the only one that has to prove it. The refusal is a
   // precondition rather than a mismatch: it describes a store that cannot answer
   // the question, not a writer that answered it wrongly, and the conversion that
   // replaces it already handles the no-op correctly.
+  //
+  // Of the three, only the sequence comparison is reachable from the store: it
+  // supplies an array for the store order by construction, and the base it reads
+  // the durable order from was already required non-null above. The other two are
+  // the module's API contract — a caller that cannot see the live record has no
+  // way to publish a reorder, and must be told that rather than be trusted.
   if (entry.actionName === REORDER_ACTION) {
     if (!preLayerOrder) {
       return { outcome: 'preconditions', reason: 'a layer reorder needs the store layer order it was planned against' };

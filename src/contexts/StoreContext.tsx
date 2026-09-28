@@ -17,7 +17,7 @@ import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
 import { cloneDocumentFrame, documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
 import { createHistoryItem } from './history-utils.ts';
-import { reorderLayers } from './layer-utils.ts';
+import { getSortedLayersArray, reorderLayers } from './layer-utils.ts';
 import { freezeDurableDocument, type DurableDocument, type DurableHistoryEntry } from './history-model.ts';
 import {
   convertLegacyHistorySafely,
@@ -376,11 +376,15 @@ function createReorderHistoryItem(intent: ReorderLayersIntent): HistoryItem {
  * after the row that started it was rendered, so a closure's copy of the layer
  * record is stale by exactly the interval in which a rename or a second reorder
  * can land.
+ *
+ * This is `getSortedLayersArray` rather than a local sort on purpose. The order
+ * this reads IS the feature — everything downstream is derived from the sequence
+ * it produces — so a private copy of the comparator would be a second
+ * implementation of a load-bearing rule, and the parity test would pin the test's
+ * copy rather than this one.
  */
 function layerOrderBottomFirst(layers: LayersRecord): LayerId[] {
-  return Object.values(layers)
-    .sort((left, right) => left.order - right.order)
-    .map((layer) => layer.id);
+  return getSortedLayersArray(layers).map((layer) => layer.id);
 }
 
 function reorderLayersFromState(layers: LayersRecord, intent: ReorderLayersIntent): LayersRecord {
