@@ -62,9 +62,12 @@ type AnchoredOverlayProps = {
   /** Margin kept clear against every viewport edge, in px. */
   viewportPadding?: number;
   /**
-   * Re-measures the overlay when this changes, and only then. A caller that replaces the
-   * content behind a reused instance — a flyout that switches to a different group — has
-   * no ref to reattach and would otherwise keep the previous size.
+   * Re-measures the overlay when this changes, and only then. The effect re-runs on its own
+   * whenever the anchor or a placement option changes, so this is only needed by a caller
+   * whose overlay keeps its identity while its CONTENT changes size — a tooltip whose label
+   * changed under it. The flyout passes its group index, which cannot change under a live
+   * instance: the overlay is rendered inside the open group's own tile, and switching groups
+   * unmounts it, so it is there to be explicit rather than load-bearing.
    */
   measureKey?: string;
 };
@@ -97,15 +100,28 @@ const AnchoredOverlay = ({
     const overlay = overlayRef.current;
     if (!anchor || !overlay) return;
 
+    // A detached anchor measures as an all-zero box, and the clamp would then place the
+    // overlay in the top-left corner at the viewport padding — a real, painted, clickable
+    // menu attached to nothing. Nothing is rendered for a detached anchor (see the guard
+    // below), so there is nothing to place; measuring it would only write a position that
+    // is never used. Skipping it is also cheaper than the alternative: invalidating the
+    // position from here would be a `setState` inside a layout effect, which is a cascading
+    // render to say something the render can already derive.
+    if (!anchor.isConnected) return;
+
     const anchorRect = anchor.getBoundingClientRect();
     const width = overlay.offsetWidth;
     const height = overlay.offsetHeight;
-    const { innerWidth, innerHeight } = window;
+    // A `position: fixed` box is laid out against the viewport MINUS a classic scrollbar,
+    // which `window.innerWidth` includes, so the clamp would overshoot by the scrollbar's
+    // width. `documentElement.clientWidth` is the same box the containing block actually is.
+    const viewportWidth = document.documentElement.clientWidth;
+    const viewportHeight = document.documentElement.clientHeight;
 
     // Preferred side is the anchor's trailing edge, which for a left-hand rail is the
     // right. Flip to the leading edge only when the trailing one cannot hold the whole
     // overlay; if neither side fits, clamp the preferred side rather than choosing.
-    const fitsTrailing = anchorRect.right + gap + width <= innerWidth - viewportPadding;
+    const fitsTrailing = anchorRect.right + gap + width <= viewportWidth - viewportPadding;
     const fitsLeading = anchorRect.left - gap - width >= viewportPadding;
     const unclampedLeft = fitsTrailing
       ? anchorRect.right + gap
@@ -115,8 +131,8 @@ const AnchoredOverlay = ({
 
     const unclampedTop = align === 'center' ? anchorRect.top + (anchorRect.height - height) / 2 : anchorRect.top;
 
-    const left = clampToViewport(unclampedLeft, width, innerWidth, viewportPadding);
-    const top = clampToViewport(unclampedTop, height, innerHeight, viewportPadding);
+    const left = clampToViewport(unclampedLeft, width, viewportWidth, viewportPadding);
+    const top = clampToViewport(unclampedTop, height, viewportHeight, viewportPadding);
 
     // Keep the same object when nothing moved, so a measurement that agrees with the
     // current position does not re-render.
@@ -140,13 +156,33 @@ const AnchoredOverlay = ({
     };
   }, [reposition]);
 
-  if (anchor === null) return null;
+  // A detached anchor is the same case as a missing one: there is nowhere to place an
+  // overlay, so render nothing at all rather than an empty box somewhere on screen. The
+  // check is a derivation from the anchor, not stored state — React re-evaluates it on
+  // every commit, so an anchor that leaves and rejoins the document needs no invalidation
+  // to be picked up again. `SidebarLeft` also clears the anchor when the flyout closes, so
+  // this is the backstop for the tile unmounting while its overlay is still mounted.
+  if (anchor === null || !anchor.isConnected) return null;
 
   const style: CSSProperties = {
     position: 'fixed',
     top: position?.top ?? OFFSCREEN,
     left: position?.left ?? OFFSCREEN,
     visibility: position === null ? 'hidden' : undefined,
+    // The wrapper is a positioning box, not a target. Left as `pointer-events: auto` it
+    // shrink-wraps the child, and with two overlays on screen the one portalled last wins:
+    // a right-click opens the flyout immediately and the hover tooltip 250ms later, so the
+    // tooltip's wrapper sat on top of the first flyout item, `locator.click()` timed out on
+    // it, and the outside-click handler read the click as outside the group — the menu
+    // closed with nothing selected. Children that need to be clickable opt back in: the
+    // flyout's `<ul>` says `pointer-events-auto`, and the tooltip's span is already
+    // `pointer-events-none`, which is why nothing visible has stopped responding.
+    pointerEvents: 'none',
+    // The children carried `z-50`, which did nothing: neither is a positioned element nor
+    // a flex or grid item, so the class had no stacking context to apply to and the wrapper
+    // sat at `z-index: auto`, ordered among body's children by append time. This is the
+    // stacking level the classes were asking for.
+    zIndex: 50,
   };
 
   return createPortal(

@@ -298,6 +298,50 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     expectEveryItemPainted(await readFlyoutGeometry(page));
   });
 
+  test('a right-clicked flyout still takes clicks once the hover tooltip has appeared', async ({ page }) => {
+    // A right-click opens the flyout at once and the hover tooltip 250ms later, so the
+    // tooltip is the overlay portalled last. When the portal wrapper was a hit target, its
+    // shrink-wrapped box sat over the first flyout item, `locator.click()` timed out on it,
+    // and the outside-click handler read the click as outside the group — the menu closed
+    // with nothing selected.
+    await openToolFlyoutViaRightClick(page, 'shape');
+    await page.getByTestId('tool-button-shape').hover();
+    // Well past `ToolTooltip`'s 250ms threshold, so the tooltip is definitely on screen.
+    await page.waitForTimeout(600);
+    await expect(page.getByRole('tooltip')).toBeVisible();
+
+    await page.getByTestId('tool-flyout-item-shape-ellipse-tool').click();
+
+    await expect(page.getByRole('menu')).toBeHidden();
+    await expect(page.getByTestId('tool-button-shape')).toHaveAttribute('aria-label', 'Ellipse Tool');
+  });
+
+  test('Tab leaves an open flyout instead of leaving it stranded on screen', async ({ page }) => {
+    const brushButton = page.getByTestId('tool-button-brush');
+    await expect(brushButton).toBeVisible();
+    await longPressWithMouse(page, 'brush');
+    await expect(page.getByRole('menu')).toBeVisible();
+
+    await page.keyboard.press('Tab');
+
+    await expect(page.getByRole('menu')).toBeHidden();
+  });
+
+  test('crossing the tablet boundary closes the flyout instead of reopening it', async ({ page }) => {
+    // The two layouts number the same groups differently, so a stale `openGroup` stops
+    // matching at the boundary and matches again on the way back — the menu reappearing with
+    // nothing the user did to open it.
+    await openToolFlyout(page, 'brush');
+    await expect(page.getByRole('menu')).toBeVisible();
+
+    await page.setViewportSize({ width: 900, height: 720 });
+    await expect(page.getByRole('menu')).toBeHidden();
+
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await expect(page.getByTestId('left-sidebar')).toBeVisible();
+    await expect(page.getByRole('menu')).toBeHidden();
+  });
+
   test('a hovered tool tooltip is painted, not clipped by the rail', async ({ page }) => {
     const button = page.getByTestId('tool-button-brush');
     await expect(button).toBeVisible();

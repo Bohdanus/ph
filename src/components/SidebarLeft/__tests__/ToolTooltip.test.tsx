@@ -211,11 +211,19 @@ describe('ToolTooltip', () => {
 
     const tooltip = screen.getByRole('tooltip');
     expect(tooltip).toHaveClass('pointer-events-none');
-    expect(tooltip).toHaveClass('z-50');
     expect(tooltip).toHaveClass('bg-gray-950');
     expect(tooltip).toHaveClass('text-white');
     expect(tooltip).toHaveClass('rounded-md');
     expect(tooltip).toHaveClass('shadow-lg');
+
+    // The stacking level lives on the portal wrapper, not on this span. `z-50` here was
+    // inert: the span is neither a positioned element nor a flex or grid item, so the class
+    // had no stacking context to apply to, and `AnchoredOverlay`'s wrapper sat at
+    // `z-index: auto` — ordered among body's children by append time. Both halves are pinned
+    // so the class cannot be added back as decoration and so the real `z-index` cannot be
+    // dropped without this going red.
+    expect(tooltip).not.toHaveClass('z-50');
+    expect((tooltip.parentElement as HTMLElement).style.zIndex).toBe('50');
   });
 
   it('escapes its container, because the left rail clips anything positioned outside it', () => {

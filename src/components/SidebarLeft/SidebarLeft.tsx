@@ -1,4 +1,4 @@
-import { type ChangeEvent, type RefObject, useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useApp } from '../../hooks/useApp.ts';
 import AnchoredOverlay from './AnchoredOverlay.tsx';
@@ -56,6 +56,24 @@ const SidebarLeft = () => {
   // changed, which is what stops that from re-rendering forever.
   const [flyoutAnchor, setFlyoutAnchor] = useState<{ groupIndex: string; element: HTMLLIElement } | null>(null);
 
+  // A crossing of the tablet boundary replaces the two-column group keys with the
+  // one-column ones, so an open group simply stops matching and the flyout vanishes without
+  // having been closed. Crossing back matches the stale `openGroup` again and the menu
+  // reopens by itself, with nothing the user did to open it.
+  //
+  // This is adjusted during render rather than in an effect: the state is derived from a
+  // prop, which is what React's own guidance says to handle this way, and it is why it is
+  // not an effect. `react-hooks/set-state-in-effect` rejects the effect form, and an effect
+  // would additionally leave a commit in which the stale group is still open. Closing here
+  // is also the only place the anchor's tile is guaranteed to be going away, which is what
+  // `closeFlyout` has to be told about.
+  const [lastIsTablet, setLastIsTablet] = useState(isTablet);
+  if (lastIsTablet !== isTablet) {
+    setLastIsTablet(isTablet);
+    setOpenGroup(null);
+    setFlyoutAnchor(null);
+  }
+
   const handleColorClick = (e: React.MouseEvent<HTMLDivElement>, inputRef: RefObject<HTMLInputElement | null>) => {
     if (!inputRef.current) return;
 
@@ -95,6 +113,18 @@ const SidebarLeft = () => {
     setOpenGroup(groupIndex);
   };
 
+  /**
+   * The one way a flyout closes. The anchor goes with it: it is the element the overlay
+   * measures, published by the open tile's ref callback, and nothing else ever clears it.
+   * Left behind, it survives a tile that unmounts — crossing the tablet boundary replaces
+   * the two-column group keys with the one-column ones, so the guard in `renderToolGroup`
+   * can stop matching the open group while a detached `<li>` is still held as the anchor.
+   */
+  const closeFlyout = useCallback(() => {
+    setOpenGroup(null);
+    setFlyoutAnchor(null);
+  }, []);
+
   const scheduleFlyoutOpen = (groupIndex: string) => {
     clearLongPressFlyout();
     longPressOpenedRef.current = false;
@@ -115,13 +145,13 @@ const SidebarLeft = () => {
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setOpenGroup(null);
+        closeFlyout();
       }
     };
 
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, [openGroup]);
+  }, [openGroup, closeFlyout]);
 
   useEffect(() => {
     if (openGroup === null) return;
@@ -132,18 +162,18 @@ const SidebarLeft = () => {
       // container, so it is no longer inside the `<li>` that holds the tile. Without this
       // second test every click on a flyout item reads as a click outside the group, and
       // the menu closes under the item that was just chosen. The attribute is matched
-      // rather than a ref to the `<ul>` held here, because the element the click landed on
-      // is a descendant of it — the overlay's own wrapper, or a `<kbd>` — and only the DOM
-      // knows which group it belongs to.
+      // rather than a ref to the `<ul>` held here, because the click target can be the
+      // `<ul>` or anything inside it — a `<kbd>`, a label span, an icon — and only the DOM
+      // knows which of those belongs to which group.
       const clickedFlyout = event.target instanceof Element ? event.target.closest('[data-toolbar-flyout]') : null;
       if (toolGroupRefs.current[openGroup]?.contains(event.target)) return;
       if (clickedFlyout?.getAttribute('data-toolbar-flyout') === openGroup) return;
-      setOpenGroup(null);
+      closeFlyout();
     };
 
     document.addEventListener('click', handleOutsideClick);
     return () => document.removeEventListener('click', handleOutsideClick);
-  }, [openGroup]);
+  }, [openGroup, closeFlyout]);
 
   const getToolIcon = (tool: ToolbarTool) => {
     if (tool.figure) {
@@ -209,7 +239,7 @@ const SidebarLeft = () => {
 
               if (hasFlyout) {
                 if (isOpen) {
-                  setOpenGroup(null);
+                  closeFlyout();
                   return;
                 }
                 selectTool(primaryTool);
@@ -280,9 +310,19 @@ const SidebarLeft = () => {
           <AnchoredOverlay align="start" anchor={flyoutAnchor.element} measureKey={groupIndex}>
             <ul
               aria-label={group.some((tool) => tool.figure) ? 'Shape tools' : `${primaryTool.label} tools`}
-              className="z-50 min-w-48 list-none rounded-lg border border-gray-300 bg-gray-100 p-1.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
+              className="pointer-events-auto min-w-48 list-none rounded-lg border border-gray-300 bg-gray-100 p-1.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
               data-toolbar-flyout={groupIndex}
               onKeyDown={(event) => {
+                // Tab leaves the menu rather than walking it. The overlay lives in
+                // `document.body`, so its items are not in the tile's focus ring and Tab is
+                // the only key that can move focus out of the menu — which is also what a
+                // `role="menu"` is supposed to do. Without this the menu outlives the focus
+                // that opened it, sitting on screen with its focus somewhere behind it.
+                if (event.key === 'Tab') {
+                  closeFlyout();
+                  return;
+                }
+
                 const items = Array.from(
                   event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
                 );
@@ -323,7 +363,7 @@ const SidebarLeft = () => {
                       onClick={() => {
                         setPrimaryTools((current) => ({ ...current, [groupIndex]: tool }));
                         selectTool(tool);
-                        setOpenGroup(null);
+                        closeFlyout();
                       }}
                       role="menuitemradio"
                       type="button"
@@ -372,7 +412,7 @@ const SidebarLeft = () => {
               className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
               onClick={() => {
                 setIsSingleColumn((current) => !current);
-                setOpenGroup(null);
+                closeFlyout();
               }}
               title={isSingleColumn ? 'Use two columns' : 'Use one column'}
               type="button"
