@@ -27,9 +27,15 @@ const createToolArgsState = vi.hoisted(() => () => ({
 }));
 const createStoreMocks = vi.hoisted(() => () => {
   const canvas = document.createElement('canvas');
-  canvas.width = 800;
-  canvas.height = 600;
+  // Deliberately NOT the store's `totalSize` (800x600) below. The teardown clears the whole
+  // backing store, and a clear sized off a render-scope value would cover a different region than
+  // the one the preview is painted on, so the two must be distinguishable in the assertions. The
+  // container's rect stays 800x600 because that is what `getLocalCoords` reads and therefore what
+  // fixes the dragged geometry.
+  canvas.width = 640;
+  canvas.height = 480;
   const ctx = {
+    canvas,
     clearRect: vi.fn(),
     fillRect: vi.fn(),
     strokeRect: vi.fn(),
@@ -1042,6 +1048,98 @@ describe('ShapeToolArea', () => {
       // With documentFrame x=0, y=0 (from documentFrameFromSize), canvas coords == document coords
       expect(fullArgs.args.start).toEqual({ x: 2, y: 2 });
       expect(fullArgs.pos).toEqual({ x: 8, y: 18, width: 44, height: 44 });
+    });
+  });
+
+  /**
+   * The overlay canvas is shared, long-lived and only ever `display`-toggled
+   * (`Main.tsx:239-284`), and toggling `display` never touches a backing store. This area never
+   * clears it on pointer up at all — the last `flushDrawingFrame` in `handlePointerUp` REDRAWS the
+   * shape and the commit leaves it there — so the unmount teardown is the only thing that ever
+   * removes the preview. Without it the shape stays painted over the next tool's document.
+   */
+  describe('overlay teardown', () => {
+    it('clears the whole backing store on unmount', () => {
+      vi.useFakeTimers();
+      const { view, toolArea } = renderToolArea();
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+      expect(drawShapeMock).toHaveBeenCalled();
+
+      vi.mocked(storeMocks.ctx.clearRect).mockClear();
+      view.unmount();
+
+      // 640x480 is the CANVAS, and totalSize is 800x600: this asserts the backing store was read at
+      // call time, which a closure over a render-scope size could not do after a document resize.
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
+    });
+
+    it('cancels a queued preview frame so it cannot repaint over the teardown clear', () => {
+      vi.useFakeTimers();
+      const { view, toolArea } = renderToolArea();
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      // The frame is queued and NOT fired, so the preview is still pending.
+      expect(drawShapeMock).not.toHaveBeenCalled();
+
+      vi.mocked(storeMocks.ctx.clearRect).mockClear();
+      view.unmount();
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      // Cancel first, then clear: a frame that survived would have repainted after the clear.
+      expect(drawShapeMock).not.toHaveBeenCalled();
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledWith(0, 0, 640, 480);
+    });
+
+    it('clears the preview a committed shape leaves painted, which nothing else removes', () => {
+      vi.useFakeTimers();
+      const { view, toolArea } = renderToolArea();
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+      act(() => {
+        fireEvent.pointerUp(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+
+      // The commit ran and left the preview on the overlay: `handlePointerUp`'s last
+      // `flushDrawingFrame` redraws it and `createLayerFromTool` does not clear it. The shape is
+      // now a layer AND is painted twice, and the overlay keeps painting over the next tool's
+      // document because toggling `display` never touches a backing store.
+      expect(createLayerFromToolMock).toHaveBeenCalledTimes(1);
+      expect(drawShapeMock).toHaveBeenCalled();
+
+      vi.mocked(storeMocks.ctx.clearRect).mockClear();
+      view.unmount();
+
+      expect(storeMocks.ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
+    });
+
+    it('clears nothing on mount, so the clear is unambiguously a teardown', () => {
+      const { view } = renderToolArea();
+      expect(storeMocks.ctx.clearRect).not.toHaveBeenCalled();
+      view.unmount();
     });
   });
 
