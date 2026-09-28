@@ -1,0 +1,1052 @@
+/**
+ * Tests for the worktree inventory generator.
+ *
+ * The properties worth pinning are not "does it produce JSON" but the two rules
+ * the whole tool exists to enforce, both of which this repository has already
+ * been bitten by:
+ *
+ *   1. A worktree reporting 0 commits ahead of main and being an ancestor of
+ *      main is NOT prunable while its working tree holds changes. This is the
+ *      "0 ahead is not a safety test" case, and it is the exact shape of the
+ *      17 worktrees here that look disposable and are not.
+ *   2. A paid-model launch that died at zero tokens is classified as a
+ *      failure, not as a finished session that happened to be quiet.
+ *
+ * Everything runs under the root jsdom project per AGENTS.md, so these are
+ * environment-agnostic: no git repository is created, no clock is read, and
+ * `node:sqlite` is only exercised where a real temporary database is cheap.
+ */
+
+import { describe, expect, it } from 'vitest';
+import { DatabaseSync } from 'node:sqlite';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { classify, riskScore, RECOMMENDATION, STATUS } from '../lib/worktree-inventory/classify.mjs';
+import { classifySession, summariseChats, isUnfinished, isDead } from '../lib/worktree-inventory/chats.mjs';
+import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
+import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
+import { __testables, findMissingWorktrees, listWorktrees } from '../lib/worktree-inventory/git.mjs';
+import { resolveBoardDb, readBoard } from '../lib/worktree-inventory/board.mjs';
+
+const NOW = 1_790_000_000_000;
+
+/**
+ * A throwaway git repository with a known ahead/behind shape.
+ *
+ * main has 3 commits, the side branch adds 2 of its own and does not see main's
+ * 3rd, so the answer is behind=1 ahead=2 — two different numbers that a
+ * transposed destructuring would still render plausibly.
+ */
+function makeRepo() {
+  const dir = mkdtempSync(join(tmpdir(), 'wtinv-git-'));
+  const g = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'ignore' });
+  g('init', '--initial-branch=main', '--quiet');
+  g('config', 'user.email', 't@t');
+  g('config', 'user.name', 't');
+  for (const n of ['one', 'two', 'three']) {
+    writeFileSync(join(dir, `${n}.txt`), n);
+    g('add', '.');
+    g('commit', '--quiet', '-m', n);
+  }
+  g('checkout', '--quiet', '-b', 'side');
+  for (const n of ['four', 'five']) {
+    writeFileSync(join(dir, `${n}.txt`), n);
+    g('add', '.');
+    g('commit', '--quiet', '-m', n);
+  }
+  g('checkout', '--quiet', 'main');
+  writeFileSync(join(dir, 'six.txt'), 'six');
+  g('add', '.');
+  g('commit', '--quiet', '-m', 'six');
+  return dir;
+}
+
+/** A worktree shaped like the ones this repository actually has. */
+function wt(overrides = {}) {
+  return {
+    name: 'example',
+    path: '/repo/.kilo/worktrees/example',
+    branch: 'feat/example',
+    head: 'abc',
+    isPrimary: false,
+    tip: { sha: 'abc', subject: 'feat: something', date: '2026-09-28T00:00:00Z', author: 'kilo' },
+    ahead: 1,
+    behind: 2,
+    mergedIntoBase: false,
+    workingTree: { modified: 0, untracked: 0, paths: [] },
+    commitsAhead: [],
+    ...overrides,
+  };
+}
+
+const noChats = { count: 0, lastActivity: null };
+const noSessions = [];
+
+describe('git.mjs against a real repository', () => {
+  it('maps rev-list --left-right --count to behind=left, ahead=right', () => {
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
+      const raw = execFileSync('git', ['rev-list', '--left-right', '--count', 'main...HEAD'], {
+        cwd: dir,
+        encoding: 'utf8',
+      }).trim();
+      // Pin the raw shape first: if git ever changes the order, this fails
+      // with the actual string rather than a mysterious assertion failure.
+      expect(raw).toBe('1\t2');
+
+      const { ahead, behind } = __testables.aheadBehind(dir, 'main');
+      expect(behind).toBe(1);
+      expect(ahead).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a branch that main does not contain as NOT merged', () => {
+    const dir = makeRepo();
+    try {
+      // `makeRepo` leaves HEAD on main, where the question is trivially true.
+      // The interesting case is a branch main has not seen.
+      execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
+      expect(__testables.isMergedInto(dir, 'main')).toBe(false);
+      execFileSync('git', ['checkout', '--quiet', 'main'], { cwd: dir, stdio: 'ignore' });
+      expect(__testables.isMergedInto(dir, 'main')).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reads a leading-space porcelain status without eating the first path character', () => {
+    const dir = makeRepo();
+    try {
+      writeFileSync(join(dir, 'one.txt'), 'edited');
+      execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
+      writeFileSync(join(dir, 'dirty.txt'), 'untracked');
+
+      const tree = __testables.workingTreeState(dir);
+      expect(tree.modified).toBe(1);
+      expect(tree.untracked).toBe(1);
+      // The first porcelain line is " M one.txt" with a leading space. A
+      // `.trim()` on the whole output turns that into "M one.txt", and
+      // `slice(3)` then yields "ne.txt" — a path that resolves to nothing.
+      expect(tree.paths).toContain('one.txt');
+      expect(tree.paths).toContain('dirty.txt');
+      for (const p of tree.paths) {
+        expect(existsSync(join(dir, p)), `${p} does not resolve inside the worktree`).toBe(true);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports whether the commit list was cut off at the cap', () => {
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
+      const full = __testables.commitsAhead(dir, 'main', 2);
+      expect(full.commits).toHaveLength(2);
+      expect(full.truncated).toBe(false);
+
+      const capped = __testables.commitsAhead(dir, 'main', 2, 1);
+      expect(capped.commits).toHaveLength(1);
+      // ahead=2 with one commit listed is a SAMPLE, and a reader must be able
+      // to tell that from a complete list.
+      expect(capped.truncated).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('finds a worktree whose directory was deleted, by path', () => {
+    const dir = makeRepo();
+    try {
+      execFileSync('git', ['worktree', 'add', '--quiet', join(dir, 'wt-gone'), 'side'], {
+        cwd: dir,
+        stdio: 'ignore',
+      });
+      expect(findMissingWorktrees(dir)).toHaveLength(0);
+
+      rmSync(join(dir, 'wt-gone'), { recursive: true, force: true });
+      const missing = findMissingWorktrees(dir);
+      expect(missing).toHaveLength(1);
+      // By PATH, and compared after resolving symlinks: on macOS `mkdtemp`
+      // hands back `/var/…` while git reports the same directory as
+      // `/private/var/…`, so a raw string comparison fails on the prefix.
+      // Comparing PATH SEGMENTS is what the production code does.
+      expect(missing[0].path.endsWith('wt-gone')).toBe(true);
+      expect(existsSync(missing[0].path)).toBe(false);
+      expect(listWorktrees(dir).map((w) => w.path)).toContain(missing[0].path);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('resolveBoardDb', () => {
+  it('returns an absolute path, so it resolves the same from any worktree', () => {
+    const dir = makeRepo();
+    try {
+      const p = resolveBoardDb(dir);
+      expect(p.startsWith('/')).toBe(true);
+      // The failure this pins: plain `git rev-parse --git-common-dir` answers
+      // the RELATIVE string ".git", which DatabaseSync then resolves against
+      // process.cwd() — a different directory in every worktree.
+      expect(p).not.toMatch(/^\.git/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('readBoard: liveness of claims and locks', () => {
+  /** A board database with the real schema and one row of each kind. */
+  function makeBoard({ leaseUntil, releasedAt = null, expiresAt }) {
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-board-'));
+    const db = new DatabaseSync(join(dir, 'board.db'));
+    db.exec(`CREATE TABLE issues (id TEXT, title TEXT, scope TEXT, status TEXT, priority TEXT, origin TEXT);
+             CREATE TABLE claims (issue_id TEXT, agent_id TEXT, worktree TEXT, branch TEXT,
+                                  lease_until TEXT, released_at TEXT);
+             CREATE TABLE file_locks (path TEXT, agent_id TEXT, issue_id TEXT, worktree TEXT,
+                                     expires_at TEXT, released_at TEXT);`);
+    db.prepare('INSERT INTO issues VALUES (?,?,?,?,?,?)').run('ph-1', 'an issue', 'prod', 'open', 'high', 'x');
+    db.prepare('INSERT INTO claims VALUES (?,?,?,?,?,?)').run(
+      'ph-1',
+      'agent-a',
+      '/repo/.kilo/worktrees/x',
+      'feat/x',
+      leaseUntil,
+      releasedAt
+    );
+    db.prepare('INSERT INTO file_locks VALUES (?,?,?,?,?,?)').run(
+      'src/a.ts',
+      'agent-a',
+      'ph-1',
+      '/repo/.kilo/worktrees/x',
+      expiresAt,
+      releasedAt
+    );
+    db.close();
+    return { dir, dbPath: join(dir, 'board.db') };
+  }
+
+  const iso = (ms) => new Date(ms).toISOString();
+
+  it('keeps a claim whose ISO-8601 lease has not expired', () => {
+    // `lease_until` is TEXT. A bare `Number(x) > nowMs` is `NaN > n` — false
+    // for every row — so this filter once dropped every claim and every lock
+    // in the repository, and the board half reported zero contention.
+    const { dir, dbPath } = makeBoard({ leaseUntil: iso(NOW + 600_000), expiresAt: iso(NOW + 600_000) });
+    try {
+      const board = readBoard(process.cwd(), { nowMs: NOW, dbPath });
+      expect(board.available).toBe(true);
+      expect(board.issues).toHaveLength(1);
+      expect([...board.claims.values()].flat()).toHaveLength(1);
+      expect([...board.fileLocks.values()].flat()).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('drops a claim whose lease has run out, and one that was released', () => {
+    const expired = makeBoard({ leaseUntil: iso(NOW - 600_000), expiresAt: iso(NOW - 600_000) });
+    try {
+      const board = readBoard(process.cwd(), { nowMs: NOW, dbPath: expired.dbPath });
+      expect([...board.claims.values()].flat()).toHaveLength(0);
+    } finally {
+      rmSync(expired.dir, { recursive: true, force: true });
+    }
+
+    const released = makeBoard({ leaseUntil: iso(NOW + 600_000), expiresAt: iso(NOW + 600_000), releasedAt: iso(NOW) });
+    try {
+      const board = readBoard(process.cwd(), { nowMs: NOW, dbPath: released.dbPath });
+      expect([...board.claims.values()].flat()).toHaveLength(0);
+    } finally {
+      rmSync(released.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('treats an unparseable timestamp as live rather than hiding the claim', () => {
+    const { dir, dbPath } = makeBoard({ leaseUntil: 'not-a-date', expiresAt: 'not-a-date' });
+    try {
+      const board = readBoard(process.cwd(), { nowMs: NOW, dbPath });
+      expect([...board.claims.values()].flat()).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('degrades to an empty board, not a crash, when the database is absent', () => {
+    const board = readBoard(process.cwd(), { nowMs: NOW, dbPath: '/nonexistent/board.db' });
+    expect(board.available).toBe(false);
+    expect(board.claims.size).toBe(0);
+    expect(board.issues).toEqual([]);
+  });
+});
+
+describe('blocked-question detection', () => {
+  /**
+   * The real shape: the message sits inside a JSON string, so its quotes are
+   * escaped, and the same row also carries a `questionID` JSON KEY whose value
+   * is the placeholder `"/"`.
+   */
+  const payload = JSON.stringify({
+    type: 'tool',
+    tool: 'agent_manager',
+    state: { status: 'error' },
+    input: { questionID: '/', replyTo: '/' },
+    error:
+      'The managed session ses_x ("a title") is waiting for input. ' +
+      // BARE quotes here: `JSON.stringify` is what escapes them, exactly as the
+      // runtime did when it stored the row. Escaping them twice, as an earlier
+      // draft of this fixture did, produces `\\\"` and the test then proves
+      // nothing about the real payload.
+      'Pending question requests: questionID "que_0e49a9650001UM8oJl32u9X3ko"',
+  });
+
+  it('extracts the question id from the escaped payload', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-blk-'));
+    const dbPath = join(dir, 'kilo.db');
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec(`CREATE TABLE session (id TEXT, directory TEXT, title TEXT, parent_id TEXT, agent TEXT,
+                 slug TEXT, tokens_output INTEGER, tokens_input INTEGER, time_created INTEGER,
+                 time_updated INTEGER, time_archived INTEGER);
+               CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, time_created INTEGER,
+                 time_updated INTEGER, data TEXT);`);
+      db.prepare('INSERT INTO session VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(
+        'ses_x',
+        '/wt',
+        'a title',
+        null,
+        'code',
+        's',
+        100,
+        10,
+        NOW - 7200_000,
+        NOW - 7200_000,
+        null
+      );
+      db.prepare('INSERT INTO part VALUES (?,?,?,?,?,?)').run('p1', 'm1', 'ses_x', NOW - 100, NOW - 100, payload);
+      db.close();
+
+      const { auditChats } = await_import();
+      const audit = auditChats({ dbPath, sinceMs: NOW - 4 * 3600_000, nowMs: NOW, existingPaths: new Set(['/wt']) });
+      const [s] = audit.byDirectory.get('/wt');
+      expect(s.state).toBe('blocked');
+      // Not the `"/"` placeholder from the input JSON — that occurrence is
+      // skipped because it is followed by a quote rather than a space.
+      expect(s.blockedOn).toBe('que_0e49a9650001UM8oJl32u9X3ko');
+      expect(s.reasons.join(' ')).toContain('waiting for input');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('the pinned clock', () => {
+  it('does not let --now in the past reclassify worktrees as in-use', () => {
+    const board = { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] };
+    const lastActivity = NOW;
+    const byDirectory = new Map([
+      ['/repo/.kilo/worktrees/x', [{ id: 's1', state: 'finished', timeUpdated: lastActivity, subagentCount: 0 }]],
+    ]);
+    const chatAudit = { available: true, dbPath: 'k', byDirectory, total: 1, newestSessionAt: lastActivity };
+
+    // nowMs is a day BEHIND the newest session the audit knows about. A
+    // negative idle time passes the liveness test, which once flipped a dozen
+    // worktrees from salvage to in-use under this flag.
+    const inv = buildInventory({
+      worktrees: [wt({ name: 'x', ahead: 2, mergedIntoBase: false })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit,
+      nowMs: NOW - 86_400_000,
+    });
+    expect(inv.worktrees[0].recommendation).toBe(RECOMMENDATION.SALVAGE);
+  });
+
+  it('still marks a genuinely live session in-use', () => {
+    const board = { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] };
+    // The map key MUST be the worktree's own path: `buildInventory` looks
+    // sessions up by `wt.path`, and a key that does not match silently
+    // produces an empty chat set — which reads as "no live session".
+    const byDirectory = new Map([
+      ['/repo/.kilo/worktrees/example', [{ id: 's1', state: 'active', timeUpdated: NOW - 60_000, subagentCount: 0 }]],
+    ]);
+    const inv = buildInventory({
+      worktrees: [wt({ ahead: 2, mergedIntoBase: false })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit: { available: true, dbPath: 'k', byDirectory, total: 1, newestSessionAt: NOW - 60_000 },
+      nowMs: NOW,
+    });
+    expect(inv.worktrees[0].chats.count).toBe(1);
+    expect(inv.worktrees[0].recommendation).toBe(RECOMMENDATION.IN_USE);
+  });
+});
+
+describe('classify: the 0-ahead trap', () => {
+  it('calls a branch at an old main commit with no commits of its own UNCOMMITTED_ONLY, not landed', () => {
+    const v = classify(
+      wt({ ahead: 0, mergedIntoBase: true, head: 'main-old', workingTree: { modified: 3, untracked: 2, paths: [] } }),
+      { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
+    );
+    expect(v.status).toBe(STATUS.UNCOMMITTED_ONLY);
+    expect(v.recommendation).toBe(RECOMMENDATION.SALVAGE);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('never marks a worktree prunable while it holds uncommitted work, whatever git says', () => {
+    for (const tree of [
+      { modified: 1, untracked: 0, paths: [] },
+      { modified: 0, untracked: 1, paths: [] },
+      { modified: 9, untracked: 9, paths: [] },
+    ]) {
+      const v = classify(wt({ ahead: 0, behind: 40, mergedIntoBase: true, workingTree: tree }), {
+        chatSummary: noChats,
+        chatSessions: noSessions,
+        curated: null,
+        nowMs: NOW,
+      });
+      expect(v.prunable).toBe(false);
+      expect(v.recommendation).not.toBe(RECOMMENDATION.PRUNE);
+    }
+  });
+
+  it('marks a landed, clean worktree prunable', () => {
+    const v = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.status).toBe(STATUS.LANDED);
+    expect(v.recommendation).toBe(RECOMMENDATION.PRUNE);
+    expect(v.prunable).toBe(true);
+  });
+
+  it('refuses to prune a landed, clean worktree that a curated finding protects', () => {
+    const v = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: { mustNotPrune: true },
+      nowMs: NOW,
+    });
+    expect(v.prunable).toBe(false);
+    expect(v.recommendation).toBe(RECOMMENDATION.REVIEW_RESIDUE);
+  });
+
+  it('treats a live session as in-use even when the branch is prunable on git alone', () => {
+    const v = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 1, lastActivity: NOW - 60_000 },
+      chatSessions: [{ state: 'active' }],
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.recommendation).toBe(RECOMMENDATION.IN_USE);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('reports unmerged commits as salvage', () => {
+    const v = classify(wt({ ahead: 3 }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.status).toBe(STATUS.UNMERGED_WORK);
+    expect(v.recommendation).toBe(RECOMMENDATION.SALVAGE);
+  });
+
+  it('reports a dirty tree on a merged branch as uncommitted-only, not landed', () => {
+    const v = classify(
+      wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 1, untracked: 0, paths: ['a.ts'] } }),
+      { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
+    );
+    expect(v.status).toBe(STATUS.UNCOMMITTED_ONLY);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('never marks the MAIN worktree prunable, whatever git reports about it', () => {
+    // The main checkout is the landing site and the place the operator works.
+    // `isPrimary` short-circuits the status ladder, so without an explicit
+    // guard a clean main reports `recommendation: "prune"` — a file that says
+    // "safe to remove now, with or without --force", about the main checkout.
+    for (const facts of [
+      { ahead: 0, behind: 0, mergedIntoBase: true },
+      { ahead: 7, behind: 0, mergedIntoBase: false },
+      { ahead: 3, behind: 9, mergedIntoBase: true },
+    ]) {
+      const v = classify(wt({ name: 'ph', isPrimary: true, ...facts }), {
+        chatSummary: noChats,
+        chatSessions: noSessions,
+        curated: null,
+        nowMs: NOW,
+      });
+      expect(v.prunable, `main with ${JSON.stringify(facts)} was called prunable`).toBe(false);
+      expect(v.recommendation).not.toBe(RECOMMENDATION.PRUNE);
+    }
+  });
+
+  it('reports the MAIN worktree as in-use when a session is live in it', () => {
+    // `wt.live` was read instead of the local `live`, and the input record
+    // never carries that property — so the main worktree could never report
+    // `in-use`, and the only thing standing between it and `keep` while
+    // someone worked in it was a coincidence.
+    const v = classify(wt({ name: 'ph', isPrimary: true, ahead: 0, mergedIntoBase: true }), {
+      chatSummary: { count: 1, lastActivity: NOW - 60_000 },
+      chatSessions: [{ state: 'active' }],
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.recommendation).toBe(RECOMMENDATION.IN_USE);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('reports a main worktree with uncommitted work as holding it, not as landed', () => {
+    const v = classify(
+      wt({
+        name: 'ph',
+        isPrimary: true,
+        ahead: 0,
+        mergedIntoBase: true,
+        workingTree: { modified: 3, untracked: 1, paths: [] },
+      }),
+      { chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW }
+    );
+    expect(v.prunable).toBe(false);
+    expect(v.uncommitted).toBe(true);
+  });
+
+  it('reports a detached HEAD as UNREADABLE, because there is no branch identity to compare', () => {
+    const v = classify(wt({ detached: true, branch: '(detached)', ahead: 0, mergedIntoBase: true }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.status).toBe(STATUS.UNREADABLE);
+    // A detached worktree at a commit main contains is NOT prunable: the
+    // inventory never records which branch it was on, so "safe to delete"
+    // would be a claim about a ref the file does not show.
+    expect(v.prunable).toBe(false);
+  });
+
+  it('ranks salvage above prune, so the worst work sorts first', () => {
+    expect(riskScore({ recommendation: RECOMMENDATION.SALVAGE })).toBeGreaterThan(
+      riskScore({ recommendation: RECOMMENDATION.PRUNE })
+    );
+  });
+});
+
+describe('classifySession: dead and unfinished agents', () => {
+  const base = {
+    id: 'ses_x',
+    title: 'a task',
+    agent: 'code',
+    directory: '/repo',
+    timeCreated: NOW - 1000,
+    timeUpdated: NOW - 1000,
+    tokensOutput: 500,
+  };
+
+  // Past the 30-minute liveness window, so an assertion about the last turn's
+  // shape is not silently an assertion about recency instead.
+  const stale = { ...base, timeUpdated: NOW - 5 * 3600_000 };
+
+  it('classifies a paid-model launch that died at zero tokens as rejected-credits', () => {
+    const s = classifySession(
+      { ...base, tokensOutput: 0 },
+      { creditsFailures: 1, toolErrors: 1 },
+      { nowMs: NOW, exists: true }
+    );
+    expect(s.state).toBe('rejected-credits');
+    expect(s.creditsFailures).toBe(1);
+  });
+
+  it('classifies a session whose worktree was deleted as orphaned', () => {
+    const s = classifySession(base, { lastReason: 'stop' }, { nowMs: NOW, exists: false });
+    expect(s.state).toBe('orphaned');
+  });
+
+  it('classifies a stale turn that ended on a tool call as abandoned-midflight', () => {
+    const s = classifySession(stale, { lastReason: 'tool-calls' }, { nowMs: NOW, exists: true });
+    expect(s.state).toBe('abandoned-midflight');
+  });
+
+  it('classifies a turn cut off by the token limit as abandoned too', () => {
+    expect(classifySession(stale, { lastReason: 'length' }, { nowMs: NOW, exists: true }).state).toBe(
+      'abandoned-midflight'
+    );
+  });
+
+  it('classifies a stale completed stop as finished', () => {
+    expect(classifySession(stale, { lastReason: 'stop' }, { nowMs: NOW, exists: true }).state).toBe('finished');
+  });
+
+  it('prefers active over abandoned for a recent session, so a live machine is never cried up as stuck', () => {
+    expect(classifySession(base, { lastReason: 'tool-calls' }, { nowMs: NOW, exists: true }).state).toBe('active');
+  });
+
+  it('separates a live session from a completed one by recency alone', () => {
+    expect(classifySession(base, { lastReason: 'stop' }, { nowMs: NOW, exists: true }).state).toBe('active');
+    expect(classifySession(stale, { lastReason: 'stop' }, { nowMs: NOW, exists: true }).state).toBe('finished');
+  });
+
+  it('has no fourth state, so a finished agent is never reported as still-open', () => {
+    // An earlier draft had an `idle` state that swallowed `finished`, which made
+    // the `unfinished` array a list of every completed agent. The states below
+    // are the whole vocabulary, and a stale completed session must land on
+    // `finished` rather than on anything that reads as unresolved.
+    const observed = new Set();
+    for (const [session, outcome] of [
+      [base, { lastReason: 'stop' }],
+      [stale, { lastReason: 'stop' }],
+      [stale, { lastReason: 'tool-calls' }],
+      [{ ...base, tokensOutput: 0 }, { creditsFailures: 1 }],
+    ]) {
+      observed.add(classifySession(session, outcome, { nowMs: NOW, exists: true }).state);
+    }
+    expect([...observed].sort()).toEqual(['abandoned-midflight', 'active', 'finished', 'rejected-credits']);
+    expect(observed.has('idle')).toBe(false);
+  });
+});
+
+describe('summariseChats', () => {
+  it('counts states, collects chat ids and separates unfinished from finished', () => {
+    const s = summariseChats([
+      { id: 'a', state: 'active', timeUpdated: NOW, subagentCount: 2 },
+      { id: 'b', state: 'abandoned-midflight', timeUpdated: NOW - 1, subagentCount: 0 },
+      { id: 'c', state: 'finished', timeUpdated: NOW - 2, subagentCount: 1 },
+      { id: 'd', state: 'died-at-birth', timeUpdated: NOW - 3, subagentCount: 0 },
+    ]);
+    expect(s.count).toBe(4);
+    expect(s.chatIds).toEqual(['a', 'b', 'c', 'd']);
+    expect(s.subagentCount).toBe(3);
+    expect(s.activeChatIds).toEqual(['a']);
+    expect(s.unfinishedChatIds).toEqual(expect.arrayContaining(['a', 'b', 'd']));
+    expect(s.unfinishedChatIds).not.toContain('c');
+    expect(s.lastActivity).toBe(NOW);
+  });
+});
+
+describe('auditChats against a real session database', () => {
+  it('reads the LAST step-finish per session, not the first', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-'));
+    const dbPath = join(dir, 'kilo.db');
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec(`CREATE TABLE session (id TEXT, directory TEXT, title TEXT, parent_id TEXT, agent TEXT,
+                 slug TEXT, tokens_output INTEGER, tokens_input INTEGER, time_created INTEGER,
+                 time_updated INTEGER, time_archived INTEGER)`);
+      db.exec(`CREATE TABLE part (id TEXT, message_id TEXT, session_id TEXT, time_created INTEGER,
+                 time_updated INTEGER, data TEXT)`);
+      db.prepare('INSERT INTO session VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(
+        // Stale enough to be past the 30-minute liveness window, so the
+        // assertion below is about the finish reason and not about recency.
+        'ses_one',
+        '/wt',
+        'first turn ends badly',
+        null,
+        'code',
+        's',
+        100,
+        10,
+        NOW - 7200_000,
+        NOW - 7200_000,
+        null
+      );
+      const ins = db.prepare('INSERT INTO part VALUES (?,?,?,?,?,?)');
+      // An early tool-calls turn, then a later proper stop. Reading the first
+      // row here misclassifies the session as abandoned.
+      ins.run(
+        'p1',
+        'm1',
+        'ses_one',
+        NOW - 900,
+        NOW - 900,
+        JSON.stringify({ type: 'step-finish', reason: 'tool-calls' })
+      );
+      ins.run('p2', 'm2', 'ses_one', NOW - 800, NOW - 800, JSON.stringify({ type: 'step-finish', reason: 'stop' }));
+
+      db.close();
+
+      const { auditChats } = await_import();
+      const audit = auditChats({
+        dbPath,
+        // The window must reach back past the session's own timestamp: it is
+        // two hours old, and a 10s window filters it out before the turn
+        // reasons are ever read.
+        sinceMs: NOW - 4 * 3600_000,
+        nowMs: NOW,
+        existingPaths: new Set(['/wt']),
+      });
+
+      expect(audit.available).toBe(true);
+      const sessions = audit.byDirectory.get('/wt');
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].lastTurnReason).toBe('stop');
+      expect(sessions[0].state).toBe('finished');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('degrades to an empty audit when the database is absent', () => {
+    const { auditChats } = await_import();
+    const audit = auditChats({ dbPath: '/nonexistent/kilo.db', sinceMs: 0, nowMs: NOW });
+    expect(audit.available).toBe(false);
+    expect(audit.byDirectory.size).toBe(0);
+  });
+});
+
+// Imported lazily so the module-level `node:sqlite` import is not a hard
+// dependency of the pure-function tests above.
+function await_import() {
+  // eslint-disable-next-line
+  return chatsModule;
+}
+
+describe('buildInventory', () => {
+  const board = { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] };
+  const chatAudit = { available: true, dbPath: 'k', byDirectory: new Map(), total: 0 };
+
+  it('emits a document with counts that agree with the records it contains', () => {
+    const inv = buildInventory({
+      worktrees: [
+        wt({ name: 'a', ahead: 0, mergedIntoBase: true }),
+        wt({ name: 'b', ahead: 2, mergedIntoBase: false, workingTree: { modified: 1, untracked: 0, paths: [] } }),
+        wt({ name: 'main', isPrimary: true, ahead: 0, mergedIntoBase: true }),
+      ],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit,
+      nowMs: NOW,
+    });
+
+    expect(inv.schemaVersion).toBe(SCHEMA_VERSION);
+    expect(inv.worktrees).toHaveLength(3);
+    expect(inv.totals.worktrees).toBe(3);
+    // The counts must be derived from the records, not maintained by hand.
+    const summed = Object.values(inv.totals.byStatus).reduce((a, b) => a + b, 0);
+    expect(summed).toBe(3);
+    const byRec = inv.totals.byRecommendation;
+    expect(Object.values(byRec).reduce((a, b) => a + b, 0)).toBe(3);
+    expect(inv.totals.prunable).toBe(inv.worktrees.filter((w) => w.prunable).length);
+  });
+
+  it('sorts the highest-risk worktree first, so the list opens with what is at risk', () => {
+    const inv = buildInventory({
+      worktrees: [
+        wt({ name: 'safe', ahead: 0, mergedIntoBase: true }),
+        wt({ name: 'risky', ahead: 0, mergedIntoBase: true, workingTree: { modified: 4, untracked: 0, paths: [] } }),
+      ],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit,
+      nowMs: NOW,
+    });
+    expect(inv.worktrees[0].name).toBe('risky');
+  });
+
+  it('keeps every record addressable by name and unique', () => {
+    const inv = buildInventory({
+      worktrees: [wt({ name: 'x' }), wt({ name: 'x', path: '/repo/.kilo/worktrees/x2' })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit,
+      nowMs: NOW,
+    });
+    const keys = inv.worktrees.map((w) => `${w.name}:${w.absolutePath}`);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('surfaces unfinished and dead chats as separate arrays on the worktree', () => {
+    const byDirectory = new Map([
+      [
+        '/repo/.kilo/worktrees/example',
+        [
+          {
+            id: 's1',
+            title: 'stuck',
+            state: 'abandoned-midflight',
+            idleMs: 1000,
+            reasons: [],
+            toolErrors: 3,
+            creditsFailures: 0,
+            timeUpdated: NOW - 1,
+          },
+          {
+            id: 's2',
+            title: 'dead',
+            state: 'rejected-credits',
+            idleMs: 2000,
+            reasons: [],
+            toolErrors: 1,
+            creditsFailures: 1,
+            timeUpdated: NOW - 2,
+          },
+          {
+            id: 's3',
+            title: 'done',
+            state: 'finished',
+            idleMs: 3000,
+            reasons: [],
+            toolErrors: 0,
+            creditsFailures: 0,
+            timeUpdated: NOW - 3,
+          },
+        ],
+      ],
+    ]);
+    const inv = buildInventory({
+      worktrees: [wt()],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit: { ...chatAudit, byDirectory },
+      nowMs: NOW,
+    });
+    const w = inv.worktrees[0];
+    expect(w.chats.count).toBe(3);
+    expect(w.chats.unfinished.map((c) => c.id)).toEqual(['s1', 's2']);
+    expect(w.chats.dead.map((c) => c.id)).toEqual(['s2']);
+    expect(w.chats.chatIds).toEqual(['s1', 's2', 's3']);
+  });
+
+  it('records a null summary rather than inventing one', () => {
+    const inv = buildInventory({
+      worktrees: [wt({ name: 'not-in-curated' })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit,
+      nowMs: NOW,
+    });
+    expect(inv.worktrees[0].summary).toBeNull();
+    expect(inv.worktrees[0].summarySource).toBe('none');
+    expect(inv.totals.withoutSummary).toBe(1);
+  });
+});
+
+describe('the curated table', () => {
+  it('gives every entry a summary, because the inventory is read as prose', () => {
+    for (const [name, entry] of Object.entries(CURATED)) {
+      expect(typeof entry.summary, `${name} has no summary`).toBe('string');
+      expect(entry.summary.length, `${name} has an empty summary`).toBeGreaterThan(20);
+    }
+  });
+
+  it('contains no bare count in any summary, because a number in prose goes stale silently', () => {
+    // Seven entries asserted counts ("32 paths uncommitted", "12 commits
+    // behind", "four files and a new test"). Every one was wrong within hours
+    // and nothing could catch it, because prose is not checkable. The
+    // generated record already carries dirty/untracked/ahead/behind.
+    const offenders = [];
+    for (const [name, entry] of Object.entries(CURATED)) {
+      for (const field of ['summary', 'note']) {
+        const text = entry[field];
+        if (!text) continue;
+        // A number that counts files, commits or paths. Years, part numbers and
+        // commit shas are not what this is about — and ZERO is not, because
+        // "0 ahead of main" is the invariant this whole tool exists to refuse
+        // to read as safety. It is a structural fact of a merged branch, not a
+        // measurement that drifts.
+        const m = /\b(\d+)\s+(path|file|commit|spec|dirty|untracked|behind|ahead)/i.exec(text);
+        if (m && Number(m[1]) > 0) offenders.push(`${name}.${field}: "${m[0]}"`);
+      }
+    }
+    expect(
+      offenders,
+      `curated prose contains counts that will drift: ${offenders.join('; ')}. ` +
+        'Describe what is there; read dirty/untracked/ahead/behind from the record.'
+    ).toEqual([]);
+  });
+
+  it('gives every non-primary worktree a curated entry, so none is undocumented', () => {
+    // This reads the REAL worktree list, not the curated table. The previous
+    // version iterated `Object.keys(CURATED)` and compared it to itself, so it
+    // passed with 23 entries deleted and with every summary blanked.
+    const cwd = process.cwd();
+    const live = listWorktrees(cwd);
+    expect(live.length).toBeGreaterThan(1);
+
+    // Worktrees created after the table was written, plus the two that are
+    // documented elsewhere by construction. Everything else must be curated.
+    const allowed = new Set(['worktree-inventory']);
+    const uncategorised = live
+      .map((w) => w.name)
+      .filter((name) => name !== 'ph' && !allowed.has(name) && !CURATED[name]);
+
+    expect(
+      uncategorised,
+      `worktrees with no curated entry: ${uncategorised.join(', ')}. ` +
+        'Add each to scripts/lib/worktree-inventory/curated.mjs with a summary.'
+    ).toEqual([]);
+  });
+
+  it('agrees with git about every `landed: true` claim, so the two cannot contradict', () => {
+    // `landed` is a curator's assertion. It was previously read by nothing, so
+    // a worktree could claim it was landed while git reported the opposite and
+    // no test objected.
+    const cwd = process.cwd();
+    const live = listWorktrees(cwd);
+    const claimed = Object.entries(CURATED)
+      .filter(([, e]) => e.landed === true)
+      .map(([n]) => n);
+
+    expect(claimed.length).toBeGreaterThan(0);
+
+    const contradictions = [];
+    for (const name of claimed) {
+      const w = live.find((x) => x.name === name);
+      if (!w) continue; // the worktree is gone; nothing to contradict
+      if (!__testables.isMergedInto(w.path, 'main')) {
+        contradictions.push(`${name}: curated says landed, git says the branch is not on main`);
+      }
+      if (w.branch === '(detached)') {
+        contradictions.push(`${name}: curated says landed, but the worktree is detached`);
+      }
+    }
+    expect(contradictions, contradictions.join('\n')).toEqual([]);
+  });
+
+  it('marks no detached worktree as landed', () => {
+    for (const [name, entry] of Object.entries(CURATED)) {
+      if (entry.landed) {
+        const w = listWorktrees(process.cwd()).find((x) => x.name === name);
+        if (w) expect(w.branch, `${name} claims landed but is detached`).not.toBe('(detached)');
+      }
+    }
+  });
+
+  it('keeps the main worktree and this one out of the curated table on purpose', () => {
+    // `ph` is described in AGENTS.md, not per-worktree, and this worktree is
+    // this change's own scratch space.
+    expect(CURATED.ph).toBeUndefined();
+    expect(CURATED['worktree-inventory']).toBeUndefined();
+  });
+
+  it('requires a mustNotPrune entry to say WHY, because the flag alone is unfalsifiable', () => {
+    for (const [name, entry] of Object.entries(CURATED)) {
+      if (entry.mustNotPrune) {
+        expect(
+          typeof entry.note === 'string' && entry.note.length > 30,
+          `${name} sets mustNotPrune without a note explaining what would be lost`
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('sets mustNotPrune on every worktree whose danger is invisible to git', () => {
+    // These are the worktrees where `prunable` would be true on git's facts
+    // alone, or where the work is on no ref at all. Losing one is unrecoverable
+    // and no amount of rebasing brings it back, so the flag must be set.
+    const invisibleToGit = [
+      'fix-oracle',
+      'polygon-marching-ants',
+      'ps-pixel-tools',
+      'ps-tools-spine',
+      'responsive-design-plan',
+      'ps-tool-playbook',
+      'e2e-1-export-oracle',
+      'e2e-2-draw-specs',
+      'e2e-3-layers-levels',
+      'e2e-4-flyout-keyboard',
+      'e2e-5-history-undo',
+      'history-append-layer-ops-main',
+      'history-selection-creation-writer-2',
+      'history-selection-deselect-writer',
+      'history-selection-gesture-writer',
+    ];
+    for (const name of invisibleToGit) {
+      expect(CURATED[name]?.mustNotPrune, `${name} holds work on no ref and is not protected`).toBe(true);
+    }
+  });
+
+  it('gives every issue a ref and a title, because a ref with no title is unreadable', () => {
+    for (const [name, entry] of Object.entries(CURATED)) {
+      for (const issue of entry.issues ?? []) {
+        expect(issue.ref, `${name} has an issue with no ref`).toBeTruthy();
+        expect(issue.title, `${name} has an issue with no title`).toBeTruthy();
+      }
+    }
+  });
+});
+
+import * as chatsModule from '../lib/worktree-inventory/chats.mjs';
+
+describe('the CLI staleness check', () => {
+  const { equivalent } = await_import_cli();
+
+  const doc = (over = {}) =>
+    JSON.stringify({ generatedAt: '2026-01-01T00:00:00.000Z', totals: { worktrees: 2 }, worktrees: [], ...over });
+
+  it('ignores only the generation timestamp', () => {
+    // This file is a live snapshot of a repository where agents message
+    // continuously, so a byte comparison fails on `generatedAt` alone and
+    // `--check` could never pass. A gate that always fails is noise that
+    // trains people to ignore it.
+    expect(equivalent(doc(), doc({ generatedAt: '2026-09-28T21:00:00.000Z' }))).toBe(true);
+  });
+
+  it('still fails on a real change', () => {
+    expect(equivalent(doc(), doc({ totals: { worktrees: 3 } }))).toBe(false);
+    const a = doc({ worktrees: [{ name: 'x', prunable: true }] });
+    const b = doc({ worktrees: [{ name: 'x', prunable: false }] });
+    expect(equivalent(a, b)).toBe(false);
+  });
+
+  it('treats unparseable input as different rather than equal', () => {
+    expect(equivalent('not json', doc())).toBe(false);
+  });
+});
+
+// Imported lazily so the CLI module's top-level `main()` side effects are not
+// triggered by the pure-function tests above.
+function await_import_cli() {
+  return cliModule;
+}
+
+import * as cliModule from '../worktree-inventory.mjs';
+
+describe('the generated file is already formatted', () => {
+  it('is byte-identical to what Prettier would produce', () => {
+    // Otherwise every regeneration produces a file `lint-staged
+    // --fail-on-changes` refuses and un-stages, and the only ways out are a
+    // .prettierignore or dropping .json from the linted set — both of which
+    // weaken a gate to accommodate a generator.
+    const board = { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] };
+    const inv = buildInventory({
+      worktrees: [wt({ name: 'a', issues: [] })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit: { available: true, dbPath: 'k', byDirectory: new Map(), total: 0, newestSessionAt: 0 },
+      nowMs: NOW,
+    });
+    const formatted = formatCanonical(serialise(inv));
+    // Idempotent: formatting an already-formatted document changes nothing.
+    expect(formatCanonical(formatted)).toBe(formatted);
+    expect(formatted.endsWith('\n')).toBe(true);
+    // Still valid JSON with every field intact after the reflow.
+    expect(JSON.parse(formatted).worktrees).toHaveLength(1);
+  });
+});

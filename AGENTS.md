@@ -69,6 +69,8 @@ npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
 npm run board -- help   # the swarm board: who has what, and which files are taken
+
+node scripts/worktree-inventory.mjs   # WORKTREES.json: what every worktree holds
 ```
 
 ## The swarm board
@@ -190,6 +192,120 @@ Five traps that cost real debugging time:
 - **`node_modules` is empty or missing in most worktrees.** Node walks up to the parent checkout, so `tsc` and `vitest` mostly work anyway — which is exactly what makes it misleading. Vite does **not** walk up: it serves only what `server.fs.allow` permits, so fonts, images and AVIF assets from the ancestor checkout 404 in a worktree and work in the root checkout. Run `npm ci` there before debugging an asset that will not load.
 - **Every worktree's dev server wants :5173.** Locally `reuseExistingServer` is on, so `test:e2e` can attach to a server another worktree started and then test _that_ checkout. Use `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` in a worktree. "My change did nothing" in e2e is this, not a cache.
 - **The main worktree is not stable while you work.** Other sessions commit into it concurrently. Re-read `git status` / `git diff` before staging, and stage only your own paths.
+
+## WORKTREES.json: the inventory of every worktree
+
+`WORKTREES.json` at the repository root is a generated inventory of every
+worktree: its branch, how far it has drifted from `main`, whether that branch
+is already landed, what the working tree holds that no commit does, which
+Kilo sessions ran there, and which of those are unfinished, blocked or dead.
+**It is regenerated, never hand-edited**, and it is the first thing to read
+before deleting a worktree or starting one that may already exist.
+
+```bash
+node scripts/worktree-inventory.mjs            # regenerate
+node scripts/worktree-inventory.mjs --check    # exit 1 if stale, write nothing
+node scripts/worktree-inventory.mjs --quiet    # totals only
+```
+
+**Read `recommendation` and `prunable`, never `ahead`/`behind` on their own.**
+`prunable: true` means ALL of these hold: it is not the main worktree, the
+branch is an ancestor of `main`, the working tree is clean, and no curated
+finding protects it. `recommendation` is the decision — `prune`, `salvage`,
+`review-residue`, `in-use`, or `keep` (the main checkout, which is never a
+deletion candidate) — and `statusReasons` is why, in the generator's own words,
+so you can check the reasoning rather than trust it.
+
+### "0 commits ahead of main" is NOT evidence that a worktree is disposable
+
+This is the single most expensive mistake available in this repository, and it
+has already happened. A branch created from `main` and never committed to
+reports **0 ahead**, is **an ancestor of main**, and can be holding **hours of
+uncommitted work that exists on no ref at all**. `git status --porcelain` being
+non-empty is the only check that sees it.
+
+So the generator gives that shape its own status, `uncommitted-only`, and never
+calls it prunable. `uncommitted-only` deliberately does **not** distinguish "a
+branch that landed and was then edited" from "a branch that never committed" —
+git cannot tell them apart, both report 0 ahead and an ancestor, and inventing
+a distinction git cannot support would be a false reassurance. The curated
+`mustNotPrune` flag in `scripts/lib/worktree-inventory/curated.mjs` is where a
+human records the claim git cannot.
+
+### `unfinished` and `dead` are separate, and they need different responses
+
+`chats.unfinished` holds sessions that have stopped with work outstanding:
+`active`, `abandoned-midflight` (a stale session whose last turn ended on a
+tool call rather than a completed stop), `blocked` (waiting on a human answer —
+go answer it), `died-at-birth` and `rejected-credits`. `chats.dead` holds the
+subset that will never produce anything: `died-at-birth`, `rejected-credits`
+and `orphaned` (the worktree directory no longer exists).
+
+**`rejected-credits` is a caller bug, not a session problem.** It means a
+launcher resolved a bare model name onto a paid GPT id and the subagent died at
+zero tokens with `APIError: Add credits to continue`. There is nothing to
+salvage and no work to redo — the fix is in the code that made the call, and it
+is the model policy at the top of this document. Count these before blaming a
+branch for making no progress.
+
+A session that is `active` is **never** reported as abandoned: recency is
+checked before the shape of the last turn, because a live machine's most recent
+turn always ends in a tool call, and treating that as stuck would cry wolf on
+every running agent. A `blocked` session is a live machine **waiting on a
+human** — go answer it.
+
+`blocked` is detected indirectly, from the runtime's own report that a managed
+session is waiting on a question. The signal is weak, so it is kept visible:
+`blockedOn` carries the question id and the reason names the evidence, rather
+than a flat `blocked` with nothing behind it.
+
+### The file is generated; the judgement is not
+
+Anything git or the session database can answer is read fresh on every run.
+Anything a human had to look at and decide lives in
+`scripts/lib/worktree-inventory/curated.mjs` and survives regeneration:
+
+```js
+'polygon-marching-ants': {
+  summary: 'Polygon-selection marching ants: the ants component, the hook, …',
+  issues: [{ ref: 'HANDOFF.md#48', title: 'eraser is hard-edged' }],
+  mustNotPrune: true,   // blocks prunable even when git says it is clean
+  landed: true,         // a CLAIM, asserted against git by a test
+  note: 'the tip is an old main commit, so git reports 0 ahead; the work is on no ref',
+},
+```
+
+**When you create a worktree, add its entry in the same change.** A new
+worktree with no curated entry still appears, with `summary: null` and
+`summarySource: "none"`, and a test reads the real `git worktree list` and fails
+on it — an undocumented worktree cannot be created quietly. An uncurated entry
+is a worktree nobody has written down what it is for, which is how a
+preservation branch gets mistaken for a disposable one.
+
+`mustNotPrune` is a tripwire, not a suggestion: it makes the generator refuse
+to call a worktree prunable even when git reports it landed and clean, and it
+exists for the case that has already cost real work here. A test requires every
+`mustNotPrune` entry to carry a `note` saying what would be lost, because a
+flag with no explanation is unfalsifiable.
+
+`landed: true` is a curator's **claim**, printed next to git's answer as
+`claimedLanded` against `mergedIntoMain`. A test re-derives it from
+`git merge-base --is-ancestor` and fails when the two disagree: an earlier
+version asserted `landed` for a worktree git reported as holding uncommitted
+work, and nothing noticed.
+
+**Never put a count in a summary.** "32 paths uncommitted" and "12 commits
+behind" were both wrong within hours, in a file whose whole purpose is to be
+trusted, and no test can catch a wrong number in prose. `dirty`, `untracked`,
+`ahead`, `behind` and `commitsAheadTruncated` are already on every record —
+describe WHAT a worktree holds and leave the arithmetic to the generator.
+
+**Regenerate and commit `WORKTREES.json` in the same change that adds or
+removes a worktree.** A stale inventory is worse than none: a reader cannot
+tell which parts are true. `--check` exists for a script or a hook that wants
+to fail on a stale file, and it names the per-worktree fields that drifted
+(`status`, `recommendation`, `prunable`, `ahead`, `behind`, `dirty`, …) rather
+than only reporting that something changed.
 
 ## Test traps
 
