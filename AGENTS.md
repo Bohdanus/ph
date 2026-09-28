@@ -153,7 +153,7 @@ assertions, no re-recorded visual baselines.
 
 ## Known failures and how to read one
 
-On the default headless run **no e2e test fails**: 97 pass, 2 are skipped by
+On the default headless run **no e2e test fails**: 106 pass, 2 are skipped by
 declaration. That is stable across repeated full runs. Three defect groups used to
 fail here and have since been fixed in this repository — the CDP capture-size
 assertions, the keyboard flyout race, and the `levels.spec.ts` canvas lookup. Their

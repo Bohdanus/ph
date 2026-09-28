@@ -1,6 +1,7 @@
 import React from 'react';
 
 import Blur from '../components/ToolbarsRight/Blur/Blur.tsx';
+import Brush from '../components/ToolbarsRight/Brush/Brush.tsx';
 import Color from '../components/ToolbarsRight/Colors/Color.tsx';
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
 import Draw from '../components/ToolbarsRight/Draw/Draw.tsx';
@@ -11,6 +12,7 @@ import PolygonalLasso from '../components/ToolbarsRight/Lasso/PolygonalLasso.tsx
 import Levels from '../components/ToolbarsRight/Levels/Levels.tsx';
 import MagicWand from '../components/ToolbarsRight/MagicWand/MagicWand.tsx';
 import Reposition from '../components/ToolbarsRight/Move/Reposition.tsx';
+import Pencil from '../components/ToolbarsRight/Pencil/Pencil.tsx';
 import RectangularSelection from '../components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx';
 import Text from '../components/ToolbarsRight/Text/Text.tsx';
 import { PlaceholderTool } from '../components/ToolbarsRight/ToolbarPlaceholder.tsx';
@@ -72,12 +74,12 @@ export const toolsMap: ToolsMap = {
   brush: {
     ...toolProcessors.brush,
     icon: 'brush',
-    toolboxComponent: placeholderTool('Brush Tool', 'brush', false),
+    toolboxComponent: Brush,
   },
   pencil: {
     ...toolProcessors.pencil,
     icon: 'pencil',
-    toolboxComponent: placeholderTool('Pencil Tool', 'pencil', false),
+    toolboxComponent: Pencil,
   },
   'color-replacement': {
     ...toolProcessors['color-replacement'],

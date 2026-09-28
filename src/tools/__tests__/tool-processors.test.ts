@@ -362,8 +362,6 @@ describe('toolsMap wiring', () => {
 
   it('renders the placeholder toolbox components with their configured options', () => {
     const placeholderNames = [
-      'brush',
-      'pencil',
       'color-replacement',
       'pen',
       'freeform-pen',
@@ -383,18 +381,19 @@ describe('toolsMap wiring', () => {
     }
   });
 
-  it('shows a TODO badge on real placeholders and hides it where the tool is functional', () => {
-    const Placeholder = toolsMap['custom-shape'].toolboxComponent;
-    const NoBadge = toolsMap.brush.toolboxComponent;
+  it('shows a TODO badge on the placeholder toolbox components', () => {
+    // The brush and pencil used to be the only `showTodoBadge: false` entries here,
+    // the placeholder for a tool whose canvas behaviour was already real. Both now
+    // render the Photoshop paint bar instead (`src/tools/toolsMap.ts:72-81`), so
+    // every remaining placeholder is an unimplemented tool and every one of them
+    // carries the badge. Their bars are asserted in
+    // `src/components/ToolbarsRight/Paint/__tests__/Paint.test.tsx`.
+    for (const toolName of ['color-replacement', 'pen', 'custom-shape'] as const) {
+      const { unmount } = render(React.createElement(toolsMap[toolName].toolboxComponent));
 
-    const withBadge = render(React.createElement(Placeholder));
-    expect(screen.getByText('Custom Shape Tool')).toBeInTheDocument();
-    expect(screen.getAllByText('TODO').length).toBeGreaterThan(0);
-    withBadge.unmount();
-
-    render(React.createElement(NoBadge));
-    expect(screen.queryByText('TODO')).not.toBeInTheDocument();
-    expect(screen.getByText('Brush Tool')).toBeInTheDocument();
+      expect(screen.getAllByText('TODO').length, toolName).toBeGreaterThan(0);
+      unmount();
+    }
   });
 });
 
@@ -802,8 +801,8 @@ describe('toolsMap exhaustiveness', () => {
     expect(new Set(components).size).toBe(3);
   });
 
-  it('builds a distinct placeholder component per unimplemented and paint-stub tool', () => {
-    const placeholderTools: readonly ToolName[] = ['brush', 'pencil', 'color-replacement', ...unimplementedTools];
+  it('builds a distinct placeholder component per unimplemented tool', () => {
+    const placeholderTools: readonly ToolName[] = ['color-replacement', ...unimplementedTools];
     const components = placeholderTools.map((toolName) => toolsMap[toolName].toolboxComponent);
 
     // Six of them share the `pen` placeholder group, but each `placeholderTool(...)` call
@@ -812,6 +811,16 @@ describe('toolsMap exhaustiveness', () => {
     for (const toolName of placeholderTools) {
       expect(toolsMap[toolName].toolboxComponent, toolName).not.toBe(toolsMap.shape.toolboxComponent);
     }
+  });
+
+  it('builds a distinct paint bar for the brush and the pencil', () => {
+    // `createPaintToolbar` mints a closure per tool for the same reason
+    // `placeholderTool` does: `ToolbarHorizontal` remounts the bar on
+    // `key={toolName}`, and a shared identity would make the two tools'
+    // components indistinguishable to that contract.
+    expect(toolsMap.brush.toolboxComponent).not.toBe(toolsMap.pencil.toolboxComponent);
+    expect(toolsMap.brush.toolboxComponent).not.toBe(toolsMap.shape.toolboxComponent);
+    expect(toolsMap.pencil.toolboxComponent).not.toBe(toolsMap.shape.toolboxComponent);
   });
 
   it.each(['polygon-selection', 'lasso', 'Pen', 'colorpicker', 'polygonal-lasso '])(

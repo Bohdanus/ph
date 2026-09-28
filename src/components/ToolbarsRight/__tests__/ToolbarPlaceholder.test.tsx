@@ -10,10 +10,12 @@ const CONFIG_KEYS = Object.keys(placeholderToolGroups) as Array<keyof typeof pla
 /**
  * Mirrors the `placeholderTool(...)` wiring in `src/tools/toolsMap.ts`. A tool missing from this
  * list, or a key that no longer matches toolsMap, fails the wiring assertions below.
+ *
+ * The brush and pencil are absent on purpose: they render the real Photoshop paint bar
+ * (`src/components/ToolbarsRight/Paint/Paint.tsx`) and no longer have a config group, so
+ * listing them here would keep their placeholder contract alive after the fact.
  */
 const PLACEHOLDER_TOOLS = [
-  { toolName: 'brush', configKey: 'brush', title: 'Brush Tool', showTodoBadge: false },
-  { toolName: 'pencil', configKey: 'pencil', title: 'Pencil Tool', showTodoBadge: false },
   {
     toolName: 'color-replacement',
     configKey: 'color-replacement',
@@ -121,6 +123,15 @@ describe('placeholder tool wiring in toolsMap', () => {
     // toolsMap wires freeform-pen, curvature-pen and rectangle to other groups, so these
     // three entries in toolbarPlaceholderConfig.ts are currently dead config.
     expect(unreachableKeys).toEqual(['freeform-pen', 'curvature-pen', 'rectangle']);
+  });
+
+  it('keeps a config group for every tool that is still a placeholder', () => {
+    // A tool that stops being a placeholder must also lose its config group, or it
+    // becomes dead config the assertions above will report as unreachable. The paint
+    // tools are the ones that have already made that move, so pin the inverse
+    // direction: nothing may reintroduce a `brush` or `pencil` group.
+    expect(Object.hasOwn(placeholderToolGroups, 'brush')).toBe(false);
+    expect(Object.hasOwn(placeholderToolGroups, 'pencil')).toBe(false);
   });
 
   it.each(PLACEHOLDER_TOOLS)(
