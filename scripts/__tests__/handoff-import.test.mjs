@@ -133,12 +133,20 @@ describe('the three real documents', () => {
   });
 
   it('reads OPEN_PROBLEMS.md’s severity headings, which carry no number at all', () => {
-    const titles = openProblems.parsed.items.map((item) => item.title);
-    expect(titles).toContain(
-      'P1 — the committed export baselines do not match on this host, and the delta predates the responsive work'
-    );
-    expect(titles).toContain('P2 — an empty CDP capture is reported as a successful capture');
-    for (const item of openProblems.parsed.items) expect(item.origin).not.toMatch(/#\d+$/);
+    const items = openProblems.parsed.items;
+    /**
+     * Asserted as a SHAPE, not as the document's current text. This file
+     * describes a live document that other work edits, and pinning a title here
+     * made the test fail when somebody fixed the very P1 it named — a
+     * documentation change, not a parser defect. What matters is that a
+     * `P<n> — <problem>` heading yields an item with a slug origin, and that no
+     * origin in this document is a number.
+     */
+    const severity = items.filter((item) => /^P\d{1,3}\s*[—–-]/.test(item.title));
+    expect(severity.length).toBeGreaterThan(0);
+    for (const item of severity) expect(item.origin).toMatch(/^OPEN_PROBLEMS\.md#[a-z0-9-]+$/);
+    expect(items.length).toBeGreaterThan(0);
+    for (const item of items) expect(item.origin).not.toMatch(/#\d+$/);
   });
 
   it('records the numbers a deleted heading retires, and nothing else', () => {
