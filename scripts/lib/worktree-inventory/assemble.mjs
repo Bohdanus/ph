@@ -16,8 +16,11 @@ import { classify, riskScore, ACTION } from './classify.mjs';
 import { summariseChats, isUnfinished, isDead } from './chats.mjs';
 import { curatedFor } from './curated.mjs';
 import { inferBoardIssues } from './board.mjs';
+import { auditVerdict, unread, isReadUnfinished } from './chat-audit.mjs';
 
 export const SCHEMA_VERSION = 1;
+
+const RISK_ORDER = { high: 0, medium: 1, low: 2 };
 
 /**
  * Path relative to the repository root, by path SEGMENT rather than by string
@@ -40,6 +43,7 @@ export function buildInventory({
   mainHead,
   board,
   chatAudit,
+  readAudit = { available: false, byId: new Map(), records: [] },
   nowMs,
   chatWindowMs = 24 * 60 * 60 * 1000,
 }) {
@@ -51,6 +55,15 @@ export function buildInventory({
   // is reproducibility must not change the answer.
   const newestKnown = chatAudit?.newestSessionAt ?? 0;
   const effectiveNow = Math.max(nowMs, newestKnown);
+
+  // Live state per worktree, so a read-derived claim can be re-checked rather
+  // than merely repeated.
+  const liveStateByDirectory = new Map(
+    worktrees.map((w) => [
+      w.name,
+      { dirty: w.workingTree.modified, untracked: w.workingTree.untracked, ahead: w.ahead },
+    ])
+  );
 
   const records = worktrees.map((wt) => {
     const curated = curatedFor(wt.name) ?? null;
@@ -73,6 +86,17 @@ export function buildInventory({
     // and as a negation in chats.mjs, and the copies agreed only by hand.
     const unfinished = chatSessions.filter(isUnfinished);
     const dead = chatSessions.filter(isDead);
+
+    // The READ verdict, attached to each session. Both are emitted and neither
+    // is reconciled: where a computed "finished" sits next to a read
+    // "struggling", that disagreement is the finding, and collapsing it would
+    // hide the exact case this audit was run to find.
+    const withRead = chatSessions.map((c) => {
+      const record = readAudit.byId.get(c.id);
+      return record
+        ? { ...c, read: auditVerdict(record, { risk: record.readRisk, worktreeGone: record.worktreeGone }) }
+        : { ...c, read: null };
+    });
 
     return {
       name: wt.name,
@@ -130,6 +154,16 @@ export function buildInventory({
         activeChatIds: chatSummary.activeChatIds,
         unfinishedChatIds: chatSummary.unfinishedChatIds,
         lastActivity: chatSummary.lastActivity,
+        readUnfinished: withRead
+          .filter((c) => c.read && isReadUnfinished(c.read.readState))
+          .map((c) => ({
+            id: c.id,
+            readState: c.read.readState,
+            readRisk: c.read.readRisk,
+            workOnNoRef: c.read.workOnNoRef,
+            note: c.read.note,
+          })),
+        read: withRead.map((c) => c.read),
         unfinished: unfinished.map((s) => ({
           id: s.id,
           title: s.title,
@@ -155,6 +189,23 @@ export function buildInventory({
         agents: boardAgents,
         held: claims.length + fileLocks.length > 0,
       },
+
+      // What the transcript says about the agents that worked here, beside
+      // what their turn-shape says. Both, deliberately.
+      read: withRead
+        .filter((c) => c.read)
+        .map((c) => ({
+          id: c.id,
+          readState: c.read.readState,
+          readRisk: c.read.readRisk,
+          workOnNoRef: c.read.workOnNoRef,
+          // `directoryExists` rather than `worktreeGone`: this loop only
+          // reaches sessions whose directory still exists, so a worktreeGone
+          // field here is a constant. The real signal is `readLostWorktree`.
+          directoryExists: true,
+          deadSubagents: c.read.deadSubagents,
+          note: c.read.note,
+        })),
     };
   });
 
@@ -201,11 +252,84 @@ export function buildInventory({
       board: board.available
         ? { ok: true, path: board.dbPath, issues: board.issues.length }
         : { ok: false, reason: 'no agent-board database at the expected path' },
+      // The read audit is the one data source that goes stale on its own: it
+      // records what transcripts said at a moment in time, and agents commit
+      // and get deleted afterwards. The `asOf` stamp is therefore part of the
+      // source description, not an optional extra.
+      readAudit: readAudit.available
+        ? {
+            ok: true,
+            path: readAudit.path,
+            sessions: readAudit.records.length,
+            asOf: readAudit.asOf,
+            windowHours: readAudit.windowHours,
+          }
+        : {
+            ok: false,
+            reason: readAudit.reason ?? 'no transcript read audit at the expected path',
+            corrupt: readAudit.corrupt ?? false,
+          },
     },
     // Read these first. They are the answers; `worktrees` is the evidence.
     readyToLand,
     disposalCandidates,
     atRisk,
+
+    // Every session a reader of the transcript says is unfinished, and the
+    // ones where the work exists on no ref at all. These are the answers to
+    // "which agents have work in flight, or died holding it".
+    readUnfinished: unread(
+      readAudit.records.map((r) => ({
+        id: r.id,
+        readState: r.readState,
+        readRisk: r.readRisk,
+        note: r.note ?? null,
+        modifiedFiles: r.modifiedFiles,
+        commitsAheadOfMain: r.commitsAheadOfMain,
+      }))
+    ),
+    // Cross-checked against the tree as it is NOW, because a read-derived
+    // count is a claim about a moment and the operator reads it later. Every
+    // entry below said "on no ref" at `asOf`; without this they would still say
+    // so, printed beside a `dirty=0` record for the same worktree.
+    workOnNoRef: readAudit.records
+      .filter((r) => r.untrackedFiles > 0 || (r.modifiedFiles > 0 && r.commitsAheadOfMain === 0))
+      .map((r) => {
+        const live = liveStateByDirectory.get(r.directory) ?? null;
+        const landedSince = live !== null && live.dirty + live.untracked === 0 && live.ahead > 0;
+        return {
+          id: r.id,
+          directory: r.directory,
+          modifiedFiles: r.modifiedFiles,
+          untrackedFiles: r.untrackedFiles,
+          asOf: readAudit.asOf,
+          // false  = the work landed after the audit was taken
+          // null  = the directory is gone, so it cannot be checked at all
+          // true   = still uncommitted on no ref, as far as the tree can tell
+          stillOnNoRef: live === null ? null : !landedSince,
+          liveDirty: live ? live.dirty + live.untracked : null,
+          liveAhead: live ? live.ahead : null,
+          note: r.note ?? null,
+        };
+      }),
+
+    // The finding no computed signal can produce: a session produced work and
+    // the directory holding it no longer exists. It MUST be a top-level list —
+    // every such session ran in a directory that is gone, so the per-worktree
+    // loop, which only visits worktrees that exist, can never reach it. It was
+    // previously emitted on the worktree record, where it was structurally
+    // always false, which is the same as not emitting it.
+    readLostWorktree: readAudit.records
+      .filter((r) => r.worktreeGone)
+      .map((r) => ({
+        id: r.id,
+        directory: r.directory,
+        readState: r.readState,
+        readRisk: r.readRisk,
+        note: r.note ?? null,
+      }))
+      .sort((a, b) => RISK_ORDER[a.readRisk] - RISK_ORDER[b.readRisk] || a.id.localeCompare(b.id)),
+    readLostWorktreeHighRisk: readAudit.records.filter((r) => r.worktreeGone && r.readRisk === 'high').length,
 
     totals: {
       worktrees: records.length,

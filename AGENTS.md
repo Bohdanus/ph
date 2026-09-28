@@ -312,6 +312,54 @@ turn always ends in a tool call, and treating that as stuck would cry wolf on
 every running agent. A `blocked` session is a live machine **waiting on a
 human** — go answer it.
 
+### The READ audit: what the agents actually said, not what their shape implies
+
+Everything above is **computed**: it reads `step-finish` reasons, tool-error
+counts, and "Add credits" strings out of the session database. It is cheap,
+necessary, and it cannot answer the only question you have — _is the work
+finished_ — because two agents with identical shape can have merged a branch and
+written a plan. It also cannot see the failure that matters most here: an agent
+that reported "Done" for a branch that was never merged, which git then reports
+as clean, landed, and prunable.
+
+So `scripts/lib/worktree-inventory/chat-audit.data.json` records what reading
+the transcripts found, for every top-level session in the window. Each record
+carries a `readState` (`struggling`, `blocked`, `abandoned`, `failed`,
+`unknown`, `finished`), a `readRisk`, and a `note` naming what the agent
+actually delivered and where its own summary overstates it.
+
+**Both views ship, and they are deliberately not reconciled.** `chats.byState`
+is computed and live; `chats.read` is observed and dated. Where a computed
+`finished` sits next to a read `struggling`, that disagreement **is the finding**
+— reconciling them would require trusting one over the other in exactly the case
+that matters. `readUnfinished` and `workOnNoRef` are the two lists, named at the
+top of the file, and `node scripts/worktree-inventory.mjs` prints them before
+anything else.
+
+**`dataSources.readAudit.asOf` is load-bearing, and it is derived.** It comes
+from the extraction artefact's mtime, never typed by hand: a hand-typed one was
+wrong on the first attempt — local time written with a `Z` suffix, which put the
+stamp 91 minutes in the **future**, so every `now - asOf` computed a negative
+age and concluded the audit was fresh. A test asserts `asOf <= now`.
+
+**Every read-derived list is re-checked against the live tree, because a
+read-derived count is a claim about a moment.** `workOnNoRef` carries
+`stillOnNoRef`, and all four of its entries were `false` by the time the file
+was generated: each had committed within the hour. A test drives it. Without
+that, the list printed "on no ref" beside a `dirty=0` record for the same
+worktree, in the same document.
+
+**`readLostWorktree` is a top-level list and has to be.** The finding no
+computed signal can produce is a session that produced work whose worktree was
+then deleted. It was previously a field on the worktree record, where it was
+**structurally always false** — the loop that fills it only visits worktrees
+that still exist, so every one of the seventeen was unreachable and two of the
+three lost-work findings appeared in no output at all.
+
+**The audit records conclusions about sessions, never their contents.** No
+transcript body, no tool arguments, no code — a test asserts the record's exact
+key set — so the file cannot leak what was said and cannot grow without bound.
+
 `blocked` is detected indirectly, from the runtime's own report that a managed
 session is waiting on a question. The signal is weak, so it is kept visible:
 `blockedOn` carries the question id and the reason names the evidence, rather

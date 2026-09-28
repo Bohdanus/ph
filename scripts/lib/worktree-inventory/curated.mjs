@@ -48,7 +48,7 @@ export const CURATED = {
   'agent-board': {
     summary:
       'The swarm board itself: scripts/agent-board.mjs and its node:sqlite storage under the common git directory.',
-    landed: true,
+    note: 'This said `landed: true` while it was. It has since taken a salvage commit preserving work from an abandoned worktree, so it is unmerged again, and the claim is retracted rather than argued with — which is what the landed-claim test exists to force.',
   },
   'board-file-index': {
     summary:
@@ -577,10 +577,34 @@ export const CURATED = {
       'Names which board the CLI is talking about and teaches `ready` to answer. Was merged once and then extended, so it is unmerged again.',
     note: 'This entry said `landed: true` while git reported the branch off main. That contradiction is what the landed-claim test exists to catch, and it caught it.',
   },
+  'swarm-lease': {
+    summary: 'A board worktree on lease behaviour, sitting on the merge that landed the brush-tip-core branch.',
+    mustNotPrune: true,
+    note: 'Holds an uncommitted change and is branched from a main that is already moving; the lease semantics it is about are still the open board item.',
+  },
+  'test-review-harness': {
+    summary: 'A review of the test harness itself, branched from main while the inventory work was in flight.',
+  },
+  'test-review-leaks': {
+    summary: 'A review looking for leaks between test and production state.',
+  },
+  'test-review-parser': {
+    summary: 'A review of parser behaviour under test.',
+  },
+  'test-review-titles': {
+    summary: 'A review of how tests are titled and grouped.',
+  },
+  'test-review-vacuous': {
+    summary: 'A review hunting assertions that cannot fail — the same class this repository has been bitten by twice.',
+  },
+  'chat-audit': {
+    summary:
+      'Reads every agent transcript in a 30-hour window and records what each one actually delivered, so the inventory answers whether work is finished instead of inferring it from turn shape.',
+  },
   'fix-e2e-findings': {
     summary:
       'Moves e2e findings off their original branches and onto the documents, so the defects are recorded where an agent will read them.',
-    landed: true,
+    note: 'This said `landed: true`; it has since taken more commits and holds uncommitted work, so the claim is retracted rather than left to contradict git.',
   },
   'handoff-citation-rotation': {
     summary:

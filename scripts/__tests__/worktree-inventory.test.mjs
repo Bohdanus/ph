@@ -20,9 +20,10 @@
 import { describe, expect, it } from 'vitest';
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { classify, riskScore, ACTION, RECOMMENDATION, STATUS } from '../lib/worktree-inventory/classify.mjs';
 import { classifySession, summariseChats, isUnfinished, isDead } from '../lib/worktree-inventory/chats.mjs';
@@ -30,6 +31,7 @@ import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../l
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
 import { __testables, findMissingWorktrees, listWorktrees, mergeConflict } from '../lib/worktree-inventory/git.mjs';
 import { resolveBoardDb, readBoard } from '../lib/worktree-inventory/board.mjs';
+import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../lib/worktree-inventory/chat-audit.mjs';
 
 const NOW = 1_790_000_000_000;
 
@@ -1215,6 +1217,339 @@ describe('the headline lists and totals', () => {
     expect(landable.mergeChecked).toBe(true);
     expect(landable.mergeConflict).toBe(false);
     expect(landable.mergeConflictFiles).toEqual([]);
+  });
+});
+
+describe('the transcript read audit', () => {
+  // Resolved from cwd, not `import.meta.url`: under the root jsdom project
+  // `import.meta.url` is an http URL and `fileURLToPath` throws on it.
+  const dataPath = resolve(process.cwd(), 'scripts/lib/worktree-inventory/chat-audit.data.json');
+
+  it('loads the real audit and stamps when it was taken', () => {
+    const a = loadChatAudit(dataPath);
+    expect(a.available).toBe(true);
+    expect(a.records.length).toBeGreaterThan(50);
+    // Without `asOf` a stale "on no ref" reads as a current fact, which is the
+    // one mistake this exercise exists to prevent.
+    expect(a.asOf).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(a.windowHours).toBeGreaterThan(0);
+  });
+
+  it('is stamped in the PAST, never the future', () => {
+    // A hand-typed stamp was wrong once already: local 23:20 written with a "Z"
+    // suffix, which put it 91 minutes ahead. Every consumer that computes
+    // `now - asOf` then concludes the audit is FRESH, so a future stamp defeats
+    // the only guard the file has.
+    expect(Date.parse(loadChatAudit(dataPath).asOf)).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('names every record that is really a top-level session, with nothing invented', () => {
+    // The falsifiable part of "all 105 sessions were read". Exact window
+    // membership is NOT reproducible — `time_updated` keeps moving on a live
+    // session — so this pins what is actually checkable: every id exists, is
+    // top-level, and falls after the documented window start.
+    const a = loadChatAudit(dataPath);
+    const startMs = Date.parse(a.windowStart);
+    let db;
+    try {
+      db = new DatabaseSync(resolve(process.env.HOME, '.local/share/kilo/kilo.db'), { readOnly: true });
+    } catch {
+      return; // no session database on this machine
+    }
+    try {
+      const rows = db
+        .prepare(
+          `SELECT id, parent_id, time_updated FROM session
+            WHERE id IN (${a.records.map(() => '?').join(',')})`
+        )
+        .all(...a.records.map((r) => r.id));
+      expect(rows.length, 'a record names a session that does not exist').toBe(a.records.length);
+      for (const row of rows) {
+        expect(row.parent_id, `${row.id} is a SUBAGENT, not a top-level session`).toBeNull();
+        expect(row.time_updated).toBeGreaterThanOrEqual(startMs);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  it('keeps `sessions` in step with `records.length`', () => {
+    // A top-level count the loader never reads and nothing kept in sync.
+    const raw = JSON.parse(readFileSync(dataPath, 'utf8'));
+    expect(raw.sessions).toBe(raw.records.length);
+    expect(raw.records.length).toBe(loadChatAudit(dataPath).records.length);
+  });
+
+  it('carries only verdicts about sessions, never their contents', () => {
+    // A transcript body in this file would grow without bound and would leak
+    // whatever was said in it.
+    const a = loadChatAudit(dataPath);
+    for (const r of a.records) {
+      expect(Object.keys(r).sort()).toEqual(
+        [
+          'commitsAheadOfMain',
+          'deadSubagents',
+          'directory',
+          'id',
+          'modifiedFiles',
+          'note',
+          'readRisk',
+          'readState',
+          'toolErrors',
+          'untrackedFiles',
+          'worktreeGone',
+        ].sort()
+      );
+    }
+  });
+
+  it('uses only the states it documents', () => {
+    const known = new Set(Object.values(READ_STATE));
+    for (const r of loadChatAudit(dataPath).records) {
+      expect(known.has(r.readState), `unknown read state ${r.readState}`).toBe(true);
+    }
+  });
+
+  it('treats every state except finished as something to go and look at', () => {
+    expect(isReadUnfinished(READ_STATE.FINISHED)).toBe(false);
+    for (const s of [
+      READ_STATE.STRUGGLING,
+      READ_STATE.BLOCKED,
+      READ_STATE.ABANDONED,
+      READ_STATE.FAILED,
+      READ_STATE.UNKNOWN,
+    ]) {
+      expect(isReadUnfinished(s), `${s} should be unfinished`).toBe(true);
+    }
+  });
+
+  it('computes workOnNoRef from the same rule the file describes', () => {
+    // untracked, OR modified with 0 ahead. Ahead>0 means a commit holds it.
+    expect(auditVerdict({ id: 'a', untrackedFiles: 1, modifiedFiles: 0, commitsAheadOfMain: 0 }).workOnNoRef).toBe(
+      true
+    );
+    expect(auditVerdict({ id: 'b', untrackedFiles: 0, modifiedFiles: 3, commitsAheadOfMain: 0 }).workOnNoRef).toBe(
+      true
+    );
+    expect(auditVerdict({ id: 'c', untrackedFiles: 0, modifiedFiles: 3, commitsAheadOfMain: 1 }).workOnNoRef).toBe(
+      false
+    );
+    expect(auditVerdict({ id: 'd', untrackedFiles: 0, modifiedFiles: 0, commitsAheadOfMain: 0 }).workOnNoRef).toBe(
+      false
+    );
+  });
+
+  it('passes the worktree-gone signal through, which no heuristic can produce', () => {
+    const v = auditVerdict(
+      { id: 'e', untrackedFiles: 0, modifiedFiles: 0, commitsAheadOfMain: 0 },
+      { worktreeGone: true }
+    );
+    expect(v.worktreeGone).toBe(true);
+  });
+
+  it('emits the deleted-worktree case, which the per-worktree loop cannot reach', () => {
+    // It was previously a field on the worktree record, where it was
+    // structurally always false: the loop only visits sessions whose directory
+    // still exists, so every worktreeGone session was unreachable and two of
+    // the three lost-work findings were in no output at all.
+    const board = {
+      available: true,
+      dbPath: 'b',
+      claims: new Map(),
+      fileLocks: new Map(),
+      agents: new Map(),
+      issues: [],
+    };
+    const goneRecord = {
+      id: 's9',
+      directory: 'vanished',
+      readState: 'finished',
+      readRisk: 'high',
+      note: 'its worktree was deleted',
+      worktreeGone: true,
+      untrackedFiles: null,
+      modifiedFiles: null,
+      commitsAheadOfMain: null,
+      deadSubagents: 0,
+      toolErrors: 0,
+    };
+    const inv = buildInventory({
+      worktrees: [wt()],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit: { available: true, dbPath: 'k', byDirectory: new Map(), total: 0, newestSessionAt: 0 },
+      readAudit: {
+        available: true,
+        asOf: '2026-01-01T00:00:00Z',
+        windowHours: 30,
+        records: [goneRecord],
+        byId: new Map(),
+      },
+      nowMs: NOW,
+    });
+    expect(inv.readLostWorktree.map((r) => r.id)).toEqual(['s9']);
+    expect(inv.readLostWorktreeHighRisk).toBe(1);
+    expect(JSON.stringify(inv)).toContain('vanished');
+    // And it must not be on a worktree record, where it is a constant.
+    expect(JSON.stringify(inv.worktrees)).not.toContain('worktreeGone');
+  });
+
+  it('re-checks a read-derived no-ref claim against the live tree', () => {
+    // Every entry said "on no ref" at asOf and had committed within the hour.
+    // Repeating the claim un-cross-checked prints a stale fact beside a
+    // contradicting `dirty=0` for the same worktree.
+    const board = {
+      available: true,
+      dbPath: 'b',
+      claims: new Map(),
+      fileLocks: new Map(),
+      agents: new Map(),
+      issues: [],
+    };
+    const rec = {
+      id: 's1',
+      directory: 'w',
+      readState: 'finished',
+      readRisk: 'medium',
+      note: null,
+      worktreeGone: false,
+      untrackedFiles: 0,
+      modifiedFiles: 11,
+      commitsAheadOfMain: 0,
+      deadSubagents: 0,
+      toolErrors: 0,
+    };
+    // `w` is the fixture's worktree name, so live state is available.
+    const inv = buildInventory({
+      worktrees: [wt({ name: 'w', ahead: 1, mergedIntoBase: false })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit: { available: true, dbPath: 'k', byDirectory: new Map(), total: 0, newestSessionAt: 0 },
+      readAudit: {
+        available: true,
+        asOf: '2026-01-01T00:00:00Z',
+        windowHours: 30,
+        records: [rec],
+        byId: new Map([['s1', rec]]),
+      },
+      nowMs: NOW,
+    });
+    expect(inv.workOnNoRef[0].stillOnNoRef).toBe(false);
+    expect(inv.workOnNoRef[0].liveDirty).toBe(0);
+    expect(inv.workOnNoRef[0].asOf).toBe('2026-01-01T00:00:00Z');
+  });
+
+  it('reports a corrupt audit file differently from a missing one', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-bad-'));
+    const bad = join(dir, 'chat-audit.data.json');
+    writeFileSync(bad, '{ "asOf": "2026-01-01T00:00:00Z", "records": [ TRUNCATED');
+    try {
+      const a = loadChatAudit(bad);
+      expect(a.available).toBe(false);
+      // The bug: one bad hand-edit used to report "not found", so the entire
+      // safety signal vanished while claiming it had never been there.
+      expect(a.corrupt).toBe(true);
+      expect(a.reason).toMatch(/unreadable/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('degrades to an empty audit rather than refusing to generate', () => {
+    const a = loadChatAudit('/nonexistent/chat-audit.data.json');
+    expect(a.available).toBe(false);
+    expect(a.records).toEqual([]);
+    expect(a.asOf).toBeNull();
+  });
+});
+
+describe('the read and computed chat views together', () => {
+  it('emits both, and never reconciles them', () => {
+    // The whole value is that they disagree sometimes. A computed "finished"
+    // beside a read "struggling" is the finding, not a bug to smooth over.
+    const board = {
+      available: true,
+      dbPath: 'b',
+      claims: new Map(),
+      fileLocks: new Map(),
+      agents: new Map(),
+      issues: [],
+    };
+    const byDirectory = new Map([
+      [
+        '/repo/.kilo/worktrees/example',
+        [
+          {
+            id: 's1',
+            state: 'finished',
+            idleMs: 9e9,
+            subagentCount: 0,
+            timeUpdated: NOW - 9e9,
+            toolErrors: 0,
+            creditsFailures: 0,
+            lastTurnReason: 'stop',
+          },
+        ],
+      ],
+    ]);
+    const readAudit = {
+      available: true,
+      asOf: '2026-01-01T00:00:00Z',
+      windowHours: 30,
+      records: [
+        {
+          id: 's1',
+          directory: 'example',
+          readState: 'struggling',
+          readRisk: 'high',
+          note: 'never committed',
+          worktreeGone: false,
+          untrackedFiles: 0,
+          modifiedFiles: 4,
+          commitsAheadOfMain: 0,
+          deadSubagents: 0,
+          toolErrors: 0,
+        },
+      ],
+      byId: new Map([
+        [
+          's1',
+          {
+            id: 's1',
+            directory: 'example',
+            readState: 'struggling',
+            readRisk: 'high',
+            note: 'never committed',
+            worktreeGone: false,
+            untrackedFiles: 0,
+            modifiedFiles: 4,
+            commitsAheadOfMain: 0,
+            deadSubagents: 0,
+            toolErrors: 0,
+          },
+        ],
+      ]),
+    };
+    const inv = buildInventory({
+      worktrees: [wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 4, untracked: 0, paths: [] } })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit: { available: true, dbPath: 'k', byDirectory, total: 1, newestSessionAt: NOW - 9e9 },
+      readAudit,
+      nowMs: NOW,
+    });
+    const w = inv.worktrees[0];
+    expect(w.chats.byState.finished).toBe(1);
+    expect(w.read[0].readState).toBe('struggling');
+    expect(w.read[0].workOnNoRef).toBe(true);
+    expect(inv.readUnfinished.map((r) => r.id)).toEqual(['s1']);
+    expect(inv.dataSources.readAudit.asOf).toBe('2026-01-01T00:00:00Z');
   });
 });
 
