@@ -9,6 +9,7 @@ import { useLayers } from '../../contexts/useLayer.ts';
 import { flushSync } from 'react-dom';
 import { hasPendingText } from '../../util/typeGuards.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import { useRightPanelVisibility } from '../../contexts/RightPanelVisibility.tsx';
 import type { ToolName } from '../../contexts/tool-types.ts';
 import type { FigureType } from '../../tools/shape.ts';
 
@@ -120,6 +121,12 @@ const DesktopHeader = () => {
     },
     [openMenu]
   );
+
+  const {
+    isCollapsible: isRightPanelCollapsible,
+    isOpen: isRightPanelOpen,
+    toggle: toggleRightPanel,
+  } = useRightPanelVisibility();
 
   useEffect(() => {
     document.addEventListener('mousedown', handleClickOutside);
@@ -349,6 +356,34 @@ const DesktopHeader = () => {
           )}
         </button>
         <HistoryControls />
+
+        {/* Tablet only. `lg:hidden` hides it from 1024px up, and the header itself is
+            `max-md:hidden`, so the button is visible in exactly the tablet band and at no
+            other width — desktop keeps no trace of it, including no extra grid area, no
+            state and no layout shift when the window crosses 1024px. */}
+        {isRightPanelCollapsible && (
+          <button
+            type="button"
+            onClick={toggleRightPanel}
+            aria-expanded={isRightPanelOpen}
+            aria-controls="right-panel"
+            aria-label={isRightPanelOpen ? 'Hide layers panel' : 'Show layers panel'}
+            title={isRightPanelOpen ? 'Hide layers panel' : 'Show layers panel'}
+            className="ml-2 rounded p-1 text-white/75 transition-colors hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-400 lg:hidden"
+            data-testid="right-panel-toggle"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              fill="currentColor"
+              viewBox="0 0 16 16"
+              aria-hidden="true"
+            >
+              <path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8A2.5 2.5 0 0 1 15 2.5v11a2.5 2.5 0 0 1-2.5 2.5h-8A2.5 2.5 0 0 1 2 13.5zm10.5-1h-9a1.5 1.5 0 0 0-1.5 1.5v10A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5V3A1.5 1.5 0 0 0 13.5 1.5" />
+            </svg>
+          </button>
+        )}
       </div>
     </header>
   );

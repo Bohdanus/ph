@@ -1806,3 +1806,60 @@ is a **clone of this same repository** (identical `origin`, and this HEAD is a d
 
 **Files.** `.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt` (not
 tracked; gitignored under `.kilo/`), and the `Files` line of every entry named in the table above.
+
+## 56. Layer opacity has no writer, and the obvious one is discarded by replay without a word
+
+**Problem.** `Layer.opacity` is a required field (`src/contexts/tool-types.ts:93`),
+PSD import populates and validates it (`src/contexts/psd-utils.ts:159,229`), and
+`materialization.ts:162` applies it to the document frame. Nothing in the app ever
+writes it. There is no opacity control in the desktop shell, and the mobile layers
+drawer had one that was removed rather than shipped broken.
+
+**Why the obvious implementation is wrong.** A slider would reach for
+`updateLayer(id, { opacity }, TOOL_ACTION)`, because that is what every other layer
+property uses. It fails twice, silently. `history-replay.ts:146` reads
+`if (!layer || !toolArgs?.toolName) continue;`, and a property patch carries no
+`toolName` in its args — so replay skips the entry and the document after undo
+diverges from the document before. `getHistoryItemTitle` (`src/contexts/useHistory.ts:23`)
+returns `(args as ToolArgs).toolName` for a `TOOL_ACTION`, which is `undefined` here,
+so the history panel also grows an untitled row per step. A slider drag writes one of
+each per step, and a user who drags the handle to 50% leaves 100 untitled,
+unreplayable entries in the timeline.
+
+**Fix — needs a real action, not a patch.** Opacity is a layer property, not a tool
+edit, so it wants a `SET_LAYER_OPACITY_ACTION` of its own: a title in
+`getHistoryItemTitle`, and an arm in `history-replay.ts` next to the existing
+`SHOW_LAYER_ACTION`/`HIDE_LAYER_ACTION` pair at `:112` that writes
+`{ ...layer, opacity }` the same way those two write `visible`. Those three lines are
+the whole change. Do not reach for `TOOL_ACTION`, and do not reuse
+`UPDATE_LAYERS` — item 13 records that it is an unguarded escape hatch.
+
+**Files.** `src/contexts/tool-types.ts:93`, `src/contexts/history-replay.ts:112,146`,
+`src/contexts/useHistory.ts:23`, `src/contexts/psd-utils.ts:159,229`
+
+## 57. The mobile shell has no colour control at all
+
+**Problem.** The desktop rail carries the foreground and background swatches, a swap
+and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:365-408`).
+The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
+no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
+use whatever colour the document happened to be created with, and the foreground colour
+cannot be changed at all.
+
+An earlier draft of this feature carried a `MobileColorPalette` component. It was
+never imported by anything, so it shipped no reachable UI while its own test file
+passed against the component in isolation. It was deleted rather than wired, because
+choosing which tools expose it is a design decision on the lowest-priority surface in
+the app, and shipping an unreachable one is worse than shipping none.
+
+**Fix.** Port the desktop's swatch pair and swap into `MobileBottomBar` or
+`MobileLayersDrawer` — it is one `useStore` read of `color` and `backgroundColor`,
+and the same two hidden `<input type="color">` elements, so the colour model stays
+whatever the desktop uses. A richer picker (a palette, a hex field) is a separate
+decision. Note the swatches are 32px in the desktop rail; on a touch surface they need
+the same 44px floor as the other mobile controls, which is why they should be built
+for mobile rather than copied across.
+
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:365-408`,
+`src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
+

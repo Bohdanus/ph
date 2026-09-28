@@ -5,6 +5,7 @@ import ToolTooltip from './ToolTooltip.tsx';
 import { toolIcons } from './toolIcons.tsx';
 import { slugifyToolLabel, toolbarMap, type ToolbarTool, type ToolbarToolGroup } from '../../../toolbar-mapping.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import { useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
 
 const TOOL_BUTTON_BASE_CLASS =
   'group relative flex h-11 w-11 items-center justify-center rounded-md border text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 focus:ring-offset-gray-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:focus:ring-offset-gray-800';
@@ -30,6 +31,7 @@ const SidebarLeft = () => {
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
   const [isSingleColumn, setIsSingleColumn] = useState(true);
+  const isTablet = useIsTabletViewport();
   const longPressFlyoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressLongPressRef = useRef(false);
   const longPressOpenedRef = useRef(false);
@@ -313,38 +315,50 @@ const SidebarLeft = () => {
 
   if (!hasImage) return;
 
-  const toolbarWidth = isSingleColumn ? '3.5rem' : '6.75rem';
+  // The tablet band has no room for a 108px two-column rail: at 768px that plus the layers
+  // panel leaves the canvas 410px. The two-column choice is a desktop preference, so below
+  // `lg` the rail is forced to one column and the toggle is hidden rather than shown
+  // inert. This is the one place a media query has to reach the DOM rather than a class,
+  // because the two modes are different markup (one `<ul>` per section, versus a single
+  // two-column `<ul>`) and not a restyle of the same tree.
+  const isSingleColumnMode = isTablet || isSingleColumn;
+  const toolbarWidth = isSingleColumnMode ? '3.5rem' : '6.75rem';
 
   return (
     <aside
-      className="max-md:hidden border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]"
+      className="max-md:hidden min-h-0 overflow-y-auto overscroll-contain border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]"
       data-testid="left-sidebar"
       style={{ width: toolbarWidth }}
     >
-      <div className="flex h-full flex-col items-center px-3 py-4">
+      {/* `min-h-full`, not `h-full`: the aside now scrolls, and `h-full` on a child of a
+          scroll container resolves against the container's own height, which would leave
+          the colour swatches unpainted at the bottom of a long rail. */}
+      <div className="flex min-h-full flex-col items-center px-3 py-4">
         <div className="mb-2 flex w-full justify-end px-1">
-          <button
-            aria-label={isSingleColumn ? 'Use two-column toolbar' : 'Use one-column toolbar'}
-            aria-pressed={isSingleColumn}
-            className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
-            onClick={() => {
-              setIsSingleColumn((current) => !current);
-              setOpenGroup(null);
-            }}
-            title={isSingleColumn ? 'Use two columns' : 'Use one column'}
-            type="button"
-            data-testid="toolbar-layout-toggle"
-          >
-            <LayoutIcon singleColumn={isSingleColumn} />
-          </button>
+          {!isTablet && (
+            <button
+              aria-label={isSingleColumn ? 'Use two-column toolbar' : 'Use one-column toolbar'}
+              aria-pressed={isSingleColumn}
+              className="rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
+              onClick={() => {
+                setIsSingleColumn((current) => !current);
+                setOpenGroup(null);
+              }}
+              title={isSingleColumn ? 'Use two columns' : 'Use one column'}
+              type="button"
+              data-testid="toolbar-layout-toggle"
+            >
+              <LayoutIcon singleColumn={isSingleColumn} />
+            </button>
+          )}
         </div>
         <div
           className={`rounded-lg border border-gray-300 bg-gray-200/70 p-1.5 shadow-inner dark:border-gray-700 dark:bg-gray-950/35 ${
-            isSingleColumn ? 'w-14' : 'w-[6.75rem]'
+            isSingleColumnMode ? 'w-14' : 'w-[6.75rem]'
           }`}
           data-testid="left-toolbar-tools"
         >
-          {isSingleColumn ? (
+          {isSingleColumnMode ? (
             toolbarMap.map((section, sectionIndex) => (
               <ul
                 className={`grid list-none grid-cols-1 gap-1.5 ${sectionIndex > 0 ? 'mt-1.5 border-t border-gray-300 pt-1.5 dark:border-gray-700' : ''}`}
