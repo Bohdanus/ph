@@ -36,10 +36,10 @@ they resolve, and they carry the identifier they name:
   rotating the citation to the _declaration_ would have been the wrong fix and a second audit caught
   it — the declaration moved 386 → 396 in the same change, so a line-tracking rotation would have
   looked correct and pointed at the helper again.
-- **§1's `StoreContext.tsx:658-695` is the right function at the wrong layer.** 658-695 is
+- **§1's `StoreContext.tsx:659-696` is the right function at the wrong layer.** 659-696 is
   `buildDurableDocument`, which does derive the shadow, but it returns `{ status, document,
 diagnostics }`. None of the three `StoreData` field names occurs in the range except a read of the
-  previous revision (`StoreContext.tsx:669`). §1 has been rewritten to say so.
+  previous revision (`StoreContext.tsx:670`). §1 has been rewritten to say so.
 
 That audit also found one claim-level error in §1, now fixed in place: it said the shadow fields are
 "read by nothing outside that file", which is false — `DevStatusStrip.tsx:18` and
@@ -143,7 +143,7 @@ they _were_, because both were silent-corruption classes rather than visible bre
 
 Production still runs legacy `HistoryItem[]` → `replayHistory` (`useHistory.ts:81`) → runtime
 `Layer` → `layer-renderer.ts:65-146` → canvas. `durableDocument`, `durableStatus` and
-`durableDiagnostics` are derived by `buildDurableDocument` (`StoreContext.tsx:658-695`) and
+`durableDiagnostics` are derived by `buildDurableDocument` (`StoreContext.tsx:659-696`) and
 projected onto the three `StoreData` fields at each call site, never inside that function. Two
 production components read the fields from `useStore()` — `DevStatusStrip.tsx:18` and
 `ErrorBoundary.tsx:48` — so this entry's earlier claim that they are "read by nothing outside that
@@ -392,8 +392,8 @@ exact failure this item exists to prevent.
 
 **Unreachable in production today, and both UIs guard it.** `LayersTab.tsx:94` computes
 `isDropTarget` as `dropTargetId === layer.id && dropTargetId !== draggedLayerId && …` and
-`LayersTab.tsx:154` returns before dispatching when it is false, so a row cannot be dropped on
-itself; the other `animateMove` call site (`LayersTab.tsx:274`) passes no anchor at all, and
+`LayersTab.tsx:155` returns before dispatching when it is false, so a row cannot be dropped on
+itself; the other `animateMove` call site (`LayersTab.tsx:276`) passes no anchor at all, and
 `MobileLayersDrawer.tsx:63,72` anchors on a neighbouring index. `git grep moveLayerAfter` returns
 only those two components. This was asserted as reachable on an earlier read of this section and
 that was wrong — the drop guard is the reason, and it is a guard, not a coincidence. It is still a
@@ -517,7 +517,7 @@ The migration-relevant ones:
 
 | Location                                          | What it pins                                                                                                                                                                                                                                                                                                                                                                                           |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `materialization.ordering.test.ts:415`            | interleaved affine/filter grouping (item 3)                                                                                                                                                                                                                                                                                                                                                            |
+| `materialization.ordering.test.ts:415`            | interleaved affine/filter grouping (§2)                                                                                                                                                                                                                                                                                                                                                                |
 | `StoreContext.durable-boundary.test.tsx:441`      | `REPLACE_DOCUMENT` retains the prior frame crop                                                                                                                                                                                                                                                                                                                                                        |
 | `useSelectionClipboard.layerViaCopy.test.tsx:203` | canvas→document position translation. **Its diagnosis is stale**: it blames a `documentToCanvasPos` call at `useSelectionClipboard.ts:100` that now calls `canvasToDocumentPos` (correct). The expectation matches neither the correct value nor the described bug. The polygon `points` array is still never frame-converted — a real unfixed clipboard bug under the plan's own coordinate contract. |
 | `text.test.ts:282`                                | replaying text from a durable vector source without re-rasterizing                                                                                                                                                                                                                                                                                                                                     |
@@ -529,7 +529,7 @@ it is an ordinary passing test, so it must be rewritten rather than removed when
 
 The e2e suite pins nothing. `grep -rn 'it.fails(' e2e` returns 0, there is no `test.fixme` and no
 `describe.skip`, and the only skips are the two `test.skip` declarations
-(`e2e/export/photopea.spec.ts:6`, `e2e/sidebar-flyout.spec.ts:157`). So a failure on the default
+(`e2e/export/photopea.spec.ts:6`, `e2e/sidebar-flyout.spec.ts:171`). So a failure on the default
 headless run is a new defect rather than a known one; `e2e/OPEN_PROBLEMS.md` holds the latent
 defects the suite does not trip. `AGENTS.md` forbids every headed Playwright invocation, so a headed
 failure is not a gate and the mode must not be flipped to make one go away.
@@ -694,7 +694,7 @@ one real entry through `commitSelection` / `clearSelections` / `appendSelectionC
 So every selection change in a session adds a row, and **one gesture can add more than one kind**: a
 lasso gesture appends a creation and a later drag appends a separate move, both labelled identically.
 Each row is also a navigation target (`resetHistoryTo(originalIndex)` at `HistoryTab.tsx:74`) and
-carries a disable toggle (`:45`), so a user can step onto or disable a row whose label says nothing
+carries a disable toggle (`:53-57`), so a user can step onto or disable a row whose label says nothing
 about what it did — and there is no way to tell a creation from a move from a clear, since all three
 carry the same `layerId: 'selection'` and the same action name.
 
@@ -721,18 +721,19 @@ whatever this build writes it has to be able to read back. Pinned by three new c
 `src/contexts/__tests__/avif-utils.test.ts` plus the pre-existing load-side pin — over-budget
 rejection, the guard running before `getImageData`, the exact-budget boundary (`10000 × 8000`
 encodes, `10000 × 8001` does not), and the load-side string preserved byte for byte. The stale
-`NewImageDialog.tsx:77-78` / `:158` / `:178` citation in `tiff-utils.ts:8-9` now points at the real
-`:208-209` / `:289` / `:308`.
+`NewImageDialog.tsx:77-78` / `:158` / `:178` citation in `tiff-utils.ts:8-9` names the dialog's
+clamps, which are at `NewImageDialog.tsx:111-112` (a preset is chosen) and `:144-145` (the DPI
+changes), with `max="10000"` on the two inputs at `:198` and `:217`.
 
 **Remaining verification — a ceiling decision that belongs to the operator, not to a fix branch.**
 Three numbers still disagree, and enforcing the budget on the encoder made the disagreement a
 capability loss rather than a latent trap:
 
-| ceiling                             | value       | where                                     |
-| ----------------------------------- | ----------- | ----------------------------------------- |
-| largest document the app can create | 100,000,000 | `NewImageDialog.tsx:96-97` and `:129-130` |
-| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:13`                        |
-| TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:23`                        |
+| ceiling                             | value       | where                                                |
+| ----------------------------------- | ----------- | ---------------------------------------------------- |
+| largest document the app can create | 100,000,000 | `tiff-utils.ts:13` (`MAX_CREATABLE_DOCUMENT_PIXELS`) |
+| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:13`                                   |
+| TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:24`                                   |
 
 So a document between 80 MP and 100 MP **cannot be saved as AVIF at all** — `saveImageToDisk` throws
 with the budget message, and `useFile.tsx:119-135` surfaces it as an alert. Before the guard it saved
@@ -757,13 +758,13 @@ different number defensible if the ceiling is ever revisited.
 **Also unfixed, and the same drift, larger than item 45 first claimed.** Four ceilings exist and two
 are below what the dialog can create:
 
-| ceiling                             | value       | where                                     |
-| ----------------------------------- | ----------- | ----------------------------------------- |
-| largest document the app can create | 100,000,000 | `NewImageDialog.tsx:96-97` and `:129-130` |
-| affine transform                    | 67,108,864  | `affine-transform.ts:34`                  |
-| PSD                                 | 67,108,864  | `psd-utils.ts:36`                         |
-| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:13`                        |
-| TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:12-23`                     |
+| ceiling                             | value       | where                                                |
+| ----------------------------------- | ----------- | ---------------------------------------------------- |
+| largest document the app can create | 100,000,000 | `tiff-utils.ts:13` (`MAX_CREATABLE_DOCUMENT_PIXELS`) |
+| affine transform                    | 67,108,864  | `affine-transform.ts:34`                             |
+| PSD                                 | 67,108,864  | `psd-utils.ts:36`                                    |
+| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:13`                                   |
+| TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:12-24`                                |
 
 The two 64 MP constants are the same number written twice, independently, in files that do not
 import each other. A 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as AVIF and not
@@ -817,12 +818,12 @@ test can reach an interesting ratio.
 **Owned, so recorded not fixed:** `image-load-save-utils.ts:113-136` is the load path for GIF and SVG
 and bounds nothing — the whole file is base64-encoded into a data URL and handed to `new Image()`.
 That is where a shared load-side ceiling would have to live for those two formats. Separately,
-TIFF's save-side byte check at `:175` is provably dead (`MAX_TIFF_PIXELS * 4` is always below
+TIFF's save-side byte check at `:176` is provably dead (`MAX_TIFF_PIXELS * 4` is always below
 `MAX_TIFF_BYTES`) and its message says "Decoding it" on a save; AVIF's `assertPixelBudget` has no
 finite/integer guard, so a decoded `width: -5, height: -3` passes the budget and reaches
 `createImageData(-5, -3)`, throwing a DOM `IndexSizeError` instead of an actionable message.
 
-**Files.** `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts:8-9,73-104,175`,
+**Files.** `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts:8-9,73-104,176`,
 `src/contexts/bmp-utils.ts:45-47`, `src/contexts/gif-utils.ts:10-16`, `src/contexts/ico-utils.ts:18-23,84-85,113-118`,
 `src/contexts/__tests__/avif-utils.test.ts`, `src/contexts/image-load-save-utils.ts:150-172`,
 `src/contexts/affine-transform.ts:34`, `src/contexts/psd-utils.ts:36`
@@ -863,7 +864,7 @@ React throws `Element type is invalid` from `createFiberFromTypeAndProps` — in
 directory, with a message that names neither the missing icon nor the stale literal. Adding the
 four eraser-family icons meant editing the same list eleven times.
 
-**Fix.** Delete the inline `vi.mock`/`vi.hoisted` blocks from the nine suites, import
+**Fix.** Delete the inline `vi.mock`/`vi.hoisted` blocks from the ten suites, import
 `storeState` / `toolArgs` / `goToTool` / `patchToolArgs` / `toolbarButtonByName` from
 `./harness` in each (the import must precede `../SidebarLeft.tsx`, which the harness docstring
 already states, and `SidebarLeft.tablet` is the worked example), and then delete the harness's
@@ -872,7 +873,7 @@ duplicated exports. While in there, replace the
 again — `SidebarLeft.icon-state` needs per-name `data-icon` attributes, so it needs a
 `vi.mock` that maps over the real keys rather than a hard-coded array.
 
-**Files.** `src/components/SidebarLeft/__tests__/harness.tsx:1-11,64-127` and the nine
+**Files.** `src/components/SidebarLeft/__tests__/harness.tsx:1-11,64-127` and the ten
 `SidebarLeft.*.test.tsx` files listed above.
 
 ---
@@ -881,7 +882,7 @@ again — `SidebarLeft.icon-state` needs per-name `data-icon` attributes, so it 
 
 `src/tools/fill.ts:38-44` declares `size: Size` on `FillToolArgs`,
 with the comment that a fill needs its layer geometry in the committed args. The seeded defaults are
-`{ width: 1, height: 1 }` (`src/tools/settings.ts:190,199`), and the two fill processors take the real
+`{ width: 1, height: 1 }` (`src/tools/settings.ts:196,205`), and the two fill processors take the real
 size from the curried `ProcessorToolParams` — `fillLayer` destructures `params.size` (`:102`) and never
 reads `args.size`. `pos` is genuinely required, because a durable `apply-raster-processor` op replays
 from the stored args alone (`src/contexts/materialization.ts:282`); `size` is not, because the same
@@ -895,7 +896,7 @@ the repository that carries a size — every other tool learns it from `params`.
 `args.size` and assert in `src/tools/__tests__/fill.test.ts` that a `pos`/`size` pair in the args
 governs the raster, so the field cannot be write-only. Do not leave it as it is.
 
-**Files.** `src/tools/fill.ts:38-44`, `src/tools/settings.ts:190,199` (the two
+**Files.** `src/tools/fill.ts:38-44`, `src/tools/settings.ts:196,205` (the two
 `size: { width: 1, height: 1 }`
 defaults)
 
@@ -908,17 +909,20 @@ defaults)
 them, so the bar is two-thirds Photoshop-shaped. Of the three it cannot honour, two are rendered
 `disabled` and one is **absent entirely**: `Brush` mode
 (`src/components/ToolbarsRight/Eraser/Eraser.tsx:56`) and `Flow` (`:96-110`) are `disabled`, while
-`Airbrush` has no DOM node at all — `grep -rni airbrush src` matches only the Paint toolbar's own
-test. So a reader counting dead controls from this bar will over-count the `disabled` ones by one.
+`Airbrush` has no DOM node at all — `grep -rni airbrush src` matches nothing under
+`src/components/ToolbarsRight/Eraser/`, and its remaining hits are the tool-description prose that
+records the control as missing (`src/tools/descriptions/paint.ts:53-57`), a comment in
+`src/util/draw.ts:164`, and the Paint toolbar's own test. So a reader counting dead controls from
+this bar will over-count the `disabled` ones by one.
 
 **Why it is not a wiring bug.** The painter issues exactly one `beginPath`, one
 `moveTo` and one `stroke()` per stroke (`src/util/draw.ts:151-154`; `drawLine` picks the renderer
-at `:99-103`, and the call-count pins are `src/tools/__tests__/paint-tools.test.ts:227,229`). A canvas
+at `:99-103`, and the call-count pins are `src/tools/__tests__/paint-tools.test.ts:226,228`). A canvas
 `stroke()` has no falloff, so the result is always hard-edged, and it has no dab
 loop, so there is nothing for a per-dab alpha ramp (Flow) or a build-up
 accumulator (Airbrush) to vary. `Flow` therefore renders disabled rather than
 changing a readout, and the seeded `EraserMode` is `'pencil'`
-(`src/tools/settings.ts:177`; the type itself is `src/tools/eraser.ts:16`) rather than Photoshop's
+(`src/tools/settings.ts:183`; the type itself is `src/tools/eraser.ts:16`) rather than Photoshop's
 `Brush`, because offering
 `Brush` as a selected value would ship a mode that silently renders as Pencil.
 
@@ -929,8 +933,8 @@ new module beside `src/util/draw.ts` rather than inside `drawPen`, and leave the
 legacy `draw` path calling `drawPen` unchanged.
 
 **Tripwires that must be removed in the same change, not weakened.**
-`src/tools/__tests__/paint-tools.test.ts:227,229` pin `beginPath` called exactly
-once and `stroke()` called exactly once for a brush or pencil stroke, and `:222`
+`src/tools/__tests__/paint-tools.test.ts:226,228` pin `beginPath` called exactly
+once and `stroke()` called exactly once for a brush or pencil stroke, and `:405`
 pins `createRadialGradient` once per sample on the spray path. A stamp loop for
 the eraser family fails the first two only if the pins are extended to the eraser
 rather than rewritten; scope them by tool name so the legacy `draw` pins survive.
@@ -938,8 +942,8 @@ rather than rewritten; scope them by tool name so the legacy `draw` pins survive
 are unaffected as long as `draw` is left alone.
 
 **Files.** `src/components/ToolbarsRight/Eraser/Eraser.tsx:56,96-110`,
-`src/tools/eraser.ts:16`, `src/tools/settings.ts:177`, `src/util/draw.ts:151-154`,
-`src/tools/__tests__/paint-tools.test.ts:222,227,229`
+`src/tools/eraser.ts:16`, `src/tools/settings.ts:183`, `src/util/draw.ts:151-154`,
+`src/tools/__tests__/paint-tools.test.ts:226,228,405`
 
 ---
 
@@ -1032,7 +1036,7 @@ ring and the Color Sampler are overlay work and belong with the navigation clust
 ## 52. Hand, Zoom and Rotate View are absent because the view transform is commented out
 
 **Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and
-the placeholder is a commented-out JSX line: `src/components/SidebarLeft/SidebarLeft.tsx:548`
+the placeholder is a commented-out JSX line: `src/components/SidebarLeft/SidebarLeft.tsx:553`
 is `{/*<Zoom />*/}`.
 
 **Why it is not a wiring bug.** There is no view transform to wire. The store's
@@ -1040,7 +1044,7 @@ zoom data is entirely commented out — `src/contexts/StoreContext.tsx:1166-1172
 `// const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });` and the rest
 of that block — and `usePointerPosition` maps client coordinates to image pixels
 through a `scale` supplied by the host rather than owning a view transform itself.
-`Main.tsx:60` initialises `interactionMode = 'zoom'` and nothing ever sets it to
+`Main.tsx:61` initialises `interactionMode = 'zoom'` and nothing ever sets it to
 that string, so the name is currently a dead default rather than a feature.
 
 **Fix.** Decide whether the canvas has a view transform at all, because three
@@ -1051,9 +1055,9 @@ owning `{ dx, dy, zoom }`, with `usePointerPosition` and every pointer-to-image
 conversion reading from it, is the shape the commented-out code was reaching for.
 Do not start with a Hand tool; start with the scope, and the three tools fall out.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:548`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:553`,
 `src/contexts/StoreContext.tsx:1166-1172`, `src/hooks/usePointerPosition.ts`,
-`src/components/Main/Main.tsx:60`
+`src/components/Main/Main.tsx:61`
 
 ---
 
@@ -1063,10 +1067,10 @@ Do not start with a Hand tool; start with the scope, and the three tools fall ou
 `delete-anchor-point`, `convert-point` and `custom-shape` are all in `toolbar-mapping.ts`'s
 `availableTools` (`:123-134`) and all render a button. Each is
 `commit: 'unimplemented'` with `imageProcessor: unimplemented`
-(`src/tools/toolProcessors.ts:299` for `pen`, `:330` for `custom-shape`), and the
+(`src/tools/toolProcessors.ts:300` for `pen`, `:331-335` for `custom-shape`), and the
 processor returns `[null]`. Each has no `interactionMode` arm in
 `src/components/Main/Main.tsx`, so each falls through to `else EventHandler =
-DummyToolArea` (`:217`) — a `display: none` div with no handlers. **They do not
+DummyToolArea` (`:226`) — a `display: none` div with no handlers. **They do not
 consume a history entry**, which is the thing an earlier inventory of this repo
 got wrong and which is worth stating because it changes the severity: the defect
 is a dead button, not a corrupted document.
@@ -1078,16 +1082,16 @@ That is a phase of work, not a wiring fix.
 
 **Fix — needs a call, not a patch.** Two honest options, and the choice is the
 operator's. Either hide the six from `toolbarMap` until they work, or make
-`unimplemented` throw a named error at `toolProcessors.ts:109` so selecting one
+`unimplemented` throw a named error at `toolProcessors.ts:110` so selecting one
 fails loudly instead of silently doing nothing. Throwing is the smaller diff and
 converts a silent no-op into a visible one, but it changes seven existing tools'
 behaviour, which is a product decision rather than a cleanup. Whatever is chosen,
 do it before the next tool tranche: every new tool inherits the same silent
 failure, and the four added here would have shipped the same way had the spine
-agent not checked `Main.tsx:60`.
+agent not checked `Main.tsx:61`.
 
-**Files.** `src/tools/toolProcessors.ts:109,299,330`,
-`src/components/Main/Main.tsx:60,217`, `toolbar-mapping.ts:123-134`
+**Files.** `src/tools/toolProcessors.ts:110,300,331-335`,
+`src/components/Main/Main.tsx:61,226`, `toolbar-mapping.ts:123-134`
 
 ---
 
@@ -1111,7 +1115,7 @@ path free of unnecessary asset work.
 ## 55. The `EXCLUDED-touched-by-prior-campaigns` manifest is not a safe boundary
 
 **Problem.** `.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt` is
-what a fixer reads to learn which files a prior campaign owns, and item 39 in this file is written
+what a fixer reads to learn which files a prior campaign owns, and §55 in this file is written
 entirely in terms of it. It lists 136 files (`wc -l`). Reconstructing the true set from the session store
 instead — every `apply_patch` / `edit` / `write` target in a session whose `model.providerID` is
 `openai`, which is 60 GPT sessions — returns **72 `src/` files the manifest does not list**, and
@@ -1241,7 +1245,7 @@ layer property.
 ## 57. The mobile shell has no colour control at all
 
 **Problem.** The desktop rail carries the foreground and background swatches, a swap
-and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:520-528`).
+and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:507-539,542-549`).
 The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
 no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
 use whatever colour the document happened to be created with, and the foreground colour
@@ -1261,7 +1265,7 @@ decision. Note the swatches are 32px in the desktop rail; on a touch surface the
 the same 44px floor as the other mobile controls, which is why they should be built
 for mobile rather than copied across.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:520-528`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:507-539,542-549`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
 
 ---
@@ -1279,7 +1283,7 @@ so a single unconvertible layer voids the entire document rather than itself.
 `legacy-tool` route.** The second thing a user does in a session is draw a stroke, so this is not a
 latent shape of the cutover — it is what the cutover would do.
 
-The irony worth recording: `toolProcessors.draw` at `toolProcessors.ts:151-157` is a genuine `creator: true`, so a
+The irony worth recording: `toolProcessors.draw` at `toolProcessors.ts:152-158` is a genuine `creator: true`, so a
 deterministic creator for exactly this exists and is simply unreachable, because the adapter never
 routes to it.
 
@@ -1297,7 +1301,7 @@ yield `source.kind === 'legacy-tool'`. And `materializeDocument` over a replay c
 layer plus two good layers must resolve with the good layers present.
 
 **Files.** `src/contexts/history-adapter.ts:144-185`, `src/contexts/materialization.ts:156,347-350`,
-`src/contexts/useLayer.ts:287`, `src/tools/toolProcessors.ts:151-157`
+`src/contexts/useLayer.ts:287`, `src/tools/toolProcessors.ts:152-158`
 
 ---
 
@@ -1305,8 +1309,8 @@ layer plus two good layers must resolve with the good layers present.
 
 **Problem.** `materializeLayer` trusts the `creator` flag as its only gate
 (`materialization.ts:167-168`). All three `commit: 'selection'` entries claim it —
-`polygonal-lasso` (`toolProcessors.ts:166-172`), `freehand-lasso` (`:173-179`) and
-`rectangular-selection` (`:192-198`) — and all three processors are pass-throughs over a `bitmap`
+`polygonal-lasso` (`toolProcessors.ts:167-173`), `freehand-lasso` (`:174-180`) and
+`rectangular-selection` (`:193-199`) — and all three processors are pass-throughs over a `bitmap`
 that is `undefined` on a creator call:
 
 ```ts
@@ -1334,7 +1338,7 @@ flag is a sound determinism signal wherever it is honestly set.
 `imageProcessor({ size: { width: 8, height: 8 } })(args)` and assert a returned bitmap with finite
 `width`/`height` ≥ 1. Fails today for the two lasso tools.
 
-**Files.** `src/tools/toolProcessors.ts:166-198`, `src/tools/selection.ts:15-19`,
+**Files.** `src/tools/toolProcessors.ts:167-199`, `src/tools/selection.ts:15-19`,
 `src/tools/rectangularSelection.ts:9-13`, `src/contexts/materialization.ts:167-172`
 
 ---

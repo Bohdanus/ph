@@ -118,11 +118,11 @@ const SEEDED_LAYER = 'Blank 1';
  *
  * **The pixel poll alone is not readiness either, and this is the defect it hid.** The store
  * starts with `documentId: 'uninitialized'`, `activeLayerId: null` and an empty history
- * (`StoreContext.tsx:296,304-306`); the document only exists once the seed's `REPLACE_DOCUMENT`
- * lands (`useApp.ts:77-80` -> `useLayer.ts:211-227` -> `useLayer.ts:174-199`). `readPixel` cannot
+ * (`StoreContext.tsx:297,317`); the document only exists once the seed's `REPLACE_DOCUMENT`
+ * lands (`useApp.ts:77-80` -> `useLayer.ts:214-230` -> `useLayer.ts:174,204-210`). `readPixel` cannot
  * tell that state from a ready one: it calls `getColorAtPoint(image, x, y, 0)` with no
  * `ignoreNearWhite`, and that function returns `null` only for a point outside the capture or for
- * a fully transparent one (`canvas-helpers.ts:666,693`). A WHITE pixel therefore satisfies it, so
+ * a fully transparent one (`canvas-helpers.ts:718`). A WHITE pixel therefore satisfies it, so
  * the poll is a test that a screenshot is non-empty. Measured on this spec, it was satisfied on its
  * FIRST attempt on 20 of 20 runs, 42-154 ms after `goto` resolved.
  *

@@ -324,14 +324,14 @@ with `PLAYWRIGHT_PORT=5711` and `reuseExistingServer` off, all headless:
    the 6th. Every test gets a fresh `BrowserContext`, the app persists nothing but
    the theme (`src/contexts/ThemeContext.tsx:14,28` is the only `localStorage`
    write in `src/`), and the document starts `uninitialized` on every load
-   (`src/contexts/StoreContext.tsx:296,304-306`). **A leaked marquee, layer,
+   (`src/contexts/StoreContext.tsx:297,317`). **A leaked marquee, layer,
    zoom or tool is impossible across tests here**, and the failing test's first act
    is `openWorkspace`, before any of its own state exists.
 2. **It is not the 440px scroll that `preservingScroll` exists to undo.** Measured
    on this tree at 1280x720: `document.documentElement.scrollHeight` is **720**,
    equal to `innerHeight`, and `window.scrollY` was **0** at every step of the
    failing test's setup. The overflow that made the page 1177px tall was fixed by
-   `min-h-0 overflow-y-auto` on the `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx:335`);
+   `min-h-0 overflow-y-auto` on the `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx:455-456`);
    the canvas box is a constant `108,100 922x583` from tool click to capture. The
    1177px/440px figures in `e2e/helpers/screenshot-scale.ts:53`,
    `e2e/helpers/cdp-helpers.ts:60`, `e2e/helpers/toolbar-helpers.ts:102-108` and
@@ -339,14 +339,14 @@ with `PLAYWRIGHT_PORT=5711` and `reuseExistingServer` off, all headless:
    **They are stale, not load-bearing, and correcting them is its own change.**
 
 **What the failure therefore is, and is not.** `hasRedPixels`
-(`e2e/helpers/canvas-helpers.ts:411-429`) wants `red > 180, green < 100,
+(`e2e/helpers/canvas-helpers.ts:473`) wants `red > 180, green < 100,
 blue < 100` anywhere in a 360x140 capture that certainly contains the line. The
 line is composited over an opaque white base, so its red channel is **204 at full
 opacity and higher at any lower opacity** — the Draw tool's `Opacity` slider
 cannot push it under the threshold, and `drawSlab` pins that slider to 1 anyway.
 **The threshold is not defeatable and is not the cause.** The capture also lands
 wholly inside the viewport at `x 228..588, y 230..370` against a 1280x720 window,
-so the viewport-edge truncation recorded at `e2e/OPEN_PROBLEMS.md:113` does not
+so the viewport-edge truncation recorded at `e2e/OPEN_PROBLEMS.md:154-186` does not
 apply. What is left is the only remaining reading: **the stroke never reached the
 composite**, and every action in `drawSlab` reported success while it did not.
 
@@ -355,15 +355,15 @@ composite**, and every action in `drawSlab` reported success while it did not.
 - A **refused commit**. The Draw tool commits from `handlePointerUp` and nowhere
   else (`src/components/Main/DrawToolArea.tsx:110-143`), and it is reached only
   when `isPointerUpValid` agrees, which refuses a non-primary button or a foreign
-  pointer id (`src/hooks/usePointerPosition.ts:149,151`) and refuses a second
-  press while one is live (`:126`). A refusal produces no layer, no history entry
+  pointer id (`src/hooks/usePointerPosition.ts:221,223`) and refuses a second
+  press while one is live (`:198`). A refusal produces no layer, no history entry
   and no log. See `HANDOFF.md` §66 — that silence is recorded there as a
   document-state defect in its own right, independently of this flake.
 - A **commit the seed overwrote**. The store has no document until the seeding
   `REPLACE_DOCUMENT` lands (`src/hooks/useApp.ts:77-80` ->
-  `src/contexts/useLayer.ts:211-227` -> `:174-199`), and a tool layer is appended
+  `src/contexts/useLayer.ts:214-230` -> `:174-199`), and a tool layer is appended
   with `COMMIT_DOCUMENT_EDIT` against the `layers` its render closure captured
-  (`src/contexts/useLayer.ts:201-207,292`). **Weakened, not eliminated:** an
+  (`src/contexts/useLayer.ts:174,201-207`). **Weakened, not eliminated:** an
   instrumented copy of the real `openWorkspace` measured its own pixel poll
   satisfied on its **first** attempt on 20 of 20 runs, 42-154 ms after `goto`
   resolved, so the old gate did return before it had established that a document
@@ -375,14 +375,14 @@ composite**, and every action in `drawSlab` reported success while it did not.
 waited on `readPixel(...) not.toBeNull()` and claimed to wait for the seeded base
 layer. It did not: `readPixel` calls `getColorAtPoint(image, x, y, 0)` with no
 `ignoreNearWhite`, and that returns `null` only for an out-of-capture point or a
-fully transparent one (`e2e/helpers/canvas-helpers.ts:666,693`) — **a white pixel
+fully transparent one (`e2e/helpers/canvas-helpers.ts:718`) — **a white pixel
 satisfied it**, so the poll only asserted that a screenshot was non-empty. It now
 additionally waits for the seeded `Blank 1` row to be in the Layers panel, read by
 name, which is a fact about the document rather than about a capture. And `drawSlab`
 now asserts the stroke **committed** — `undo` is disabled on a seeded document and
 enabled after the append — _before_ it polls for pixels, so a refused commit names
 itself in the default expect timeout instead of surfacing ten seconds later as a
-bare `Canvas did not render … within 10000ms` from `canvas-helpers.ts:536`.
+bare `Canvas did not render … within 10000ms` from `canvas-helpers.ts:577`.
 
 **To hunt it, capture the artifact, not the name.** The single most valuable
 change to a future report of this is the state at the moment the wait gives up:
@@ -460,7 +460,7 @@ serving code you did not write.
 
 ## 10. An e2e mutation campaign run without `PLAYWRIGHT_PORT` reports every mutation as green
 
-**The trap.** `playwright.config.ts:118-120` sets `reuseExistingServer: false` only when `CI` or
+**The trap.** `playwright.config.ts:118-119` sets `reuseExistingServer: false` only when `CI` or
 `PLAYWRIGHT_PORT` is set. A bare `npx playwright test` from a worktree under `.kilo/worktrees/`
 therefore falls back to :5173 with reuse ON, and attaches to whichever dev server got there first —
 which is another checkout. For an ordinary green/red run this is the trap `AGENTS.md` already

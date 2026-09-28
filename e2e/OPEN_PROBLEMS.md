@@ -115,13 +115,13 @@ a real window, because that is what they are for. The rule applies to
 
 ## P2 — `drawLine` applies no contain scale, so its arguments are not document coordinates
 
-`e2e/helpers/canvas-helpers.ts:426-436`
+`e2e/helpers/canvas-helpers.ts:524`
 
 A spec must not drift into the assumption that `drawLine`'s arguments are
 document coordinates. They are not. `drawLine` computes
 `{ x: box.x + startX, y: box.y + startY }` and nothing else, while the document it
 addresses is **contained** in that box (`object-contain`,
-`src/components/Main/Main.tsx:241`): the CSS origin of document `(0,0)` is
+`src/components/Main/Main.tsx:245`): the CSS origin of document `(0,0)` is
 
 ```text
 scale    = min(boxWidth / 800, boxHeight / 600)
@@ -174,7 +174,7 @@ capture bug rather than a coordinate bug.
 undo it.** The conversion is the pure function `viewportRectToPageRect`
 (`screenshot-scale.ts:69-76`), it is applied **at the CDP site only**
 (`cdp-helpers.ts:66-74`) and not in the callers, the scroll offset is read per
-capture rather than cached (`getPageScroll`, `canvas-helpers.ts:207-209`, because
+capture rather than cached (`getPageScroll`, `canvas-helpers.ts:375-377`, because
 the window scrolls between captures — `clickToolButton` alone scrolls 440px, which
 is what `preservingScroll` exists to undo, `toolbar-helpers.ts:117-121,128,150`),
 and the rule is unit-tested for a non-zero offset at
@@ -186,7 +186,7 @@ somewhere that already has one.
 
 ## P2 — an empty CDP capture is reported as a successful capture
 
-`e2e/helpers/cdp-helpers.ts:64-66`
+`e2e/helpers/cdp-helpers.ts:81`
 
 `Buffer.from(data, 'base64')` is never length-checked, so a response whose `data`
 is `''` decodes to a zero-byte buffer that the helper writes to
@@ -203,12 +203,12 @@ failure is the one the caller sees. Test the decoded length, not just the field:
 a `typeof data === 'string'` guard alone still lets it through.
 
 Pinned by `reports success for an empty capture, writing and attaching a zero-byte
-file` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:340`. A fix removes that
+file` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:415`. A fix removes that
 pin in the same change.
 
 ## P2 — a failing detach replaces the capture error and destroys the cause
 
-`e2e/helpers/cdp-helpers.ts:68-70`
+`e2e/helpers/cdp-helpers.ts:85-87`
 
 `finally { await cdp.detach() }` runs on the way out whether or not the capture
 threw, and a rejection from it becomes the rejection the caller sees. When the
@@ -224,12 +224,12 @@ something is already failing. Do not swallow a detach failure on the success pat
 a session that cannot be closed is the leak this helper exists to avoid.
 
 Pinned by `reports a detach failure in place of the capture failure when both fail`
-in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:371`. A fix removes that pin in
+in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:446`. A fix removes that pin in
 the same change.
 
 ## P2 — a CDP response without `data` surfaces as a raw `TypeError` from `Buffer`
 
-`e2e/helpers/cdp-helpers.ts:60, 64`
+`e2e/helpers/cdp-helpers.ts:77, 81`
 
 A `Page.captureScreenshot` response that omits `data` reaches
 `Buffer.from(undefined, 'base64')`, which throws `The first argument must be of
@@ -237,7 +237,7 @@ type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like
 Object. Received undefined` (Node 24). The message names neither CDP, nor this
 helper, nor the test, so the reader has to find the call site before they can tell
 what failed. The sibling helper in the same directory checks its inputs and names
-itself (`canvas-helpers.ts:207-209`); this one does not.
+itself (`canvas-helpers.ts:375-377`); this one does not.
 
 Fix: validate the response before decoding — `typeof data === 'string'`, and
 non-empty — with an error that names `captureCanvasScreenshot` and the CDP request
@@ -245,7 +245,7 @@ it came from. Merge this with the length check above rather than adding a second
 guard on the same two lines.
 
 Pinned by `rejects with a raw TypeError when the CDP response omits data, and
-detaches` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:322`. A fix removes that
+detaches` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:397`. A fix removes that
 pin in the same change.
 
 ## P3 — zero-sized image yields `NaN` edges
@@ -259,16 +259,16 @@ opaque. Callers must reject empty images first.
 
 ## P3 — transparent pixels weighted as fully opaque (low confidence)
 
-`e2e/helpers/canvas-helpers.ts:231` and `:507` **[pinned]**
+`e2e/helpers/canvas-helpers.ts:428` and `:718` **[pinned]**
 
 `dominantRed` and `getColorAtPoint` skip only `alpha === 0`, so a nearly
 invisible pixel counts at full weight. A weighting concern rather than a
 correctness bug, and the only helper that reports the colour back to the caller.
 They are the two places the distinction bites hardest, because the other two
-`alpha === 0` filters, in `hasDarkPixels` (`:254`) and `hasRedPixels` (`:274`),
+`alpha === 0` filters, in `hasDarkPixels` (`:453`) and `hasRedPixels` (`:473`),
 answer a yes/no question where one nearly-invisible pixel is the same as one
-opaque one. The other half of the file, `getDarkPixelBounds` (`:401`) and
-`getSelectionBounds` (`:457`), filters on `a !== 0` instead — a different question
+opaque one. The other half of the file, `getDarkPixelBounds` (`:621`) and
+`getSelectionBounds` (`:673`), filters on `a !== 0` instead — a different question
 asked with a boolean rather than a weight.
 
 ## P3 — 10 orphaned committed baselines (2.1 MB)
@@ -292,7 +292,7 @@ were left in place because deleting committed baselines was not authorized.
 
 ## P3 — the artifact name is interpolated into a path unsanitised
 
-`e2e/helpers/cdp-helpers.ts:36-37`
+`e2e/helpers/cdp-helpers.ts:38-39`
 
 Only `outputDir` is created, so `name` is sound only if it is a bare filename. A
 name containing a separator (`nested/thing`) fails with `ENOENT` on a parent
@@ -308,18 +308,18 @@ silently rewriting it would attach the report under a name the test never asked
 for. Sanitising would also let two distinct names collide into one artifact.
 
 Pinned by `treats a name containing a path separator as a path, not a filename`
-(`:454`) and `writes outside the output directory when the name traverses out of it`
-(`:468`) in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts`. A fix removes both
+(`:529`) and `writes outside the output directory when the name traverses out of it`
+(`:543`) in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts`. A fix removes both
 pins in the same change; the first one's own comment names sanitisation as the
 shape a fix must not take.
 
 ## P3 — the `outputDir` guard in `captureCanvasScreenshot` has no test
 
-`e2e/helpers/cdp-helpers.ts:33-35`
+`e2e/helpers/cdp-helpers.ts:34-37`
 
-The guard exists and is the same shape as `canvas-helpers.ts:207-209`, but it is
+The guard exists and is the same shape as `canvas-helpers.ts:375-377`, but it is
 the module's only uncovered statement: `npm run test:e2e:unit:coverage` reports
-`cdp-helpers.ts` at 93.75% statements and 93.33% lines with line 34 — the `throw` —
+`cdp-helpers.ts` at 93.75% statements and 93.33% lines with line 36 — the `throw` —
 uncovered, against 100% of its functions. The sibling guard is pinned
 (`e2e/helpers/__tests__/canvas-interaction.unit.test.ts:192-216`), so nothing fails
 if this one is deleted, and the raw V8 failure it exists to replace
@@ -328,7 +328,7 @@ if this one is deleted, and the raw V8 failure it exists to replace
 Fix: add the two cases to `e2e/helpers/__tests__/cdp-helpers.unit.test.ts` — a
 `TestInfo` with no `outputDir` and one with an empty string — asserting the helper's
 own message and that no CDP session was opened. `createTestInfoMock()`
-(`e2e/helpers/__tests__/canvas-helpers.fixtures.ts:121`) already makes `outputDir`
+(`e2e/helpers/__tests__/canvas-helpers.fixtures.ts:223`) already makes `outputDir`
 optional, so the double needs no change.
 
 ## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
@@ -350,7 +350,7 @@ against the `<select>`, which carries no `disabled` attribute. The result is
 
 This is a wrong-pass: a bar that removed the attribute, or that enabled a mode it
 cannot render, would still be reported as correct. It is also invisible in jsdom —
-`src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx:89` asserts
+`src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx:90` asserts
 `expect(options[0]).toBeDisabled()` with `@testing-library/jest-dom` and passes,
 because that matcher reads the DOM property directly and has no retarget step. A
 jsdom pass is therefore not evidence that the browser assertion works.
@@ -406,7 +406,7 @@ Two specs are `test.skip` by declaration:
 - `e2e/export/photopea.spec.ts:6` — `exports to PSD and verifies in Photopea`.
   Round-trips through the external photopea.com, so it cannot run offline or in
   a sandboxed CI.
-- `e2e/sidebar-flyout.spec.ts:157` — `right-click does not open flyout for
+- `e2e/sidebar-flyout.spec.ts:171` — `right-click does not open flyout for
 single-tool groups`.
 
 ## Verified and still unverified
