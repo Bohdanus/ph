@@ -48,7 +48,8 @@ export const CURATED = {
   'agent-board': {
     summary:
       'The swarm board itself: scripts/agent-board.mjs and its node:sqlite storage under the common git directory.',
-    landed: true,
+    landed: false,
+    note: 'The board work itself is on main. A later `wip(salvage)` commit (3f1d0e2) sits on this branch on top of that, carrying an uncommitted board-schema migration test suite that was on no ref when the owning worktree was swept. It does not pass as it stands — one of the 74 tests in `agent-board.test.mjs` fails on this branch — so the claim is retracted rather than asserted. Landing it is a real fix, not a deletion.',
   },
   'board-file-index': {
     summary:
