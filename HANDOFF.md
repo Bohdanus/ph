@@ -1396,18 +1396,18 @@ returns, which is a product decision rather than a test one.
 **Problem.** `src/components/ToolbarsRight/Figures/Shape.tsx:31-34` mirrors the foreground and
 background swatches into the tool's args, but gates the mirror on `args.toolName === 'shape'`
 (the test is at `:32`). `src/tools/toolsMap.ts` routes all six shape-family tools to that one
-component — `shape` at `:62`, and `rectangle`, `ellipse`, `triangle`, `polygon`, `line` at
-`:153-157` — while `src/tools/settings.ts` gives each of those five its own `toolName` in its
-default args: `:270`, `:277`, `:284`, `:291`, `:298`. The guard therefore returns for every one of
+component — `shape` at `:63`, and `rectangle`, `ellipse`, `triangle`, `polygon`, `line` at
+`:154-158` — while `src/tools/settings.ts` gives each of those five its own `toolName` in its
+default args: `:276`, `:283`, `:290`, `:297`, `:304`. The guard therefore returns for every one of
 them, and their args stay frozen on the hardcoded `color: '#000000'`. Only `shape` itself, whose
-default is `toolName: 'shape'` at `src/tools/settings.ts:75`, passes. Moving the foreground swatch
+default is `toolName: 'shape'` at `src/tools/settings.ts:80`, passes. Moving the foreground swatch
 therefore changes the toolbar preview for `shape` and nothing at all for the other five, and the
 committed layer is black in all five cases.
 
 The fill half is the mirror's own doing, and it is the more visible half. For the one tool the
 effect does run on it mirrors **both** swatches, and `src/tools/shape.ts:144-145` fills with
 `backgroundColor` — `if (hasFill && backgroundColor) { ctx.fillStyle = backgroundColor; }` — where
-the store's background swatch defaults to `'#ffffff'` (`src/contexts/StoreContext.tsx:314`). So
+the store's background swatch defaults to `'#ffffff'` (`src/contexts/StoreContext.tsx:315`). So
 ticking "Filled" paints white, and the shape reads as an outline with a transparent interior on a
 white document. The only way to change the fill colour is to move the **background** swatch, which
 is shared with the eraser, the bucket and every other tool that uses it.
@@ -1422,9 +1422,9 @@ The second half is a product decision, not a bug fix — the operator has alread
 fill should follow Photoshop's model, which is a dedicated Fill swatch, so this item reduces to
 implementing that and then widening the guard.
 
-**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx:31-34`, `src/tools/toolsMap.ts:62,153-157`,
-`src/tools/settings.ts:75,270,277,284,291,298`, `src/tools/shape.ts:144-145`,
-`src/contexts/StoreContext.tsx:314`
+**Files.** `src/components/ToolbarsRight/Figures/Shape.tsx:31-34`, `src/tools/toolsMap.ts:63,154-158`,
+`src/tools/settings.ts:80,276,283,290,297,304`, `src/tools/shape.ts:144-145`,
+`src/contexts/StoreContext.tsx:315`
 
 ---
 

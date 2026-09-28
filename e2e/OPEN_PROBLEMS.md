@@ -516,7 +516,7 @@ across the suite write their gesture as `(box|Box|bandBox).(x|y) + <literal>` â€
 `erase-fill-eyedropper.spec.ts`, six in `layers.spec.ts`, eight in `selection-tools.spec.ts`, four in
 `select-move.spec.ts`, two each in `paint-options.spec.ts` and `pen-types.spec.ts`, and the rest
 scattered. The ICO export path is still canvas-relative as well: `ICON_STROKE` at
-`e2e/export/helpers.ts:297` is a set of box offsets, used at `:326` and `:328`.
+`e2e/export/helpers.ts:479` is a set of box offsets, used at `:508` and `:510`.
 
 **Why it matters, stated as a measurement rather than a worry.** These are not merely fragile, they
 are wrong in a specific direction. A `box.x + 150` gesture is a _window_-relative point: change the
