@@ -518,9 +518,11 @@ describe('DesktopHeader File > New', () => {
     expect(confirm).toHaveBeenCalledExactlyOnceWith(NEW_CONFIRM_MESSAGE);
     expect(file.openNewImageDialog).not.toHaveBeenCalled();
     expect(app.setBlankImage).not.toHaveBeenCalled();
-    // The guard returns before setOpenMenu(null), so a dismissed discard leaves the menu
-    // standing and the document exactly as it was.
-    expect(screen.getByTestId('header-file-new-button')).toBeInTheDocument();
+    // A declined discard leaves the document exactly as it was, and it also leaves no
+    // dropdown behind: `setOpenMenu(null)` now runs before the guard, so the early return
+    // cannot skip it. The open menu overlapped the top-left of the workspace canvas, so a
+    // spec that captured the canvas after a decline used to read a contaminated region.
+    expect(screen.queryByTestId('header-file-new-button')).toBeNull();
   });
 
   it('asks before discarding a document that really has unsaved changes', async () => {
@@ -582,6 +584,9 @@ describe('DesktopHeader File > New', () => {
     expect(consoleError).toHaveBeenCalledWith('Unable to create document', expect.any(Error));
     expect(alert).toHaveBeenCalledExactlyOnceWith('Failed to create document: dialog exploded');
     expect(app.setBlankImage).not.toHaveBeenCalled();
+    // The throw used to skip `setOpenMenu(null)` too and strand the dropdown behind the
+    // alert. It no longer does: activating the item dismisses the menu on every path.
+    expect(screen.queryByTestId('header-file-new-button')).toBeNull();
   });
 
   it('stringifies a non-Error rejection for the new document alert', async () => {
@@ -636,7 +641,9 @@ describe('DesktopHeader File > Open', () => {
 
     expect(confirm).toHaveBeenCalledExactlyOnceWith(OPEN_CONFIRM_MESSAGE);
     expect(file.openLoadImageDialog).not.toHaveBeenCalled();
-    expect(screen.getByTestId('header-file-open-button')).toBeInTheDocument();
+    // Declining the discard dismisses the menu, same as New: the close is no longer after
+    // the branch that returns early.
+    expect(screen.queryByTestId('header-file-open-button')).toBeNull();
   });
 
   it('does not ask for confirmation when the text tool holds an empty draft', async () => {
