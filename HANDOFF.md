@@ -1115,7 +1115,7 @@ path free of unnecessary asset work.
 ## 55. The `EXCLUDED-touched-by-prior-campaigns` manifest is not a safe boundary
 
 **Problem.** `.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt` is
-what a fixer reads to learn which files a prior campaign owns, and §55 in this file is written
+what a fixer reads to learn which files a prior campaign owns, and item 39 in this file is written
 entirely in terms of it. It lists 136 files (`wc -l`). Reconstructing the true set from the session store
 instead — every `apply_patch` / `edit` / `write` target in a session whose `model.providerID` is
 `openai`, which is 60 GPT sessions — returns **72 `src/` files the manifest does not list**, and

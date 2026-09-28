@@ -324,7 +324,7 @@ with `PLAYWRIGHT_PORT=5711` and `reuseExistingServer` off, all headless:
    the 6th. Every test gets a fresh `BrowserContext`, the app persists nothing but
    the theme (`src/contexts/ThemeContext.tsx:14,28` is the only `localStorage`
    write in `src/`), and the document starts `uninitialized` on every load
-   (`src/contexts/StoreContext.tsx:297,317`). **A leaked marquee, layer,
+   (`src/contexts/StoreContext.tsx:297,307,315,317`). **A leaked marquee, layer,
    zoom or tool is impossible across tests here**, and the failing test's first act
    is `openWorkspace`, before any of its own state exists.
 2. **It is not the 440px scroll that `preservingScroll` exists to undo.** Measured
@@ -346,8 +346,8 @@ opacity and higher at any lower opacity** — the Draw tool's `Opacity` slider
 cannot push it under the threshold, and `drawSlab` pins that slider to 1 anyway.
 **The threshold is not defeatable and is not the cause.** The capture also lands
 wholly inside the viewport at `x 228..588, y 230..370` against a 1280x720 window,
-so the viewport-edge truncation recorded at `e2e/OPEN_PROBLEMS.md:154-186` does not
-apply. What is left is the only remaining reading: **the stroke never reached the
+and no entry in `e2e/OPEN_PROBLEMS.md` records a viewport-edge truncation —
+the capture is simply inside the window, so the hazard does not apply. What is left is the only remaining reading: **the stroke never reached the
 composite**, and every action in `drawSlab` reported success while it did not.
 
 **The two candidate mechanisms, neither demonstrated.**
@@ -396,7 +396,7 @@ already sets for section 1, and it applies here unchanged. A second observation,
 with the assertion text and whether it was a timeout or a value mismatch, is
 worth more than twenty green runs.
 
-## 9. A third, NAMED observation — the first Playwright page loads in a cold checkout time out
+## 9. A fourth, NAMED observation — the first Playwright page loads in a cold checkout time out
 
 This one is not a flake at all. It is deterministic, it reproduces on the first
 run in a fresh checkout, and it is regularly misdiagnosed as a product defect in
