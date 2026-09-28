@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-28T20:17:59.376Z",
+  "generatedAt": "2026-09-28T20:20:40.956Z",
   "generator": "scripts/worktree-inventory.mjs",
   "base": "main",
   "mainHead": "69f42c5f438ff118808aa05b054b1e5eea4d5b1d",
@@ -14,7 +14,7 @@
     "sessions": {
       "ok": true,
       "path": "/Users/bkalynovskyi/.local/share/kilo/kilo.db",
-      "sessions": 87
+      "sessions": 88
     },
     "board": {
       "ok": true,
@@ -24,20 +24,20 @@
   },
   "totals": {
     "worktrees": 68,
-    "prunable": 1,
+    "prunable": 2,
     "salvage": 64,
-    "inUse": 3,
-    "holdingUncommittedWork": 25,
+    "inUse": 2,
+    "holdingUncommittedWork": 24,
     "withoutSummary": 2,
     "byStatus": {
-      "uncommitted-only": 18,
-      "unmerged-work": 47,
+      "uncommitted-only": 17,
+      "unmerged-work": 48,
       "landed": 3
     },
     "byRecommendation": {
       "salvage": 64,
-      "in-use": 3,
-      "prune": 1
+      "in-use": 2,
+      "prune": 2
     },
     "byChatState": {
       "finished": 64,
@@ -3166,7 +3166,7 @@
             "id": "ses_f1b3877baffeulCrn1qWWgBo2p",
             "title": "Review selection baseline history replay fix",
             "state": "abandoned-midflight",
-            "idleMs": 81546999,
+            "idleMs": 81708579,
             "reasons": ["idle for 23h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 3,
             "creditsFailures": 0,
@@ -4879,37 +4879,32 @@
       "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/worktree-inventory",
       "branch": "chore/worktree-inventory",
       "isPrimary": false,
-      "head": "69f42c5f438ff118808aa05b054b1e5eea4d5b1d",
+      "head": "9161837ffd8f3f1d78fe9a46848ea252f8949362",
       "detached": false,
-      "status": "uncommitted-only",
+      "status": "unmerged-work",
       "recommendation": "salvage",
       "prunable": false,
       "riskScore": 90,
-      "statusReasons": [
-        "the branch reports 0 commits ahead of main and is an ancestor of it",
-        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
-        "git cannot distinguish this from a branch that landed and was then edited",
-        "work here is not reachable from any commit on this branch"
-      ],
-      "ahead": 0,
+      "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
+      "ahead": 1,
       "behind": 0,
-      "mergedIntoMain": true,
-      "dirty": 5,
+      "mergedIntoMain": false,
+      "dirty": 0,
       "untracked": 0,
-      "dirtyPaths": [
-        "AGENTS.md",
-        "scripts/__tests__/worktree-inventory.test.mjs",
-        "scripts/lib/worktree-inventory/assemble.mjs",
-        "scripts/lib/worktree-inventory/board.mjs",
-        "scripts/lib/worktree-inventory/classify.mjs"
-      ],
+      "dirtyPaths": [],
       "lastCommit": {
-        "sha": "69f42c5f438ff118808aa05b054b1e5eea4d5b1d",
-        "subject": "Merge branch 'main' into chore/worktree-inventory",
-        "date": "2026-09-28T22:12:11+02:00",
+        "sha": "9161837ffd8f3f1d78fe9a46848ea252f8949362",
+        "subject": "fix(scripts): read liveness from the board, not only from session.directory",
+        "date": "2026-09-28T22:19:53+02:00",
         "author": "Bohdan"
       },
-      "commitsAhead": [],
+      "commitsAhead": [
+        {
+          "sha": "9161837",
+          "subject": "fix(scripts): read liveness from the board, not only from session.directory",
+          "date": "2026-09-28T22:19:53+02:00"
+        }
+      ],
       "commitsAheadTruncated": false,
       "claimedLanded": null,
       "summary": null,
@@ -5047,69 +5042,6 @@
       }
     },
     {
-      "name": "e2e-coverage-2",
-      "path": ".kilo/worktrees/e2e-coverage-2",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-coverage-2",
-      "branch": "e2e/coverage-2",
-      "isPrimary": false,
-      "head": "13f44a1f78807e4c3e26d792680d99934cd76ec9",
-      "detached": false,
-      "status": "landed",
-      "recommendation": "in-use",
-      "prunable": false,
-      "riskScore": 70,
-      "statusReasons": [
-        "the branch is an ancestor of main and the working tree is clean",
-        "the board saw agent e2e/coverage-2 in this worktree inside the last 30 minutes"
-      ],
-      "ahead": 0,
-      "behind": 7,
-      "mergedIntoMain": true,
-      "dirty": 0,
-      "untracked": 0,
-      "dirtyPaths": [],
-      "lastCommit": {
-        "sha": "13f44a1f78807e4c3e26d792680d99934cd76ec9",
-        "subject": "merge: main, and re-derive the two citations main moved",
-        "date": "2026-09-28T22:04:22+02:00",
-        "author": "Bohdan"
-      },
-      "commitsAhead": [],
-      "commitsAheadTruncated": false,
-      "claimedLanded": null,
-      "summary": "Broad e2e coverage tranche spanning keyboard, layers, history, dialogs, adjustments, shapes and the mobile shell, plus corrections to two false explanations in a toolbar test.",
-      "summarySource": "curated",
-      "issues": [],
-      "inferredBoardIssues": [],
-      "note": null,
-      "liveNote": null,
-      "mustNotPrune": false,
-      "chats": {
-        "count": 0,
-        "chatIds": [],
-        "subagentCount": 0,
-        "byState": {},
-        "activeChatIds": [],
-        "unfinishedChatIds": [],
-        "lastActivity": null,
-        "unfinished": [],
-        "dead": []
-      },
-      "board": {
-        "claims": [],
-        "fileLocks": [],
-        "agents": [
-          {
-            "agentId": "e2e/coverage-2",
-            "branch": "e2e/coverage-2",
-            "lastSeenMs": 1790624904462,
-            "live": true
-          }
-        ],
-        "held": false
-      }
-    },
-    {
       "name": "ph",
       "path": ".",
       "absolutePath": "/Users/bkalynovskyi/ph",
@@ -5173,10 +5105,10 @@
         "count": 59,
         "chatIds": [
           "ses_f1717029bffeO2Tgiso7XjVWvz",
+          "ses_f167d43ebffenKG4aRh8qnMKN5",
           "ses_f1703646effe9LHAl5QgqHkEbj",
           "ses_f1678e1ecffeE6PmxFG4SH1MGO",
           "ses_f1692fbb5ffe48aRfBKFyv739e",
-          "ses_f167d43ebffenKG4aRh8qnMKN5",
           "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
           "ses_f1871204bffeRe2NIbxXCnD0pm",
           "ses_f16a47026ffe4E7yDrTCIlcxiX",
@@ -5241,19 +5173,19 @@
         },
         "activeChatIds": [
           "ses_f1717029bffeO2Tgiso7XjVWvz",
+          "ses_f167d43ebffenKG4aRh8qnMKN5",
           "ses_f1703646effe9LHAl5QgqHkEbj",
           "ses_f1678e1ecffeE6PmxFG4SH1MGO",
           "ses_f1692fbb5ffe48aRfBKFyv739e",
-          "ses_f167d43ebffenKG4aRh8qnMKN5",
           "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
           "ses_f1871204bffeRe2NIbxXCnD0pm"
         ],
         "unfinishedChatIds": [
           "ses_f1717029bffeO2Tgiso7XjVWvz",
+          "ses_f167d43ebffenKG4aRh8qnMKN5",
           "ses_f1703646effe9LHAl5QgqHkEbj",
           "ses_f1678e1ecffeE6PmxFG4SH1MGO",
           "ses_f1692fbb5ffe48aRfBKFyv739e",
-          "ses_f167d43ebffenKG4aRh8qnMKN5",
           "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
           "ses_f1871204bffeRe2NIbxXCnD0pm",
           "ses_f174eec52ffedigagDe7uAkRob",
@@ -5262,24 +5194,34 @@
           "ses_f19365ab4ffefSJC5XwcDdHYDB",
           "ses_f1ba92bedffeb9De69jCNMC00Q"
         ],
-        "lastActivity": 1790626664091,
+        "lastActivity": 1790626803259,
         "unfinished": [
           {
             "id": "ses_f1717029bffeO2Tgiso7XjVWvz",
             "title": "Worktree inventory JSON and agents.md update",
             "state": "active",
-            "idleMs": 15285,
-            "reasons": ["last message 0m ago"],
+            "idleMs": 37697,
+            "reasons": ["last message 1m ago"],
             "toolErrors": 9,
             "creditsFailures": 15,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f167d43ebffenKG4aRh8qnMKN5",
+            "title": "E2E orchestrator continuation next steps",
+            "state": "active",
+            "idleMs": 100330,
+            "reasons": ["last message 2m ago"],
+            "toolErrors": 5,
+            "creditsFailures": 0,
             "blockedOn": null
           },
           {
             "id": "ses_f1703646effe9LHAl5QgqHkEbj",
             "title": "Increasing e2e test coverage",
             "state": "active",
-            "idleMs": 445580,
-            "reasons": ["last message 7m ago"],
+            "idleMs": 607160,
+            "reasons": ["last message 10m ago"],
             "toolErrors": 3,
             "creditsFailures": 1,
             "blockedOn": null
@@ -5288,8 +5230,8 @@
             "id": "ses_f1678e1ecffeE6PmxFG4SH1MGO",
             "title": "Fix board service and launch as daemon",
             "state": "active",
-            "idleMs": 507806,
-            "reasons": ["last message 8m ago"],
+            "idleMs": 669386,
+            "reasons": ["last message 11m ago"],
             "toolErrors": 0,
             "creditsFailures": 1,
             "blockedOn": null
@@ -5298,28 +5240,18 @@
             "id": "ses_f1692fbb5ffe48aRfBKFyv739e",
             "title": "Recent tool description audit",
             "state": "active",
-            "idleMs": 561865,
-            "reasons": ["last message 9m ago"],
+            "idleMs": 723445,
+            "reasons": ["last message 12m ago"],
             "toolErrors": 0,
             "creditsFailures": 1,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f167d43ebffenKG4aRh8qnMKN5",
-            "title": "E2E orchestrator continuation next steps",
-            "state": "active",
-            "idleMs": 603506,
-            "reasons": ["last message 10m ago"],
-            "toolErrors": 5,
-            "creditsFailures": 0,
             "blockedOn": null
           },
           {
             "id": "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
             "title": "Clean and merge stale worktrees into main",
             "state": "active",
-            "idleMs": 878185,
-            "reasons": ["last message 15m ago"],
+            "idleMs": 1039765,
+            "reasons": ["last message 17m ago"],
             "toolErrors": 1,
             "creditsFailures": 1,
             "blockedOn": null
@@ -5328,8 +5260,8 @@
             "id": "ses_f1871204bffeRe2NIbxXCnD0pm",
             "title": "Fix handoff doc issues and merge to main",
             "state": "active",
-            "idleMs": 1615127,
-            "reasons": ["last message 27m ago"],
+            "idleMs": 1776707,
+            "reasons": ["last message 30m ago"],
             "toolErrors": 2,
             "creditsFailures": 3,
             "blockedOn": null
@@ -5338,7 +5270,7 @@
             "id": "ses_f174eec52ffedigagDe7uAkRob",
             "title": "-- del --",
             "state": "abandoned-midflight",
-            "idleMs": 15198643,
+            "idleMs": 15360223,
             "reasons": ["idle for 4h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 2,
             "creditsFailures": 0,
@@ -5348,7 +5280,7 @@
             "id": "ses_f18cb10c7ffeQyGIipjfTQJifF",
             "title": "-- e2e orchestrator",
             "state": "abandoned-midflight",
-            "idleMs": 24115595,
+            "idleMs": 24277175,
             "reasons": ["idle for 7h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 7,
             "creditsFailures": 0,
@@ -5358,7 +5290,7 @@
             "id": "ses_f183ab42cffeVdFwk5GNadKyhe",
             "title": "-- PNG todo --",
             "state": "abandoned-midflight",
-            "idleMs": 31385743,
+            "idleMs": 31547323,
             "reasons": ["idle for 9h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 2,
             "creditsFailures": 1,
@@ -5368,7 +5300,7 @@
             "id": "ses_f19365ab4ffefSJC5XwcDdHYDB",
             "title": "New session - 2026-09-28T06:52:49.867Z",
             "state": "abandoned-midflight",
-            "idleMs": 47725873,
+            "idleMs": 47887453,
             "reasons": ["idle for 13h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 4,
             "creditsFailures": 0,
@@ -5378,12 +5310,12 @@
             "id": "ses_f1ba92bedffeb9De69jCNMC00Q",
             "title": "$$$ History migration architecture and planning $$$",
             "state": "blocked",
-            "idleMs": 74329132,
+            "idleMs": 74490712,
             "reasons": [
               "last turn completed 21h ago and nothing has happened since",
               "an agent_manager call reported a managed session waiting for input"
             ],
-            "toolErrors": 8,
+            "toolErrors": 5,
             "creditsFailures": 0,
             "blockedOn": "que_0e4b3e885001PBylIpsTKfV71Q"
           }
@@ -5452,6 +5384,66 @@
           }
         ],
         "held": true
+      }
+    },
+    {
+      "name": "e2e-coverage-2",
+      "path": ".kilo/worktrees/e2e-coverage-2",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-coverage-2",
+      "branch": "e2e/coverage-2",
+      "isPrimary": false,
+      "head": "13f44a1f78807e4c3e26d792680d99934cd76ec9",
+      "detached": false,
+      "status": "landed",
+      "recommendation": "prune",
+      "prunable": true,
+      "riskScore": 10,
+      "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
+      "ahead": 0,
+      "behind": 7,
+      "mergedIntoMain": true,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
+      "lastCommit": {
+        "sha": "13f44a1f78807e4c3e26d792680d99934cd76ec9",
+        "subject": "merge: main, and re-derive the two citations main moved",
+        "date": "2026-09-28T22:04:22+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": "Broad e2e coverage tranche spanning keyboard, layers, history, dialogs, adjustments, shapes and the mobile shell, plus corrections to two false explanations in a toolbar test.",
+      "summarySource": "curated",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [],
+        "agents": [
+          {
+            "agentId": "e2e/coverage-2",
+            "branch": "e2e/coverage-2",
+            "lastSeenMs": 1790624904462,
+            "live": false
+          }
+        ],
+        "held": false
       }
     },
     {
