@@ -122,13 +122,13 @@ The project uses GitHub Actions for continuous integration:
 - **E2E Job**: Playwright specs in Chrome. A **blocking** gate. It was
   `continue-on-error` on the stated grounds that five specs failed; those failures
   were fixed, so the comment justifying it stopped describing the suite and the job
-  went on reporting a state the suite no longer had. The browser download is cached,
-  so the job is mostly the suite itself. See
+  went on reporting a state the suite no longer had. Chrome is installed through the
+  OS package manager, so there is nothing here to cache. See
   [`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md).
-- **Dependency Review Job**: the licence allow/deny list and the high-severity
-  advisory threshold in
-  [`.github/dependency-review-config.yml`](.github/dependency-review-config.yml), on
-  pull requests only. `npm audit` covers pushes to `main`.
+- **Dependency licences**: the allow/deny list and the high-severity advisory
+  threshold are written down in [`DEPENDENCIES.md`](DEPENDENCIES.md), and nothing
+  enforces them. `npm audit --audit-level=high` is a real step on every push, and
+  it is the vulnerability half of that policy.
 
 ![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)
 

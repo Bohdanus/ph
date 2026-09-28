@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { cloneDeep } from 'lodash-es';
 
 import { defaultSettings, lastSavedSettings, savedArgsPerFigure, savedDrawPerPen } from '../settings.ts';
-import { toolProcessors } from '../toolProcessors.ts';
+import { findToolProcessor, PIXEL_FREE_TOOLS } from '../toolProcessors.ts';
 import { saveLastSettings } from '../../util/settings.ts';
 import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import type { ToolArgs, ToolName } from '../../contexts/tool-types.ts';
@@ -44,8 +44,16 @@ beforeEach(() => {
 });
 
 describe('defaultSettings', () => {
-  it('declares an entry for every registered tool', () => {
-    expect(toolNames.sort()).toEqual(Object.keys(toolProcessors).sort());
+  it('declares an entry for every tool, and a processor or a pixel-free declaration for each', () => {
+    // `defaultSettings` is `satisfies ToolArgsByName`, so the compile-time half of the coverage
+    // contract is already enforced; this is the runtime half. The eyedropper has settings but no
+    // processor, which is the one shape where the two key sets differ, so the two are checked
+    // against each other rather than against a hand-written list.
+    const processorNames = toolNames.filter((toolName) => findToolProcessor(toolName) !== undefined);
+    const pixelFree = toolNames.filter((toolName) => findToolProcessor(toolName) === undefined);
+
+    expect(pixelFree.sort()).toEqual([...PIXEL_FREE_TOOLS].sort());
+    expect([...processorNames, ...pixelFree].sort()).toEqual([...toolNames].sort());
   });
 
   it('stamps each entry with its own key as toolName', () => {
@@ -225,6 +233,34 @@ describe('saveLastSettings tool-name coverage', () => {
     expect(lastSavedSettings['feather-magnetic-lasso']).toMatchObject({ featherRadius: 33, points: [] });
   });
 
+  it('keeps the point list out of every saved stroke-tool setting, and keeps the rest', () => {
+    // The four new brush-shaped tools all persist through the arm in
+    // `src/util/settings.ts` that empties `points`. A stroke is geometry, not a setting,
+    // so reseeding it would hand the next drag the previous one. The settings that ride
+    // alongside it have to survive, which is the part the `never` sentinel cannot see:
+    // it only catches a missing arm, never a wrong one.
+    const stroke = [
+      { x: 1, y: 2 },
+      { x: 9, y: 7 },
+    ];
+
+    saveLastSettings({ ...defaultSettings.smudge, strength: 80, points: stroke });
+    saveLastSettings({ ...defaultSettings.dodge, exposure: 20, points: stroke });
+    saveLastSettings({ ...defaultSettings.burn, exposure: 30, points: stroke });
+    saveLastSettings({ ...defaultSettings['clone-stamp'], alpha: 0.5, points: stroke });
+
+    expect(lastSavedSettings.smudge).toMatchObject({ strength: 80, points: [], toolName: 'smudge' });
+    expect(lastSavedSettings.dodge).toMatchObject({ exposure: 20, points: [], toolName: 'dodge' });
+    expect(lastSavedSettings.burn).toMatchObject({ exposure: 30, points: [], toolName: 'burn' });
+    // A clone-stamp source point is a setting, not geometry, so it is persisted.
+    expect(lastSavedSettings['clone-stamp']).toMatchObject({
+      alpha: 0.5,
+      points: [],
+      source: null,
+      toolName: 'clone-stamp',
+    });
+  });
+
   it('collapses tools without a settings UI down to their tool name', () => {
     saveLastSettings({ toolName: 'rectangular-selection', rect });
     saveLastSettings({ ...defaultSettings.pen, toolName: 'pen' } as ToolArgs);
@@ -361,7 +397,7 @@ describe('defaultSettings value sanity', () => {
 
   it('reduces every unimplemented tool to a bare tool name, matching its null result', () => {
     for (const toolName of toolNames) {
-      if (toolProcessors[toolName].commit !== 'unimplemented') continue;
+      if (findToolProcessor(toolName)?.commit !== 'unimplemented') continue;
 
       expect(defaultSettings[toolName], toolName).toEqual({ toolName });
     }
@@ -388,7 +424,7 @@ describe('defaultSettings assumptions baked into the registry', () => {
 
   it('turns the transform defaults into a pure no-op through the registry', () => {
     const size = { width: 40, height: 24 };
-    const result = toolProcessors.transform.imageProcessor({ size, bitmap: createMockImageBitmap(40, 24) })(
+    const result = findToolProcessor('transform')!.imageProcessor({ size, bitmap: createMockImageBitmap(40, 24) })(
       defaultSettings.transform as never
     );
 
@@ -403,9 +439,10 @@ describe('defaultSettings assumptions baked into the registry', () => {
     // seeded rect is null, so the document-operation commit needs a real rect first.
     expect(defaultSettings.crop.rect).toBeNull();
     expect(() =>
-      toolProcessors.crop.imageProcessor({ size: { width: 40, height: 24 }, bitmap: createMockImageBitmap(40, 24) })(
-        defaultSettings.crop as never
-      )
+      findToolProcessor('crop')!.imageProcessor({
+        size: { width: 40, height: 24 },
+        bitmap: createMockImageBitmap(40, 24),
+      })(defaultSettings.crop as never)
     ).toThrow(TypeError);
   });
 

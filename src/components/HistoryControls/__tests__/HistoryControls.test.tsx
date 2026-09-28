@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import HistoryControls from '../HistoryControls.tsx';
+import { claimDocumentGesture, isDocumentGestureOpen, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const history = vi.hoisted(() => ({
   canUndo: vi.fn(() => false),
@@ -9,13 +10,7 @@ const history = vi.hoisted(() => ({
   redo: vi.fn(),
 }));
 
-const currentTool = vi.hoisted(() => ({
-  isToolDirty: false,
-  resetToLastSavedArgs: vi.fn(),
-}));
-
 vi.mock('../../../contexts/useHistory.ts', () => ({ useHistory: () => history }));
-vi.mock('../../../contexts/useCurrentTool.tsx', () => ({ useCurrentTool: () => currentTool }));
 
 function undoButton() {
   return screen.getByRole('button', { name: 'Undo' }) as HTMLButtonElement;
@@ -29,7 +24,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   history.canUndo.mockReturnValue(false);
   history.canRedo.mockReturnValue(false);
-  currentTool.isToolDirty = false;
+  // The gesture slot is module-level and outlives every mount, so a case that
+  // leaked a claim would refuse every later click in this file and a failure in
+  // one case would read as a failure in all of them. Cleared on the way in AND
+  // on the way out; a case below pins that the reset actually does it.
+  resetDocumentGestures();
+});
+
+afterEach(() => {
+  resetDocumentGestures();
 });
 
 describe('HistoryControls rendering', () => {
@@ -58,66 +61,35 @@ describe('HistoryControls rendering', () => {
 });
 
 describe('HistoryControls disabled truth table', () => {
+  // Every combination of the two availability flags, so the buttons cannot be wired to one flag
+  // where they mean the other. The second row is the regression this table exists for: a redo
+  // button that enables itself from `canUndo` would pass every other row.
   it.each([
-    { canUndo: false, canRedo: false, isToolDirty: false, undoDisabled: true, redoDisabled: true },
-    { canUndo: true, canRedo: false, isToolDirty: false, undoDisabled: false, redoDisabled: true },
-    { canUndo: false, canRedo: true, isToolDirty: false, undoDisabled: true, redoDisabled: false },
-    { canUndo: true, canRedo: true, isToolDirty: false, undoDisabled: false, redoDisabled: false },
-    { canUndo: false, canRedo: false, isToolDirty: true, undoDisabled: false, redoDisabled: true },
-    { canUndo: true, canRedo: true, isToolDirty: true, undoDisabled: false, redoDisabled: false },
+    { canUndo: false, canRedo: false, undoDisabled: true, redoDisabled: true },
+    { canUndo: true, canRedo: false, undoDisabled: false, redoDisabled: true },
+    { canUndo: false, canRedo: true, undoDisabled: true, redoDisabled: false },
+    { canUndo: true, canRedo: true, undoDisabled: false, redoDisabled: false },
   ])(
-    'canUndo=$canUndo canRedo=$canRedo isToolDirty=$isToolDirty -> undo disabled=$undoDisabled redo disabled=$redoDisabled',
-    ({ canUndo, canRedo, isToolDirty, undoDisabled, redoDisabled }) => {
+    'canUndo=$canUndo canRedo=$canRedo -> undo disabled=$undoDisabled redo disabled=$redoDisabled',
+    ({ canUndo, canRedo, undoDisabled, redoDisabled }) => {
       history.canUndo.mockReturnValue(canUndo);
       history.canRedo.mockReturnValue(canRedo);
-      currentTool.isToolDirty = isToolDirty;
       render(<HistoryControls />);
 
       expect(undoButton().disabled).toBe(undoDisabled);
       expect(redoButton().disabled).toBe(redoDisabled);
     }
   );
-
-  it('never enables redo from a dirty tool alone', () => {
-    history.canRedo.mockReturnValue(false);
-    currentTool.isToolDirty = true;
-    render(<HistoryControls />);
-
-    expect(redoButton().disabled).toBe(true);
-  });
 });
 
 describe('HistoryControls undo dispatch', () => {
-  it('resets the dirty tool instead of undoing history', () => {
-    currentTool.isToolDirty = true;
-    history.canUndo.mockReturnValue(false);
-    render(<HistoryControls />);
-
-    fireEvent.click(undoButton());
-
-    expect(currentTool.resetToLastSavedArgs).toHaveBeenCalledExactlyOnceWith();
-    expect(history.undo).not.toHaveBeenCalled();
-  });
-
-  it('prefers the dirty-tool reset even when history could undo', () => {
-    currentTool.isToolDirty = true;
-    history.canUndo.mockReturnValue(true);
-    render(<HistoryControls />);
-
-    fireEvent.click(undoButton());
-
-    expect(currentTool.resetToLastSavedArgs).toHaveBeenCalledTimes(1);
-    expect(history.undo).not.toHaveBeenCalled();
-  });
-
-  it('undoes history when the tool is clean and history allows it', () => {
+  it('undoes history when the history allows it', () => {
     history.canUndo.mockReturnValue(true);
     render(<HistoryControls />);
 
     fireEvent.click(undoButton());
 
     expect(history.undo).toHaveBeenCalledTimes(1);
-    expect(currentTool.resetToLastSavedArgs).not.toHaveBeenCalled();
   });
 
   it('does not undo while the button is disabled, because the disabled attribute is the only guard', () => {
@@ -127,23 +99,6 @@ describe('HistoryControls undo dispatch', () => {
 
     expect(undoButton().disabled).toBe(true);
     expect(history.undo).not.toHaveBeenCalled();
-    expect(currentTool.resetToLastSavedArgs).not.toHaveBeenCalled();
-  });
-
-  it('switches to the history undo once the tool becomes clean', () => {
-    currentTool.isToolDirty = true;
-    history.canUndo.mockReturnValue(true);
-    const { rerender } = render(<HistoryControls />);
-
-    fireEvent.click(undoButton());
-    expect(currentTool.resetToLastSavedArgs).toHaveBeenCalledTimes(1);
-
-    currentTool.isToolDirty = false;
-    rerender(<HistoryControls />);
-    fireEvent.click(undoButton());
-
-    expect(history.undo).toHaveBeenCalledTimes(1);
-    expect(currentTool.resetToLastSavedArgs).toHaveBeenCalledTimes(1);
   });
 
   it('undoes on repeated clicks', () => {
@@ -154,6 +109,19 @@ describe('HistoryControls undo dispatch', () => {
     fireEvent.click(undoButton());
 
     expect(history.undo).toHaveBeenCalledTimes(2);
+  });
+
+  it('follows the history availability across a re-render', () => {
+    history.canUndo.mockReturnValue(false);
+    const { rerender } = render(<HistoryControls />);
+    fireEvent.click(undoButton());
+    expect(history.undo).not.toHaveBeenCalled();
+
+    history.canUndo.mockReturnValue(true);
+    rerender(<HistoryControls />);
+    fireEvent.click(undoButton());
+
+    expect(history.undo).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -166,18 +134,6 @@ describe('HistoryControls redo dispatch', () => {
 
     expect(history.redo).toHaveBeenCalledTimes(1);
     expect(history.undo).not.toHaveBeenCalled();
-    expect(currentTool.resetToLastSavedArgs).not.toHaveBeenCalled();
-  });
-
-  it('never resets the dirty tool from the redo button', () => {
-    currentTool.isToolDirty = true;
-    history.canRedo.mockReturnValue(true);
-    render(<HistoryControls />);
-
-    fireEvent.click(redoButton());
-
-    expect(history.redo).toHaveBeenCalledTimes(1);
-    expect(currentTool.resetToLastSavedArgs).not.toHaveBeenCalled();
   });
 
   it('does nothing while redo is unavailable', () => {
@@ -196,4 +152,82 @@ describe('HistoryControls redo dispatch', () => {
   // positive tests"). Whether the throw reaches `window` is React/jsdom behaviour, not a
   // `HistoryControls` invariant: the component wires `onClick={redo}` with no error handling
   // of its own, so there is nothing here to pin.
+});
+
+/**
+ * The keyboard gate (`useKeyboardEvents.tsx:134`) refused document-mutating
+ * shortcuts while a pointer gesture owned the document, and the buttons were
+ * never covered. They dispatch the same replay, and inside that window the
+ * replay is destructive: `undo`/`redo` replays `selections` from the SAME
+ * `history` array, so `history.length` never moves and the pending commit's
+ * `entries.slice(0, cursor + 1)` truncates the redo tail with no other symptom.
+ * A single pointer cannot hit it — the pointer is captured by the tool area — so
+ * the window is reachable only by a second pointer, which is why this is a
+ * coverage gap rather than an easy hit.
+ *
+ * The refusal belongs in these handlers, at the input layer: no dispatch, so
+ * nothing appends, so nothing truncates. It deliberately does NOT come from the
+ * `disabled` attribute either way — every case below claims the gesture AFTER
+ * render, and `disabled` is read at render time, so a render-time read could not
+ * see the claim at all.
+ */
+describe('HistoryControls document gesture gate', () => {
+  it('refuses undo while a document gesture is open, because the release-time commit would truncate the redo tail', () => {
+    history.canUndo.mockReturnValue(true);
+    render(<HistoryControls />);
+    claimDocumentGesture('layer-transform', 1);
+
+    fireEvent.click(undoButton());
+
+    // The button is enabled, so this is the handler refusing and not the
+    // attribute: a disabled button would make the assertion below vacuous.
+    expect(undoButton().disabled).toBe(false);
+    expect(history.undo).not.toHaveBeenCalled();
+  });
+
+  it('refuses redo while a document gesture is open, for the same reason', () => {
+    history.canRedo.mockReturnValue(true);
+    render(<HistoryControls />);
+    claimDocumentGesture('rectangular-selection', 2);
+
+    fireEvent.click(redoButton());
+
+    expect(redoButton().disabled).toBe(false);
+    expect(history.redo).not.toHaveBeenCalled();
+  });
+
+  it('undoes with no gesture open, so the gate refuses only while a gesture owns the document', () => {
+    history.canUndo.mockReturnValue(true);
+    render(<HistoryControls />);
+    expect(isDocumentGestureOpen()).toBe(false);
+
+    fireEvent.click(undoButton());
+
+    expect(history.undo).toHaveBeenCalledTimes(1);
+  });
+
+  it('redoes with no gesture open, so the gate refuses only while a gesture owns the document', () => {
+    history.canRedo.mockReturnValue(true);
+    render(<HistoryControls />);
+    expect(isDocumentGestureOpen()).toBe(false);
+
+    fireEvent.click(redoButton());
+
+    expect(history.redo).toHaveBeenCalledTimes(1);
+  });
+
+  it('undoes again once resetDocumentGestures drops the claim, so the gate is a window and not a latch', () => {
+    history.canUndo.mockReturnValue(true);
+    render(<HistoryControls />);
+
+    claimDocumentGesture('brush-stroke', 3);
+    fireEvent.click(undoButton());
+    expect(history.undo).not.toHaveBeenCalled();
+
+    resetDocumentGestures();
+    expect(isDocumentGestureOpen()).toBe(false);
+    fireEvent.click(undoButton());
+
+    expect(history.undo).toHaveBeenCalledTimes(1);
+  });
 });

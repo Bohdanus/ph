@@ -11,14 +11,39 @@ spec helpers themselves. The application under test is `src/` in this repository
 
 ```
 e2e/
-├── *.spec.ts            # 11 top-level specs: canvas redraw, colour, layers,
-│                        #   levels, pen types, select/move, sidebar flyout /
-│                        #   keyboard / layout, viewport drawing, DPR
+├── *.spec.ts            # 23 top-level specs: canvas redraw, colour, device pixel
+│                        #   ratio, document dialogs, eraser / fill / eyedropper,
+│                        #   adjustment tools, history panel, keyboard shortcuts,
+│                        #   layers, layers panel, levels, mobile shell, paint
+│                        #   options, paint tools, pen types, responsive shell,
+│                        #   select/move, selection tools, shape tools, sidebar
+│                        #   flyout / keyboard / layout, viewport drawing
 ├── export/              # 6 export-format specs + committed visual-regression baselines
 ├── global-setup.ts      # refuses --headed / --ui / --debug before a window exists
 └── helpers/             # 7 shared helper modules
     └── __tests__/       # Node-environment unit tests for those helpers
 ```
+
+### What the top-level specs are organised by
+
+The list above is alphabetical because that is how the directory is. What is not
+alphabetical is what each one is responsible for, and several of them overlap on
+purpose:
+
+| Concern                       | Specs                                                                                               |
+| ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| Keyboard                      | `keyboard-shortcuts`, `sidebar-keyboard`                                                            |
+| The left rail and its flyouts | `sidebar-flyout`, `sidebar-keyboard`, `sidebar-layout`                                              |
+| Layers and the panel          | `layers`, `layers-panel`                                                                            |
+| History and its panel         | `keyboard-shortcuts`, `history-panel`                                                               |
+| Dialogs and the document      | `document-dialogs`, `select-move` (crop)                                                            |
+| Pixel-affecting tools         | `paint-tools`, `paint-options`, `pen-types`, `shape-tools`, `filter-tools`, `erase-fill-eyedropper` |
+| Selections                    | `selection-tools`, `select-move`                                                                    |
+| Shell and viewport            | `responsive-shell`, `mobile-shell`, `viewport-drawing`, `check-dpr`                                 |
+
+`layers.spec.ts` and `layers-panel.spec.ts` overlap deliberately: the first is
+about the stack a tool sees, the second about the panel that edits it. Splitting
+them by file would have hidden that they describe one feature from two sides.
 
 ## Run it headless
 
@@ -131,8 +156,9 @@ a container.
 ## Helper unit tests
 
 Fast, browser-free tests for the modules in `e2e/helpers/`. They run in Node via
-Vitest and need no application instance, so they are the only part of this suite
-that CI gates on — see the `e2e-unit` job in `.github/workflows/ci.yml`.
+Vitest and need no application instance, so they get their own CI job rather than
+sharing one with the browser run — see the `e2e-unit` job in
+`.github/workflows/ci.yml`. The specs themselves are gated too, by the `e2e` job.
 
 ```bash
 npm run test:e2e:unit              # single run
@@ -175,8 +201,13 @@ at runtime.
 `e2e/` is a TypeScript project reference off the root `tsconfig.json`, so
 `npm run tsc` (`tsc -b`) type-checks the specs, the helpers and the unit tests
 alongside the app and node projects. It is green. `.husky/pre-commit` runs
-`lint-staged`, `npm run tsc` and `npm run test:e2e:unit`, so a change under `e2e/`
-is type-checked and unit-tested before it is committed, not only in CI.
+`lint-staged`, `npm run tsc` and `npm run build`, so a change under `e2e/` is
+type-checked and built before it is committed. It does **not** run the helper
+unit tests: `test:e2e:unit` is not in the commit gate. It is the only coverage
+these helpers have — `vitest.config.ts` excludes `e2e/**` — and it is not
+optional, because the `e2e-unit` CI job runs it as its own blocking step,
+separately from `ci`, so a break in the app pipeline cannot remove the only gate
+on `e2e/`. Run `npm run test:e2e:unit` by hand when you change anything here.
 
 Settings that differ from `tsconfig.app.json`, and why:
 
@@ -283,36 +314,38 @@ where to read them.
 | Helper unit tests | `npm run test:e2e:unit` |
 | E2E tests         | `npm run test:e2e`      |
 
-Three groups used to; all three are fixed, and each was fixed by changing
-an assertion or a wait rather than by loosening a threshold:
-
-| formerly failing tests            | was                                     | now                                                               |
-| --------------------------------- | --------------------------------------- | ----------------------------------------------------------------- |
-| `cdp-helpers.spec.ts`             | 2 headless, 5 headed, disjoint per mode | capture scale is no longer asserted; mode-independent             |
-| `sidebar-keyboard.spec.ts:76, 88` | 0–2, 5 of 12 measured headless runs     | root-caused to a `requestAnimationFrame` focus race, then awaited |
-| `levels.spec.ts:64, 109`          | 2, both modes                           | canvas located by test id, not document order                     |
-
-- The CDP group derived its expected capture size from `window.devicePixelRatio`, but
-  the capture scale is neither a function of that value nor of the emulated ratio.
-  The contract was removed rather than re-derived — the scale belongs to Chrome, not
-  to this code — and replaced with assertions that hold everywhere: exact rect, one
-  integral scale on both axes, correct pixels, and no rescaling of the helper's own.
-  Each was mutation-tested. See `OPEN_PROBLEMS.md` for the measurements.
-- `sidebar-keyboard.spec.ts` was a real race, and not the one it looked like: the app
-  focuses the flyout's first item in a `requestAnimationFrame`, so a keypress landing
-  in that one-frame gap is handled by the tool button again and re-opens the flyout
-  instead of activating an item. The opener now waits for the focus to land.
-- The visual-regression baselines are genuinely compared. They were not before:
-  `if (testInfo.config.updateSnapshots)` was always truthy, because Playwright's
-  default for that option is the string `'missing'`, so every run re-recorded the
-  baseline and returned before `compareScreenshots`. A green run now means the pixels
-  matched.
-
 The workspace canvas is located by `data-testid="workspace-canvas"`, published on the
 primary `<canvas>` in `src/components/Main/Main.tsx`. There is no positional fallback:
 a document index put the locator on the Draw preview canvas, or on a hidden overlay
 once a tool change unmounted it. `getWorkspaceCanvas` is a single-selector locator
 precisely so it can only ever match one element.
+
+### Name every coordinate in document space
+
+An 800x600 document is contained into the canvas element with a uniform scale and a
+centred letterbox, so one CSS pixel on the canvas is not one document pixel and the
+canvas box has no fixed size. `drawLine` takes **box-relative** offsets, and
+`documentToCanvasOffset` / `canvasOffsetToDocument` convert between the two spaces.
+
+Everything a test _asserts_ on has to be named in document space, and any
+spec that both places a gesture and reads a pixel back has to convert in the
+right direction at each end. Getting it backwards is silent: a sample 200 units
+"beyond" a drag that started 131 units into the document lands off the document
+entirely, and the checkerboard behind it reads as a plausible value. The failure
+is a wrong number, not an error.
+
+Two more consequences of the same geometry, both of which have bitten a spec here:
+
+- **Measure the box per sample, not once per test.** A tool change swaps the
+  options bar, the toolbar row changes height, the canvas box moves, and every
+  cached coordinate is now pointing somewhere else. `filter-tools.spec.ts` and
+  `shape-tools.spec.ts` re-measure inside their sampling helper for this reason.
+- **A layer's own bounds are not the document's.** A stroke commits a layer the
+  size of the stroke, so an adjustment that spreads, fills or blurs is only
+  observable from outside the shape if the layer is bigger than the gesture. Both
+  of those specs draw a corner-to-corner stroke first, because that is the only
+  cheap way to get a full-document layer (`GradientToolArea` also refuses to run
+  on the bedrock layer at all).
 
 2 tests are declared `test.skip`: the Photopea PSD round-trip (needs the external
 photopea.com) and one right-click flyout case.
@@ -354,14 +387,12 @@ becomes a hard error), enable `retries: 2`, switch the reporter to `github`, and
 default `workers` to full parallelism. Locally you get `workers: 1` and a
 `list`/`html` reporter, which keeps a debug run readable.
 
-**Both local and CI runs are headless.** The old `headless: !!process.env.CI` meant a
-local run was _headed_ — the trap this file opens on. It is now
+**Both local and CI runs are headless.** `playwright.config.ts` resolves
 `headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1'`, so the only way to get a
 window is to ask for one explicitly. `PLAYWRIGHT_ALLOW_HEADED=1` is that switch, and
-`test:e2e:headed` is the script wrapping it. The previous `PLAYWRIGHT_HEADLESS`
-variable is gone and setting it now does nothing, and so is `PLAYWRIGHT_HEADED` —
-renamed, because it is the name a model reaches for first when it wants a window, and
-that must not be sufficient on its own.
+`test:e2e:headed` is the script wrapping it. `PLAYWRIGHT_HEADLESS` is not read, and
+neither is `PLAYWRIGHT_HEADED` — the latter is the name a model reaches for first
+when it wants a window, and that must not be sufficient on its own.
 
 To use a browser other than Chrome, set `PLAYWRIGHT_CHANNEL` yourself:
 
@@ -395,21 +426,20 @@ every tracked `.ts`/`.tsx` is inside some project's `include`, unit tests, and t
 production build. `tsc -b` is what also builds `tsconfig.e2e.json`.
 
 `e2e` installs Chrome and runs the browser tests against the dev server started by
-`playwright.config.ts`. It is still marked `continue-on-error: true`, and that
-justification no longer holds: it was there because 2–4 of the 97 tests failed for
-documented reasons, and **all of them are now fixed**. The suite is green locally,
-headless, across repeated full runs.
+`playwright.config.ts`. It is a **blocking** gate. It was `continue-on-error`, on the
+stated grounds that a handful of specs failed for documented reasons; those are all
+fixed and the job went on reporting a state the suite no longer had.
 
-It is left as-is because making the job blocking is a workflow decision that belongs
-to the operator, not a consequence of this work. It is also the one thing left to do
-to make the job a real gate: flipping `continue-on-error` to `false`. Two things
-should be settled first, because a blocking job is only as good as what it compares
-against:
+Two things are still unmeasured, and neither is a reason to unblock the job — both
+concern configurations this job does not run in:
 
 - a headed run, to confirm the CDP fix is green outside the headless configuration
   this host can produce (see `AGENTS.md` — the operator runs it, not an agent);
 - whether the visual-regression baselines should be regenerated from a production
   build rather than a dev server, since the job runs against `npm run dev`.
 
-Until then the job reports the true state including the 2 declared skips. It runs
-the full suite with no `--grep-invert`, so the report is unfiltered.
+The job reports the true state including the 2 declared skips. It runs the full
+suite with no `--grep-invert`, so the report is unfiltered — but note that
+`playwright.config.ts` sets `retries: 2` when `CI` is set, so a green run here is a
+green run _after_ retries. A flake that only shows on the first attempt is
+invisible in this job by design.

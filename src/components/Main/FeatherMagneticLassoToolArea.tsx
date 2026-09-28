@@ -521,10 +521,21 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     finishSelection();
   };
 
+  // `mutatesDocument: false` on all four, and every one of them is a shortcut
+  // about THIS component's own gesture, which is the only reason to claim the
+  // exemption. `useKeyboardEvents` refuses document-mutating shortcuts while a
+  // document-committing gesture holds the document, and a lasso here is built
+  // click by click with the anchors on the overlay: refusing `Escape` would leave
+  // no way to cancel it, `Enter` no way to finish it, and `Backspace` no way to
+  // remove a vertex placed against the wrong edge. This component claims no
+  // gesture of its own — every step between the first click and `finishSelection`
+  // mutates refs and the overlay and dispatches nothing — so the exemption costs
+  // nothing: there is no window here for a shortcut to corrupt.
   useKeyDownShortcut({
     key: 'Escape',
     preventDefault: true,
     allowInInput: true,
+    mutatesDocument: false,
     onKeyDown: cancelSelectionDraft,
   });
 
@@ -532,6 +543,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     key: 'Enter',
     preventDefault: true,
     allowInInput: true,
+    mutatesDocument: false,
     onKeyDown: finishSelection,
   });
 
@@ -545,6 +557,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     key: 'Backspace',
     preventDefault: true,
     enabled: hasDraftAnchors,
+    mutatesDocument: false,
     onKeyDown: removeLastAnchor,
   });
 
@@ -552,6 +565,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
     key: 'Delete',
     preventDefault: true,
     enabled: hasDraftAnchors,
+    mutatesDocument: false,
     onKeyDown: removeLastAnchor,
   });
 

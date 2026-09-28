@@ -3,6 +3,8 @@ import type { Point, RectXY, RectXYSorted, Size } from '../contexts/general-type
 import { usePointerPosition } from './usePointerPosition.ts';
 import { getCanvasSize, posToSortedRect, sortRect, trimRect } from '../util/rect.ts';
 import { CURSOR_MAP, HANDLE_SIZE } from '../util/constants.ts';
+import { resetOverlayAlpha } from '../util/canvas.ts';
+import { refitRectWidthToAspect } from '../util/rect-aspect.ts';
 import { isEqual } from 'lodash-es';
 import type { Layer } from '../contexts/layer-types.ts';
 
@@ -55,7 +57,7 @@ export function useRect({
 
   useEffect(() => {
     if (aspectRatio && initialRect) {
-      const patch = adjustWidthRatio(initialRect, aspectRatio);
+      const patch = refitRectWidthToAspect(initialRect, aspectRatio);
       startRectRef.current = { ...initialRect, ...patch };
     } else {
       startRectRef.current = initialRect ? { ...initialRect } : null;
@@ -145,6 +147,13 @@ export function useRect({
     const ctx = overlayRef.current?.getContext('2d');
     if (!ctx) return;
 
+    // The tool overlay is ONE 2D context for the whole session, and every tool area is handed the
+    // same object, so the `rgba(0, 0, 0, 0.7)` dim below renders at `0.7 x whatever globalAlpha
+    // the last tool left` — 0.63 after any default brush stroke, 0.14 at 20% opacity. Reset here
+    // rather than at each call site, and BEFORE the `hideBlend` block so the dim and the stroke are
+    // both covered. The dash this function owns is written after, deliberately.
+    resetOverlayAlpha(ctx);
+
     ctx.clearRect(0, 0, imageSize.width, imageSize.height);
 
     const rect = rectUnsortedRef.current;
@@ -203,23 +212,16 @@ export function useRect({
     return { y1, y2 };
   }
 
-  function adjustWidthRatio({ x1, y1, x2, y2 }: RectXY, _aspectRatio: number | null) {
-    if (_aspectRatio) {
-      const height = Math.abs(y2 - y1);
-      const currentWidth = Math.abs(x2 - x1);
-      const wantedWidth = height / _aspectRatio;
-      const diff = (wantedWidth - currentWidth) / 2;
-      if (x1 < x2) {
-        x1 -= diff;
-        x2 += diff;
-      } else {
-        x1 += diff;
-        x2 -= diff;
-      }
-    }
-    return { x1, x2 };
-  }
-
+  /**
+   * A free drag's own aspect constraint: whichever axis is proportionally too long is shortened,
+   * so the result always satisfies `width / height === _aspectRatio`.
+   *
+   * `refitRectWidthToAspect` enforces the same relation from the other side, and this function's
+   * output is a fixed point of it. That fixed point is the load-bearing property: the effect above
+   * refits `initialRect` through `refitRectWidthToAspect` on every render, so a disagreement here
+   * refitted the rect the overlay had just published into a different shape and repainted it, and
+   * the refitted rect is the one `onChangeEnd` committed.
+   */
   function adjustFreePoint(point: Point, _aspectRatio: number | null) {
     const x1 = startPointRef.current!.x;
     const y1 = startPointRef.current!.y;
@@ -268,11 +270,11 @@ export function useRect({
           break;
         case 'top':
           y1 = point.y;
-          ({ x1, x2 } = adjustWidthRatio({ x1, y1, x2, y2 }, _aspectRatio));
+          ({ x1, x2 } = refitRectWidthToAspect({ x1, y1, x2, y2 }, _aspectRatio));
           break;
         case 'bottom':
           y2 = point.y;
-          ({ x1, x2 } = adjustWidthRatio({ x1, y1, x2, y2 }, _aspectRatio));
+          ({ x1, x2 } = refitRectWidthToAspect({ x1, y1, x2, y2 }, _aspectRatio));
           break;
         default:
           ({ x1, y1, x2, y2 } = adjustFreePoint(point, _aspectRatio));

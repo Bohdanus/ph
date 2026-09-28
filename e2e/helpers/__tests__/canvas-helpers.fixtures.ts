@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Locator, Mouse, Page, TestInfo } from '@playwright/test';
-import { loadImageData, type ImageDataResult } from '../canvas-helpers';
+import { loadImageData, type ClipOptions, type ImageDataResult } from '../canvas-helpers';
 
 export interface Color {
   red: number;
@@ -96,6 +96,11 @@ export function createMouseMock(): MouseMock {
 
 export function createPageMock(overrides: Partial<Page> = {}): Page {
   const double: Partial<Page> = { ...overrides };
+  // The helpers read the window before they read the canvas, so a double without
+  // `evaluate` is not a Page they can run against. The default answers from a window that
+  // holds its whole page at scroll 0, which is the geometry every pre-existing capture test
+  // assumes; a test that cares about scrolling passes its own.
+  double.evaluate ??= createScrollModel().evaluate;
   return double as Page;
 }
 
@@ -104,6 +109,103 @@ export type ScreenshotSpy = Mock<(options: ScreenshotOptions) => Promise<Buffer>
 
 export function createScreenshotSpy(result: Buffer): ScreenshotSpy {
   return vi.fn<(options: ScreenshotOptions) => Promise<Buffer>>().mockResolvedValue(result);
+}
+
+export interface ScrollGeometry {
+  /** `window.innerHeight` / `window.innerWidth`. */
+  viewportHeight?: number;
+  viewportWidth?: number;
+  /** `document.documentElement.scrollHeight` — the page's full height. */
+  documentHeight?: number;
+  initialScrollX?: number;
+  initialScrollY?: number;
+}
+
+export interface ScrollModel {
+  evaluate: Mock<Page['evaluate']>;
+  scrollX: () => number;
+  scrollY: () => number;
+  /** Every `window.scrollTo` the code under test asked for, in order. */
+  scrollRequests: () => Array<{ x: number; y: number }>;
+}
+
+/**
+ * A `page.evaluate` that runs the helper's OWN page function against a stubbed window, so
+ * the assertions are made on the callback rather than on a value the double chose to hand
+ * back — the same idiom as `createRunningEvaluate` in cdp-helpers.unit.test.ts. The window
+ * reports its scroll through getters, so a `scrollTo` issued by one call is visible to the
+ * next, and the globals are stubbed for the duration of the call only, so a test that sets
+ * up its own never sees them leak into the next.
+ */
+export function createScrollModel(geometry: ScrollGeometry = {}): ScrollModel {
+  const viewportHeight = geometry.viewportHeight ?? 1080;
+  const viewportWidth = geometry.viewportWidth ?? 1280;
+  const documentHeight = geometry.documentHeight ?? viewportHeight;
+  const scroll = { x: geometry.initialScrollX ?? 0, y: geometry.initialScrollY ?? 0 };
+  const requests: Array<{ x: number; y: number }> = [];
+
+  const evaluate = vi.fn(async (pageFunction: (arg?: unknown) => unknown, arg?: unknown) => {
+    vi.stubGlobal('window', {
+      innerWidth: viewportWidth,
+      innerHeight: viewportHeight,
+      get scrollX(): number {
+        return scroll.x;
+      },
+      get scrollY(): number {
+        return scroll.y;
+      },
+      scrollTo: (x: number, y: number): void => {
+        scroll.x = x;
+        scroll.y = y;
+        requests.push({ x, y });
+      },
+    });
+    vi.stubGlobal('document', { documentElement: { scrollHeight: documentHeight } });
+    try {
+      return pageFunction(arg);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }) as unknown as Mock<Page['evaluate']>;
+
+  return {
+    evaluate,
+    scrollX: () => scroll.x,
+    scrollY: () => scroll.y,
+    scrollRequests: () => requests,
+  };
+}
+
+export interface ScrollablePage {
+  page: Page;
+  screenshot: ScreenshotSpy;
+  scroll: ScrollModel;
+  /** Clips handed to `page.screenshot`, in call order. */
+  clips: () => Required<ClipOptions>[];
+}
+
+/**
+ * A page whose window scrolls. The default geometry is a window tall enough to hold its
+ * whole page at scroll 0, so a clip is already on screen unless a test says otherwise —
+ * that is the case every pre-existing capture test is written against, and it is what
+ * keeps them reading the clip they passed in.
+ */
+export function createScrollablePage(
+  options: ScrollGeometry & {
+    result?: Buffer;
+    waitForTimeout?: Mock<(ms: number) => Promise<void>>;
+  } = {}
+): ScrollablePage {
+  const screenshot = createScreenshotSpy(options.result ?? Buffer.from('fake-png-data'));
+  const waitForTimeout = options.waitForTimeout ?? vi.fn<(ms: number) => Promise<void>>().mockResolvedValue(undefined);
+  const scroll = createScrollModel(options);
+  const page = createPageMock({ screenshot, waitForTimeout, evaluate: scroll.evaluate });
+  return {
+    page,
+    screenshot,
+    scroll,
+    clips: () => screenshot.mock.calls.map(([screenshotOptions]) => screenshotOptions.clip),
+  };
 }
 
 export interface AttachOptions {

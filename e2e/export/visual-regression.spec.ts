@@ -94,6 +94,46 @@ test.describe('Export visual regression', () => {
     });
   }
 
+  /**
+   * The export must be a function of the document, not of the window.
+   *
+   * This is the pin for the decoupling, and it is stated as a property rather than as a
+   * baseline because a baseline cannot express it: the original failure was that fixing a
+   * desktop overflow changed the canvas from 974x890 to 974x583, which moved a
+   * canvas-relative test line and failed seven pixel comparisons with no change in the
+   * export path. The same line, specified in document space, must render identically at
+   * both canvas heights.
+   *
+   * 890 and 583 are the two measured canvas heights for a 1280x720 window, before and after
+   * the grid-overflow fix. Any future change to the shell's layout is therefore covered: if
+   * it moves the canvas, this test still passes, and so do the seven baseline comparisons
+   * above.
+   */
+  test('the export is independent of the canvas height', async ({ page }, testInfo) => {
+    test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
+
+    const dataUrlAtHeight = async (height: number) => {
+      await page.setViewportSize({ width: 1280, height });
+      const { sourceDataUrl } = await setupExportTest(page, testInfo);
+      return sourceDataUrl;
+    };
+
+    const tall = await dataUrlAtHeight(720);
+    const short = await dataUrlAtHeight(560);
+
+    // A different canvas height really is in play, or this proves nothing.
+    const canvases = await page.evaluate(() => {
+      const c = document.querySelector('[data-testid="workspace-canvas"]') as HTMLCanvasElement;
+      return { w: c.width, h: c.height };
+    });
+    expect(canvases, 'the backing store is the document size at any viewport').toEqual({
+      w: 800,
+      h: 600,
+    });
+
+    expect(short, 'the same document line must export identically at a different canvas height').toBe(tall);
+  });
+
   test('ICO export matches the source canvas', async ({ page }, testInfo) => {
     test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
 

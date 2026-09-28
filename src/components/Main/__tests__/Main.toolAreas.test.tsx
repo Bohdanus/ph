@@ -67,20 +67,50 @@ vi.mock('../MagicWandToolArea.tsx', () => ({ MagicWandToolArea: marker('magic-wa
 vi.mock('../RectangularSelectionToolArea.tsx', () => ({
   RectangularSelectionToolArea: marker('rectangular-selection'),
 }));
+vi.mock('../EllipticalSelectionToolArea.tsx', () => ({
+  EllipticalSelectionToolArea: marker('elliptical-selection'),
+}));
+vi.mock('../QuickSelectionToolArea.tsx', () => ({ QuickSelectionToolArea: marker('quick-selection') }));
+vi.mock('../EyedropperToolArea.tsx', () => ({ EyedropperToolArea: marker('eyedropper') }));
+vi.mock('../EraserToolArea.tsx', () => ({ EraserToolArea: marker('eraser') }));
+vi.mock('../CloneStampToolArea.tsx', () => ({ CloneStampToolArea: marker('clone-stamp') }));
+vi.mock('../SharpenToolArea.tsx', () => ({ SharpenToolArea: marker('sharpen') }));
+vi.mock('../SmudgeToolArea.tsx', () => ({ SmudgeToolArea: marker('smudge') }));
+vi.mock('../DodgeToolArea.tsx', () => ({ DodgeToolArea: marker('dodge') }));
+vi.mock('../BurnToolArea.tsx', () => ({ BurnToolArea: marker('burn') }));
+vi.mock('../FillToolArea.tsx', () => ({ FillToolArea: marker('fill') }));
+vi.mock('../GradientToolArea.tsx', () => ({ GradientToolArea: marker('gradient') }));
+
+/**
+ * Every mocked tool area, in the order the routing table names them. `toolAreaTestId` walks this
+ * list, so an area mounted by a tool the table does not expect is still detected rather than
+ * passing as "no tool area at all".
+ */
+const TOOL_AREA_IDS = [
+  'move',
+  'crop',
+  'draw',
+  'shape',
+  'text',
+  'lasso',
+  'feather-magnetic-lasso',
+  'magic-wand',
+  'rectangular-selection',
+  'elliptical-selection',
+  'quick-selection',
+  'eyedropper',
+  'eraser',
+  'clone-stamp',
+  'sharpen',
+  'smudge',
+  'dodge',
+  'burn',
+  'fill',
+  'gradient',
+] as const;
 
 const toolAreaTestId = () => {
-  const ids = [
-    'move',
-    'crop',
-    'draw',
-    'shape',
-    'text',
-    'lasso',
-    'feather-magnetic-lasso',
-    'magic-wand',
-    'rectangular-selection',
-  ];
-  return ids.map((id) => screen.queryByTestId(`tool-area-${id}`)).findIndex((el) => el !== null);
+  return TOOL_AREA_IDS.map((id) => screen.queryByTestId(`tool-area-${id}`)).findIndex((el) => el !== null);
 };
 
 const canvases = (container: HTMLElement) => Array.from(container.querySelectorAll('canvas'));
@@ -91,6 +121,8 @@ beforeEach(() => {
   storeState.hasImage = true;
   storeState.hasUnsavedChanges = false;
   storeState.toolName = 'reposition';
+  storeState.totalSize = { width: 640, height: 480 };
+  storeState.documentFrame = { x: 0, y: 0, width: 640, height: 480 };
   storeState.currentArgs = { current: { toolName: 'brush' } as ToolArgs };
   loadDocumentFile.mockResolvedValue({ fileName: 'photo.png' });
   setImageFromUpload.mockResolvedValue(undefined);
@@ -123,6 +155,23 @@ describe('Main tool-area routing', () => {
     ['feather-magnetic-lasso', 'feather-magnetic-lasso'],
     ['magic-wand', 'magic-wand'],
     ['rectangular-selection', 'rectangular-selection'],
+    // Each of the new tools got its own tool area rather than sharing the `draw` one, so each
+    // row below pins a DISTINCT area: a tool accidentally pointed at a neighbour's component
+    // would render that neighbour's marker and fail here. The eraser is a drag area that is NOT
+    // `DrawToolArea`, so it gets its own mode too. The two fill tools share one area because
+    // they differ only in what their processor writes into the fill mask.
+    ['elliptical-selection', 'elliptical-selection'],
+    ['quick-selection', 'quick-selection'],
+    ['eyedropper', 'eyedropper'],
+    ['eraser', 'eraser'],
+    ['clone-stamp', 'clone-stamp'],
+    ['sharpen', 'sharpen'],
+    ['smudge', 'smudge'],
+    ['dodge', 'dodge'],
+    ['burn', 'burn'],
+    ['magic-eraser', 'fill'],
+    ['paint-bucket', 'fill'],
+    ['gradient', 'gradient'],
   ])('routes the %s tool to the %s tool area', (toolName, expected) => {
     storeState.toolName = toolName;
 
@@ -131,7 +180,70 @@ describe('Main tool-area routing', () => {
     expect(screen.getByTestId(`tool-area-${expected}`)).toBeTruthy();
   });
 
-  it.each(['zoom', 'custom-shape', 'transform'] as const)('falls back to the hidden dummy area for %s', (toolName) => {
+  it('mounts exactly one tool area for every tool that has one', () => {
+    // The routing table above checks the expected marker is present, which would still pass
+    // if `Main` rendered a SECOND area alongside it. Every tool-area branch is an `else if`
+    // over a single `interactionMode`, so one is the only correct number.
+    const routed = [
+      'reposition',
+      'crop',
+      'draw',
+      'brush',
+      'pencil',
+      'color-replacement',
+      'shape',
+      'rectangle',
+      'ellipse',
+      'triangle',
+      'polygon',
+      'line',
+      'text',
+      'polygonal-lasso',
+      'freehand-lasso',
+      'feather-magnetic-lasso',
+      'magic-wand',
+      'rectangular-selection',
+      'elliptical-selection',
+      'quick-selection',
+      'eyedropper',
+      'eraser',
+      'clone-stamp',
+      'sharpen',
+      'smudge',
+      'dodge',
+      'burn',
+      'paint-bucket',
+      'gradient',
+    ] as const;
+
+    for (const toolName of routed) {
+      storeState.toolName = toolName;
+      const { container, unmount } = render(<Main />);
+
+      const mounted = TOOL_AREA_IDS.map((id) => container.querySelector(`[data-testid="tool-area-${id}"]`)).filter(
+        (element) => element !== null
+      );
+      expect(mounted, toolName).toHaveLength(1);
+      unmount();
+    }
+  });
+
+  it.each([
+    'zoom',
+    'custom-shape',
+    'transform',
+    // These are the only tools left with no tool area at all: the zoom is a store-driven
+    // viewport control, `custom-shape` is still a placeholder panel, and `transform` is a
+    // one-shot operation the canvas route drives rather than a gesture surface. The eleven
+    // Photoshop tools that used to sit in this list have each left it for a real area, so
+    // this table is the deliberate allow-list of what may still fall through to the dummy.
+    'pen',
+    'freeform-pen',
+    'curvature-pen',
+    'add-anchor-point',
+    'delete-anchor-point',
+    'convert-point',
+  ] as const)('falls back to the hidden dummy area for %s', (toolName) => {
     storeState.toolName = toolName;
 
     const { container } = render(<Main />);
@@ -183,15 +295,65 @@ describe('Main tool-area routing', () => {
     expect(canvases(container)[2].style.display).toBe('none');
   });
 
-  it('sizes both overlays to the document and enables smoothing on the main canvas', () => {
+  it('keeps the eraser OFF the overlay canvas, which structurally cannot preview an erase', () => {
+    // The eraser previews by mutating the active layer through `tempUpdateLayer`
+    // (`EraserToolArea.tsx`), not by drawing into the overlay. It used to draw into the overlay
+    // with `composite: 'destination-out'`, and that can never produce a visible pixel: the
+    // overlay is cleared to fully transparent each frame and `destination-out` computes
+    // `da' = da * (1 - sa)`, so `da = 0` gives `0` for every pixel. The stroke was therefore
+    // invisible for the whole gesture and appeared only on pointer-up, and this list entry is
+    // what kept the empty canvas stacked over the document. Listing it here again would
+    // reintroduce the dead-looking tool.
+    storeState.toolName = 'eraser';
+    const { container } = render(<Main />);
+
+    expect(canvases(container)[1].style.display).toBe('none');
+  });
+
+  it('keeps the tool overlay hidden for the fill and eyedropper tools', () => {
+    // Both commit on the click itself and never draw a preview, so the overlay has nothing to
+    // show — and showing it would leave a stale overlay from an earlier tool on the document.
+    for (const toolName of ['paint-bucket', 'magic-eraser', 'eyedropper'] as const) {
+      storeState.toolName = toolName;
+      const { container, unmount } = render(<Main />);
+
+      expect(canvases(container)[1].style.display).toBe('none');
+      unmount();
+    }
+  });
+
+  it('sizes both overlays to the document', () => {
     render(<Main />);
 
-    const [canvas, toolOverlay, rectOverlay] = canvases(document.body);
-    expect([canvas, toolOverlay, rectOverlay].map((el) => [el.width, el.height])).toEqual([
-      [300, 150],
+    const [, toolOverlay, rectOverlay] = canvases(document.body);
+    expect([toolOverlay, rectOverlay].map((el) => [el.width, el.height])).toEqual([
       [640, 480],
       [640, 480],
     ]);
+  });
+
+  it('leaves the workspace canvas to the CSS box and to useApp, never sizing it from the document', () => {
+    // `Main`'s `useLayoutEffect` sizes the two overlays from `totalSize`. The workspace canvas is
+    // deliberately absent from it: the drawing surface is CSS-sized to its container
+    // (`h-full w-full object-contain`) and `useApp` owns its backing store, so a `resizeCanvas`
+    // call here would fight that and resize a buffer nothing reads.
+    //
+    // The guard is relational on purpose. The old form asserted `[300, 150]`, which is jsdom's
+    // default and a value no one in this app chose — it would pin an environment artefact as
+    // though it were a product decision, and it would only say anything at all because `Main`
+    // happens not to write those attributes. So instead: the workspace canvas's backing store
+    // must not follow the document size, and the overlays are asserted to have followed it, which
+    // is what stops "unchanged" from passing merely because the sizing effect never ran.
+    const { rerender } = render(<Main />);
+    const [workspace, toolOverlay, rectOverlay] = canvases(document.body);
+    const untouched = [workspace.width, workspace.height];
+
+    storeState.totalSize = { width: 800, height: 600 };
+    rerender(<Main />);
+
+    expect([workspace.width, workspace.height]).toEqual(untouched);
+    expect([toolOverlay.width, toolOverlay.height]).toEqual([800, 600]);
+    expect([rectOverlay.width, rectOverlay.height]).toEqual([800, 600]);
   });
 
   it('repaints every layer when the document frame changes', () => {

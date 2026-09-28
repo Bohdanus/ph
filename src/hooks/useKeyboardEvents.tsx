@@ -1,9 +1,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { isDocumentGestureOpen, resetDocumentGestures } from './document-gesture.ts';
 
 export type KeyboardShortcut = {
   key: string;
   onKeyDown: (event: KeyboardEvent) => void;
   enabled?: boolean;
+  mutatesDocument?: boolean; // Default: true. A document-committing gesture is in progress, so this registration must not run. Set to `false` ONLY for a shortcut that is about the gesture itself — `Escape` cancelling the draft, `Enter` finishing it, `Backspace` removing the last anchor, a popup's own `Escape` — because refusing those would leave the gesture with no way out. A registration that defaults to `true` is safe without anyone having thought about it; the exemption has to be argued for.
   preventDefault?: boolean;
   stopPropagation?: boolean;
   allowInInput?: boolean; // Default: false. Set to true for shortcuts that should work in input fields (tool commands, not text editing)
@@ -94,12 +96,42 @@ export const KeyboardEventsProvider = ({ children }: { children: React.ReactNode
   }, []);
 
   useEffect(() => {
+    // The gesture slot is module-level, so it outlives any one mount. A claim
+    // leaked by a mount that is already gone — an unmount between claim and
+    // commit, or a test case that never released — would otherwise gate every
+    // later keystroke in the session. Clearing on mount and again on cleanup
+    // bounds that leak to the mount that leaked it.
+    resetDocumentGestures();
+
     const handleKeyDown = (event: KeyboardEvent) => {
       const shortcuts = keyDownShortcutsRef.current;
 
       for (let i = shortcuts.length - 1; i >= 0; i--) {
         const shortcut = shortcuts[i]();
         if (!shortcut || shortcut.enabled === false) continue;
+
+        // A document-committing gesture is in progress, and a gesture commits on
+        // release. Undo/redo here replaces `selections` from the SAME `history`
+        // array, so `history.length` never moves and the pending commit's
+        // `entries.slice(0, cursor + 1)` then truncates the redo tail with no
+        // other symptom; `mod+c` bumps `metadata.copiedAtVersion` in place with
+        // no append at all. Both are invisible from the writer, and neither is
+        // detectable by comparing `history.length`.
+        //
+        // THE GUARANTEE IS STRUCTURAL, NOT A GUARD SOMEWHERE DEEPER: refusal
+        // happens here, at `keydown`, so no dispatch occurs, therefore no append
+        // occurs, therefore nothing truncates. `useSelectionHistory` stays
+        // untouched, and `previousSelectionState` is still captured from live
+        // state at commit time.
+        //
+        // Placed next to `enabled` and deliberately NOT after `preventDefault`:
+        // a refused shortcut then behaves exactly like a disabled one — the
+        // browser default is left untouched, no `stopPropagation` claim is made
+        // for the lifetime of the press, and the loop still falls through to a
+        // lower-priority registration. This is the same rule
+        // `usePointerPosition.isPointerDownValid` already applies to a second
+        // pointer, applied to the keyboard channel where it was missing.
+        if (shortcut.mutatesDocument !== false && isDocumentGestureOpen()) continue;
 
         if (!shortcut.allowInInput && isEditableTarget(event.target)) continue;
 
@@ -130,6 +162,10 @@ export const KeyboardEventsProvider = ({ children }: { children: React.ReactNode
 
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
+      // Paired with the mount-time clear: the provider going away must not leave
+      // a claim behind for whatever mounts next, or the keyboard stays dead for
+      // the rest of the session with nothing on screen to explain it.
+      resetDocumentGestures();
     };
   }, []);
 

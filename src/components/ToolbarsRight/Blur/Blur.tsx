@@ -67,11 +67,11 @@ const Blur: React.FC<{}> = () => {
    * replayed the timeline one entry back and silently reverted the user's last
    * committed edit while the slider kept showing the unapplied radius.
    *
-   * The baseline is `defaultSettings.blur`, not `resetToLastSavedArgs()`: the
-   * slider write goes through `setToolArgs`, which calls `saveLastSettings` on the
-   * same tick and overwrites `lastSavedSettings.blur` with the value the user just
-   * dragged to. A reset cloned from there restores the unapplied value and the
-   * control goes on lying about it.
+   * The baseline is `defaultSettings.blur`, never the last-saved copy of the blur
+   * settings: the slider write goes through `setToolArgs`, which calls
+   * `saveLastSettings` on the same tick, so `lastSavedSettings.blur` already holds
+   * the value the user just dragged to. Cloning it back would restore the
+   * unapplied value and the control would go on lying about it.
    *
    * `commitDirtyTool` bakes the preview into a real layer plus a `TOOL_ACTION`
    * entry — on tool switch, on export and in `mergeAllLayers` — and by then there
