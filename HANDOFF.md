@@ -443,33 +443,6 @@ block rather than porting it.
 
 ---
 
-## 20. No durable-path test materializes a `rectangle`, `ellipse` or `line` vector source
-
-**Problem.** `history-adapter.ts:185` maps all six of `shape`, `rectangle`, `ellipse`, `triangle`,
-`polygon`, `line` to `kind: 'vector'`, and `materialization.ts:168` then throws
-`Source tool ${toolName} is not a deterministic creator` for any of them whose registry entry lacks
-`creator: true`. The registry now flags all six (`toolProcessors.ts:124, 220-224`), but the only
-durable test that _successfully_ pushes a vector source through `materializeLayer` uses
-`toolName: 'shape'`
-(`materialization.assets.test.ts:406-425`) — so the `rectangle`/`ellipse`/`line` entries were never
-exercised end to end, and nothing in `src/contexts/__tests__` would have caught them missing the
-flag. `history-adapter.tool-conversion.test.ts:76-80` pins only the adapter half.
-
-Nothing in production reaches this code: `materializeLayer` and `materializeDocument` have no
-non-test importer (item 1), so the throw is latent.
-
-**Fix.** In `materialization.assets.test.ts`, extend the existing vector-source case into an
-`it.each` over `['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line']` with the matching
-`args` per tool, asserting `materializeLayer` resolves and yields a bitmap for every one. That
-converts the registry flag into a contract the durable path checks instead of a declaration in
-`toolProcessors.test.ts`. Belongs with the migration work, not with a registry edit.
-
-**Files.** `src/contexts/__tests__/materialization.assets.test.ts`
-
----
-
----
-
 ## Known defects that are PINNED — do not "fix" them casually
 
 An `it.fails(...)` is a tripwire: it passes today and **fails the moment the defect is fixed**, so a
@@ -1442,38 +1415,55 @@ attributes are pinned rather than assumed.
 
 ---
 
-## 45. The raster budget is a ceiling the operator set, and the AVIF half of it is still below the app's own maximum
+## 45. The AVIF encoder enforces no raster budget, and the two codecs' ceilings still disagree
 
-**Problem.** `MAX_TIFF_BYTES` / `MAX_TIFF_PIXELS` in `src/contexts/tiff-utils.ts:15-27` are a
-product decision, not a security constant, and nothing records where the numbers came from — so the
-next session will "tidy" them back to a round figure and nobody will notice. The two ceilings, and
-the reject-don't-clamp behaviour above them, are:
+**What is fixed.** `encodeAvif` (`avif-utils.ts:32`) called the codec on an unbounded canvas while
+`loadAvifFile` (`:20`) refused anything over `MAX_AVIF_PIXELS`, so `New ▸ A3 @ 1200 dpi` followed by
+`Save as AVIF` wrote a file this build then refused to reopen. Both sides now share one
+`assertPixelBudget(width, height, 'open' | 'save')` (`:14`), called on the encode path at `:37`
+before the pixels are read, on the same rationale `tiff-utils.ts:168-174` already uses for TIFF:
+whatever this build writes it has to be able to read back. Pinned by three new cases in
+`src/contexts/__tests__/avif-utils.test.ts` plus the pre-existing load-side pin — over-budget
+rejection, the guard running before `getImageData`, the exact-budget boundary (`10000 × 8000`
+encodes, `10000 × 8001` does not), and the load-side string preserved byte for byte. The stale
+`NewImageDialog.tsx:77-78` / `:158` / `:178` citation in `tiff-utils.ts:8-9` now points at the real
+`:208-209` / `:289` / `:308`.
 
-- `MAX_TIFF_BYTES = 1_600_000_000` — the app's largest creatable document
-  (10000 × 10000 = 1e8 px, `NewImageDialog.tsx:208-209` clamps each axis to 10000 and both inputs
-  declare `max="10000"` at `:158`/`:178`) at 16 bytes per pixel, which is the largest per-pixel
-  buffer `UTIF.decodeImage` can build for a 4-sample page: `Math.min(32, t258[0])` bits per sample
-  (`UTIF.js:116`) times 4 samples.
-- `MAX_TIFF_PIXELS = MAX_TIFF_BYTES / 8` = 200,000,000 — the same budget read at 8 bytes per
-  pixel, the largest per-pixel buffer a displayable 16-bit RGBA page declares. Two times the app's
-  own maximum, so a document the dialog can create has headroom.
-- Above either ceiling the file is **rejected with an error, never clamped or downscaled**. That is
-  deliberate: a clamp silently hands the user a smaller image than the file they opened, and a
-  rejected file loses nothing.
+**Remaining verification — a ceiling decision that belongs to the operator, not to a fix branch.**
+Three numbers still disagree, and enforcing the budget on the encoder made the disagreement a
+capability loss rather than a latent trap:
 
-**The residual defect.** `MAX_AVIF_PIXELS` in `src/contexts/avif-utils.ts:5` is still
-`80_000_000` — below the 100 MP the New Image dialog can create, and applied to `loadAvifFile`
-(`:15`) but never to `encodeAvif` (`:24-26`). So `New ▸ A3 @ 1200 dpi`, then `Save as AVIF`,
-produces a file this build refuses to reopen. This is the same asymmetry the TIFF budget had; the
-TIFF side is fixed and this side is not.
+| ceiling                             | value       | where                        |
+| ----------------------------------- | ----------- | ---------------------------- |
+| largest document the app can create | 100,000,000 | `NewImageDialog.tsx:208-209` |
+| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:12`           |
+| TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:23`           |
 
-**Fix.** Replace `MAX_AVIF_PIXELS` with the same `MAX_TIFF_PIXELS` derivation, or export one
-`MAX_RASTER_PIXELS` from a module both codecs import so the two cannot drift again, and add the
-same budget call to `encodeAvif`. If the ceiling itself is wrong — if 200 MP is too generous or too
-tight for the product — that is the operator's call, and it must be made here rather than in a fix
-branch: the derivation above is what makes a different number defensible, not the number itself.
+So a document between 80 MP and 100 MP now **cannot be saved as AVIF at all** — `saveImageToDisk`
+throws with the budget message, and `useFile.tsx:119-135` surfaces it as an alert. Before the guard
+it saved and then failed to reopen, which is the worse failure, so the change is right; the cost is
+real and the number was not chosen by whoever added the guard. The handoff's own instruction is that
+this value is the operator's call. Either raise `MAX_AVIF_PIXELS` to the same
+`MAX_CREATABLE_DOCUMENT_PIXELS` derivation TIFF uses, or name 80 MP as the accepted AVIF ceiling and
+accept that A3 @ 1200 dpi is not exportable in that format.
 
-**Files.** `src/contexts/avif-utils.ts:4-5,15,24-26`, `src/contexts/tiff-utils.ts:11-27`
+**The rule that must survive whichever number is chosen.** Above a ceiling the file is **rejected
+with an error, never clamped or downscaled**: a clamp silently hands the user a smaller image than
+the one they opened, and a rejected file loses nothing. The TIFF byte ceiling also has a recorded
+provenance worth keeping — `MAX_TIFF_BYTES` is the app's largest creatable document at 16 bytes per
+pixel, the largest buffer `UTIF.decodeImage` can build for a 4-sample page
+(`Math.min(32, t258[0])` bits per sample, `UTIF.js:116`, times 4 samples) — and
+`MAX_TIFF_PIXELS` is that same budget read at 8 bytes per pixel, so the two agree by construction
+rather than by coincidence. That derivation is what makes a different number defensible.
+
+**Also unfixed, and the same drift.** `image-load-save-utils.ts:150-172` exports BMP, GIF, ICO and
+SVG with no budget on either side, so a 100 MP document is refused for AVIF (80 MP), refused for
+nothing else, and refused for TIFF only above 200 MP. Save-time refusals now differ per format. One
+exported `MAX_RASTER_PIXELS` both codecs import would close this, but `image-load-save-utils.ts` is
+owned by an in-flight branch — see item 55.
+
+**Files.** `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts:8-9`,
+`src/contexts/__tests__/avif-utils.test.ts`, `src/contexts/image-load-save-utils.ts:150-172`
 
 ---
 
@@ -1742,3 +1732,74 @@ path free of unnecessary asset work.
 
 **Files.** `src/contexts/history-append.ts`, `src/contexts/StoreContext.tsx`,
 `src/contexts/history-adapter.ts`
+
+---
+
+## 55. The `EXCLUDED-touched-by-prior-campaigns` manifest is not a safe boundary
+
+**Problem.** `.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt` is
+what a fixer reads to learn which files a prior campaign owns, and item 39 in this file is written
+entirely in terms of it. It lists 136 files (`wc -l`). Reconstructing the true set from the session store
+instead — every `apply_patch` / `edit` / `write` target in a session whose `model.providerID` is
+`openai`, which is 60 GPT sessions — returns **72 `src/` files the manifest does not list**, and
+several of them are load-bearing for entries above:
+
+| not in the manifest                                                                                | which entry depends on it |
+| -------------------------------------------------------------------------------------------------- | ------------------------- |
+| `src/contexts/history-model.ts`                                                                    | 10, 11, 12                |
+| `src/contexts/durable-replay.ts`, `replay-coordinator.ts`, `replay-checkpoints.ts`                 | 1, 12                     |
+| `src/contexts/psd-utils.ts`                                                                        | 7                         |
+| `src/contexts/useSelectionHistory.ts`                                                              | 15, 33                    |
+| `src/contexts/selection-baseline.ts`                                                               | 31                        |
+| `src/components/HistoryControls/HistoryControls.tsx`, `AppKeyboardShortcuts.tsx`, `UndoButton.tsx` | 37                        |
+| `src/components/SidebarLeft/toolIcons.tsx`                                                         | 46                        |
+| `src/components/SaveDialog/__tests__/SaveDialog.test.tsx`                                          | 44                        |
+| `src/hooks/useAnts.ts`, `src/util/canvas.ts`                                                       | 39                        |
+| `src/components/Main/CropToolArea.tsx`, `TextToolArea.tsx`                                         | 22                        |
+
+So an entry whose `Files` line names only unlisted files reads as unblocked when it is not: items 7,
+10, 12, 22, 31, 37, 39, 44 and 46 all do. Item 39's own text is the tell — it says `src/tools/draw.ts`
+is "**not** in the EXCLUDED list" and therefore needs coordination; it is not in the list because
+the list is incomplete, not because the file is free.
+
+**A second, live ownership axis the manifest has no notion of: 40 branches are unmerged.**
+`git branch --no-merged main` returns 41, and `merge/ps-tool-expansion` alone diffs 121 files against
+`main` — including `src/tools/settings.ts`, `src/contexts/layer-utils.ts`,
+`src/components/Main/Main.tsx`, `toolbar-mapping.ts` and every `SidebarLeft` suite. `src/util/floodFill.ts`
+is renamed to `src/util/flood-fill.ts` there, so item 49's files are mid-migration. The GPT-owned
+unmerged branches are `history-presentation-lifecycle`, `history-selection-baseline-parity`,
+`history-append-readiness`, `history-selection-append-support`,
+`history-selection-creation-writer`, and `fix/unit-tests` (the branch that closes items 16-19).
+
+**Fix.** Regenerate the manifest from the session store rather than maintaining it by hand, and
+extend it with the unmerged-branch file set. Until then, treat "not in the manifest" as carrying no
+information at all, and derive ownership the way this entry does before touching anything.
+
+**Reproduce the 72.** The `lightshopy.com` clone is the reason both path prefixes and the
+`edit`/`write` tools are in this, not just `apply_patch`:
+
+```bash
+GPT="SELECT id FROM session WHERE json_extract(model,'$.providerID')='openai' OR json_extract(model,'$.id') LIKE '%gpt%'"
+{ sqlite3 ~/.local/share/kilo/kilo.db "WITH g AS ($GPT) SELECT json_extract(p.data,'$.state.input.patchText') FROM part p JOIN g ON g.id=p.session_id WHERE json_extract(p.data,'$.tool')='apply_patch'" 2>/dev/null \
+    | perl -ne 'while(/\*\*\* (?:Update|Add|Delete) File: (\S+)/g){ print "$1\n" }'
+  sqlite3 ~/.local/share/kilo/kilo.db "WITH g AS ($GPT) SELECT json_extract(p.data,'$.state.input.filePath') FROM part p JOIN g ON g.id=p.session_id WHERE json_extract(p.data,'$.tool') IN ('edit','write')" 2>/dev/null
+} | sed -e 's#^/Users/bkalynovskyi/ph/##' -e 's#^/Users/bkalynovskyi/WebstormProjects/lightshopy\.com/##' -e 's#^\.kilo/worktrees/[^/]*/##' \
+  | sort -u > /tmp/gpt_paths.txt
+comm -23 /tmp/gpt_paths.txt <(sort .kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt) | grep '^src/' | wc -l   # -> 72
+```
+
+`session.model` is a TEXT column holding JSON, so the filter is `json_extract`, not a plain column
+comparison. Dropping the clone prefix lowers the count to 39, which is how a `grep -rn lightshopy`
+over the store misses a third of the corpus.
+
+**Verified by cross-check, not assertion:** the reconstruction also audited the other write vectors
+and found them clean — of 974 `bash` calls in GPT sessions there is no `sed -i`, `perl -i`, `tee`,
+`patch`, `git apply` or shell redirect that writes a tracked file. The only files the tool-call
+reconstruction misses are `package.json` and `package-lock.json`, via `npm install ag-psd` and
+`npm uninstall @floating-ui/react`. Note also that `/Users/bkalynovskyi/WebstormProjects/lightshopy.com`
+is a **clone of this same repository** (identical `origin`, and this HEAD is a descendant of its
+`1ddc968`), so 317 of those commands target this codebase from another path and a
+`grep -rn 'lightshopy'` on the session store misses them.
+
+**Files.** `.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt` (not
+tracked; gitignored under `.kilo/`), and the `Files` line of every entry named in the table above.
