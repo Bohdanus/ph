@@ -6,6 +6,7 @@ import type { ToolName, ToolArgs, ToolArgsFor, ToolPatch } from './tool-types.ts
 import { saveLastSettings } from '../util/settings.ts';
 import { useStore } from './StoreContext.tsx';
 import { setRefValue } from '../util/ref.ts';
+import { SetToolArgsContext } from './set-tool-args.ts';
 
 export interface CurrentToolContextState {
   toolArgs: ToolArgs;
@@ -17,8 +18,6 @@ export interface CurrentToolContextState {
 }
 
 const CurrentToolContext = createContext<CurrentToolContextState | undefined>(undefined);
-
-const SetToolArgsContext = createContext<CurrentToolContextState['setToolArgs'] | null>(null);
 
 /**
  * `lastSavedSettings` is mutable and may still hold a legacy `circle`/`square`
@@ -110,8 +109,6 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
     </SetToolArgsContext.Provider>
   );
 };
-
-export const useSetToolArgs = (): CurrentToolContextState['setToolArgs'] | null => useContext(SetToolArgsContext);
 
 export const useCurrentTool = (): CurrentToolContextState => {
   const ctx = useContext(CurrentToolContext);

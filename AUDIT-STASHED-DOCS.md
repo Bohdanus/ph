@@ -1,264 +1,144 @@
 # Audit of the abandoned stashed issue docs
 
-Three issue documents were stashed and never recovered. They were verified against
-`main` at `446d7eb` and this file lists only the issues that are **still valid**.
-Entries whose defect no longer exists are deleted rather than softened; item numbers
-are stable identifiers and are not renumbered.
+Three issue documents were stashed and never recovered. Every issue in them was
+verified against `main` at `446d7eb`, and the surviving ones were then fixed. This
+file is the record: §1 is what is **still open**, §2 is what was fixed and by what.
+Item numbers are stable identifiers and are not renumbered.
 
 **Recovered from** `stash@{0}` (`WIP on main: 50bb2b8`, 2026-09-27 09:13). The
 stashed `HANDOFF.md` is a 424-line predecessor of main's 1114-line file and is
 **not** recovered — main's version supersedes it entirely.
 
-| Recovered doc | Disposition |
-| --- | --- |
-| `TEST_ISSUES.md` (355 lines) | 13 of 27 issues still valid. Items 1-4 below. |
-| `docs/save-settings-inconsistency.md` (139 lines) | **Entirely obsolete.** Fixed by `8736334`; the `never` exhaustiveness sentinel it proposed as Solution C is at `src/util/settings.ts:81`. One stale comment remains (item 8). |
-| `docs/next-target-useLayer.md` (261 lines) | **Obsolete as a plan.** Its Priority A "THE RACE" is not real. Two production defects it walked past survive (item 4). |
+| Recovered doc                                     | Disposition                                                                                                                                                                                                               |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TEST_ISSUES.md` (355 lines)                      | 13 of 27 issues survived verification. All 13 fixed.                                                                                                                                                                      |
+| `docs/save-settings-inconsistency.md` (139 lines) | **Entirely obsolete.** Fixed by `8736334`; the `never` exhaustiveness sentinel it proposed as Solution C is at `src/util/settings.ts:81`. One stale comment remained (item 28).                                           |
+| `docs/next-target-useLayer.md` (261 lines)        | **Obsolete as a plan.** Its Priority A "THE RACE" is not real, and every Priority A-F area is now covered by six test files that did not exist when it was written. It walked past two production defects (items 12, 14). |
 
 The chat that prompted this audit (`eb2160e`) is clean: its four claims are
 `VERIFIED-FIXED`, `VERIFIED-FIXED`, `VERIFIED-FIXED` and `PARTIAL`. The `PARTIAL`
-produced items 5-7 below.
+produced items 24-27 below.
 
 ---
 
-## 1. Production defects the stash preserved and `HANDOFF.md` never recorded
+## 1. Still open
 
-`HANDOFF.md` is scoped to "the durable-replay migration and the presentation/append
-boundary" and says tool features are out of scope. That scope is why these died with
-the stash: they were never `HANDOFF.md` candidates. They are not on the cutover
-path, so they are independently fixable.
+### 1. `maybeCommitAutoAnchor`'s commit branch is never executed
 
-### 1. `Levels.tsx` publishes a preview for a layer that does not exist
+`FeatherMagneticLassoToolArea.tsx:446-454` commits an auto-anchor segment, and the
+70 ms frequency gate at `:26` means no test ever gets past it: the fixture sets
+`frequency: 1000` and nothing advances `Date.now`. So `commitSegment` from the
+auto-anchor path is unexercised while every other commit route is covered. A
+slow-drag case with `frequency` lowered below the segment path length is the missing
+test.
 
-**Problem.** `src/components/ToolbarsRight/Levels/Levels.tsx:23` is
-`tempUpdateLayer({ id: activeLayerId!, toolArgs: pendingUpdateRef.current })`. The id
-is asserted non-null, never checked. With no active layer the `requestAnimationFrame`
-callback still runs and publishes a `tempUpdateLayer` for `undefined`.
+### 2. `getHistoryItemTitle`'s tool-`layerSource` branch is unreachable from the fixture
 
-**Tripwire.** `src/components/ToolbarsRight/Levels/__tests__/Levels.test.tsx:307` is
-`it.fails('skips the layer preview entirely when no layer is active (Levels.tsx:23)')`.
-A fix must invert it in the same change.
+`useHistory.ts:18` branches on `layerSource?.kind === 'tool'`; the `HistoryTab`
+fixture entry carries `TOOL_ACTION` with `args.toolName` and **no** `layerSource`, so
+it takes the `actionName === TOOL_ACTION` branch at `:22` instead. The mock
+previously restated the whole title map, so neither path was under test; now that
+the mock delegates to the real function, this is visible. Closing it means changing
+`mockHistory`, which ripples through the index-based row assertions — left alone
+rather than half-changed.
 
-**Fix.** Early-return inside the rAF callback when `activeLayerId == null`, and clear
-`pendingUpdateRef` before the return so the next change re-arms the frame.
+### 3. `updateLayer` has no direct test
 
-### 2. Two Levels sliders changed in one animation frame lose the first change
+`useLayer.ts:427-443` is reached only indirectly, via `toggleVisibility` and the
+unknown-layer early return. Its `COMMIT_DOCUMENT_EDIT` history item construction is
+unasserted.
 
-**Problem.** `Levels.tsx:33-39` — both handlers spread the render-scoped `args`:
-`throttledOnChange({ ...args, brightness })` and `throttledOnChange({ ...args, contrast })`.
-`throttledOnChange` (`:17`) overwrites `pendingUpdateRef.current = newArgs` with no
-merge. A contrast change before the frame runs therefore discards the pending
-brightness value, and the layer preview and `setToolArgs` both publish the stale one.
+### 4. `Levels.test.tsx:113` is vacuous
 
-This is **unpinned** — `Levels.test.tsx` flushes between changes in every case, so
-nothing in the suite can fail on it.
+`does not call tempUpdateLayer when activeLayerId is null` fires a change and asserts
+`not.toHaveBeenCalled()` **without flushing a frame**, so it passes against the
+unfixed component too — it could never have caught the null-layer publish. The real
+replacement is the frame-flushing test added alongside it. Delete this one; it is
+duplicate weight, not coverage.
 
-**Fix.** Merge against the pending value rather than the render snapshot: base each
-change on `pendingUpdateRef.current ?? args` inside `throttledOnChange`, and add a
-same-frame two-slider test that asserts both values survive.
+### 5. No shared test provider wrapper
 
-### 3. `ellipsify` can emit a lone surrogate
+`src/__tests__/fixtures/` is a real shared helper module, so the recovered doc's
+"no shared test-helper module" claim was wrong. What is genuinely missing is a shared
+**provider** wrapper: four local ones exist (e.g. `useCurrentTool.test.tsx:73`), 55
+files still `vi.mock` `StoreContext` themselves, and all six `Main` tool-area suites
+import zero lines from `fixtures/`. That duplication is the live residue.
 
-**Problem.** `src/util/string.ts:36-38` —
-`if (str.length <= maxLength) return str; return str.slice(0, maxLength - 3) + '...'`.
-`length` and `slice` count UTF-16 code units, so an emoji costs 2. Three functions
-above it, `deleteCharAt` (`:15-36`) and `charLength`, use `Intl.Segmenter` and cut on
-whole grapheme clusters. Truncating `'👍🏽👍🏽…'` to 5 units yields `"👍🏽\ud83d"` — a
-lone high surrogate, which renders as the replacement glyph in a layer name.
+### 6. 50 exact-pixel assertions pin `ShapeToolArea.test.tsx` to production math
 
-**Tripwire.** None. `string.test.ts` has 0 `it.fails` and no non-BMP input.
+Lines 174-913 hold 50 hardcoded coordinate/bbox literals (36 object-literal
+`toEqual`, 14 scalar) re-deriving what the `shared shape geometry wiring` describe at
+:915-1181 already asserts generically through `shapeGeometryBounds` /
+`normalizeShapeGeometry`. Fragile, and low value to fix.
 
-**Fix.** Segment first, append whole clusters while they fit inside the budget, then
-`'...'`. Add a non-BMP case to `string.test.ts`.
+### 7. `MIGRATION_NEXT_STEPS_SUNDAY.md:801-805` still carries a fixed issue
 
-### 4. `removeLayer` throws after it has already committed
+It states `toolbar-mapping.ts` is "type-checked only transitively" and prescribes
+`"include": ["src", "toolbar-mapping.ts"]` plus a CI assertion. Both landed:
+`tsconfig.app.json:43` and `ci.yml:48`. A fixed-issue entry inside a section titled
+"Stale documentation — actively misleading".
 
-**Problem.** `src/contexts/useLayer.ts:423` is
-`const ctx = toolOverlayRef.current!.getContext('2d')!;` — no guard, while the
-sibling `clearOverlay` guards both hops. When the tool overlay is unmounted the
-dispatch at `:415` has already removed the layer, then a raw `TypeError` escapes.
-
-**Tripwire.** `src/contexts/__tests__/useLayer.lifecycle.test.tsx:615` is a **passing**
-`it('commits the removal and then throws when the overlay has no 2d context (PROD
-DEFECT, not fixed)')` that asserts the throw. A fix must invert it in the same change.
-
-**Fix.** Guard `toolOverlayRef.current?.getContext('2d')` and return when absent, then
-invert the tripwire.
-
-**Cross-reference bug.** That test's comment says "HANDOFF §23". `HANDOFF.md` §23 is
-`Main.toolAreas.test.tsx` naming image smoothing — an unrelated item. This defect is
-in no `HANDOFF.md` section at all, so the citation points the next session at the
-wrong entry. Correct it to name this item.
-
-### 5. `useDoubleClick` reports a double click with zero points
-
-**Problem.** `src/hooks/useDoubleClick.ts:25` —
-`if (pointsRef.current?.length <= minPointsForDetection || !lastClickPosRef.current)`.
-When `current` is `null`, `undefined <= 2` is `false`, so the length gate falls
-through and only the position guard remains: a double click is reported for a tool
-that has no points at all. The optional chain is what makes it wrong — a
-non-optional comparison would have thrown instead.
-
-**Tripwire.** None. `useDoubleClick.test.ts` has 0 `it.fails`; its `createPointsRef`
-helper always builds an array, so `current` is never `null` in the suite.
-
-**Fix.** Make the null case explicit — `pointsRef.current == null ||
-pointsRef.current.length < minPointsForDetection` — and add a test whose points ref
-is null.
-
-### 6. A second text layer on Apply after the draft was committed
-
-**Problem.** `src/contexts/useLayer.ts:332` — `commitDirtyTool`'s text branch clears
-only `text`, and only on the imperative `currentArgsRef`:
-`currentArgsRef.current = { ...args, text: '' }`. `rect` survives, and React's
-`toolArgs` are untouched. So after one text layer is committed the Text toolbar's
-Apply button is still enabled, and clicking it again creates a second layer rather
-than no-op.
-
-**Tripwire.** None.
-
-**Fix.** The clear must reach the state the Apply button reads, or the button's
-disabled condition must be derived from the same source as the commit guard.
-
-### 7. `hexToRgb` and `luminance` mangle 3-digit hex
-
-**Problem.** `src/util/color.ts:4-7` and `src/util/rect.ts:96-101` are byte-identical
-parsers with no length branch: `parseInt(hex.substring(0, 2), 16)` over a 3-character
-string. For `'#fff'`: `r=255`, `g=15`, `b=NaN`. `luminance` is `NaN`, `NaN > 128` is
-`false`, so **`isLightColor('#fff')` returns `false`** — pure white is classified as
-dark — and `hexToRgb('#fff')` returns the string `"255, 15, NaN"`.
-
-**Tripwire.** None. Both test files have 0 `it.fails` and no 3-digit case.
-
-**Fix.** Expand a 3-digit hex to its 6-digit form before parsing, in one shared
-helper both files call, so the two copies cannot drift again.
-
----
-
-## 2. Test assertions that cannot fail
-
-Each of these passes today and would keep passing if the production code regressed.
-
-### 8. `HistoryTab.test.tsx` re-implements the title function it asserts
-
-`src/components/SidebarRight/__tests__/HistoryTab.test.tsx:56-62` hand-writes the title
-map, while production `src/contexts/useHistory.ts:19,23,28` returns
-`layerSource.args.toolName` — the bare string `'brush'`, not the mock's
-`"Tool: brush"`. Six assertions use the mock's literals and `:322` even selects a row
-by them, so the whole title layer is pinned to strings production never emits. Rewrite
-the mock with `importOriginal` and assert against the imported `getHistoryItemTitle`.
-
-### 9. `useHistory.test.tsx` certifies its own mock reducer
-
-`src/contexts/__tests__/useHistory.test.tsx:187-218` is a hand-written mini-reducer
-that hardcodes `hasUnsavedChanges: true` in both arms while the store mock seeds
-`false`. Four assertions read that fabricated value: `:499` and `:681` expect `true`,
-`:651` and `:754` expect `false`. The real transition is already proven through the
-real provider at `StoreContext.durable-boundary.test.tsx:1031-1055`, so this is
-deletion, not new coverage.
-
-### 10. `CropToolArea.test.tsx` cannot observe the spread it is named for
-
-`src/components/Main/__tests__/CropToolArea.test.tsx:83-89` is `it('renders a div
-without crashing and spreads useRect pointer events')` and ends at
-`expect(el.tagName).toBe('DIV')`. Its `useRect` mock (`:47-56`) mints fresh
-`vi.fn()` handlers per call, so the div's handlers are unreachable from the test.
-`TextToolArea.test.tsx:185-196` already shows the working pattern: hoisted handler
-refs plus `toHaveBeenCalledTimes`.
-
-### 11. `SidebarLeft.color-pickers.test.tsx` asserts zero-valued layout
-
-`src/components/SidebarLeft/__tests__/SidebarLeft.color-pickers.test.tsx:168-181`
-asserts `input.style.left === '0px'` and `top === '5px'`, with the comment at `:174`
-admitting "jsdom returns zero rects, so offsets are 0". Production
-`SidebarLeft.tsx:49-52` computes the real offsets and nothing in the suite stubs
-`getBoundingClientRect`, so `0` and any other value both satisfy it.
-
-### 12. `useCurrentTool.test.tsx` asserts a seed, not a round-trip
-
-`src/contexts/__tests__/useCurrentTool.test.tsx:51-53` mocks `saveLastSettings` with a
-bare `vi.fn()`, so `lastSavedSettings.draw` is never written. The test at `:278-296`
-sets `lineWidth: 20`, calls `resetToLastSavedArgs()` and asserts `lineWidth: 5` — the
-seed. It passes identically with `saveLastSettings(nextArgs)` deleted from
-`useCurrentTool.tsx:71`. `useCurrentTool.legacy-figure.test.tsx:21-33` already
-demonstrates the `importOriginal` + delegate pattern that would make it falsifiable.
-
----
-
-## 3. Redundant and missing coverage
-
-### 13. `LassoToolArea.test.tsx` re-tests `util/draw.ts`
-
-`src/components/Main/__tests__/LassoToolArea.test.tsx:141-192` is four
-`pointsBoundingPos` blocks with 16 exact-pixel assertions over
-`util/draw.ts:pointsBoundingPos`, which `src/util/__tests__/draw.test.ts:14-36`
-already covers. They assert nothing about `LassoToolArea`. Delete them.
-
-### 14. Four tool-area suites never exercise a non-identity document frame
-
-`canvasToDocumentPos` / `documentToCanvasPos` are the coordinate contract, and they
-regress invisibly while every suite pins a 0,0 frame. Identity or `null` today:
-`LassoToolArea.test.tsx:54`, `FeatherMagneticLassoToolArea.test.tsx:56`,
-`ShapeToolArea.test.tsx:62` (`Shape` additionally pins the `x=0,y=0` fallback at
-`:894`). `RectangularSelectionToolArea.test.tsx:23` is worse — its store mock has **no
-`documentFrame` key at all** while `RectangularSelectionToolArea.tsx:12,25,35,72-73`
-converts through it. Give each a non-zero frame so a conversion bug fails in every
-suite, not just the four that already have one.
-
----
-
-## 4. Documentation defects
-
-### 15. `e2e/OPEN_PROBLEMS.md` violates its own header
-
-`e2e/OPEN_PROBLEMS.md:3-4` states "Not a changelog. Each entry is an unfixed defect…
-The one section that is not work says so on its own heading." Four changelog
-sections survive: `:110`, `:191`, `:242`, `:436`. `AGENTS.md` forbids exactly this in
-handoff docs. Delete them; the rationale belongs in the code and `e2e/README.md`.
-
-### 16. `AGENTS.md` contradicts itself on pins
-
-`AGENTS.md:159-163` says a fixed defect's pin "survives in `e2e/OPEN_PROBLEMS.md`
-rather than being deleted", while `:170-171` says "a fix must remove the pin in the
-same change". A reader cannot follow both. `:170-171` is the rule that matches
-`useHistory`'s test suite; fix `:159-163` to point at the tripwire in the test code.
-
-### 17. `MIGRATION_NEXT_STEPS_SUNDAY.md` quotes a measurement nobody took
-
-`MIGRATION_NEXT_STEPS_SUNDAY.md:636` reports "97 collected, 92 pass, 3 fail, 2
-skipped — _reported in `e2e/OPEN_PROBLEMS.md`, not re-measured_".
-`e2e/OPEN_PROBLEMS.md:41` now reports 97 pass, 2 skipped, nothing failing, so the
-cited source no longer contains that number. Correct or delete the line.
-
-### 18. The `getWorkspaceCanvas` "ignores a non-canvas" pin is near-vacuous
-
-`e2e/helpers/__tests__/canvas-interaction.unit.test.ts:69-75` builds
-`dom = [{selector:'div'}, canvas('workspace-canvas')]`. Restoring the old
-`getByTestId(…).or(locator('canvas').nth(1))` still yields one match, because
-`nth(1)` of a one-canvas list is empty — so the pin does not guard the regression it
-names. The sibling pins at `:42` and `:52` carry that weight; either give this case a
-second canvas or drop it.
-
-### 19. `saveLayerCanvas` is dead but still gates the cutover
+### 8. `saveLayerCanvas` is dead but still gates the cutover
 
 `HANDOFF.md` §19 records that `saveLayerCanvas` (`src/contexts/layer-utils.ts:115`)
 has no non-test caller, and `AGENTS.md`'s architecture section says not to begin the
 single-writer cutover "while `saveLayerCanvas()` can still promote cached canvases
-outside reducer publication". The function is still present and still dead, so the
-gate is not wrong — but it is now decided by a function no production code calls.
-Either delete the function (the `AGENTS.md` gate then clears) or state in the gate
-that the real remaining risk is the dead export's presence, not its behaviour.
+outside reducer publication". The function is present and dead, so the gate is not
+wrong — but it is now decided by an export nothing calls. Either delete the function
+(the gate then clears) or state that the remaining risk is its presence, not its
+behaviour.
 
-### 20. A stale comment inside `saveLastSettings`
+### 9. 4-digit hex is still mis-parsed
 
-`src/util/settings.ts:34` reads "deliberately not storing for those three because
-they have a different philosophy, unfortunately". It predates the gap it describes and
-is contradicted by `src/util/settings.ts:71-76`, which stores blur, color and levels.
-This is the only residue of `docs/save-settings-inconsistency.md`.
+`hexToRgb('#f00a')` → `"240, 0, NaN"` and `isLightColor('#f00a')` → `false`, the same
+failure the 3-digit case had. The recovered doc scoped the defect to 3 digits and a
+`#rgba` / `#rrggbbaa` branch is a wider change than an audit warrants. 8-digit hex
+happens to work, because the three substrings land on the right channels.
 
 ---
 
-## 5. Claims to strike
+## 2. Fixed by this audit
+
+Each is verified by a test that fails without the change, and the full gate suite is
+green on top of it.
+
+| #   | Issue                                                                                                   | Fix                                                                                                                                                                                                                    |
+| --- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 10  | `Levels.tsx` published a preview for a nonexistent layer (`activeLayerId!`)                             | Guard inside the rAF callback; the `it.fails` at `Levels.test.tsx:307` inverted to a passing `it` in the same change, and `pendingUpdateRef` / `rafIdRef` now clear unconditionally so the next change re-arms a frame |
+| 11  | Two Levels sliders changed in one frame lost the first change                                           | `throttledOnChange` merges onto `pendingUpdateRef.current ?? args` instead of the render snapshot, so a handler can no longer reintroduce it; new same-frame test                                                      |
+| 12  | `removeLayer` threw after it had already committed                                                      | Now calls the already-guarded `clearOverlay`; the _passing_ tripwire that asserted the throw was inverted in the same change                                                                                           |
+| 13  | `ellipsify` could emit a lone surrogate                                                                 | Cut on `Intl.Segmenter` clusters, matching `deleteCharAt` three functions above; 4 new cases incl. a boundary-exact budget                                                                                             |
+| 14  | Apply committed a second identical text layer after a tool-switch commit                                | `commitDirtyTool` now clears through a new stable `SetToolArgsContext` instead of writing the ref directly, so there is one draft state; 3 new tests                                                                   |
+| 15  | `useDoubleClick` accepted a null points ref (`undefined <= 2` is `false`)                               | Explicit absence test. The `<=` boundary is preserved deliberately: the sole caller compensates at `PolygonClickToolArea.tsx:258`                                                                                      |
+| 16  | `isLightColor('#fff')` was `false`; `hexToRgb('#fff')` was `"255, 15, NaN"`                             | One shared `normalizeHex` both parsers call, so the byte-identical copies cannot drift again                                                                                                                           |
+| 17  | `HistoryTab.test.tsx` re-implemented the title function it asserted                                     | Mock delegates via `importOriginal`; titles pinned to production literals so a regression in `getHistoryItemTitle` fails the suite                                                                                     |
+| 18  | `useHistory.test.tsx` certified its own mock reducer                                                    | 4 assertions on fabricated state removed; the real transition was already covered at `StoreContext.durable-boundary.test.tsx:1031`                                                                                     |
+| 19  | `CropToolArea.test.tsx` could not observe the spread it is named for                                    | Hoisted handler fns, so the 3 call-count assertions are reachable; the `layer-utils`-style fresh-`vi.fn()`-per-call mock is gone                                                                                       |
+| 20  | `SidebarLeft.color-pickers` asserted zero-valued layout                                                 | Real `getBoundingClientRect` stub with non-round values; both prototype spies restored unconditionally in `afterEach`                                                                                                  |
+| 21  | `useCurrentTool.test.tsx` asserted a seed, not a round-trip                                             | `importOriginal` + delegate, and `beforeEach` resets `draw`/`text`/`shape`; 2 tests converted to true round-trips                                                                                                      |
+| 22  | `LayersTab.test.tsx` asserted mock payloads over a frozen store                                         | Real `useSyncExternalStore` subscription, `layer-utils` mock deleted, and every payload test now also asserts a rendered/store outcome                                                                                 |
+| 23  | `LassoToolArea` re-tested `util/draw.ts`; 4 suites had no real document frame                           | 4 redundant blocks deleted; non-zero frames added, with every changed expectation derived from the transform rather than read off a failure                                                                            |
+| 24  | `e2e/OPEN-PROBLEMS.md` violated its own no-changelog header                                             | 4 `Fixed` sections + 1 unheaded block deleted; 5 dangling cross-references repaired; 30+ `file:line` citations re-verified                                                                                             |
+| 25  | `AGENTS.md` contradicted itself on pins (`:159-163` vs `:170-171`)                                      | `:159-163` resolved toward `:170-171` — the pin lives in the test code, as the suite's actual practice shows                                                                                                           |
+| 26  | `MIGRATION_NEXT_STEPS_SUNDAY.md` / `e2e/README.md` quoted stale e2e counts and carried changelog blocks | Corrected where current, deleted where historical, preserved where load-bearing (the `continue-on-error` justification)                                                                                                |
+| 27  | The `getWorkspaceCanvas` "ignores a non-canvas" pin was near-vacuous                                    | The DOM now holds two canvases, so `nth(1)` resolves and restoring the old `.or()` union genuinely mis-resolves                                                                                                        |
+| 28  | `settings.ts:34` claimed a gap that no longer exists                                                    | Comment deleted — the only residue of `docs/save-settings-inconsistency.md`                                                                                                                                            |
+
+Two things the fixes turned up that the recovered docs did not name:
+
+- `Levels.test.tsx:113` was already a false positive, and one _passing_ test
+  ('keeps publishing the tool args when no layer is active…') asserted the opposite of
+  the contract the fix implements, so it had to go too. See item 4.
+- The text-commit defect's real cause is not what the recovered doc said. `rect`
+  surviving is not what keeps Apply live — the button reads React state, and the
+  provider's only sync is React → ref, so `useLayers` could not reach it at all. The
+  fix wires a separate stable context rather than a `useCurrentTool()` call inside
+  `useLayers()`, which would have re-rendered all 13 of its consumers on every
+  pointer move.
+
+---
+
+## 3. Struck: claims to strike
 
 Recorded so the next session does not re-audit them. Each was verified against main.
 
@@ -270,14 +150,19 @@ Recorded so the next session does not re-audit them. Each was verified against m
 - `TEST_ISSUES.md` §3.5, §4.2, §4.5 — stale. The `usePolylineAnts` module-scoped slot
   is gone; the oversized-file set is now `selection.test.ts` (1325),
   `ShapeToolArea.test.tsx` (1182), `history-adapter.branches.test.ts` (1180),
-  `StoreContext.durable-boundary.test.tsx` (1105). See item 14 for what survives of
-  the `documentFrame` claim.
+  `StoreContext.durable-boundary.test.tsx` (1105).
 - `TEST_ISSUES.md` §4.1 — wrong. `src/__tests__/fixtures/` is a shared helper module
-  with 7 modules and 27 importers.
+  with 7 modules and 27 importers. See item 5 for the narrower real residue.
 - `TEST_ISSUES.md` §5.11, §5.12 — wrong. Cursor mapping is covered by three passing
   tests; the `it.fails` inventory is 36, not 55.
 - `TEST_ISSUES.md` §4.3 — the substance holds, the number is 50 exact-pixel
-  assertions, not 47.
+  assertions, not 47. See item 6.
+- `TEST_ISSUES.md` §4.4b — wrong. `RectangularSelection.test.tsx` and
+  `Common/UndoControls.test.tsx` share setup, not assertions; both earn their place.
+- `TEST_ISSUES.md` §6's "coverage thresholds in `vitest.config.ts:33` are 95/89/97/96"
+  — false. `vitest.config.ts` has no `thresholds` key and no `test:coverage` script.
+  CI runs `npm run test -- --coverage` at `ci.yml:82`, so numbers are reported and
+  nothing fails.
 - `docs/next-target-useLayer.md` Priority A "THE RACE" — not real, and never was.
   `Text.tsx:82-89` clears the shared draft before committing and
   `useCurrentTool.tsx:70` writes the ref synchronously, so the next `commitDirtyTool`
