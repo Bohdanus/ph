@@ -623,7 +623,12 @@ describe('toolsMap wiring', () => {
     // every remaining placeholder is an unimplemented tool and every one of them
     // carries the badge. Their bars are asserted in
     // `src/components/ToolbarsRight/Paint/__tests__/Paint.test.tsx`.
-    for (const toolName of ['color-replacement', 'pen', 'custom-shape'] as const) {
+    //
+    // `color-replacement` was here too and has left for the same reason, one tranche
+    // later: it renders `ColorReplacement.tsx`. It is not merely deleted from this list —
+    // it is in `realBarNames`, so the test above now asserts the opposite of this one for
+    // it, which is the stronger half.
+    for (const toolName of ['pen', 'custom-shape'] as const) {
       const { unmount } = render(React.createElement(toolsMap[toolName].toolboxComponent));
 
       expect(screen.getAllByText('TODO').length, toolName).toBeGreaterThan(0);
