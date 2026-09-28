@@ -13,7 +13,7 @@ does not spell out. Where the two disagree, `AGENTS.md` wins and this document i
 Read it first.
 
 Every `file:line` here was re-verified against `main` at `1c9c8de` on 2026-09-28. **Re-verify
-before you rely on one**: `AGENTS.md:134` says to verify against the tree, and a stale line number sends the next session
+before you rely on one**: `AGENTS.md:143` says to verify against the tree, and a stale line number sends the next session
 after a bug that does not exist, and that is not hypothetical — writing this skill corrected
 more than sixty citations inherited from the playbook it was built on.
 
@@ -104,7 +104,7 @@ Not every tool is a from-scratch build. Pick the shape first, because it changes
 The third shape is where a task goes to die. Decide it in Phase 1, write it down, and do not
 discover it in Phase 4.
 
-`AGENTS.md` is the authority on every rule restated here (`:78-86` worktrees, `:95-123` gates, `:45-60` the browser rule). This section adds the procedures it states but does not spell out. Every `file:line` was re-verified against `main` at `1c9c8de`; a citation you cannot re-verify sends the next session after a bug that does not exist (`AGENTS.md:134`).
+`AGENTS.md` is the authority on every rule restated here (`:78-86` worktrees, `:95-132` gates, `:45-60` the browser rule). This section adds the procedures it states but does not spell out. Every `file:line` was re-verified against `main` at `1c9c8de`; a citation you cannot re-verify sends the next session after a bug that does not exist (`AGENTS.md:143`).
 
 ---
 
@@ -155,7 +155,7 @@ mkdir -p .kilo/plans/ps-research
 cp /Users/bkalynovskyi/ph/.kilo/plans/ps-research/{08-merge-plan,RESEARCH-BRIEF}.md .kilo/plans/ps-research/
 ```
 
-Never copy the whole tree: `agent-manager.json` is UI/recovery state the extension writes, and a second copy in a worktree is one it will overwrite. A handoff doc is **not** gitignored — `docs/handoffs/` is tracked (existing example: `docs/handoffs/ps-transform-geometry-review-and-merge.md`), so write that one in the worktree, on the branch, in the same commit as the finding (`AGENTS.md:139`). `AGENTS.md:137` is explicit that nothing durable belongs under `.kilo/`.
+Never copy the whole tree: `agent-manager.json` is UI/recovery state the extension writes, and a second copy in a worktree is one it will overwrite. A handoff doc is **not** gitignored — `docs/handoffs/` is tracked (existing example: `docs/handoffs/ps-transform-geometry-review-and-merge.md`), so write that one in the worktree, on the branch, in the same commit as the finding (`AGENTS.md:148`). `AGENTS.md:146` is explicit that nothing durable belongs under `.kilo/`.
 
 ### 0.4 `node_modules` is usually missing or empty
 
@@ -1549,7 +1549,7 @@ which is the same defect with a different trigger.
 
 Verified against `main` at `1c9c8de` in the worktree `.kilo/worktrees/skill-ps-tool` on
 2026-09-28. Every `file:line` below was read in that tree. Re-read them before you edit:
-`AGENTS.md:134` says of handoff docs "Verify against the tree."
+`AGENTS.md:143` says of handoff docs "Verify against the tree."
 
 Read `AGENTS.md` first. It is the authority on commands, gates, the headed-browser
 refusal, and the handoff lifecycle. This section assumes it.
@@ -1589,7 +1589,7 @@ plain JSON**, because the durable conversion runs them through `plainObject`
 non-finite number, or a non-`Object.prototype` object. There is no canvas snapshot, no
 `ImageData`, no diffing, no migration. That is the cost.
 
-**The durable path is a shadow, and you must not over-claim.** `AGENTS.md:146-148`: the
+**The durable path is a shadow, and you must not over-claim.** `AGENTS.md:155-157`: the
 legacy `HistoryItem[]` path is the production replay authority; the durable document is a
 shadow projection, not the authority for rendering. Choosing `commit: 'raster'` buys a
 durable document that _agrees_ with legacy replay. It does not promote the durable
@@ -1758,7 +1758,7 @@ one unsupported entry throws inside the per-item loop, the loop catches it into 
 `convertLegacyHistorySafely` rolls the asset transaction back and returns
 `{ status: 'unavailable', document: null }` (`:657-665`) — **the shadow is absent, not
 degraded.** A tool durable conversion cannot translate therefore costs the _whole_ durable
-document, not just its own entry. That is designed behaviour, and `AGENTS.md:146-148` says
+document, not just its own entry. That is designed behaviour, and `AGENTS.md:155-157` says
 the durable document is a shadow, so nothing user-visible breaks — but it is a consequence
 an agent should be able to explain rather than discover.
 
@@ -1874,7 +1874,7 @@ the same change; do not treat the durable op as covering the representation.
    existing op has" is a reason: tier 3, and a `HANDOFF.md` entry.
 5. **If the answer is 3 and you are nervous about non-destructiveness:** ship on `raster`,
    write the handoff entry, and say so in the PR. The durable document is a shadow
-   (`AGENTS.md:146-148`); a missing non-destructive shadow is a tracked problem, not a
+   (`AGENTS.md:155-157`); a missing non-destructive shadow is a tracked problem, not a
    shipped defect.
 
 Then verify, before you write a line of UI: `npm run test -- src/tools/__tests__/tool-processors.test.ts`
@@ -1963,7 +1963,7 @@ And constraint 1, which the durable path makes concrete: runtime layer state is 
 only by dispatching a typed action through the store reducer. If your tool needs to publish
 derived presentation state, it needs document-scoped presentation ownership or a new typed
 presentation action — not a mutation from a callback or an async continuation.
-`AGENTS.md:146-148` adds the standing warning: do not start a single-writer cutover while
+`AGENTS.md:155-157` adds the standing warning: do not start a single-writer cutover while
 `saveLayerCanvas()` can still promote cached canvases outside reducer publication.
 
 ---
@@ -2111,7 +2111,7 @@ deferred its entire engine-dependent remainder to **six numbered `HANDOFF.md` en
 preset). `git grep TODO brush-toolbar -- src/` finds only the pre-existing
 `ToolbarPlaceholder` UI strings and the test asserting the Paint panel no longer renders
 one — **no new `// TODO` comment was added anywhere in the change.** I could not verify a
-repo-level ban on source comments: `AGENTS.md` (287 lines) contains no occurrence of the
+repo-level ban on source comments: `AGENTS.md` (157 lines) contains no occurrence of the
 word, and `eslint.config.js` sets no comment rule. What _is_ verifiable, and what the
 reference build did, is six handoff entries with zero new inline TODOs. Follow the build,
 not an unverifiable rule.
@@ -2160,15 +2160,15 @@ test pin (`AGENTS.md`: "a pin is a tripwire that fails the moment the defect is 
 fix must remove the pin in the same change"); or the fix would change a committed
 visual-regression baseline (**recording belongs to the operator**); or the fix would widen a
 closed union or a hardcoded allowlist in the history files (tiers 2 and 3), or start a
-single-writer cutover (`AGENTS.md:146-148`).
+single-writer cutover (`AGENTS.md:155-157`).
 
 #### Lifecycle and numbering
 
-From `AGENTS.md:141-144`: **fixed and verified deletes the entry** — never rewrite an open
+From `AGENTS.md:150-153`: **fixed and verified deletes the entry** — never rewrite an open
 problem into a closed one; "unverified is not closed", so a fix that landed without a check
 leaves the entry alive, tightened to say what still needs verifying; and the handoff edit
 **belongs in the same commit as the work that produced the finding**
-(`AGENTS.md:139`). **Numbers are stable identifiers other items cite, so they are never
+(`AGENTS.md:148`). **Numbers are stable identifiers other items cite, so they are never
 renumbered** — the gaps are entries that were fixed and deleted. New entries append at EOF
 after a `---`, taking the next unused number.
 
@@ -2211,7 +2211,7 @@ base (`446d7eb`) and do not resolve at `1c9c8de`. Do not cite them as current-tr
 - **The brush-toolbar branch's test outcomes.** Its commit message claims gates passed; I did
   not run them and cannot confirm the branch is green against `1c9c8de`.
 - **`saveLayerCanvas` promotion.** `src/contexts/layer-utils.ts:116-117` still exists at
-  `1c9c8de`, consistent with the standing warning in `AGENTS.md:146-148`, so that warning is
+  `1c9c8de`, consistent with the standing warning in `AGENTS.md:155-157`, so that warning is
   current for this tree. What I did not trace is every caller.
 
 Every `file:line` about the working tree was re-verified at **`1c9c8de`** (branch `skill/photoshop-tool-creation`). Citations of the form
@@ -2985,7 +2985,7 @@ only reproduces visually, that is the operator's call — name the command and s
 
 Read a failure from disk, never a viewer: `screenshot: 'only-on-failure'` puts a PNG in the failing
 test's `outputDir` under `test-results/`, and the `list` reporter on stdout is the pass/fail record
-(`playwright.config.ts:87`, `AGENTS.md:130`).
+(`playwright.config.ts:87`, `AGENTS.md:139`).
 
 ### The brief template
 
@@ -3179,7 +3179,7 @@ the decoded image dimensions instead, via `screenshotBoundsToCss` (`canvas-helpe
 
 `e2e/OPEN_PROBLEMS.md` holds latent e2e defects — ones no current run trips but that a new spec can
 walk into. **Read it before investigating any e2e failure, and do not re-introduce a known defect**
-(`AGENTS.md:127`). On the default headless run nothing fails (`e2e/OPEN_PROBLEMS.md:41-42`), so a new
+(`AGENTS.md:136`). On the default headless run nothing fails (`e2e/OPEN_PROBLEMS.md:41-42`), so a new
 failure is a new defect, never a known one. Characterised, not listed:
 
 1. **Empty input flowing into arithmetic.** `screenshotBoundsToCss` (`canvas-helpers.ts:30`) and
@@ -3239,7 +3239,7 @@ Two more latent entries: a nearly transparent pixel counts at full weight in `do
 colour assertion worthless (`e2e/OPEN_PROBLEMS.md:183-195`); and a bare `name` passed to
 `captureCanvasScreenshot` is interpolated into a path unsanitised (`:216-237`). **Do not weaken a
 gate to get green:** no skips, no raised thresholds, no deleted assertions, no re-recorded visual
-baselines (`AGENTS.md:123`).
+baselines (`AGENTS.md:132`).
 
 ### Visual regression
 
@@ -3263,7 +3263,7 @@ files (`visual-regression.spec.ts:67-72`, `e2e/MIGRATION-TODO.md:52-60`). Budget
 (`e2e/helpers/image-comparison.ts:27-29`); read the call site rather than assuming a budget.
 
 **Re-recording requires an explicit `--update-snapshots` (`npm run test:e2e:update-baselines`) and
-is a recording decision that belongs to the operator** (`AGENTS.md:123`). A missing baseline
+is a recording decision that belongs to the operator** (`AGENTS.md:132`). A missing baseline
 attaches the export and then throws on purpose: the comparison was never made
 (`visual-regression.spec.ts:80-84`).
 
@@ -3568,7 +3568,7 @@ re-emit costs one turn.
 
 ## Phase 8 — gates
 
-`AGENTS.md:95-123` is authoritative. This section gives the commands, the order, and the failure signals.
+`AGENTS.md:95-132` is authoritative. This section gives the commands, the order, and the failure signals.
 
 ### 8.1 The command list
 
@@ -3622,8 +3622,8 @@ PLAYWRIGHT_PORT=5199 npm run test:e2e          # headless, last: slowest, most e
 - **`prettier --check` failing on the two files you just wrote.** This happened for real. It is not a preference — the commit hook blocks on it. Run `npm run format`, read the diff, re-stage.
 - **`npm run test` fails only in a full run.** `pool: 'vmThreads'`, `maxWorkers: 4` (`vitest.config.ts:7-8`, `AGENTS.md:75`). A timing-sensitive test that only fails in a full run is usually the pool — reproduce with one file and say so, rather than reporting a product bug.
 - **A new test that passes with its fix reverted.** Revert one file, re-run, record the failure count, restore (`08-merge-plan.md:81-82`). A test that passes either way consumes a maintainer's trust and is worse than no test.
-- **An e2e failure you cannot find in `e2e/OPEN_PROBLEMS.md`.** `AGENTS.md` carries no pass/skip count any more — it stopped being a place that records one. The count lives in `e2e/OPEN_PROBLEMS.md:41-42`; the skips are `e2e/export/photopea.spec.ts:6` and `e2e/sidebar-flyout.spec.ts:48`, listed at `e2e/OPEN_PROBLEMS.md:376-385`. **A new failure is a new defect, never a known one** (`AGENTS.md:127`).
-- **A `trace.zip` you cannot open.** The trace viewer is a window; ask the operator (`AGENTS.md:130`).
+- **An e2e failure you cannot find in `e2e/OPEN_PROBLEMS.md`.** `AGENTS.md` carries no pass/skip count any more — it stopped being a place that records one. The count lives in `e2e/OPEN_PROBLEMS.md:41-42`; the skips are `e2e/export/photopea.spec.ts:6` and `e2e/sidebar-flyout.spec.ts:48`, listed at `e2e/OPEN_PROBLEMS.md:376-385`. **A new failure is a new defect, never a known one** (`AGENTS.md:136`).
+- **A `trace.zip` you cannot open.** The trace viewer is a window; ask the operator (`AGENTS.md:139`).
 
 ### 8.5 CI jobs
 
@@ -3639,7 +3639,7 @@ The "tracked file in a project" step is a real constraint: a new `.ts`/`.tsx` no
 
 ### 8.6 The one rule
 
-**Never weaken a gate to get green** (`AGENTS.md:123`): no skips, no raised thresholds, no deleted assertions, no re-recorded visual baselines. The baselines are genuinely compared now: `e2e/export/visual-regression.spec.ts:73` gates re-recording on `testInfo.config.updateSnapshots === 'all'` — the exact string, because Playwright's default is the truthy string `'missing'` and the earlier truthiness check always re-recorded and returned before the comparison (`e2e/OPEN_PROBLEMS.md:396-405`). Re-record only with `npm run test:e2e:update-baselines` (`package.json:25`), an operator decision. Likewise a unit test that pins broken behaviour on purpose must have that pin removed in the same change as the fix (`AGENTS.md:128`).
+**Never weaken a gate to get green** (`AGENTS.md:132`): no skips, no raised thresholds, no deleted assertions, no re-recorded visual baselines. The baselines are genuinely compared now: `e2e/export/visual-regression.spec.ts:73` gates re-recording on `testInfo.config.updateSnapshots === 'all'` — the exact string, because Playwright's default is the truthy string `'missing'` and the earlier truthiness check always re-recorded and returned before the comparison (`e2e/OPEN_PROBLEMS.md:396-405`). Re-record only with `npm run test:e2e:update-baselines` (`package.json:25`), an operator decision. Likewise a unit test that pins broken behaviour on purpose must have that pin removed in the same change as the fix (`AGENTS.md:137`).
 
 ---
 
@@ -3649,11 +3649,11 @@ The "tracked file in a project" step is a real constraint: a new `.ts`/`.tsx` no
 todo-oriented: **no changelog, no "work completed", no status summaries.** Each entry is a validated
 issue with a problem statement, the affected files and an actionable fix. Verify every claim against
 the working tree first — stale line numbers send the next session after a bug that does not exist
-(`AGENTS.md:134`).
+(`AGENTS.md:143`).
 
 ### The lifecycle
 
-Stated as a lifecycle, from `AGENTS.md:141-144` — the rule most often broken:
+Stated as a lifecycle, from `AGENTS.md:150-153` — the rule most often broken:
 
 | State                        | What you do                                                                                                  |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -3666,15 +3666,15 @@ Stated as a lifecycle, from `AGENTS.md:141-144` — the rule most often broken:
 The residue a fix may leave is **a tripwire in the test code, not a paragraph in the doc**. Several
 `e2e/OPEN_PROBLEMS.md` entries are pinned by a unit test that asserts the current broken behaviour
 on purpose: it passes today and fails the moment the defect is fixed, so **a fix must remove the pin
-in the same change** (`AGENTS.md:128`, `e2e/OPEN_PROBLEMS.md:26-29`).
+in the same change** (`AGENTS.md:137`, `e2e/OPEN_PROBLEMS.md:26-29`).
 
-**Writing is the default, not a favour** (`AGENTS.md:139`). Leave a handoff doc, or edit the
+**Writing is the default, not a favour** (`AGENTS.md:148`). Leave a handoff doc, or edit the
 existing one, whenever you find a validated issue, a strong recommendation, or a finding worth
 preserving. The strongest case is a confirmed defect: you investigated, it is real, nobody else
 knows. **Not finding anything is the only reason to leave the doc alone** — a session that found a
 real problem and wrote nothing down still lost it. Do not ask permission to write one. Handoff docs
 **ship with the code**, so the edit belongs in the same commit as the work that produced the finding
-(`AGENTS.md:139`).
+(`AGENTS.md:148`).
 
 ### Where the handoff goes
 
@@ -3838,7 +3838,7 @@ Procedure, in order:
    the places you edited last. Do this as the final step before committing.
 
 A stale line number is not neutral: the next session spends a full investigation on a bug that is
-already gone, or worse "fixes" a line that has nothing to do with it (`AGENTS.md:134`,
+already gone, or worse "fixes" a line that has nothing to do with it (`AGENTS.md:143`,
 `:139`). The discipline the working `HANDOFF.md` states about itself, and that your entry
 inherits:
 
@@ -3894,7 +3894,7 @@ git diff --cached --stat
 
 ### 10.2 Commit shape
 
-Conventional Commits with a scope and a body that explains the _why_ (`git log --oneline -30`): `gates: …`, `docs(e2e): …`, `merge: 15 review branches from the untouched-code campaign`, `test(e2e): accept the File > New unsaved-changes confirm in setupIcoTest`, `fix(colors): re-anchor the CSS filter curve …`. Merge commits use the default `Merge branch '<x>' into '<y>'` form. The handoff edit belongs in the **same commit** as the work that produced the finding (`AGENTS.md:139`); a handoff that trails by one commit is a finding that survives one fast-forward without context.
+Conventional Commits with a scope and a body that explains the _why_ (`git log --oneline -30`): `gates: …`, `docs(e2e): …`, `merge: 15 review branches from the untouched-code campaign`, `test(e2e): accept the File > New unsaved-changes confirm in setupIcoTest`, `fix(colors): re-anchor the CSS filter curve …`. Merge commits use the default `Merge branch '<x>' into '<y>'` form. The handoff edit belongs in the **same commit** as the work that produced the finding (`AGENTS.md:148`); a handoff that trails by one commit is a finding that survives one fast-forward without context.
 
 ### 10.3 The pre-commit hook rewrites your files — re-verify after
 
@@ -3958,7 +3958,7 @@ Do not use the worktree count as a test. `HANDOFF.md:554-556` measured 59 on 202
 - [ ] `npm run test:e2e:unit` clean. `npm run build` clean.
 - [ ] `PLAYWRIGHT_PORT=<free port> npm run test:e2e` clean; any failure located in `e2e/OPEN_PROBLEMS.md` or declared a new defect.
 - [ ] Every new test fails without its fix, with the failure count recorded.
-- [ ] Handoff entry in the same commit as the finding; fixed entries deleted, not reworded (`AGENTS.md:141-144`).
+- [ ] Handoff entry in the same commit as the finding; fixed entries deleted, not reworded (`AGENTS.md:150-153`).
 - [ ] `package.json` and `package-lock.json` unchanged; no new runtime dependency.
 - [ ] No new comments in source except `// BUG:` and `// @ts-expect-error`.
 - [ ] Staged by explicit path; `git diff --cached` read.
@@ -3972,7 +3972,7 @@ Do not use the worktree count as a test. `HANDOFF.md:554-556` measured 59 on 202
 
 **Snapshot: `main` at `1c9c8de` (2026-09-28), branch `skill/photoshop-tool-creation`, re-verified
 on 2026-09-28 against `ps/missing-tools` after four tools landed.** Every `file:line` below was
-re-read against that tree. `AGENTS.md:134` is the rule this section
+re-read against that tree. `AGENTS.md:143` is the rule this section
 obeys: a citation you cannot re-verify sends the next session after a bug that does not exist.
 
 **The ranking rubric, as a rule.** Order gaps by the product of two things, both of which you
@@ -4230,7 +4230,7 @@ status` / `git diff` before staging, every time, and stage only your own paths. 
 12. **The legacy `draw` path's export baselines are committed.** Symptom: a correct-looking change
     to the draw/brush path fails visual regression. Verified: `e2e/export/visual-regression.spec.ts-snapshots/export-baselines`
     holds **17** tracked files. Defence: re-recording is `npm run test:e2e:update-baselines`,
-    which is **an operator decision, not an agent decision** (`AGENTS.md:123`).
+    which is **an operator decision, not an agent decision** (`AGENTS.md:132`).
 
 ### Canvas and testing
 
@@ -4426,7 +4426,7 @@ status` / `git diff` before staging, every time, and stage only your own paths. 
     change to the suite invalidates the number. Defence: the same commit that changes the count
     edits the sentence.
 40. **A handoff entry's lifecycle is delete-or-nothing.** Symptom: a session "updating" a fixed
-    problem into a closed one, which buries the open problems. Defence: `AGENTS.md:143-144` —
+    problem into a closed one, which buries the open problems. Defence: `AGENTS.md:152-153` —
     fixed and verified **deletes** the entry; never rewrite it as "fixed in abc123"; unverified
     is not closed, so tighten it to say what still needs checking and let verification delete it.
 
@@ -4443,15 +4443,15 @@ status` / `git diff` before staging, every time, and stage only your own paths. 
 42. **Do not weaken a gate to get green.** No skips, no raised thresholds, no deleted assertions,
     no re-recorded visual baselines. `visual-regression.spec.ts` re-records only under an explicit
     `--update-snapshots` (`npm run test:e2e:update-baselines`), and that is an operator decision
-    (`AGENTS.md:123`).
+    (`AGENTS.md:132`).
 43. **A test that pins a defect is a tripwire, not a test.** Symptom: you fix the defect, the
-    "failing" test goes green, and you never notice the pin. Defence: `AGENTS.md:128` — a fix
+    "failing" test goes green, and you never notice the pin. Defence: `AGENTS.md:137` — a fix
     must **invert** the pin in the same change. And the sharper form: **a test whose only half
     disappears when you remove the last example must be re-aimed, not deleted** — if a test exists
     only to assert the behaviour of one instance, removing the instance silently removes the
     assertion, and the correct move is to repoint it at a surviving case.
 44. **Do not start a single-writer durable cutover yet.** `saveLayerCanvas()` can still promote
-    cached canvases outside reducer publication. `AGENTS.md:148` and the `durable_cutover_gate`
+    cached canvases outside reducer publication. `AGENTS.md:157` and the `durable_cutover_gate`
     constraint both hold. Treat the legacy `HistoryItem[]` path as the production replay
     authority.
 45. **Two subagents on the same file is a merge conflict you scheduled yourself.** Split by
@@ -4835,13 +4835,13 @@ bucket, eyedropper). The first two touched no cited file. The last four restruct
 and the last one added four tools and moved the registry spine under almost every `src/` citation
 in this document.
 
-**`AGENTS.md` went from 287 lines to 148.** Every one of its 58 distinct `AGENTS.md:NNN` citations
-had to be re-derived. The structural damage:
+**`AGENTS.md` went from 287 lines to 148, and to 157 since.** Every one of its 58 distinct
+`AGENTS.md:NNN` citations had to be re-derived. The structural damage:
 
 - `## Known failures and how to read one` was **deleted outright**. Its content was redistributed
   into a new `## E2E failures` and into `### Gates`. Citations that pointed into it (`AGENTS.md:207`
   "97 pass, 2 are skipped", `:216-218`, `:226-230`, `:232-236`) now point at
-  `## E2E failures` (`:127`, `:128`, `:130`) or at `AGENTS.md:123` — **except** the pass/skip
+  `## E2E failures` (`:136`, `:137`, `:139`) or at `AGENTS.md:132` — **except** the pass/skip
   count, which `AGENTS.md` no longer carries at all. That count now lives only in
   `e2e/OPEN_PROBLEMS.md:41-42`, and the citations were moved there rather than left pointing at a
   sentence that no longer exists.
@@ -4870,3 +4870,9 @@ registered, 19→23 with a real options bar), and the `ToolsMap` type, which ups
 `Record<ToolName, ToolProcessorDefinition & …>` to `Record<ToolName, Partial<ToolProcessorDefinition>
 & …>` — a deliberate reversal, and one that weakens the totality argument in `### The structural
 finding`. A line number can be right and the sentence around it still wrong.
+
+**2026-09-28, the second invalidation.** `2d036fe` landed minutes after the pass above, added 9
+lines to `AGENTS.md` (148 → 157) and invalidated 36 of this document's `AGENTS.md:NNN` citations
+again. A skill whose value is checkable citations is structurally fragile while its cited documents
+are edited in parallel: a repair pass is durable only as long as the documents it repaired. Name a
+**section** beside every line — a heading survives an insertion above it, a line number does not.
