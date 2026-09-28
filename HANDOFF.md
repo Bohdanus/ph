@@ -17,6 +17,33 @@ does warn" (there is no `console.warn` in `history-append.ts`), and §15's row f
 `addHistoryEntry`. **Re-derive a citation from the sentence that contains it, never from the old
 number**, and treat every citation in a file you have not just read as unverified.
 
+**A second audit, of the two highest-churn files only, at `f7757cf`.** _Owner: GPT model
+(history-migration)._ All 18 line targets into `StoreContext.tsx` (1181 lines) and
+`history-adapter.ts` were re-derived from their prose: **16 confirmed, 2 wrong at the claim level
+rather than the line level, 0 resolving to a blank or degenerate line.** That is a much better
+result than the sweep above and is not in tension with it: the 60 wrong there are dominated by
+low-churn files, while these two are the ones that move. Both survivors are the dangerous kind —
+they resolve, and they carry the identifier they name:
+
+- **§15's `StoreContext.tsx:386 layerOrderBottomFirst` is the declaration, not the boundary read.**
+  The prose claims the reorder pre-state is `state.layers` read at the boundary. Line 386 is a
+  three-line pure helper whose whole body is `getSortedLayersArray(layers).map(...)`
+  (`StoreContext.tsx:386-388`); it holds no boundary, no state and no `state.layers`. The read is
+  `StoreContext.tsx:885`. A `grep` for `layerOrderBottomFirst` confirms 386 is "the right place".
+  The code at both locations is correct — only the citation is wrong, so fixing it is a re-derivation
+  from the sentence, not an edit to `StoreContext.tsx`.
+- **§1's `StoreContext.tsx:658-695` is the right function at the wrong layer.** 658-695 is
+  `buildDurableDocument`, which does derive the shadow, but it returns `{ status, document,
+diagnostics }`. None of the three `StoreData` field names occurs in the range except a read of the
+  previous revision (`StoreContext.tsx:669`). §1 has been rewritten to say so.
+
+That audit also found one claim-level error in §1, now fixed in place: it said the shadow fields are
+"read by nothing outside that file", which is false — `DevStatusStrip.tsx:18` and
+`ErrorBoundary.tsx:48` both read them — though neither runs on a normal production load, so §1's
+conclusion that the deliverable is unwired still stands. Worth knowing while auditing the reader
+set: `DevStatusStrip.tsx` contradicts itself, claiming at `:12-15` that a production bundle keeps
+the call, and at `:58-60` that it never subscribes in production. `:58-60` is the correct one.
+
 Verified on `fix/handoff-2026-09-28`, branched from `main` at `80eb207` and merged to `main` with
 it. Items 6, 15, 18, 19 and 20 were closed here or landed from the migration while this branch was
 in review; 6 and 15 are `2dfc18e`, 20 is `2d985d4`, and 18/19 and the encoder half of 20 were done
@@ -98,8 +125,15 @@ they _were_, because both were silent-corruption classes rather than visible bre
 
 Production still runs legacy `HistoryItem[]` → `replayHistory` (`useHistory.ts:81`) → runtime
 `Layer` → `layer-renderer.ts:65-146` → canvas. `durableDocument`, `durableStatus` and
-`durableDiagnostics` are computed at `StoreContext.tsx:658-695` and read by nothing outside that
-file. `StoreContext.durable-boundary.test.tsx:573-583` actively pins the absence — it asserts that
+`durableDiagnostics` are derived by `buildDurableDocument` (`StoreContext.tsx:658-695`) and
+projected onto the three `StoreData` fields at each call site, never inside that function. Two
+production components read the fields from `useStore()` — `DevStatusStrip.tsx:18` and
+`ErrorBoundary.tsx:48` — so this entry's earlier claim that they are "read by nothing outside that
+file" was false and is withdrawn. Neither reader runs on a normal production load, so the
+conclusion below still stands: `DevStatusStrip.tsx:62` gates its body on `import.meta.env.DEV`, and
+`ErrorBoundary`'s `useStore()` call is inside `ErrorBoundaryFallback` (`ErrorBoundary.tsx:41`),
+which renders only after a region has thrown (`ErrorBoundary.tsx:95`).
+`StoreContext.durable-boundary.test.tsx:573-583` actively pins the absence — it asserts that
 `replayCoordinator`, `presentationMaterialization` and `getReplayRevisionToken` are _not_ in the
 store. The suite is green and is enforcing the absence of the feature.
 
