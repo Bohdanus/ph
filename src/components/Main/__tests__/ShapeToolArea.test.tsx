@@ -713,7 +713,7 @@ describe('ShapeToolArea', () => {
       });
     });
 
-    it('ignores the shift square constraint for the line figure at commit time', () => {
+    it('snaps the line figure to 45 degrees under shift at commit time', () => {
       toolArgsState.toolArgs.figure = 'line';
       const { container } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
       const toolArea = container.firstElementChild as HTMLDivElement;
@@ -730,8 +730,10 @@ describe('ShapeToolArea', () => {
 
       const fullArgs = createLayerFromToolMock.mock.calls[0][0];
 
-      // Free angle preserved: no square clamping, no ellipse recomputation.
-      expect(fullArgs.pos).toEqual({ x: 38, y: 58, width: 44, height: 64 });
+      // The drag is 56.3 degrees, so Shift quantises it to 45 while keeping
+      // hypot(40, 60) = 72.111: the line then runs 50.990 along each axis, and
+      // the committed box is that plus the 4 px the free-angle 44 x 64 also had.
+      expect(fullArgs.pos).toEqual({ x: 38, y: 58, width: 55, height: 55 });
       expect(fullArgs.args.figure).toBe('line');
     });
 
@@ -1210,7 +1212,7 @@ describe('ShapeToolArea', () => {
       }
     );
 
-    it('leaves the line figure unconstrained when shift is held', () => {
+    it('constrains a shifted line to 45 degrees and keeps its length', () => {
       toolArgsState.toolArgs.figure = 'line';
       const { view, toolArea } = renderToolArea();
       const anchor = { x: 10, y: 20 };
@@ -1222,10 +1224,14 @@ describe('ShapeToolArea', () => {
       expect(geometry).toEqual(
         toDocumentShape(normalizeShapeGeometry(anchor, pointer, 'line', { shiftKey: true, altKey: false }))
       );
-      expect(geometry).toEqual(toDocumentShape({ start: { x: 10, y: 20 }, end: { x: 50, y: 80 } }));
-      // A free angle must survive Shift: clamping it to 60x60 would be a square.
-      expect(Math.abs(geometry.end.x - geometry.start.x)).toBe(40);
-      expect(Math.abs(geometry.end.y - geometry.start.y)).toBe(60);
+      // 56.3 degrees snaps to 45, with the original hypot(40, 60) = 72.111 kept, so
+      // each axis runs 50.990 of it. Measured off `start` because `geometry` is
+      // already in the document frame and `anchor` is not.
+      expect(geometry.end.x - geometry.start.x).toBeCloseTo(50.99019513592784, 6);
+      expect(geometry.end.y - geometry.start.y).toBeCloseTo(50.99019513592784, 6);
+      // The 45 degree snap is what makes the two runs equal; the free angle's
+      // 40 and 60 are not the assertion any more.
+      expect(Math.abs(geometry.end.x - geometry.start.x)).toBeCloseTo(Math.abs(geometry.end.y - geometry.start.y), 6);
       view.unmount();
     });
 

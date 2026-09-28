@@ -145,11 +145,16 @@ export const CURATED = {
       },
     ],
   },
+  'agents-doc-corrections': {
+    summary:
+      'Corrections to AGENTS.md and the worktree-inventory comments, from a code review of AGENTS.md against the tree. The structural orphan under "The board is cross-session" and the board-to-swarm regression it introduced; the toolbar section, which listed a shipped Color Replacement options bar as a PlaceholderTool and understated the hand-copied tool lists by fourfold; the mergeChecked semantics, which the document and the code comment both got wrong; the npx tsc --noEmit explanation, which named a missing exclude that does not exist; and the drifted enumerations (orphaned, the curated code sample, the at-risk third source). Adds mergeChecked to the --check watched list.',
+    note: 'Short-lived documentation work. Safe to drop once the branch is an ancestor of main; the only non-AGENTS.md change that outlives the prose is the mergeChecked entry in scripts/worktree-inventory.mjs.',
+  },
   'polygon-marching-ants': {
     summary:
       'Polygon-selection marching ants: the ants component, the selection-ants hook, a new usePolylineAnts module and its tests, and edits to the lasso, magic wand and click tool areas. The branch has no commits of its own.',
     mustNotPrune: true,
-    note: 'git reports this as merged and 0 ahead because the branch sits on an old main commit. Seventeen paths exist on no ref.',
+    note: 'git reports this as merged and 0 ahead because the branch sits on an old main commit. The work exists on no ref; see `dirty` and `untracked` for what the working tree holds.',
   },
   'ps-pixel-tools': {
     summary:
