@@ -79,7 +79,7 @@ they _were_, because both were silent-corruption classes rather than visible bre
 
 Production still runs legacy `HistoryItem[]` → `replayHistory` (`useHistory.ts:90`) → runtime
 `Layer` → `layer-renderer.ts:60-141` → canvas. `durableDocument`, `durableStatus` and
-`durableDiagnostics` are computed at `StoreContext.tsx:686-786` and read by nothing outside that
+`durableDiagnostics` are computed at `StoreContext.tsx:637-674` and read by nothing outside that
 file. `StoreContext.durable-boundary.test.tsx:602-633` actively pins the absence — it asserts that
 `replayCoordinator`, `presentationMaterialization` and `getReplayRevisionToken` are _not_ in the
 store. The suite is green and is enforcing the absence of the feature.
@@ -142,8 +142,8 @@ what makes the pin a tripwire. Only then can the `it.fails` be removed in the sa
 
 ## 4. P0 — one error diagnostic voids the entire durable shadow
 
-**Problem.** `convertLegacyHistorySafely` (`history-adapter.ts:561`) checks
-`converted.diagnostics.some((d) => d.severity === 'error')` at `:573` and, if any one entry
+**Problem.** `convertLegacyHistorySafely` (`history-adapter.ts:720`) checks
+`converted.diagnostics.some((d) => d.severity === 'error')` at `:732` and, if any one entry
 produced an error, rolls back the asset transaction and returns `status: 'unavailable'` with
 `document: null`.
 
@@ -231,7 +231,7 @@ cannot be derived from the history item alone.** The item carries intent (`layer
 an `orderByLayerId` map against. Two preconditions that the slice has now satisfied:
 
 - **The store owns the pre-state.** `REORDER_LAYERS` takes intent only and the reducer applies the
-  move to `state.layers` (`StoreContext.tsx:368`, `reorderLayersFromState`), so the authoritative
+  move to `state.layers` (`StoreContext.tsx:369`, `reorderLayersFromState`), so the authoritative
   logical order immediately before the append is available at the boundary instead of being carried
   out of a 200 ms-stale hook closure.
 - **A missing anchor no longer disagrees.** Legacy replay skips the move
@@ -242,7 +242,7 @@ an `orderByLayerId` map against. Two preconditions that the slice has now satisf
   divergence poisoned all later entries. It now skips like the other two, leaving `operation` null,
   which is the "record nothing" path a dropped rename already takes and needs no cursor-map change
   (`legacyCursorToDurableCursor` is appended outside the `if (operation)` push,
-  `history-adapter.ts:691-692`).
+  `history-adapter.ts:699-700`).
 
 **Fix.** Take the authoritative layer order from the store at the boundary, recompute the expected
 `orderByLayerId` there **independently** of `legacyHistoryToDurable`'s copy, and route the writer
@@ -291,9 +291,9 @@ exists, and that single gap is what keeps the majority of these writers here.
 
 > **Fixed on `fix/unit-tests` (`b027de3`).** Open on `main`; delete after the merge. See §0.
 
-**Problem.** `deriveSetDocumentFrameEntry` (`history-adapter.ts:271`) returns `null` when
+**Problem.** `deriveSetDocumentFrameEntry` (`history-adapter.ts:255`) returns `null` when
 `!isValidDocumentFrame(args?.nextFrame)`. In `legacyHistoryToDurable` the frame branch
-(`:501-506`) cannot throw, and `diagnostics.push` exists only in the `catch`, so no entry is
+(`:625-630`) cannot throw, and `diagnostics.push` exists only in the `catch`, so no entry is
 pushed and no diagnostic is recorded. `convertLegacyHistorySafely` then commits and returns
 `status: 'current'` — the shadow asserts a faithful conversion while silently omitting a
 document-frame change.
@@ -336,7 +336,7 @@ legacy agreement, **not** timeline uniqueness); `next.entries[next.entries.lengt
 unconditionally.
 
 So a duplicate id on the published path yields a durable document with two same-id entries, and
-since the id is a lookup key (`history-adapter.ts:637`, `history-timeline.ts:24`) a later toggle
+since the id is a lookup key (`history-adapter.ts:796`, `history-timeline.ts:24`) a later toggle
 hits the wrong entry. The invariant rests entirely on a diagnostic that is computed and discarded.
 
 The cursor branch is largely redundant: `decideDurableAppend:229` requires
@@ -468,7 +468,7 @@ CI.
 **Problem.** `deriveSelectionBaseline` (`selection-baseline.ts:56`) is deliberately unbounded: it
 takes the **first** non-disabled `SELECTION_ACTION` on the timeline and seeds from that entry's
 `previousSelectionState` (`:57-59`), with no cursor argument at all. Both consumers take the
-timeline wholesale — `history-replay.ts:68` and `history-adapter.ts:465` — so the durable baseline
+timeline wholesale — `history-replay.ts:68` and `history-adapter.ts:543` — so the durable baseline
 and the legacy replay start from the same snapshot, which is the parity property `0659ce9`
 extracted this rule to own.
 
@@ -492,7 +492,7 @@ bound pass. The unbounded behaviour was a live feature, so a fix that makes one 
 re-deriving it has removed a user-visible capability, not corrected a pin.
 
 Both consumers take the timeline wholesale, so the bound has to reach `deriveSelectionBaseline` (add a
-cursor argument) and be threaded through `history-replay.ts:68` and `history-adapter.ts:465`
+cursor argument) and be threaded through `history-replay.ts:68` and `history-adapter.ts:543`
 together — bounding one and not the other re-opens the parity divergence that `selection-baseline.ts`
 exists to close.
 
@@ -502,15 +502,15 @@ them:**
 - `selection-baseline.ts:46-55` — the doc comment above `deriveSelectionBaseline`. The claim is at
   `:50-51`, "the first non-disabled `SELECTION_ACTION` entry's `previousSelectionState` is the only
   record that the selection ever existed", with `:52-54` restating it for the durable baseline.
-- `history-adapter.ts:460-464` — the comment above the `deriveSelectionBaseline(legacyHistory)` call
-  at `:465` repeats it in the adapter's own voice: "It cannot be narrowed to the pre-first-entry state
+- `history-adapter.ts:538-542` — the comment above the `deriveSelectionBaseline(legacyHistory)` call
+  at `:543` repeats it in the adapter's own voice: "It cannot be narrowed to the pre-first-entry state
   **while a selection is created outside history**: the tool-switch clear's `previousSelectionState` is
   the only record that the selection existed." Rewriting only the first leaves the rule's owner
   corrected and its caller still advertising the reason it must not be bounded, so the next reader
   takes the call site as exempt from the bound being introduced at the signature.
 
 **Files.** `src/contexts/selection-baseline.ts:46-59`, `src/contexts/history-replay.ts:68`,
-`src/contexts/history-adapter.ts:460-465`, `src/contexts/__tests__/useHistory.test.tsx:439`,
+`src/contexts/history-adapter.ts:538-543`, `src/contexts/__tests__/useHistory.test.tsx:439`,
 `src/contexts/__tests__/history-replay.test.ts:90,117`
 
 ---
@@ -869,7 +869,7 @@ the placeholder is a commented-out JSX line: `src/components/SidebarLeft/Sidebar
 is `{/*<Zoom />*/}`.
 
 **Why it is not a wiring bug.** There is no view transform to wire. The store's
-zoom data is entirely commented out — `src/contexts/StoreContext.tsx:953-957` is
+zoom data is entirely commented out — `src/contexts/StoreContext.tsx:1112-1118` is
 `// const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });` and the rest
 of that block — and `usePointerPosition` maps client coordinates to image pixels
 through a `scale` supplied by the host rather than owning a view transform itself.
@@ -885,7 +885,7 @@ conversion reading from it, is the shape the commented-out code was reaching for
 Do not start with a Hand tool; start with the scope, and the three tools fall out.
 
 **Files.** `src/components/SidebarLeft/SidebarLeft.tsx:412`,
-`src/contexts/StoreContext.tsx:953-957`, `src/hooks/usePointerPosition.ts`,
+`src/contexts/StoreContext.tsx:1112-1118`, `src/hooks/usePointerPosition.ts`,
 `src/components/Main/Main.tsx:53`
 
 ---
@@ -928,7 +928,7 @@ agent not checked `Main.tsx:53`.
 
 **Problem.** `decideDurableAppend` publishes a cloned durable document directly, while full
 conversion wraps asset-bearing operations in `beginDocumentAssetTransaction` / commit / reconcile
-(`history-adapter.ts:676-690`). The current append slice is safe because layer-property operations
+(`history-adapter.ts:728-742`). The current append slice is safe because layer-property operations
 carry no assets, but the next asset-bearing operation could publish a document without registering
 or retiring its raster ownership.
 
@@ -1043,7 +1043,7 @@ belongs there, not in a hand-rolled arm, and not in `TOOL_ACTION`. Five places:
   `DurableLayerPropertyPatch`. The type is `Readonly<…>`, which is deliberate: it is
   what stops a writer smuggling an arbitrary `Partial<Layer>` through the append
   boundary as a patch the validator then has to re-derive.
-- `src/contexts/history-adapter.ts:331` and `:340` — add the action to
+- `src/contexts/history-adapter.ts:355` and `:387` — add the action to
   `isSetLayerPropertiesAction` and give `deriveSetLayerPropertiesEntry` its branch.
   Adding it to the first without the second makes `updateLayer` plan an append that
   resolves to no durable entry, and it silently falls back to the raw patch.
@@ -1061,10 +1061,12 @@ belongs there, not in a hand-rolled arm, and not in `TOOL_ACTION`. Five places:
 `updateLayer` itself needs no change: given a whitelisted action it already replaces
 the caller's patch with the canonical one from the planned durable entry.
 
-Do not reuse `UPDATE_LAYERS` — item 13 records that it is an unguarded escape hatch.
+There is no longer an `UPDATE_LAYERS` shortcut to avoid: it was removed as an unguarded
+second writer surface, so `updateLayer` with a whitelisted action is the only way to set a
+layer property.
 
 **Files.** `src/contexts/tool-types.ts:93`, `src/contexts/useLayer.ts:431`,
-`src/contexts/history-model.ts:80`, `src/contexts/history-adapter.ts:330,342`,
+`src/contexts/history-model.ts:80`, `src/contexts/history-adapter.ts:355,387`,
 `src/contexts/history-replay.ts:112,146`, `src/contexts/useHistory.ts:15,23`,
 `src/contexts/psd-utils.ts:159,229`
 
@@ -1098,7 +1100,7 @@ for mobile rather than copied across.
 
 ## 58. A single brush stroke makes the durable document un-materializable, and it voids the whole document
 
-**Problem.** `convertSource` (`history-adapter.ts:166-172`) routes a layer source's `args.toolName`
+**Problem.** `convertSource` (`history-adapter.ts:167-173`) routes a layer source's `args.toolName`
 to `text` or `vector` for exactly two cases — `'text'`, and the six shape names — and to
 `legacy-tool` for everything else. `materialization.ts:156` throws on `legacy-tool`
 **unconditionally**, and `materializeDocument` releases every taken lease and rethrows (`:347-350`),
@@ -1126,7 +1128,7 @@ whole-document rethrow at `:347-350` is what turns any per-layer defect into a t
 yield `source.kind === 'legacy-tool'`. And `materializeDocument` over a replay containing a brush
 layer plus two good layers must resolve with the good layers present.
 
-**Files.** `src/contexts/history-adapter.ts:164-183`, `src/contexts/materialization.ts:156,347-350`,
+**Files.** `src/contexts/history-adapter.ts:144-185`, `src/contexts/materialization.ts:156,347-350`,
 `src/contexts/useLayer.ts:289`, `src/tools/toolProcessors.ts:144-150`
 
 ---
