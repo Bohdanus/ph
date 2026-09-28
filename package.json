@@ -15,6 +15,7 @@
     "format": "prettier --write .",
     "preview": "vite preview",
     "test": "vitest --run",
+    "test:staged": "vitest related $(git diff --cached --name-only --diff-filter=ACMR) --run",
     "test:integration": "vitest --run src/contexts/__tests__/psd-utils.test.ts src/hooks/__tests__/useApp.psd.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
@@ -29,7 +30,7 @@
     "prepare": "husky",
     "gate:verify": "npm run tsc && npm run build && npm run test:e2e:unit",
     "gate:commit": "lint-staged --fail-on-changes --no-stash && npm run gate:verify",
-    "gate:push": "npm run gate:commit && npm run lint:check && npm run test"
+    "gate:push": "npm run test"
   },
   "engines": {
     "node": ">=24"
@@ -39,7 +40,7 @@
       "eslint --fix",
       "prettier --write"
     ],
-    "*.{md,yml,yaml,json}": [
+    "*.{js,scss,jsonc,yml,yaml,md,json}": [
       "prettier --write"
     ]
   },

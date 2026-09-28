@@ -1,11 +1,17 @@
 #!/usr/bin/env sh
-# Runs the commit gate again before the objects leave the machine. It is repeated
-# on purpose: a push can follow a `git commit --no-verify`, a rebase, or a
-# cherry-pick, none of which is guaranteed to have passed `gate:commit`, and
-# nothing downstream re-runs it until CI does.
+# The full app unit suite, once per push, and nothing else.
 #
-# `lint:check` and the app unit suite are here rather than in `gate:commit`
-# because they are whole-tree checks and the slowest gates in the repo.
+# It is here rather than in `gate:commit` because it is the one whole-tree check
+# that the commit gate cannot approximate: `test:staged` runs only the tests that
+# import the files being committed, so a commit can pass it and still land a change
+# whose own test was already failing before the commit started. Measured 7-14s,
+# against `tsc -b` at 5s, so there is no cost argument for splitting it further.
+#
+# `tsc` and `build` are deliberately NOT repeated here. An earlier version re-ran
+# all of `gate:commit` and bought nothing with it: a rebase or a `--no-verify`
+# commit that broke the build is caught by the `ci` job in about a minute, and
+# re-running 9s of deterministic checks to protect 7s of suite time is how a gate
+# ends up `--no-verify`'d along with everything else.
 set -e
 
 npm run gate:push

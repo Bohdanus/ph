@@ -9,3 +9,4 @@
 set -e
 
 npm run gate:commit
+npm run test:staged

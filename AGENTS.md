@@ -152,15 +152,41 @@ developer is gated by is a command anyone can run by hand:
 | --------------------- | ------------------- | -------------------------------------------------------------- |
 | `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
 | `npm run gate:verify` | —                   | `tsc` -> `build` -> `test:e2e:unit`                            |
-| `npm run gate:push`   | `.husky/pre-push`   | `gate:commit`, then `lint:check` -> `test`                     |
+| `npm run test:staged` | `.husky/pre-commit` | `vitest related` over the staged paths, after `gate:commit`    |
+| `npm run gate:push`   | `.husky/pre-push`   | `test` — the full app suite, and nothing else                  |
 
-The split is by measured cost, not by principle: `build` 1.4s, `test:e2e:unit`
-1.2s, `tsc -b` 7.4s, `test` 16s, `lint:check` 6-12s. Anything that would push the
-commit hook past ~10s belongs to the push hook. `build` stays in the commit hook
-despite being cheap because it is not redundant with `tsc`: `vite build` runs Babel
-and esbuild, which strip types without checking them, so it catches Sass, wasm
+The commit hook is two gates, not one, because they answer different questions.
+`gate:verify` asks "does the tree still build and typecheck". `test:staged` asks
+"did this commit break a test that covers the files in it" — and only that. Both
+`tsc` and `build` pass a change that flips a numeric threshold, renames a branch,
+or drops a case, so without the second gate such a change commits cleanly and is
+caught in CI, which is the same class of fix that has repeatedly needed its own
+worktree ("Fix 12 failing useHistory tests", "Fix 3 failing replay-coordinator
+tests", "Fix failing useApp.psd tests", "Fix failing useRect tests").
+
+`test:staged` is a 2.8s scoped run where the full suite is 7-14s, and it is
+unconditionally safe in Vitest 5: with no matching staged path it reports
+`No test files found` and exits 0, and a staged path outside `src/` — a `.md`
+file, an `e2e/**` helper — also exits 0 without running the whole suite. It
+therefore needs no `--passWithNoTests` and no guard. What it does **not** give you
+is completeness: a file with no test importing it passes it, which is why the full
+suite still runs at push.
+
+Measured costs, for judging a future change to this table: `build` 1.7s,
+`test:e2e:unit` 1.1s, `test:staged` 2.8s, `tsc -b` 5s, `gate:commit` end to end
+~9s, `test:staged` adding ~3s, `test` 7-14s, `lint:check` 7s. `build` is in the
+commit hook because it is not redundant with `tsc`: `vite build` runs Babel and
+esbuild, which strip types without checking them, so it catches Sass, wasm
 resolution, PostCSS and import resolution that `tsc` cannot, and `tsc` catches types
 the bundle never sees.
+
+`lint-staged` formats two groups. `*.{ts,tsx}` gets `eslint --fix` and
+`prettier --write`; `*.{js,scss,jsonc,yml,yaml,md,json}` gets `prettier --write`
+only, because no ESLint config covers those and adding it would break every commit
+touching a `.md` or `.scss` file. The second group deliberately includes `.js`,
+`.scss` and `.jsonc`: `prettier --check .` matches all of them, and anything it
+matches but lint-staged does not is formatted by nobody at commit time and fails at
+`lint:check` or in CI instead.
 
 `--fail-on-changes` is the reason the commit hook is trustworthy. By default
 lint-staged re-adds whatever `eslint --fix` and `prettier --write` changed, so the
@@ -170,11 +196,16 @@ blocked so the change can be read and staged deliberately. `--no-stash` is what
 makes that clean: without it lint-staged keeps its backup stash when it declines to
 revert, so a blocked commit leaves a `WIP on <branch>` entry behind. The two flags
 together produce no index rewrite and no residue. The cost is one extra round trip
-per commit that touched an unformatted file; `npm run format` removes it.
+per commit that touched an unformatted file; `npm run format` removes it. One
+residue does survive and is not in the working tree: lint-staged writes
+`.git/lint-staged_unstaged.patch` when it declines to stage, and nothing removes
+it, so it is a stale file in the gitdir after any blocked commit.
 
-The hook repeats `gate:commit` on push on purpose: a push can follow a
-`git commit --no-verify`, a rebase, or a cherry-pick, and nothing re-runs the commit
-gate until CI does.
+`gate:push` does not repeat `gate:commit`. It used to, on the reasoning that a push
+can follow a `git commit --no-verify`, a rebase, or a cherry-pick — that reasoning
+is sound for `tsc` and does not survive contact with the cost: it re-ran 9s of
+deterministic checks to protect 7s of suite time, and `test:e2e:unit` ran twice per
+push. A rebase that broke the build is caught by the `ci` job in about a minute.
 
 ### CI gates
 
