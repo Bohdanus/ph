@@ -11,16 +11,16 @@ spec helpers themselves. The application under test is `src/` in this repository
 
 ```
 e2e/
-├── *.spec.ts            # 23 top-level specs: canvas redraw, colour, device pixel
-│                        #   ratio, document dialogs, eraser / fill / eyedropper,
-│                        #   adjustment tools, history panel, keyboard shortcuts,
-│                        #   layers, layers panel, levels, mobile shell, paint
-│                        #   options, paint tools, pen types, responsive shell,
-│                        #   select/move, selection tools, shape tools, sidebar
-│                        #   flyout / keyboard / layout, viewport drawing
+├── *.spec.ts            # 22 top-level specs: canvas redraw, colour, document
+│                        #   dialogs, eraser / fill / eyedropper, adjustment
+│                        #   tools, history panel, keyboard shortcuts, layers,
+│                        #   layers panel, levels, mobile shell, paint options,
+│                        #   paint tools, pen types, responsive shell, select/move,
+│                        #   selection tools, shape tools, sidebar flyout /
+│                        #   keyboard / layout, viewport drawing
 ├── export/              # 6 export-format specs + committed visual-regression baselines
 ├── global-setup.ts      # refuses --headed / --ui / --debug before a window exists
-└── helpers/             # 7 shared helper modules
+└── helpers/             # 8 shared helper modules
     └── __tests__/       # Node-environment unit tests for those helpers
 ```
 
@@ -39,7 +39,7 @@ purpose:
 | Dialogs and the document      | `document-dialogs`, `select-move` (crop)                                                            |
 | Pixel-affecting tools         | `paint-tools`, `paint-options`, `pen-types`, `shape-tools`, `filter-tools`, `erase-fill-eyedropper` |
 | Selections                    | `selection-tools`, `select-move`                                                                    |
-| Shell and viewport            | `responsive-shell`, `mobile-shell`, `viewport-drawing`, `check-dpr`                                 |
+| Shell and viewport            | `responsive-shell`, `mobile-shell`, `viewport-drawing`                                              |
 
 `layers.spec.ts` and `layers-panel.spec.ts` overlap deliberately: the first is
 about the stack a tool sees, the second about the panel that edits it. Splitting
@@ -264,8 +264,12 @@ npm run test:e2e:update-baselines
   `CHANGED_CHANNEL_THRESHOLD_ICO` (20,000) colour channels to drift by more than
   `CHANNEL_DELTA_TOLERANCE` (40) from the source canvas.
 - A **missing** baseline attaches the export and then throws, pointing at
-  `--update-snapshots`. That fails the run on purpose: a missing baseline means
-  the comparison was never made.
+  `npm run test:e2e:update-baselines`. That fails the run on purpose: a missing
+  baseline means the comparison was never made. The npm script, not a bare
+  `--update-snapshots`, is the recovery: the flag's own preset is `'changed'`,
+  the record branch requires `'all'`, and `'changed'` rewrites nothing here
+  because this spec reads its baseline with `readFile` rather than through a
+  Playwright snapshot assertion.
 
 ### Baseline layout
 

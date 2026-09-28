@@ -16,9 +16,15 @@ test.describe('Color Helpers', () => {
     });
 
     test('verifies swatch color when verifySwatch is true', async ({ page }) => {
+      // The swatch is seeded with a colour the helper is NOT asked to set. It used to
+      // be seeded with the target, `rgb(255, 0, 0)`, which made the internal
+      // `toHaveCSS` unsatisfiable-by-failure: a helper that did nothing at all would
+      // still have read back the seeded value and passed. Nothing here asserts on its
+      // own, so this test's whole strength is whether the value it checks for differs
+      // from the value it started with.
       await page.setContent(`
         <input data-testid="foreground-color-input" type="color" value="#000000">
-        <div data-testid="foreground-color-swatch" style="background-color: rgb(255, 0, 0)"></div>
+        <div data-testid="foreground-color-swatch" style="background-color: rgb(0, 128, 0)"></div>
       `);
 
       await setForegroundColor(page, '#ff0000', true);

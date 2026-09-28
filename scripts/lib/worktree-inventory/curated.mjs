@@ -593,9 +593,28 @@ export const CURATED = {
     landed: true,
   },
   'fix-e2e-findings': {
+    // The SECOND worktree to land on this directory name, and the second time a
+    // curated entry outlived the worktree it described. The first entry here said
+    // `landed: true` about a worktree that moved 33 e2e findings into the ledger
+    // and was then removed; its branch is gone, so the claim was untestable. This
+    // worktree took the same name, the entry attached to it, and the contradiction
+    // test correctly reported that a live, unlanded branch was not on main.
+    //
+    // The directory name is the identity the generator uses, so a recycled name
+    // silently re-points an entry at unrelated work. Renaming the worktree would
+    // have hidden it; the test is what made the collision visible, which is the
+    // only reason it is worth keeping.
+    //
+    // So: this entry is rewritten to describe the work actually in this worktree,
+    // and `landed` is not claimed until the branch really is an ancestor of main.
     summary:
-      'Moves e2e findings off their original branches and onto the documents, so the defects are recorded where an agent will read them.',
-    landed: true,
+      'Implements the 33 transferred e2e findings: the DPI-relative stroke thresholds, the baseline re-record mode, the assertions that could not fail, and the pins that resisted their own fix.',
+    issues: [
+      {
+        ref: 'e2e/OPEN_PROBLEMS.md#transferred',
+        title: 'the 33 findings transferred in 4d47904, now fixed and deleted from the ledger',
+      },
+    ],
   },
   'handoff-citation-rotation': {
     summary:

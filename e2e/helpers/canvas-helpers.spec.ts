@@ -259,11 +259,13 @@ test.describe('Canvas Helpers', () => {
     await expect(loadImageData(corruptBuffer)).rejects.toThrow();
   });
 
-  test('loadImageData rejects quickly on invalid input (no hang)', async () => {
+  test('loadImageData rejects invalid image bytes, without a wall-clock bound', async () => {
+    // This used to be a second, weaker copy of the corrupt-base64 case above, with a
+    // `Date.now()` delta asserted under 5000 ms. The delta made the suite's result
+    // depend on how fast the machine is, and the rejection it asserted was the one the
+    // previous test already asserts — so a hang would have been caught as a failure
+    // either way, and a slow machine produced a red that no code change could fix.
     const invalidBuffer = Buffer.from('invalid-not-an-image', 'utf-8');
-    const startTime = Date.now();
     await expect(loadImageData(invalidBuffer)).rejects.toThrow();
-    const elapsed = Date.now() - startTime;
-    expect(elapsed).toBeLessThan(5000);
   });
 });

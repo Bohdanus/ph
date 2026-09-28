@@ -529,7 +529,7 @@ it is an ordinary passing test, so it must be rewritten rather than removed when
 
 The e2e suite pins nothing. `grep -rn 'it.fails(' e2e` returns 0, there is no `test.fixme` and no
 `describe.skip`, and the only skips are the two `test.skip` declarations
-(`e2e/export/photopea.spec.ts:6`, `e2e/sidebar-flyout.spec.ts:157`). So a failure on the default
+(`e2e/export/photopea.spec.ts:12`, `e2e/sidebar-flyout.spec.ts:162`). So a failure on the default
 headless run is a new defect rather than a known one; `e2e/OPEN_PROBLEMS.md` holds the latent
 defects the suite does not trip. `AGENTS.md` forbids every headed Playwright invocation, so a headed
 failure is not a gate and the mode must not be flipped to make one go away.
