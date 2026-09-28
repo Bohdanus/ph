@@ -998,7 +998,7 @@ replay authority.
 
 ---
 
-## 39. A Backspace aimed at the layer-rename field is owned by the lasso tool, so the field cannot be edited while a draft is active
+## 43. A Backspace aimed at the layer-rename field is owned by the lasso tool, so the field cannot be edited while a draft is active
 
 **Problem.** `PolygonClickToolArea.tsx:557-568` and `FeatherMagneticLassoToolArea.tsx:501-512`
 register `Backspace` and `Delete` with `allowInInput: true`, `preventDefault: true` and **no
