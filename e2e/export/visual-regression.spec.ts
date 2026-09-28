@@ -6,13 +6,37 @@ import {
   exportAndVerify,
   exportFormats,
   exportIcoAndVerify,
+  fillSaveDialog,
   INTEGRATION_TEST_TIMEOUT_MS,
   mimeType,
+  openSaveDialog,
   setupExportTest,
   setupIcoTest,
+  submitSaveDialogForDownload,
+  type ExportFormat,
 } from './helpers';
 
 const formats = exportFormats.filter((f) => f.comparePixels);
+
+/**
+ * The shell's `lg` breakpoint, 1024px. `src/index.scss:38` pins it in px deliberately:
+ * Tailwind emitted `max-lg:` as `48rem`, a media feature that resolves against the user's
+ * default font size, so at a 20px default the stylesheet hid the desktop regions at 960px
+ * while the JS still read 768.
+ */
+const LG_BREAKPOINT_PX = 1024;
+
+/**
+ * Viewport widths the layout-independence test sweeps, and why each one is here.
+ *
+ * A width is here because it either sits on a side of `lg` or is a width the rest of the suite
+ * depends on. 1023 and 1024 are adjacent on purpose: one pixel apart, and the canvas box jumps
+ * from 967px to 718px across them because the right panel appears at `250px`.
+ */
+const LAYOUT_WIDTHS = [900, 1023, 1024, 1280, 1600] as const;
+
+/** PNG, the lossless format with no third-party encoder in the path. See the test's docblock. */
+const layoutInvarianceFormat: ExportFormat = { label: 'PNG', extension: '.png', comparePixels: false };
 
 /** Sub-directory of the committed snapshot directory that holds the baseline PNGs. */
 const BASELINE_DIR = 'export-baselines';
@@ -102,36 +126,121 @@ test.describe('Export visual regression', () => {
    * desktop overflow changed the canvas from 974x890 to 974x583, which moved a
    * canvas-relative test line and failed seven pixel comparisons with no change in the
    * export path. The same line, specified in document space, must render identically at
-   * both canvas heights.
+   * every layout the shell can produce.
    *
-   * 890 and 583 are the two measured canvas heights for a 1280x720 window, before and after
-   * the grid-overflow fix. Any future change to the shell's layout is therefore covered: if
-   * it moves the canvas, this test still passes, and so do the seven baseline comparisons
-   * above.
+   * WHY WIDTHS, AND WHY THIS PARTICULAR SET. The shell's structural boundary is `lg` at
+   * 1024px (`src/index.scss:38`, pinned in px rather than the `rem` Tailwind would have
+   * emitted), and crossing it is not a resize — it is a different shell. Measured at
+   * height 720: below 1024 the right panel is `display: none` and the canvas is 844px wide
+   * at a 900px viewport and 967px at 1023px; at 1024 the panel appears at `250px` and the
+   * canvas drops to 718px. One pixel of viewport width therefore moves the canvas by 249,
+   * which no fixed geometry survives. A HEIGHT sweep cannot see any of this: the right
+   * panel's width, and therefore the canvas box, is a function of width alone, so at a
+   * fixed width of 1280 every height agreed and the height-only version of this test was
+   * green while the property it names was unprotected. 1280 is kept because it is the width
+   * the committed baselines were recorded at, so a regression that broke the baselines would
+   * fail both this test and the seven above it.
+   *
+   * WHY ONLY THE SIDEBAR STATE ABOVE 1024. `toolbar-layout-toggle` is rendered behind
+   * `!isTablet` in `SidebarLeft`, so below `lg` there is no second left-rail layout to enter
+   * and the test asserts that absence rather than skipping past it — see below.
+   *
+   * WHY THE EXPORTED BYTES AND NOT THE CANVAS. `sourceDataUrl` is `canvas.toDataURL()` of the
+   * workspace canvas, which is the drawing, not the file. The property is about the export:
+   * `src/contexts/useFile.tsx` resolves the format, lazily `import()`s an encoder
+   * (`src/contexts/image-load-save-utils.ts:145-178`) and downloads the result. PNG is the
+   * format asserted on because it is the only lossless one that never leaves the browser —
+   * `imageFormat.encoding === 'canvas'` takes a plain `canvas.toBlob(blob, 'image/png')` with
+   * no dynamic import — where TIFF, GIF and AVIF pull in `utif`, `gifenc` and
+   * `@jsquash/avif`. A byte comparison against a third-party codec would be a test of the
+   * codec, not of the geometry. The canvas comparison is kept as well, because it is already
+   * computed and it localises a failure to the drawing rather than the encoder.
    */
-  test('the export is independent of the canvas height', async ({ page }, testInfo) => {
+  test('the export is independent of the shell layout', async ({ page }, testInfo) => {
     test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
 
-    const dataUrlAtHeight = async (height: number) => {
-      await page.setViewportSize({ width: 1280, height });
-      const { sourceDataUrl } = await setupExportTest(page, testInfo);
-      return sourceDataUrl;
-    };
+    const configurations: { label: string; width: number; height: number; toolbarLayout: 'default' | 'toggled' }[] = [];
+    for (const height of [720, 560]) {
+      for (const width of LAYOUT_WIDTHS) {
+        // The toggle does not exist below `lg`, so the second rail layout is only entered where
+        // the control is rendered — and the reason is asserted at the end of this test rather
+        // than assumed, so the matrix cannot quietly stop covering a rail layout.
+        for (const toolbarLayout of width >= LG_BREAKPOINT_PX
+          ? (['default', 'toggled'] as const)
+          : (['default'] as const)) {
+          configurations.push({ label: `${width}x${height}/${toolbarLayout}`, width, height, toolbarLayout });
+        }
+      }
+    }
 
-    const tall = await dataUrlAtHeight(720);
-    const short = await dataUrlAtHeight(560);
+    const exports: {
+      label: string;
+      sourceDataUrl: string;
+      bytes: Buffer;
+      canvas: { width: number; height: number };
+    }[] = [];
 
-    // A different canvas height really is in play, or this proves nothing.
-    const canvases = await page.evaluate(() => {
-      const c = document.querySelector('[data-testid="workspace-canvas"]') as HTMLCanvasElement;
-      return { w: c.width, h: c.height };
-    });
-    expect(canvases, 'the backing store is the document size at any viewport').toEqual({
-      w: 800,
-      h: 600,
-    });
+    for (const { label, width, height, toolbarLayout } of configurations) {
+      await page.setViewportSize({ width, height });
+      const { sourceDataUrl, downloadDirectory } = await setupExportTest(page, testInfo, { toolbarLayout });
 
-    expect(short, 'the same document line must export identically at a different canvas height').toBe(tall);
+      // The encoded file, through the same dialog a user drives. PNG: `exportFormats` already
+      // offers it as a lossless format, and reading its bytes back off disk is the only way to
+      // assert on the export rather than on the drawing.
+      await openSaveDialog(page);
+      await fillSaveDialog(page, 'layout-invariance', 'PNG');
+      const download = await submitSaveDialogForDownload(page, layoutInvarianceFormat);
+      const target = path.join(downloadDirectory, path.basename(download.suggestedFilename()));
+      await download.saveAs(target);
+      await expect(page.getByRole('heading', { name: 'Save File As...' })).toHaveCount(0);
+
+      const bytes = await readFile(target);
+      expect(bytes.byteLength, `${label}: the exported file should not be empty`).toBeGreaterThan(100);
+      const canvas = await page.evaluate(() => {
+        const c = document.querySelector('[data-testid="workspace-canvas"]') as HTMLCanvasElement;
+        return { width: c.width, height: c.height };
+      });
+      exports.push({ label, sourceDataUrl, bytes, canvas });
+    }
+
+    // The backing store is the document size at any viewport, so a difference below is geometry
+    // and not a differently-sized document being encoded.
+    for (const { label, canvas } of exports) {
+      expect(canvas, `${label}: the backing store is the document size at any viewport`).toEqual({
+        width: 800,
+        height: 600,
+      });
+    }
+
+    // The property, on the export.
+    const [reference, ...rest] = exports;
+    for (const { label, bytes } of rest) {
+      expect(
+        bytes.equals(reference.bytes),
+        `${label}: the exported PNG must be byte-identical to ${reference.label}. A difference here is ` +
+          `layout-dependent geometry: the line is specified in document space, so the document point it marks ` +
+          `cannot depend on the canvas box. If the constants are on the pixel grid the exported anti-aliasing ` +
+          `in the round caps splits with viewport width, and a height-only sweep cannot see it.`
+      ).toBe(true);
+    }
+
+    // And, free, on the drawing: localises the same failure to before the encoder.
+    for (const { label, sourceDataUrl } of rest) {
+      expect(sourceDataUrl, `${label}: the same document line must render identically on the canvas`).toBe(
+        reference.sourceDataUrl
+      );
+    }
+
+    // Why only one sidebar state below `lg`. If the toggle were ever rendered in the tablet band
+    // the matrix above would silently stop covering a rail layout it claims to, and the reason
+    // it is covered above `lg` would stop being true.
+    await page.setViewportSize({ width: LAYOUT_WIDTHS[0], height: 720 });
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('toolbar-layout-toggle')).toBeHidden();
+    await expect(page.locator('#right-panel')).toBeHidden();
+    await page.setViewportSize({ width: LAYOUT_WIDTHS[LAYOUT_WIDTHS.length - 1], height: 720 });
+    await expect(page.getByTestId('toolbar-layout-toggle')).toBeVisible();
+    await expect(page.locator('#right-panel')).toBeVisible();
   });
 
   test('ICO export matches the source canvas', async ({ page }, testInfo) => {

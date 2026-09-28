@@ -275,6 +275,42 @@ with `npm run test:e2e:clean`.
 `.gitattributes` marks `visual-regression.spec.ts-snapshots/**` as `binary` so the
 committed pixels can never be rewritten by line-ending normalisation.
 
+### The export test line is in document space, and it must stay off the pixel grid
+
+Two things about `EXPORT_LINE_START` / `EXPORT_LINE_END` in `e2e/export/helpers.ts`
+are load-bearing and neither is obvious from the constants themselves.
+
+**The line is specified in DOCUMENT space.** `documentToCanvasOffset`
+(`canvas-helpers.ts`) mirrors the app's own contain-fit from
+`src/hooks/usePointerPosition.ts`, and `setupExportTest` maps the document point into
+whatever canvas box the shell produced. A canvas-relative offset would make the export a
+function of the window, which is what the baselines used to record — see the `e2087bf` /
+`e8f17ba` history.
+
+**The coordinates must be clear of the integer document pixel grid, and that is enforced.**
+`documentStrokeBoundaryMargin` returns the smallest distance from any stroke boundary to
+an integer document pixel, and `MIN_STROKE_BOUNDARY_MARGIN_DOC_PX` is the floor. The
+reason is specific: the pen strokes with a ROUND cap, a boundary that lands on an integer
+pixel is a Skia anti-aliasing rounding tie, and the app's `getLocalCoords` is bare
+float64 — so the sign of a sub-pixel error decides an 8-bit coverage value. The only error
+in the chain is the transport's, because a CDP `pointermove` carries `Math.fround(sent)`:
+measured at 4.1e-5 document px of achieved-coordinate error over viewport widths
+768-1920, and it varies with `offsetX` and `scale`, i.e. with the frame.
+
+So the two failure shapes to know about:
+
+- **Do not round the constants.** `123.203285` → `123` puts both cap extremes exactly on
+  the grid. Measured: the export then splits into 2+ distinct byte-strings across viewport
+  widths and the suite is still green at 1280, because the split is periodic in WIDTH.
+- **Do not assume a height sweep would catch it.** The right panel's width — and therefore
+  the canvas box — is a function of width alone, so every height agreed at a fixed width.
+  `the export is independent of the shell layout` sweeps widths across the `lg` breakpoint
+  (1024px, `src/index.scss:38`) at two heights and in both sidebar states, and compares the
+  **exported PNG bytes** with `Buffer.equals`. PNG rather than a comparison of
+  `sourceDataUrl`, because the property is about the export and PNG is the only lossless
+  format that never leaves the browser — TIFF, GIF and AVIF lazily `import()` `utif`,
+  `gifenc` and `@jsquash/avif`.
+
 ## Current status
 
 Nothing fails on the default headless run, and that is stable across repeated full

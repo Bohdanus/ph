@@ -105,6 +105,100 @@ export function canvasOffsetToDocument(
   return { x: (canvasX - offsetX) / scale, y: (canvasY - offsetY) / scale };
 }
 
+/**
+ * The Draw tool's stroke width, in document pixels.
+ *
+ * Sourced from `src/tools/settings.ts:25` — `savedDrawPerPen.pen = { alpha: 0.9, lineWidth: 10 }`
+ * — which `defaultSettings.draw` (line 56) spreads, so the Draw tool's pen preset strokes at
+ * 10. It is written out here rather than imported because `vitest.e2e.config.ts` records a
+ * deliberate boundary: "nothing under `e2e/` imports app source. The e2e suite drives the
+ * real application through a browser, so it must not reach into `src/`." Reaching in for one
+ * number would break that rule and pull the app's module graph into every e2e helper unit
+ * test.
+ *
+ * Two things keep the copy honest, and neither is this comment: the docblock on
+ * `documentStrokeBoundaryMargin` states where the number is used, and
+ * `document-mapping.unit.test.ts` asserts it is 10 and that the margin is computed from it — so
+ * the copy cannot drift from what the rule is measured against without a failing unit test. A
+ * pixel-thickness assertion in the browser would additionally catch a change to the app's own
+ * preset, at the cost of a threshold that is itself not robust for an odd width (a stroke of
+ * odd width centred between two rows has one fewer fully-covered row than it has pixels), so
+ * it is not shipped.
+ */
+export const DRAW_TOOL_STROKE_WIDTH = 10;
+
+/**
+ * Smallest acceptable distance from a stroke boundary to an integer document pixel.
+ *
+ * WHY A NUMBER AND NOT A RULE. A stroke rasterised into the document canvas has boundaries at
+ * its two endpoints and at `lineWidth/2` beyond each of them in every direction; the pen is
+ * `moveTo` + `bezierSmoothedLine` + `stroke` with a ROUND cap (`src/tools/draw.ts:56`), and
+ * the layer is composited at float x/y (`src/contexts/layer-renderer.ts:81`). A boundary that
+ * lands exactly on an integer document pixel therefore sits on a Skia anti-aliasing rounding
+ * tie, and the SIGN of a sub-pixel error decides an 8-bit coverage value.
+ *
+ * WHY THAT MATTERS FOR A LAYOUT-INDEPENDENT ORACLE. The app never rounds: `getLocalCoords`
+ * is bare float64 arithmetic (`src/hooks/usePointerPosition.ts:183`). The only quantisation
+ * is upstream of it, in the transport. Measured on this host's Chrome: a `pointermove` from
+ * `Input.dispatchMouseEvent` carries `Math.fround(sent)` and nothing more, so the delivered
+ * `clientX` differs from the sent one by up to half a float32 ulp. Over viewport widths
+ * 768-1920 and heights 560/720, the resulting error in the ACHIEVED DOCUMENT coordinate of
+ * `EXPORT_LINE_START` measured at most 4.1e-5 doc px, and it VARIES with `offsetX` and
+ * `scale` — that is, with the frame, which is the whole problem.
+ *
+ * (Only the `pointermove` is float32. The `mousemove` Blink synthesises alongside it carries
+ * INTEGER coordinates — 400.75 arrives as 400 — but the app listens to pointer events, so
+ * that second, far larger quantisation never reaches the stroke.)
+ *
+ * THE THRESHOLD, and why it is 0.05 rather than a round 0.1 or 0.2. It is set from the
+ * measured stability boundary, not from taste: sweeping both endpoints across viewport widths
+ * 1024-1140 step 4 (plus 1280/1366/1600/1920) x both sidebar states, a boundary margin of 0
+ * doc px — which is what "tidy 123.203285 to 123" produces — splits the export into 2
+ * distinct byte-strings, and the split is periodic in viewport WIDTH, so a height-only test
+ * cannot see it. A margin of 0.02 doc px is 97x the measured 4.1e-5 transport error; 0.05 is
+ * what the sweep found stable with headroom over the largest margin it could still split at,
+ * and it sits 4x below the shipped constants' own 0.203285 so the invariant has room to move
+ * before it starts biting.
+ *
+ * WHAT BREAKS IF IT IS IGNORED. `EXPORT_LINE_START`/`EXPORT_LINE_END` are six-decimal magic
+ * numbers whose only recorded property is the round trip through `documentToCanvasOffset`.
+ * Nothing states that they must be clear of the pixel grid, so rounding them to integers
+ * reintroduces a layout-dependent oracle that stays green at 1280 wide and is wrong at 1024.
+ */
+export const MIN_STROKE_BOUNDARY_MARGIN_DOC_PX = 0.05;
+
+/**
+ * Distance from the nearest stroke boundary to an integer document pixel.
+ *
+ * A stroke from `start` to `end` with a round cap and width `lineWidth` reaches `lineWidth/2`
+ * beyond each endpoint in every direction, so its extremes are the eight coordinates below.
+ * (For a horizontal stroke these are the two cap centres on x and the two long edges on y; the
+ * endpoint form is also the conservative answer for a diagonal one.)
+ *
+ * Returns 0 when a boundary sits exactly on the grid — the AA-tie case — and a larger value
+ * the further every boundary is from an integer. Pure and browser-free by design: it is the
+ * rule `EXPORT_LINE_START`/`EXPORT_LINE_END` have to satisfy, and it must be checkable
+ * without a browser so the check runs in `npm run test:e2e:unit` and in `tsc -b`.
+ */
+export function documentStrokeBoundaryMargin(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  lineWidth: number
+): number {
+  const half = lineWidth / 2;
+  const offGrid = (value: number) => Math.abs(value - Math.round(value));
+  return Math.min(
+    offGrid(start.x - half),
+    offGrid(start.x + half),
+    offGrid(end.x - half),
+    offGrid(end.x + half),
+    offGrid(start.y - half),
+    offGrid(start.y + half),
+    offGrid(end.y - half),
+    offGrid(end.y + half)
+  );
+}
+
 export const CANVAS_REDRAW_TIMEOUT_MS = 10_000;
 export const CANVAS_REDRAW_POLL_INTERVAL_MS = 100;
 

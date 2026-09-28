@@ -2,7 +2,7 @@ import { type Download, expect, type Page, type TestInfo } from '@playwright/tes
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { documentToCanvasOffset, drawLine, getWorkspaceCanvas, waitForCanvasRedraw } from '../helpers/canvas-helpers';
-import { clickToolButton } from '../helpers/toolbar-helpers';
+import { clickToolButton, toggleToolbarLayout } from '../helpers/toolbar-helpers';
 
 export interface ExportFormat {
   label: string;
@@ -101,9 +101,25 @@ export function mimeType(extension: string | null | undefined): string {
 export const EXPORT_LINE_START = { x: 123.203285, y: 57.700205 };
 export const EXPORT_LINE_END = { x: 287.474333, y: 57.700205 };
 
+/**
+ * How the left toolbar's layout is set before the line is drawn.
+ *
+ * The toggle is a desktop-only control: `SidebarLeft` renders it behind `!isTablet`, so it
+ * does not exist below the `lg` breakpoint (1024px) and `toggled` is only reachable above it.
+ * The layout-independence test relies on that — it applies `toggled` only at widths where the
+ * control is present, and asserts its absence below `lg` rather than silently skipping.
+ */
+export type ToolbarLayout = 'default' | 'toggled';
+
+export interface SetupExportTestOptions {
+  /** Which left-toolbar layout to draw in. Defaults to `default`. */
+  toolbarLayout?: ToolbarLayout;
+}
+
 export async function setupExportTest(
   page: Page,
-  testInfo: TestInfo
+  testInfo: TestInfo,
+  options: SetupExportTestOptions = {}
 ): Promise<{
   box: { x: number; y: number; width: number; height: number };
   sourceDataUrl: string;
@@ -116,6 +132,15 @@ export async function setupExportTest(
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   const canvas = getWorkspaceCanvas(page);
   await expect(canvas).toBeVisible();
+
+  // BEFORE the box is read. The toggle restyles the left rail, which resizes the grid area the
+  // canvas fills, so a box measured before it would map the document line into a canvas that no
+  // longer exists — and the mapping would be wrong by the rail's width rather than by a
+  // rounding, which is exactly the class of error this helper exists to remove.
+  if (options.toolbarLayout === 'toggled') {
+    await toggleToolbarLayout(page);
+  }
+
   const box = await canvas.boundingBox();
   if (!box) throw new Error('Canvas not found');
 
