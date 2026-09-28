@@ -45,6 +45,20 @@ export type DrawToolArgs = {
   toolName: 'draw';
 };
 
+/**
+ * The paint tools, re-exported from `./brush.ts`, which is where the union is DECLARED.
+ *
+ * `color-replacement` used to be a member of that union and is not any more: it is not a paint,
+ * it is a substitution, and the two cannot share a processor or a settings shape. The old entry
+ * made that visible in the worst place — `PaintToolArgs` carried a `penType` the Color
+ * Replacement processor forced to `'spray'` and ignored every other control, so Tolerance and
+ * Limits had nowhere to live. Its own args live in `src/tools/colorReplacement.ts`.
+ *
+ * The narrowing is deliberately NOT a second declaration here. `brush.ts` owns the union, and
+ * redeclaring it in this file would leave two types with one name and different members — the
+ * exact class of bug the removal is fixing, re-created silently and one file over. The edit is
+ * one member of `src/tools/brush.ts:9`.
+ */
 export type { PaintToolName };
 
 /**

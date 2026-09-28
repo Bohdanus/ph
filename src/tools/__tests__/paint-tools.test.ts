@@ -14,7 +14,12 @@ import type { FigureType } from '../shape.ts';
 import type { Ctx2D, Point } from '../../contexts/general-types.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 
-const paintToolNames: readonly PaintToolName[] = ['brush', 'pencil', 'color-replacement'];
+/**
+ * The two tools that stamp the foreground colour. `color-replacement` is NOT in this family and
+ * is deliberately absent: it substitutes a colour, which is a different operation with a different
+ * args type (`src/tools/colorReplacement.ts`) and a different test file.
+ */
+const paintToolNames: readonly PaintToolName[] = ['brush', 'pencil'];
 
 /** Every member of the narrowed `FigureType` union, in toolbar order. */
 const figureTypes: readonly FigureType[] = ['rectangle', 'oval', 'line', 'triangle', 'polygon'];
@@ -85,7 +90,7 @@ const runProcessor = (toolName: keyof typeof toolProcessors, args: unknown) => {
 };
 
 describe('paint tools', () => {
-  it('exposes real draw-like behavior for brush, pencil, and color replacement tools', () => {
+  it('exposes real draw-like behavior for brush and pencil', () => {
     for (const toolName of paintToolNames) {
       const args = paintToolArgs(toolName);
 
@@ -217,39 +222,17 @@ describe('paint tool rasterization', () => {
   it.each(paintToolNames)('strokes %s with the pen renderer, whatever penType the args carry', (toolName) => {
     const canvas = runProcessor(toolName, { ...paintToolArgs(toolName), penType: 'spray', points: stroke });
 
-    // brush/pencil force `pen`; color-replacement forces `spray`. Only the latter paints
-    // a radial gradient per point instead of stroking a smoothed path.
-    if (toolName === 'color-replacement') {
-      expect(canvas.ctx.stroke).not.toHaveBeenCalled();
-      expect(canvas.ctx.createRadialGradient).toHaveBeenCalledTimes(stroke.length);
-      return;
-    }
-
+    // Both force `pen`, so a `spray` the args carry is overridden rather than honoured.
+    expect(canvas.ctx.stroke).toHaveBeenCalledTimes(1);
     expect(canvas.ctx.lineCap).toBe('round');
     expect(canvas.ctx.beginPath).toHaveBeenCalledTimes(1);
     expect(canvas.ctx.moveTo).toHaveBeenCalledWith(stroke[0].x, stroke[0].y);
-    expect(canvas.ctx.stroke).toHaveBeenCalledTimes(1);
   });
 
   it('applies the default alpha and line width of each paint tool to its context', () => {
     for (const toolName of paintToolNames) {
       const canvas = runProcessor(toolName, paintToolArgsWithPoints(toolName, stroke));
       const defaults = defaultSettings[toolName];
-
-      if (toolName === 'color-replacement') {
-        // `setupDrawCtx` bails out early for the forced spray pen, so the pen-only
-        // assignments never happen. Assert the absence of the seeded values rather than
-        // the mock's starting numbers, which would pass for any input.
-        expect(canvas.ctx.lineWidth, toolName).not.toBe(defaults.lineWidth);
-        expect(canvas.ctx.globalAlpha, toolName).not.toBe(defaults.alpha);
-        expect(canvas.ctx.strokeStyle, toolName).not.toBe(defaults.color);
-        // The spray path spends half the lineWidth as the radial-gradient radius, because the
-        // Size slider is a diameter on every other pen and spending all of it painted a blob
-        // twice the requested size that also overflowed the layer crop.
-        const gradientCall = (canvas.ctx.createRadialGradient.mock.calls as unknown as number[][])[0];
-        expect(gradientCall[5], toolName).toBe(defaults.lineWidth / 2);
-        continue;
-      }
 
       expect(canvas.ctx.lineWidth, toolName).toBe(defaults.lineWidth);
       expect(canvas.ctx.globalAlpha, toolName).toBe(defaults.alpha);
@@ -478,8 +461,14 @@ describe('paint tool stroke smoothing', () => {
     { x: 5, y: 5 },
   ];
 
-  /** `brush` and `pencil` force the pen renderer; `color-replacement` forces spray (src/tools/toolProcessors.ts:165-193). */
-  const penToolNames = paintToolNames.filter((name) => name !== 'color-replacement');
+  /**
+   * Both paint tools force the pen renderer, so this suite has a single family. It was
+   * `paintToolNames.filter((name) => name !== 'color-replacement')` while the Color Replacement
+   * was still a member of `PaintToolName` and forced the spray pen instead; the narrowing in
+   * `src/tools/brush.ts` made the filter the identity, and a filter that filters nothing is a
+   * lie about what this suite covers.
+   */
+  const penToolNames = paintToolNames;
 
   const smoothingArgs = (toolName: PaintToolName, points: Point[], smoothing: number): PaintToolArgs => ({
     ...paintToolArgsWithPoints(toolName, points),
@@ -536,20 +525,6 @@ describe('paint tool stroke smoothing', () => {
     calls.flat().forEach((value, axis) => expect(value, `axis ${axis}`).toBeCloseTo(expected[axis]));
   };
 
-  /** Every radial gradient the spray renderer issued, as its `(x, y)` centre (src/util/draw.ts:127). */
-  const sprayCentres = (ctx: MockCtx): number[][] =>
-    sixArgCalls(ctx.createRadialGradient).map((call) => [call[0], call[1]]);
-
-  const expectSprayPath = (ctx: MockCtx, path: Point[]) => {
-    const centres = sprayCentres(ctx);
-
-    expect(centres).toHaveLength(path.length);
-    centres.forEach(([x, y], i) => {
-      expect(x, `sample ${i}`).toBeCloseTo(path[i].x);
-      expect(y, `sample ${i}`).toBeCloseTo(path[i].y);
-    });
-  };
-
   /** A comparable record of everything a stroke drew, so two runs compare call-for-call instead of field-by-field. */
   const drawTrace = (ctx: MockCtx) => ({
     beginPath: ctx.beginPath.mock.calls,
@@ -570,15 +545,6 @@ describe('paint tool stroke smoothing', () => {
       // Smoothing filters the path in point space, so it cannot change how many
       // paths a stroke opens or how many samples the renderer walks. A stamp loop
       // would raise both counts and break the committed export baselines.
-      if (toolName === 'color-replacement') {
-        // The spray renderer paints one radial gradient per sample instead of
-        // stroking a path, and the filter maps 1:1 onto the sample list.
-        expect(canvas.ctx.createRadialGradient, label).toHaveBeenCalledTimes(curvedStroke.length);
-        expect(canvas.ctx.arc, label).toHaveBeenCalledTimes(curvedStroke.length);
-        expect(canvas.ctx.stroke, label).not.toHaveBeenCalled();
-        continue;
-      }
-
       expect(canvas.ctx.beginPath, label).toHaveBeenCalledTimes(1);
       expect(canvas.ctx.moveTo, label).toHaveBeenCalledTimes(1);
       expect(canvas.ctx.stroke, label).toHaveBeenCalledTimes(1);
@@ -595,18 +561,6 @@ describe('paint tool stroke smoothing', () => {
       // (src/tools/brush.ts:105), so the path still begins under the pointer. In
       // `curvedStroke` that head sits far off its neighbours' midpoint, so a filter
       // that smoothed it would move the stroke's start rather than blur it.
-      if (toolName === 'color-replacement') {
-        expect(sprayCentres(canvas.ctx)[0], label).toEqual([curvedStroke[0].x, curvedStroke[0].y]);
-        expect(canvas.ctx.arc, label).toHaveBeenCalledWith(
-          curvedStroke[0].x,
-          curvedStroke[0].y,
-          expect.any(Number),
-          0,
-          Math.PI * 2
-        );
-        continue;
-      }
-
       expect(canvas.ctx.moveTo, label).toHaveBeenCalledTimes(1);
       expect(canvas.ctx.moveTo, label).toHaveBeenCalledWith(curvedStroke[0].x, curvedStroke[0].y);
     }
@@ -708,11 +662,7 @@ describe('paint tool stroke smoothing', () => {
       const atZero = runProcessor(toolName, smoothingArgs(toolName, curvedStroke, 0));
       const expected = pulledPath(curvedStroke, defaultSettings[toolName].smoothing);
 
-      if (toolName === 'color-replacement') {
-        expectSprayPath(seeded.ctx, expected);
-      } else {
-        expectBezierPath(seeded.ctx, expected);
-      }
+      expectBezierPath(seeded.ctx, expected);
 
       // The seeded level is not 0, so the default render must differ from an
       // explicitly unsmoothed one.
@@ -721,23 +671,16 @@ describe('paint tool stroke smoothing', () => {
     }
   });
 
-  it('gives the color replacement spray renderer the smoothed path, not the raw samples', () => {
-    const target = midpointedPath(curvedStroke);
-    const atFull = runProcessor('color-replacement', smoothingArgs('color-replacement', curvedStroke, 100));
-    const atZero = runProcessor('color-replacement', smoothingArgs('color-replacement', curvedStroke, 0));
-
-    // `color-replacement` forces the spray pen (src/tools/toolProcessors.ts:186-193),
-    // which walks the point list rather than a bezier path, so the smoothed samples
-    // have to reach the gradient and the arc, not just the pen renderer.
-    expectSprayPath(atFull.ctx, target);
-    expectSprayPath(atZero.ctx, curvedStroke);
-
-    // The interior samples are the only ones the two runs disagree on: an endpoint pin
-    // would still pass every head/tail assertion above.
-    expect(sprayCentres(atFull.ctx)[1]).toEqual([target[1].x, target[1].y]);
-    expect(sprayCentres(atFull.ctx)[1]).not.toEqual([curvedStroke[1].x, curvedStroke[1].y]);
-    expect(atFull.ctx.arc).toHaveBeenCalledWith(target[1].x, target[1].y, expect.any(Number), 0, Math.PI * 2);
-  });
+  /**
+   * `gives the color replacement spray renderer the smoothed path, not the raw samples` used to
+   * sit here. Its subject does not exist: the Color Replacement has left `PaintToolName`, so it
+   * reaches neither `drawSpray` nor the paint bar's path filter, and `smoothStrokePoints` is not
+   * called anywhere in `src/tools/colorReplacement.ts`. Its own `smoothness` is a different
+   * control — the softening of the brush's coverage rim — and the ground it stood on (a drag
+   * sweeps a segment rather than its endpoints, and the rim softens) is pinned in
+   * `src/tools/__tests__/color-replacement.test.ts` under `createStrokeCoverage` and
+   * `createColorReplacementPlan — Smoothness and Size`.
+   */
 
   it('renders the legacy draw tool identically whether smoothing is absent or zero', () => {
     const absent = { ...defaultSettings.draw, points: curvedStroke };

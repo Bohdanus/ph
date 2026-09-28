@@ -13,6 +13,7 @@ import type { FeatherMagneticLassoToolArgs } from '../tools/featherMagneticLasso
 import type { MagicWandToolArgs } from '../tools/magicWand.ts';
 import type { EraserToolArgs } from '../tools/eraser.ts';
 import type { FillToolArgs } from '../tools/fill.ts';
+import type { ColorReplacementToolArgs } from '../tools/colorReplacement.ts';
 import type { EyedropperToolArgs } from '../tools/eyedropper.ts';
 import type { EllipticalSelectionToolArgs } from '../tools/ellipticalSelection.ts';
 import type { QuickSelectionToolArgs } from '../tools/quickSelection.ts';
@@ -49,7 +50,7 @@ export type ToolArgsByName = {
   'clone-stamp': CloneStampToolArgs;
   brush: PaintToolArgs;
   pencil: PaintToolArgs;
-  'color-replacement': PaintToolArgs;
+  'color-replacement': ColorReplacementToolArgs;
   eraser: EraserToolArgs;
   'magic-eraser': FillToolArgs;
   'paint-bucket': FillToolArgs;
