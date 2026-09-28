@@ -1816,31 +1816,59 @@ writes it. There is no opacity control in the desktop shell, and the mobile laye
 drawer had one that was removed rather than shipped broken.
 
 **Why the obvious implementation is wrong.** A slider would reach for
-`updateLayer(id, { opacity }, TOOL_ACTION)`, because that is what every other layer
-property uses. It fails twice, silently. `history-replay.ts:146` reads
-`if (!layer || !toolArgs?.toolName) continue;`, and a property patch carries no
-`toolName` in its args — so replay skips the entry and the document after undo
-diverges from the document before. `getHistoryItemTitle` (`src/contexts/useHistory.ts:23`)
-returns `(args as ToolArgs).toolName` for a `TOOL_ACTION`, which is `undefined` here,
-so the history panel also grows an untitled row per step. A slider drag writes one of
-each per step, and a user who drags the handle to 50% leaves 100 untitled,
-unreplayable entries in the timeline.
+`updateLayer(id, { opacity }, TOOL_ACTION)`, because that is the signature every
+other layer property write uses (`src/contexts/useLayer.ts:431`). It fails three
+times, all silently. `updateLayer` only plans a durable append when
+`isSetLayerPropertiesAction(actionName)` is true, and `TOOL_ACTION` is not in that
+whitelist, so the entry never gets a durable translation. `history-replay.ts:146`
+reads `if (!layer || !toolArgs?.toolName) continue;`, and a property patch carries
+no `toolName` in its args, so legacy replay skips it and the document after an undo
+diverges from the document before. And `getHistoryItemTitle`
+(`src/contexts/useHistory.ts:23`) returns `(args as ToolArgs).toolName` for a
+`TOOL_ACTION`, which is `undefined` here, so the history panel grows an untitled row
+per step. A slider drag writes one of each per step: dragging the handle to 50% would
+leave ~100 untitled, unreplayable entries in the timeline.
 
-**Fix — needs a real action, not a patch.** Opacity is a layer property, not a tool
-edit, so it wants a `SET_LAYER_OPACITY_ACTION` of its own: a title in
-`getHistoryItemTitle`, and an arm in `history-replay.ts` next to the existing
-`SHOW_LAYER_ACTION`/`HIDE_LAYER_ACTION` pair at `:112` that writes
-`{ ...layer, opacity }` the same way those two write `visible`. Those three lines are
-the whole change. Do not reach for `TOOL_ACTION`, and do not reuse
-`UPDATE_LAYERS` — item 13 records that it is an unguarded escape hatch.
+**Fix — a real action, added to the existing layer-property path.** The rename /
+show / hide writer already reaches the append boundary, and it does so through a
+single canonical derivation that both conversion and the live writer share. Opacity
+belongs there, not in a hand-rolled arm, and not in `TOOL_ACTION`. Five places:
 
-**Files.** `src/contexts/tool-types.ts:93`, `src/contexts/history-replay.ts:112,146`,
-`src/contexts/useHistory.ts:23`, `src/contexts/psd-utils.ts:159,229`
+- `src/util/constants.ts` — a `SET_LAYER_OPACITY_ACTION` next to
+  `SHOW_LAYER_ACTION`/`HIDE_LAYER_ACTION`/`RENAME_LAYER_ACTION`.
+- `src/contexts/history-model.ts:80` — add `opacity` to
+  `DurableLayerPropertyPatch`. The type is `Readonly<…>`, which is deliberate: it is
+  what stops a writer smuggling an arbitrary `Partial<Layer>` through the append
+  boundary as a patch the validator then has to re-derive.
+- `src/contexts/history-adapter.ts:331` and `:340` — add the action to
+  `isSetLayerPropertiesAction` and give `deriveSetLayerPropertiesEntry` its branch.
+  Adding it to the first without the second makes `updateLayer` plan an append that
+  resolves to no durable entry, and it silently falls back to the raw patch.
+- `src/contexts/history-replay.ts:112-121` — the legacy arm beside the
+  show/hide and rename arms, writing `{ ...layer, opacity }` the way those write
+  `visible` and `name`. This is the arm that made the `TOOL_ACTION` route wrong, and
+  without it undo/redo leaves the document inconsistent.
+- `src/contexts/useHistory.ts:15` — a real title. Not a correctness fix: the
+  `return actionName` fallback at `:28` already yields a non-empty string for a
+  purpose-built action, so the `undefined` above is specific to `TOOL_ACTION`. It
+  matters because `SHOW_LAYER_ACTION` and friends already render their raw constant
+  name in the History panel, and a fourth raw constant is a worse answer than a
+  fifth proper title.
+
+`updateLayer` itself needs no change: given a whitelisted action it already replaces
+the caller's patch with the canonical one from the planned durable entry.
+
+Do not reuse `UPDATE_LAYERS` — item 13 records that it is an unguarded escape hatch.
+
+**Files.** `src/contexts/tool-types.ts:93`, `src/contexts/useLayer.ts:431`,
+`src/contexts/history-model.ts:80`, `src/contexts/history-adapter.ts:330,342`,
+`src/contexts/history-replay.ts:112,146`, `src/contexts/useHistory.ts:15,23`,
+`src/contexts/psd-utils.ts:159,229`
 
 ## 57. The mobile shell has no colour control at all
 
 **Problem.** The desktop rail carries the foreground and background swatches, a swap
-and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:365-408`).
+and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:380-425`).
 The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
 no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
 use whatever colour the document happened to be created with, and the foreground colour
@@ -1860,6 +1888,5 @@ decision. Note the swatches are 32px in the desktop rail; on a touch surface the
 the same 44px floor as the other mobile controls, which is why they should be built
 for mobile rather than copied across.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:365-408`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:380-425`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
-
