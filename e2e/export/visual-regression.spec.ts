@@ -269,7 +269,23 @@ test.describe('Export visual regression', () => {
       expect(helperFit.offsetX, 'the helper and the app agree on the horizontal letterbox').toBe(published.offsetX);
       expect(helperFit.offsetY, 'the helper and the app agree on the vertical letterbox').toBe(published.offsetY);
 
-      // And the round trip that used to be tautological, now with the app's own numbers on
+      // ------------------------------------------------------------------------------------
+      // WHAT IS AND IS NOT PROVEN HERE, because a review found this leg cannot fail and the
+      // commit that added it claimed otherwise.
+      //
+      // The three `toBe` assertions above are the load-bearing ones. They put the app's
+      // PUBLISHED numbers on one side and the helper's independently computed `containFit`
+      // on the other, so a drift between the two is a failure. Setting `offsetX` to 0 in
+      // `containFit` — ignoring the horizontal letterbox — turns them red.
+      //
+      // The round trip below is an IDENTITY and cannot fail. It builds a client coordinate
+      // from the app's own scale and offsets and then inverts that same arithmetic, so
+      // loosening its precision from 9 digits to 0 leaves it green. It is kept because it
+      // documents the mapping and would catch a sign error or a swapped axis, but it is NOT
+      // evidence that the helper agrees with the app, and nothing else here should be
+      // described that way. The agreement is the `toBe` trio; this is arithmetic.
+      // ------------------------------------------------------------------------------------
+      // The round trip that used to be tautological, now with the app's own numbers on
       // one side: a document point goes out as a client coordinate and the app's `scale` and
       // `offsetX`/`offsetY` bring it back to the document point it started as.
       //

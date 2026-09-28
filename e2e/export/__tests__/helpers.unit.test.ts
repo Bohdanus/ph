@@ -23,6 +23,9 @@ import {
   verifyPsdInPhotopea,
   type ExportFormat,
   type PixelComparisonResult,
+  GEOMETRY_TOLERANCE_HORIZONTAL,
+  GEOMETRY_TOLERANCE_SPAN,
+  GEOMETRY_TOLERANCE_VERTICAL,
 } from '../helpers';
 import {
   CANVAS_REDRAW_CLIP,
@@ -633,6 +636,36 @@ describe('Export Helpers', () => {
 
     it('falls back to application/octet-stream for a non-string at runtime', () => {
       expect(mimeType(123 as never)).toBe(OCTET_STREAM_MIME);
+    });
+  });
+
+  describe('the export fixture geometry budgets', () => {
+    /**
+     * A RATCHET, not a transcription. These three numbers are the fixture's whole notion of
+     * "close enough", and a review found that raising the horizontal one from 0.25 to 1.4 and
+     * the vertical from 0.05 to 5 left all 888 e2e unit tests GREEN — only a browser run,
+     * comparing decoded pixels, could tell, and nothing in CI compared them. A budget that
+     * nothing can object to is not a budget.
+     *
+     * Asserting the exact values would be a transcription, and the wrong instinct: an agent
+     * who widens a tolerance on purpose would widen it in the test too and never see the
+     * moment. Asserting an UPPER bound makes the loosening the thing that fails. These may
+     * be tightened freely — that is the direction that makes the fixture stricter — and a
+     * widening has to come through this file as a conscious edit with a reason.
+     */
+    it('are no looser than the measured error, and cannot be widened silently', () => {
+      // 0.271 document px is the measured error on the span (see the constants' JSDoc), so a
+      // span budget of 1 is already under 4x it. Horizontal 0.25 and vertical 0.05 are the
+      // per-edge budgets and have no headroom to give.
+      expect(GEOMETRY_TOLERANCE_HORIZONTAL).toBeLessThanOrEqual(0.25);
+      expect(GEOMETRY_TOLERANCE_VERTICAL).toBeLessThanOrEqual(0.05);
+      expect(GEOMETRY_TOLERANCE_SPAN).toBeLessThanOrEqual(1);
+
+      // And the three are ordered the way the geometry is: the span is the whole mark, so
+      // its budget is the largest of the three by construction, not by accident. A swap here
+      // would let a mark twice as wrong through on the axis meant to be tightest.
+      expect(GEOMETRY_TOLERANCE_SPAN).toBeGreaterThan(GEOMETRY_TOLERANCE_HORIZONTAL);
+      expect(GEOMETRY_TOLERANCE_HORIZONTAL).toBeGreaterThan(GEOMETRY_TOLERANCE_VERTICAL);
     });
   });
 

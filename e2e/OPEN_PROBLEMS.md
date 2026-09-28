@@ -500,7 +500,7 @@ loudly, which is the better of the two outcomes and is not guaranteed.
 values. Worth knowing before passing a custom clip anywhere in this suite: the two forms
 differ by the box origin and nothing in the types distinguishes them.
 
-## P1 — the document-space oracle was applied to one call site of eighty-three, so a 1px sidebar change still moves most of the suite
+## P1 — the document-space oracle reached a handful of call sites, so most of the suite still moves when the frame does
 
 `e2e/helpers/canvas-helpers.ts:48-51`
 
@@ -511,12 +511,27 @@ longer depends on where the app put the letterbox. That is the right idea and it
 **What does not.** The idea reached exactly one caller. `LINE_START_X`/`LINE_START_Y`/`LINE_END_X`/
 `LINE_END_Y` at `e2e/helpers/canvas-helpers.ts:48-51` are still "relative to the canvas box", and nine
 specs import them: `adjustments`, `color`, `document-dialogs`, `erase-fill-eyedropper`, `example`,
-`file-roundtrip`, `levels`, `paint-tool-pixels`, `select-move`. Beyond those, eighty-three sites
-across the suite write their gesture as `(box|Box|bandBox).(x|y) + <literal>` — six in
-`erase-fill-eyedropper.spec.ts`, six in `layers.spec.ts`, eight in `selection-tools.spec.ts`, four in
-`select-move.spec.ts`, two each in `paint-options.spec.ts` and `pen-types.spec.ts`, and the rest
-scattered. The ICO export path is still canvas-relative as well: `ICON_STROKE` at
-`e2e/export/helpers.ts:479` is a set of box offsets, used at `:508` and `:510`.
+`file-roundtrip`, `levels`, `paint-tool-pixels`, `select-move`. Beyond those, the suite writes its
+gestures as `box.x + <something>` throughout, and **none of them invert the mapping back to document
+space**. Counted, with the counting command, because a number here without one is worse than none
+and an earlier draft of this entry got it wrong twice — once by 7x:
+
+```
+grep -rEo "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e            # 25  canvas-relative LITERALS
+grep -roE "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]*" e2e   # 63  any box-relative offset
+grep -roE "[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]* *\*" e2e      #  0  the fraction form, which is correct
+```
+
+So: 25 gestures add a bare number to the box origin, and 63 add something box-relative. The 63 is
+the larger number because it includes sites like `box.x + LINE_Y`, which reach the same place
+through a named constant rather than a literal — those are the ones the first pattern misses
+entirely, and a count that only looked for literals is how the first draft of this entry said
+"twelve" and the second said "eighty-three". Both were wrong; the zero on the third line is the
+part that matters, because `e2e/viewport-drawing.spec.ts` gestures at `box.x + box.width * 0.25`
+and that is the one form that survives a layout change by construction.
+
+The ICO export path is still canvas-relative as well: `ICON_STROKE` at `e2e/export/helpers.ts:479`
+is a set of box offsets, used at `:508` and `:510`.
 
 **Why it matters, stated as a measurement rather than a worry.** These are not merely fragile, they
 are wrong in a specific direction. A `box.x + 150` gesture is a _window_-relative point: change the
