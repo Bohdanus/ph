@@ -31,7 +31,16 @@ export type DrawToolArgs = {
   toolName: 'draw';
 };
 
-export type PaintToolName = 'brush' | 'pencil' | 'color-replacement';
+/**
+ * The two tools that paint by STAMPING THE FOREGROUND COLOUR.
+ *
+ * `color-replacement` used to be a member of this union and is not any more: it is not a paint, it
+ * is a substitution, and the two cannot share a processor or a settings shape. The old entry made
+ * that visible in the worst place — `PaintToolArgs` carried a `penType` the Color Replacement
+ * processor forced to `'spray'` and ignored every other control, so Tolerance and Limits had
+ * nowhere to live. Its own args live in `src/tools/colorReplacement.ts`.
+ */
+export type PaintToolName = 'brush' | 'pencil';
 
 export type PaintToolArgs = Omit<DrawToolArgs, 'toolName'> & {
   toolName: PaintToolName;

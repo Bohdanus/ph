@@ -12,7 +12,12 @@ import type { FigureType } from '../shape.ts';
 import type { Ctx2D, Point } from '../../contexts/general-types.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 
-const paintToolNames: readonly PaintToolName[] = ['brush', 'pencil', 'color-replacement'];
+/**
+ * The two tools that stamp the foreground colour. `color-replacement` is NOT in this family and
+ * is deliberately absent: it substitutes a colour, which is a different operation with a different
+ * args type (`src/tools/colorReplacement.ts`) and a different test file.
+ */
+const paintToolNames: readonly PaintToolName[] = ['brush', 'pencil'];
 
 /** Every member of the narrowed `FigureType` union, in toolbar order. */
 const figureTypes: readonly FigureType[] = ['rectangle', 'oval', 'line', 'triangle', 'polygon'];
@@ -83,7 +88,7 @@ const runProcessor = (toolName: keyof typeof toolProcessors, args: unknown) => {
 };
 
 describe('paint tools', () => {
-  it('exposes real draw-like behavior for brush, pencil, and color replacement tools', () => {
+  it('exposes real draw-like behavior for brush and pencil', () => {
     for (const toolName of paintToolNames) {
       const args = paintToolArgs(toolName);
 
@@ -215,37 +220,17 @@ describe('paint tool rasterization', () => {
   it.each(paintToolNames)('strokes %s with the pen renderer, whatever penType the args carry', (toolName) => {
     const canvas = runProcessor(toolName, { ...paintToolArgs(toolName), penType: 'spray', points: stroke });
 
-    // brush/pencil force `pen`; color-replacement forces `spray`. Only the latter paints
-    // a radial gradient per point instead of stroking a smoothed path.
-    if (toolName === 'color-replacement') {
-      expect(canvas.ctx.stroke).not.toHaveBeenCalled();
-      expect(canvas.ctx.createRadialGradient).toHaveBeenCalledTimes(stroke.length);
-      return;
-    }
-
+    // Both force `pen`, so a `spray` the args carry is overridden rather than honoured.
+    expect(canvas.ctx.stroke).toHaveBeenCalledTimes(1);
     expect(canvas.ctx.lineCap).toBe('round');
     expect(canvas.ctx.beginPath).toHaveBeenCalledTimes(1);
     expect(canvas.ctx.moveTo).toHaveBeenCalledWith(stroke[0].x, stroke[0].y);
-    expect(canvas.ctx.stroke).toHaveBeenCalledTimes(1);
   });
 
   it('applies the default alpha and line width of each paint tool to its context', () => {
     for (const toolName of paintToolNames) {
       const canvas = runProcessor(toolName, paintToolArgsWithPoints(toolName, stroke));
       const defaults = defaultSettings[toolName];
-
-      if (toolName === 'color-replacement') {
-        // `setupDrawCtx` bails out early for the forced spray pen, so the pen-only
-        // assignments never happen. Assert the absence of the seeded values rather than
-        // the mock's starting numbers, which would pass for any input.
-        expect(canvas.ctx.lineWidth, toolName).not.toBe(defaults.lineWidth);
-        expect(canvas.ctx.globalAlpha, toolName).not.toBe(defaults.alpha);
-        expect(canvas.ctx.strokeStyle, toolName).not.toBe(defaults.color);
-        // The spray path still spends lineWidth as the radial-gradient radius.
-        const gradientCall = (canvas.ctx.createRadialGradient.mock.calls as unknown as number[][])[0];
-        expect(gradientCall[5], toolName).toBe(defaults.lineWidth);
-        continue;
-      }
 
       expect(canvas.ctx.lineWidth, toolName).toBe(defaults.lineWidth);
       expect(canvas.ctx.globalAlpha, toolName).toBe(defaults.alpha);

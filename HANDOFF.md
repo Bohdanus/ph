@@ -1758,3 +1758,39 @@ agent not checked `Main.tsx:53`.
 
 **Files.** `src/tools/toolProcessors.ts:103,237,268`,
 `src/components/Main/Main.tsx:53,177`, `toolbar-mapping.ts:47-71`
+
+---
+
+## 54. The Color Replacement Tool has no drag preview and no `All Layers` sampling
+
+**Problem.** The Color Replacement Tool is now a real substitution tool — click to
+sample, drag to replace, with working `Tolerance`, `Limits`, `Smoothness`, `Size` and
+`Opacity` (`src/tools/colorReplacement.ts`, `src/components/Main/ColorReplacementToolArea.tsx`,
+`src/components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx`) — and two of
+Photoshop's controls are still not there:
+
+1. **No live preview while dragging.** Photoshop repaints the replaced pixels on the
+   overlay as the pointer moves. This tool commits on pointer-up, like the fill tools do.
+2. **`All Layers` sampling renders `disabled`.** Only `Current Layer` is live.
+
+**Why it is not a wiring bug.** The preview needs the full-layer plan — a
+multi-megapixel tolerance scan plus a flood — recomputed on every pointer move, and
+`createColorReplacementPlan` is not cheap. The cheaper overlays are worse than none: a
+brush swath painted regardless of tolerance shows colour over pixels the commit is about
+to leave alone, which is a bigger lie than a tool that commits when you lift. `All
+Layers` needs a composite read of every visible layer honouring each `blendMode`, and
+`commit: 'raster'` writes back to the active layer alone — which is the same missing
+render pipeline as the eyedropper's `Sample All Layers` in item 51.
+
+**Fix.** For `All Layers`, do what item 51 says for the eyedropper: extract the
+layer-iteration walk `drawLayersToCanvas` already performs, read through it, and feed the
+composite to `createColorReplacementPlan` as the match source while still writing the
+result to the active layer. That also unblocks item 51. For the preview, the cached
+source `ImageData` and cached `matchMask` are reusable across a stroke — they depend on
+the layer, the sample and Tolerance, and none of those change mid-drag — so only the
+coverage and the flood are per-move. Gate it on the plan's `changedPixelCount` and skip
+the overlay entirely above some pixel count rather than dropping frames on a large photo.
+
+**Files.** `src/tools/colorReplacement.ts` (`createColorReplacementPlan`),
+`src/components/Main/ColorReplacementToolArea.tsx`,
+`src/components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx:80-95`

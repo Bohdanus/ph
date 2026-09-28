@@ -14,12 +14,8 @@ const CONFIG_KEYS = Object.keys(placeholderToolGroups) as Array<keyof typeof pla
 const PLACEHOLDER_TOOLS = [
   { toolName: 'brush', configKey: 'brush', title: 'Brush Tool', showTodoBadge: false },
   { toolName: 'pencil', configKey: 'pencil', title: 'Pencil Tool', showTodoBadge: false },
-  {
-    toolName: 'color-replacement',
-    configKey: 'color-replacement',
-    title: 'Color Replacement Tool',
-    showTodoBadge: true,
-  },
+  // `color-replacement` was here and is gone: it has a real options bar now, so there is no
+  // placeholder group left for it to be keyed by.
   { toolName: 'pen', configKey: 'pen', title: 'Pen Tool', showTodoBadge: true },
   { toolName: 'freeform-pen', configKey: 'pen', title: 'Freeform Pen Tool', showTodoBadge: true },
   { toolName: 'curvature-pen', configKey: 'pen', title: 'Curvature Pen Tool', showTodoBadge: true },

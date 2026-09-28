@@ -2,6 +2,7 @@ import React from 'react';
 
 import Blur from '../components/ToolbarsRight/Blur/Blur.tsx';
 import Color from '../components/ToolbarsRight/Colors/Color.tsx';
+import ColorReplacement from '../components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx';
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
 import Draw from '../components/ToolbarsRight/Draw/Draw.tsx';
 import Eraser from '../components/ToolbarsRight/Eraser/Eraser.tsx';
@@ -86,7 +87,7 @@ export const toolsMap: ToolsMap = {
   'color-replacement': {
     ...toolProcessors['color-replacement'],
     icon: 'color-replacement',
-    toolboxComponent: placeholderTool('Color Replacement Tool', 'color-replacement'),
+    toolboxComponent: ColorReplacement,
   },
   eraser: { ...toolProcessors.eraser, icon: 'eraser', toolboxComponent: Eraser },
   'magic-eraser': { ...toolProcessors['magic-eraser'], icon: 'magic-eraser', toolboxComponent: MagicEraser },

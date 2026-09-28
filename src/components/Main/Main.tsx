@@ -12,6 +12,7 @@ import { FeatherMagneticLassoToolArea } from './FeatherMagneticLassoToolArea.tsx
 import { MagicWandToolArea } from './MagicWandToolArea.tsx';
 import { EraserToolArea } from './EraserToolArea.tsx';
 import { FillToolArea } from './FillToolArea.tsx';
+import { ColorReplacementToolArea } from './ColorReplacementToolArea.tsx';
 import { EyedropperToolArea } from './EyedropperToolArea.tsx';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
@@ -55,8 +56,14 @@ const Main = () => {
     interactionMode = 'reposition';
   } else if (toolName === 'crop') {
     interactionMode = 'crop';
-  } else if (toolName === 'draw' || toolName === 'brush' || toolName === 'pencil' || toolName === 'color-replacement') {
+  } else if (toolName === 'draw' || toolName === 'brush' || toolName === 'pencil') {
     interactionMode = 'draw';
+  } else if (toolName === 'color-replacement') {
+    // Its own area, not `draw`. A Color Replacement is a click-to-sample followed by a drag, and
+    // `DrawToolArea` has no step for the first half of that: it would stroke the sampling click as
+    // if it were paint. It is also an ACTIVE-layer edit like the eraser, committing through
+    // `updateLayerByTool` rather than creating a layer.
+    interactionMode = 'color-replacement';
   } else if (
     toolName === 'shape' ||
     toolName === 'rectangle' ||
@@ -158,6 +165,7 @@ const Main = () => {
       | typeof RectangularSelectionToolArea
       | typeof EraserToolArea
       | typeof FillToolArea
+      | typeof ColorReplacementToolArea
       | typeof EyedropperToolArea;
 
     let EventHandler: ToolAreaComponent = DummyToolArea;
@@ -173,6 +181,7 @@ const Main = () => {
       else if (interactionMode === 'rectangular-selection') EventHandler = RectangularSelectionToolArea;
       else if (interactionMode === 'eraser') EventHandler = EraserToolArea;
       else if (interactionMode === 'fill') EventHandler = FillToolArea;
+      else if (interactionMode === 'color-replacement') EventHandler = ColorReplacementToolArea;
       else if (interactionMode === 'eyedropper') EventHandler = EyedropperToolArea;
       else EventHandler = DummyToolArea;
     }

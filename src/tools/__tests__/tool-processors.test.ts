@@ -369,19 +369,6 @@ describe('paint tool raster processors', () => {
     }
   });
 
-  it('color replacement always rasterizes with the spray pen and its own alpha ramp', () => {
-    const recorded = run('color-replacement', { penType: 'pen', lineWidth: 6, points: stroke.slice(0, 1) });
-
-    // The penType argument is forced to `spray`, so `setupDrawCtx` bails out and the
-    // pen-only lineWidth/globalAlpha assignments never happen.
-    expect(recorded.stroke).not.toHaveBeenCalled();
-    expect(recorded.lineWidth).toBe(1);
-    const gradientCall = (recorded.createRadialGradient.mock.calls as unknown as number[][])[0];
-    expect(gradientCall[5]).toBe(6);
-    expect(gradientCall[0]).toBe(stroke[0].x);
-    expect(recorded.arc).toHaveBeenCalledTimes(1);
-  });
-
   it('honours the global alpha from paint defaults', () => {
     const recorded = run('brush', { alpha: 0.25, points: stroke });
 
@@ -432,10 +419,11 @@ describe('toolsMap wiring', () => {
   });
 
   it('renders the placeholder toolbox components with their configured options', () => {
+    // `color-replacement` is not here: it has a real options bar now, not a TODO card, and
+    // rendering it here would pass on the bar's own labels for the wrong reason.
     const placeholderNames = [
       'brush',
       'pencil',
-      'color-replacement',
       'pen',
       'freeform-pen',
       'curvature-pen',
@@ -506,7 +494,7 @@ const unimplementedTools: readonly ToolName[] = [
   'custom-shape',
 ];
 
-const paintWrapperTools: readonly PaintToolName[] = ['brush', 'pencil', 'color-replacement'];
+const paintWrapperTools: readonly PaintToolName[] = ['brush', 'pencil'];
 
 describe('toolProcessors processor identity', () => {
   it.each(directProcessorSources)('routes %s to its own module-level processor', (toolName, source) => {
@@ -892,7 +880,7 @@ describe('toolsMap exhaustiveness', () => {
   });
 
   it('builds a distinct placeholder component per unimplemented and paint-stub tool', () => {
-    const placeholderTools: readonly ToolName[] = ['brush', 'pencil', 'color-replacement', ...unimplementedTools];
+    const placeholderTools: readonly ToolName[] = ['brush', 'pencil', ...unimplementedTools];
     const components = placeholderTools.map((toolName) => toolsMap[toolName].toolboxComponent);
 
     // Six of them share the `pen` placeholder group, but each `placeholderTool(...)` call

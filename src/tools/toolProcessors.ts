@@ -2,6 +2,7 @@ import type { BitmapSource, Pos, Size } from '../contexts/general-types.ts';
 import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
 import { blur } from './blur.ts';
 import { colors } from './colors.ts';
+import { colorReplacement } from './colorReplacement.ts';
 import { crop } from './crop.ts';
 import { draw, type DrawToolArgs } from './draw.ts';
 import { eraser } from './eraser.ts';
@@ -214,10 +215,10 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   'color-replacement': {
     commit: 'raster',
     replay: replay('raster-processor', true),
-    imageProcessor: (params) => (args) => {
-      const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'spray'));
-      return [canvas];
-    },
+    // No `@ts-expect-error` here, unlike the entries above it: `colorReplacement` narrows its
+    // params to the registry's own union and its args to the registry's own `ToolArgs`, so the
+    // signature already matches without a cast. That is what a real processor looks like.
+    imageProcessor: colorReplacement,
   },
   eraser: {
     commit: 'raster',

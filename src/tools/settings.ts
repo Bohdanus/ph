@@ -16,6 +16,11 @@ import type { FeatherMagneticLassoToolArgs, FeatherMagneticLassoToolSettings } f
 import type { MagicWandToolArgs, MagicWandToolSettings } from './magicWand.ts';
 import type { EraserToolArgs } from './eraser.ts';
 import type { FillToolArgs } from './fill.ts';
+import {
+  COLOR_REPLACEMENT_SMOOTHNESS_DEFAULT,
+  COLOR_REPLACEMENT_TOLERANCE_DEFAULT,
+  type ColorReplacementToolArgs,
+} from './colorReplacement.ts';
 import type { EyedropperToolArgs } from './eyedropper.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
@@ -131,13 +136,17 @@ export const defaultSettings = {
     toolName: 'pencil',
   } satisfies PaintToolArgs,
   'color-replacement': {
-    alpha: 0.55,
-    color: '#000000',
-    penType: 'spray',
+    alpha: 1,
     lineWidth: 18,
+    color: '#000000',
+    tolerance: COLOR_REPLACEMENT_TOLERANCE_DEFAULT,
+    limits: 'contiguous',
+    sampling: 'current-layer',
+    smoothness: COLOR_REPLACEMENT_SMOOTHNESS_DEFAULT,
+    sampleColor: null,
     points: [],
     toolName: 'color-replacement',
-  } satisfies PaintToolArgs,
+  } satisfies ColorReplacementToolArgs,
   eraser: {
     mode: 'pencil',
     lineWidth: 40,

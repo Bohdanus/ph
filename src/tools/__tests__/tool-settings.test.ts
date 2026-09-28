@@ -4,6 +4,7 @@ import { cloneDeep } from 'lodash-es';
 import { defaultSettings, lastSavedSettings, savedArgsPerFigure, savedDrawPerPen } from '../settings.ts';
 import { findToolProcessor, PIXEL_FREE_TOOLS } from '../toolProcessors.ts';
 import { saveLastSettings } from '../../util/settings.ts';
+import { COLOR_REPLACEMENT_SMOOTHNESS_MAX, COLOR_REPLACEMENT_TOLERANCE_MAX } from '../colorReplacement.ts';
 import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import type { ToolArgs, ToolName } from '../../contexts/tool-types.ts';
 import type { RectXYSorted } from '../../contexts/general-types.ts';
@@ -378,12 +379,28 @@ describe('defaultSettings value sanity', () => {
 
 describe('defaultSettings assumptions baked into the registry', () => {
   it('seeds each paint tool with the penType its registry adapter forces', () => {
-    // toolProcessors.ts forces `pen` for brush (:166) and pencil (:174) and `spray` for
-    // color replacement (:184). If a default disagreed, the forced value would silently
-    // override the user's own setting instead of confirming it.
+    // toolProcessors.ts forces `pen` for brush (:166) and pencil (:174). If a default disagreed,
+    // the forced value would silently override the user's own setting instead of confirming it.
+    // `color-replacement` is no longer a paint tool and has no `penType` at all: it used to be
+    // pinned to `'spray'` here, and that pin is what a paint-over could never satisfy.
     expect(defaultSettings.brush.penType).toBe('pen');
     expect(defaultSettings.pencil.penType).toBe('pen');
-    expect(defaultSettings['color-replacement'].penType).toBe('spray');
+    expect(defaultSettings['color-replacement']).not.toHaveProperty('penType');
+  });
+
+  it('seeds the Color Replacement controls with Adobe’s own defaults', () => {
+    // The controls that used to exist only as prose on a TODO card
+    // (`toolbarPlaceholderConfig.ts:4`). Tolerance 30 and Smoothness 10 are Adobe's, on 0-100 and
+    // 0-50 scales respectively, and Limits opens on Contiguous.
+    expect(defaultSettings['color-replacement']).toMatchObject({
+      tolerance: 30,
+      smoothness: 10,
+      limits: 'contiguous',
+      sampling: 'current-layer',
+      sampleColor: null,
+    });
+    expect(defaultSettings['color-replacement'].tolerance).toBeLessThanOrEqual(COLOR_REPLACEMENT_TOLERANCE_MAX);
+    expect(defaultSettings['color-replacement'].smoothness).toBeLessThanOrEqual(COLOR_REPLACEMENT_SMOOTHNESS_MAX);
   });
 
   it('seeds the pencil width with the same fallback the adapter applies when it is absent', () => {

@@ -69,6 +69,7 @@ vi.mock('../RectangularSelectionToolArea.tsx', () => ({
 }));
 vi.mock('../EraserToolArea.tsx', () => ({ EraserToolArea: marker('eraser') }));
 vi.mock('../FillToolArea.tsx', () => ({ FillToolArea: marker('fill') }));
+vi.mock('../ColorReplacementToolArea.tsx', () => ({ ColorReplacementToolArea: marker('color-replacement') }));
 vi.mock('../EyedropperToolArea.tsx', () => ({ EyedropperToolArea: marker('eyedropper') }));
 
 const toolAreaTestId = () => {
@@ -84,6 +85,7 @@ const toolAreaTestId = () => {
     'rectangular-selection',
     'eraser',
     'fill',
+    'color-replacement',
     'eyedropper',
   ];
   return ids.map((id) => screen.queryByTestId(`tool-area-${id}`)).findIndex((el) => el !== null);
@@ -116,7 +118,9 @@ describe('Main tool-area routing', () => {
     ['draw', 'draw'],
     ['brush', 'draw'],
     ['pencil', 'draw'],
-    ['color-replacement', 'draw'],
+    // Not `draw`: the Color Replacement has a click-to-sample step `DrawToolArea` has no place
+    // for, and it commits to the ACTIVE layer instead of creating one.
+    ['color-replacement', 'color-replacement'],
     ['shape', 'shape'],
     ['rectangle', 'shape'],
     ['ellipse', 'shape'],
