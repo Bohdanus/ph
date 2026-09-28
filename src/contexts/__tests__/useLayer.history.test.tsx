@@ -450,16 +450,16 @@ describe('useLayers layer-property writers', () => {
     expect(store.durableDocument!.cursor).toBe(1);
   });
 
-  it('reconciles a reorder by conversion rather than publishing a planned entry', () => {
+  it('publishes a reorder through the store and carries the diagnostics a publication carries', () => {
     const bottom = documentLayer('bottom', 0);
     const top = documentLayer('top', 1);
     const result = setupWithDocument({ bottom, top });
     expect(planHistoryAppend).not.toHaveBeenCalled();
 
     // A commit whose plan disagrees with its own legacy entry reports a
-    // mismatch, and a publication would carry that diagnostic into the next
-    // commit. A reconversion replaces the list instead, so the diagnostic's
-    // survival is a direct read of which path the next commit took.
+    // mismatch, and a publication carries that diagnostic into the next append.
+    // Whether the next append publishes or reconverts is therefore readable off
+    // the list: a publication preserves it, a reconversion replaces it.
     const rename: HistoryItem = {
       id: 'rename-1',
       actionName: RENAME_LAYER_ACTION,
@@ -487,8 +487,9 @@ describe('useLayers layer-property writers', () => {
       result.current.layers.moveLayerAfter('bottom', 'top');
     });
 
-    // The reorder writer asks the boundary for nothing, so the store cannot
-    // publish a single planned entry for it and rebuilds the shadow instead.
+    // The writer still asks the hook boundary for nothing, because a reorder's
+    // durable operation names the order of every layer and only the store can see
+    // the record it must describe. The store plans it from that record instead.
     expect(planHistoryAppend).not.toHaveBeenCalled();
     const store = result.current.store;
     expect(store.history.at(-1)).toMatchObject({
@@ -496,7 +497,10 @@ describe('useLayers layer-property writers', () => {
       layerId: 'bottom',
       args: { layerToMoveId: 'bottom', afterWhichLayerId: 'top' },
     });
-    expect(store.durableDiagnostics).toEqual([]);
+    // The carried diagnostic is the proof the append published rather than
+    // reconverting: a reconversion would have replaced the list with its own.
+    expect(store.durableDiagnostics.map((diagnostic) => diagnostic.code)).toEqual(['durable-append-mismatch']);
+    expect(store.durableStatus).toBe('current');
     expect(store.durableDocument!.history.map((entry) => entry.operation.kind)).toEqual([
       'set-layer-properties',
       'reorder-layers',

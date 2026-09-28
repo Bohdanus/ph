@@ -24,7 +24,8 @@ import {
   type DurableConversionStatus,
   type MigrationDiagnostic,
 } from './history-adapter.ts';
-import { decideDurableAppend, durableAppendDiagnostic } from './history-append.ts';
+import { decideDurableAppend, deriveReorderLayersEntry, durableAppendDiagnostic } from './history-append.ts';
+import { replayDurableDocument } from './durable-replay.ts';
 import { getAssetRegistry } from './asset-registry.ts';
 import {
   closePresentationBitmap,
@@ -364,6 +365,22 @@ function createReorderHistoryItem(intent: ReorderLayersIntent): HistoryItem {
     actionName: REORDER_ACTION,
     args: { layerToMoveId: intent.layerToMoveId, afterWhichLayerId: intent.afterWhichLayerId },
   });
+}
+
+/**
+ * The live record's layer order, bottom first: index 0 is the bottom of the
+ * stack, which is the same sequence `reorderLayers` mutates, `replayHistory`
+ * replays, and the durable converter normalizes its own snapshots into.
+ *
+ * Read here, at the store, rather than in the hook: a drag dispatches 200 ms
+ * after the row that started it was rendered, so a closure's copy of the layer
+ * record is stale by exactly the interval in which a rename or a second reorder
+ * can land.
+ */
+function layerOrderBottomFirst(layers: LayersRecord): LayerId[] {
+  return Object.values(layers)
+    .sort((left, right) => left.order - right.order)
+    .map((layer) => layer.id);
 }
 
 function reorderLayersFromState(layers: LayersRecord, intent: ReorderLayersIntent): LayersRecord {
@@ -847,22 +864,50 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (action.type === 'REORDER_LAYERS') {
       const intent = { ...action.payload };
       const historyItem = action.historyItem ?? createReorderHistoryItem(intent);
-      const timeline = updateHistoryTimeline(
-        {
-          entries: currentState.history,
-          cursor: currentState.historyIndex,
-          branchRevision: currentState.branchRevision,
-        },
-        { type: 'append', entry: historyItem }
-      );
-      // Reorder intentionally takes the existing conversion path. It has no
-      // durable append plan, so the shadow is rebuilt from the legacy timeline.
-      const converted = buildDurableDocument(
-        currentState,
-        [...timeline.entries],
-        timeline.cursor,
-        timeline.branchRevision
-      );
+      const prior = {
+        entries: currentState.history,
+        cursor: currentState.historyIndex,
+        branchRevision: currentState.branchRevision,
+      };
+      const timeline = updateHistoryTimeline(prior, { type: 'append', entry: historyItem });
+      // A reorder's durable operation names the resulting order of every layer,
+      // so it is planned here, where the pre-append record is authoritative, and
+      // it is checked against a second, independent copy of the rule. The store's
+      // own durable layer set is supplied too: durable replay skips ids it does
+      // not know, so a map derived from a set the shadow does not share would
+      // renumber the layers the two models do agree on.
+      const base = currentState.durableStatus === 'current' ? currentState.durableDocument : null;
+      const preLayerOrder = layerOrderBottomFirst(currentState.layers);
+      const durableLayerIds = base ? new Set(Object.keys(replayDurableDocument(base, base.cursor).layers)) : null;
+      // The record is reordered by `intent` while the durable map is derived from
+      // the history item's args, because that is what a replay reads. Production
+      // never supplies its own item, so the two are the same move by
+      // construction — but a supplied item that disagreed with the payload would
+      // leave the shadow describing one move and the document another, and the
+      // plan is refused rather than reconciled, because nothing here can tell
+      // which of the two is the intent.
+      const args = historyItem.args as { layerToMoveId?: LayerId; afterWhichLayerId?: LayerId | null } | undefined;
+      const itemMatchesIntent =
+        args?.layerToMoveId === intent.layerToMoveId &&
+        (args?.afterWhichLayerId ?? null) === (intent.afterWhichLayerId ?? null);
+      const decision = decideDurableAppend({
+        documentId: currentState.documentId,
+        base,
+        prior,
+        next: timeline,
+        entry: historyItem,
+        planned: itemMatchesIntent ? deriveReorderLayersEntry(historyItem, preLayerOrder) : null,
+        documentRevision: currentState.documentRevision,
+        preLayerOrder,
+        durableLayerIds,
+      });
+      const converted =
+        decision.outcome === 'published'
+          ? { status: 'current' as const, document: decision.document, diagnostics: currentState.durableDiagnostics }
+          : buildDurableDocument(currentState, [...timeline.entries], timeline.cursor, timeline.branchRevision);
+      if (decision.outcome === 'mismatch') {
+        converted.diagnostics = [...converted.diagnostics, durableAppendDiagnostic(historyItem, decision.reason)];
+      }
       const nextLayers = reorderLayersFromState(currentState.layers, intent);
       const committedAction: ReorderLayersAction = {
         ...action,
