@@ -112,26 +112,36 @@ describe('the three real documents', () => {
     }
   });
 
-  it('reads a numbered document as one item per number, in document order', () => {
-    /**
-     * Asserted as a contiguous 1..N run rather than as a literal list of the document's
-     * current section numbers, for the reason the sibling assertion below already gives:
-     * this file describes a live document that other work edits, and pinning the content
-     * here made the test fail when somebody added the very section it describes. The real
-     * contract is that the numbers are non-empty, contiguous, in document order, and in
-     * this file's own origin form — all of which is still asserted, and each of which a
-     * literal list of 8 would have stopped checking the moment a ninth section landed.
-     */
-    const origins = flakes.parsed.items.map((item) => item.origin);
-    expect(origins.length).toBeGreaterThan(0);
-    expect(origins).toEqual(Array.from({ length: origins.length }, (_, index) => `TEST-FLAKES.md#${index + 1}`));
+  /**
+   * Everything below asserts GRAMMAR and STABILITY, never the documents' current
+   * contents. The file's own docstring says a change to any of the three
+   * documents is allowed to move the item count without failing this suite, and
+   * three assertions here broke that promise: the exact list of TEST-FLAKES
+   * origins, a 26-element dead-number array, and two HANDOFF titles. Adding
+   * `## 9.` to TEST-FLAKES.md — the workflow AGENTS.md mandates — failed a
+   * parser test over a document edit, which is the failure mode this file exists
+   * to not have.
+   */
+  it('reads a numbered document as one item per number, ascending', () => {
+    const numbers = flakes.parsed.items.map((item) => Number(/#(\d+)$/.exec(item.origin)[1]));
+    expect(numbers.length).toBeGreaterThan(0);
+    // One item per number, no duplicates, and in document order.
+    expect(new Set(numbers).size).toBe(numbers.length);
+    expect([...numbers].sort((a, b) => a - b)).toEqual(numbers);
+    for (const item of flakes.parsed.items) {
+      expect(item.origin).toMatch(/^TEST-FLAKES\.md#\d+$/);
+    }
   });
 
   it("keeps HANDOFF.md's own numbering, so every origin there is a number", () => {
     const origins = handoff.parsed.items.map((item) => item.origin);
-    expect(origins).toContain('HANDOFF.md#12');
-    expect(origins).toContain('HANDOFF.md#65');
+    expect(origins.length).toBeGreaterThan(0);
     for (const origin of origins) expect(origin, origin).toMatch(/^HANDOFF\.md#\d+$/);
+    // Ascending by number, and no number claimed twice — the two properties
+    // that make an origin stable enough to key an import on.
+    const numbers = origins.map((origin) => Number(origin.split('#')[1]));
+    expect(new Set(numbers).size).toBe(numbers.length);
+    expect([...numbers].sort((a, b) => a - b)).toEqual(numbers);
   });
 
   it('reads OPEN_PROBLEMS.md’s severity headings, which carry no number at all', () => {
@@ -152,10 +162,15 @@ describe('the three real documents', () => {
   });
 
   it('records the numbers a deleted heading retires, and nothing else', () => {
-    expect(handoff.parsed.dead).toEqual([
-      5, 7, 9, 13, 14, 18, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29, 33, 34, 35, 37, 38, 39, 40, 41, 42, 44,
-    ]);
+    // Derived from the document, not pinned: the retired set moves every time
+    // somebody lands a fix, and the property worth holding is that the parser's
+    // dead set IS the set the document's own deleted headings name.
     expect(handoff.parsed.dead).toEqual(deadNumbers(handoff.text));
+    expect(handoff.parsed.dead).toEqual(expect.arrayContaining([expect.any(Number)]));
+    // Ascending and unique, so it can be compared and counted.
+    expect(new Set(handoff.parsed.dead).size).toBe(handoff.parsed.dead.length);
+    expect([...handoff.parsed.dead].sort((a, b) => a - b)).toEqual(handoff.parsed.dead);
+    // A document that has not deleted anything retires nothing.
     expect(flakes.parsed.dead).toEqual([]);
     expect(openProblems.parsed.dead).toEqual([]);
   });
@@ -166,12 +181,25 @@ describe('the three real documents', () => {
     }
   });
 
-  it('does not turn a prose section into an item', () => {
-    const handoffTitles = handoff.parsed.items.map((item) => item.title);
-    expect(handoffTitles).not.toContain('Known defects that are PINNED — do not "fix" them casually');
-    expect(handoffTitles).not.toContain('Two efforts, one set of files');
-    expect(handoffTitles).not.toContain('Worktree hygiene');
-    expect(openProblems.parsed.items.map((item) => item.title)).not.toContain('Observed failures');
+  it('produces one item per numbered heading, and no item for a prose section', () => {
+    /**
+     * The grammar, counted from the raw document: as many items as there are
+     * numbered headings, and no more. That is the property a parser can be
+     * wrong about in both directions — a missed heading loses a defect, an
+     * invented one files a section of prose as work — and it is checked without
+     * naming a single heading, so editing any of the three documents cannot fail
+     * it. (An earlier version asserted that every title starts with its number,
+     * which is simply false: the number is stripped from the title.)
+     */
+    const countHeadings = (text, pattern) => [...text.matchAll(pattern)].length;
+    for (const doc of [handoff, flakes]) {
+      const headings = countHeadings(doc.text, /^#{1,6}[ \t]+(?:Item[ \t]+)?\d+\b/gim);
+      expect(headings, doc.file).toBeGreaterThan(0);
+      expect(doc.parsed.items.length, doc.file).toBe(headings);
+    }
+    const severities = countHeadings(openProblems.text, /^#{1,6}[ \t]+P\d{1,3}\b/gim);
+    expect(severities, 'OPEN_PROBLEMS.md').toBeGreaterThan(0);
+    expect(openProblems.parsed.items.length).toBe(severities);
   });
 });
 
