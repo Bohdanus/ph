@@ -1,6 +1,4 @@
 export const placeholderToolGroups: Record<string, readonly string[]> = {
-  brush: ['Brush Preset Picker', 'Blend Mode', 'Opacity', 'Flow', 'Airbrush', 'Smoothing', 'Symmetry'],
-  pencil: ['Brush Preset Picker', 'Blend Mode', 'Opacity', 'Auto Erase', 'Smoothing', 'Symmetry'],
   'color-replacement': ['Brush Preset Picker', 'Blend Mode', 'Sampling', 'Limits', 'Tolerance', 'Anti-alias'],
   pen: ['Tool Mode', 'Fill', 'Stroke', 'Make Selection', 'Path Operations', 'Alignment', 'Auto Add/Delete'],
   'freeform-pen': ['Tool Mode', 'Fill', 'Stroke', 'Magnetic', 'Curve Fit'],

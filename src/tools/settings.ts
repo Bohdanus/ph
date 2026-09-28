@@ -1,5 +1,6 @@
 import { cloneDeep } from 'lodash-es';
 
+import { PAINT_SMOOTHING_DEFAULT } from './brush.ts';
 import type { DrawToolSettings, DrawToolArgs, PaintToolArgs, PenType } from './draw.ts';
 import type { TextToolArgs, TextToolSettings } from './text.ts';
 import type { CropToolArgs } from './crop.ts';
@@ -117,6 +118,8 @@ export const defaultSettings = {
     penType: 'pen',
     lineWidth: 10,
     points: [],
+    smoothing: PAINT_SMOOTHING_DEFAULT,
+    blendMode: 'source-over',
     toolName: 'brush',
   } satisfies PaintToolArgs,
   pencil: {
@@ -125,6 +128,8 @@ export const defaultSettings = {
     penType: 'pen',
     lineWidth: 3,
     points: [],
+    smoothing: PAINT_SMOOTHING_DEFAULT,
+    blendMode: 'source-over',
     toolName: 'pencil',
   } satisfies PaintToolArgs,
   'color-replacement': {
@@ -133,6 +138,8 @@ export const defaultSettings = {
     penType: 'spray',
     lineWidth: 18,
     points: [],
+    smoothing: PAINT_SMOOTHING_DEFAULT,
+    blendMode: 'source-over',
     toolName: 'color-replacement',
   } satisfies PaintToolArgs,
   pen: { toolName: 'pen' },

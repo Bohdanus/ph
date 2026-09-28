@@ -38,7 +38,7 @@ breakage or unmaintainable. **P3** = cosmetic / robustness.
 **Run the suite headless** — `npm run test:e2e`. That is the default, and the
 reason is the first entry below.
 
-On the default (headless) configuration **nothing fails**: 97 pass, 2 are skipped by
+On the default (headless) configuration **nothing fails**: 106 pass, 2 are skipped by
 declaration, and that is stable across repeated full runs.
 
 Three defect groups used to fail here and have been fixed in this repository. Their

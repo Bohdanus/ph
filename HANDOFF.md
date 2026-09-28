@@ -9,6 +9,10 @@ entries that were fixed and deleted.
 **Scope:** the durable-replay migration and the presentation/append boundary. Tool features and
 visual fidelity are out of scope unless a defect is caused by this work.
 
+**Exception:** items 36-41 below are tool-surface problems, added for the Brush/Pencil options bar.
+They are grouped under their own heading and share nothing with items 1-35; do not read a fix for one
+as authorising work on the other.
+
 ---
 
 ## 0. Branch state — read before the problem list
@@ -1112,3 +1116,155 @@ outlines are always restored; it is not one, and the fix is what makes it true.
 
 **Files.** `src/components/Main/PolygonClickToolArea.tsx:77,403-418,433-454,503-505,732-734`,
 `src/contexts/StoreContext.tsx:532-537`, `src/util/selection.ts:142`
+
+---
+
+# Paint tool surface — the Brush and Pencil options bar
+
+Added for `src/components/ToolbarsRight/Paint/Paint.tsx` and the settings it writes. Everything here
+is a Photoshop control the bar does **not** expose, or a gap in the pipeline a control would have to
+cross to be real. Each is deliberately absent rather than shipped as a dead slider.
+
+The bar publishes exactly four settings, all of which reach the renderer: `lineWidth` (Size, already
+existed), `alpha` (Opacity, already existed), `smoothing` (Smoothing — filtered over the sampled path
+in `drawLine`, `src/util/draw.ts:85-104`) and `blendMode` (Mode — set on the stroke's layer by
+`toolLayerBlendMode`, `src/contexts/layer-utils.ts:160-167`).
+
+## 36. The Brush Settings panel has no representation in the renderer
+
+**Problem.** `drawPen` (`src/util/draw.ts:106-114`) issues one `beginPath`, one `moveTo` and one
+`stroke()` for a whole stroke: the pen nib travels continuously along a path, and there is no dab
+loop and no per-dab compositing to modulate. Every remaining Photoshop paint control is defined in
+terms of a stamped tip, so none of them can be reached by wiring a field into the args:
+
+| Control                                     | What it needs that does not exist                                                      |
+| ------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Hardness                                    | a radial edge-falloff kernel; today the edge is whatever `ctx.stroke()` produces       |
+| Spacing                                     | arc-length resampling between stamps; a single path makes the point density irrelevant |
+| Flow                                        | per-dab accumulation within one stroke; `ctx.globalAlpha` is set once, per stroke      |
+| Airbrush                                    | a timer that keeps stamping while the pointer is stationary                            |
+| Scatter, Count, Size/Angle/Roundness Jitter | a seeded RNG and multiple dabs per spacing interval                                    |
+| Wet Edges                                   | stroke-level coverage analysis across dabs, not per-dab darkening                      |
+| Texture, Protect Texture                    | a pattern sampler composited inside each dab                                           |
+| Angle, Roundness, Flip X/Y                  | an affine-transformable tip kernel at arbitrary scale                                  |
+| Symmetry                                    | the stroke replayed through an active transform on every dab                           |
+
+**Why it is not a wiring bug.** `buildDrawArgs` (`src/tools/toolProcessors.ts:61-67`) narrows
+`penType` to `'pen' | 'spray'` and both paint tools force `'pen'` (`:169`, `:182`), so the one
+per-point painter in the tree, `drawSpray` (`src/util/draw.ts:116-136`), is unreachable from a brush
+or a pencil. That is deliberate — it is the adapter that makes the tools hard-edged — not an oversight.
+
+**Fix.** Replace the single-path stroke with a stamp loop: build a tip bitmap (falloff from Hardness,
+affine from Angle/Roundness/Flip), walk the path by Spacing, and composite each dab with Flow
+accumulating into a stroke buffer. Do this in a new module rather than in `drawPen`, and have both
+paint processors call it, so `draw` keeps its existing vector behaviour.
+
+**Tripwires that must be removed in the same change, not weakened.** `src/tools/__tests__/paint-tools.test.ts`
+pins `beginPath` called exactly once and `stroke()` called exactly once for a brush or pencil stroke
+(the `strokes %s with the pen renderer` case), and `createRadialGradient` once per sample for the spray
+path. A stamp loop fails all three. `e2e/export/visual-regression.spec.ts` baselines were recorded
+through the `draw` tool and are unaffected as long as `draw` is left alone.
+
+**Files.** `src/util/draw.ts:85-136`, `src/tools/toolProcessors.ts:61-67,165-193`,
+`src/tools/__tests__/paint-tools.test.ts` (the three call-count pins)
+
+## 37. The Pencil's `Auto Erase` does not exist
+
+**Problem.** `Auto Erase` is the one control Adobe marks as Pencil-only, and the reason a user picks
+the Pencil over the Brush; the bar does not offer it, so the Pencil and the Brush differ only in their
+default size. Photoshop's mechanic is "paints the background color over areas containing the
+foreground color", sampled per dab under the nib.
+
+**Why it is not a wiring bug.** No paint tool reads a source bitmap. `toolProcessors.brush.imageProcessor`
+takes `CreatorToolParams` (`{ size }`, `src/tools/toolProcessors.ts:22-24`) and `drawPen` composites
+onto a fresh transparent canvas, so the foreground-colour comparison has nothing to sample.
+
+**Fix.** Pass the base layer's bitmap alongside `size` for `kind: 'tool'` sources at
+`src/contexts/layer-utils.ts:232-241`. Both replay paths already have a bitmap to hand
+(`src/contexts/useHistory.ts:98-108` and `src/contexts/materialization.ts:270-282`), so only the
+`createLayerSource` call site needs it. Then sample the nib position in the rasterizer and paint
+`backgroundColor` where it matches `color`. Guard the read with the existing
+`typeof ctx.getImageData === 'function'` check — the global test mock deliberately omits it
+(`src/test/setup.ts:185-189`), and adding a read-back to that mock would silently move every
+rasterization test onto the other branch.
+
+**Files.** `src/contexts/layer-utils.ts:232-241`, `src/tools/toolProcessors.ts:22-24,186-193`,
+`src/util/draw.ts:116-136`, `src/components/ToolbarsRight/Paint/Paint.tsx`
+
+## 38. Tablet pressure cannot reach the renderer
+
+**Problem.** `Point` is `{ x: number; y: number }` (`src/contexts/general-types.ts:1`) and
+`getLocalCoords` returns a bare `Point` (`src/hooks/usePointerPosition.ts:167-182`). `pressure`,
+`tiltX`, `tiltY`, `twist` and `pointerType` are read nowhere in production code — the only occurrence
+of `pressure` in the whole repository is a test fixture asserting its own default
+(`src/__tests__/fixtures/pointer.ts:25`). So Photoshop's "always use pressure for size/opacity"
+toggles have nothing to act on, and there is no `getCoalescedEvents()` expansion anywhere, which means
+a fast stroke is already under-sampled before any smoothing filter sees it.
+
+**Fix.** Widen the point payload or add a parallel per-sample array in `DrawToolArea`
+(`src/components/Main/DrawToolArea.tsx:24,53,62,71`), thread the event fields through
+`getLocalCoords`, and read them where the dabs of item 36 are placed. The values must survive the
+`plainValue` guard in `src/contexts/history-adapter.ts:100-119`, which rejects `NaN`, `±Infinity` and
+non-plain objects — a pressure of 0 on a mouse that reports no pressure has to be normalised to 1 on
+the way in, or the whole durable conversion throws. A mouse reporting no pressure must render exactly
+as Photoshop does with no tablet, or every mouse user gets a different stroke.
+
+**Files.** `src/contexts/general-types.ts:1`, `src/hooks/usePointerPosition.ts:167-182`,
+`src/components/Main/DrawToolArea.tsx:24,53-75`, `src/contexts/history-adapter.ts:100-119`
+
+## 39. `pointsBoundingPos` pads by `lineWidth` per side, so a tip wider than it is tall is clipped
+
+**Problem.** A committed stroke's layer is sized by
+`pointsBoundingPos({ points, lineWidth })`, which inflates by the full `lineWidth` on every side
+(`src/util/draw.ts:6-27`), and the stroke is then rasterized into a canvas of exactly that size
+(`src/contexts/layer-utils.ts:232-241`). `lineWidth` is the tip's diameter, so the padding is twice
+the reach a round tip needs — harmless today, and enough to hide the error. It stops being harmless
+the moment the tip can be elliptical: at an aspect ratio above 4 the tip needs more than
+`lineWidth / 2` of reach on one axis and the layer crops it.
+
+**Fix.** Inflate by the true tip extent — `R * sqrt(max(1, aspect))` per axis, with `R = lineWidth / 2`
+— rather than by `lineWidth`. The signature already takes only `{ lineWidth, points }`, so it has to
+learn the tip's aspect. Check `src/tools/__tests__/paint-tools.test.ts` (`preserves computed
+draw-like bounds instead of snapping the finished layer to 0,0`) before changing it: that test pins the
+current padding arithmetic and will need re-deriving, not widening.
+
+**Files.** `src/util/draw.ts:6-27`, `src/components/Main/DrawToolArea.tsx:78`,
+`src/contexts/layer-utils.ts:232-241`
+
+## 40. `setupDrawCtx` runs once per stroke, so the live overlay ignores mid-stroke setting changes
+
+**Problem.** `setupDrawCtx` is called on `pointerdown` only (`src/components/Main/DrawToolArea.tsx:51`)
+and every later repaint reuses whatever context state that left. The commit-time re-raster does read
+the final args (`src/contexts/layer-utils.ts:232-241`), so a control changed mid-gesture is honoured in
+the committed pixels and ignored in the preview — the stroke the user watched is not the stroke they
+get. No current control can be exercised this way, because changing a control requires a pointer that
+is not over the canvas, which ends the gesture. It becomes live the moment any control is bound to a
+pointer-held modifier (a size/opacity scrub while dragging) or any per-dab feature from item 36 lands.
+
+**Fix.** Re-run `setupDrawCtx` at the top of `flushDrawingFrame`
+(`src/components/Main/DrawToolArea.tsx:34-44`) rather than only at `pointerdown`, or narrow the claim
+by making `handlePointerMove` re-setup when the args object identity changed since the last sample.
+
+**Files.** `src/components/Main/DrawToolArea.tsx:34-44,51`
+
+## 41. The brush bar opens on `Custom`, not on a preset, because the seeded opacity is 0.9
+
+**Problem.** `matchPaintPreset` compares all four settings with a `1e-9` epsilon and returns `''` —
+rendered as `Custom` — unless all four match. The seeded brush is `alpha: 0.9, smoothing: 10,
+lineWidth: 10, blendMode: 'source-over'` (`src/tools/settings.ts:115-134`) and the closest preset,
+`Hard Round`, is `alpha: 1, smoothing: 0` (`src/tools/brush.ts`). So a freshly selected brush claims
+to be a hand-tuned combination, and the `Hard Round` option silently snaps opacity to 100% and
+smoothing to 0 — two settings the user did not ask to change.
+
+Photoshop's defaults are Opacity 100% and Smoothing 10% (`src/tools/brush.ts:PAINT_SMOOTHING_DEFAULT`),
+so the mismatch is half the seeded alpha. `alpha: 0.9` is pinned by
+`src/tools/__tests__/paint-tools.test.ts` (`applies the default alpha and line width of each paint
+tool to its context`), so this is a decision, not an oversight, and it is not obviously the right one.
+
+**Fix — needs a call, not a patch.** Either raise the seeded `alpha` to 1 and re-derive that pin, or
+add a preset matching the seeded defaults exactly and rename `Hard Round` to something that does not
+promise a 100%-opaque hard edge. The first is closer to Photoshop and changes every committed
+document's default stroke; the second changes nothing outside the bar.
+
+**Files.** `src/tools/brush.ts` (`PAINT_PRESETS`, `matchPaintPreset`), `src/tools/settings.ts:115-134`,
+`src/tools/__tests__/paint-tools.test.ts` (the `applies the default alpha and line width` case)

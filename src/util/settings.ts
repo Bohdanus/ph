@@ -50,10 +50,15 @@ export function saveLastSettings(args: ToolArgs) {
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(
       withNormalizedFigure(omit(args as unknown as ShapeToolArgs, 'start', 'end'))
     ) as ToolArgs;
+  } else if (toolName === 'brush' || toolName === 'pencil' || toolName === 'color-replacement') {
+    // The Photoshop paint bar writes Size, Opacity, Smoothing and Mode through
+    // `setToolArgs`, which lands here on every change. Persisting only the tool name
+    // — as the arm below still does for the pen and shape families — throws those
+    // four away on the same tick, so the next tool switch re-seeds the bar from
+    // `{ toolName }` and every control silently resets. `points` is stroke geometry,
+    // not a setting, so it is emptied the way `draw` empties it above.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ ...args, points: [] });
   } else if (
-    toolName === 'brush' ||
-    toolName === 'pencil' ||
-    toolName === 'color-replacement' ||
     toolName === 'pen' ||
     toolName === 'freeform-pen' ||
     toolName === 'curvature-pen' ||

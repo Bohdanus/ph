@@ -11,9 +11,10 @@ spec helpers themselves. The application under test is `src/` in this repository
 
 ```
 e2e/
-├── *.spec.ts            # 11 top-level specs: canvas redraw, colour, layers,
-│                        #   levels, pen types, select/move, sidebar flyout /
-│                        #   keyboard / layout, viewport drawing, DPR
+├── *.spec.ts            # 12 top-level specs: canvas redraw, colour, layers,
+│                        #   levels, paint options, pen types, select/move,
+│                        #   sidebar flyout / keyboard / layout, viewport
+│                        #   drawing, DPR
 ├── export/              # 6 export-format specs + committed visual-regression baselines
 ├── global-setup.ts      # refuses --headed / --ui / --debug before a window exists
 └── helpers/             # 7 shared helper modules
