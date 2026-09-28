@@ -118,8 +118,15 @@ export const calculateNewRect = (
   canvasRef: RefObject<HTMLCanvasElement | null>,
   imageSize: Size
 ): RectXYSorted | null => {
-  const { align, text, fontSize, lineHeight } = newArgs;
-  const rect = newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 };
+  const { align, text, fontSize, lineHeight, rect } = newArgs;
+  // No rect means the text has not been placed on the canvas yet, and there is nothing to
+  // grow. The old `newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 }` manufactured one at the
+  // document origin, which no caller wanted: the only path that can reach here with a null
+  // rect is a toolbar keystroke (`Text.tsx`), and that made `Apply` reachable for text drawn
+  // at 0,0 -- `disabled={!text || !rect}` was a dead half that the substitution kept dead.
+  // `TextToolArea.tsx:32` passes the rect `useRect`'s `onChangeEnd` hands it, non-null by
+  // type, so it can never hit this.
+  if (!rect) return null;
 
   if (!text)
     return {
