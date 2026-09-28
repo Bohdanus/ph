@@ -45,50 +45,70 @@ import {
 } from './export/helpers';
 
 /**
- * A taller viewport, kept — but on a measured reason, because the comment this replaces
- * named the right need and the wrong mechanism.
+ * A taller viewport, kept — on a re-derived reason. The comment this replaces named a
+ * real need and described it in terms of a page fold and a capture API that no longer
+ * behave that way, so both halves of its mechanism were false even though the bump itself
+ * still turns out to be load-bearing.
  *
- * What is true. The workspace canvas element is 974x963 at this viewport with its top
- * 100px down the page (measured), so at Playwright's 1280x720 it would be 974x840 with
- * 220px below the fold, and a document that fills more than the visible part of the
- * element is not fully rendered in what a capture of that element carries. Measured at
- * 1280x720, deterministically on three consecutive runs: the 150 DPI US Letter document
- * (1275x1650, which letterboxes to 649x840) appears in the capture as 650x620 of blue —
- * the width is right and the vertical run stops exactly at the fold, 720 - 100 = 620. The
- * aspect assertion then reports a rendered 1.0484 against a document aspect of 0.7727 and
- * fails. So the bump is load-bearing, and dropping it is not an option.
+ * WHAT IS FALSE, and was measured rather than assumed. The old comment said the workspace
+ * canvas element is 974x963 here and would be 974x840 at 1280x720 with "220px below the
+ * fold". Every number in that is wrong:
  *
- * What is false. "A clip built from the element's box is refused as outside the resulting
- * image" is not what happens, and there is no refusal. This file's captures go through
- * `captureWorkspace` -> `captureCanvasScreenshot` (`e2e/helpers/cdp-helpers.ts`), which is
- * CDP `Page.captureScreenshot`; measured at 1280x720 it returns the FULL 974x840 image
- * with no error, and what is absent is the canvas's painted content below the fold, not
- * any part of the image. The silent clip truncation that really does exist — the same box
- * coming back 974x620 from `page.screenshot({ clip })` — belongs to the other capture API,
- * which this file only reaches indirectly, through `waitForCanvasPixels`
- * (`e2e/helpers/canvas-helpers.ts:380`) with `canvasRedrawClip`'s 300x100 band at box
- * offset (100,100). That band is page y 200..300, inside the fold at 720, so it is
- * neither truncated nor missing and says nothing about the viewport either way.
+ *   - The WIDTH is 922, not 974. The suite runs the TWO-COLUMN desktop shell:
+ *     `grid-cols-[auto_1fr_250px]` (`src/App.tsx:75`) with a 108px rail (6.75rem), so
+ *     1280 - 108 - 250 = 922. 974 is the ONE-COLUMN width (rail 3.5rem = 56px), which
+ *     nothing here selects.
+ *   - There IS no fold. Measured at 1280x720: the element is 922x583 at page (108, 100)
+ *     and `documentElement.scrollHeight` is 720, equal to `clientHeight` and to
+ *     `innerHeight` — the page does not overflow at all. The left rail owns its own
+ *     scrolling (`min-h-0 overflow-y-auto`, `src/components/SidebarLeft/SidebarLeft.tsx:335`),
+ *     so the shell is exactly viewport-tall.
+ *   - So the element is not "840 tall with 220 below the fold"; it is 583 tall and
+ *     entirely on screen.
+ *   - The clip-truncation mechanism is gone. `waitForCanvasPixels` reads through
+ *     `page.screenshot` at `e2e/helpers/canvas-helpers.ts:531`, but behind `onScreenClip`
+ *     at `:529`, which re-derives the clip every poll and SCROLLS the region into view;
+ *     it is not a silent truncation at a fold. The `:380` this comment used to cite is
+ *     inside an unrelated red-dominance predicate. Nothing about this file's captures goes
+ *     near a fold.
  *
- * Kept for the first reason, with the second recorded so the next reader does not go
- * hunting for a `page.screenshot({ clip })` call this file does not have. Nothing else
- * derives a number from 1100: every locator is by test id, the centre sample is the
- * element's midpoint, and the deepest pointer-driven point is box y 450.
+ * WHAT IS TRUE, and is the reason the bump stays: the taller viewport is what leaves bare
+ * WORKSPACE BACKDROP above the letterboxed document, and `backdropRange` below can only
+ * measure a backdrop where there is backdrop. That is a property of the document's aspect
+ * against the ELEMENT's, not of the viewport or any capture API.
+ *
+ *   At 1280x1100 the element is 922x963, aspect 0.957. The 800x600 boot document is 1.333,
+ *   so `object-fit: contain` is WIDTH-limited: it renders 922x691.5 centred, leaving about
+ *   136 rows of bare element above it. The top 4% strip (38 rows) lands entirely in that
+ *   bare region, which is exactly what the strip is for.
+ *
+ *   At 1280x720 the element is 922x583, aspect 1.581 — WIDER than the document's 1.333.
+ *   The fit flips to HEIGHT-limited: the document renders 777x583 and fills the element's
+ *   full height, so there is no bare strip anywhere and the top 4% is ON the document.
+ *
+ * Measured consequence, and it is a named assertion rather than a subtle one: with the
+ * bump dropped, "the background opacity reaches the created document" fails at its
+ * `onFill` precondition with 17894 of the strip matching the opaque fill, and the other
+ * seven tests pass. So the bump is kept, `onFill` is what enforces it, and if a future
+ * layout change takes the bare strip away again this file names that in one line.
+ *
+ * Nothing else derives a number from 1100: every locator is by test id, the centre sample
+ * is the element's midpoint, and the deepest pointer-driven point is box y 450.
  */
 test.use({
   viewport: { width: 1280, height: 1100 },
   // PINNED, and this is the fix for a guarantee that used to rest on nothing. The
   // workspace backdrop is the 20px checkerboard the canvas's parent div carries
   // (`chessboard-light` / `chessboard-dark`, chosen from the resolved theme at
-  // `src/components/Main/Main.tsx:163`), and the theme resolves through
-  // `ThemeContext.tsx:19`'s `prefers-color-scheme` fallback whenever `localStorage` has
-  // no saved theme — which is every fresh Playwright context. So the colour scheme
-  // decides whether the opacity test's direction holds at all, and under dark it inverts.
-  // Playwright's own default is `light`, so this run was passing by an inherited value
-  // that neither this file nor `playwright.config.ts` ever stated. Stated now, and the
-  // opacity test additionally MEASURES the margin the direction depends on rather than
-  // trusting the pin: a pinning mistake then fails as a named assertion, not as six
-  // unexplained monotonicity failures.
+  // `src/components/Main/Main.tsx:222`), and the theme resolves through
+  // `src/contexts/ThemeContext.tsx:13-22`'s `prefers-color-scheme` fallback whenever
+  // `localStorage` has no saved theme — which is every fresh Playwright context. So the
+  // colour scheme decides whether the opacity test's direction holds at all, and under
+  // dark it inverts. Playwright's own default is `light`, so this run was passing by an
+  // inherited value that neither this file nor `playwright.config.ts` ever stated. Stated
+  // now, and the opacity test additionally MEASURES the margin the direction depends on
+  // rather than trusting the pin: a pinning mistake then fails as a named assertion, not
+  // as six unexplained monotonicity failures.
   colorScheme: 'light',
 });
 
@@ -112,11 +132,12 @@ const SAVE_DIALOG_TEST_TIMEOUT_MS = INTEGRATION_TEST_TIMEOUT_MS;
  * the same three numbers make the order invert.
  *
  * And the backdrop is not one colour to compare against. It is a 20px checkerboard
- * (`src/index.scss:68-79` light: `#fff` plus `#f3f3f3` gradients; `:81-92` dark: `#000`
- * plus `#121212`), so the composite reads whichever cell a sample lands on. The real
- * precondition is therefore per channel, `backdrop[channel] > colour[channel]`, measured
- * on the real pixels — and the margin that buys is small. On blue, the binding channel,
- * the tightest the two readings can be even with the whole checkboard correct is
+ * (`src/index.scss:126-137` light: `#fff` plus `#f3f3f3` gradients; `:139-150` dark: `#000`
+ * plus `#121212` — the two rules are identical but for those two colours, and both pin
+ * `background-size: 20px 20px`), so the composite reads whichever cell a sample lands on.
+ * The real precondition is therefore per channel, `backdrop[channel] > colour[channel]`,
+ * measured on the real pixels — and the margin that buys is small. On blue, the binding
+ * channel, the tightest the two readings can be even with the whole checkboard correct is
  *
  *   0.2 over the dark cell (243)  = 235.2
  *   0.6 over the bright cell (255) = 224.4
@@ -148,12 +169,15 @@ const ASPECT_TOLERANCE = 0.02;
 
 /**
  * Detail strokes, in canvas-box relative coordinates. Enough edges for JPEG quantisation
- * to show. The boot document is 800x600 (src/App.tsx:16-21) and is letterboxed into the
- * workspace canvas element, which is 974x963 with its top 100px down the page at this
+ * to show. The boot document is 800x600 (`src/App.tsx:20-25`) and is letterboxed into the
+ * workspace canvas element, which is 922x963 with its top 100px down the page at this
  * file's 1280x1100 viewport (measured). `object-fit: contain` is width-limited there —
- * 974/800 = 1.2175 against 963/600 = 1.605 — so the document renders 974x730.5 centred,
- * occupying roughly y 116..846 of the box, and x the full width. Every point below sits
+ * 922/800 = 1.1525 against 963/600 = 1.605 — so the document renders 922x691.5 centred,
+ * occupying roughly y 136..827 of the box, and x the full width. Every point below sits
  * inside it, and none of them is on an edge the box scales.
+ *
+ * The 922 is the two-column width; see the `test.use` comment above for why the width was
+ * 974 in an earlier revision and what actually makes this viewport necessary.
  */
 const DETAIL_STROKES: ReadonlyArray<readonly [number, number, number, number]> = [
   [140, 180, 620, 320],
@@ -178,13 +202,13 @@ const jpegFormat = (): ExportFormat => formatByLabel('JPEG');
  * `page.once` immediately before the click, never a global `page.on('dialog')`: the
  * guard is `confirm()` in `DesktopHeader.tsx`, and a global accept would also swallow
  * every unexpected alert/confirm in the suite, so those surfacing would stop being a
- * load-bearing signal. See the same note at e2e/export/helpers.ts:250.
+ * load-bearing signal. See the same note at e2e/export/helpers.ts:309-312.
  *
  * The `prompted` flag and the `expect.poll` are what make a NON-firing prompt a failure
  * here instead of a leak. `page.once` is armed unconditionally and depends on this click
  * always producing a `confirm()`: if it ever stops, the handler is still armed, and
  * `once` consumes the NEXT dialog of any kind — a stray alert, an unrelated confirm
- * later in the same test — accepting it. That is the hazard e2e/export/helpers.ts:250
+ * later in the same test — accepting it. That is the hazard e2e/export/helpers.ts:309-312
  * warns about, arrived at from the other direction. A comment alone would not close it:
  * the flag is polled for, so a missing prompt fails this helper at a named line instead
  * of quietly accepting something else three steps later. The flag is already consumed by
@@ -252,11 +276,20 @@ const CHANNELS: ReadonlyArray<keyof Rgb> = ['red', 'green', 'blue'];
 /**
  * The document's pixel dimensions, as the app published them.
  *
- * `setBlankImage` calls `handleImageCreate(params.size)`, which is `resizeCanvas` on the
- * workspace canvas (src/hooks/useApp.ts:77-80, :61-65), so the canvas element's own
- * `width`/`height` ARE the created document's size - not a copy of what the dialog was
- * showing. Every test below pairs this with pixels, because the number alone would also
- * pass if the renderer ignored it.
+ * File > New resolves through `openNewImageDialog` and the header then calls
+ * `setBlankImage(data)` (`src/components/DesktopHeader/DesktopHeader.tsx:185`), which is
+ * `handleImageCreate(params.size)` (`src/hooks/useApp.ts:77-80`) — `resizeCanvas` on the
+ * workspace canvas at `:61-65`. So the canvas element's own `width`/`height` ARE the
+ * created document's size, not a copy of what the dialog was showing.
+ *
+ * NOT exclusive, and measured, because a comment that names one caller as THE caller is
+ * the kind that makes a test look covered when it is not: `resizeCanvas` also runs on
+ * every composite in `src/contexts/layer-renderer.ts:136`, so neutering the `useApp` call
+ * leaves all four New Image dialog tests green — the renderer resizes the same element
+ * from the same `size`. That is why the tests below pair this with pixels and why the
+ * pixel assertions, not this read, are what carry the file: the DPI test's
+ * `documentSize` checks agree with the rendered content only because the aspect assertion
+ * that follows them would fail on a stale size.
  */
 async function documentSize(page: Page): Promise<DocumentSize> {
   return await getWorkspaceCanvas(page).evaluate((node) => {
@@ -300,14 +333,18 @@ async function documentColourSample(page: Page, testInfo: TestInfo, name: string
  * that strip that could BE the document, so the caller can check it is reading backdrop.
  *
  * Only the TOP strip, because it is the one the centred document is guaranteed to leave
- * bare, and the bottom strip's guarantee is a property of the capture rather than of the
- * layout. At 1280x720 — this file's viewport before the bump above, and the reason the bump
- * exists — the element's bottom 4% is below the fold and carries no checkerboard at all:
- * measured, it is solid `rgb(255,255,255)` under a DARK theme, where `chessboard-dark`
+ * bare AT THIS VIEWPORT, and the bottom strip's guarantee is a property of the capture
+ * rather than of the layout. Measured at this file's 1280x1100: the element is 922x963 and
+ * the 800x600 document renders 922x691.5 centred, so both the top and the bottom 4% are
+ * bare checkerboard — light theme darkest 243, brightest 255, which are exactly the two
+ * colours `src/index.scss:126-137` mixes. At 1280x720 the element is 922x583 and the same
+ * document renders 777x583 filling the element's whole height, so NEITHER strip is bare:
+ * that is why the viewport above is bumped, and why this strip only needs the top. The
+ * bottom 4% would additionally be below the fold at 720, where it carries no checkerboard
+ * at all — measured, solid `rgb(255,255,255)` under a DARK theme, where `chessboard-dark`
  * (`#000` plus `#121212`) cannot produce anything brighter than 18. A range that mixed the
  * two strips would put a 255 in `brightest` and report a margin far worse than the real
- * one. The top 4% is the checkerboard in both themes: darkest 0 and brightest 18 under
- * dark, 243 and 255 under light.
+ * one.
  *
  * Being above the document is a consequence of the document being smaller than the
  * element, which is not true of an arbitrary document, so `onFill` counts the pixels that
@@ -371,8 +408,8 @@ async function drawAndWait(page: Page, box: BoundingBox, testInfo: TestInfo, nam
 /**
  * Closes the File menu if it is open.
  *
- * Declining the unsaved-changes prompt returns before `setOpenMenu(null)`
- * (src/components/DesktopHeader/DesktopHeader.tsx:152-158), so the dropdown is still
+ * Declining the unsaved-changes prompt returns before the menu is closed
+ * (`src/components/DesktopHeader/DesktopHeader.tsx:152-157`), so the dropdown is still
  * rendered - and it overlaps the top-left corner of the canvas element's box, which is
  * the region a canvas-clipped capture reads. It has to be dismissed before two captures
  * can be compared, or the comparison measures the dropdown instead of the document. The
@@ -439,11 +476,12 @@ test.describe('New Image dialog', () => {
     // ---- The precondition, asserted before it is relied on ----
     //
     // The blank layer is filled with `globalAlpha = opacity` over a cleared canvas
-    // (src/contexts/layer-utils.ts:196-199), so a partly transparent background lands on
-    // the canvas as `opacity * colour + (1 - opacity) * backdrop` with real alpha, and the
-    // page then resolves that over whatever is behind the canvas. Everything the two
-    // direction checks below assume is in these two blocks; without them the assertions
-    // are unfalsifiable claims about an unmeasured composite.
+    // (`src/contexts/layer-utils.ts:205-215`, the `globalAlpha` assignment at `:212`),
+    // so a partly transparent background lands on the canvas as
+    // `opacity * colour + (1 - opacity) * backdrop` with real alpha, and the page then
+    // resolves that over whatever is behind the canvas. Everything the two direction checks
+    // below assume is in these two blocks; without them the assertions are unfalsifiable
+    // claims about an unmeasured composite.
     //
     // (1) Per channel, the backdrop has to be ABOVE the fill colour. That is the whole
     // precondition, and "#3366cc is below 255 in every channel" does not state it - the
@@ -453,8 +491,8 @@ test.describe('New Image dialog', () => {
     expect(
       onFill,
       `${onFill} of the top 4% of the capture is the opaque #${BACKGROUND_HEX} fill, so the strip read as ` +
-        `the workspace backdrop is on the document. The 800x600 document is letterboxed into the 974x963 ` +
-        `element and centred, which leaves about 116 rows above it, so this says the letterbox changed ` +
+        `the workspace backdrop is on the document. The 800x600 document is letterboxed into the 922x963 ` +
+        `element and centred, which leaves about 136 rows above it, so this says the letterbox changed ` +
         `and the backdrop is no longer being measured where it is claimed to be.`
     ).toBe(0);
     for (const channel of CHANNELS) {
@@ -742,13 +780,14 @@ test.describe('Save dialog', () => {
     // The counter is read only AFTER the dialog has closed, and that ordering is the
     // gate — not a timing allowance, and not "two round trips". In the regression this
     // catches, Cancel wired to `handleSave` would not close the dialog at all: `onSave`
-    // runs (`SaveDialog.tsx:21`) and the dialog is unmounted only by the `finally` in
-    // `handleImageSave` (`useFile.tsx:136`), which runs AFTER `downloadBlob` /
-    // `saveImageToDisk` has already been dispatched (`useFile.tsx:124,126`). So the
-    // download is dispatched BEFORE the dialog closes, always, and waiting for the close
-    // cannot be what observes it — it only guarantees the count has settled. What observes
-    // it is that the listener is registered before the click and read after the close, with
-    // nothing in between able to absorb the event.
+    // runs (`src/components/SaveDialog/SaveDialog.tsx:31`) and the dialog is unmounted
+    // only by the `finally` in `handleImageSave`
+    // (`src/contexts/useFile.tsx:135-138`), which runs AFTER `downloadBlob` /
+    // `saveImageToDisk` has already been dispatched (`src/contexts/useFile.tsx:124,126`).
+    // So the download is dispatched BEFORE the dialog closes, always, and waiting for the
+    // close cannot be what observes it — it only guarantees the count has settled. What
+    // observes it is that the listener is registered before the click and read after the
+    // close, with nothing in between able to absorb the event.
     expect(downloads, 'cancelling the save dialog started a download').toBe(0);
 
     // The listener is live, so the zero above means "no download" and not "no listener".
