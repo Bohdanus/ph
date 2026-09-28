@@ -31,7 +31,8 @@ defect a test suite can have, because its whole effect is to teach the operator
 that the gate is unreliable — and a gate that is `--no-verify`'d takes every
 other step in it down too, including the deterministic and cheap ones. A flaky
 test in CI is a nuisance. The same test in the commit path is a reason to delete
-the commit path.
+the commit path. The same test in a command nobody is required to run is just a
+bug in that command's output.
 
 **One observation in a scheduling-dependent runner is a rate, not a data point.**
 `vitest.config.ts:6-9` sets `pool: 'vmThreads'`, `maxWorkers: 4`,
@@ -54,16 +55,20 @@ you will ever have of it.
 
 ## 3. What changed since, and what it does and does not settle
 
-The scoped run that produced the observation no longer exists. `test:staged` was
-removed from the commit hook in the same change that fixed the worktree hook gap
-(see AGENTS.md, "Gates"), because its cost was not bounded by the change: it
-selected 10 of 180 test files for one component and 115 of 180 for
-`src/util/draw.ts`, so its worst case was the full run it was introduced to
-replace.
+`test:staged` still exists and still produces the same scoped run; what changed
+is that it is **no longer a gate**. It was taken out of `.husky/pre-commit` in
+the change that fixed the worktree hook gap, because its cost is a function of a
+file's fan-in across the test suite rather than of the change — about 5% of the
+suite for a hook, a util or a component, 44% for `src/contexts/StoreContext.tsx`,
+64% for `src/util/draw.ts`, and all of them for `src/test/setup.ts`. It is now a
+documented command to run when you want the fast scoped pass. See AGENTS.md,
+"`test:staged` is a command, not a gate".
 
-That removes the _exposure_ — there is no longer a fan-out run inside a commit
-gate, so there is no longer a scoped run in which this flake could be observed by
-a developer mid-commit. It does **not** remove the _condition_. The same
+That removes the _exposure_: there is no longer a fan-out run inside a commit
+gate, so there is no longer a scoped run standing between a developer and their
+commit, failing at random and teaching them that the gate lies. It does **not**
+remove the _condition_, and it does not make this entry closed — a scoped run is
+still one `npm run test:staged` away. The same
 `vmThreads` pool, the same 4 workers, the same shared machine, still runs the
 full suite in three places:
 
@@ -75,7 +80,8 @@ full suite in three places:
 
 The full suite has been observed green repeatedly — 180/180 files, 4142 passed,
 34 expected-fail, across at least seven separate full runs on 2026-09-28, exit 0
-every time. That is a much larger sample than the 8 that was dismissed earlier,
+every time. (Those counts are what the suite held that day; the suite has grown
+since. The seven green runs are the point, not the numbers.) That is a much larger sample than the 8 that was dismissed earlier,
 and it is evidence that the full-suite failure rate is low. It is not evidence
 that it is zero, and the coverage run in CI is a _different_ execution again
 (instrumented, slower, different timing), so it is not the same sample either.
@@ -87,12 +93,12 @@ that reported it was deleted would be closing it for the wrong reason.
 ## 4. Why `src/util/draw.ts` is a place worth staring at
 
 The observation came from the file set that `src/util/draw.ts` fans out to, which
-is the widest in the repository at 115 of 180 files. Two reasons that is not a
-coincidence:
+is the widest in the repository — around 60% of the suite. Two reasons that is not
+a coincidence:
 
 - A wide fan-out means the run contains most of the suite, so it has the largest
   exposure window of any scoped run that could exist. Whatever the flake is, a
-  115-file run is the most likely place to meet it.
+  run over 60% of the suite is the most likely place to meet it.
 - `draw.ts` is imported by the drawing and shape tool areas, the layer
   compositing path, and the export path, and it is covered by
   `pool: 'vmThreads'`. Drawing code in jsdom is the part of this suite most
@@ -174,4 +180,4 @@ existed.
 - `src/test/setup.ts` — the polyfills most likely to be involved
 - `src/util/draw.ts` — the file whose import fan-out defined the observed set
 - `.husky/pre-push` — where `npm run test` now runs
-- `AGENTS.md`, "Gates" — why the scoped run no longer exists
+- `AGENTS.md`, "`test:staged` is a command, not a gate" — where it lives now, and what it costs

@@ -8,13 +8,14 @@
     "dev": "vite",
     "build": "vite build",
     "dist": "vite build",
-    "lint": "eslint . --cache",
-    "lint:check": "eslint . --cache && prettier --check .",
+    "lint": "node scripts/lint-tracked.js --eslint-only",
+    "lint:check": "node scripts/lint-tracked.js",
     "tsc": "tsc -b",
-    "lint:fix": "eslint . --fix",
-    "format": "prettier --write .",
+    "lint:fix": "node scripts/lint-tracked.js --eslint-only --fix",
+    "format": "node scripts/lint-tracked.js --write",
     "preview": "vite preview",
     "test": "vitest --run",
+    "test:staged": "git diff --cached --name-only --diff-filter=ACMR -z | xargs -0 vitest related --run",
     "test:integration": "vitest --run src/contexts/__tests__/psd-utils.test.ts src/hooks/__tests__/useApp.psd.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
@@ -39,7 +40,7 @@
       "eslint --fix",
       "prettier --write"
     ],
-    "*.{js,scss,jsonc,yml,yaml,md,json}": [
+    "*.{js,jsx,mjs,cjs,scss,css,jsonc,yml,yaml,md,json}": [
       "prettier --write"
     ]
   },

@@ -3606,7 +3606,7 @@ Neither file is reached by husky any more. `core.hooksPath` points at `<common g
 
 The commit gate runs **no app unit test at all**, and that is deliberate: a `vitest related` fan-out over the staged files was tried and removed because its cost is not bounded by the change — it selects anywhere from 10 to 115 of the repository's 180 test files depending on the file touched, so its worst case is the full run it was meant to replace. `npm run test` is the whole-tree check; `gate:push` runs it once per push. The pre-push hook does not repeat `gate:commit` either: a push can follow a `git commit --no-verify`, a rebase, or a cherry-pick, but the `ci` job catches a broken build in about a minute, and re-running deterministic checks at push is how a gate gets `--no-verify`'d along with everything else.
 
-`lint-staged` covers `*.{ts,tsx}` (ESLint fix + Prettier) and `*.{js,scss,jsonc,yml,yaml,md,json}` (Prettier only, because no ESLint config covers them). **There is no local `lint:check`**: whole-tree ESLint and Prettier run in CI only, so a file already committed unformatted, a rule-changing branch switch, or a bad rebase surface in `ci`, not locally. Run `npm run format` before you commit, not after the hook blocks you.
+`lint-staged` covers `*.{ts,tsx}` (ESLint fix + Prettier) and `*.{js,jsx,mjs,cjs,scss,css,jsonc,yml,yaml,md,json}` (Prettier only, because no ESLint config covers them). The two lists are the same rule as `scripts/lint-tracked.js`, which is what `lint:check` runs: it lints `git ls-files`, not `.`, so the 121 worktrees under `.kilo/`, `dist/` and generated e2e output are not inputs, and `.prettierignore` no longer exists to keep them out. **No `lint:check` in any local gate** — `ci` runs the full tracked set on every push, and locally only the staged subset is formatted, so a file already committed unformatted, a rule-changing branch switch, or a bad rebase surface in `ci`. Run `npm run format` before you commit, not after the hook blocks you.
 
 ### 8.4 Order, and what counts as a red flag
 
@@ -3628,14 +3628,13 @@ PLAYWRIGHT_PORT=5199 npm run test:e2e          # headless, last: slowest, most e
 
 ### 8.5 CI jobs
 
-`.github/workflows/ci.yml` is the only workflow file: four jobs on push and pull request to `main`, plus `workflow_dispatch` (`ci.yml:3-10`), Node 24 from `.nvmrc`, `npm ci`, `permissions: contents: read` (`:20-21`).
+`.github/workflows/ci.yml` is the only workflow file: three jobs on push and pull request to `main`, plus `workflow_dispatch` (`ci.yml:3-10`), Node 24 from `.nvmrc`, `npm ci`, `permissions: contents: read` (`:20-21`). A fourth job, `dependency-review`, was removed; the licence policy it read is now written down in `DEPENDENCIES.md` and is not a gate. `npm audit` still covers the vulnerability half on every push.
 
-| Job                 | Line         | Runs                                                                                                                                                                                        |
-| ------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci`                | `ci.yml:24`  | `lint:check` → `npm audit --audit-level=high` → `tsc` → assert every tracked `.ts`/`.tsx` is inside some project's `include` (`:59-90`) → `test --coverage` → `build`. Uploads `coverage/`. |
-| `dependency-review` | `ci.yml:127` | PR only (`:130`). Denies GPL-3.0-only / AGPL-3.0-only, fails on a high-severity advisory, allowlists licences.                                                                              |
-| `e2e-unit`          | `ci.yml:157` | `test:e2e:unit` → `test:e2e:unit:coverage` → upload. A **separate blocking job** so a break in the app pipeline cannot remove the only gate on `e2e/` (`:149-156`).                         |
-| `e2e`               | `ci.yml:205` | `npm ci` → cache Chrome → `npx playwright install --with-deps chrome` → `npx playwright test`. A **gate**, not `continue-on-error` (`:208-232`).                                            |
+| Job        | Line         | Runs                                                                                                                                                                                        |
+| ---------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci`       | `ci.yml:24`  | `lint:check` → `npm audit --audit-level=high` → `tsc` → assert every tracked `.ts`/`.tsx` is inside some project's `include` (`:59-90`) → `test --coverage` → `build`. Uploads `coverage/`. |
+| `e2e-unit` | `ci.yml:157` | `test:e2e:unit` → `test:e2e:unit:coverage` → upload. A **separate blocking job** so a break in the app pipeline cannot remove the only gate on `e2e/` (`:149-156`).                         |
+| `e2e`      | `ci.yml:205` | `npm ci` → cache Chrome → `npx playwright install --with-deps chrome` → `npx playwright test`. A **gate**, not `continue-on-error` (`:208-232`).                                            |
 
 The "tracked file in a project" step is a real constraint: a new `.ts`/`.tsx` no project includes is type-checked by nothing, with no error anywhere. Scope it correctly, though — `tsc -b --listFiles` catches a file no project reaches but **not** one reachable only through its importers (`ci.yml:60-69`). There are no coverage thresholds anywhere (`vitest.config.ts:19-32`, `vitest.e2e.config.ts:38-43`); `--coverage` is for the report, not a percentage gate (`ci.yml:100-102`).
 
@@ -4583,7 +4582,7 @@ Source: `docs/ps-tool-playbook.md` at `docs/ps-tool-playbook`, authored against 
 
 - `npm run test:e2e  # playwright, headless, informational` → a **gate** (`ci.yml:205-208`, `AGENTS.md:190-194`).
 - `e2e` (informational, `continue-on-error`) → promoted to a gate; the comment that justified the old setting is `ci.yml:208-232`, and `AGENTS.md:190-194` explains what the promotion does and does not rest on.
-- CI described as three jobs → **four**: `ci` (`ci.yml:24`), `dependency-review` (`ci.yml:127`, PR-only), `e2e-unit` (`ci.yml:157`), `e2e` (`ci.yml:205`).
+- CI described as three jobs → **four**: **wrong, and now wrong the other way.** `dependency-review` was briefly added as a fourth (PR-only) job and has since been removed again; it is `ci` (`ci.yml:24`), `e2e-unit` (`ci.yml:157`), `e2e` (`ci.yml:205`). The licence policy survives as prose in `DEPENDENCIES.md`, enforced by nothing.
 - `.github/workflows/ci.yml:48-79` for the "tracked file in a project" step → that step is `ci.yml:59-90` (`:70-89` shell body, `:84` the `comm` that yields the uncovered list).
 - `AGENTS.md:101-104` for the typecheck — verified unchanged, but `tsconfig.json:1-14` says a bare `npx tsc` resolves **zero** files, where `AGENTS.md:102-103` says it "resolves the app tsconfig alone". Same conclusion; `tsconfig.e2e.json:44` is what makes it safe.
 - `08-merge-plan.md:75-86` extras — range still correct, but `npx tsc -b --force` is obsolete (`tsconfig.app.json:3-8`, `tsconfig.node.json:3-5`: `tsc -b` re-checks every run), and `npx eslint . && npx prettier --check .` → `npm run lint:check` (`package.json:12`).

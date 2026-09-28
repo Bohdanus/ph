@@ -125,10 +125,10 @@ The project uses GitHub Actions for continuous integration:
   went on reporting a state the suite no longer had. The browser download is cached,
   so the job is mostly the suite itself. See
   [`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md).
-- **Dependency Review Job**: the licence allow/deny list and the high-severity
-  advisory threshold in
-  [`.github/dependency-review-config.yml`](.github/dependency-review-config.yml), on
-  pull requests only. `npm audit` covers pushes to `main`.
+- **Dependency licences**: the allow/deny list and the high-severity advisory
+  threshold are written down in [`DEPENDENCIES.md`](DEPENDENCIES.md), and nothing
+  enforces them. `npm audit --audit-level=high` is a real step on every push, and
+  it is the vulnerability half of that policy.
 
 ![CI](https://github.com/<owner>/<repo>/actions/workflows/ci.yml/badge.svg)
 
