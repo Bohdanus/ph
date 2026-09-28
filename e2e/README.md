@@ -132,8 +132,9 @@ a container.
 ## Helper unit tests
 
 Fast, browser-free tests for the modules in `e2e/helpers/`. They run in Node via
-Vitest and need no application instance, so they are the only part of this suite
-that CI gates on — see the `e2e-unit` job in `.github/workflows/ci.yml`.
+Vitest and need no application instance, so they get their own CI job rather than
+sharing one with the browser run — see the `e2e-unit` job in
+`.github/workflows/ci.yml`. The specs themselves are gated too, by the `e2e` job.
 
 ```bash
 npm run test:e2e:unit              # single run
@@ -401,21 +402,20 @@ every tracked `.ts`/`.tsx` is inside some project's `include`, unit tests, and t
 production build. `tsc -b` is what also builds `tsconfig.e2e.json`.
 
 `e2e` installs Chrome and runs the browser tests against the dev server started by
-`playwright.config.ts`. It is still marked `continue-on-error: true`, and that
-justification no longer holds: it was there because 2–4 of the 97 tests failed for
-documented reasons, and **all of them are now fixed**. The suite is green locally,
-headless, across repeated full runs.
+`playwright.config.ts`. It is a **blocking** gate. It was `continue-on-error`, on the
+stated grounds that a handful of specs failed for documented reasons; those are all
+fixed and the job went on reporting a state the suite no longer had.
 
-It is left as-is because making the job blocking is a workflow decision that belongs
-to the operator, not a consequence of this work. It is also the one thing left to do
-to make the job a real gate: flipping `continue-on-error` to `false`. Two things
-should be settled first, because a blocking job is only as good as what it compares
-against:
+Two things are still unmeasured, and neither is a reason to unblock the job — both
+concern configurations this job does not run in:
 
 - a headed run, to confirm the CDP fix is green outside the headless configuration
   this host can produce (see `AGENTS.md` — the operator runs it, not an agent);
 - whether the visual-regression baselines should be regenerated from a production
   build rather than a dev server, since the job runs against `npm run dev`.
 
-Until then the job reports the true state including the 2 declared skips. It runs
-the full suite with no `--grep-invert`, so the report is unfiltered.
+The job reports the true state including the 2 declared skips. It runs the full
+suite with no `--grep-invert`, so the report is unfiltered — but note that
+`playwright.config.ts` sets `retries: 2` when `CI` is set, so a green run here is a
+green run _after_ retries. A flake that only shows on the first attempt is
+invisible in this job by design.

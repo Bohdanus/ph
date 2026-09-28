@@ -112,4 +112,5 @@ specifics worth calling out:
   not authorized. That claim rested on the void `updateSnapshots` check described in
   §2 — the spec was re-recording rather than comparing, so "passes against the
   committed baselines" was never tested. It is tested now, and they do match.
-- **No `e2e` browser-job gating.** Left informational; see §3.
+- **The `e2e` browser job gates.** It is no longer `continue-on-error`; the
+  justification for that was the failing set recorded in §2, and that set is empty.
