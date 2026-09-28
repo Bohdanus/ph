@@ -580,12 +580,16 @@ export const CURATED = {
     // worktree of the same name then made it checkable, and it failed.
     //
     // The lesson is the one `landed` exists to enforce: a curated entry is a
-    // claim about git, and a claim nothing re-derives is just prose. `landed`
-    // is deliberately FALSE here — this branch is not on main — and the entry
-    // goes away with the worktree when it lands.
+    // claim about git, and a claim nothing re-derives is just prose.
+    //
+    // It is `true` again because it is now true — `npm run board` was merged as
+    // `npm run swarm`, the worktree is removed, and the branch is an ancestor of
+    // main. The entry is KEPT rather than deleted, matching every other landed
+    // worktree here: a landed-and-removed worktree is history, and the claim is
+    // only worth keeping while something re-derives it.
     summary:
-      "The swarm board names which board it is (Kilo's built-in board_read is a different tool, empty by design), is renamed `swarm` so the two cannot be confused, and ranks `ready` by provenance and contention so the live work is not buried under the handoff imports.",
-    landed: false,
+      "Landed: the board command is `swarm` (it was `board`, which is also the name of Kilo's unrelated built-in tool), and `ready` ranks by priority, then live-before-imported, then startable-before-contended.",
+    landed: true,
   },
   'fix-e2e-findings': {
     summary:
