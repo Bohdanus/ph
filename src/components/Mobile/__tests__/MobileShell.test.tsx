@@ -18,7 +18,6 @@ const updateLayerMock = vi.hoisted(() => vi.fn());
 const moveLayerAfterMock = vi.hoisted(() => vi.fn());
 const resetHistoryToMock = vi.hoisted(() => vi.fn());
 const toggleDisabledMock = vi.hoisted(() => vi.fn());
-const resetToLastSavedArgsMock = vi.hoisted(() => vi.fn());
 const commitDirtyToolMock = vi.hoisted(() => vi.fn(() => ({})));
 const openNewImageDialogMock = vi.hoisted(() => vi.fn());
 const openLoadImageDialogMock = vi.hoisted(() => vi.fn());
@@ -98,7 +97,6 @@ vi.mock('../../../contexts/useCurrentTool.tsx', () => ({
     isToolDirty: currentToolMock.isToolDirty,
     toolArgs: currentToolMock.toolArgs,
     patchToolArgs: vi.fn(),
-    resetToLastSavedArgs: resetToLastSavedArgsMock,
   }),
 }));
 

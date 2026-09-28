@@ -163,6 +163,7 @@ export const FileProvider = ({ children }: FileProviderProps) => {
       {children}
       <input
         type="file"
+        data-testid="file-open-input"
         ref={fileInputRef}
         onChange={handleFileInputChange}
         accept="image/*,.psd,.tif,.tiff,.bmp,.gif,.avif,.ico,.svg"

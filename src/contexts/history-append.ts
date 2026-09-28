@@ -1,4 +1,4 @@
-import { SELECTION_ACTION, SET_DOCUMENT_FRAME_ACTION, SHOW_LAYER_ACTION } from '../util/constants.ts';
+import { REORDER_ACTION, SELECTION_ACTION, SET_DOCUMENT_FRAME_ACTION, SHOW_LAYER_ACTION } from '../util/constants.ts';
 import type { DocumentFrame } from './document-frame.ts';
 import {
   deriveSetDocumentFrameEntry,
@@ -19,6 +19,7 @@ import {
 import type { HistoryTimeline } from './history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
+import type { LayerId } from './layer-types.ts';
 
 const EMPTY_SELECTIONS: SelectionSnapshot = Object.freeze({ selections: Object.freeze([]), activeSelectionId: null });
 
@@ -171,6 +172,109 @@ function translate(
   );
 }
 
+/**
+ * The durable order a legacy reorder must produce, recomputed here rather than
+ * read out of `legacyHistoryToDurable`.
+ *
+ * A reorder is the one translated action whose durable operation cannot be a
+ * function of the history item: `orderByLayerId` names the resulting position of
+ * *every* layer, and the item carries only the intent. So the answer has to come
+ * from the pre-append layer order, and the only trustworthy copy of that is the
+ * store's live record — a hook closure is 200 ms stale by the time a drag
+ * dispatches.
+ *
+ * This is deliberately a second implementation of the rule rather than a call
+ * into the converter's. Reusing the converter's copy would make a bug in it
+ * reproduce itself here, which is the opposite of a check. Two copies can drift,
+ * so `history-append.reorder.test.ts` pins them against each other over a
+ * matrix of orders and intents, and the store test pins the published document
+ * against a full conversion.
+ *
+ * `preOrder` is the layer sequence bottom first — index 0 is the bottom of the
+ * stack — which is the same sequence `reorderLayers` and `replayHistory` operate
+ * on, and the same one the converter normalizes its own layer snapshots into.
+ *
+ * A `null` result is the one answer this function refuses: the mover is not in
+ * the document, a named anchor is not, or the anchor is the mover itself. All
+ * three of the first two are already agreed no-ops rather than placements
+ * (`replayHistory` skips, `reorderLayers` refuses, the converter records
+ * nothing), so a refusal must not become a fabricated map. Returning `null`
+ * routes the append to conversion, which is where that no-op belongs.
+ *
+ * A self-anchored move is refused for a different reason, and the reason is a
+ * known disagreement rather than a settled rule. `reorderLayers` anchors on the
+ * layer's own order, shifts everything above it, and then re-assigns the layer —
+ * so the resulting *sequence* is unchanged and only the sparse order values
+ * move. The converter drops the mover from the list first, so its `indexOf` is
+ * -1 and it records a move to the bottom. Executed, not assumed: on a stack
+ * ordered bottom-first as `a, b, c`, a self-anchored move of `c` leaves the
+ * document reading `a, b, c` and the converter recording `c, a, b`. (The two
+ * agree when the mover is already the bottom layer, so the disagreement is a
+ * function of the stack, not a blanket one.)
+ *
+ * This boundary is written to agree with the converter rather than to become a
+ * third opinion, and the two implementations of the durable rule are pinned
+ * against each other, so returning the sequence-preserving map here would break
+ * that pin. It is recorded in `HANDOFF.md` as a conversion defect; fixing it
+ * means changing the converter and this function together.
+ *
+ * Note what the refusal does and does not buy. It stops THIS append from
+ * publishing, and the reconversion it falls back to leaves the shadow ordered
+ * the converter's way while the document keeps the sequence it had — so the two
+ * models now disagree. That disagreement is caught by the `durableLayerOrder`
+ * precondition on the NEXT append, not by this refusal. The refusal is the
+ * first line; the order comparison is what actually keeps a publication and a
+ * reconversion interchangeable.
+ */
+export function reorderOrderAfterIntent(
+  preOrder: readonly LayerId[],
+  intent: { layerToMoveId: LayerId; afterWhichLayerId?: LayerId | null }
+): Readonly<Record<LayerId, number>> | null {
+  if (!intent.layerToMoveId) return null;
+  if (!preOrder.includes(intent.layerToMoveId)) return null;
+  if (intent.afterWhichLayerId && !preOrder.includes(intent.afterWhichLayerId)) return null;
+  // The anchor is the mover. See the doc block: the document keeps the sequence
+  // and the converter does not, and this function does not get to pick.
+  if (intent.afterWhichLayerId === intent.layerToMoveId) return null;
+
+  const remaining = preOrder.filter((id) => id !== intent.layerToMoveId);
+  // A falsy anchor means the bottom, which is index 0 here. A named anchor is
+  // known to be present, so `indexOf` cannot be -1 and the `+ 1` is its slot.
+  const targetIndex = intent.afterWhichLayerId ? remaining.indexOf(intent.afterWhichLayerId) + 1 : 0;
+  remaining.splice(targetIndex, 0, intent.layerToMoveId);
+  return Object.freeze(Object.fromEntries(remaining.map((id, index) => [id, index])));
+}
+
+/**
+ * The durable entry for a legacy reorder, or `null` when the append is not a
+ * reorder or the intent does not apply to the store's layer order.
+ *
+ * `preOrder` is `null`/absent at every caller that cannot see the live record —
+ * including `planHistoryAppend`, which is why reorder is absent from
+ * `translate` and planned at the store boundary instead.
+ */
+export function deriveReorderLayersEntry(
+  item: HistoryItem,
+  preOrder: readonly LayerId[] | null | undefined
+): DurableHistoryEntry | null {
+  if (item.actionName !== REORDER_ACTION) return null;
+  if (!preOrder) return null;
+  const args = item.args as { layerToMoveId?: LayerId; afterWhichLayerId?: LayerId | null } | undefined;
+  const layerToMoveId = args?.layerToMoveId;
+  if (!layerToMoveId) return null;
+  const orderByLayerId = reorderOrderAfterIntent(preOrder, {
+    layerToMoveId,
+    afterWhichLayerId: args?.afterWhichLayerId,
+  });
+  if (!orderByLayerId) return null;
+  return Object.freeze({
+    id: item.id,
+    schemaVersion: DURABLE_SCHEMA_VERSION,
+    enabled: isEntryEnabled(item),
+    operation: Object.freeze({ kind: 'reorder-layers' as const, orderByLayerId }),
+  });
+}
+
 function validateTimeline(entry: HistoryItem, timeline: HistoryTimeline): MigrationDiagnostic | null {
   if (timeline.entries.some((candidate) => candidate.id === entry.id)) {
     return {
@@ -238,6 +342,32 @@ export type DurableAppendInput = Readonly<{
   /** The entry the boundary planned for it, if any. */
   planned?: DurableHistoryEntry | null;
   documentRevision: number;
+  /**
+   * The store's authoritative pre-append layer order, bottom first.
+   *
+   * A reorder is the only published action that needs it, because its operation
+   * names the resulting order of every layer rather than a change to one of
+   * them. It is supplied by the store from the live record, never by a writer.
+   */
+  preLayerOrder?: readonly LayerId[] | null;
+  /**
+   * The layer ids the durable document itself holds at its cursor, in the order
+   * its own snapshots sort into.
+   *
+   * A reorder map is keyed on the whole layer set, and durable replay silently
+   * skips ids it does not know (`durable-replay.ts`), so a map derived from a
+   * layer set the shadow does not share would renumber the layers the two models
+   * do agree on and leave the shadow ordered differently from the document. The
+   * store supplies the comparison so this module never has to replay anything.
+   *
+   * The ORDER is compared, not just the membership, and the difference is the
+   * whole point. A published map is a fresh normalisation of the order, so it
+   * overwrites whatever order the shadow had; publishing it while the two models
+   * already disagree about the order launders that disagreement into a document
+   * no reconversion will reproduce. Sequence equality is what makes a publication
+   * and a reconversion interchangeable.
+   */
+  durableLayerOrder?: readonly LayerId[] | null;
 }>;
 
 function sameFrame(left: unknown, right: unknown): boolean {
@@ -321,12 +451,34 @@ function sameSelectionSnapshot(left: unknown, right: unknown): boolean {
   return leftSelections.every((selection, index) => sameSelection(selection, rightSelections[index]));
 }
 
+function sameOrderMap(left: Readonly<Record<LayerId, number>>, right: Readonly<Record<LayerId, number>>): boolean {
+  const leftIds = Object.keys(left);
+  if (leftIds.length !== Object.keys(right).length) return false;
+  return leftIds.every((id) => left[id] === right[id]);
+}
+
+/** Two layer sequences are equal when they name the same ids in the same order. */
+function sameLayerSequence(left: readonly LayerId[], right: readonly LayerId[]): boolean {
+  return left.length === right.length && left.every((id, index) => id === right[index]);
+}
+
 /**
  * Proves the planned entry is the entry this legacy item must produce. A
  * disagreement is a defect in the writer, not a reason to reject the edit, so
  * the caller still falls back to the conversion and reports it.
+ *
+ * `preLayerOrder` is the reorder branch's independent source. Note what that
+ * does and does not buy: it catches a `durableEntry` that was built or supplied
+ * somewhere other than the store boundary, which is the case that can actually
+ * occur, because it is fed the store's record rather than the plan's own output.
+ * It does not make `reorderOrderAfterIntent` self-proving — the parity test
+ * against the converter, and the store test against a full conversion, are.
  */
-export function validatePlannedDurableEntry(entry: HistoryItem, planned: DurableHistoryEntry): string | null {
+export function validatePlannedDurableEntry(
+  entry: HistoryItem,
+  planned: DurableHistoryEntry,
+  preLayerOrder?: readonly LayerId[] | null
+): string | null {
   if (planned.schemaVersion !== DURABLE_SCHEMA_VERSION) return `durable schema version ${planned.schemaVersion}`;
   if (planned.id !== entry.id) return `durable entry id ${planned.id} does not match the legacy entry id ${entry.id}`;
   if (planned.enabled !== isEntryEnabled(entry)) return 'the durable enabled state does not match the legacy entry';
@@ -364,6 +516,28 @@ export function validatePlannedDurableEntry(entry: HistoryItem, planned: Durable
       return 'the durable previous selection state does not match the legacy entry';
     }
     return null;
+  }
+
+  if (entry.actionName === REORDER_ACTION) {
+    if (planned.operation.kind !== 'reorder-layers') {
+      return `a layer reorder produced a "${planned.operation.kind}" operation`;
+    }
+    const args = entry.args as { layerToMoveId?: LayerId; afterWhichLayerId?: LayerId | null } | undefined;
+    const layerToMoveId = args?.layerToMoveId;
+    if (!layerToMoveId) return 'a layer reorder has no moving layer id';
+    if (!preLayerOrder) return 'a layer reorder was checked without the store layer order it was planned against';
+    const expected = reorderOrderAfterIntent(preLayerOrder, {
+      layerToMoveId,
+      afterWhichLayerId: args?.afterWhichLayerId,
+    });
+    // The refusal cases never reach here: `decideDurableAppend` sends a reorder
+    // whose intent does not apply down the `preconditions` path before it calls
+    // this. Grading one as a mismatch would report a writer defect for an append
+    // that is behaving exactly as legacy replay does.
+    if (!expected) return 'the layer reorder names a layer the document does not hold';
+    return sameOrderMap(planned.operation.orderByLayerId, expected)
+      ? null
+      : 'the durable layer order does not match the store order';
   }
 
   if (isSetLayerPropertiesAction(entry.actionName)) {
@@ -410,6 +584,8 @@ export function decideDurableAppend({
   entry,
   planned,
   documentRevision,
+  preLayerOrder,
+  durableLayerOrder,
 }: DurableAppendInput): DurableAppendDecision {
   if (!planned) return { outcome: 'preconditions', reason: 'no durable entry was planned for this append' };
   if (!base) return { outcome: 'preconditions', reason: 'the durable document is unavailable' };
@@ -433,7 +609,36 @@ export function decideDurableAppend({
     return { outcome: 'preconditions', reason: 'the appended entry is not the one that was planned' };
   }
 
-  const problem = validatePlannedDurableEntry(entry, planned);
+  // A reorder is the only publication whose correctness depends on the whole
+  // layer order, so it is the only one that has to prove it. The refusal is a
+  // precondition rather than a mismatch: it describes a store that cannot answer
+  // the question, not a writer that answered it wrongly, and the conversion that
+  // replaces it already handles the no-op correctly.
+  //
+  // Of the three, only the sequence comparison is reachable from the store: it
+  // supplies an array for the store order by construction, and the base it reads
+  // the durable order from was already required non-null above. The other two are
+  // the module's API contract — a caller that cannot see the live record has no
+  // way to publish a reorder, and must be told that rather than be trusted.
+  if (entry.actionName === REORDER_ACTION) {
+    if (!preLayerOrder) {
+      return { outcome: 'preconditions', reason: 'a layer reorder needs the store layer order it was planned against' };
+    }
+    if (!durableLayerOrder) {
+      return {
+        outcome: 'preconditions',
+        reason: 'a layer reorder needs the durable layer order to compare the store order against',
+      };
+    }
+    if (!sameLayerSequence(durableLayerOrder, preLayerOrder)) {
+      return {
+        outcome: 'preconditions',
+        reason: 'the durable document and the store record disagree about the layer order',
+      };
+    }
+  }
+
+  const problem = validatePlannedDurableEntry(entry, planned, preLayerOrder);
   if (problem) return { outcome: 'mismatch', reason: problem };
 
   const cursor = base.history.length;

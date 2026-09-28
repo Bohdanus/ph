@@ -250,12 +250,26 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
   }
 
   function handlePointerUp(event: React.PointerEvent<HTMLDivElement>) {
-    // Whether this release is the one that owns the claim, read BEFORE the
-    // delegation: `useRect`'s pointer-up nulls the pointer it tracked, so after
-    // the call the id is gone and the comparison can no longer be made. A
-    // stranger's release must not hand the document back while the owning pointer
-    // is still dragging toward a commit that truncates the redo tail.
-    const ownsClaim = pointerIdRef.current !== null && pointerIdRef.current === getPointerId(event);
+    // Whether this release is the one that owns the claim and the interaction
+    // teardown, read BEFORE the delegation: `useRect`'s pointer-up nulls the
+    // pointer it tracked, so after the call the id is gone and the comparison can
+    // no longer be made. A stranger's release must not hand the document back
+    // while the owning pointer is still dragging toward a commit that truncates
+    // the redo tail.
+    //
+    // Both halves are load-bearing for the reason `isPointerUpValid` needs both:
+    // a mouse is ONE pointer whose id is constant across buttons, so a
+    // right-button release that arrives while a left drag is in flight shares the
+    // left pointer's id, and matching on the id alone handed that release to
+    // every caller's teardown for a release this press never made. The id match
+    // alone is a second hole in the other direction — a release from a pointer
+    // this surface never tracked cannot end a drag it does not own — so only the
+    // primary release of the tracked pointer is one this gesture ends on. Its
+    // refusal leaves the gesture armed, so the genuine primary release still
+    // arrives, and `pointercancel`, the leave route and the unmount route carry
+    // the aborts that have no primary release to wait for.
+    const isOwningRelease =
+      event.button === 0 && pointerIdRef.current !== null && pointerIdRef.current === getPointerId(event);
 
     handlePointerUp_useRect(event);
 
@@ -263,8 +277,12 @@ export const MoveToolArea = ({ className }: moveToolAreaProps) => {
     // `onChangeEnd` and therefore `updateLayerByTool`, so releasing first would
     // open the keyboard for the one dispatch this gesture exists to make. The
     // release covers the commit path and every early return inside `onChangeEnd`
-    // (no layer, no start position, no displacement) with one call.
-    if (ownsClaim) releaseDocumentClaim();
+    // (no layer, no start position, no displacement) with one call. The teardown
+    // below rides the same condition: ending the interaction and ending the claim
+    // are one event, so a release that ends neither hands back nothing.
+    if (!isOwningRelease) return;
+
+    releaseDocumentClaim();
 
     isInteractionActiveRef.current = false;
     interactionLayerIdRef.current = null;

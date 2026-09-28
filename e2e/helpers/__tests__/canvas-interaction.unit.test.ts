@@ -70,7 +70,13 @@ describe('getWorkspaceCanvas', () => {
     // The locator keys off the test id, not the tag, so a sibling without the id is
     // not a candidate. A non-canvas element that *did* publish the id would be a
     // second match and trip strict mode - that is the app's contract to keep.
-    const dom = [{ selector: 'div' }, canvasElement('workspace-canvas')];
+    //
+    // The second canvas is what makes the case falsifiable. With one canvas,
+    // `locator('canvas').nth(1)` is empty, so the old
+    // `getByTestId(...).or(nth(1))` union resolved to the same single element and
+    // passed: this DOM could not tell the two helpers apart. A second canvas gives
+    // `nth(1)` a real element, so the union returns two and the assertion fails.
+    const dom = [{ selector: 'div' }, canvasElement('workspace-canvas'), canvasElement()];
     expect(resolveFakeMatches(getWorkspaceCanvas(createFakePage(dom)))).toEqual([dom[1]]);
   });
 });

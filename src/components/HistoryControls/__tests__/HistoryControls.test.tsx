@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import HistoryControls from '../HistoryControls.tsx';
+import { claimDocumentGesture, isDocumentGestureOpen, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 
 const history = vi.hoisted(() => ({
   canUndo: vi.fn(() => false),
@@ -23,6 +24,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   history.canUndo.mockReturnValue(false);
   history.canRedo.mockReturnValue(false);
+  // The gesture slot is module-level and outlives every mount, so a case that
+  // leaked a claim would refuse every later click in this file and a failure in
+  // one case would read as a failure in all of them. Cleared on the way in AND
+  // on the way out; a case below pins that the reset actually does it.
+  resetDocumentGestures();
+});
+
+afterEach(() => {
+  resetDocumentGestures();
 });
 
 describe('HistoryControls rendering', () => {
@@ -142,4 +152,82 @@ describe('HistoryControls redo dispatch', () => {
   // positive tests"). Whether the throw reaches `window` is React/jsdom behaviour, not a
   // `HistoryControls` invariant: the component wires `onClick={redo}` with no error handling
   // of its own, so there is nothing here to pin.
+});
+
+/**
+ * The keyboard gate (`useKeyboardEvents.tsx:134`) refused document-mutating
+ * shortcuts while a pointer gesture owned the document, and the buttons were
+ * never covered. They dispatch the same replay, and inside that window the
+ * replay is destructive: `undo`/`redo` replays `selections` from the SAME
+ * `history` array, so `history.length` never moves and the pending commit's
+ * `entries.slice(0, cursor + 1)` truncates the redo tail with no other symptom.
+ * A single pointer cannot hit it — the pointer is captured by the tool area — so
+ * the window is reachable only by a second pointer, which is why this is a
+ * coverage gap rather than an easy hit.
+ *
+ * The refusal belongs in these handlers, at the input layer: no dispatch, so
+ * nothing appends, so nothing truncates. It deliberately does NOT come from the
+ * `disabled` attribute either way — every case below claims the gesture AFTER
+ * render, and `disabled` is read at render time, so a render-time read could not
+ * see the claim at all.
+ */
+describe('HistoryControls document gesture gate', () => {
+  it('refuses undo while a document gesture is open, because the release-time commit would truncate the redo tail', () => {
+    history.canUndo.mockReturnValue(true);
+    render(<HistoryControls />);
+    claimDocumentGesture('layer-transform', 1);
+
+    fireEvent.click(undoButton());
+
+    // The button is enabled, so this is the handler refusing and not the
+    // attribute: a disabled button would make the assertion below vacuous.
+    expect(undoButton().disabled).toBe(false);
+    expect(history.undo).not.toHaveBeenCalled();
+  });
+
+  it('refuses redo while a document gesture is open, for the same reason', () => {
+    history.canRedo.mockReturnValue(true);
+    render(<HistoryControls />);
+    claimDocumentGesture('rectangular-selection', 2);
+
+    fireEvent.click(redoButton());
+
+    expect(redoButton().disabled).toBe(false);
+    expect(history.redo).not.toHaveBeenCalled();
+  });
+
+  it('undoes with no gesture open, so the gate refuses only while a gesture owns the document', () => {
+    history.canUndo.mockReturnValue(true);
+    render(<HistoryControls />);
+    expect(isDocumentGestureOpen()).toBe(false);
+
+    fireEvent.click(undoButton());
+
+    expect(history.undo).toHaveBeenCalledTimes(1);
+  });
+
+  it('redoes with no gesture open, so the gate refuses only while a gesture owns the document', () => {
+    history.canRedo.mockReturnValue(true);
+    render(<HistoryControls />);
+    expect(isDocumentGestureOpen()).toBe(false);
+
+    fireEvent.click(redoButton());
+
+    expect(history.redo).toHaveBeenCalledTimes(1);
+  });
+
+  it('undoes again once resetDocumentGestures drops the claim, so the gate is a window and not a latch', () => {
+    history.canUndo.mockReturnValue(true);
+    render(<HistoryControls />);
+
+    claimDocumentGesture('brush-stroke', 3);
+    fireEvent.click(undoButton());
+    expect(history.undo).not.toHaveBeenCalled();
+
+    resetDocumentGestures();
+    expect(isDocumentGestureOpen()).toBe(false);
+    fireEvent.click(undoButton());
+
+    expect(history.undo).toHaveBeenCalledTimes(1);
+  });
 });

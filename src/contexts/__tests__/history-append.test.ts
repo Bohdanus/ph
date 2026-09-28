@@ -8,6 +8,7 @@ import {
 import { AssetRegistry } from '../asset-registry.ts';
 import {
   decideDurableAppend,
+  deriveReorderLayersEntry,
   durableAppendDiagnostic,
   planHistoryAppend,
   type AppendBoundaryResult,
@@ -29,6 +30,7 @@ import {
   HIDE_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
   RENAME_LAYER_ACTION,
+  REORDER_ACTION,
   SELECTION_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SHOW_LAYER_ACTION,
@@ -37,6 +39,7 @@ import {
 } from '../../util/constants.ts';
 import type { DocumentFrame } from '../document-frame.ts';
 import type { Selection } from '../general-types.ts';
+import type { LayerId } from '../layer-types.ts';
 import type { HistoryTimeline } from '../history-timeline.ts';
 import type { HistoryItem, NewHistoryItem } from '../history-types.ts';
 
@@ -940,5 +943,127 @@ describe('decideDurableAppend: layer-property entries', () => {
     });
 
     expect(decidePlan(plan).outcome).toBe('preconditions');
+  });
+});
+
+/**
+ * The reorder decisions. A reorder is the only published action whose
+ * correctness depends on the whole layer set rather than on one property of one
+ * layer, so it is also the only one the decision has to prove something extra
+ * about before it publishes. The store-level behaviour is covered in
+ * `StoreContext.reorder.test.tsx`; what is pinned here is that each refusal is
+ * reachable, and is a `preconditions` outcome rather than a reported error.
+ */
+describe('decideDurableAppend: reorder entries', () => {
+  const preOrder: LayerId[] = ['bottom', 'middle', 'top'];
+  const priorEntries = [createMockHistoryItem({ id: 'baseline' })];
+  const base = {
+    documentId: 'doc-1',
+    documentRevision: 4,
+    branchRevision: 0,
+    durableRevision: 7,
+    baseline: {
+      frame: baselineFrame,
+      layers: [],
+      selections: { selections: [], activeSelectionId: null },
+      activeLayerId: null,
+    },
+    history: [createFrameEntry('baseline')],
+    cursor: 0,
+  } as unknown as DurableDocument;
+
+  const reorderEntry = (overrides: { id?: string; afterWhichLayerId?: LayerId | null } = {}) => {
+    const args: { layerToMoveId: LayerId; afterWhichLayerId?: LayerId | null } =
+      'afterWhichLayerId' in overrides
+        ? { layerToMoveId: 'bottom', afterWhichLayerId: overrides.afterWhichLayerId }
+        : { layerToMoveId: 'bottom', afterWhichLayerId: 'top' };
+    return createMockHistoryItem({
+      id: overrides.id ?? 'reorder-1',
+      actionName: REORDER_ACTION,
+      layerId: 'bottom',
+      args,
+    });
+  };
+
+  const decide = (entry: ReturnType<typeof reorderEntry>, overrides: Partial<DurableAppendInput> = {}) => {
+    const next = { entries: [...priorEntries, entry], cursor: 1, branchRevision: 0 };
+    return decideDurableAppend({
+      documentId: 'doc-1',
+      base,
+      prior: { entries: priorEntries, cursor: 0, branchRevision: 0 },
+      next,
+      entry,
+      planned: deriveReorderLayersEntry(entry, preOrder),
+      documentRevision: 4,
+      preLayerOrder: preOrder,
+      durableLayerOrder: [...preOrder],
+      ...overrides,
+    });
+  };
+
+  it('publishes a reorder planned from the store order', () => {
+    const entry = reorderEntry();
+    const decision = decide(entry);
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.history).toHaveLength(2);
+    expect(decision.document.history[1]!.operation).toEqual({
+      kind: 'reorder-layers',
+      orderByLayerId: { middle: 0, top: 1, bottom: 2 },
+    });
+    expect(decision.document.history[1]!.id).toBe(entry.id);
+    expect(decision.document.durableRevision).toBe(8);
+  });
+
+  it.each([
+    ['no store order at all', { preLayerOrder: null }],
+    ['a durable order that is not supplied', { durableLayerOrder: null }],
+    ['a durable order of the wrong length', { durableLayerOrder: ['bottom', 'middle'] }],
+    ['a durable order with a layer the store does not hold', { durableLayerOrder: [...preOrder, 'ghost'] }],
+    ['a durable order missing a layer the store holds', { durableLayerOrder: ['bottom', 'top'] }],
+    // Same length, same members, different sequence. This is the case a
+    // membership check cannot see, and it is the one that matters: a published
+    // map is a fresh normalisation of the order, so publishing while the models
+    // disagree about the order launders the disagreement into a document no
+    // reconversion will reproduce.
+    [
+      'a durable order that is the same set in a different sequence',
+      { durableLayerOrder: ['top', 'middle', 'bottom'] },
+    ],
+  ] as const)('refuses to publish for %s', (_label, overrides) => {
+    const decision = decide(reorderEntry(), overrides as Partial<DurableAppendInput>);
+
+    expect(decision.outcome).toBe('preconditions');
+  });
+
+  it('refuses a plan whose map disagrees with the store order', () => {
+    const entry = reorderEntry();
+
+    // A map that is a valid reorder, of a different reorder. Only the store's
+    // own order can tell them apart, which is the whole reason it is supplied.
+    const decision = decide(entry, {
+      planned: {
+        id: entry.id,
+        schemaVersion: DURABLE_SCHEMA_VERSION,
+        enabled: true,
+        operation: { kind: 'reorder-layers', orderByLayerId: { bottom: 0, middle: 1, top: 2 } },
+      } as DurableHistoryEntry,
+    });
+
+    expect(decision.outcome).toBe('mismatch');
+    if (decision.outcome === 'mismatch') expect(decision.reason).toContain('order');
+  });
+
+  it.each([
+    ['no anchor', undefined, { bottom: 0, middle: 1, top: 2 }],
+    ['an explicit null anchor', null, { bottom: 0, middle: 1, top: 2 }],
+  ] as const)('plans a move to the bottom for %s', (_label, afterWhichLayerId, expected) => {
+    const entry = reorderEntry({ afterWhichLayerId });
+    const decision = decide(entry);
+
+    expect(decision.outcome).toBe('published');
+    if (decision.outcome !== 'published') return;
+    expect(decision.document.history[1]!.operation).toEqual({ kind: 'reorder-layers', orderByLayerId: expected });
   });
 });

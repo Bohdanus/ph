@@ -122,8 +122,8 @@ The project uses GitHub Actions for continuous integration:
 - **E2E Job**: Playwright specs in Chrome. A **blocking** gate. It was
   `continue-on-error` on the stated grounds that five specs failed; those failures
   were fixed, so the comment justifying it stopped describing the suite and the job
-  went on reporting a state the suite no longer had. The browser download is cached,
-  so the job is mostly the suite itself. See
+  went on reporting a state the suite no longer had. Chrome is installed through the
+  OS package manager, so there is nothing here to cache. See
   [`e2e/OPEN_PROBLEMS.md`](e2e/OPEN_PROBLEMS.md).
 - **Dependency licences**: the allow/deny list and the high-severity advisory
   threshold are written down in [`DEPENDENCIES.md`](DEPENDENCIES.md), and nothing

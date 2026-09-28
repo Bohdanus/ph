@@ -1,5 +1,6 @@
 import type { RefObject } from 'react';
 import { getTextWidth, type TextToolArgs } from '../tools/text.ts';
+import { normalizeHex } from './color.ts';
 import { TEXT_PADDING } from './constants.ts';
 import type { Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
 
@@ -103,10 +104,8 @@ export function posToSortedRect(rect: Pos): RectXYSorted {
 }
 
 export function hexToRgb(hex: string): string {
-  // Remove the #
-  hex = hex.replace('#', '');
-
   // Parse the hex values
+  hex = normalizeHex(hex);
   const r = parseInt(hex.substring(0, 2), 16);
   const g = parseInt(hex.substring(2, 4), 16);
   const b = parseInt(hex.substring(4, 6), 16);
@@ -119,8 +118,15 @@ export const calculateNewRect = (
   canvasRef: RefObject<HTMLCanvasElement | null>,
   imageSize: Size
 ): RectXYSorted | null => {
-  const { align, text, fontSize, lineHeight } = newArgs;
-  const rect = newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 };
+  const { align, text, fontSize, lineHeight, rect } = newArgs;
+  // No rect means the text has not been placed on the canvas yet, and there is nothing to
+  // grow. The old `newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 }` manufactured one at the
+  // document origin, which no caller wanted: the only path that can reach here with a null
+  // rect is a toolbar keystroke (`Text.tsx`), and that made `Apply` reachable for text drawn
+  // at 0,0 -- `disabled={!text || !rect}` was a dead half that the substitution kept dead.
+  // `TextToolArea.tsx:32` passes the rect `useRect`'s `onChangeEnd` hands it, non-null by
+  // type, so it can never hit this.
+  if (!rect) return null;
 
   if (!text)
     return {

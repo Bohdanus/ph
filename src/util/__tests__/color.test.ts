@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { isLightColor } from '../color.ts';
+import { isLightColor, normalizeHex } from '../color.ts';
+
+describe('normalizeHex', () => {
+  it('expands 3-digit shorthand to its 6-digit form', () => {
+    expect(normalizeHex('#fff')).toBe('ffffff');
+    expect(normalizeHex('#000')).toBe('000000');
+    expect(normalizeHex('#abc')).toBe('aabbcc');
+  });
+
+  it('leaves a 6-digit value untouched with or without the leading hash', () => {
+    expect(normalizeHex('#ff0000')).toBe('ff0000');
+    expect(normalizeHex('ff0000')).toBe('ff0000');
+  });
+});
 
 describe('isLightColor', () => {
   it('returns true for an empty string', () => {
@@ -30,5 +43,16 @@ describe('isLightColor', () => {
   it('returns true for a hex color without the leading hash', () => {
     expect(isLightColor('ffffff')).toBe(true);
     expect(isLightColor('000000')).toBe(false);
+  });
+
+  it('classifies 3-digit hex as light instead of falling through to NaN luminance', () => {
+    expect(isLightColor('#fff')).toBe(true);
+    expect(isLightColor('#abc')).toBe(true);
+    expect(isLightColor('#000')).toBe(false);
+  });
+
+  it('classifies 3-digit hex identically to its 6-digit equivalent', () => {
+    expect(isLightColor('#f00')).toBe(isLightColor('#ff0000'));
+    expect(isLightColor('#fff')).toBe(isLightColor('#ffffff'));
   });
 });

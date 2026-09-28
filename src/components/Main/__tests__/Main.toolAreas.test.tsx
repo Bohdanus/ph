@@ -71,6 +71,9 @@ vi.mock('../EllipticalSelectionToolArea.tsx', () => ({
   EllipticalSelectionToolArea: marker('elliptical-selection'),
 }));
 vi.mock('../QuickSelectionToolArea.tsx', () => ({ QuickSelectionToolArea: marker('quick-selection') }));
+// Its own area, not `DrawToolArea`: the Color Replacement is a click-to-sample followed by a
+// drag, and it commits to the ACTIVE layer rather than creating one.
+vi.mock('../ColorReplacementToolArea.tsx', () => ({ ColorReplacementToolArea: marker('color-replacement') }));
 vi.mock('../EyedropperToolArea.tsx', () => ({ EyedropperToolArea: marker('eyedropper') }));
 vi.mock('../EraserToolArea.tsx', () => ({ EraserToolArea: marker('eraser') }));
 vi.mock('../CloneStampToolArea.tsx', () => ({ CloneStampToolArea: marker('clone-stamp') }));
@@ -106,6 +109,7 @@ const TOOL_AREA_IDS = [
   'dodge',
   'burn',
   'fill',
+  'color-replacement',
   'gradient',
 ] as const;
 
@@ -142,7 +146,9 @@ describe('Main tool-area routing', () => {
     ['draw', 'draw'],
     ['brush', 'draw'],
     ['pencil', 'draw'],
-    ['color-replacement', 'draw'],
+    // Not `draw`: the Color Replacement has a click-to-sample step `DrawToolArea` has no place
+    // for, and it commits to the ACTIVE layer instead of creating one.
+    ['color-replacement', 'color-replacement'],
     ['shape', 'shape'],
     ['rectangle', 'shape'],
     ['ellipse', 'shape'],

@@ -45,6 +45,20 @@ export type DrawToolArgs = {
   toolName: 'draw';
 };
 
+/**
+ * The paint tools, re-exported from `./brush.ts`, which is where the union is DECLARED.
+ *
+ * `color-replacement` used to be a member of that union and is not any more: it is not a paint,
+ * it is a substitution, and the two cannot share a processor or a settings shape. The old entry
+ * made that visible in the worst place — `PaintToolArgs` carried a `penType` the Color
+ * Replacement processor forced to `'spray'` and ignored every other control, so Tolerance and
+ * Limits had nowhere to live. Its own args live in `src/tools/colorReplacement.ts`.
+ *
+ * The narrowing is deliberately NOT a second declaration here. `brush.ts` owns the union, and
+ * redeclaring it in this file would leave two types with one name and different members — the
+ * exact class of bug the removal is fixing, re-created silently and one file over. The edit is
+ * one member of `src/tools/brush.ts:9`.
+ */
 export type { PaintToolName };
 
 /**
@@ -98,8 +112,9 @@ export const draw =
     // For the two stroked pen types `globalAlpha` is written at the tool's own alpha and never
     // forced to 1, so a fresh `OffscreenCanvas` here still commits a faded layer. `spray` returns
     // before that write: `drawSpray` carries the tool's alpha in its gradient colour stops
-    // (`alpha / 4` at the centre, `0` at the rim) and so needs no `globalAlpha` and leaves none
-    // behind — the composite operator is the only state it writes, and this bracket covers that.
+    // (its peak of `alpha * SPRAY_PEAK_ALPHA`, held over the inner quarter of the radius, then
+    // `0` at the rim) and so needs no `globalAlpha` and leaves none behind — the composite
+    // operator is the only state it writes, and this bracket covers that.
     // The visible consequence of the overlay being bracketed: a spray preview drawn after a stroke
     // at less than full alpha used to be DIMMER than the commit it previewed, because it
     // multiplied its own gradient by the alpha that stroke had leaked. The bracketed overlay
