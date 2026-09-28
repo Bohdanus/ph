@@ -56,17 +56,15 @@ const SidebarLeft = () => {
   // changed, which is what stops that from re-rendering forever.
   const [flyoutAnchor, setFlyoutAnchor] = useState<{ groupIndex: string; element: HTMLLIElement } | null>(null);
 
-  // A crossing of the tablet boundary replaces the two-column group keys with the
-  // one-column ones, so an open group simply stops matching and the flyout vanishes without
-  // having been closed. Crossing back matches the stale `openGroup` again and the menu
-  // reopens by itself, with nothing the user did to open it.
+  // The two layouts number the same groups differently — `two-column-3` above the tablet
+  // boundary, `0-2` below it — so a crossing leaves `openGroup` matching nothing and the
+  // flyout vanishes without having been closed. Crossing back matches the stale group again
+  // and the menu reopens by itself, with nothing the user did to open it.
   //
-  // This is adjusted during render rather than in an effect: the state is derived from a
-  // prop, which is what React's own guidance says to handle this way, and it is why it is
-  // not an effect. `react-hooks/set-state-in-effect` rejects the effect form, and an effect
-  // would additionally leave a commit in which the stale group is still open. Closing here
-  // is also the only place the anchor's tile is guaranteed to be going away, which is what
-  // `closeFlyout` has to be told about.
+  // Adjusted during render rather than in an effect, because this state is derived from a
+  // prop, which is what React's own guidance says to handle this way. `set-state-in-effect`
+  // rejects the effect form, and an effect would also leave a commit in which the stale
+  // group is still open.
   const [lastIsTablet, setLastIsTablet] = useState(isTablet);
   if (lastIsTablet !== isTablet) {
     setLastIsTablet(isTablet);
@@ -116,9 +114,9 @@ const SidebarLeft = () => {
   /**
    * The one way a flyout closes. The anchor goes with it: it is the element the overlay
    * measures, published by the open tile's ref callback, and nothing else ever clears it.
-   * Left behind, it survives a tile that unmounts — crossing the tablet boundary replaces
-   * the two-column group keys with the one-column ones, so the guard in `renderToolGroup`
-   * can stop matching the open group while a detached `<li>` is still held as the anchor.
+   * Left behind, it survives a tile that unmounts — crossing the `lg` breakpoint replaces
+   * the two-column keys with the one-column ones, so the guard below can match a group
+   * whose tile is detached, and the overlay would measure a detached box.
    */
   const closeFlyout = useCallback(() => {
     setOpenGroup(null);
@@ -255,6 +253,13 @@ const SidebarLeft = () => {
             }}
             onKeyDown={(event) => {
               if (!hasFlyout) return;
+              // A long press leaves focus on the tile, so Tab from there is the common way
+              // out of a flyout opened by mouse. The menu's own handler covers the case
+              // where focus is already inside it.
+              if (event.key === 'Tab') {
+                if (isOpen) closeFlyout();
+                return;
+              }
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
                 openFlyout(groupIndex);
@@ -314,10 +319,10 @@ const SidebarLeft = () => {
               data-toolbar-flyout={groupIndex}
               onKeyDown={(event) => {
                 // Tab leaves the menu rather than walking it. The overlay lives in
-                // `document.body`, so its items are not in the tile's focus ring and Tab is
-                // the only key that can move focus out of the menu — which is also what a
-                // `role="menu"` is supposed to do. Without this the menu outlives the focus
-                // that opened it, sitting on screen with its focus somewhere behind it.
+                // `document.body`, so the items are no longer in the tile's focus ring and
+                // Tab is the only key that can move focus out of the menu — which is also
+                // what a `role="menu"` is supposed to do. Closing here stops the menu
+                // outliving the focus that opened it.
                 if (event.key === 'Tab') {
                   closeFlyout();
                   return;

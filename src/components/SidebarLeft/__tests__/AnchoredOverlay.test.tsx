@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { useState } from 'react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import AnchoredOverlay from '../AnchoredOverlay.tsx';
 
 /**
@@ -32,28 +32,10 @@ const stubMeasuredSize = (): void => {
 };
 
 const setViewport = (width: number, height: number): void => {
-  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
-  Object.defineProperty(window, 'innerHeight', { configurable: true, value: height });
-  // `AnchoredOverlay` clamps against `documentElement.client*`, not `window.inner*`, so the
-  // two have to be stubbed together. jsdom reports 0 for every `client*` box, which would
-  // make the clamp collapse to the padding on every placement.
+  // A `position: fixed` box is laid out against `documentElement.clientWidth`, not
+  // `window.innerWidth`, and jsdom computes neither. The component reads the former.
   Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: width });
   Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, value: height });
-};
-
-/**
- * Diverges the two viewport measures the way a classic scrollbar does: the layout box a
- * `position: fixed` overlay is placed against is narrower than the `window.inner*` box that
- * includes the scrollbar gutter.
- */
-const setViewportWithScrollbar = (
-  inner: { width: number; height: number },
-  client: { width: number; height: number }
-): void => {
-  Object.defineProperty(window, 'innerWidth', { configurable: true, value: inner.width });
-  Object.defineProperty(window, 'innerHeight', { configurable: true, value: inner.height });
-  Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: client.width });
-  Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, value: client.height });
 };
 
 /** Re-reads the live box on every call, so a test can move the anchor between calls. */
@@ -69,20 +51,48 @@ const anchorBox = (element: HTMLElement, box: Box): void => {
     }) as DOMRect;
 };
 
-/** The anchor node the harness published, so a test can detach it. */
-let publishedAnchor: HTMLElement | null = null;
-
 /**
- * Reads it through a declared return type. `publishedAnchor` is only ever assigned from
- * inside a ref callback, which TypeScript's control-flow analysis treats as unreachable from
- * here, so a direct read narrows to `null` and every assertion on it is rejected.
+ * The anchor is resolved by the caller, through a callback ref in both real call sites, so
+ * the harness holds it in state exactly as they do. The size is read by the prototype
+ * getters during the overlay's layout effect, so it is set before the render that triggers
+ * it rather than inside the component.
  */
-const readPublishedAnchor = (): HTMLElement | null => publishedAnchor;
+const Harness = ({
+  anchor,
+  gap,
+  align,
+  measureKey,
+}: {
+  anchor: Box;
+  gap?: number;
+  align?: 'start' | 'center';
+  measureKey?: string;
+}) => {
+  const [anchorElement, setAnchorElement] = useState<HTMLSpanElement | null>(null);
+
+  return (
+    <div>
+      <span
+        data-testid="anchor"
+        ref={(node) => {
+          if (node) anchorBox(node, anchor);
+          setAnchorElement(node);
+        }}
+      />
+      <AnchoredOverlay align={align} anchor={anchorElement} gap={gap} measureKey={measureKey}>
+        <ul data-testid="overlay" role="menu" />
+      </AnchoredOverlay>
+    </div>
+  );
+};
 
 /**
- * Renders an anchor sibling and an anchored overlay. The returned `anchor` is the same
- * object the anchor's `getBoundingClientRect` reads on every call, so a test can move the
- * anchor and fire one event rather than re-rendering. `element` is that anchor's node.
+ * Renders an anchor and an anchored overlay. The returned `anchor` is the object the
+ * anchor's `getBoundingClientRect` reads on every call, so a test can move the anchor and
+ * fire one event rather than re-rendering. `resize` re-renders with new content and, by
+ * default, a new `measureKey` — the key is how a caller says its content changed, so a
+ * re-render that keeps it is expected NOT to re-measure. `commit` re-renders with everything
+ * unchanged, for a contract that React only re-evaluates when it renders.
  */
 const renderOverlay = ({
   anchor,
@@ -96,49 +106,32 @@ const renderOverlay = ({
   gap?: number;
   align?: 'start' | 'center';
   measureKey?: string;
-}): { anchor: Box; element: HTMLElement; rerender: () => void } => {
-  // The anchor is resolved by the caller, through a callback ref in both real call sites,
-  // so the harness holds it in state exactly as they do. The size is read by the prototype
-  // getters during the overlay's layout effect, so it is set before the render that
-  // triggers it rather than inside the component.
+}): {
+  anchor: Box;
+  resize: (size: Size, nextMeasureKey?: string) => void;
+  commit: () => void;
+} => {
   measuredSize = overlaySize;
-  publishedAnchor = null;
+  const { rerender } = render(<Harness align={align} anchor={anchor} gap={gap} measureKey={measureKey} />);
 
-  const Anchored = () => {
-    const [anchorElement, setAnchorElement] = useState<HTMLSpanElement | null>(null);
-
-    return (
-      <div>
-        <span
-          data-testid="anchor"
-          ref={(node) => {
-            if (node) anchorBox(node, anchor);
-            publishedAnchor = node;
-            setAnchorElement(node);
-          }}
-        />
-        <AnchoredOverlay align={align} anchor={anchorElement} gap={gap} measureKey={measureKey}>
-          <ul data-testid="overlay" role="menu" />
-        </AnchoredOverlay>
-      </div>
-    );
+  return {
+    anchor,
+    commit: () => rerender(<Harness align={align} anchor={anchor} gap={gap} measureKey={measureKey} />),
+    resize: (size, nextMeasureKey = measureKey) => {
+      measuredSize = size;
+      rerender(<Harness align={align} anchor={anchor} gap={gap} measureKey={nextMeasureKey} />);
+    },
   };
-
-  const { rerender } = render(<Anchored />);
-
-  return { anchor, element: readPublishedAnchor() as HTMLElement, rerender: () => rerender(<Anchored />) };
 };
 
 const overlay = (): HTMLElement => screen.getByTestId('overlay');
 
 /** The wrapper is the element the component positions, so its inline style is the truth. */
+const wrapper = (): HTMLElement => overlay().parentElement as HTMLElement;
+
 const position = (): { top: number; left: number; position: string } => {
-  const wrapper = overlay().parentElement as HTMLElement;
-  return {
-    top: Number.parseFloat(wrapper.style.top),
-    left: Number.parseFloat(wrapper.style.left),
-    position: wrapper.style.position,
-  };
+  const { top, left, position: placement } = wrapper().style;
+  return { top: Number.parseFloat(top), left: Number.parseFloat(left), position: placement };
 };
 
 /** A left-hand rail tile: 56px wide, 44px tall, `left: 0`. */
@@ -147,17 +140,35 @@ const RAIL_TILE = { left: 0, top: 100, width: 56, height: 44 };
 describe('AnchoredOverlay', () => {
   stubMeasuredSize();
 
-  afterEach(() => {
+  beforeEach(() => {
     setViewport(1280, 720);
+  });
+
+  afterAll(() => {
+    // The stubs are installed on the prototype and would otherwise outlive the file.
+    // `isolate: true` is what keeps them out of other test files today; nothing here should
+    // depend on that staying true.
+    delete (HTMLElement.prototype as { offsetWidth?: number }).offsetWidth;
+    delete (HTMLElement.prototype as { offsetHeight?: number }).offsetHeight;
   });
 
   it('renders into the body, so no clipping ancestor sits between it and the viewport', () => {
     renderOverlay({ anchor: RAIL_TILE, overlaySize: { width: 200, height: 120 } });
 
-    const wrapper = overlay().parentElement as HTMLElement;
-    expect(wrapper.parentElement).toBe(document.body);
-    expect(screen.getByTestId('anchor').contains(wrapper)).toBe(false);
+    expect(wrapper().parentElement).toBe(document.body);
+    expect(screen.getByTestId('anchor').contains(wrapper())).toBe(false);
     expect(position().position).toBe('fixed');
+  });
+
+  it('keeps the wrapper out of hit testing, so two overlapping overlays cannot shadow each other', () => {
+    renderOverlay({ anchor: RAIL_TILE, overlaySize: { width: 200, height: 120 } });
+
+    // Shrink-wrapped to its child, a wrapper with `pointer-events: auto` covers the whole
+    // overlay, and the overlay portalled last is the one on top. Right-clicking a tile
+    // opens the flyout before the 250ms hover tooltip, so the tooltip's box landed on the
+    // first flyout item and swallowed its clicks. Children opt back in themselves.
+    expect(wrapper().style.pointerEvents).toBe('none');
+    expect(wrapper().style.zIndex).toBe('50');
   });
 
   it('places the overlay beside the anchor trailing edge when it fits', () => {
@@ -205,9 +216,27 @@ describe('AnchoredOverlay', () => {
       overlaySize: { width: 900, height: 120 },
     });
 
-    // 648 + 900 overflows 1280 and 640 - 8 - 900 does not fit either, so the trailing
-    // placement is clamped into the viewport rather than a side being chosen.
+    // 704 (696 + 8) + 900 overflows 1280 and 640 - 8 - 900 does not fit either, so the
+    // trailing placement is clamped into the viewport rather than a side being chosen.
     expect(position()).toEqual({ position: 'fixed', left: 372, top: 100 });
+  });
+
+  it('re-measures when the caller says the content changed size', () => {
+    const { resize } = renderOverlay({
+      anchor: RAIL_TILE,
+      overlaySize: { width: 200, height: 120 },
+      measureKey: 'shape-1',
+    });
+    expect(position()).toEqual({ position: 'fixed', left: 64, top: 100 });
+
+    // Same anchor, bigger content, new key. Without the key the effect would not re-run —
+    // `reposition`'s inputs have not changed, only the element's size has — and the
+    // overlay would keep a placement computed for the old size.
+    resize({ width: 1300, height: 700 }, 'shape-2');
+
+    // 64 + 1300 overflows 1280 and 0 - 8 - 1300 does not fit either, so the trailing
+    // placement is clamped; 100 + 700 overflows 720, so the top is clamped too.
+    expect(position()).toEqual({ position: 'fixed', left: 8, top: 12 });
   });
 
   it('re-measures when the rail scrolls under it', () => {
@@ -227,16 +256,38 @@ describe('AnchoredOverlay', () => {
     expect(position().top).toBe(300);
   });
 
-  it('does not let a scrollbar gutter push the overlay past the viewport edge', () => {
-    // The two measures are unmistakably different here: `window.innerHeight` reports the
-    // full window while the layout viewport — the containing block of a `position: fixed`
-    // box — is 80px shorter once a classic scrollbar takes its gutter.
-    setViewportWithScrollbar({ width: 1280, height: 720 }, { width: 1280, height: 640 });
+  it('re-measures when the window resizes under it', () => {
+    renderOverlay({
+      anchor: { left: 1100, top: 100, width: 56, height: 44 },
+      overlaySize: { width: 200, height: 120 },
+    });
+
+    // 1156 + 8 + 200 overflows 1280, so the overlay is on the anchor's leading edge.
+    expect(position()).toEqual({ position: 'fixed', left: 892, top: 100 });
+
+    // A wider window is a wider viewport to clamp against, and the same overlay now fits
+    // on the trailing side. Without the resize listener it would sit on the wrong side
+    // until something else happened to re-measure it.
+    setViewport(1600, 720);
+    act(() => {
+      fireEvent.resize(window);
+    });
+
+    expect(position()).toEqual({ position: 'fixed', left: 1164, top: 100 });
+  });
+
+  it('clamps against the layout viewport, not the window box a scrollbar widens', () => {
+    // `setViewport` keeps the two measures equal, so on its own this test cannot tell them
+    // apart — and the difference is the whole point. A classic scrollbar occupies layout
+    // space, so `window.innerHeight` reports 720 while the containing block of a
+    // `position: fixed` box is the 640px left after its gutter.
+    setViewport(1280, 720);
+    Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, value: 640 });
 
     renderOverlay({
       // Low in the rail, so the vertical clamp is what places it. The horizontal axis cannot
-      // be used to pin this: a left-rail tile sits at x 0-56, so the leading side always has
-      // room and the left clamp never binds.
+      // pin this: a left-rail tile sits at x 0-56, so the leading side always has room and
+      // the left clamp never binds.
       anchor: { left: 0, top: 600, width: 56, height: 44 },
       overlaySize: { width: 200, height: 200 },
     });
@@ -246,46 +297,42 @@ describe('AnchoredOverlay', () => {
     expect(position().top).toBe(432);
   });
 
-  it('stops rendering when its anchor leaves the document', () => {
-    const { element, rerender } = renderOverlay({
+  it('renders nothing once its anchor leaves the document', () => {
+    const { commit } = renderOverlay({
       anchor: { ...RAIL_TILE, top: 500 },
       overlaySize: { width: 200, height: 120 },
     });
     expect(position().top).toBe(500);
 
-    // A detached element's `getBoundingClientRect()` is an all-zero box, and the clamp would
-    // then pin the overlay into the top-left corner at the viewport padding: a real, painted,
-    // clickable menu attached to nothing. Rendering nothing is the honest answer.
-    //
-    // The commit is driven explicitly because that is the whole contract: the check is a
-    // derivation React re-evaluates when it renders, not stored state something has to push.
-    // A detach on its own changes no state — and the layout effect now skips the detached
-    // anchor, so it no longer forces a render either, which is correct: there is no position
-    // to update for an overlay that is not on screen.
+    // A detached element's `getBoundingClientRect()` is an all-zero box, so the clamp would
+    // pin the overlay into the top-left corner at the viewport padding: a real, painted,
+    // clickable menu attached to nothing. This is the case a caller cannot prevent by
+    // clearing its own state — the tile is unmounted, not closed.
     act(() => {
-      element.remove();
+      screen.getByTestId('anchor').remove();
     });
     expect(screen.queryByTestId('overlay')).not.toBeNull();
 
-    rerender();
+    // The commit is explicit because that is the contract: the guard is derived from the
+    // anchor on every render, not stored state something has to push. A detach on its own
+    // changes no state, and the layout effect no longer forces a render for a detached
+    // anchor — correct, since there is no position to update for an overlay not on screen.
+    commit();
 
     expect(screen.queryByTestId('overlay')).toBeNull();
   });
 
-  it('is not a pointer target itself, so a sibling overlay cannot be swallowed', () => {
-    renderOverlay({ anchor: RAIL_TILE, overlaySize: { width: 200, height: 120 } });
+  it('renders nothing while the anchor is unresolved', () => {
+    // The caller resolves the anchor from a callback ref, so there is a commit in which
+    // the overlay's anchor is not known. Rendering it anyway would place it against
+    // nothing — and a flyout placed against nothing is an open menu nobody can see.
+    render(
+      <AnchoredOverlay anchor={null}>
+        <ul data-testid="overlay" role="menu" />
+      </AnchoredOverlay>
+    );
 
-    const wrapper = overlay().parentElement as HTMLElement;
-    // The wrapper shrink-wraps the child, so `auto` would make a box the size of the menu
-    // that sits over whatever else is on screen. The tooltip portals after the flyout and
-    // used to land on its first item.
-    expect(wrapper.style.pointerEvents).toBe('none');
-  });
-
-  it('carries the stacking level the children were asking for', () => {
-    renderOverlay({ anchor: RAIL_TILE, overlaySize: { width: 200, height: 120 } });
-
-    const wrapper = overlay().parentElement as HTMLElement;
-    expect(wrapper.style.zIndex).toBe('50');
+    expect(screen.queryByTestId('overlay')).toBeNull();
+    expect(document.body.querySelector('[role="menu"]')).toBeNull();
   });
 });

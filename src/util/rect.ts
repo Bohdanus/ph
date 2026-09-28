@@ -1,5 +1,6 @@
 import type { RefObject } from 'react';
 import { getTextWidth, type TextToolArgs } from '../tools/text.ts';
+import { normalizeHex } from './color.ts';
 import { TEXT_PADDING } from './constants.ts';
 import type { Pos, RectXY, Size, RectXYSorted } from '../contexts/general-types.ts';
 
@@ -103,10 +104,8 @@ export function posToSortedRect(rect: Pos): RectXYSorted {
 }
 
 export function hexToRgb(hex: string): string {
-  // Remove the #
-  hex = hex.replace('#', '');
-
   // Parse the hex values
+  hex = normalizeHex(hex);
   const r = parseInt(hex.substring(0, 2), 16);
   const g = parseInt(hex.substring(2, 4), 16);
   const b = parseInt(hex.substring(4, 6), 16);

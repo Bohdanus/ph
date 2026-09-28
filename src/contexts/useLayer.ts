@@ -2,6 +2,7 @@ import { useCallback, type Dispatch } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from './StoreContext.tsx';
 import type { BitmapSource } from './general-types.ts';
+import { useSetToolArgs } from './set-tool-args.ts';
 import type {
   BlankLayerSource,
   ImageLayerSource,
@@ -129,6 +130,8 @@ export const useLayers = () => {
   // in the same change; the intersection types the registration at its call site
   // rather than hiding it behind a cast.
   const dispatch = baseDispatch as typeof baseDispatch & Dispatch<AdoptLayerBitmapsAction>;
+
+  const setToolArgs = useSetToolArgs();
   const documentFrame = currentDocumentFrame ?? documentFrameFromSize(totalSize);
 
   /**
@@ -348,7 +351,12 @@ export const useLayers = () => {
       if (!args.text || !args.rect) return layers;
 
       const layer = createLayerFromTool({ args });
-      currentArgsRef.current = { ...args, text: '' };
+      const cleared = { ...args, text: '', rect: null };
+      if (setToolArgs) {
+        setToolArgs(cleared);
+      } else {
+        currentArgsRef.current = cleared;
+      }
       return { ...layers, [layer.id]: layer };
     }
 
@@ -439,8 +447,7 @@ export const useLayers = () => {
       },
     });
 
-    const ctx = toolOverlayRef.current!.getContext('2d')!;
-    ctx.clearRect(0, 0, totalSize.width, totalSize.height);
+    clearOverlay();
   };
 
   const updateLayer = (id: LayerId, patch: Partial<Layer>, actionName: ActionType) => {
