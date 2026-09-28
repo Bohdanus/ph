@@ -391,6 +391,7 @@ function assemble(base, { lines, records }) {
   const runs = new Map();
   let ambient = 1;
   let open = null;
+  let inDeadSection = false;
 
   const close = (endLine, endColumn) => {
     if (!open) return;
@@ -405,8 +406,12 @@ function assemble(base, { lines, records }) {
 
       if (DEAD_HEADING.test(record.text)) {
         close(record.line, 0);
+        inDeadSection = true;
         continue;
       }
+      // Any other heading ends the dead section, including one that opens no
+      // item: the next live entry may legitimately be marked inline.
+      inDeadSection = false;
 
       const number = NUMBERED.exec(record.text);
       if (number) {
@@ -424,6 +429,18 @@ function assemble(base, { lines, records }) {
       if (open && record.level <= open.level) close(record.line, 0);
       continue;
     }
+
+    /**
+     * An inline marker inside a section the document has already deleted is not
+     * an item. `HANDOFF.md` lists what it retired exactly this way —
+     * `### Items 5, 7, 9 … — deleted` followed by prose that says
+     * `- **Item 18** and **item 19** turned a dropped runtime publication…` —
+     * and those became board issues whose titles were the sentence they were
+     * mentioned in. Worse than noise: first-occurrence-wins gave the phantom the
+     * number, so a genuinely reopened `## 7.` later in the document was the
+     * duplicate that got dropped.
+     */
+    if (inDeadSection) continue;
 
     const line = lines[record.line];
     const remainder = titleOf(line.slice(record.to));

@@ -54,7 +54,7 @@ const USAGE = `agent board — live coordination for a swarm of agents on one re
   comment <id> <text>    say something on an issue
   note <text>            say something to the swarm
   resolve <id>           the work is done       --note
-  close <id>             verified, done        --verified-by
+  close <id>             verified by YOU, done
   defer <id>             park it                --reason --until
   reopen <id>            back to open
   dep <id> <depends-on>  record a dependency
@@ -368,7 +368,7 @@ export async function run(
         // on a file this agent was not allowed to have: if the locks are
         // refused the claim never happens, and if the claim is then refused the
         // locks this command just took are given back.
-        const held = flags.files ? board.holdFiles(list(flags.files), { issueId: id, leaseMs, force }).held : [];
+        const taken = flags.files ? board.holdFiles(list(flags.files), { issueId: id, leaseMs, force }) : null;
         try {
           const result = board.claimIssue(id, {
             leaseMs,
@@ -376,12 +376,22 @@ export async function run(
             force,
           });
           emit(
-            { ...result, files: held },
-            `${result.id} ${result.renewed ? 'lease extended' : 'claimed'} by ${result.agent} · ${remaining(result.lease_until)}${held.length ? ` · files ${held.join(', ')}` : ''}`
+            { ...result, files: taken?.held ?? [] },
+            `${result.id} ${result.renewed ? 'lease extended' : 'claimed'} by ${result.agent} · ${remaining(result.lease_until)}${taken ? ` · files ${taken.held.join(', ')}` : ''}`
           );
           return 0;
         } catch (error) {
-          if (held.length) board.releaseFiles(held, { force: true });
+          /**
+           * Give back `acquired`, never `held`, and never with `force`.
+           *
+           * `held` includes locks this agent already had before the command,
+           * because holding a file you already hold is not a conflict — so
+           * releasing `held` freed a file the agent had been working in since
+           * before the command ran, on a command that only ever FAILED. `force`
+           * made it worse by releasing other agents' rows on the same path.
+           * `acquired` is what this invocation took, and nothing else.
+           */
+          if (taken?.acquired.length) board.releaseFiles(taken.acquired);
           throw error;
         }
       }
@@ -465,8 +475,14 @@ export async function run(
       case 'close': {
         const id = args[0];
         if (!id) throw new BoardError('close needs an issue id', { code: 1 });
+        // The verifier is the identity running the command, and there is no flag
+        // to name somebody else. A `--verified-by` string is a name the actor
+        // supplies about a person who is not in the room: it made the whole
+        // resolve/close separation one flag wide, since an agent could resolve
+        // an issue and then close it by claiming a reviewer verified it. A
+        // reviewer who wants to close it runs `board close` as themselves, and
+        // the log records who actually did.
         const result = board.closeIssue(id, {
-          verifiedBy: flags.verified_by ? String(flags.verified_by) : null,
           note: flags.note ? String(flags.note) : null,
         });
         emit(result, `${id} closed, verified by ${result.verified_by}`);
@@ -539,19 +555,26 @@ export async function run(
       }
 
       case 'watch': {
-        const since = flags.since ? Number(flags.since) : 0;
+        // `cursor` MOVES. It did not, and a `watch --follow` re-read the same
+        // 200 events on every poll for as long as it ran: the three events of a
+        // test board were printed about seventy times a second, and on a board
+        // with more than 200 events it would print the first 200 forever and
+        // never show anything new — which is the opposite of tailing a log.
+        let cursor = flags.since ? Number(flags.since) : 0;
         for (;;) {
           const events = board.events({
-            since,
+            since: cursor,
             limit: 200,
             kind: flags.kind ? String(flags.kind) : null,
           });
           for (const event of events) {
             out.write(`${eventLine(event)}\n`);
           }
+          if (events.length > 0) cursor = Number(events.at(-1).seq);
           if (!flags.follow) break;
-          if (events.length > 0) await new Promise((resolve) => setTimeout(resolve, 50));
-          else await new Promise((resolve) => setTimeout(resolve, 1500));
+          // A full page means there is probably more waiting, so go straight
+          // back; an empty one means the swarm is quiet, so do not spin on it.
+          await new Promise((resolve) => setTimeout(resolve, events.length > 0 ? 50 : 1500));
         }
         return 0;
       }

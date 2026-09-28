@@ -5,17 +5,34 @@
  *
  * Each test gets its own directory, so nothing here depends on the operator's
  * real board, and a test that leaks a lock cannot reach the next one.
+ *
+ * The claim-exclusivity test spawns real processes on purpose. Two connections
+ * in one process share a thread and a connection pool; separate OS processes,
+ * launched at the same instant against a database that does not exist yet, are
+ * the situation the board actually has to survive when a swarm wakes up, and
+ * they found two defects the in-process tests could not: a lost claim race
+ * hidden by a shared process, and `SQLITE_BUSY` on the very first open.
  */
 
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Board, BoardError, parseDuration } from '../lib/agent-board/db.mjs';
 import { resolveIdentity } from '../lib/agent-board/identity.mjs';
 import { run } from '../agent-board.mjs';
+
+/**
+ * The CLI as a filesystem path, for spawning.
+ *
+ * `import.meta.url` is NOT usable here: under the root jsdom project it is an
+ * `http://localhost/...` URL, so spawning it means asking node to load a web
+ * page. `import.meta.dirname` is the real directory, and the fallback covers a
+ * runner that does not provide it.
+ */
+const CLI = resolve(import.meta.dirname ?? process.cwd(), '..', 'agent-board.mjs');
 
 let dir;
 const agents = {};
@@ -64,11 +81,15 @@ afterEach(() => {
 
 describe('the board is testable where it is going to run', () => {
   /**
-   * A load-bearing assumption, not a curiosity: the board's only dependency is
-   * `node:sqlite`, and this suite runs under the root Vitest project, whose
-   * pool is `vmThreads`. If a pool or environment change ever took the built-in
-   * sqlite binding out of that context, every test in this file would fail to
-   * import for a reason that has nothing to do with the board.
+   * A load-bearing assumption, stated as narrowly as it is true: the BUILT-IN
+   * `node:sqlite` binding loads and writes under the root Vitest project, whose
+   * pool is `vmThreads`. If a pool or environment change ever took that away,
+   * every test below would fail to import for a reason that has nothing to do
+   * with the board, and this one fails first and says so.
+   *
+   * It deliberately does not touch `Board`: what proves the BOARD works in this
+   * project is the ninety-odd tests that exercise it, not a probe of a
+   * dependency in isolation.
    */
   it('has node:sqlite available in the root vitest project', () => {
     const db = new DatabaseSync(':memory:');
@@ -227,7 +248,7 @@ describe('claims are exclusive and leased', () => {
     const { id } = board.createIssue({ title: 'done' });
     board.claimIssue(id, { leaseMs: 60_000 });
     board.resolveIssue(id);
-    board.closeIssue(id, { verifiedBy: 'reviewer' });
+    board.closeIssue(id, { agent: 'reviewer' });
     expect(() => board.claimIssue(id)).toThrow(/ph-\d+ is closed, not claimable/);
   });
 
@@ -307,10 +328,60 @@ describe('file locks make one-file-one-agent real', () => {
     expect(board.checkPath('src/mine.ts').free).toBe(true);
   });
 
+  it('records a refusal in the log, which a rolled-back transaction cannot', () => {
+    const a = boardFor('a');
+    a.holdFiles(['src/taken.ts']);
+    a.close();
+    const b = boardFor('b');
+    expect(() => b.holdFiles(['src/taken.ts'])).toThrow();
+    // The denial is written inside the transaction that then rolls back, so the
+    // log used to show no contention at all — losing the one event that tells
+    // the swarm a file is busy.
+    const denial = b.events({ since: 0, kind: 'lock.deny' });
+    expect(denial).toHaveLength(1);
+    expect(denial[0].path).toBe('src/taken.ts');
+    expect(denial[0].message).toBe('refused, held by a');
+    b.close();
+  });
+
   it('normalizes paths so the same file from two worktrees is one lock', () => {
     const board = boardFor('a');
     board.holdFiles(['./src/util/draw.ts', 'src/util/draw.ts']);
     expect(board.locksHeldBy('a').map((lock) => lock.path)).toEqual(['src/util/draw.ts']);
+  });
+
+  it('strips the worktree prefix, so an absolute path is the same lock', () => {
+    const a = boardFor('a');
+    a.holdFiles([`${a.identity.worktree}/src/util/draw.ts`]);
+    a.close();
+    const b = boardFor('b');
+    // Two worktrees, two absolute prefixes, one file: the lock has to collide
+    // or the whole rule is off for anyone who passes an absolute path.
+    expect(b.checkPath('src/util/draw.ts').holders.map((holder) => holder.agent_id)).toEqual(['a']);
+    expect(b.locksHeldBy('a').map((lock) => lock.path)).toEqual(['src/util/draw.ts']);
+    b.close();
+  });
+
+  it('hides an expired lock from everything that renders it, not just from a conflict check', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'lock outlives its lease' });
+    a.holdFiles(['src/ghost.ts'], { issueId: id, leaseMs: 60_000 });
+    advance(60_001);
+    // `board show` and the FILES column of `board ready` read locksFor, and used
+    // to advertise a lease that had already run out while `board check`, in the
+    // same breath, called the file free.
+    expect(a.locksFor(id)).toHaveLength(0);
+    expect(a.listIssues({ files: ['src/ghost.ts'], claimedBy: 'someone-else' })).toHaveLength(0);
+    a.close();
+  });
+
+  it('does not list an issue under --claimed-by once its claim has expired', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'lease ran out' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    expect(a.listIssues({ claimedBy: 'a' }).map((issue) => issue.id)).toEqual([id]);
+    advance(60_001);
+    expect(a.listIssues({ claimedBy: 'a' })).toHaveLength(0);
   });
 });
 
@@ -334,7 +405,7 @@ describe('the resolution lifecycle separates a fix from its verification', () =>
     a.claimIssue(id, { leaseMs: 60_000 });
     a.resolveIssue(id);
     try {
-      a.closeIssue(id, { verifiedBy: 'a' });
+      a.closeIssue(id);
       throw new Error('should not have closed');
     } catch (error) {
       expect(error.code).toBe(5);
@@ -343,15 +414,27 @@ describe('the resolution lifecycle separates a fix from its verification', () =>
     expect(a.getIssue(id).status).toBe('resolved');
   });
 
+  it('has no way to name a verifier that is not the agent running the command', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'named verifier' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.resolveIssue(id);
+    // The parameter that made the rule one flag wide: a caller could hand in
+    // the name of an agent that was not in the room and close its own work.
+    expect(a.closeIssue.length).toBeLessThanOrEqual(2);
+    expect(() => a.closeIssue(id, { verifiedBy: 'some-other-agent' })).toThrow(/cannot also verify it/);
+    a.close();
+  });
+
   it('closes when a different agent verifies, and records who', () => {
     const a = boardFor('a');
     const { id } = a.createIssue({ title: 'verified by a review' });
     a.claimIssue(id, { leaseMs: 60_000 });
     a.resolveIssue(id);
     const b = boardFor('b');
-    const result = b.closeIssue(id, { verifiedBy: 'reviewer' });
+    const result = b.closeIssue(id);
     expect(result.status).toBe('closed');
-    expect(b.getIssue(id).verified_by).toBe('reviewer');
+    expect(b.getIssue(id).verified_by).toBe('b');
     expect(b.events({ issue: id }).at(-1).kind).toBe('issue.close');
     a.close();
     b.close();
@@ -362,7 +445,7 @@ describe('the resolution lifecycle separates a fix from its verification', () =>
     const { id } = board.createIssue({ title: 'regression' });
     board.claimIssue(id, { leaseMs: 60_000 });
     board.resolveIssue(id);
-    board.closeIssue(id, { verifiedBy: 'reviewer' });
+    board.closeIssue(id, { agent: 'reviewer' });
     board.reopenIssue(id, { reason: 'it came back' });
     const issue = board.getIssue(id);
     expect(issue.status).toBe('open');
@@ -457,7 +540,7 @@ describe('the event log is the swarm talking', () => {
     board.comment(id, 'the tricky part is the after state');
     board.holdFiles(['src/lifecycle.ts'], { issueId: id });
     board.resolveIssue(id, { note: 'fixed in the adapter' });
-    board.closeIssue(id, { verifiedBy: 'reviewer' });
+    board.closeIssue(id, { agent: 'reviewer' });
     const events = board.events({ issue: id });
     expect(events.map((event) => event.kind)).toEqual([
       'issue.create',
@@ -504,6 +587,67 @@ describe('one board is shared by every worktree', () => {
     expect(b.checkPath('src/shared.ts').holders[0].agent_id).toBe('a');
     b.close();
   });
+});
+
+describe('separate processes, not just separate connections', () => {
+  /** Runs the CLI in its own process and resolves with its exit code. */
+  const spawnCli = (args, agent) =>
+    new Promise((resolve) => {
+      const child = spawn(process.execPath, [CLI, ...args, '--dir', dir, '--agent', agent], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let out = '';
+      let err = '';
+      child.stdout.on('data', (chunk) => (out += chunk));
+      child.stderr.on('data', (chunk) => (err += chunk));
+      child.on('close', (code) => resolve({ code, out, err }));
+    });
+
+  it('lets exactly one of ten processes claim one issue', async () => {
+    const board = liveBoardFor('setup');
+    const { id } = board.createIssue({ title: 'contended by ten processes' });
+    board.close();
+
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, index) => spawnCli(['claim', id], `racer-${index}`))
+    );
+    const winners = results.filter((result) => result.code === 0);
+    const refused = results.filter((result) => result.code === 3);
+    expect(winners).toHaveLength(1);
+    expect(refused).toHaveLength(9);
+    // A refusal must name the winner, or a loser cannot tell a race from a bug.
+    expect(refused[0].err).toMatch(/claimed by racer-/);
+
+    const after = new Board({ dir, identity: identityFor('audit') }).open();
+    expect(after.getIssue(id).status).toBe('claimed');
+    const holder = after.liveClaimOrNull(id).agent_id;
+    expect(winners[0].out).toContain(`claimed by ${holder}`);
+    expect(after.events({ issue: id }).filter((event) => event.kind === 'claim.acquire')).toHaveLength(1);
+    after.close();
+  }, 30_000);
+
+  it('survives ten processes opening a board that does not exist yet', async () => {
+    /**
+     * The first-open race. `PRAGMA journal_mode` takes a lock on the file, and
+     * it used to run before `busy_timeout` was set, so a process that lost that
+     * race got SQLITE_BUSY immediately and the very first board command of the
+     * session failed with "database is locked". It reproduced on roughly one
+     * process in twelve, intermittently, with every in-process test green —
+     * which is to say it would have been found the first morning a swarm woke
+     * up, and never before.
+     */
+    rmSync(dir, { recursive: true, force: true });
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, index) =>
+        spawnCli(['new', `first command from ${index}`, '--json'], `opener-${index}`)
+      )
+    );
+    const failed = results.filter((result) => result.code !== 0);
+    expect(failed.map((result) => result.err.split('\n')[0])).toEqual([]);
+    const after = new Board({ dir, identity: identityFor('audit') }).open();
+    expect(after.listIssues()).toHaveLength(10);
+    after.close();
+  }, 30_000);
 });
 
 describe('durations', () => {
@@ -613,6 +757,89 @@ describe('the command line', () => {
     expect((await cli(['show', filed.id])).out).toContain('not claimed');
     expect((await cli(['show', filed.id, '--json'])).code).toBe(0);
   });
+
+  it("gives back only its own locks when a claim fails, never another agent's", async () => {
+    /**
+     * The rollback used to release `held`, which includes files this agent
+     * already held before the command ran — holding a file you already hold is
+     * not a conflict, so it is not in `acquired` — and it used to pass `force`,
+     * which releases every other agent's row on the path too. So this sequence
+     * destroyed `a`'s lock on `src/x.ts`, taken before the command started, with
+     * a command that only ever FAILED. The worst possible moment to free a file
+     * somebody is working in.
+     */
+    await cli(['hold', 'src/x.ts']);
+    const taken = JSON.parse((await cli(['new', 'b claims this first', '--json'], 'b')).out);
+    await cli(['claim', taken.id], 'b');
+
+    // `a` tries to claim an issue `b` already holds, naming a file `a` holds.
+    const refused = await cli(['claim', taken.id, '--files', 'src/x.ts'], 'a');
+    expect(refused.code).toBe(3);
+    const stillHeld = JSON.parse((await cli(['check', 'src/x.ts', '--json'], 'b')).out);
+    expect(stillHeld.report[0].free).toBe(false);
+    expect(stillHeld.report[0].holders.map((holder) => holder.agent_id)).toEqual(['a']);
+  });
+
+  it('does release the files it did take when the claim is refused', async () => {
+    const issue = JSON.parse((await cli(['new', 'a free file, a taken issue', '--json'])).out);
+    const other = JSON.parse((await cli(['new', 'claimed by b', '--json'], 'b')).out);
+    await cli(['claim', other.id], 'b');
+    const refused = await cli(['claim', other.id, '--files', 'src/fresh.ts'], 'a');
+    expect(refused.code).toBe(3);
+    const report = JSON.parse((await cli(['check', 'src/fresh.ts', '--json'], 'b')).out);
+    expect(report.report[0].free).toBe(true);
+    expect(issue.id).toBeTruthy();
+  });
+
+  it('refuses to close an issue as the agent that resolved it, with no flag to name another', async () => {
+    const filed = JSON.parse((await cli(['new', 'no named verifier', '--json'])).out);
+    await cli(['claim', filed.id]);
+    await cli(['resolve', filed.id]);
+    const selfClose = await cli(['close', filed.id]);
+    expect(selfClose.code).toBe(5);
+    const named = await cli(['close', filed.id, '--verified-by', 'somebody-else']);
+    // The flag is not a way around it: the verifier is whoever runs the command.
+    expect(JSON.parse((await cli(['show', filed.id, '--json'])).out).issue.status).toBe('resolved');
+    expect(named.code).toBe(5);
+    const reviewed = await cli(['close', filed.id], 'b');
+    expect(reviewed.code).toBe(0);
+  });
+
+  it('tails only new events, so --follow does not reprint the log forever', async () => {
+    const { id } = JSON.parse((await cli(['new', 'watched twice', '--json'])).out);
+    await cli(['comment', id, 'first comment']);
+
+    const child = spawn(process.execPath, [CLI, 'watch', '--follow', '--dir', dir, '--agent', 'watcher'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let seen = '';
+    child.stdout.on('data', (chunk) => {
+      seen += chunk;
+    });
+    const occurrences = (text) => seen.split(text).length - 1;
+    const waitFor = async (predicate, ms) => {
+      const until = Date.now() + ms;
+      while (Date.now() < until) {
+        if (predicate()) return true;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      return false;
+    };
+
+    try {
+      expect(await waitFor(() => seen.includes('first comment'), 10_000)).toBe(true);
+      await cli(['comment', id, 'second comment'], 'watcher');
+      expect(await waitFor(() => seen.includes('second comment'), 10_000)).toBe(true);
+      // Several more poll rounds. The cursor used not to move, so a `--follow`
+      // reprinted the same first 200 events roughly seventy times a second and
+      // on a busier board never showed anything new at all.
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    } finally {
+      child.kill('SIGTERM');
+    }
+    expect(occurrences('first comment')).toBe(1);
+    expect(occurrences('second comment')).toBe(1);
+  }, 30_000);
 
   it('lists what is ready, and nothing that is claimed or blocked', async () => {
     const open = JSON.parse((await cli(['new', 'open work', '--json'])).out);

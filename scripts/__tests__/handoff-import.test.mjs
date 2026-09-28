@@ -200,13 +200,64 @@ describe('planning the import', () => {
 
   it('does not file a number the document records as finished', () => {
     const created = plan.create.map((item) => item.origin);
-    const retired = handoff.parsed.items.filter((item) => !liveItems(handoff.parsed).includes(item));
-    expect(retired.length).toBeGreaterThan(0);
-    for (const item of retired) {
-      expect(handoff.parsed.dead).toContain(Number(/#(\d+)$/.exec(item.origin)[1]));
-      expect(created).not.toContain(item.origin);
-      expect(plan.skip).not.toContain(item.origin);
+    // Nothing the real document parsed may name a number in its own dead set.
+    // This used to be non-trivially false: the prose inside
+    // `### Items 5, 7, 9 … — deleted` produced phantoms for 7 and 18 that
+    // planImport had to filter out, and first-occurrence-wins meant the
+    // phantom owned the origin a reopened `## 7.` would need.
+    for (const item of handoff.parsed.items) {
+      const number = /#(\d+)$/.exec(item.origin)?.[1];
+      if (!number) continue;
+      expect(handoff.parsed.dead, `${item.origin} is in the document's dead set`).not.toContain(Number(number));
     }
+    for (const origin of created) {
+      // Scoped to this document: `TEST-FLAKES.md#5` is a different entry from
+      // `HANDOFF.md#5`, and only the latter is judged against HANDOFF's dead
+      // set.
+      if (!origin.startsWith('HANDOFF.md#')) continue;
+      const number = /#(\d+)$/.exec(origin)?.[1];
+      if (!number) continue;
+      expect(handoff.parsed.dead, `${origin} was filed`).not.toContain(Number(number));
+    }
+  });
+
+  it('drops a live entry whose number the document has deleted', () => {
+    const parsed = parseHandoffDoc({
+      file: 'HANDOFF.md',
+      text: '## 4. Retired but not yet removed\n\nAlpha.\n\n### Items 4 — deleted\n',
+    });
+    expect(parsed.items.map((item) => item.origin)).toEqual(['HANDOFF.md#4']);
+    expect(planImport([parsed], []).create).toEqual([]);
+    expect(planImport([parsed], []).skip).toEqual([]);
+  });
+
+  it('takes no item from the prose of a section the document has deleted', () => {
+    // The shape HANDOFF.md uses: a deleted-items heading, then prose that
+    // mentions the retired numbers while explaining what they were.
+    const parsed = parseHandoffDoc({
+      file: 'HANDOFF.md',
+      text:
+        '### Items 5, 7, 9, 13, 14 — deleted\n\n' +
+        '- **Item 5** and **item 9** turned a dropped publication into an error.\n' +
+        '- **Item 7** was the dangerous one.\n\n' +
+        '## 8. A live item\n\nStill open.\n',
+    });
+    expect(parsed.items.map((item) => item.origin)).toEqual(['HANDOFF.md#8']);
+    expect(parsed.dead).toEqual([5, 7, 9, 13, 14]);
+  });
+
+  it('lets a reopened item take back the number a deleted section mentioned', () => {
+    const parsed = parseHandoffDoc({
+      file: 'HANDOFF.md',
+      text:
+        '### Items 7 — deleted\n\n- **Item 7** was the dangerous one.\n\n' +
+        '## 7. Item 7 is back after the migration\n\nReopened, and it is real.\n',
+    });
+    expect(parsed.items.map((item) => item.origin)).toEqual(['HANDOFF.md#7']);
+    expect(parsed.items[0].title).toBe('Item 7 is back after the migration');
+    // The dead set still names 7, so planImport holds it back — the operator
+    // clears that when the document says the item is open again.
+    expect(planImport([parsed], []).create).toEqual([]);
   });
 
   it('files nothing on a second run, because the first run is what is known', () => {

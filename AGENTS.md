@@ -105,10 +105,15 @@ what is new.
 - **`board hold <path>` makes "never two agents on the same file" a refused
   write**, and the refusal names the holder. `board check <path>` exits 1 when
   somebody else holds it, so a shell can gate on it. `board claim --files a.ts
-b.ts` takes both, and gives the files back if the claim is then refused.
+b.ts` takes both, and gives back **only the ones it took** if the claim is
+  then refused — never a file that agent already held, and never with `--force`.
 - **The fixer's claim is not its verification.** `board resolve` needs the live
   claim; `board close` refuses the agent that resolved the issue, exactly as
   this document's own handoff lifecycle requires. Exit code 5 is that refusal.
+  **There is no `--verified-by`**, and that is the point: a flag naming somebody
+  else is a name the caller supplies about an agent that is not in the room, and
+  it made the whole rule one flag wide. A reviewer closes an issue by being the
+  reviewer.
 - **`board note` is how one agent addresses the swarm**; `board watch --follow`
   tails the same log. Every command appends to it, which is the replacement for
   N agents each writing their own account of the same work into a document

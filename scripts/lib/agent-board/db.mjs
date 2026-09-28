@@ -240,12 +240,16 @@ export class Board {
       throw new BoardError(`no board at ${this.path}`, { code: 2 });
     }
     this.db = new DatabaseSync(this.path);
-    // WAL keeps readers from blocking the claim transaction, and the busy
-    // timeout turns a concurrent writer into a short wait rather than an
-    // immediate SQLITE_BUSY. Both are required for 137 worktrees to share one
-    // file without a single lost claim.
-    this.db.exec('PRAGMA journal_mode = WAL');
+    // ORDER MATTERS. `busy_timeout` has to be in force before `journal_mode` is
+    // touched: setting WAL takes a lock on the database file, and without the
+    // timeout a second process that happens to be opening a board for the first
+    // time gets SQLITE_BUSY immediately instead of waiting. That is not a rare
+    // race — it is what happens the first morning the swarm starts, when every
+    // agent opens the board at once, and it surfaced as "database is locked"
+    // from this very line on one process in twelve, intermittently, with every
+    // single-process test in the suite green.
     this.db.exec('PRAGMA busy_timeout = 5000');
+    this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA foreign_keys = ON');
     this.migrate();
     return this;
@@ -269,12 +273,23 @@ export class Board {
     return new Date(at).toISOString();
   }
 
+  /**
+   * Creates the schema, and refuses to write over a newer one.
+   *
+   * The version row is written with a plain conditional insert rather than a
+   * read followed by an insert. The read-then-insert was outside any
+   * transaction, so two processes opening a brand-new board at the same moment
+   * both saw no row and both tried to write it — and the loser failed the very
+   * first command of the very first session, with a message about a
+   * constraint that has nothing to do with what the user asked for.
+   */
   migrate() {
     this.db.exec(SCHEMA);
+    this.db
+      .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING')
+      .run('schema_version', String(SCHEMA_VERSION));
     const row = this.db.prepare('SELECT value FROM meta WHERE key = ?').get('schema_version');
-    if (row === undefined) {
-      this.db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('schema_version', String(SCHEMA_VERSION));
-    } else if (Number(row.value) > SCHEMA_VERSION) {
+    if (Number(row.value) > SCHEMA_VERSION) {
       throw new BoardError(
         `board schema is v${row.value}, this script writes v${SCHEMA_VERSION}; update the board script, not the database`,
         { code: 1 }
@@ -447,7 +462,7 @@ export class Board {
       // must not leave the importing agent holding sixty files' leases.
       const conflicts = [];
       if (holdFiles) {
-        for (const path of normalizePaths(files)) {
+        for (const path of normalizePaths(files, { worktree: this.identity?.worktree })) {
           const holder = this.liveLocks().find((lock) => lock.path === path && lock.agent_id !== createdBy);
           if (holder) {
             conflicts.push({ path, holder });
@@ -571,10 +586,14 @@ export class Board {
       params.push(origin);
     }
     if (claimedBy) {
+      // The lease, not just the row: an issue whose claim expired a
+      // millisecond ago is not being worked on by anybody, and
+      // `board list --claimed-by` saying otherwise sends the next agent round
+      // the loop to find work that is already free.
       where.push(
-        'EXISTS (SELECT 1 FROM claims c WHERE c.issue_id = issues.id AND c.agent_id = ? AND c.released_at IS NULL)'
+        `EXISTS (SELECT 1 FROM claims c WHERE c.issue_id = issues.id AND c.agent_id = ? AND c.released_at IS NULL AND c.lease_until > ?)`
       );
-      params.push(claimedBy);
+      params.push(claimedBy, this.iso());
     }
     if (files && files.length > 0) {
       where.push(
@@ -644,8 +663,12 @@ export class Board {
   claimIssue(id, { leaseMs = DEFAULT_LEASE_MS, note = null, agent, force = false } = {}) {
     const who = agent ?? this.identity?.agentId;
     if (!who) throw new BoardError('no agent identity to claim with', { code: 1 });
-    const at = this.now();
     return this.transaction(() => {
+      // Sampled inside the transaction, after any wait for the write lock: a
+      // lease computed from a timestamp taken before a four-second wait is four
+      // seconds shorter than asked for, and a claim judged four seconds stale
+      // reads a lease as live when it is not.
+      const at = this.now();
       const issue = this.getIssue(id);
       const held = this.liveClaimOrNull(id, at);
       // Two gates, in this order and for this reason: the status decides
@@ -774,8 +797,21 @@ export class Board {
       .filter((lock) => Date.parse(lock.expires_at) > at);
   }
 
-  locksFor(issueId) {
-    return this.db.prepare('SELECT * FROM file_locks WHERE issue_id = ? AND released_at IS NULL').all(issueId);
+  /**
+   * The locks still holding on an issue, expired ones excluded.
+   *
+   * Filtering only on `released_at` reads a lock whose lease has run out as a
+   * live one, which is how `board show` and the FILES column of `board ready`
+   * came to advertise a file that `board check`, in the same breath, called
+   * free. Anything that renders a lock to a human goes through here or through
+   * `liveLocks`; anything that decides a conflict ALWAYS goes through
+   * `liveLocks`, and never through this.
+   */
+  locksFor(issueId, at = this.now()) {
+    return this.db
+      .prepare('SELECT * FROM file_locks WHERE issue_id = ? AND released_at IS NULL')
+      .all(issueId)
+      .filter((lock) => Date.parse(lock.expires_at) > at);
   }
 
   locksHeldBy(agent, at = this.now()) {
@@ -791,43 +827,72 @@ export class Board {
   holdFiles(paths, { issueId = null, leaseMs = DEFAULT_LEASE_MS, agent, force = false } = {}) {
     const who = agent ?? this.identity?.agentId;
     if (!who) throw new BoardError('no agent identity to hold with', { code: 1 });
-    const at = this.now();
-    const list = normalizePaths(paths);
+    const list = normalizePaths(paths, { worktree: this.identity?.worktree });
     if (list.length === 0) throw new BoardError('no file paths given', { code: 1 });
-    return this.transaction(() => {
-      const conflicts = [];
-      for (const path of list) {
-        const holders = this.liveLocks(at).filter((lock) => lock.path === path && lock.agent_id !== who);
-        if (holders.length > 0 && !force) {
-          conflicts.push({ path, holder: holders[0] });
+    try {
+      return this.transaction(() => {
+        // The clock is sampled inside the transaction, not before it. A claim
+        // that waited on the write lock for four seconds and then computed its
+        // lease from a timestamp taken before the wait hands out four seconds
+        // less than it was asked for, and judges four-second-old leases as
+        // still live.
+        const at = this.now();
+        const conflicts = [];
+        for (const path of list) {
+          const holder = this.liveLocks(at).find((lock) => lock.path === path && lock.agent_id !== who);
+          if (holder && !force) conflicts.push({ path, holder });
         }
-      }
-      if (conflicts.length > 0) {
-        for (const conflict of conflicts) {
-          this.addEvent('lock.deny', {
-            issue: issueId,
-            agent: who,
-            path: conflict.path,
-            message: `refused, held by ${conflict.holder.agent_id}`,
-            data: { holder: conflict.holder },
-          });
+        if (conflicts.length > 0) {
+          throw new BoardError(
+            `held by another agent: ${conflicts.map((c) => `${c.path} (${c.holder.agent_id})`).join(', ')}`,
+            { code: 4, detail: { conflicts } }
+          );
         }
-        throw new BoardError(
-          `held by another agent: ${conflicts.map((c) => `${c.path} (${c.holder.agent_id})`).join(', ')}`,
-          { code: 4, detail: { conflicts } }
+        // Which of these the caller did not ALREADY hold. A caller that takes
+        // locks, then fails at something else, has to give back exactly the ones
+        // it acquired and none of the ones it walked in with — the difference
+        // is the whole reason a rollback does not quietly free a file the agent
+        // was working in before the command started.
+        const mine = new Set(
+          this.liveLocks(at)
+            .filter((lock) => lock.agent_id === who)
+            .map((lock) => lock.path)
         );
-      }
-      for (const path of list) {
-        this.holdFileInTransaction(path, { issueId, agent: who, leaseMs, at });
-      }
-      this.addEvent('lock.hold', {
-        issue: issueId,
-        agent: who,
-        message: `${list.length} file(s)`,
-        data: { files: list, forced: Boolean(force) },
+        for (const path of list) {
+          this.holdFileInTransaction(path, { issueId, agent: who, leaseMs, at });
+        }
+        this.addEvent('lock.hold', {
+          issue: issueId,
+          agent: who,
+          message: `${list.length} file(s)`,
+          data: { files: list, forced: Boolean(force) },
+        });
+        return { held: list, acquired: list.filter((path) => !mine.has(path)), agent: who };
       });
-      return { held: list, agent: who };
-    });
+    } catch (error) {
+      /**
+       * A REFUSAL is one of the most useful things on this board — it is how a
+       * second agent learns somebody is already in a file — and it was being
+       * written inside the transaction that then rolled it back, so the log
+       * recorded no refusals at all. Recording them here, in a fresh
+       * transaction, is why the log can be trusted to show contention.
+       */
+      const conflicts = error?.detail?.conflicts;
+      if (Array.isArray(conflicts) && conflicts.length > 0) {
+        this.transaction(() => {
+          for (const conflict of conflicts) {
+            this.addEvent('lock.deny', {
+              issue: issueId,
+              agent: who,
+              path: conflict.path,
+              message: `refused, held by ${conflict.holder.agent_id}`,
+              data: { holder: conflict.holder },
+            });
+          }
+        });
+      }
+      throw error;
+    }
   }
 
   holdFileInTransaction(path, { issueId = null, agent, leaseMs = DEFAULT_LEASE_MS, at = this.now() } = {}) {
@@ -849,7 +914,7 @@ export class Board {
 
   releaseFiles(paths, { agent, force = false } = {}) {
     const who = agent ?? this.identity?.agentId;
-    const list = normalizePaths(paths);
+    const list = normalizePaths(paths, { worktree: this.identity?.worktree });
     return this.transaction(() => {
       const released = [];
       for (const path of list) {
@@ -930,10 +995,17 @@ export class Board {
    * agent that resolved an issue be the agent that closes it, which is the
    * repository's own handoff lifecycle rule made mechanical: a fix is verified
    * by another agent, a review, or a test — not by the fixer's claim.
+   *
+   * There is no `verifiedBy` argument. It existed, and it defeated the entire
+   * rule: `closeIssue(id, { verifiedBy: 'someone-else' })` compared the RESOLVER
+   * against a name the caller supplied about an agent that was not in the
+   * room, so the agent that resolved the issue could name any other string and
+   * close its own work. The verifier is the identity that runs the command; a
+   * reviewer closes the issue by being the reviewer.
    */
-  closeIssue(id, { agent, verifiedBy, note: text = null } = {}) {
+  closeIssue(id, { agent, note: text = null } = {}) {
     const who = agent ?? this.identity?.agentId;
-    const verifier = verifiedBy ?? who;
+    const verifier = who;
     return this.transaction(() => {
       const issue = this.getIssue(id);
       if (issue.status !== 'resolved') {
@@ -1075,18 +1147,27 @@ function existsDir(path) {
 
 /**
  * Paths are recorded as repo-relative, POSIX-separated, so that a lock taken
- * in one worktree matches the same file named in another (a macOS agent
- * resolving `/private/var` and a Linux one not would otherwise never collide,
- * which is exactly when a lock stops working).
+ * in one worktree matches the same file named in another.
+ *
+ * The worktree prefix is stripped because a machine resolves the same
+ * repository to different absolute paths — macOS answers `/private/var/...`
+ * where Linux answers `/var/...` — and two agents on the same machine still
+ * name the same file differently when one says `src/x.ts` and the other says
+ * `/Users/me/ph/.kilo/worktrees/agent-board/src/x.ts`. That is precisely when a
+ * file lock stops working, so the comparison happens on the relative form.
+ * An absolute path that is NOT under the caller's worktree is left alone
+ * rather than guessed at: it is outside everything this board coordinates.
  */
-export function normalizePaths(paths) {
+export function normalizePaths(paths, { worktree = null } = {}) {
   const list = Array.isArray(paths) ? paths : [paths];
+  const root = worktree ? `${String(worktree).split('\\').join('/').replace(/\/+$/, '')}/` : null;
   const out = [];
   for (const raw of list) {
     if (typeof raw !== 'string') continue;
     const trimmed = raw.trim();
     if (!trimmed) continue;
-    const normalized = trimmed.split('\\').join('/').replace(/^\.\//, '');
+    let normalized = trimmed.split('\\').join('/').replace(/^\.\//, '');
+    if (root && normalized.startsWith(root)) normalized = normalized.slice(root.length);
     if (!out.includes(normalized)) out.push(normalized);
   }
   return out;
