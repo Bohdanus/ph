@@ -76,14 +76,14 @@ conversion, diagnosable failure, deterministic asset ownership — currently pro
 user-visible behaviour. The migration's deliverable is unwired.
 
 **Trap for whoever wires it.** Two independent affine/filter composers exist.
-`materialization.ts:102-138` duplicates `getLayerAffineTransform` and `scaleVectorArgs` from
+`materialization.ts:109-145` duplicates `getLayerAffineTransform` and `scaleVectorArgs` from
 `affine-transform.ts`, violating the "never independently approximate in different files" rule.
 `materializeLayer` / `materializeDocument` have zero callers, so the first wiring attempt is the
 first time that code executes against real state.
 
 **Also wrong at the boundary.** The runtime path feeds an _untransformed_ bitmap to a pixel
 processor (`useLayer.ts:526-533`); the durable path materializes the retained presentation first
-(`materialization.ts:263-269`). Wiring the durable path without reconciling these changes pixel-tool
+(`materialization.ts:270-276`). Wiring the durable path without reconciling these changes pixel-tool
 results.
 
 **Fix.** Pick one rendering authority and make the other a projection. Minimum viable: route the
@@ -99,7 +99,7 @@ rest, and delete the duplicated composer. Do not attempt all five consumers at o
 
 **Problem.** `materialization.ts`'s product rule groups operations by kind rather than applying them
 in timeline order, so a filter applied between two affines is hoisted. Raster processors are now
-genuine segment boundaries (`materialization.ts:257-284`), so this is **half-fixed**:
+genuine segment boundaries (`materialization.ts:264-291`), so this is **half-fixed**:
 _inter-intra-segment_ interleaving is still grouped.
 
 `materialization.ordering.test.ts:415` is `it.fails('applies interleaved affine and filter
@@ -245,7 +245,7 @@ Latent only while nothing schedules replays (item 1), but it is a required input
 
 ## 11. `materialization.ts` does not apply `blendMode`
 
-**Problem.** `materialization.ts:155` sets `ctx.globalAlpha = source.opacity`, but there is no
+**Problem.** `materialization.ts:162` sets `ctx.globalAlpha = source.opacity`, but there is no
 `blendMode` / `globalCompositeOperation` anywhere in `materialization.ts` or `durable-replay.ts`.
 Only the legacy renderer applies it (`layer-renderer.ts:96`).
 
@@ -480,7 +480,7 @@ block rather than porting it.
 ## 20. No durable-path test materializes a `rectangle`, `ellipse` or `line` vector source
 
 **Problem.** `history-adapter.ts:185` maps all six of `shape`, `rectangle`, `ellipse`, `triangle`,
-`polygon`, `line` to `kind: 'vector'`, and `materialization.ts:161` then throws
+`polygon`, `line` to `kind: 'vector'`, and `materialization.ts:168` then throws
 `Source tool ${toolName} is not a deterministic creator` for any of them whose registry entry lacks
 `creator: true`. The registry now flags all six (`toolProcessors.ts:124, 220-224`), but the only
 durable test that _successfully_ pushes a vector source through `materializeLayer` uses
@@ -960,8 +960,8 @@ one real entry through `commitSelection` / `clearSelections` / `appendSelectionC
 | Clear/Deselect control, and the tool switch                      | `useSelectionHistory.ts:212`, `useSelectionHistory.ts:95` (`useApp.ts:172`) |
 | magic-wand click                                                 | `MagicWandToolArea.tsx:93`                                                  |
 | rectangle drag end                                               | `RectangularSelectionToolArea.tsx:83`                                       |
-| polygonal / freehand lasso close, feathered magnetic lasso close | `PolygonClickToolArea.tsx:253`, `FeatherMagneticLassoToolArea.tsx:409`      |
-| polygon's committed anchor or body drag                          | `PolygonClickToolArea.tsx:561`                                              |
+| polygonal / freehand lasso close, feathered magnetic lasso close | `PolygonClickToolArea.tsx:274`, `FeatherMagneticLassoToolArea.tsx:424`      |
+| polygon's committed anchor or body drag                          | `PolygonClickToolArea.tsx:593`                                              |
 
 So every selection change in a session adds a row, and **one gesture can add more than one kind**: a
 lasso gesture appends a creation and a later drag appends a separate move, both labelled identically.
@@ -1042,7 +1042,7 @@ publish decision is downstream.
 
 ## 34. A polygon selection drag released outside the surface is discarded, unlike the rectangle's
 
-**Problem.** `handlePointerLeave` (`PolygonClickToolArea.tsx:571`) calls `abortSelectionDrag()` and
+**Problem.** `handlePointerLeave` (`PolygonClickToolArea.tsx:603`) calls `abortSelectionDrag()` and
 returns, so a committed selection the user dragged out of the surface loses the move with **no history
 entry at all** — not an entry describing a discard, simply nothing. The rectangle behaves the opposite
 way: `usePointerPosition.isPointerDownValid` takes a capture (`usePointerPosition.ts:130`), so the
@@ -1056,13 +1056,13 @@ position and releasing outside the window is a completed, intended move in the r
 discarding it in the polygon loses work the user can see they did. The reason the polygon discards is
 real too: it takes no capture for a selection drag, so `pointerleave` is genuinely terminal — there is
 no later `up` to tell "let go here" apart from "left the surface", and the only event that currently
-means "this move happened" is release (`PolygonClickToolArea.tsx:530`). The operator chooses between
+means "this move happened" is release (`PolygonClickToolArea.tsx:562`). The operator chooses between
 parity (commit when the drag leaves and is released outside) and the current behaviour (discard).
 
 **Fix, if parity is chosen.** Take a capture on `handlePointerDown`'s selection/anchor branches only,
-the way the freehand branch already does at `PolygonClickToolArea.tsx:286`, and make
+the way the freehand branch already does at `PolygonClickToolArea.tsx:307`, and make
 `handlePointerLeave` commit rather than abort. **That is not a one-line change**: the freehand
-gesture is finished on `pointerleave` _by design_ (`PolygonClickToolArea.tsx:579-581`, and the
+gesture is finished on `pointerleave` _by design_ (`PolygonClickToolArea.tsx:611-613`, and the
 `LassoToolArea`/`FreehandLasso` tests pin it), and the same `handlePointerLeave` serves both modes,
 so capturing the selection drag has to be scoped to a branch that knows whether a selection drag is
 running — not added to the surface wholesale. Then add the parity test to
@@ -1071,7 +1071,7 @@ running — not added to the surface wholesale. Then add the parity test to
 and would have to be changed in the same change. `usePointerPosition`'s first-pointer-wins guard
 (`usePointerPosition.ts:126`) is the model for the "one pointer owns this drag" rule.
 
-**Files.** `src/components/Main/PolygonClickToolArea.tsx:286,458,530,571-582`,
+**Files.** `src/components/Main/PolygonClickToolArea.tsx:307,489,562,603-614`,
 `src/components/Main/RectangularSelectionToolArea.tsx:46-84`,
 `src/hooks/usePointerPosition.ts:122-133`, `src/hooks/useRect.ts:383-403`
 
@@ -1079,11 +1079,11 @@ and would have to be changed in the same change. `usePointerPosition`'s first-po
 
 ## 35. `resetInteractionState` clears the overlay and only repaints when a drag happened to be running
 
-**Problem.** `resetInteractionState` (`PolygonClickToolArea.tsx:444-456`) calls `clearOverlay()`
-(`:448`) and then `abortSelectionDrag()` (`:453`), which returns `null` and repaints nothing when no
-drag was running (`:433-440`). The only unconditional repaint in the component is the effect at
-`PolygonClickToolArea.tsx:734-736`, keyed on `redrawOverlay`, whose identity depends on `selections`
-(`:403-418`) — and the dispatch that usually accompanies a reset does not change it:
+**Problem.** `resetInteractionState` (`PolygonClickToolArea.tsx:469-487`) calls `clearOverlay()`
+(`:481`) and then `abortSelectionDrag()` (`:486`), which returns `null` and repaints nothing when no
+drag was running (`:460-467`). The only unconditional repaint in the component is the effect at
+`PolygonClickToolArea.tsx:767-769`, keyed on `redrawOverlay`, whose identity depends on `selections`
+(`:430-445`) — and the dispatch that usually accompanies a reset does not change it:
 `CANCEL_SELECTION_DRAFT` returns the **same `selections` array reference**
 (`StoreContext.tsx:532-537`, which touches `selectionDraft` alone), so the effect provably cannot
 re-run. The committed outlines `clearOverlay` just wiped therefore have no path back to the canvas
@@ -1091,11 +1091,11 @@ until something unrelated repaints.
 
 **Currently unreachable with a visible effect, and for two compounding reasons.** A draft can only be
 opened when no selection is active: `handlePointerDown` returns early on
-`selections.some((selection) => selection.isActive)` (`PolygonClickToolArea.tsx:505-507`), so by the
+`selections.some((selection) => selection.isActive)` (`PolygonClickToolArea.tsx:536-538`), so by the
 time `resetInteractionState` runs with a draft open every stored selection has `isActive: false`, and
 `drawSelectionOutline` returns immediately for those (`selection.ts:142`). And the one route that
 does leave an active selection in the store — `finishSelection`, which commits the new polygon before
-resetting (`:251`) — changes `selections`, so the effect does re-run and puts the outline back.
+resetting (`:274`) — changes `selections`, so the effect does re-run and puts the outline back.
 
 **It becomes live the moment a committed selection can be active during a draft-free reset** — if that
 `handlePointerDown` guard is relaxed, if a second selection is activated without a re-render, or if a
@@ -1105,13 +1105,114 @@ disappear with no state change to bring them back.
 **Fix.** Make the reset unconditional rather than drag-conditional: have `resetInteractionState` call
 `redrawOverlay()` after `clearOverlay()` (or drop `clearOverlay` entirely, since `redrawOverlay` →
 `drawPolygonOverlay` already clears the canvas at `PolygonClickToolArea.tsx:78`). Then
-`abortSelectionDrag`'s repaint at `:439` is redundant on this path and can be narrowed to the routes
+`abortSelectionDrag`'s repaint at `:464` is redundant on this path and can be narrowed to the routes
 that actually need it (`handlePointerLeave`, `handlePointerCancel`, `handlePointerDown`). The
-`// After the clear, never before` comment at `:451-454` currently reads as a guarantee that the
+`// After the clear, never before` comment at `:482-485` currently reads as a guarantee that the
 outlines are always restored; it is not one, and the fix is what makes it true.
 
-**Files.** `src/components/Main/PolygonClickToolArea.tsx:78,405-420,435-456,505-507,734-736`,
+**Files.** `src/components/Main/PolygonClickToolArea.tsx:78,430-445,460-487,536-538,767-769`,
 `src/contexts/StoreContext.tsx:532-537`, `src/util/selection.ts:142`
+
+---
+
+---
+
+## 37. `isToolDirty` has no production writer, so every reader of it is on its dead branch
+
+**Problem.** `isToolDirty` has a type (`StoreContext.tsx:174`), a reducer arm (`:358-362`) and three
+readers — but **nothing dispatches `SET_TOOL_DIRTY` with `true`**. A grep for `SET_TOOL_DIRTY` alone
+is not sufficient proof: `BATCH_UPDATES`, `COMMIT_DOCUMENT_EDIT` and `REPLACE_DOCUMENT` all spread
+their payloads into state, so every production payload has to be checked. All of them send `false`,
+and `SET_TOOL_NAME` (`:357`) also clears it. The flag is therefore permanently `false`, and each
+reader's `isToolDirty` arm is unreachable:
+
+- `src/components/HistoryControls/HistoryControls.tsx:9-15,22` — the header undo button. It always
+  takes the `else` and calls `undo()`, and `:22` mis-gates the button on `canUndo()` alone. Correct
+  in effect, but the flag contributes nothing and the code implies otherwise.
+- `src/components/Common/AppKeyboardShortcuts.tsx:111-120` — `Cmd+Z`. Same shape.
+- `src/components/Common/UndoButton.tsx:11-22` — **no production caller left.** The Blur, Color and
+  Levels panels used it for a button labelled "Undo Blur" / "Reset" that discarded an _uncommitted_
+  adjustment; they now do that panel-locally, gated on a live preview so it cannot claim a reset it
+  cannot perform (item 40). Only `src/components/Common/__tests__/UndoControls.test.tsx` still
+  renders it, so the component and its `isToolDirty` arm are kept alive by a test alone.
+
+The flag's arm is also not a harmless no-op even if it were reachable: `resetToLastSavedArgs` clones
+`lastSavedSettings[toolName]`, and `_setToolArgs` calls `saveLastSettings(nextArgs)` on the same tick
+(`useCurrentTool.tsx:71`). Any write that marks the tool dirty immediately overwrites the baseline
+the reset would clone back, so wiring a `SET_TOOL_DIRTY` dispatcher alone would turn a wrong undo
+into a **silent no-op** that is harder to notice, not into a working reset.
+
+**Fix.** Pick one and make it explicit; do not leave the flag half-wired.
+
+- _Delete it._ Remove `isToolDirty` from the store, the `SET_TOOL_DIRTY` arm, and both readers' dead
+  branches, then delete `UndoButton.tsx` together with its now-orphaned
+  `UndoControls.test.tsx` case and the `isToolDirty` arms in
+  `HistoryControls.test.tsx` and `AppKeyboardShortcuts.test.tsx`. This is the smaller diff and it
+  matches production reality.
+- _Make it mean something._ Only worth it if there is a real uncommitted-adjustment concept. It needs
+  a dispatcher that marks dirty on the args write and clears on commit, **and** a baseline that
+  `saveLastSettings` does not clobber — a separate `committedArgs` slot, not `lastSavedSettings`. Two
+  files, and a state machine, for an affordance the panels now implement directly.
+
+Either way the header undo and `Cmd+Z` keep working: both already call `undo()` on the reachable
+branch, and the flag's deletion removes no live behaviour.
+
+**Files.** `src/contexts/StoreContext.tsx:110,174,357-362`, `src/contexts/useCurrentTool.tsx:12,16,53-59,71`,
+`src/components/HistoryControls/HistoryControls.tsx:7-22`, `src/components/Common/AppKeyboardShortcuts.tsx:25,111-120`,
+`src/components/Common/UndoButton.tsx`, `src/components/Common/__tests__/UndoControls.test.tsx`,
+`src/components/HistoryControls/__tests__/HistoryControls.test.tsx`,
+`src/components/Common/__tests__/AppKeyboardShortcuts.test.tsx`
+
+---
+
+## 38. A drag with a non-square ratio set commits a rect the user was never shown
+
+**Problem.** `adjustWidthRatio` (`useRect.ts:206-221`) enforces `width = height / ratio`
+(`const wantedWidth = height / _aspectRatio;`, `:210`), but the drag that produced the rect enforced
+the **reciprocal**, `width = height * ratio` (`adjustFreePoint`, `useRect.ts:229-237`). The two
+conventions agree only when the ratio is 1, so on every drag with a non-square ratio set the effect
+at `useRect.ts:56-68` refits the rect `CropToolArea.tsx:24` just published into a _different_
+shape, sees `!isEqual` at `:64`, and repaints it. What the user sees after mouse-up and what `Apply`
+commits are then two different rects, and the committed one wins: `Crop.tsx:61` hands `rect`
+straight to `applyDocumentCrop`.
+
+Measured on the real hook, drag `(0,0)` -> `(200,200)`, ratio preset set, `onChangeEnd`'s payload
+fed back as `initialRect` exactly as `CropToolArea` does, and the last `onRepaint` payload read —
+which is the rect `drawMask` paints at `useRect.ts:181-182`:
+
+```
+Square 1:1: store(w=200.00 h=200.00) painted(w=200.00 h=200.00) equal=true
+3:4:       store(w=150.00 h=200.00) painted(w=266.67 h=200.00) equal=false
+4:3:       store(w=200.00 h=150.00) painted(w=112.50 h=150.00) equal=false
+16:9:      store(w=200.00 h=112.50) painted(w=63.28  h=112.50) equal=false
+9:16:      store(w=112.50 h=200.00) painted(w=355.56 h=200.00) equal=false
+```
+
+The user sees the overlay snap from 16:9 to 9:16 on release and then the document is cropped to
+16:9. The same inversion is a second, separate user-visible defect: picking "3:4" in the panel
+yields a 4:3 rect today, because the panel's own refit (`Crop.tsx:79-87`, introduced by `99ca9ba`)
+mirrors `adjustWidthRatio` rather than `adjustFreePoint`.
+
+**Fix.** `height / _aspectRatio` wants to be `height * _aspectRatio` at `useRect.ts:210`; with that
+one line, `adjustFreePoint`'s output is a fixed point of `adjustWidthRatio` and the effect's re-refit
+becomes a genuine no-op, which closes this and the wrong-orientation bug together.
+`adjustHeightRatio` (`useRect.ts:189-204`) already uses `width / ratio` and is consistent — the
+inversion is `adjustWidthRatio` alone.
+
+**The panel is a second copy of the same function, and nothing keeps the two in step.**
+`refitRectToAspect` (`Crop.tsx:79-87`) is byte-equal to `adjustWidthRatio` today (a 400 000-case
+differential fuzz over all five presets gave `mismatch: 0, maxDelta: 0`), and the only thing holding
+it there is a comment. `useRect`'s four `aspect ratio` tests
+(`src/hooks/__tests__/useRect.test.ts:285-320`) are vacuous — three assert
+`expect(result.current.onPointerDown).toBeDefined()` and the fourth asserts `typeof res === 'boolean'` —
+so none of them pins the refit shape, and `Crop.test.tsx`'s refit tests hard-code literals rather
+than deriving them from the hook. **A one-sided edit to either function, including flipping the axis
+to fit the height, leaves both suites green and silently re-opens the mis-crop.** So the line above
+must be changed in `useRect.ts:210` **and** `Crop.tsx:82` in the same change, and the fix should land
+a test that derives the panel's refit from the hook's, or extracts one shared helper both call.
+
+**Files.** `src/hooks/useRect.ts:206-221`, `src/components/ToolbarsRight/Crop/Crop.tsx:79-87`,
+`src/hooks/__tests__/useRect.test.ts:285-320`
 
 ---
 
@@ -1130,9 +1231,9 @@ dragged the Opacity slider to 20 %.
 **Root cause — the two writers, and both are still unbracketed.** This is the part that must not be
 skipped, because fixing the two painters below without it leaves the cause exactly where it is.
 
-1. `setupDrawCtx` (`src/tools/draw.ts:26-38`) writes `strokeStyle` (`:31`), `lineWidth` (`:32`),
+1. `setupDrawCtx` (`src/tools/draw.ts:26-41`) writes `strokeStyle` (`:31`), `lineWidth` (`:32`),
    `lineJoin` (`:33`), `lineCap` (`:34`), `globalAlpha` (`:35`) and, for a dashed pen, `setLineDash`
-   (`:37`), with no `save()`/`restore()` anywhere in the function.
+   (`:39`), with no `save()`/`restore()` anywhere in the function.
 2. `setShapeCtx` (`src/tools/shape.ts:120-131`) does the same, ending at `globalAlpha` (`:129`) and
    an unconditional `setLineDash` (`:130`).
 
@@ -1144,7 +1245,7 @@ between the two is the defect.
 `resetOverlayAlpha` (`src/util/canvas.ts:8-10`) now runs at the entry of the overlay paints that
 could be reached legally, so four of the six reachable painters are correct. That is a **per-paint
 discipline, not a property of the context**: any painter added later without the reset re-opens the
-same leak, and `restore()` inside `useAnts.animate` (`src/hooks/useAnts.ts:56-70`) puts the leaked
+same leak, and `restore()` inside `useAnts.animate` (`src/hooks/useAnts.ts:58-72`) puts the leaked
 alpha straight back after painting, so that path does not even heal the context for the next painter.
 **This entry cannot be closed while the two writers remain unbracketed, even after both painters
 below are fixed** — a session that patches the two victims and deletes this section has fixed the
@@ -1158,7 +1259,7 @@ leak and never sets the value is still wrong. `DrawToolArea.tsx` and `ShapeToolA
 `.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt`, but its `:37` is
 rank 3's hunk in the same function (branch `rev2/draw-pen-dash-inherit`), so it needs coordination
 rather than a solo edit. Do **not** neutralise this by writing `ctx.globalAlpha = 1` at the top of
-`setupDrawCtx`: `draw()` (`src/tools/draw.ts:40-54`) runs `setupDrawCtx` on a fresh `OffscreenCanvas`
+`setupDrawCtx`: `draw()` (`src/tools/draw.ts:43-57`) runs `setupDrawCtx` on a fresh `OffscreenCanvas`
 at the slider's alpha, and the committed layer would flatten to 1.
 
 **Two painters are still wrong, both behind
@@ -1200,5 +1301,265 @@ caller, so its context is never the shared overlay.
 
 **Files.** `src/tools/draw.ts:26-38`, `src/tools/shape.ts:120-131`,
 `src/components/Main/DrawToolArea.tsx:51`, `src/components/Main/ShapeToolArea.tsx:73`,
-`src/hooks/useAnts.ts:56-70`, `src/hooks/useRect.ts:143-163`,
+`src/hooks/useAnts.ts:58-72`, `src/hooks/useRect.ts:143-163`,
 `src/components/Main/MagicWandToolArea.tsx:35,102`, `src/util/selection.ts:141`
+
+---
+
+## 40. A committed Blur/Color/Levels adjustment has no panel affordance, only document undo
+
+**Problem.** The three panels' discard button removes an **uncommitted** preview and nothing else.
+`commitDirtyTool` (`useLayer.ts:323`) bakes the preview into a real layer, empties the preview map
+(`:353`) and appends a `TOOL_ACTION` entry (`:372-384`; `normalizeCommittedToolArgs` at `:72-77`
+returns non-transform args unchanged). It runs on tool switch (`useApp.ts:157`), on export
+(`DesktopHeader.tsx:206`, inside `flushSync`, panel still mounted) and in `mergeAllLayers`
+(`useLayer.ts:618`).
+
+From that moment the adjustment is a **document edit**. The panel's `hasLivePreview`
+(`Blur/Blur.tsx:59`, `Colors/Color.tsx:87`, `Levels/Levels.tsx:62`) is `false`, so the button is
+disabled, because `cancelLayerPreview` (`useLayer.ts:567-570`) only deletes the active layer's
+preview entry and that entry is gone. "Undo Blur" is therefore greyed out while the canvas carries
+the blur, and the only routes out are document-level: the header undo / `Cmd+Z`
+(`HistoryControls.tsx:9-14,21-22`), or the History row, which is labelled with the tool name
+(`useHistory.ts:22-24`) and rewinds the **whole** timeline to that row (`HistoryTab.tsx:27`,
+"Click to go back to this state"), discarding every entry after it.
+
+This is a deliberate scope rather than an oversight: the button is gated precisely so it cannot
+claim a reset it cannot perform. The gate is also the inverse of the one this button had before
+it — `UndoButton.tsx:14` disabled it whenever `canUndo()` was false, which is the _mid-adjustment_
+state on a fresh document — so the panel button is enabled exactly while an adjustment is
+uncommitted and disabled otherwise. Three tests pin the gate — `Blur.test.tsx:175`,
+`Color.test.tsx:304`, `Levels.test.tsx:136`, "leaves the discard/Reset disabled once the adjustment
+is committed" — and they go red if the gate is removed.
+
+**Fix.** Only if the operator wants the panel to own the committed case too. It must be a **typed
+store action**, not a call to `undo()`: routing a panel button at the document timeline is the
+defect item 37's `UndoButton` was, and `resetHistoryTo` would discard unrelated later edits along
+with the adjustment. The shape to add is a single-writer action that reverts the newest
+`TOOL_ACTION` entry for the active layer when that entry's `args.toolName` matches the panel's
+tool — appended through the same boundary as every other history write, not spliced — with the
+panel gating on it the way it now gates on the preview. It belongs in `useHistory.ts` next to
+`undo()`, not in a panel. Until that exists the disabled button is the honest answer and no change
+is required.
+
+**Files.** `src/components/ToolbarsRight/Blur/Blur.tsx:59,118`,
+`src/components/ToolbarsRight/Colors/Color.tsx:87,186`,
+`src/components/ToolbarsRight/Levels/Levels.tsx:62,140`, `src/contexts/useLayer.ts:323,353,372-384,567-570,618`,
+`src/hooks/useApp.ts:157`, `src/components/DesktopHeader/DesktopHeader.tsx:206`,
+`src/components/HistoryControls/HistoryControls.tsx:9-14,21-22`, `src/contexts/useHistory.ts:22-24`
+
+---
+
+## 41. Original / Free no longer restores the rect drawn before a ratio change
+
+**Problem.** This is a **regression caused by the fix** (`99ca9ba`), not a pre-existing bug — say so
+plainly, because the surrounding symptom looks like one. Before it, a ratio change only reshaped the
+overlay's private `startRectRef`, so the store still held the drawn rect and choosing
+`Original`/`Free` snapped the display back to it. Now the panel publishes the fitted rect
+(`Crop.tsx:43`), so the store holds **the fitted** rect and the pre-ratio rect is gone: there is
+nothing left to restore from, and the rect stays 16:9-shaped after switching back to `Free`. `Clear`
+(`Crop.tsx:67`, which nulls `rect` entirely) is the only way back, and the user loses their framing.
+
+`src/components/ToolbarsRight/Crop/__tests__/Crop.test.tsx:155-168`
+(`leaves the rect untouched when the ratio is reset to Original`) **encodes this loss as the
+contract** — `expect(lastToolArgs()).toEqual({ aspectRatio: null, rect: SQUARE_OF_RECT, … })`. It is
+honest, but it reads to the next session as a deliberate feature, and someone will "fix" it back
+into the mis-crop. Deleting or rewriting that test without restoring the round-trip would drop the
+only record that the loss exists.
+
+**The fix is forced.** The store has to hold what is displayed, and the pre-ratio rect was never
+stored anywhere; between a silent mis-crop and a lost framing, the mis-crop is worse. Restoring the
+round trip is a product decision with reach outside the Crop panel: it needs a `preRatioRect` field
+on `CropToolArgs` (`src/tools/crop.ts:5-9`), and that field must survive session persistence, where
+`saveLastSettings` strips `rect` but keeps `aspectRatio` (`src/util/settings.ts:33`; the crop
+defaults live at `src/tools/settings.ts:51`). Carrying it in panel state instead goes stale the
+moment the user drags a new rect after choosing a ratio.
+
+**Fix.** Decide the field: add `preRatioRect` to `CropToolArgs`, have `Crop.tsx:40-44` set it on
+every ratio change and `Free`/`Original` restore `preRatioRect ?? rect`, then **delete or rewrite
+`Crop.test.tsx:155-168` in the same change** to assert the round trip. If the operator instead
+decides the loss is acceptable, say so in writing and keep the test — but then the test name must
+change, because "leaves the rect untouched" describes a bug, not the contract.
+
+**Files.** `src/components/ToolbarsRight/Crop/Crop.tsx:40-44`,
+`src/components/ToolbarsRight/Crop/__tests__/Crop.test.tsx:155-168`, `src/tools/crop.ts:5-9`,
+`src/util/settings.ts:33`, `src/tools/settings.ts:51`
+
+---
+
+## 42. The transient luma plane is a full-frame `Float32Array` where three rows would do
+
+**Problem.** `createEdgeMapFromImageData` (`magneticLasso.ts:144`) still allocates
+`luma = new Float32Array(width * height)` at `:146`, a full-frame buffer, and the Sobel pass at
+`:158-177` reads it at rows `y - 1`, `y` and `y + 1` of the output row only (`:160-167`). Nothing
+reads row `y + 2` or beyond, and no caller sees the array — it is a local of the call. A 3-row ring
+buffer of `3 * width` floats would make the peak luma cost `12 * width` bytes instead of
+`4 * width * height`, so on the app's own A4@300dpi preset (2480x3508) that is 29 KB instead of
+35 MB, and on the 100 MP document its own dialog allows (A3 at 2400 dpi, clamped to 10000 per side)
+under 120 KB instead of 400 MB.
+
+That buffer is the last remaining piece of the avoidable half of the P1 in
+`.kilo/reviews/2026-09-27-untouched/final/branches/magnetic-lasso-edge-map.md`. The shape trim
+dropped `gradientDirection` entirely and stopped returning `luma`, so retention is now `4N` instead
+of `12N`; what is left is this transient `4N`, allocated and touched on every pointer-down that
+begins a draft (`FeatherMagneticLassoToolArea.tsx` `startDraft` -> `createEdgeMapFromCanvas` ->
+`getImageData` at `magneticLasso.ts:138`).
+
+**It was not attempted, deliberately.** That brief scoped its trimming job to the _returned_ shape —
+delete `gradientDirection` from the type/allocation/write/return, and either drop `luma` from
+`EdgeMap` or keep it — and its "Must not regress" required the Sobel pass order not to change once
+`luma` became a local. Rewriting the two passes as a fused 3-row sweep changes that pass structure,
+so it was out of scope rather than overlooked.
+
+**Fix.** Fuse the luma fill and the Sobel pass into one row-major sweep that keeps a 3-row ring
+buffer, so row `y + 1` is filled on demand as the output row `y` is produced and the full-frame
+`luma` is never allocated. Two constraints bind the change: the Sobel weights and the `Float32Array`
+store order at `:169-171` must be reproduced exactly, or every `gradientMagnitude` value and every
+magnetised path moves; and the outermost ring must stay at zero, so the first and last rows and
+columns remain unwritten rather than being computed from partial windows. Pin the fused output
+against the current two-pass output on a non-uniform fixture before it lands — the existing
+`magneticLasso.test.ts` cases are uniform or 2x2, so a subtly shifted window would pass them all.
+The region bound on the `getImageData` at `:138` is the larger remaining cost and is a separate
+change.
+
+**Files.** `src/util/magneticLasso.ts:144-179`, `src/util/__tests__/magneticLasso.test.ts`
+
+---
+
+## 43. A Backspace aimed at the layer-rename field is owned by the lasso tool, so the field cannot be edited while a draft is active
+
+**Problem.** `PolygonClickToolArea.tsx:753-765` and `FeatherMagneticLassoToolArea.tsx:544-556`
+register `Backspace` and `Delete` with `allowInInput: true`, `preventDefault: true` and **no
+`enabled` guard**. The layer-rename field is a `contentEditable` span
+(`LayersTab.tsx:188-189`) whose local `onKeyDown` (`:202-211`) handles Enter/Escape but does not
+`stopPropagation`, so the event bubbles to the document listener
+(`useKeyboardEvents.tsx:129`) and the tool's registration matches it: `removeLastAnchor` runs
+**and** `preventDefault()` cancels the field's own key action. A Backspace aimed at the field
+neither deletes the character nor leaves the selection alone. This is live on this branch and on
+`main`; nothing in `rev2/keyboard-repeat-gate` changes it.
+
+**Fix.** `rev2/lasso-shortcut-guards` (commit `0434871`) is the fix: it gates both registrations
+on `enabled: selectionDraft.status === 'draft'` and drops `allowInInput` from `Backspace`/`Delete`
+(keeping it on `Escape`/`Enter`), so the `isEditableTarget` guard in `useKeyboardEvents.tsx:104`
+suppresses the registration inside a field and the field's own default applies.
+
+**Integration ordering — `rev2/lasso-shortcut-guards` must land first.** The two unmerged branches
+share no file, so they merge textually in either order, but they are semantically coupled on
+exactly these four registrations, and only one of them fixes what the other one leans on:
+
+- `rev2/lasso-shortcut-guards` is the branch that closes the defect above. It must land **first**;
+  `rev2/keyboard-repeat-gate` must not be merged or released ahead of it. Merging the repeat gate
+  alone would ship an app whose layer-rename field is still un-editable, with the gate's claim on
+  the key (below) rather than a fix for the field — the defect would be a known-open one instead
+  of a closed one.
+- `rev2/keyboard-repeat-gate` (this branch) adds the auto-repeat gate at
+  `useKeyboardEvents.tsx:116-122`, deliberately **below** `preventDefault`/`stopPropagation`: a
+  suppressed repeat must not re-fire the handler but must keep cancelling the browser default, so
+  a held key keeps the app's claim on it for the lifetime of the press. That placement is what
+  keeps the two branches from interacting badly while both are in flight — the eight
+  `allowInInput: true` + `preventDefault: true` registrations in the two tool areas (Escape, Enter,
+  Backspace, Delete) are the ones the gate would otherwise hand a browser default they have never
+  had. Rank 5 removes `allowInInput` from Backspace/Delete, so after both land nothing in the app
+  currently pairs those two flags on an OS-repeating key; the placement is the defence, and its
+  tripwire is the unit test named below.
+- Do not re-add `allowInInput` to `Backspace`/`Delete` in either branch, and do not re-add it to a
+  registration that also sets `preventDefault` on a key the OS repeats: that pair is what cancels a
+  field's own key action.
+- If the gate is ever moved back above `preventDefault`, a held Backspace in the rename field
+  re-acquires the browser's own repeat munging, which no version of this app had. Two tests must go
+  red first; if they do not, the tests were weakened, not the behaviour improved.
+
+**Verification to delete this entry.** With rank 5 merged, hold Backspace in a focused
+layer-rename field with a lasso draft active: the field must mung its own text. Then confirm
+`src/hooks/__tests__/useKeyboardEvents.shortcuts.test.tsx` is still green, including
+"keeps preventing the default for a held key that allowInInput runs inside a contenteditable
+field" — that test is the tripwire for the gate's placement and must not be relaxed to accommodate
+a registration that reaches into a field again.
+
+**Files.** `src/components/Main/PolygonClickToolArea.tsx:753-765`,
+`src/components/Main/FeatherMagneticLassoToolArea.tsx:544-556`, `src/hooks/useKeyboardEvents.tsx:104`
+and `:116-122`
+
+---
+
+## 44. `SaveDialog` has the same unowned keyboard as `NewImageDialog` had, and no dialog in the app is marked as one
+
+**Problem.** `NewImageDialog` no longer has this defect, but its sibling never had the fix.
+`SaveDialog.tsx:32` is the same `fixed inset-0 z-[1050]` overlay with `outline-none
+focus:outline-none` and nothing else: no `autoFocus`, no `tabIndex`, no `onKeyDown`, so no Escape
+handler, no key interception and no focus trap (`grep -n 'autoFocus\|onKeyDown\|tabIndex'
+src/components/SaveDialog/SaveDialog.tsx` matches only the Tailwind outline classes).
+
+The consequence is the one `NewImageDialog` just had. Focus stays on the `File ▸ Save As` menu
+`<button>`, and the app's whole shortcut layer is one `document`-level keydown listener
+(`useKeyboardEvents.tsx:129`) suppressed only by `isEditableTarget` (`useKeyboardEvents.tsx:29-54`),
+which is true for textarea, contenteditable, text-like inputs and select — never a `<button>`. With
+a document open, `Cmd+Z`, `Cmd+C`, `Cmd+V` and every tool key fire behind the open save dialog.
+
+**Do not copy the old approach.** `SaveDialog`'s first focusable control is the header close button
+(`:44`), which precedes both inputs (`:58`, `:71`) in document order. A
+`querySelector('select, input, button')` autofocus therefore lands on that **button**, and a button
+is not text-like, so `isEditableTarget` stays false and the shortcut hole re-opens. Port the
+selector and the `stopPropagation` scope from `NewImageDialog.tsx:20-21` and `:137-153` instead. The
+`<select>` at `:71` does not save you either way: the filename input at `:58` precedes it, so the
+text-like branch resolves there.
+
+**A focus trap that does not contain focus is the same defect twice.** `NewImageDialog`'s first
+version wrapped Tab from the last control to the first and nothing more, and the keydown handler sat
+on the overlay, so a keydown whose target was outside the panel was never seen. Clicking the dialog's
+own title, or its `Opacity:` label (`NewImageDialog.tsx:266-268`, no `htmlFor`), blurs the focused
+control and leaves `document.activeElement` on `<body>`; from there Tab walks out of the modal and
+`Cmd+Z` reaches the shortcut layer again, because `isEditableTarget(<body>)` is false. Port the
+containment too — the `focusout`/`focusin`/`keydown` capture guards at
+`NewImageDialog.tsx:66-115`, the `!panel.contains(document.activeElement)` arm at `:130-134`, and the
+test at `NewImageDialog.test.tsx` named "keeps Tab and the app shortcut layer inside the
+panel after focus is driven outside it". Two arms are not optional: a click on non-interactive text fires
+`focusout` with a null `relatedTarget` and **no** `focusin`, while removing the focused control fires
+no focus event at all, so a `focusin`-only guard still leaks.
+
+**No dialog in the app is announced as one.** `grep -rn 'role="dialog"\|aria-modal' src/` matches
+`NewImageDialog.tsx:167-168` and nothing else, so a screen reader is told nothing when
+`SaveDialog`'s overlay appears: no dialog role, no modality, and the `Save File As...` heading at
+`SaveDialog.tsx:43` is not wired to it with `aria-labelledby`. Add `role="dialog"`,
+`aria-modal="true"` and an `aria-labelledby` pointing at that heading to the `SaveDialog` overlay,
+following `NewImageDialog.tsx:163-170` and `:169`, and add the assertion the
+`NewImageDialog` suite carries ("is announced as a modal dialog labelled by its title") so the
+attributes are pinned rather than assumed.
+
+**Files.** `src/components/SaveDialog/SaveDialog.tsx:32-51`,
+`src/components/SaveDialog/__tests__/SaveDialog.test.tsx` (asserts nothing about focus or role today)
+
+---
+
+## 45. The raster budget is a ceiling the operator set, and the AVIF half of it is still below the app's own maximum
+
+**Problem.** `MAX_TIFF_BYTES` / `MAX_TIFF_PIXELS` in `src/contexts/tiff-utils.ts:15-27` are a
+product decision, not a security constant, and nothing records where the numbers came from — so the
+next session will "tidy" them back to a round figure and nobody will notice. The two ceilings, and
+the reject-don't-clamp behaviour above them, are:
+
+- `MAX_TIFF_BYTES = 1_600_000_000` — the app's largest creatable document
+  (10000 × 10000 = 1e8 px, `NewImageDialog.tsx:208-209` clamps each axis to 10000 and both inputs
+  declare `max="10000"` at `:158`/`:178`) at 16 bytes per pixel, which is the largest per-pixel
+  buffer `UTIF.decodeImage` can build for a 4-sample page: `Math.min(32, t258[0])` bits per sample
+  (`UTIF.js:116`) times 4 samples.
+- `MAX_TIFF_PIXELS = MAX_TIFF_BYTES / 8` = 200,000,000 — the same budget read at 8 bytes per
+  pixel, the largest per-pixel buffer a displayable 16-bit RGBA page declares. Two times the app's
+  own maximum, so a document the dialog can create has headroom.
+- Above either ceiling the file is **rejected with an error, never clamped or downscaled**. That is
+  deliberate: a clamp silently hands the user a smaller image than the file they opened, and a
+  rejected file loses nothing.
+
+**The residual defect.** `MAX_AVIF_PIXELS` in `src/contexts/avif-utils.ts:5` is still
+`80_000_000` — below the 100 MP the New Image dialog can create, and applied to `loadAvifFile`
+(`:15`) but never to `encodeAvif` (`:24-26`). So `New ▸ A3 @ 1200 dpi`, then `Save as AVIF`,
+produces a file this build refuses to reopen. This is the same asymmetry the TIFF budget had; the
+TIFF side is fixed and this side is not.
+
+**Fix.** Replace `MAX_AVIF_PIXELS` with the same `MAX_TIFF_PIXELS` derivation, or export one
+`MAX_RASTER_PIXELS` from a module both codecs import so the two cannot drift again, and add the
+same budget call to `encodeAvif`. If the ceiling itself is wrong — if 200 MP is too generous or too
+tight for the product — that is the operator's call, and it must be made here rather than in a fix
+branch: the derivation above is what makes a different number defensible, not the number itself.
+
+**Files.** `src/contexts/avif-utils.ts:4-5,15,24-26`, `src/contexts/tiff-utils.ts:11-27`
