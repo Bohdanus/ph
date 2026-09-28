@@ -458,7 +458,9 @@ describe('file locks make one-file-one-agent real', () => {
     const a = boardFor('a');
     // The prefix strips to the empty string, and a lock on "" is a lock on a
     // file no agent can name.
-    expect(() => a.holdFiles([`${a.identity.worktree}/`])).toThrow(/no file paths/);
+    // The refusal now names WHY: a worktree root is not a file in it, and the
+    // reason is more use to a caller than "no file paths".
+    expect(() => a.holdFiles([`${a.identity.worktree}/`])).toThrow(/not inside this repository/);
     expect(a.locksHeldBy('a')).toHaveLength(0);
     a.close();
   });
@@ -511,6 +513,20 @@ describe('file locks make one-file-one-agent real', () => {
     // 240 issues and a 200-row answer: a false negative here files a DUPLICATE of
     // work already tracked, and nothing tells the reader the list was cut.
     expect(board.listIssues()).toHaveLength(240);
+  });
+
+  it('refuses a path that climbs out of the repository, in both commands', () => {
+    const a = boardFor('a');
+    // `../../etc/passwd` names a real file, and a lock on it collides with
+    // nothing this board tracks — so it is refused rather than stored, and
+    // `check` says the same thing `hold` does instead of answering "free".
+    for (const escape of ['../../etc/passwd', '../outside.ts', '/etc/hosts']) {
+      expect(() => a.holdFiles([escape]), escape).toThrow(/not inside this repository/);
+      const report = a.checkPath(escape);
+      expect(report.free, escape).toBe(false);
+      expect(report.outside, escape).toBe(true);
+    }
+    expect(a.locksHeldBy('a')).toHaveLength(0);
   });
 
   it('lets two issues of ONE agent share a file, and keeps it when one is released', () => {
@@ -875,12 +891,39 @@ describe('the schema this script writes', () => {
     second.close();
   });
 
-  it('refuses a board written by a newer script, before touching it', () => {
+  it('refuses a board written by a newer script, without having touched it', () => {
     buildV1Board(dir);
     const raw = new DatabaseSync(join(dir, 'board.db'));
     raw.prepare("UPDATE meta SET value = '99' WHERE key = 'schema_version'").run();
+    // A board from a newer script need not have a table THIS script declares —
+    // which is exactly why the guard has to run before `exec(SCHEMA)`, whose
+    // CREATE TABLE IF NOT EXISTS would otherwise re-create it, leaving a board
+    // half-adopting the very schema it is refusing.
+    raw.exec('DROP TABLE file_locks');
     raw.close();
+
     expect(() => boardFor('a')).toThrow(/schema is v99/);
+    const after = new DatabaseSync(join(dir, 'board.db'));
+    const tables = after.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all();
+    expect(tables.map((row) => row.name)).not.toContain('file_locks');
+    after.close();
+  });
+
+  it('does not stamp a version it did not earn', () => {
+    buildV1Board(dir);
+    const raw = new DatabaseSync(join(dir, 'board.db'));
+    // An unreadable version row reads as "no version" — and "no version" must
+    // not be taken as licence to claim the board is current. An earlier fix
+    // stamped v2 whenever no migration had run, which announces a migrated
+    // board while every lock's attribution still sits in a column nothing reads.
+    raw.prepare("UPDATE meta SET value = 'unknown' WHERE key = 'schema_version'").run();
+    raw.close();
+
+    const board = boardFor('a');
+    const version = board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value;
+    expect(String(version)).not.toBe('2');
+    // And nothing was silently moved on its way past.
+    expect(board.db.prepare('SELECT COUNT(*) AS n FROM issue_locks').get().n).toBe(0);
   });
 });
 
@@ -1078,6 +1121,70 @@ describe('the command line', () => {
     expect(asOther).toContain('2/2 held: src/a.ts by a, src/b.ts by a');
     expect(asOther).toContain('src/a.ts');
     expect(filed.id).toMatch(/^ph-\d+$/);
+  });
+
+  it('reads a title typed before or after a global flag, and after a normal one', async () => {
+    // The help lists --json, --agent and --dir as GLOBAL, and a global flag
+    // before the command emptied the title: `board --json new "title"` — a
+    // normal way to type it — failed with "new needs a title". The test helper
+    // always appends its flags LAST, so it could never see this; these call the
+    // CLI with the flags genuinely first.
+    const withFlagsFirst = async (argv) => {
+      const out = [];
+      const err = [];
+      const code = await run([...argv, '--dir', dir], {
+        cwd: dir,
+        out: { write: (chunk) => out.push(chunk) },
+        err: { write: (chunk) => err.push(chunk) },
+      });
+      return { code, out: out.join(''), err: err.join('') };
+    };
+
+    const first = await withFlagsFirst(['--json', '--agent', 'a', 'new', 'title after a global flag']);
+    expect(first.code, first.err).toBe(0);
+    const id = JSON.parse(first.out).id;
+    expect(JSON.parse((await cli(['show', id, '--json'])).out).issue.title).toBe('title after a global flag');
+    // A title after an ordinary flag is refused loudly rather than emptied.
+    expect((await withFlagsFirst(['new', '--scope', 'history', 'a title'])).code).toBe(1);
+  });
+
+  it('refuses a check that cannot answer, rather than answering "free"', async () => {
+    await cli(['hold', 'src/held.ts']);
+    // Four ways of asking nothing, or asking about something this board does not
+    // cover. All of them used to answer `free` and exit 0 — the exit code that
+    // means a gate may proceed.
+    for (const args of [
+      ['check', ''],
+      ['check', '--files'],
+      ['check', '/etc/hosts'],
+    ]) {
+      const result = await cli(args, 'b');
+      expect(result.code, args.join(' ')).toBe(1);
+      expect(result.out, args.join(' ')).not.toMatch(/^free:/);
+    }
+    // And a genuine free file still answers 0.
+    expect((await cli(['check', 'src/free.ts'], 'b')).code).toBe(0);
+  });
+
+  it('claims a missing issue as NOT FOUND, not as a raw constraint error', async () => {
+    const result = await cli(['claim', 'ph-404', '--files', 'src/z.ts']);
+    // The locks are taken before the claim is validated, and the foreign key
+    // fired first: a stack trace, and exit 1 for what the table calls 2.
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/no such issue: ph-404/);
+    expect(result.err).not.toMatch(/FOREIGN KEY/);
+    // And no lock was left behind by the attempt.
+    expect((await cli(['check', 'src/z.ts'], 'b')).code).toBe(0);
+  });
+
+  it('lists every issue, at the CLI, with no cap to discover', async () => {
+    const bulk = await cli(['new', 'the first of many', '--json']);
+    expect(bulk.code).toBe(0);
+    await cli(['new', 'and a second', '--json']);
+    // The API-level cap is pinned elsewhere; this is the command an agent runs.
+    const listed = JSON.parse((await cli(['list', '--json'])).out);
+    expect(listed.issues.length).toBeGreaterThanOrEqual(2);
+    expect((await cli(['ready', '--json'])).out).toContain('and a second');
   });
 
   it('keeps a stray word out of the title when --files takes a list', async () => {

@@ -101,6 +101,7 @@ const VALUE_FLAGS = new Set([
   'scope',
   'since',
   'status',
+  'title',
   'until',
   'file',
 ]);
@@ -129,9 +130,10 @@ const LIST_FLAGS = new Set(['files', 'dep', 'file']);
 export function parseArgs(argv) {
   const flags = {};
   const positional = [];
-  /** The positional arguments that appeared BEFORE the first flag. */
+  /** The positional arguments that appeared BETWEEN the command and the first flag after it. */
   const leading = [];
   let seenFlag = false;
+  let seenCommand = false;
   let i = 0;
   while (i < argv.length) {
     const token = argv[i];
@@ -140,7 +142,11 @@ export function parseArgs(argv) {
       break;
     }
     if (token.startsWith('--')) {
-      seenFlag = true;
+      // A GLOBAL flag before the command does not end the leading run: the help
+      // lists --json, --agent and --dir as global, `board --json new "title"` is
+      // a normal way to type it, and latching on the first `--` token anywhere
+      // emptied the title of every such command.
+      if (seenCommand) seenFlag = true;
       const eq = token.indexOf('=');
       const name = eq === -1 ? token.slice(2) : token.slice(2, eq);
       const key = name.replace(/-/g, '_');
@@ -172,6 +178,9 @@ export function parseArgs(argv) {
     } else {
       positional.push(token);
       if (!seenFlag) leading.push(token);
+      // The first bare token is the COMMAND; everything after it, up to the first
+      // flag, is what `new`/`note`/`comment` read their text from.
+      if (!seenCommand) seenCommand = true;
     }
     i += 1;
   }
@@ -532,9 +541,11 @@ export async function run(
           busy.length
             ? busy
                 .map((entry) =>
-                  entry.outside
-                    ? `${entry.path} is not inside this repository`
-                    : `${entry.path} held by ${entry.holders.map((h) => h.agent_id).join(', ')}`
+                  entry.nothing
+                    ? 'nothing to check'
+                    : entry.outside
+                      ? `${entry.path} is not inside this repository`
+                      : `${entry.path} held by ${entry.holders.map((h) => h.agent_id).join(', ')}`
                 )
                 .join('\n')
             : // The NORMALISED paths, not the ones typed: the free line quoted a
@@ -546,8 +557,8 @@ export async function run(
       }
 
       case 'comment': {
-        const id = args[0];
-        const message = args.slice(1).join(' ').trim();
+        const id = leadingArgs[0];
+        const message = leadingArgs.slice(1).join(' ').trim();
         if (!id || !message) throw new BoardError('comment needs an id and a message', { code: 1 });
         board.comment(id, message);
         emit({ id, message }, `commented on ${id}`);
@@ -555,7 +566,7 @@ export async function run(
       }
 
       case 'note': {
-        const message = args.join(' ').trim();
+        const message = leadingArgs.join(' ').trim();
         if (!message) throw new BoardError('note needs a message', { code: 1 });
         board.note(message);
         emit({ message }, 'noted');

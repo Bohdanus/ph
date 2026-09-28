@@ -79,8 +79,9 @@ needs, and what nobody claimed because the worktree is gone. `npm run board --
 help` is the full command list; `--json` works on every command except `watch`, `help` and `--version`.
 `ready` is the queue an agent works from: it sorts by priority, and the FILES
 column is the files the issue is _about_ (from its own create event) annotated
-with who is currently in them — not the locks it happens to hold, which is why an
-import shows real files rather than nothing.
+with who is currently in them. An imported issue holds none of them on purpose,
+which is why it still shows its real files rather than nothing, and a filer's own
+reservation is contention like any other and is shown as such.
 
 **It is NOT the handoff documents.** `HANDOFF.md`, `TEST-FLAKES.md` and
 `e2e/OPEN_PROBLEMS.md` stay the durable, reviewable record of what is known

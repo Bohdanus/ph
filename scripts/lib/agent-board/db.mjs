@@ -1067,7 +1067,10 @@ export class Board {
     // any lock, so holding it would create a row nothing can ever collide with —
     // a lock that protects nothing while looking like protection. `check`
     // refuses the same path for the same reason, and the two must agree.
-    const outside = list.filter((path) => path.startsWith('/'));
+    // Both ways of naming a file outside this repository: an absolute path that
+    // no worktree prefix matched, and a relative one that climbs out of the
+    // worktree root. Either way there is no lock it could ever collide with.
+    const outside = list.filter((path) => path.startsWith('/') || path.startsWith('..'));
     if (outside.length > 0) {
       throw new BoardError(
         `not inside this repository: ${outside.join(', ')}. Locks cover this repository's files; ` +
@@ -1166,6 +1169,11 @@ export class Board {
       )
       .run(path, who, this.identity?.worktree ?? null, this.iso(), msFromNow(leaseMs, at));
     if (issueId) {
+      // Resolved BEFORE the write, and not by the foreign key: a claim naming
+      // an issue that does not exist is "not found", and the raw constraint
+      // error that used to come out of here was neither that nor a message an
+      // agent could act on — it was a stack trace, with the wrong exit code.
+      this.getIssue(issueId);
       this.db
         .prepare(
           `INSERT INTO issue_locks (issue_id, path, agent_id, created_at) VALUES (?, ?, ?, ?)
@@ -1347,7 +1355,13 @@ export class Board {
    * does not.
    */
   toRepoPath(path) {
+    const typed = String(path ?? '').trim();
     const direct = normalizePaths([path], { roots: this.pathRoots() })[0];
+    // A path that WAS given and normalised to nothing — the empty string, or a
+    // worktree root with a trailing slash — is not a free file. It is a path
+    // this board does not cover, and `check` answering "free" there is the
+    // disagreement with `hold`, which refuses it.
+    if (direct === undefined && typed !== '') return typed;
     // Only an ABSOLUTE path can be a symlinked spelling of a relative one. A
     // path that is already repo-relative is the canonical form, and resolving
     // it against the process's directory would turn the stored answer into an
@@ -1451,6 +1465,10 @@ export class Board {
    */
   checkPath(path, { agent, at = this.now() } = {}) {
     const who = agent ?? this.identity?.agentId;
+    const typed = String(path ?? '').trim();
+    // Nothing was asked about. "Free" is an answer about a FILE, and a command
+    // that checked no file must not hand back the exit code that means it did.
+    if (typed === '') return { path, free: false, holders: [], outside: true, nothing: true };
     const normalized = this.toRepoPath(path);
     if (normalized === undefined) return { path, free: true, holders: [] };
     // An absolute path that survived the prefix strip is OUTSIDE every worktree
@@ -1458,7 +1476,7 @@ export class Board {
     // free — `hold` refuses such a path outright, and `check` answering "free"
     // where `hold` answers "no" is the disagreement that lets a shell gate on
     // the wrong one.
-    if (normalized.startsWith('/')) {
+    if (normalized.startsWith('/') || normalized.startsWith('..')) {
       return { path: normalized, free: false, holders: [], outside: true };
     }
     const holders = this.liveLocks(at).filter((lock) => lock.path === normalized && lock.agent_id !== who);
