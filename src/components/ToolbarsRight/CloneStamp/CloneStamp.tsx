@@ -62,7 +62,7 @@ const toPercent = (alpha: number): number => Math.round(alpha * 100);
  * ## Sliders are throttled through one animation frame
  *
  * A drag emits a `change` per step and each write is a `patchToolArgs`, which calls
- * `saveLastSettings` (`src/contexts/useCurrentTool.tsx:71`) — so an unthrottled slider
+ * `saveLastSettings` (`src/contexts/useCurrentTool.tsx:62`) — so an unthrottled slider
  * persists settings on every frame of a drag. The pending PATCH is replaced wholesale rather
  * than merged with the args object, so a value the user never moved cannot survive in the
  * frame that flushes, and the `Aligned` checkbox deliberately does NOT go through here: it

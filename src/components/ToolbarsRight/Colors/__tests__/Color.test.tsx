@@ -13,7 +13,6 @@ const mockSetToolArgs = vi.hoisted(() => vi.fn());
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
 const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
 const mockMergeAllLayers = vi.hoisted(() => vi.fn());
-const mockResetToLastSavedArgs = vi.hoisted(() => vi.fn());
 const mockUndo = vi.hoisted(() => vi.fn());
 
 // The discard is gated on a live preview for the active layer, so the store's
@@ -41,7 +40,6 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs,
     setToolArgs: mockSetToolArgs,
-    resetToLastSavedArgs: mockResetToLastSavedArgs,
   }),
 }));
 
@@ -86,7 +84,6 @@ describe('Color toolbar', () => {
     mockTempUpdateLayer.mockClear();
     mockCancelLayerPreview.mockClear();
     mockMergeAllLayers.mockClear();
-    mockResetToLastSavedArgs.mockClear();
     mockUndo.mockClear();
     rafCallbacks.length = 0;
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -340,14 +337,14 @@ describe('Color toolbar', () => {
 
     expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
     // The baseline is `defaultSettings.color`, not the value the user just dragged to.
-    // A `resetToLastSavedArgs` reset would publish those three values here.
+    // A baseline read from the stored settings would publish those three values here:
+    // the slider write overwrites that copy on the same tick.
     expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
       grayscale: 0,
       sepia: 0,
       saturation: 0,
       toolName: 'color',
     });
-    expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
     // The click removes an uncommitted preview. A committed adjustment is a
     // document operation, and `undo()` — which the panel does not call — is the
     // route out of one, so a fall-through to document-level undo stays pinned here.

@@ -12,6 +12,7 @@ import { FeatherMagneticLassoToolArea } from './FeatherMagneticLassoToolArea.tsx
 import { MagicWandToolArea } from './MagicWandToolArea.tsx';
 import { EllipticalSelectionToolArea } from './EllipticalSelectionToolArea.tsx';
 import { QuickSelectionToolArea } from './QuickSelectionToolArea.tsx';
+import { ColorReplacementToolArea } from './ColorReplacementToolArea.tsx';
 import { EyedropperToolArea } from './EyedropperToolArea.tsx';
 import { EraserToolArea } from './EraserToolArea.tsx';
 import { CloneStampToolArea } from './CloneStampToolArea.tsx';
@@ -62,8 +63,14 @@ const Main = () => {
     interactionMode = 'reposition';
   } else if (toolName === 'crop') {
     interactionMode = 'crop';
-  } else if (toolName === 'draw' || toolName === 'brush' || toolName === 'pencil' || toolName === 'color-replacement') {
+  } else if (toolName === 'draw' || toolName === 'brush' || toolName === 'pencil') {
     interactionMode = 'draw';
+  } else if (toolName === 'color-replacement') {
+    // Its own area, not `draw`. A Color Replacement is a click-to-sample followed by a drag, and
+    // `DrawToolArea` has no step for the first half of that: it would stroke the sampling click as
+    // if it were paint. It is also an ACTIVE-layer edit like the eraser, committing through
+    // `updateLayerByTool` rather than creating a layer.
+    interactionMode = 'color-replacement';
   } else if (
     toolName === 'shape' ||
     toolName === 'rectangle' ||
@@ -190,7 +197,8 @@ const Main = () => {
       | typeof CloneStampToolArea
       | typeof SharpenToolArea
       | typeof GradientToolArea
-      | typeof FillToolArea;
+      | typeof FillToolArea
+      | typeof ColorReplacementToolArea;
 
     let EventHandler: ToolAreaComponent = DummyToolArea;
     if (hasImage) {
@@ -205,6 +213,7 @@ const Main = () => {
       else if (interactionMode === 'rectangular-selection') EventHandler = RectangularSelectionToolArea;
       else if (interactionMode === 'elliptical-selection') EventHandler = EllipticalSelectionToolArea;
       else if (interactionMode === 'quick-selection') EventHandler = QuickSelectionToolArea;
+      else if (interactionMode === 'color-replacement') EventHandler = ColorReplacementToolArea;
       else if (interactionMode === 'eyedropper') EventHandler = EyedropperToolArea;
       else if (interactionMode === 'eraser') EventHandler = EraserToolArea;
       else if (interactionMode === 'smudge') EventHandler = SmudgeToolArea;

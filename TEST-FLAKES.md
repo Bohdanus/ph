@@ -179,7 +179,8 @@ and destroys the only signal that the defect existed.
 
 ## 7. A second, NAMED observation — `useFile.test.tsx` JPEG-quality save
 
-**Status: OPEN. Named, not reproduced. Two failures in roughly fifteen full runs.**
+**Status: OPEN. Named, not reproduced. THREE full-run failures, and the last one landed
+immediately after the only change to this test's import graph.**
 
 This one is worth separating from section 1, because unlike it the failing test
 was captured:
@@ -193,12 +194,21 @@ FAIL  src/contexts/__tests__/useFile.test.tsx > FileProvider PSD integration
 
 Observed 2026-09-28, in a full `npm run test` on branch
 `fix/handoff-2026-09-28`. It has **not** reproduced on demand: the same file
-passes in isolation, and six further consecutive full runs were green (198/198
-files, 4513 passed, 34 expected fail). It then **recurred** during the rebase
-onto the responsive tranche, so the honest tally is **two** failures in roughly
-fifteen full runs, not one in seven. The assertion text was not captured on
-either occasion — only the test name — so the difference from section 1 is the
-name and a second data point, not a diagnosis.
+passes in isolation every time, and consecutive full runs are usually green. It has
+now failed **three** times in a full run and never in isolation. The assertion text
+was never captured — only the test name — so the difference from section 1 is the
+name and three data points, not a diagnosis.
+
+**The third occurrence is the one that matters, and it lands on the lead below.** It
+recurred on `docs/review-findings-2026-09-28` in the run immediately after that branch
+extracted the dialog focus-ownership block out of `SaveDialog.tsx` into
+`src/hooks/useDialogFocusContainment.ts` — the one file in this test's import graph
+that either branch has changed. Before that extraction the tally was two; after it,
+three. **That is a correlation across two branches, not a cause**, and it is the
+cheapest thing to test next: revert the extraction's mount effect alone, run the full
+suite in a loop, and see whether the third occurrence goes away. Do not run a scoped
+loop and conclude anything from it — section 6 forbids inferring from a scoped green
+for a failure observed in a full run.
 
 **Do not close it as "the pool".** Two things make this one worth keeping
 open, and neither is the pool:
@@ -363,7 +373,63 @@ already sets for section 1, and it applies here unchanged. A second observation,
 with the assertion text and whether it was a timeout or a value mismatch, is
 worth more than twenty green runs.
 
-## 9. Files
+## 9. A third, NAMED observation — the first Playwright page loads in a cold checkout time out
+
+This one is not a flake at all. It is deterministic, it reproduces on the first
+run in a fresh checkout, and it is regularly misdiagnosed as a product defect in
+whichever spec happened to run first.
+
+`npm run test:e2e` starts Vite, and Vite transforms `src/` on first request. A
+spec's `beforeEach` that does `await page.goto('/')` and then
+`expect(canvas).toBeVisible()` is racing that transform against Playwright's
+default 5s assertion budget. On a cold server the first several page loads lose.
+
+Measured on clean main, `npx playwright test e2e/sidebar-flyout.spec.ts`:
+
+| run               | result                                                       |
+| ----------------- | ------------------------------------------------------------ |
+| first, cold Vite  | 5 failed, 13 passed — every failure in the same `beforeEach` |
+| second, warm Vite | 0 failed, 18 passed                                          |
+
+Every one of the five failures was the identical assertion, on the identical
+line, and none of them was a flyout assertion:
+
+```
+Error: expect(locator).toBeVisible() failed
+Locator: getByTestId('workspace-canvas')
+Error: element(s) not found          # 5s budget, e2e/sidebar-flyout.spec.ts:125
+```
+
+The diagnostic detail is the shape of it: the failures were **tests 1-6** — the
+first page loads — while tests 7-19 ran the _same_ `beforeEach` and all passed.
+On the warm re-run the same tests dropped from 8.9s to 2.0-3.2s. A defect in the
+spec under test cannot select the first five tests and spare the next fourteen.
+
+**This is why the flyout looked broken to several agents at once.** The clipping
+fix had already landed in `dd92374`/`5c7cb73`, and the suite was green, but a cold
+run put five red lines on the screen inside `sidebar-flyout.spec.ts`, and the
+natural reading is that the flyout regressed. Two other worktrees
+(`fix-flyout-hit`, `fix-flyout-longpress`) were started against that reading, and
+both turned out to be re-deriving work main had already merged. The cost was
+four branches and two unmerged patches for a defect that was never there.
+
+Two things follow, and they are different:
+
+1. **Warm the dev server before the first test.** A single request to the base URL
+   in `e2e/global-setup.ts`, retried until it answers, pays Vite's transform cost
+   once instead of once per early test. This belongs in the global setup rather
+   than in any spec, because the failure is a property of the server, not of the
+   spec that noticed it.
+2. **Do not diagnose a Playwright failure from the spec it appeared in.** Read the
+   failing line. A `beforeEach` failure is the harness, not the subject; and if the
+   red tests are the first N in file order, suspect the server before the
+   application.
+
+Not yet done. The warm-up in (1) is a one-request change to a file nothing else
+touches, and it is left alone here so it does not ride in on a toolbar fix that
+does not need it.
+
+## 10. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -375,3 +441,8 @@ worth more than twenty green runs.
 - `e2e/erase-fill-eyedropper.spec.ts` — the spec behind section 8, and the commit that hardened it
 - `e2e/helpers/canvas-helpers.ts:411-429,515-540,656-699` — the predicate, the poll loop and the sampler
 - `src/hooks/usePointerPosition.ts:122-156` — the validators whose refusal is silent
+
+- `playwright.config.ts:106-120` — the `webServer` block, and why an explicit
+  `PLAYWRIGHT_PORT` disables server reuse
+- `e2e/global-setup.ts` — where the warm-up in section 9 belongs
+- `e2e/sidebar-flyout.spec.ts:125` — the `beforeEach` that loses the race
