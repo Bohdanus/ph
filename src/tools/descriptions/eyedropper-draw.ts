@@ -19,7 +19,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
         control: 'Sample',
         detail:
           'Chooses which layers a sample is read from: All Layers, Current Layer, Current & Below, and the No Adjustments variants. Adobe enumerates that menu and states no default for it. Earlier versions expressed this as a `Sample All Layers` checkbox.',
-        status: 'partial',
+        status: 'inert',
         appRef: 'src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:37',
       },
     ],
@@ -37,7 +37,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
         action: 'Cycles the tools that share the letter: Eyedropper, Color Sampler, Ruler, Note and Count.',
       },
     ],
-    implementation: 'implemented',
+    implementation: 'partial',
     implementationRefs: [
       'src/components/Main/EyedropperToolArea.tsx:46',
       'src/components/Main/EyedropperToolArea.tsx:57',
@@ -49,7 +49,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
       'toolbar-mapping.ts:57',
     ],
     appNotes:
-      'The app implements the tool without a processor: it is the sole member of the pixel-free set, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. A click dispatches a color change and nothing else, so the app records no history entry for a sample and a sample is not undoable — the same class as a zoom, a panel move or a tool switch. Three behaviors diverge. Sample Size offers only Point Sample, 3 by 3 Average and 5 by 5 Average, where Photoshop lists a longer set. `Sample All Layers` renders as a permanently unchecked, permanently disabled checkbox, so the sample source cannot be changed at all; the value is declared in settings, and a click that found it set refuses loudly rather than silently sampling the active layer. And the sample is always read from the composited canvas, with no modifier that can redirect it to the background swatch or to a single layer. The app also omits Photoshop’s spring-loaded switch: `I` here selects the tool outright and there is no temporary mode.',
+      'The app implements the tool without a processor: it is the sole member of the pixel-free set, so it rasterizes nothing, has no `commit` kind, and its `toolsMap` entry carries only an icon and an options bar. A click dispatches a color change and nothing else, so the app records no history entry for a sample and a sample is not undoable — the same class as a zoom, a panel move or a tool switch. Three behaviors diverge. Sample Size offers only Point Sample, 3 by 3 Average and 5 by 5 Average, where Photoshop lists a longer set. `Sample All Layers` renders as a permanently unchecked, permanently disabled checkbox with no change handler, so the sample source cannot be changed at all; the field is declared in settings and seeded false, no control in the app ever writes it — the only `patchToolArgs` call in this bar writes `sampleSize` — so it can never become true, and a click that found it set refuses loudly rather than silently sampling the active layer. And the sample is always read from the composited canvas, with no modifier that can redirect it to the background swatch or to a single layer. The app omits two of Photoshop’s `I` behaviors. There is no spring-loaded switch: `I` here selects the tool outright and there is no temporary mode. And there is no `Shift+I` cycle either — `I` is registered twice for the same single-tool tile and neither registration declares a `shift: true` twin, so a shifted `I` re-selects the Eyedropper instead of cycling, and none of the four tools Photoshop cycles to with it — Color Sampler, Ruler, Note and Count — exists in the app’s tool registry at all.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html',
       'https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/set-foreground-and-background-colors.html',
@@ -75,7 +75,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
     summary:
       'This app’s own freehand stroke tool, not a Photoshop tool: a drag becomes a new layer of ink, drawn with a pen, a dashed pen or a spray.',
     purpose:
-      'There is no Photoshop tool called Draw, in this app or in Adobe’s Tools panel, so there is no Adobe behavior to describe and none is invented here. What the tool does is this app’s own: a drag is resampled as a path, bezier-smoothed, and stroked in the foreground color, and the finished stroke is committed as a new layer, so every mark is a separate object that is separately undone and separately deleted. A Pen Type dropdown picks one of three renderers — a solid round-capped stroke, a dashed stroke, and a spray of soft radial gradients — and Size, Opacity and, for the dashed pen only, Dash and Gap shape it. A live preview at the end of the bar draws the current settings, so a stroke can be judged before it is committed. A user coming from Photoshop should reach for the Brush tool for the solid stroke and for the Brush’s airbrush option for the spray; there is no Photoshop equivalent to a dashed freehand ink stroke.',
+      'There is no Photoshop tool called Draw, in this app or in Adobe’s Tools panel, so there is no Adobe behavior to describe and none is invented here. What the tool does is this app’s own: a drag pushes one raw pointer coordinate per move onto the stroke, the stroke is drawn as a bezier curve through those coordinates in the foreground color, and the finished stroke is committed as a new layer, so every mark is a separate object that is separately undone and separately deleted. A Pen Type dropdown picks one of three renderers — a solid round-capped stroke, a dashed stroke, and a spray of soft radial gradients — and Size, Opacity and, for the dashed pen only, Dash and Gap shape it. A live preview at the end of the bar draws the current settings, so a stroke can be judged before it is committed. A user coming from Photoshop should reach for the Brush tool for the solid stroke, and should know that this app renders no airbrush control on any tool, so the Spray pen is the nearest thing here to the Brush’s airbrush; there is no Photoshop equivalent to a dashed freehand ink stroke.',
     options: [
       {
         control: 'Brush Preset picker',
@@ -85,8 +85,9 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
       },
       {
         control: 'Size',
-        detail: 'The diameter of the brush tip, in pixels.',
-        status: 'present',
+        detail:
+          'The diameter of the brush tip, in pixels. Photoshop’s Size runs from 1 to 5000 px; the app’s slider runs from 0.5 to 500 in steps of 0.5.',
+        status: 'partial',
         appRef: 'src/components/ToolbarsRight/Draw/Draw.tsx:142',
       },
       {
@@ -98,7 +99,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
       {
         control: 'Opacity',
         detail:
-          'The transparency of the color applied. As a stroke passes over an area the color does not exceed this level until the button is released; a further stroke adds more. Default: 100%.',
+          'The transparency of the color applied. As a stroke passes over an area the color does not exceed this level until the button is released; a further stroke adds more. Default: 100%. The app seeds a lower default per pen — 90% for the solid and dashed pens, 50% for the spray.',
         status: 'present',
         appRef: 'src/components/ToolbarsRight/Draw/Draw.tsx:204',
       },
@@ -111,14 +112,11 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
       {
         control: 'Enable airbrush-style build-up effects',
         detail:
-          'Turns the stroke into an airbrush: paint builds up as the button is held, and hardness, opacity and flow set how fast and how much is applied. Click the button to toggle it.',
-        status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Draw/Draw.tsx:129',
+          'A toggle that keeps the brush laying down color while the pointer is held still, so a stationary stroke builds up to Opacity instead of stopping at one pass. This app renders no airbrush control at any point in the Draw bar.',
+        status: 'missing',
       },
     ],
-    modifiers: [
-      { keys: 'Shift', action: 'Constrains the stroke to a straight line between the press and the release.' },
-    ],
+    modifiers: [],
     shortcuts: [
       { keys: '[', action: 'Decreases brush Size.' },
       { keys: ']', action: 'Increases brush Size.' },
@@ -134,7 +132,7 @@ export const eyedropperDrawDescriptions: Record<'eyedropper' | 'draw', ToolDescr
       'toolbar-mapping.ts:96',
     ],
     appNotes:
-      'No Photoshop provenance is claimed and none is invented: the Tools panel has no freehand-annotation or pen-stroke tool, and this app’s Draw tile sits in the tonal group where Photoshop has no tool at all. The nearest Photoshop tools are the Pen tool family, for path work, and the Brush, for freehand paint. The `shortcut` field on a toolbar entry is display-only and binds nothing: its only consumers are the tile tooltip and the <kbd> in the flyout, and the key bindings live in a separate hand-written table. That table is where the `B` goes. `B` is bound to the brush group — brush, pencil, color replacement, eraser — and `Shift+B` cycles it, so pressing `B` selects the Brush and can never select this tool. The `B` badged on the Draw Tool is therefore wrong twice over: the letter belongs to the Brush in Photoshop, and in this app the letter is taken by the Brush as well, leaving this tool reachable by pointer only. Photoshop’s spring-loaded switch is also absent: no key in the table selects this tool, so holding a letter cannot reach it either. The two fields the Photoshop paint bar exposes as Mode and Smoothing are declared on the draw args but unreachable from this bar — no draw control writes either, the default args set neither, and a draw stroke’s layer is forced to Normal by the blend-mode gate that admits only the paint tools. Two app-only controls, Dash and Gap, have no Photoshop counterpart in the paint bar.',
+      'No Photoshop provenance is claimed and none is invented: the Tools panel has no freehand-annotation or pen-stroke tool, and this app’s Draw tile sits in the tonal group where Photoshop has no tool at all. The nearest Photoshop tools are the Pen tool family, for path work, and the Brush, for freehand paint. The `shortcut` field on a toolbar entry is display-only and binds nothing: its only consumers are the tile tooltip and the <kbd> in the flyout, and the key bindings live in a separate hand-written table. That table is where the `B` goes. `B` is bound to the brush group — brush, pencil, color replacement, eraser — and `Shift+B` cycles it, so pressing `B` selects the Brush and can never select this tool. The `B` badged on the Draw Tool is therefore wrong twice over: the letter belongs to the Brush in Photoshop, and in this app the letter is taken by the Brush as well, leaving this tool reachable by pointer only. Photoshop’s spring-loaded switch is also absent: no key in the table selects this tool, so holding a letter cannot reach it either. The two fields the Photoshop paint bar exposes as Mode and Smoothing are declared on the draw args but unreachable from this bar — no draw control writes either, the default args set neither, and a draw stroke’s layer is forced to Normal by the blend-mode gate that admits only the paint tools. Two app-only controls, Dash and Gap, have no Photoshop counterpart in the paint bar. Three of the Brush bar’s controls diverge rather than go missing. Size is `partial` on its range alone: the slider starts at 0.5 px where Photoshop starts at 1 and stops at 500 px where Photoshop reaches 5000. Opacity is wired and correct for what it measures, but its build-up story is not: a draw stroke is one `beginPath`/`stroke()` over the whole path at the tool’s alpha, so where a stroke crosses itself the color does not compound within that stroke. And the airbrush toggle is `missing` rather than approximate: the Draw bar renders Pen Type, Size, Dash, Gap, Opacity and a preview, and nothing that builds color up under a held button. The Spray pen type is the nearest thing and it diverges twice over — it is reached from the Pen Type dropdown rather than a toggle, and it stamps one soft gradient per sampled point along the drag, so it builds while the pointer is moving and a press that is then held still adds nothing after the single dot it already laid down. The bracket keys Photoshop binds to resize the tip are absent too: no bracket key is bound anywhere in the app, so `[` and `]` do not change the brush size. And Photoshop’s Shift-constrains-a-freehand-stroke-to-a-straight-line has no implementation here either — the draw area reads no modifier at all, so a Shift-held drag produces the identical freehand path.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://helpx.adobe.com/ee/photoshop/how-to/color-management-basics.html',
