@@ -3,6 +3,7 @@ import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import {
   clickToolButton,
   openToolFlyout,
+  openToolFlyoutViaKeyboard,
   selectFromFlyout,
   verifyPrimaryTool,
   openToolFlyoutViaRightClick,
@@ -402,18 +403,34 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
   });
 
   test('Escape hands focus back to the tile that opened the menu', async ({ page }) => {
-    // The menu is portalled into `document.body`, so unmounting it takes the focused item
-    // with it. Measured without this, focus landed on `document.body` and the next Tab
-    // restarted at the document's first tabbable — 16 tab stops before the rail.
+    // Opened from the KEYBOARD and with focus moved into the menu, deliberately. A long press
+    // with a real mouse leaves focus on the tile already, so a test set up that way would
+    // pass with or without the restore and would be measuring nothing. The menu is portalled
+    // into `document.body`, so unmounting it takes the focused item with it: measured without
+    // the restore, focus landed on `document.body` and the next Tab restarted at the
+    // document's first tabbable — 16 tab stops before the rail.
     const brushButton = page.getByTestId('tool-button-brush');
     await expect(brushButton).toBeVisible();
-    await longPressWithMouse(page, 'brush');
-    await expect(page.getByRole('menu')).toBeVisible();
+    await openToolFlyoutViaKeyboard(page, 'brush');
+    await expect(page.getByRole('menuitemradio').first()).toBeFocused();
 
     await page.keyboard.press('Escape');
 
     await expect(page.getByRole('menu')).toBeHidden();
     await expect(brushButton).toBeFocused();
+  });
+
+  test('picking an item with the mouse does not move focus back to the tile', async ({ page }) => {
+    // The restore is for the KEYBOARD's close. A mouse pick has already focused the item the
+    // user clicked, and taking focus back to the tile would arm ToolTooltip's 250ms focus
+    // timer — so a tooltip would paint over a selection the mouse user never asked to see.
+    await openToolFlyoutViaRightClick(page, 'shape');
+    const item = page.getByTestId('tool-flyout-item-shape-ellipse-tool');
+    await item.click();
+
+    await expect(page.getByRole('menu')).toBeHidden();
+    await expect(page.getByRole('tooltip')).toBeHidden();
+    await expect(page.getByTestId('tool-button-shape')).not.toBeFocused();
   });
 
   test('a hovered tool tooltip is painted, not clipped by the rail', async ({ page }) => {

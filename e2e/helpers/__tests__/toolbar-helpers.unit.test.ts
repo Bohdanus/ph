@@ -12,6 +12,10 @@ import {
   clickToolButton,
   openToolFlyout,
   waitForFlyout,
+  // Imported, not restated. Two literals for one timeout is how the delay came to be 300 in
+  // one place and 350 in another while only `300 + 50 === 350` kept them compatible, so
+  // declaring this again here would reintroduce the exact hazard the export exists to stop.
+  FLYOUT_VISIBLE_TIMEOUT_MS,
   selectFromFlyout,
   getToolButton,
   toggleToolbarLayout,
@@ -105,7 +109,6 @@ vi.mock('@playwright/test', () => ({
 }));
 
 const LONG_PRESS_THRESHOLD_MS = 300;
-const FLYOUT_VISIBLE_TIMEOUT_MS = 2000;
 const FLYOUT_CLOSE_TIMEOUT_MS = 1000;
 const HOVER_SETTLE_MS = 400;
 

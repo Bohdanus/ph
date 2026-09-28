@@ -223,6 +223,12 @@ export async function openToolFlyout(page: Page, toolName: string): Promise<void
 
   // Lift. The flyout stays open; see the note on `onPointerUp` above.
   await button.dispatchEvent('pointerup', { button: 0 });
+
+  // `aria-expanded` and the portal are not set in the same commit: the overlay is gated on the
+  // ref callback having published the anchor, so the attribute is true one commit before the
+  // menu exists. Asserting the menu is still what makes "returned" mean "usable", and it costs
+  // nothing on the path that just opened it.
+  await expect(page.getByRole('menu')).toBeVisible({ timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
 }
 
 /**

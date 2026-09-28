@@ -379,10 +379,7 @@ describe('SidebarLeft flyout hardening', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
-  it.each([
-    ['Escape', (_menu: HTMLElement) => fireEvent.keyDown(window, { key: 'Escape' })],
-    ['Tab', (menu: HTMLElement) => fireEvent.keyDown(menu, { key: 'Tab' })],
-  ])('hands focus back to the tile when %s closes the menu', (_label, close) => {
+  it.each(['Escape', 'Tab'])('hands focus back to the tile when %s closes the menu', (key) => {
     render(<SidebarLeft />);
     const tile = toolbarButtonByName('brush');
     openFlyout(tile);
@@ -390,7 +387,10 @@ describe('SidebarLeft flyout hardening', () => {
     const menu = screen.getByRole('menu');
     screen.getAllByRole('menuitemradio')[0].focus();
     act(() => {
-      close(menu);
+      // Escape is bound on the window; Tab is the menu's own keydown, because that is the
+      // element holding focus when the user presses it.
+      if (key === 'Escape') fireEvent.keyDown(window, { key });
+      else fireEvent.keyDown(menu, { key });
     });
 
     expect(screen.queryByRole('menu')).toBeNull();
@@ -400,12 +400,38 @@ describe('SidebarLeft flyout hardening', () => {
     expect(tile).toHaveFocus();
   });
 
-  it('hands focus back to the tile when an item is chosen, which is the path that stranded it furthest', () => {
+  it('hands focus back to the tile when the KEYBOARD picks an item, the path that stranded it furthest', () => {
+    render(<SidebarLeft />);
+    const tile = toolbarButtonByName('brush');
+    openFlyout(tile);
+
+    // Driven through the menu's own keydown, because that is where the restore lives: the
+    // item's `onClick` serves the mouse too, and restoring there would put focus on the
+    // tile for a mouse pick as well.
+    const pencil = screen.getByRole('menuitemradio', { name: 'Pencil Tool' });
+    const menu = screen.getByRole('menu');
+    act(() => {
+      pencil.focus();
+    });
+    act(() => {
+      fireEvent.keyDown(menu, { key: 'Enter' });
+    });
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(goToTool).toHaveBeenCalledWith('pencil');
+    // Choosing a tool is the menu's primary action, and the unmount takes the focused item
+    // with it. Without this, focus lands on `document.body` and the next Tab restarts at the
+    // document's first tabbable — 16 tab stops before the rail the user was choosing from.
+    expect(tile).toHaveFocus();
+  });
+
+  it('leaves focus on the picked item when a MOUSE chooses one, because a restore would arm the tooltip', () => {
     render(<SidebarLeft />);
     const tile = toolbarButtonByName('brush');
     openFlyout(tile);
 
     const pencil = screen.getByRole('menuitemradio', { name: 'Pencil Tool' });
+    // What a real mouse does on mousedown, and what `locator.click()` does in the e2e suite.
     act(() => {
       pencil.focus();
     });
@@ -415,7 +441,11 @@ describe('SidebarLeft flyout hardening', () => {
 
     expect(screen.queryByRole('menu')).toBeNull();
     expect(goToTool).toHaveBeenCalledWith('pencil');
-    expect(tile).toHaveFocus();
+    // The same `onClick` serves the mouse and the keyboard's Enter, and Enter restores focus
+    // from its own keydown where the gesture is known. Restoring here instead would put focus
+    // on the tile, whose `onFocus` arms ToolTooltip's 250ms timer — a tooltip appearing over a
+    // selection the mouse user never asked to see.
+    expect(tile).not.toHaveFocus();
   });
 
   it('leaves focus alone when a pointer closes the menu, so the click target keeps it', () => {
