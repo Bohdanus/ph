@@ -232,6 +232,15 @@ describe('ToolTooltip', () => {
     expect(tooltip).toHaveClass('text-white');
     expect(tooltip).toHaveClass('rounded-md');
     expect(tooltip).toHaveClass('shadow-lg');
+
+    // `z-50` belongs on the portal wrapper, not on this span. Here it was inert: the span is
+    // neither a positioned element nor a flex or grid item, so the class had no stacking
+    // context to apply to, and the wrapper sat at `z-index: auto` — ordered among body's
+    // children by append time. The absence is the half worth pinning, because nothing else
+    // stops the class coming back as decoration. The wrapper's own `z-index: 50` is pinned by
+    // the test below, which is where that half belongs; asserting it here too would be a
+    // second copy of one fact in two files.
+    expect(tooltip).not.toHaveClass('z-50');
   });
 
   it('escapes its container, because the left rail clips anything positioned outside it', () => {

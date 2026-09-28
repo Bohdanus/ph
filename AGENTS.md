@@ -76,7 +76,12 @@ npm run board -- help   # the swarm board: who has what, and which files are tak
 `npm run board -- <command>` is the LIVE coordination layer: who has claimed
 what, which file two agents are about to edit, what one agent found that another
 needs, and what nobody claimed because the worktree is gone. `npm run board --
-help` is the full command list; `--json` works on every command except `watch`.
+help` is the full command list; `--json` works on every command except `watch`, `help` and `--version`.
+`ready` is the queue an agent works from: it sorts by priority, and the FILES
+column is the files the issue is _about_ (from its own create event) annotated
+with who is currently in them. An imported issue holds none of them on purpose,
+which is why it still shows its real files rather than nothing, and a filer's own
+reservation is contention like any other and is shown as such.
 
 **It is NOT the handoff documents.** `HANDOFF.md`, `TEST-FLAKES.md` and
 `e2e/OPEN_PROBLEMS.md` stay the durable, reviewable record of what is known
@@ -87,7 +92,7 @@ once, keyed on their own numbering (`HANDOFF.md#12`), so re-running files only
 what is new.
 
 - **Where it lives:** `$(git rev-parse --git-common-dir)/agent-board/board.db`
-  — the one path all 137 worktrees resolve to, so there is one board and no
+  — the one path every worktree resolves to, so there is one board and no
   daemon, no server, and no per-worktree copy. `AGENT_BOARD_DIR` or `--dir`
   moves it; the tests use both. **It is machine-local and gitignored, exactly
   like `.kilo/`.** Nothing durable belongs only there.
@@ -95,7 +100,13 @@ what is new.
   task is one worktree on one branch, and a branch is the same string across
   every command in that task. `--agent <id>` overrides it. The Kilo run id is
   recorded as metadata, not as identity: a subagent inherits it, so it cannot
-  tell two agents apart.
+  tell two agents apart. **Two limits worth knowing:** a branch that is RENAMED
+  mid-task leaves the old claim under a name nothing can reach (`doctor` will
+  not help — the worktree and its lease are both fine), and a detached HEAD is
+  identified by commit, so advancing the commit splits one agent into two. If
+  you are working outside a dedicated worktree — on `main`, or detached — pass
+  `--agent` or set `AGENT_BOARD_AGENT`, or you and the next agent are the same
+  agent as far as the board is concerned.
 - **A claim is a lease, not a mutex.** `board claim ph-12` holds it for 45
   minutes; `board heartbeat ph-12` extends it. Past the lease the issue is
   offered again and the takeover is in the event log with both agents named.
