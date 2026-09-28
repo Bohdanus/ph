@@ -179,7 +179,7 @@ and destroys the only signal that the defect existed.
 
 ## 7. A second, NAMED observation — `useFile.test.tsx` JPEG-quality save
 
-**Status: OPEN. Named, not reproduced. Two failures in roughly fifteen full runs.**
+**Status: OPEN. Named, not reproduced. Three failures in roughly twenty full runs.**
 
 This one is worth separating from section 1, because unlike it the failing test
 was captured:
@@ -195,10 +195,22 @@ Observed 2026-09-28, in a full `npm run test` on branch
 `fix/handoff-2026-09-28`. It has **not** reproduced on demand: the same file
 passes in isolation, and six further consecutive full runs were green (198/198
 files, 4513 passed, 34 expected fail). It then **recurred** during the rebase
-onto the responsive tranche, so the honest tally is **two** failures in roughly
-fifteen full runs, not one in seven. The assertion text was not captured on
-either occasion — only the test name — so the difference from section 1 is the
-name and a second data point, not a diagnosis.
+onto the responsive tranche, so the honest tally was **two** failures in roughly
+fifteen full runs, not one in seven. A **third** appeared on 2026-09-28 on
+`integration/e2e-campaign-final`, again only in a full run and again passing
+2/2 in isolation immediately afterwards. The assertion text was not captured on
+any occasion — only the test name — so the difference from section 1 is the
+name and a third data point, not a diagnosis.
+
+**What the three occurrences have in common, now that there are three.** Every
+one was a full `npm run test` with several agents running Playwright elsewhere
+on the machine, and every one passed in isolation within seconds. That is
+consistent with the `vmThreads` pool reading timing-sensitive state under CPU
+contention rather than with anything in the change, which is why section 6's
+"not the pool" caveat and this entry have to be read together: the pool is a
+real mechanism, and so is a genuinely unresolved save pipeline, and three
+occurrences do not separate them. What would: capturing the assertion text.
+Capture it next time and this becomes diagnosable in one run.
 
 **Do not close it as "the pool".** Two things make this one worth keeping
 open, and neither is the pool:
