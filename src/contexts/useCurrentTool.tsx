@@ -18,6 +18,8 @@ export interface CurrentToolContextState {
 
 const CurrentToolContext = createContext<CurrentToolContextState | undefined>(undefined);
 
+const SetToolArgsContext = createContext<CurrentToolContextState['setToolArgs'] | null>(null);
+
 /**
  * `lastSavedSettings` is mutable and may still hold a legacy `circle`/`square`
  * figure from an older build. Coerce on the way out so no caller ever renders
@@ -102,8 +104,14 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
     [_setToolArgs, getToolArgs, isToolDirty, patchToolArgs, resetToLastSavedArgs, toolArgs]
   );
 
-  return <CurrentToolContext.Provider value={value}>{children}</CurrentToolContext.Provider>;
+  return (
+    <SetToolArgsContext.Provider value={_setToolArgs}>
+      <CurrentToolContext.Provider value={value}>{children}</CurrentToolContext.Provider>
+    </SetToolArgsContext.Provider>
+  );
 };
+
+export const useSetToolArgs = (): CurrentToolContextState['setToolArgs'] | null => useContext(SetToolArgsContext);
 
 export const useCurrentTool = (): CurrentToolContextState => {
   const ctx = useContext(CurrentToolContext);

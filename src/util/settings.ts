@@ -31,7 +31,6 @@ export function saveLastSettings(args: ToolArgs) {
     lastSavedSettings.shape = cloneDeep(withNormalizedFigure(omit(args as ShapeToolArgs, 'start', 'end')));
   } else if (toolName === 'crop') {
     lastSavedSettings.crop = cloneDeep(omit(args as CropToolArgs, 'rect'));
-    // deliberately not storing for those three because they have a different philosophy, unfortunately
   } else if (toolName === 'transform') {
     lastSavedSettings.transform = cloneDeep(args);
   } else if (toolName === 'reposition') {

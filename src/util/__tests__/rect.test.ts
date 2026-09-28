@@ -123,6 +123,17 @@ describe('hexToRgb', () => {
   it('handles mixed-case hex digits', () => {
     expect(hexToRgb('#FfFfFf')).toBe('255, 255, 255');
   });
+
+  it('expands 3-digit hex instead of parsing a short string as channels', () => {
+    expect(hexToRgb('#fff')).toBe('255, 255, 255');
+    expect(hexToRgb('#000')).toBe('0, 0, 0');
+    expect(hexToRgb('#abc')).toBe('170, 187, 204');
+  });
+
+  it('parses 3-digit hex identically to its 6-digit equivalent', () => {
+    expect(hexToRgb('#f00')).toBe(hexToRgb('#ff0000'));
+    expect(hexToRgb('fff')).toBe('255, 255, 255');
+  });
 });
 
 describe('calculateNewRect', () => {

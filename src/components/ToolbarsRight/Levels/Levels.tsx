@@ -14,16 +14,17 @@ const Levels: React.FC<{}> = () => {
   const pendingUpdateRef = useRef<LevelsToolArgs | null>(null);
   const rafIdRef = useRef<number | null>(null);
 
-  const throttledOnChange = (newArgs: LevelsToolArgs) => {
-    pendingUpdateRef.current = newArgs;
+  const throttledOnChange = (newArgs: Partial<LevelsToolArgs>) => {
+    pendingUpdateRef.current = { ...(pendingUpdateRef.current ?? args), ...newArgs };
 
     if (rafIdRef.current === null) {
       rafIdRef.current = requestAnimationFrame(() => {
-        if (pendingUpdateRef.current !== null) {
-          tempUpdateLayer({ id: activeLayerId!, toolArgs: pendingUpdateRef.current });
-          setToolArgs(pendingUpdateRef.current);
-          pendingUpdateRef.current = null;
+        const pending = pendingUpdateRef.current;
+        if (pending !== null && activeLayerId !== null) {
+          tempUpdateLayer({ id: activeLayerId, toolArgs: pending });
+          setToolArgs(pending);
         }
+        pendingUpdateRef.current = null;
         rafIdRef.current = null;
       });
     }
@@ -31,12 +32,12 @@ const Levels: React.FC<{}> = () => {
 
   const handleBrightnessChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const brightness = Number(event.target.value);
-    throttledOnChange({ ...args, brightness });
+    throttledOnChange({ brightness });
   };
 
   const handleContrastChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const contrast = Number(event.target.value);
-    throttledOnChange({ ...args, contrast });
+    throttledOnChange({ contrast });
   };
 
   const { brightness, contrast } = args;

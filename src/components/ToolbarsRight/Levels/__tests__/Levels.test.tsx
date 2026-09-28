@@ -294,19 +294,19 @@ describe('Levels toolbar', () => {
       ]);
     });
 
-    it('keeps publishing the tool args when no layer is active, but never with a null layer id', () => {
-      setActiveLayerId(null);
+    it('publishes both slider changes that land in the same animation frame', () => {
       render(<Levels />);
 
-      changeContrast('15');
+      changeBrightness('-15');
+      changeContrast('80');
       flushFrames();
 
-      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({ toolName: 'levels', brightness: 50, contrast: 15 });
+      const expected = { toolName: 'levels', brightness: -15, contrast: 80 };
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith(expected);
+      expect(mockTempUpdateLayer).toHaveBeenCalledExactlyOnceWith({ id: 'layer-1', toolArgs: expected });
     });
 
-    it.fails('skips the layer preview entirely when no layer is active (Levels.tsx:23)', () => {
-      // `tempUpdateLayer({ id: activeLayerId!, toolArgs })` asserts non-null on `activeLayerId`,
-      // so a null id is forwarded to the layer store as `{ id: null }` instead of being skipped.
+    it('skips publishing entirely when no layer is active (Levels.tsx:23)', () => {
       setActiveLayerId(null);
       render(<Levels />);
 
@@ -314,6 +314,29 @@ describe('Levels toolbar', () => {
       flushFrames();
 
       expect(mockTempUpdateLayer).not.toHaveBeenCalled();
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+    });
+
+    it('re-arms a frame on the next change after discarding a change made with no active layer', () => {
+      setActiveLayerId(null);
+      const { rerender } = render(<Levels />);
+
+      changeContrast('15');
+      flushFrames();
+      expect(mockTempUpdateLayer).not.toHaveBeenCalled();
+      expect(mockSetToolArgs).not.toHaveBeenCalled();
+
+      setActiveLayerId('layer-1');
+      rerender(<Levels />);
+      changeContrast('15');
+      expect(frames).toHaveLength(1);
+      flushFrames();
+
+      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({ toolName: 'levels', brightness: 50, contrast: 15 });
+      expect(mockTempUpdateLayer).toHaveBeenCalledExactlyOnceWith({
+        id: 'layer-1',
+        toolArgs: { toolName: 'levels', brightness: 50, contrast: 15 },
+      });
     });
   });
 
