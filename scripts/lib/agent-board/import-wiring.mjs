@@ -1,5 +1,5 @@
 /**
- * The database half of `board import`.
+ * The database half of `swarm import`.
  *
  * The parsing half — turning a hand-maintained handoff document into items with
  * a stable `origin` — is a pure function in `handoff-import.mjs` and is tested
@@ -43,7 +43,7 @@ const NOT_ITEMS = [
  * replay path has no production caller`, `P2 — an empty CDP capture…` — and
  * every imported item was landing on the board as `normal`.
  *
- * That is not a cosmetic gap. Priority is the column `board ready` SORTS on, so
+ * That is not a cosmetic gap. Priority is the column `swarm ready` SORTS on, so
  * a flat priority column means the queue an agent works from is in document
  * order rather than in order of how much damage the item does, and the P0s sit
  * wherever their heading happened to be. The documents' P0..P3 map onto the
@@ -129,7 +129,7 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
         origin: item.origin,
         files: item.files ?? [],
         // The files an item names are context, not an intention to edit them
-        // now, so the import takes no locks; `board claim --files` is how an
+        // now, so the import takes no locks; `swarm claim --files` is how an
         // agent actually reserves one.
         holdFiles: false,
         data: { source: 'handoff-import' },

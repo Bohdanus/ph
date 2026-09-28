@@ -24,11 +24,11 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { classify, riskScore, RECOMMENDATION, STATUS } from '../lib/worktree-inventory/classify.mjs';
+import { classify, riskScore, ACTION, RECOMMENDATION, STATUS } from '../lib/worktree-inventory/classify.mjs';
 import { classifySession, summariseChats, isUnfinished, isDead } from '../lib/worktree-inventory/chats.mjs';
 import { buildInventory, serialise, formatCanonical, SCHEMA_VERSION } from '../lib/worktree-inventory/assemble.mjs';
 import { CURATED, curatedFor } from '../lib/worktree-inventory/curated.mjs';
-import { __testables, findMissingWorktrees, listWorktrees } from '../lib/worktree-inventory/git.mjs';
+import { __testables, findMissingWorktrees, listWorktrees, mergeConflict } from '../lib/worktree-inventory/git.mjs';
 import { resolveBoardDb, readBoard } from '../lib/worktree-inventory/board.mjs';
 
 const NOW = 1_790_000_000_000;
@@ -461,6 +461,176 @@ describe('the pinned clock', () => {
   });
 });
 
+describe('mergeConflict, against a real repository', () => {
+  /** `repo` has main at 3 commits; `side` adds 2 and never sees main\'s 3rd. */
+  function repo() {
+    return makeRepo();
+  }
+
+  it('reports no conflict for a branch that merges cleanly', () => {
+    const dir = repo();
+    try {
+      execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
+      expect(mergeConflict(dir, 'main')).toEqual({ conflict: false, files: [] });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a conflict when both sides changed the same line', () => {
+    const dir = repo();
+    try {
+      // Make the branch and main edit the SAME line of the SAME file, from
+      // their shared ancestor, so the three-way merge genuinely conflicts.
+      const root = execFileSync('git', ['rev-list', '--max-parents=0', 'main'], {
+        cwd: dir,
+        encoding: 'utf8',
+      }).trim();
+      execFileSync('git', ['checkout', '--quiet', '-b', 'clash', root], { cwd: dir, stdio: 'ignore' });
+      writeFileSync(join(dir, 'one.txt'), 'BASE-SIDE\n');
+      execFileSync('git', ['commit', '-qam', 'side edit'], { cwd: dir, stdio: 'ignore' });
+      execFileSync('git', ['checkout', '--quiet', 'main'], { cwd: dir, stdio: 'ignore' });
+      writeFileSync(join(dir, 'one.txt'), 'BASE-MAIN\n');
+      execFileSync('git', ['commit', '-qam', 'main edit'], { cwd: dir, stdio: 'ignore' });
+
+      execFileSync('git', ['checkout', '--quiet', 'clash'], { cwd: dir, stdio: 'ignore' });
+      const r = mergeConflict(dir, 'main');
+      expect(r.conflict).toBe(true);
+      // The files are the actionable part: "it conflicts" sends somebody to
+      // investigate, "it conflicts in these two files" is the work.
+      expect(r.files).toContain('one.txt');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null, not false, when the merge cannot be attempted', () => {
+    // A wrong `false` is a licence to land, so an unknown answer must never
+    // be reported as a clean merge.
+    const dir = repo();
+    try {
+      const r = mergeConflict(dir, 'no-such-branch');
+      expect(r.conflict).toBeNull();
+      expect(r.files).toEqual([]);
+      expect(typeof r.reason).toBe('string');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves no ref, index or worktree behind', () => {
+    // The generator runs this across every worktree, so it must be inert.
+    const dir = repo();
+    try {
+      execFileSync('git', ['checkout', '--quiet', 'side'], { cwd: dir, stdio: 'ignore' });
+      const headBefore = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' });
+      const statusBefore = execFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8' });
+      mergeConflict(dir, 'main');
+      expect(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf8' })).toBe(headBefore);
+      expect(execFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8' })).toBe(statusBefore);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('land vs at-risk: the split that salvage used to hide', () => {
+  const unmergedClean = (over = {}) =>
+    wt({ ahead: 3, behind: 40, mergedIntoBase: false, merge: { conflict: false }, ...over });
+  const args = (over) => ({ chatSummary: noChats, chatSessions: noSessions, curated: null, nowMs: NOW, ...over });
+
+  it('calls a clean, unmerged, conflict-free branch ready-to-land, not salvage', () => {
+    const v = classify(unmergedClean(), args());
+    expect(v.recommendation).toBe(RECOMMENDATION.READY_TO_LAND);
+    expect(v.action).toBe(ACTION.LAND);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('keeps a CONFLICTING branch out of ready-to-land', () => {
+    const v = classify(unmergedClean({ merge: { conflict: true } }), args());
+    expect(v.recommendation).toBe(RECOMMENDATION.SALVAGE);
+    expect(v.action).toBe(ACTION.AT_RISK);
+    expect(v.reasons.join(' ')).toContain('conflicts');
+  });
+
+  it('keeps a branch whose merge cannot be checked out of ready-to-land', () => {
+    // The dangerous case: an unknown must not read as "no conflicts".
+    const v = classify(unmergedClean({ merge: { conflict: null, reason: 'nope' } }), args());
+    expect(v.recommendation).toBe(RECOMMENDATION.SALVAGE);
+    expect(v.action).toBe(ACTION.AT_RISK);
+  });
+
+  it('never calls a worktree with uncommitted work ready to land', () => {
+    const v = classify(unmergedClean({ workingTree: { modified: 2, untracked: 0, paths: [] } }), args());
+    expect(v.recommendation).toBe(RECOMMENDATION.SALVAGE);
+    expect(v.action).toBe(ACTION.AT_RISK);
+  });
+
+  it('calls a landed, clean worktree a disposal candidate', () => {
+    const v = classify(wt({ ahead: 0, mergedIntoBase: true }), args());
+    expect(v.recommendation).toBe(RECOMMENDATION.PRUNE);
+    expect(v.action).toBe(ACTION.DISPOSE);
+    expect(v.prunable).toBe(true);
+  });
+
+  it('derives the action from the recommendation, and covers every value', () => {
+    // Each case builds inputs that actually PRODUCE that recommendation.
+    // An earlier version fed one default worktree and asserted seven
+    // mappings, which tested only the two the default could ever reach.
+    const cases = [
+      [RECOMMENDATION.PRUNE, wt({ ahead: 0, mergedIntoBase: true }), {}],
+      [
+        RECOMMENDATION.READY_TO_LAND,
+        wt({ ahead: 3, behind: 40, mergedIntoBase: false, merge: { conflict: false } }),
+        {},
+      ],
+      [RECOMMENDATION.SALVAGE, wt({ ahead: 3, mergedIntoBase: false, merge: { conflict: true } }), {}],
+      [
+        RECOMMENDATION.SALVAGE,
+        wt({ ahead: 0, mergedIntoBase: true, workingTree: { modified: 1, untracked: 0, paths: [] } }),
+        {},
+      ],
+      // Never checked at all: absent, not null. Must not read as a licence.
+      [RECOMMENDATION.SALVAGE, wt({ ahead: 3, mergedIntoBase: false }), {}],
+      [RECOMMENDATION.REVIEW_RESIDUE, wt({ ahead: 0, mergedIntoBase: true }), { curated: { mustNotPrune: true } }],
+      [RECOMMENDATION.IN_USE, wt({ ahead: 0, mergedIntoBase: true }), { boardAgents: [{ live: true, agentId: 'a' }] }],
+      [RECOMMENDATION.KEEP, wt({ isPrimary: true }), {}],
+      // Detached and not in use: there is no branch identity to report, so
+      // nothing can be decided about it. With a live agent it would be
+      // `in-use` first, which is correct but not what this case is about.
+      [RECOMMENDATION.UNKNOWN, wt({ detached: true, ahead: 0, mergedIntoBase: true }), {}],
+    ];
+    const expected = {
+      [RECOMMENDATION.PRUNE]: ACTION.DISPOSE,
+      [RECOMMENDATION.READY_TO_LAND]: ACTION.LAND,
+      [RECOMMENDATION.SALVAGE]: ACTION.AT_RISK,
+      [RECOMMENDATION.REVIEW_RESIDUE]: ACTION.AT_RISK,
+      [RECOMMENDATION.IN_USE]: ACTION.IN_USE,
+      [RECOMMENDATION.KEEP]: ACTION.KEEP,
+      [RECOMMENDATION.UNKNOWN]: ACTION.UNDECIDED,
+    };
+    const seen = new Set();
+    for (const [wantRec, worktree, extra] of cases) {
+      const v = classify(worktree, args(extra));
+      seen.add(v.recommendation);
+      expect(v.recommendation, 'case setup no longer produces the intended recommendation').toBe(wantRec);
+      expect(v.action).toBe(expected[wantRec]);
+    }
+    // Every recommendation value is exercised, so a new one cannot arrive
+    // without a mapping and without a test noticing.
+    expect([...seen].sort()).toEqual(Object.keys(expected).sort());
+  });
+
+  it('ranks ready-to-land below at-risk, since nothing is at risk there', () => {
+    expect(riskScore({ recommendation: RECOMMENDATION.READY_TO_LAND })).toBeGreaterThan(
+      riskScore({ recommendation: RECOMMENDATION.PRUNE })
+    );
+    expect(riskScore({ recommendation: RECOMMENDATION.READY_TO_LAND })).toBeLessThan(
+      riskScore({ recommendation: RECOMMENDATION.SALVAGE })
+    );
+  });
+});
+
 describe('classify: the 0-ahead trap', () => {
   it('calls a branch at an old main commit with no commits of its own UNCOMMITTED_ONLY, not landed', () => {
     const v = classify(
@@ -523,15 +693,27 @@ describe('classify: the 0-ahead trap', () => {
     expect(v.prunable).toBe(false);
   });
 
-  it('reports unmerged commits as salvage', () => {
-    const v = classify(wt({ ahead: 3 }), {
+  it('reports unmerged commits as unmerged-work, and separates waiting from at-risk', () => {
+    // This used to assert `salvage` for every unmerged branch, which is the
+    // conflation this change removes: a clean branch that merges cleanly is
+    // not salvage, it is just waiting.
+    const waiting = classify(wt({ ahead: 3, merge: { conflict: false } }), {
       chatSummary: noChats,
       chatSessions: noSessions,
       curated: null,
       nowMs: NOW,
     });
-    expect(v.status).toBe(STATUS.UNMERGED_WORK);
-    expect(v.recommendation).toBe(RECOMMENDATION.SALVAGE);
+    expect(waiting.status).toBe(STATUS.UNMERGED_WORK);
+    expect(waiting.recommendation).toBe(RECOMMENDATION.READY_TO_LAND);
+
+    const atRisk = classify(wt({ ahead: 3, merge: { conflict: true } }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(atRisk.status).toBe(STATUS.UNMERGED_WORK);
+    expect(atRisk.recommendation).toBe(RECOMMENDATION.SALVAGE);
   });
 
   it('reports a dirty tree on a merged branch as uncommitted-only, not landed', () => {
@@ -913,6 +1095,129 @@ describe('buildInventory', () => {
   });
 });
 
+describe('the headline lists and totals', () => {
+  const board = {
+    available: true,
+    dbPath: 'b',
+    claims: new Map(),
+    fileLocks: new Map(),
+    agents: new Map(),
+    issues: [],
+  };
+  const emptyChats = { available: true, dbPath: 'k', byDirectory: new Map(), total: 0, newestSessionAt: 0 };
+
+  /** A spread covering every action, so each list has a known membership. */
+  const worktrees = [
+    wt({ name: 'landable', ahead: 2, mergedIntoBase: false, merge: { conflict: false } }),
+    wt({ name: 'conflicting', ahead: 1, mergedIntoBase: false, merge: { conflict: true, files: ['a.ts'] } }),
+    wt({ name: 'uncommitted', ahead: 0, mergedIntoBase: true, workingTree: { modified: 2, untracked: 0, paths: [] } }),
+    wt({ name: 'disposable', ahead: 0, mergedIntoBase: true }),
+    wt({ name: 'primary', isPrimary: true, ahead: 0, mergedIntoBase: true }),
+  ];
+
+  const build = () =>
+    buildInventory({
+      worktrees,
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      board,
+      chatAudit: emptyChats,
+      nowMs: NOW,
+    });
+
+  it('puts every record in exactly the list its action names', () => {
+    const inv = build();
+    for (const action of [ACTION.LAND, ACTION.DISPOSE, ACTION.AT_RISK]) {
+      const expected = worktrees
+        .map((w) => w.name)
+        .filter((n) => inv.worktrees.find((r) => r.name === n).action === action);
+      const actual =
+        inv[action === ACTION.LAND ? 'readyToLand' : action === ACTION.DISPOSE ? 'disposalCandidates' : 'atRisk'];
+      expect(actual, `list for ${action}`).toEqual(expected);
+    }
+  });
+
+  it('recomputes every total from the records it contains', () => {
+    const inv = build();
+    const t = inv.totals;
+    const n = inv.worktrees.length;
+    expect(t.worktrees).toBe(n);
+    expect(t.readyToLand).toBe(inv.readyToLand.length);
+    expect(t.disposalCandidates).toBe(inv.disposalCandidates.length);
+    expect(t.atRisk).toBe(inv.atRisk.length);
+    expect(t.prunable).toBe(inv.worktrees.filter((w) => w.prunable).length);
+    expect(t.salvage).toBe(inv.worktrees.filter((w) => w.recommendation === 'salvage').length);
+    expect(t.inUse).toBe(inv.worktrees.filter((w) => w.recommendation === 'in-use').length);
+    expect(t.holdingUncommittedWork).toBe(inv.worktrees.filter((w) => w.dirty + w.untracked > 0).length);
+    expect(t.withoutSummary).toBe(inv.worktrees.filter((w) => !w.summary).length);
+    expect(Object.values(t.byAction).reduce((a, b) => a + b, 0)).toBe(n);
+    expect(Object.values(t.byRecommendation).reduce((a, b) => a + b, 0)).toBe(n);
+    expect(Object.values(t.byStatus).reduce((a, b) => a + b, 0)).toBe(n);
+  });
+
+  it('counts prunable and dispose identically, because dispose IS prunable', () => {
+    // `action: dispose` is read from the `prunable` expression rather than
+    // restated, so the two cannot drift. Assert the equivalence anyway, over
+    // every shape that reaches either value.
+    const shapes = [
+      wt({ name: 'a', ahead: 0, mergedIntoBase: true }),
+      wt({ name: 'b', ahead: 0, mergedIntoBase: false, merge: { conflict: false } }),
+      wt({ name: 'c', ahead: 0, mergedIntoBase: true, workingTree: { modified: 1, untracked: 0, paths: [] } }),
+      wt({ name: 'd', isPrimary: true, ahead: 0, mergedIntoBase: true }),
+      wt({ name: 'e', ahead: 3, mergedIntoBase: false, merge: { conflict: true } }),
+      wt({ name: 'f', detached: true, ahead: 0, mergedIntoBase: true }),
+    ];
+    for (const s of shapes) {
+      const v = classify(s, {
+        chatSummary: { count: 0, lastActivity: null },
+        chatSessions: [],
+        curated: null,
+        nowMs: NOW,
+      });
+      expect(v.action === ACTION.DISPOSE, `${s.name}: action dispose`).toBe(v.prunable);
+    }
+  });
+
+  it('never calls a DETACHED worktree ready to land, even with a clean merge', () => {
+    // Detached means there is no branch identity, so "merges cleanly" is a
+    // statement about HEAD with nothing to attach it to. Verified against a
+    // real detached worktree: it is `unreadable` -> `undecided`.
+    const v = classify(wt({ detached: true, ahead: 3, mergedIntoBase: false, merge: { conflict: false } }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+    });
+    expect(v.action).not.toBe(ACTION.LAND);
+    expect(v.status).toBe(STATUS.UNREADABLE);
+    expect(v.prunable).toBe(false);
+  });
+
+  it('does not offer a curated mustNotPrune worktree as land', () => {
+    // `fix-spray-cr` was filed under READY TO LAND while its own curated note
+    // called the colour-replacement work "the salvage target".
+    const v = classify(wt({ ahead: 4, mergedIntoBase: false, merge: { conflict: false } }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: { mustNotPrune: true, note: 'the salvage target' },
+      nowMs: NOW,
+    });
+    expect(v.action).toBe(ACTION.AT_RISK);
+    expect(v.reasons.join(' ')).toContain('curated finding');
+  });
+
+  it('reports whether the merge was actually checked', () => {
+    // `mergeConflict: null` alone is ambiguous between "not checked" and
+    // "checked and could not answer".
+    const inv = build();
+    const landable = inv.worktrees.find((w) => w.name === 'landable');
+    expect(landable.mergeChecked).toBe(true);
+    expect(landable.mergeConflict).toBe(false);
+    expect(landable.mergeConflictFiles).toEqual([]);
+  });
+});
+
 describe('the curated table', () => {
   it('gives every entry a summary, because the inventory is read as prose', () => {
     for (const [name, entry] of Object.entries(CURATED)) {
@@ -952,12 +1257,17 @@ describe('the curated table', () => {
     // version iterated `Object.keys(CURATED)` and compared it to itself, so it
     // passed with 23 entries deleted and with every summary blanked.
     const cwd = process.cwd();
-    const live = listWorktrees(cwd);
+    // Only worktrees whose directory still exists. A registration whose
+    // directory is gone is reported in `dataSources.git.missingWorktrees` and
+    // has nothing to curate — demanding a summary for it would mean inventing
+    // an entry every time a stray registration appeared and disappeared.
+    const missingPaths = new Set(findMissingWorktrees(cwd).map((w) => w.path));
+    const live = listWorktrees(cwd).filter((w) => !missingPaths.has(w.path));
     expect(live.length).toBeGreaterThan(1);
 
     // Worktrees created after the table was written, plus the two that are
     // documented elsewhere by construction. Everything else must be curated.
-    const allowed = new Set(['worktree-inventory']);
+    const allowed = new Set(['worktree-inventory', 'land-and-dispose']);
     const uncategorised = live
       .map((w) => w.name)
       .filter((name) => name !== 'ph' && !allowed.has(name) && !CURATED[name]);

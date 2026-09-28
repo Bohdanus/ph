@@ -48,7 +48,8 @@ export const CURATED = {
   'agent-board': {
     summary:
       'The swarm board itself: scripts/agent-board.mjs and its node:sqlite storage under the common git directory.',
-    landed: true,
+    landed: false,
+    note: 'The board work itself is on main. A later `wip(salvage)` commit (3f1d0e2) sits on this branch on top of that, carrying an uncommitted board-schema migration test suite that was on no ref when the owning worktree was swept. It does not pass as it stands — one of the 74 tests in `agent-board.test.mjs` fails on this branch — so the claim is retracted rather than asserted. Landing it is a real fix, not a deletion.',
   },
   'board-file-index': {
     summary:
@@ -128,13 +129,12 @@ export const CURATED = {
   },
   'fix-spray-cr': {
     summary:
-      'Merges the spray-dab fix with the Color Replacement tool onto main. The only branch carrying both, and colourReplacement.ts is uncommitted.',
+      'Merges the spray-dab fix with the Color Replacement tool onto main. The only branch carrying both, and the one to take the colour-replacement work from.',
     issues: [
       { ref: 'HANDOFF.md#48', title: 'stamp loop / dab accumulator is the named fix' },
       { ref: 'HANDOFF.md#58', title: 'color-replacement takes the legacy-tool route' },
     ],
-    mustNotPrune: true,
-    note: 'src/tools/colorReplacement.ts is modified relative to the index and exists on no ref. This is the salvage target for the colour-replacement work.',
+    note: 'The colour-replacement work that used to live only in this working tree is now committed here, so the earlier mustNotPrune flag is retracted. An earlier note said the tree was dirty and on no ref; git says it is clean and that file has two commits.',
   },
   'flake-paintbucket': {
     summary:
@@ -574,8 +574,27 @@ export const CURATED = {
       'Corrects the tool descriptions so each one says what the tool actually does, rather than what its name suggests.',
   },
   'board-entrypoint': {
+    // This entry previously claimed `landed: true` and described a worktree that
+    // no longer existed, asserting a merge that never happened: main carried none
+    // of it. The contradiction test only checks entries against worktrees that
+    // exist, so a false claim about a deleted worktree raised nothing. A later
+    // worktree of the same name then made it checkable, and it failed.
+    //
+    // The lesson is the one `landed` exists to enforce: a curated entry is a
+    // claim about git, and a claim nothing re-derives is just prose.
+    //
+    // It is `true` again because it is now true — `npm run board` was merged as
+    // `npm run swarm`, the worktree is removed, and the branch is an ancestor of
+    // main. The entry is KEPT rather than deleted, matching every other landed
+    // worktree here: a landed-and-removed worktree is history, and the claim is
+    // only worth keeping while something re-derives it.
     summary:
-      'A short-lived worktree on the board entrypoint fix, now merged: its branch is an ancestor of main and its working tree is clean.',
+      "Landed: the board command is `swarm` (it was `board`, which is also the name of Kilo's unrelated built-in tool), and `ready` ranks by priority, then live-before-imported, then startable-before-contended.",
+    landed: true,
+  },
+  'fix-e2e-findings': {
+    summary:
+      'Moves e2e findings off their original branches and onto the documents, so the defects are recorded where an agent will read them.',
     landed: true,
   },
   'handoff-citation-rotation': {
