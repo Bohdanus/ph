@@ -314,7 +314,7 @@ describe('materialization retained filter rendering', () => {
     {
       toolName: 'levels' as const,
       args: { brightness: 0, contrast: 0 } as Record<string, number>,
-      expected: /^brightness\(1\) contrast\(1\)$/,
+      expected: /^brightness\(100%\) contrast\(100%\)$/,
     },
   ])('renders a $toolName filter through the canvas filter string', async ({ toolName, args, expected }) => {
     const registry = new AssetRegistry();
@@ -342,8 +342,8 @@ describe('materialization retained filter rendering', () => {
 
     const filters = recordedContexts.map((ctx) => ctx.filter);
     expect(filters.some((filter) => filter.startsWith('blur(0px)'))).toBe(true);
-    expect(filters.some((filter) => filter.includes('grayscale(0%) sepia(0%) saturate(1)'))).toBe(true);
-    expect(filters.some((filter) => filter.includes('brightness(1) contrast(1)'))).toBe(true);
+    expect(filters.some((filter) => filter.includes('grayscale(0%) sepia(0%) saturate(100%)'))).toBe(true);
+    expect(filters.some((filter) => filter.includes('brightness(100%) contrast(100%)'))).toBe(true);
     result.lease.release();
     registry.shutdown();
   });

@@ -95,9 +95,29 @@ describe('Color toolbar', () => {
     expect(sepia).toHaveValue('0');
     expect(saturation).toHaveValue('100');
 
+    // Saturation is bipolar because the filter contract maps a signed percentage onto a
+    // CSS amount: -100% has to be reachable, or the slider could never desaturate.
+    expect(saturation).toHaveAttribute('type', 'range');
+    expect(saturation).toHaveAttribute('min', '-100');
+    expect(saturation).toHaveAttribute('max', '100');
+
     // Grayscale and Sepia are both 0, so the "0%" readout appears twice.
     expect(screen.getAllByText('0%')).toHaveLength(2);
     expect(screen.getByText('100%')).toBeInTheDocument();
+  });
+
+  it('publishes a negative saturation, so the desaturate end of the slider is reachable', () => {
+    render(<Color />);
+
+    changeSlider(/Saturation/, '-100');
+    flushRaf();
+
+    expect(mockSetToolArgs).toHaveBeenCalledWith({
+      grayscale: 0,
+      sepia: 0,
+      saturation: -100,
+      toolName: 'color',
+    });
   });
 
   it('commits only the changed field and preserves the other two tool args', () => {

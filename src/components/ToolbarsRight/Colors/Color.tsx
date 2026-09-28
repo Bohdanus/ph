@@ -96,8 +96,8 @@ const Color: React.FC<{}> = () => {
         <input
           id="saturation-slider"
           type="range"
-          min={0}
-          max={100}
+          min="-100"
+          max="100"
           value={saturation}
           onChange={handleSaturationChange}
           className="h-1.5 w-32 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
