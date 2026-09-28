@@ -7,7 +7,12 @@ numbers are stable identifiers that other items cite, so they are not renumbered
 entries that were fixed and deleted.
 
 **Scope:** the durable-replay migration and the presentation/append boundary. Tool features and
-visual fidelity are out of scope unless a defect is caused by this work.
+visual fidelity are out of scope unless a defect is caused by this work. Items 46-51 are the
+exception and are here because they are `src/` production defects on the same path: a processor
+that ignores the selection (46), a `Selection` type that cannot represent a committed region
+(47), an options-bar write that drops a field (48), an args type with nowhere to put a setting
+(49, 51) and a tool that reads a raster no one derived (50) are all reachable by a user today and
+none of them is a history/replay defect. Item 52 is the durable half of item 15 and is in scope.
 
 ---
 
@@ -316,22 +321,22 @@ it through `COMMIT_DOCUMENT_EDIT` so it participates in the single-writer contra
 
 ## 15. Only the crop and selection writers reach the append boundary; the rest reconvert the whole timeline
 
-**Problem.** `translate` (`history-append.ts:121`) handles exactly two action kinds:
-`SET_DOCUMENT_FRAME_ACTION` (`:122`) and `SELECTION_ACTION` (`:138`). Everything else returns
-`unsupported-history-feature` (`:154-158`), so a `COMMIT_DOCUMENT_EDIT` with no planned entry
+**Problem.** `translate` (`history-append.ts:117`) handles exactly two action kinds:
+`SET_DOCUMENT_FRAME_ACTION` (`:122`) and `SELECTION_ACTION` (`:137`). Everything else returns
+`unsupported-history-feature` (`:153-157`), so a `COMMIT_DOCUMENT_EDIT` with no planned entry
 reconverts the whole timeline at `StoreContext.tsx:747-758`.
 
 Derived writer inventory, from the `type: 'COMMIT_DOCUMENT_EDIT'` dispatch sites in non-test
 source. Three sites hand the store a `durableEntry`:
 
 - `useLayer.ts:597` — `applyDocumentCrop`, `set-document-frame`
-- `useSelectionHistory.ts:158` — `clearSelections`, `set-selection`
-- `useSelectionHistory.ts:240` — `commitSelection` (`'create'` / `'move'`), `set-selection`
+- `useSelectionHistory.ts:143` — `clearSelections`, `set-selection`
+- `useSelectionHistory.ts:299` — `commitSelection` (`'create'` / `'move'`), `set-selection`
 
 Eleven further sites have production callers and carry no `durableEntry`, so each one
 reconverts: `useLayer.ts:166, 293, 310, 374, 408, 432, 452, 638`, `useApp.ts:159` (the tool-switch
 deselect, which builds its `SELECTION_ACTION` at `:165-174` without planning), and the two
-`useSelectionHistory.ts:174, 256` plan-failure fallbacks. `useHistory.ts:52` (`addHistoryEntry`) is
+`useSelectionHistory.ts:149, 305` plan-failure fallbacks. `useHistory.ts:52` (`addHistoryEntry`) is
 the fifteenth site and has no production caller at all (item 14). `APPLY_HISTORY_REPLAY` and
 `REPLACE_DOCUMENT` remain legacy-only.
 
@@ -1507,3 +1512,238 @@ tight for the product — that is the operator's call, and it must be made here 
 branch: the derivation above is what makes a different number defensible, not the number itself.
 
 **Files.** `src/contexts/avif-utils.ts:4-5,15,24-26`, `src/contexts/tiff-utils.ts:11-27`
+
+---
+
+## 46. No raster processor receives the active selection, so no paint tool clips to it
+
+**Problem.** `ProcessorToolParams` is `{ size: Size; bitmap: BitmapSource }`
+(`src/tools/toolProcessors.ts:26-29`) and the `imageProcessor` signature accepts nothing else
+(`:67`). No selection reaches any processor, so the eight new pixel tools — eraser, paint bucket,
+gradient, sharpen, smudge, dodge, burn, clone stamp, all `commit: 'raster'` at `:194-241` — paint
+across the whole layer whatever is selected. `grep -n 'selection' src/tools/{eraser,smudge,dodgeBurn,cloneStamp,sharpen,gradient,paintBucket}.ts`
+matches one comment in `paintBucket.ts:29` and nothing else. The gesture hook agrees:
+`UsePaintStrokeOptions` (`src/hooks/usePaintStroke.ts:82-108`) carries `imageSize`, `containerRef`,
+`onPreview` and `enabled` and no selection, so the selection cannot be picked up on the way in
+either. Photoshop clips every paint tool to the selection, and the visible consequence is that a
+user who selects a region and then erases edits the entire layer.
+
+**Where a fix lands, and what it drags.** Extend `ProcessorToolParams` (or add a parallel field on
+it) with the active selection, and have each raster processor intersect its coverage with it. The
+processors are `src/tools/*.ts` one file each, so that part is bounded. Three hand-maintained
+inventories are not, and each fails the moment a tool is added rather than when the selection is
+threaded:
+
+- `src/tools/__tests__/tool-processors.test.ts:204-225` — `commits every raster processor as a
+raster-processor replay` compares a filtered list against eleven literal names (`:209-219`).
+- `src/tools/__tests__/tool-settings.test.ts:390-396` — `reduces every unimplemented tool to a
+bare tool name` forces `defaultSettings` for every `commit: 'unimplemented'` tool to be exactly
+  `{ toolName }` (item 49).
+- `history-adapter.ts:416-424` — the raster branch converts ANY `commit: 'raster'` tool into an
+  `apply-raster-processor` operation with no allowlist, so a new field on `ProcessorToolParams` is
+  not carried into the durable operation and the shadow will not see the clipping until that branch
+  is taught to retain it.
+
+**The blocker to name before anyone starts.** `DurableBaseline.selections`
+(`src/contexts/history-model.ts:124-129`) is shadow state, not an input: `APPLY_HISTORY_REPLAY`
+(`StoreContext.tsx:459-481`) never reads `durableDocument.selections` — it spreads the legacy
+`replayUpdates` at `:464` and takes the durable document as an unrelated payload at `:471-478` —
+and `SET_SELECTIONS` (`:507-513`) carries the comment `Selection state only; no durable input
+moves.` So a selection mask threaded into a processor is a live-store value with no durable
+counterpart. Clipping to it is a legacy-replay behaviour until the durable document can express a
+selection mask, and a replay that does not clip is a different picture from the one the user made.
+
+**Fix.** Thread the selection into `ProcessorToolParams`, intersect in each raster processor, and
+either teach the raster branch at `history-adapter.ts:416-424` to retain the mask or record that
+the durable shadow renders unclipped until selections enter durable replay authority. The
+hand-written name lists in the two registries are the intended tripwires for the first half of that
+change; leave them failing rather than widening them.
+
+**Files.** `src/tools/toolProcessors.ts:26-29,67`,
+`src/hooks/usePaintStroke.ts:82-108`, `src/tools/{eraser,smudge,dodgeBurn,cloneStamp,sharpen,gradient,paintBucket}.ts`,
+`src/contexts/history-adapter.ts:416-424`, `src/contexts/StoreContext.tsx:459-481,507-513`
+
+---
+
+## 47. A selection with a hole, or with two disjoint regions, has no representation to commit
+
+**Problem.** `Selection` (`src/contexts/general-types.ts:61-69`) carries ONE `points: Point[]` path
+and no second one, so a region with an interior hole and a region made of two disjoint blobs are
+both unrepresentable. The quick selection reports the first rather than papering over it:
+`traceMaskBoundary` returns `hasHoles` (`src/tools/quickSelection.ts:360-369`, set at `:418`),
+`createQuickSelectionPolygon` passes it through (`:466-475`), and
+`src/components/Main/QuickSelectionToolArea.tsx:202-207` logs a warning and commits nothing —
+`createCommittedPolygonSelection` runs only on `polygon && !polygon.hasHoles` (`:210`), otherwise
+`CANCEL_SELECTION_DRAFT` fires (`:217-218`). This is correct behaviour and a data-model limit, not
+a bug: committing the outer contour alone would cover the pixels the mask reports as unselected.
+`createMagicWandSelectionFromImageData` refuses the same shape for the same reason
+(`src/util/magicWand.ts:218`, `if (holes.length > 0) return null`).
+
+**The sibling defect is quieter, and it is not reported at all.** The same loop keeps only the
+LARGEST outer contour: `if (area <= largestArea) continue` (`src/tools/quickSelection.ts:421`), so
+when a stroke grows two disjoint regions the trace returns one path (`points = loop` at `:423`),
+`hasHoles` is `false`, and the caller commits the bigger region and silently drops the smaller one.
+No warning fires, because from the caller's side nothing failed.
+
+**Fix.** A multi-polygon `Selection` — a second path plus a hole/interior flag on the type — is the
+honest fix, and it is a `general-types.ts` change with a wide blast radius: `SelectionSnapshot`,
+`SelectionClipboard`, `selectionSnapshot`, `deriveSetSelectionEntry`, the four selection-commit
+writers in `useSelectionHistory.ts` and every reader of `points`. Ship it in that order, not as a
+`points`-length convention. Meanwhile, the disjoint-region case can at least stop being silent:
+have `traceMaskBoundary` report how many outer contours it found and have the tool area refuse —
+the same contract `hasHoles` already has — rather than commit the largest in silence.
+
+**Files.** `src/contexts/general-types.ts:61-69`, `src/tools/quickSelection.ts:412-425,466-475`,
+`src/components/Main/QuickSelectionToolArea.tsx:202-218`, `src/util/magicWand.ts:218`
+
+---
+
+## 48. [pinned] PaintBucket's options bar replaces its pending ref instead of merging it
+
+**Problem.** `throttledPatch` builds `pendingRef.current = { ...args, ...patch }`
+(`src/components/ToolbarsRight/PaintBucket/PaintBucket.tsx:87`) from the `args` captured when the
+frame was SCHEDULED (`:85`'s closure) and REPLACES the ref wholesale. Two different sliders moved
+inside one animation frame therefore lose the first: the second event rebuilds the payload from the
+pre-frame `args` and overwrites the field the first one set. `tolerance` is the flood fill's only
+similarity threshold, so a user who drags Tolerance and then nudges Opacity before the next frame
+commits a fill at the OLD tolerance.
+
+`Eraser.tsx:77`, `Smudge.tsx:83` and `QuickSelection.tsx:60` all merge
+(`{ ...pendingPatchRef.current, ...patch }`) and are unaffected, so this bar is the odd one out of
+four. The `contiguous` checkbox and the store-synced `color` write are also in the same closure
+(`:65-66`, `:85`).
+
+Pinned by `drops the earlier field when two different sliders move inside one frame` at
+`src/components/ToolbarsRight/PaintBucket/__tests__/PaintBucket.test.tsx:335`, whose comment says
+the assertion fails the moment the defect is fixed. A fix must remove the pin in the same change.
+
+**Fix.** Merge into the existing pending ref the way the other three bars do
+(`pendingRef.current = { ...pendingRef.current, ...patch }`), or read `getToolArgs('paint-bucket')`
+at flush time instead of closing over the scheduling render's value. The first is the smaller change
+and is the one the three sibling bars already establish.
+
+**Files.** `src/components/ToolbarsRight/PaintBucket/PaintBucket.tsx:84-97`,
+`src/components/ToolbarsRight/PaintBucket/__tests__/PaintBucket.test.tsx:335`
+
+---
+
+## 49. The eyedropper cannot carry an option at all, and a test makes that structural
+
+**Problem.** `EyedropperToolArgs` is `{ toolName: 'eyedropper' }` (`src/tools/eyedropper.ts:11-13`)
+and the tool is registered `commit: 'unimplemented'` (`src/tools/toolProcessors.ts:246-250`) because
+it has no image processor in the registry and pushes no history entry. The two are coupled by a test
+rather than by a type: `src/tools/__tests__/tool-settings.test.ts:390-396` — `reduces every
+unimplemented tool to a bare tool name, matching its null result` — asserts
+`defaultSettings[toolName]` `toEqual({ toolName })` for every `commit: 'unimplemented'` tool. Give
+the eyedropper the field in `defaultSettings` — which is what persisting an option requires — and
+this test fails.
+
+**The consequence, recorded so the next request for "an eyedropper sample size" is not a
+rediscovery.** Photoshop's **Sample Size** (Point / 3x3 / 5x5 / 7x7 / 9x9 / 11x11) and **Sample All
+Layers** are both unreachable, and the wall is the commit kind rather than the options bar. Either
+route costs more than a bar change: a persisted field on an `unimplemented` tool has nowhere to be
+committed to, and `commit: 'unimplemented'` is itself what forces the bare default. Sample All
+Layers needs a second code path besides — it samples the composited document, and the composite is
+what `drawLayersToCanvas` builds, not something a layer carries. The bar says so itself
+(`src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:35-44`).
+
+**Fix.** Give the eyedropper a real commit kind first — it writes a store colour with no history
+entry behind it, so the honest shape is a non-undoable store write the registry can name — and only
+then add args fields and the two controls. Relaxing `tool-settings.test.ts:390-396` instead is the
+wrong order: it removes the contract that makes a `defaultSettings` entry reviewable, and buys a
+field with no writer.
+
+**Files.** `src/tools/eyedropper.ts:11-13`, `src/tools/toolProcessors.ts:246-250`,
+`src/tools/__tests__/tool-settings.test.ts:390-396`,
+`src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:35-44`
+
+---
+
+## 50. The eyedropper reports no colour for a layer that carries no cached raster
+
+**Problem.** A layer with a null `tmpCanvas` has its raster re-derived on every draw by
+`getLayerBitmap` (`src/contexts/layer-renderer.ts:51-58`), which re-runs the creator processor for a
+vector source and is private to that module. The eyedropper reads
+`activeLayer.tmpCanvas ?? activeLayer.bitmap` instead
+(`src/components/Main/EyedropperToolArea.tsx:86`), so for a vector layer whose `tmpCanvas` is null
+the source is null, the guard at `:87` returns, and the tool reports no colour at all where the
+canvas is visibly showing pixels. `Layer.bitmap` is `BitmapSource` and is non-optional
+(`src/contexts/general-types.ts:76`), so the null is the runtime state of a vector layer that has
+never been rendered, not the type.
+
+**Fix.** Export `getLayerBitmap` from `layer-renderer.ts` and have the eyedropper call it for the
+same layer, so a sample and a draw read one raster by one rule. The alternative — caching
+`tmpCanvas` for the eyedropper alone — forks the derivation a second time, which is the thing
+`getLayerBitmap` exists to prevent. The tool area's own doc comment already names the case and the
+helper (`src/components/Main/EyedropperToolArea.tsx:69-72`); it records the gap rather than closing
+it, so the comment and the code agree today and a fix should update both.
+
+**Files.** `src/components/Main/EyedropperToolArea.tsx:83-94`,
+`src/contexts/layer-renderer.ts:51-58`, `src/contexts/general-types.ts:76`
+
+---
+
+## 51. Sharpen's options bar reads `toolArgs` with a cast instead of guarding on the tool
+
+**Problem.** `Sharpen.tsx` resolves its args as
+`const { toolArgs, setToolArgs } = useCurrentTool(); const args = toolArgs as SharpenToolArgs`
+(`src/components/ToolbarsRight/Sharpen/Sharpen.tsx:65,67`) with no check that `sharpen` is the active
+tool, so the Amount and Radius sliders render whenever the component is mounted. It is safe today
+only because `ToolbarHorizontal` remounts the bar on `key={toolName}`
+(`src/components/ToolbarHorizontal/ToolbarHorizontal.tsx:25`). The eight other new options bars
+that read tool args resolve them through `getToolArgs`, which returns `null` for a tool that is not
+the active one, so those bars render nothing — `PaintBucket.tsx:60`, `Gradient.tsx:56`,
+`Smudge.tsx:107`, `CloneStamp.tsx:74`, `Eraser.tsx:101`, `QuickSelection.tsx:41`,
+`EllipticalSelection.tsx:43`, and `Tonal.tsx:59-62` for the dodge/burn pair. (The Eyedropper bar
+reads no tool args at all, so it is not a case.)
+
+**Why it matters.** The safety is a property of the parent's mount key, not of this bar. A mount
+path that does not pass that key — a dialog, a popover, a future responsive layout that renders the
+bar without the remount — shows the sharpen sliders while another tool is active, and a drag then
+writes sharpen args into whichever tool the user actually has selected.
+
+**Fix.** Use the sibling guard: `const args = getToolArgs('sharpen') as SharpenToolArgs | null` and
+`if (!args) return null`, matching `PaintBucket.tsx:58-60,99`. Then the bar stops depending on the
+parent's key for correctness, and the key can change for presentation reasons without a
+mis-rendered panel.
+
+**Files.** `src/components/ToolbarsRight/Sharpen/Sharpen.tsx:65-67`,
+`src/components/ToolbarHorizontal/ToolbarHorizontal.tsx:25`
+
+---
+
+## 52. The new pixel tools reach the durable shadow for free but the append boundary only by reconversion
+
+**Problem.** Item 15 records the append boundary's scope: `translate` handles exactly two action
+kinds and everything else takes the whole-timeline reconversion at `StoreContext.tsx:747-758`. That
+item is right, and read against the eleven new tools it understates the position: the shadow half of
+the gap is already closed and only the writer half is open.
+
+The shadow side needs nothing. Every new pixel tool is `commit: 'raster'`
+(`src/tools/toolProcessors.ts:194-241`) and the raster branch converts ANY such tool into an
+`apply-raster-processor` operation keyed on `args.toolName` with no allowlist
+(`src/contexts/history-adapter.ts:416-424`), so a new raster tool is replayable in the shadow the
+moment it is registered. The registry already says this where the family is introduced
+(`src/tools/toolProcessors.ts:174-179`).
+
+The writer side is untouched, and that is the genuinely hard half: no raster tool appends through
+`planHistoryAppend` (`src/contexts/history-append.ts:182`), whose only three call sites are
+`useLayer.ts:597` (document frame) and `useSelectionHistory.ts:133` / `:289` (selection). An eraser
+stroke therefore appends a `TOOL_ACTION`, gets no planned durable entry, and makes the store
+reconvert the whole timeline — once per stroke, with a cost that grows with the timeline.
+
+**Do not read this as an oversight.** It is a scope boundary, and the durable operation the boundary
+would have to publish is the one `history-adapter.ts:416-424` already builds. The missing piece is
+the `derive*Entry` for a raster action kind, which is mechanical for these tools precisely because
+the shadow needs no allowlist extension. That makes a raster writer the smallest remaining slice of
+item 15, and it is the one the registry comment above already argues for.
+
+**Fix.** Add a raster action kind to `translate` with its own `derive*Entry` in
+`history-adapter.ts`, and route the raster tools' commit through it one tool at a time, starting
+with the eraser. Keep the `published` / `preconditions` / `mismatch` three-way decision. Do not
+widen it to the whole raster family in one change: each tool's `TOOL_ACTION` payload shape is its
+own, and the point of the slice is that the boundary is proven on one.
+
+**Files.** `src/contexts/history-append.ts:117-157,182`,
+`src/contexts/history-adapter.ts:254,311,416-424`, `src/contexts/StoreContext.tsx:747-758`,
+`src/tools/toolProcessors.ts:174-179,194-241`
