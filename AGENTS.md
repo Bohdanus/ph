@@ -72,6 +72,7 @@ npm run swarm             # the swarm board, live state: who holds what right no
 npm run swarm -- help     # the full command list
 npm run swarm -- ready    # the work queue an agent picks from
 npm run swarm -- watch    # the event log; --follow to tail it
+npm run swarm -- health   # is this board being USED, or only carried?
 
 node scripts/worktree-inventory.mjs   # WORKTREES.json: what every worktree holds
 ```
@@ -150,12 +151,47 @@ what is new.
   you are working outside a dedicated worktree — on `main`, or detached — pass
   `--agent` or set `AGENT_BOARD_AGENT`, or you and the next agent are the same
   agent as far as the board is concerned.
-- **A claim is a lease, not a mutex.** `swarm claim ph-12` holds it for 45
-  minutes; `swarm heartbeat ph-12` extends it. Past the lease the issue is
-  offered again and the takeover is in the event log with both agents named.
-  **`swarm status` reports; `swarm doctor` is the only command that releases an
-  abandoned claim**, and it releases a claim whose worktree no longer exists even
-  when the lease has not run out.
+- **A claim lives while your worktree does — there is no heartbeat to forget.**
+  `swarm claim ph-12` holds it for 45 minutes, and every later command you run
+  **renews it automatically, because your worktree is still on disk**. That is the
+  whole mechanism, and it is deliberately not `swarm heartbeat`: over 308 events
+  `claim.renew` fired **once**, and four of five unreleased claims ended up
+  expired while their holders were almost certainly still working. A heartbeat
+  nobody sends is not a liveness signal, it is a countdown that always runs out.
+  `swarm heartbeat` still exists and is still correct — it is the only thing that
+  can renew for an agent with **no worktree** (working on `main`, or detached),
+  which is the one case that has no evidence of life and so keeps the old manual
+  contract.
+- **A claim whose worktree is gone is released by the next command from anybody.**
+  The board renews your own claim **first** and sweeps **second**, and that order
+  is the entire safety argument: renewing first means a working agent's lease is
+  never what gets swept, so the sweep can only reclaim a claim whose worktree has
+  vanished — which is exactly when reclaiming it is right. Running `doctor`
+  itself on every open would hand a 45-minute timer the power to strip a lock off
+  an agent mid-edit.
+- **`swarm doctor` is EXEMPT from that sweep, and has to be.** It is the explicit,
+  authoritative one, and the exemption is what keeps `swarm doctor --dry-run`
+  meaningful: it is the command that answers _what is stale right now_, and a loop
+  reads it. If the sweep ran first, the real one would already have happened and
+  `--dry-run` would report nothing, truthfully and uselessly.
+- **A sweep writes a `doctor.run` event only when it actually released
+  something.** The sweep runs on every command, so an event per invocation turned
+  a six-event board into one that was two-thirds sweep noise, and `health`
+  inflated the very number it was reporting. `health`'s `sweeps` is therefore
+  _reclaims made_, and reads 0 on a healthy board.
+- **Past the lease the issue is offered again**, and the takeover is in the event
+  log with both agents named. `swarm status` reports; `swarm doctor` is still the
+  command that releases an abandoned claim, and it releases a claim whose
+  worktree no longer exists even when the lease has not run out.
+- **`swarm health` answers "is this thing being used, or only carried?"** It is
+  the traffic mix — events by kind, the share of them that are file locks, live
+  vs expired claims, reclaims so far, live vs imported issues, and live findings
+  idle for over six hours. It exists because this question was previously
+  answered by hand-writing SQL against the schema, which means the next agent
+  answers it differently or not at all. The two numbers that have changed a
+  decision: **locking is 66% of all traffic**, and **66% of that is `lock.release`**
+  — the board is a file-lock manager, and the issue tracker is the part nobody
+  uses. Read that before building more of the issue tracker.
 - **`swarm hold <path>` makes "never two agents on the same file" a refused
   write**, and the refusal names the holder. `swarm check <path>` exits 1 when
   somebody else holds it, so a shell can gate on it. `swarm claim --files a.ts
