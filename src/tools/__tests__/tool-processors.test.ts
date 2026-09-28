@@ -478,19 +478,6 @@ describe('paint tool raster processors', () => {
     }
   });
 
-  it('color replacement always rasterizes with the spray pen and its own alpha ramp', () => {
-    const recorded = run('color-replacement', { penType: 'pen', lineWidth: 6, points: stroke.slice(0, 1) });
-
-    // The penType argument is forced to `spray`, so `setupDrawCtx` bails out and the
-    // pen-only lineWidth/globalAlpha assignments never happen.
-    expect(recorded.stroke).not.toHaveBeenCalled();
-    expect(recorded.lineWidth).toBe(1);
-    const gradientCall = (recorded.createRadialGradient.mock.calls as unknown as number[][])[0];
-    expect(gradientCall[5]).toBe(6);
-    expect(gradientCall[0]).toBe(stroke[0].x);
-    expect(recorded.arc).toHaveBeenCalledTimes(1);
-  });
-
   it('honours the global alpha from paint defaults', () => {
     const recorded = run('brush', { alpha: 0.25, points: stroke });
 
@@ -523,11 +510,14 @@ const realBarNames = [
   'smudge',
   'dodge',
   'burn',
+  'color-replacement',
 ] as const satisfies readonly ToolName[];
 
 /** The tools whose toolbox component is still `placeholderTool(...)` in `toolsMap.ts`. */
 const placeholderNames = [
-  'color-replacement',
+  // `color-replacement` was here and is gone: it has a real options bar now
+  // (`src/components/ToolbarsRight/ColorReplacement/ColorReplacement.tsx`), not a TODO card, and
+  // listing it here would keep a placeholder contract alive for a tool that has left the roster.
   'pen',
   'freeform-pen',
   'curvature-pen',
@@ -631,7 +621,12 @@ describe('toolsMap wiring', () => {
     // every remaining placeholder is an unimplemented tool and every one of them
     // carries the badge. Their bars are asserted in
     // `src/components/ToolbarsRight/Paint/__tests__/Paint.test.tsx`.
-    for (const toolName of ['color-replacement', 'pen', 'custom-shape'] as const) {
+    //
+    // `color-replacement` was here too and has left for the same reason, one tranche
+    // later: it renders `ColorReplacement.tsx`. It is not merely deleted from this list —
+    // it is in `realBarNames`, so the test above now asserts the opposite of this one for
+    // it, which is the stronger half.
+    for (const toolName of ['pen', 'custom-shape'] as const) {
       const { unmount } = render(React.createElement(toolsMap[toolName].toolboxComponent));
 
       expect(screen.getAllByText('TODO').length, toolName).toBeGreaterThan(0);
@@ -685,7 +680,7 @@ const unimplementedTools: readonly ToolName[] = [
   'custom-shape',
 ];
 
-const paintWrapperTools: readonly PaintToolName[] = ['brush', 'pencil', 'color-replacement'];
+const paintWrapperTools: readonly PaintToolName[] = ['brush', 'pencil'];
 
 describe('toolProcessors processor identity', () => {
   it.each(directProcessorSources)('routes %s to its own module-level processor', (toolName, source) => {
@@ -1113,7 +1108,9 @@ describe('toolsMap exhaustiveness', () => {
   });
 
   it('builds a distinct placeholder component per unimplemented tool', () => {
-    const placeholderTools: readonly ToolName[] = ['color-replacement', ...unimplementedTools];
+    // `color-replacement` was the one other name here and has left the roster: it has a real
+    // options bar now, and the brush and the pencil already had `Paint.tsx` before it did.
+    const placeholderTools: readonly ToolName[] = [...unimplementedTools];
     const components = placeholderTools.map((toolName) => toolsMap[toolName].toolboxComponent);
 
     // Six of them share the `pen` placeholder group, but each `placeholderTool(...)` call
