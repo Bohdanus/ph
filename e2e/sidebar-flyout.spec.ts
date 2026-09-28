@@ -48,6 +48,13 @@ const longPressWithMouse = async (page: Page, toolName: string): Promise<void> =
   await page.mouse.down();
   await page.waitForTimeout(LONG_PRESS_SETTLE_MS);
   await page.mouse.up();
+  // Move off the tile so the hover tooltip goes away before anything is probed. Both
+  // overlays are portalled next to the same anchor, and hovering the tile starts the
+  // tooltip's 250ms timer before the 300ms press opens the flyout, so the tooltip is on
+  // screen for most of the time a flyout is. The tooltip is `pointer-events-none`, so it
+  // cannot now intercept a click — but a test that leaves it there is reading the
+  // geometry of two overlapping overlays when it means to read one.
+  await page.mouse.move(0, 0);
 };
 
 /**
@@ -89,10 +96,15 @@ const readFlyoutGeometry = async (
     return { itemCount: items.length, offscreen, unpainted };
   });
 
-const readTooltipGeometry = async (page: Page): Promise<{ offscreen: boolean; unpainted: boolean; text: string }> =>
+const readTooltipGeometry = async (
+  page: Page
+): Promise<{ missing: boolean; offscreen: boolean; unpainted: boolean; text: string }> =>
   page.evaluate(() => {
     const tooltip = document.querySelector<HTMLElement>('[role="tooltip"]');
-    if (!tooltip) return { offscreen: true, unpainted: true, text: 'no tooltip' };
+    // Reported separately from the geometry: a tooltip that never appeared is a different
+    // failure from one that appeared in the wrong place, and folding the two into
+    // "offscreen" reports the first as the second.
+    if (!tooltip) return { missing: true, offscreen: false, unpainted: false, text: '' };
 
     const rect = tooltip.getBoundingClientRect();
 
@@ -105,6 +117,7 @@ const readTooltipGeometry = async (page: Page): Promise<{ offscreen: boolean; un
     tooltip.style.pointerEvents = previous;
 
     return {
+      missing: false,
       offscreen: rect.left < 0 || rect.top < 0 || rect.right > window.innerWidth || rect.bottom > window.innerHeight,
       unpainted: !hit || (hit !== tooltip && !tooltip.contains(hit)),
       text: tooltip.textContent ?? '',
@@ -358,14 +371,35 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
   });
 
   test('a long-pressed flyout is anchored so the whole menu fits on screen', async ({ page }) => {
-    // The brush group sits low in a rail that scrolls, so anchoring its flyout to the
-    // tile's top edge ran the last item off the bottom of a 720px window.
-    await longPressWithMouse(page, 'brush');
+    // `shape` is the last group in the two-column default, and its six-item menu is 254px:
+    // anchored to the tile's top edge it would run to 761 in a 720px window. Nothing else
+    // in the default layout comes near the fold, which is why this is the group to probe —
+    // `brush`, the group the other tests use, sits mid-rail and would pass with or without
+    // the vertical clamp.
+    await longPressWithMouse(page, 'shape');
 
     await expect(page.getByRole('menu')).toBeVisible();
     const geometry = await readFlyoutGeometry(page);
     expect(geometry.itemCount).toBeGreaterThan(1);
     expect(geometry.offscreen, 'flyout items laid out outside the viewport').toEqual([]);
+    expect(geometry.unpainted, 'flyout items whose centre is not painted (clipped by an ancestor)').toEqual([]);
+  });
+
+  test('clicking the menu itself keeps it open, though the menu is no longer inside the tile', async ({ page }) => {
+    // The flyout is portalled, so the outside-click handler can no longer ask
+    // `group.contains(target)`: a click on the menu's own padding reads as a click on an
+    // element outside the tile, and the menu would close under the pointer. It matches
+    // `data-toolbar-flyout` instead, which is what this pins.
+    await longPressWithMouse(page, 'shape');
+    const menu = page.getByRole('menu');
+    await expect(menu).toBeVisible();
+    const box = await menu.boundingBox();
+    if (!box) throw new Error('no box for the flyout');
+
+    // `p-1.5` of padding inside the menu's border, which is not inside any item.
+    await page.mouse.click(box.x + 2, box.y + 2);
+
+    await expect(menu).toBeVisible();
   });
 
   test('a right-clicked flyout is painted too', async ({ page }) => {
@@ -373,6 +407,46 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
 
     await expect(page.getByRole('menu')).toBeVisible();
     expectEveryItemPainted(await readFlyoutGeometry(page));
+  });
+
+  test('a right-clicked flyout still takes clicks once the hover tooltip has appeared', async ({ page }) => {
+    // A right-click opens the flyout at once and the hover tooltip 250ms later, so the
+    // tooltip is the overlay portalled last. When the portal wrapper was a hit target, its
+    // shrink-wrapped box sat over the first flyout item, `locator.click()` timed out on it,
+    // and the outside-click handler read the click as outside the group — the menu closed
+    // with nothing selected.
+    await openToolFlyoutViaRightClick(page, 'shape');
+    await page.getByTestId('tool-button-shape').hover();
+    // Well past `ToolTooltip`'s 250ms threshold, so the tooltip is definitely on screen.
+    await page.waitForTimeout(600);
+    await expect(page.getByRole('tooltip')).toBeVisible();
+
+    await page.getByTestId('tool-flyout-item-shape-ellipse-tool').click();
+
+    await expect(page.getByRole('menu')).toBeHidden();
+    await expect(page.getByTestId('tool-button-shape')).toHaveAttribute('aria-label', 'Ellipse Tool');
+  });
+
+  test('Tab closes an open flyout, with focus on the tile or inside the menu', async ({ page }) => {
+    const brushButton = page.getByTestId('tool-button-brush');
+    await expect(brushButton).toBeVisible();
+
+    // Focus is set explicitly rather than left to the browser as a side effect of
+    // mousedown: this test is about what Tab does from each of the two places focus can
+    // be, so it has to be in one of them rather than usually in one of them.
+    await brushButton.focus();
+    await longPressWithMouse(page, 'brush');
+    await expect(page.getByRole('menu')).toBeVisible();
+    await expect(brushButton).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('menu')).toBeHidden();
+
+    // ArrowDown is what moves focus into the menu; from there Tab leaves it.
+    await brushButton.press('ArrowDown');
+    await expect(page.getByRole('menu')).toBeVisible();
+    await expect(page.getByRole('menuitemradio').first()).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(page.getByRole('menu')).toBeHidden();
   });
 
   test('a hovered tool tooltip is painted, not clipped by the rail', async ({ page }) => {
@@ -387,6 +461,7 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     await page.waitForTimeout(TOOLTIP_SETTLE_MS);
 
     const geometry = await readTooltipGeometry(page);
+    expect(geometry.missing, 'no tooltip appeared within its hover threshold').toBe(false);
     expect(geometry.text).toContain('Brush Tool');
     expect(geometry.offscreen, 'tooltip laid out outside the viewport').toBe(false);
     expect(geometry.unpainted, 'tooltip is laid out but not painted (clipped by an ancestor)').toBe(false);

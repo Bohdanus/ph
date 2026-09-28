@@ -79,7 +79,7 @@ needs, and what nobody claimed because the worktree is gone. `npm run board --
 help` is the full command list; `--json` works on every command except `watch`.
 
 **It is NOT the handoff documents.** `HANDOFF.md`, `TEST-FLAKES.md` and
-`e2e/OPEN-PROBLEMS.md` stay the durable, reviewable record of what is known
+`e2e/OPEN_PROBLEMS.md` stay the durable, reviewable record of what is known
 about this codebase, written by hand and merged through a pull request. The
 board answers the questions prose cannot: what is true _right now_, between
 concurrent agents. `board import` copies the documents' items onto the board
@@ -125,6 +125,29 @@ b.ts` takes both, and gives back **only the ones it took** if the claim is
 It is a command, not a gate. Nothing in `.husky/` calls it, and no commit may be
 blocked on it.
 
+### The board is cross-session, so a merge can announce itself
+
+The database is global with **no session scoping at all** — `scripts/agent-board.mjs`
+never mentions a session id, and identity is the git branch — so a `board note` from
+one worktree is in the same log every other session's `board watch --follow` tails.
+That is the whole reason the board can prevent a merge mess, and it is why these four
+are not optional politeness:
+
+- **Claim before the first edit**, not after: `board claim <id> --files <paths you will
+touch>`, or `board hold <path>` for a path with no issue. `board check <paths>` before
+  you edit anything a brief, a handoff, or a sibling subagent names. Both exit 1 on a
+  path somebody else holds, and the refusal names the holder.
+- **Claim the merge, not just the files.** A branch that is about to land carries a
+  hazard to every path in it, and no file claim expresses that. `board note` the branch
+  and the paths _before_ you start resolving, so an agent holding one of them learns it
+  before it edits rather than after.
+- **A delivered note is a log write, not a delivery.** There is no recipient column, no
+  wake and no activity notice: `note` is broadcast, and `comment <id>` needs an issue
+  somebody filed. Put the fact where a running agent will meet it anyway — a claimed
+  path it must `check`, and a `board note` naming its own files.
+- **An empty board is not evidence that nobody is working.** A file nobody claimed
+  reads as free, so claiming is what makes a second reader of the path find out.
+
 - **RUN FROM THE REPO ROOT** (`ph`), via the shell tool's `workdir`. A parent directory silently resolves the wrong package and the wrong tsconfig.
 - **`npm run tsc` IS THE ONLY TRUSTWORTHY TYPECHECK. NEVER GATE ON `npx tsc --noEmit`.** `tsc -b` covers `tsconfig.app/node/e2e.json`, so it also checks the Playwright specs and the test files. `npx tsc --noEmit` resolves the app tsconfig alone, which excludes tests: it exits 0 while the tests do not compile.
 - **The bare `npx tsc` type-checks ZERO files and always exits 0.** The root `tsconfig.json` is a solution stub — `"files": []`, no `include`, three `references` — so `npx tsc --showConfig -p tsconfig.json` prints `{"compilerOptions": {}}` and the references. It is indistinguishable from a pass, and `.claude/settings.local.json` in the operator's ROOT checkout carries a `"allow": ["Bash(npx tsc:*)"]` wildcard that auto-approves exactly that command. That file is untracked and globally gitignored (`~/.config/git/ignore` has `**/.claude/settings.local.json`), so no worktree, `git status` or `git ls-files` can see it — its absence from your worktree is not its absence from the machine. Only `npm run tsc` (`tsc -b`) type-checks anything.
@@ -139,6 +162,26 @@ blocked on it.
 - **Already compliant if the session you are running in IS a worktree** — an Agent Manager worktree session, or any checkout under `.kilo/worktrees/`. `git rev-parse --show-toplevel` before you assume you are on main; never nest a second worktree inside one.
 - The 1%: a read-only investigation, an operator-requested one-line doc fix, a hotfix the operator asked for on main. None of those is a feature.
 - **Never commit feature work in the main worktree**, and stage only your own paths everywhere. Do not edit in main and move the change to a worktree afterwards: that leaves an unreviewed diff in a shared checkout and a worktree that does not build.
+- **THE MAIN WORKTREE IS A LANDING, NOT A NEGOTIATION.** A branch is merged into
+  `main` only after `main` has already been merged or rebased **into the branch, in
+  the branch's own worktree**, and the gates re-run there. The merge into `main` is
+  then a fast-forward or a mechanical two-parent commit with nothing to decide.
+  Merging a stale branch straight into `main` inverts that order and puts the
+  conflicts in a shared checkout where every other session is committing: measured on
+  one branch here, `git merge audit/stashed-docs` from the main worktree produced 7
+  unmerged paths, and unwinding it needed `git merge --abort` plus a forced
+  `git reset --hard` in a checkout two other sessions were writing to.
+- **Never resolve a conflict in the main worktree**, and never repair one there with
+  `reset --hard`, `checkout --ours`/`--theirs`, `hash-object`, or `update-index`. The
+  first two destroy another session's uncommitted work; the last two write an index
+  entry no later `git status` reconciles, so the next agent reads a clean index over a
+  clobbered file. If a merge conflicts in `main`, `git merge --abort` and redo it in the
+  worktree — that is a one-command recovery while the merge is uncommitted, and an
+  archaeology project afterwards.
+- **`git stash` is global, not per-worktree.** It lives in the common git dir, so
+  `git stash pop` in one worktree can pop another agent's stash. Prefer a worktree over
+  a stash; if you must stash, `git stash push -m "<branch>: <what>"` and read the pop
+  output before you rely on it.
 
 Five traps that cost real debugging time:
 
@@ -223,7 +266,9 @@ It is worth knowing for what it is good: cost tracks blast radius, and so does r
 3. **Covered** by a test that fails without the change. A fix that cannot be pinned by a test is a fix that comes back.
 4. **Documented**: handoff docs updated, and any new gate, test trap, or architecture boundary written down where the next agent looks.
 5. **Reviewed by someone else**, thoroughly: the diff, the surrounding code, the tests, and its own load-bearing claim re-run. Not the author. A finding sends the task back.
-6. **Merged into `main`**: conflicts resolved in the worktree, pushed, `main` green afterwards.
+6. **Merged into `main`**: `main` first merged or rebased into the branch **in the
+   worktree**, conflicts resolved there, gates re-run there, and only then the merge
+   into `main` — which has nothing left to decide. Pushed, `main` green afterwards.
 7. **Reported as done**: what changed, what validation ran, what the review said.
 
 - **A green gate is the floor, not the review.** `gate:commit` and `gate:push` are mechanical, and a review that was not performed is not a review that found nothing.
