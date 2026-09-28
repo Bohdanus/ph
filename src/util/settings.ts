@@ -31,8 +31,11 @@ export function saveLastSettings(args: ToolArgs) {
   } else if (toolName === 'shape') {
     lastSavedSettings.shape = cloneDeep(withNormalizedFigure(omit(args as ShapeToolArgs, 'start', 'end')));
   } else if (toolName === 'crop') {
-    lastSavedSettings.crop = cloneDeep(omit(args as CropToolArgs, 'rect'));
-    // deliberately not storing for those three because they have a different philosophy, unfortunately
+    // `preRatioRect` goes the way `rect` does. `aspectRatio` is persisted while the rect is not, so a
+    // restored session arrives with a ratio and no rect; a persisted pre-ratio rect would fill that
+    // gap from a different document, and the next `Free`/`Original` would restore a framing the user
+    // never drew on this one. Both are presentation state.
+    lastSavedSettings.crop = cloneDeep(omit(args as CropToolArgs, 'rect', 'preRatioRect'));
   } else if (toolName === 'transform') {
     lastSavedSettings.transform = cloneDeep(args);
   } else if (toolName === 'reposition') {
@@ -66,10 +69,15 @@ export function saveLastSettings(args: ToolArgs) {
     (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(
       withNormalizedFigure(omit(args as unknown as ShapeToolArgs, 'start', 'end'))
     ) as ToolArgs;
+  } else if (toolName === 'brush' || toolName === 'pencil' || toolName === 'color-replacement') {
+    // The Photoshop paint bar writes Size, Opacity, Smoothing and Mode through
+    // `setToolArgs`, which lands here on every change. Persisting only the tool name
+    // — as the arm below still does for the pen and shape families — throws those
+    // four away on the same tick, so the next tool switch re-seeds the bar from
+    // `{ toolName }` and every control silently resets. `points` is stroke geometry,
+    // not a setting, so it is emptied the way `draw` empties it above.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ ...args, points: [] });
   } else if (
-    toolName === 'brush' ||
-    toolName === 'pencil' ||
-    toolName === 'color-replacement' ||
     toolName === 'pen' ||
     toolName === 'freeform-pen' ||
     toolName === 'curvature-pen' ||
@@ -90,6 +98,33 @@ export function saveLastSettings(args: ToolArgs) {
     lastSavedSettings.color = cloneDeep(args as ColorsToolArgs);
   } else if (toolName === 'levels') {
     lastSavedSettings.levels = cloneDeep(args as LevelsToolArgs);
+  } else if (
+    toolName === 'elliptical-selection' ||
+    toolName === 'quick-selection' ||
+    toolName === 'gradient' ||
+    toolName === 'sharpen'
+  ) {
+    // None of these carry stroke geometry, so the whole args object is the
+    // settings — the same treatment the magic wand gets above.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(args);
+  } else if (
+    toolName === 'smudge' ||
+    toolName === 'dodge' ||
+    toolName === 'burn' ||
+    toolName === 'clone-stamp' ||
+    toolName === 'eraser'
+  ) {
+    // These five are brushes, so `points` is the stroke that was just committed and not
+    // a setting: reseeding it would hand the next drag the previous one. Emptied the
+    // way `draw` (:27) and `feather-magnetic-lasso` (:44) empty theirs. Note that
+    // `clone-stamp.source` survives — a source point is a setting, and losing it is the
+    // difference between "stamp where you last cloned" and "stamp nothing".
+    //
+    // The eraser is here rather than in the arm above for exactly that reason: it erases
+    // along a stroke, so its `points` is the stroke too, and `EraserToolArgs.points` is
+    // required rather than optional. Persisting the last erased stroke would reappear in
+    // the options bar on the next tool switch.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep({ ...args, points: [] });
   } else {
     // Every `ToolName` is persisted above by design. Without this trap a tool added to
     // `ToolArgsByName` falls off the end of the chain, its settings are dropped, and its sliders

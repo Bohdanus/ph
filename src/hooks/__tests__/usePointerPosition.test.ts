@@ -372,6 +372,33 @@ describe('usePointerPosition', () => {
       expect(result.current.isMouseDown.current).toBe(false);
     });
 
+    it('refuses a non-primary release and leaves the captured pointer active', () => {
+      // The symmetric half of `isPointerDownValid`'s `button !== 0` refusal. Without it a
+      // right-button release mid left-drag is accepted on pointerId alone, so a tool area's
+      // release path — commit, claim release, all of it — runs for a release the press never
+      // made, and the tool areas' test doubles, which DO check `button`, pin behaviour the
+      // product does not have.
+      const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
+      const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));
+
+      act(() => {
+        result.current.isPointerDownValid(pointerEvent(el, { button: 0, pointerId: 5 }));
+      });
+      expect(result.current.isMouseDown.current).toBe(true);
+
+      let handled: boolean | undefined;
+      act(() => {
+        handled = result.current.isPointerUpValid(pointerEvent(el, { button: 2, pointerId: 5 }));
+      });
+
+      // Refused, so it neither ends the gesture nor tears its tracking down: the real left
+      // release still arrives and is the one that ends it.
+      expect(handled).toBe(false);
+      expect(el.releasePointerCapture).not.toHaveBeenCalled();
+      expect(result.current.pointerIdRef.current).toBe(5);
+      expect(result.current.isMouseDown.current).toBe(true);
+    });
+
     it('leaves state untouched on pointerup from a different pointer id', () => {
       const { el } = createContainer({ left: 0, top: 0, width: 200, height: 200 });
       const { result } = renderHook(() => usePointerPosition({ ref: createRef(el), imageSize: IMAGE }));

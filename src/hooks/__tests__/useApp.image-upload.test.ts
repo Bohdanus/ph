@@ -232,8 +232,15 @@ describe('useApp setImageFromUpload', () => {
       document: createPsdDocument(['Text is rasterized']),
     });
 
-    expect(harness.events).toEqual(['resizeCanvas:320x480', 'resizeCanvas:320x180', 'REPLACE_DOCUMENT']);
-    expect(harness.dispatch).toHaveBeenCalledExactlyOnceWith(
+    // The adoption lands after the replacement: the presentation scope is keyed by the owning
+    // document, so a registration published first would be filed under the outgoing one.
+    expect(harness.events).toEqual([
+      'resizeCanvas:320x480',
+      'resizeCanvas:320x180',
+      'REPLACE_DOCUMENT',
+      'ADOPT_LAYER_BITMAPS',
+    ]);
+    expect(harness.dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'REPLACE_DOCUMENT',
         payload: expect.objectContaining({

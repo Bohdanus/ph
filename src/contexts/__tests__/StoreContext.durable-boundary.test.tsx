@@ -487,36 +487,6 @@ describe('StoreContext store mutation coverage', () => {
   const baseline = baselineItem();
   const blur = toolItem('blur-edit', 'blur', { radius: 4 });
 
-  it('UPDATE_LAYERS does not recompute durable content (runtime-only transient)', () => {
-    const { getProbe, dispatch } = renderWithProbe();
-
-    act(() => {
-      dispatch()({
-        type: 'REPLACE_DOCUMENT',
-        payload: {
-          documentId: 'doc-mut',
-          history: [baseline, blur],
-          historyIndex: 1,
-          updates: { totalSize: initialSize },
-        },
-      });
-    });
-
-    const priorDocument = getProbe().store.durableDocument;
-    const priorDiagnostics = getProbe().store.durableDiagnostics;
-
-    act(() => {
-      dispatch()({
-        type: 'UPDATE_LAYERS',
-        payload: {},
-      });
-    });
-
-    const after = getProbe().store;
-    expect(after.durableDocument).toBe(priorDocument);
-    expect(after.durableDiagnostics).toBe(priorDiagnostics);
-  });
-
   it('BATCH_UPDATES does not recompute durable content (runtime-only transient)', () => {
     const { getProbe, dispatch } = renderWithProbe();
 
@@ -685,7 +655,7 @@ describe('StoreContext DurableDocumentStatus contract', () => {
     // the sidecar stale because runtime state moved past the conversion.
     const durableDocument = getProbe().store.durableDocument;
     act(() => {
-      dispatch()({ type: 'UPDATE_LAYERS', payload: {} });
+      dispatch()({ type: 'BATCH_UPDATES', payload: { toolName: 'draw' } });
     });
 
     const store = getProbe().store;

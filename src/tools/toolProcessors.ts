@@ -1,18 +1,25 @@
 import type { BitmapSource, Pos, Size } from '../contexts/general-types.ts';
 import type { ToolArgs, ToolName } from '../contexts/tool-types.ts';
 import { blur } from './blur.ts';
+import { cloneStamp } from './cloneStamp.ts';
 import { colors } from './colors.ts';
 import { crop } from './crop.ts';
+import { burn, dodge } from './dodgeBurn.ts';
 import { draw, type DrawToolArgs } from './draw.ts';
+import { ellipticalSelection } from './ellipticalSelection.ts';
 import { eraser } from './eraser.ts';
 import { featherMagneticLasso } from './featherMagneticLasso.ts';
+import { gradient } from './gradient.ts';
 import { levels } from './levels.ts';
 import { magicEraser, paintBucket } from './fill.ts';
 import { magicWand } from './magicWand.ts';
+import { quickSelection } from './quickSelection.ts';
 import { rectangularSelection } from './rectangularSelection.ts';
 import { reposition } from './reposition.ts';
 import { selection } from './selection.ts';
 import { shape } from './shape.ts';
+import { sharpen } from './sharpen.ts';
+import { smudge } from './smudge.ts';
 import { text } from './text.ts';
 import { transform } from './transform.ts';
 
@@ -49,7 +56,6 @@ export type ToolCommitKind =
 
 export type ToolProcessorDefinition = {
   creator?: boolean;
-  flattenRequired?: boolean;
   commit: ToolCommitKind;
   replay: Readonly<{
     kind: ToolReplayKind;
@@ -189,6 +195,62 @@ export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
     replay: replay('selection', false),
     // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
     imageProcessor: rectangularSelection,
+  },
+  // The Photoshop focus family below, plus the tonal tools, are all `commit: 'raster'`
+  // and therefore all get durable shadow support with no durable code of their own:
+  // `history-adapter.ts:416-424` converts ANY `commit: 'raster'` tool into an
+  // `apply-raster-processor` operation keyed on `args.toolName`, with no allowlist to
+  // extend. A new raster tool is replayable in the shadow document the day it is
+  // registered here.
+  'elliptical-selection': {
+    commit: 'selection',
+    creator: true,
+    replay: replay('selection', false),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: ellipticalSelection,
+  },
+  'quick-selection': {
+    commit: 'selection',
+    creator: true,
+    replay: replay('selection', false),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: quickSelection,
+  },
+  gradient: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: gradient,
+  },
+  sharpen: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: sharpen,
+  },
+  smudge: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: smudge,
+  },
+  dodge: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: dodge,
+  },
+  burn: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: burn,
+  },
+  'clone-stamp': {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    // @ts-expect-error Each processor narrows ToolArgs to its own registered name.
+    imageProcessor: cloneStamp,
   },
   brush: {
     commit: 'raster',

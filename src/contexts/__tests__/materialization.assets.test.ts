@@ -403,14 +403,82 @@ describe('materialization source kinds', () => {
     registry.shutdown();
   });
 
-  it('renders a vector source through its deterministic creator', async () => {
+  // The `figure` each tool must reach `drawShape` with, and the drawing call that proves it
+  // got there. `normalizeFigure` (`src/tools/shape.ts:23-27`) falls back to `'rectangle'` for
+  // anything unrecognised, so a table of tool names alone would pass with every row drawing a
+  // rectangle -- `expect(bitmap).toBeDefined()` cannot tell two figures apart. Each expectation
+  // below is therefore the primitive `drawShape` uses for that figure, and the `lineTo` counts
+  // are the side counts (triangle 3, polygon 5, line 2 points) the loop at `shape.ts:169-177`
+  // produces, so a figure that silently degraded to a rectangle fails its row. Every row also
+  // asserts the fill calls did NOT happen: these args carry no `hasFill` and no `toolMode`, so
+  // `hasFill` is falsy at `shape.ts:152` and no branch may reach a fill.
+  it.each([
+    [
+      'shape',
+      'rectangle',
+      (ctx: CanvasRenderingContext2D) => {
+        expect(ctx.strokeRect).toHaveBeenCalledOnce();
+        expect(ctx.fillRect).not.toHaveBeenCalled();
+        expect(ctx.ellipse).not.toHaveBeenCalled();
+        expect(ctx.fill).not.toHaveBeenCalled();
+      },
+    ],
+    [
+      'rectangle',
+      'rectangle',
+      (ctx: CanvasRenderingContext2D) => {
+        expect(ctx.strokeRect).toHaveBeenCalledOnce();
+        expect(ctx.fillRect).not.toHaveBeenCalled();
+        expect(ctx.ellipse).not.toHaveBeenCalled();
+        expect(ctx.fill).not.toHaveBeenCalled();
+      },
+    ],
+    [
+      'ellipse',
+      'oval',
+      (ctx: CanvasRenderingContext2D) => {
+        expect(ctx.ellipse).toHaveBeenCalledOnce();
+        expect(ctx.strokeRect).not.toHaveBeenCalled();
+        expect(ctx.fill).not.toHaveBeenCalled();
+      },
+    ],
+    [
+      'triangle',
+      'triangle',
+      (ctx: CanvasRenderingContext2D) => {
+        expect(ctx.closePath).toHaveBeenCalledOnce();
+        expect(ctx.lineTo).toHaveBeenCalledTimes(2);
+        expect(ctx.fill).not.toHaveBeenCalled();
+      },
+    ],
+    [
+      'polygon',
+      'polygon',
+      (ctx: CanvasRenderingContext2D) => {
+        expect(ctx.closePath).toHaveBeenCalledOnce();
+        expect(ctx.lineTo).toHaveBeenCalledTimes(4);
+        expect(ctx.fill).not.toHaveBeenCalled();
+      },
+    ],
+    [
+      'line',
+      'line',
+      (ctx: CanvasRenderingContext2D) => {
+        expect(ctx.lineTo).toHaveBeenCalledOnce();
+        expect(ctx.closePath).not.toHaveBeenCalled();
+        expect(ctx.ellipse).not.toHaveBeenCalled();
+        expect(ctx.strokeRect).not.toHaveBeenCalled();
+        expect(ctx.fill).not.toHaveBeenCalled();
+      },
+    ],
+  ] as const)('renders a %s vector source through its deterministic creator', async (toolName, figure, drawn) => {
     const registry = new AssetRegistry();
     const layer = makeLayer(
       'layer-1',
       Object.freeze({
         kind: 'vector' as const,
-        toolName: 'shape',
-        args: Object.freeze({ toolName: 'shape', figure: 'rectangle', start: { x: 0, y: 0 }, end: { x: 4, y: 4 } }),
+        toolName,
+        args: Object.freeze({ toolName, figure, start: { x: 0, y: 0 }, end: { x: 4, y: 4 } }),
         size: { width: 10, height: 10 },
         sourcePos: Object.freeze({ x: 0, y: 0, width: 10, height: 10 }),
       }),
@@ -419,7 +487,11 @@ describe('materialization source kinds', () => {
 
     const result = await materializeLayer(layer, makeRequest(registry));
 
-    expect(result.bitmap).toBeDefined();
+    expect(result.bitmap).toMatchObject({ width: 10, height: 10 });
+    // `shape` allocates and draws its own canvas (`src/tools/shape.ts:225-232`), which is the
+    // first one `materializeLayer` reaches; anything after it is the staging canvas the
+    // materializer composites onto. Assert on the source canvas, not the last one.
+    drawn(recordedContexts[0]);
     result.lease.release();
     registry.shutdown();
   });

@@ -2,7 +2,7 @@ import { type Page, type Locator, type TestInfo } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
-import { imageBoundsToCss } from './screenshot-scale';
+import { imageBoundsToCss, viewportRectToPageRect } from './screenshot-scale';
 
 export interface BoundingBox {
   x: number;
@@ -49,6 +49,61 @@ export const LINE_START_X = 150;
 export const LINE_START_Y = 150;
 export const LINE_END_X = 350;
 export const LINE_END_Y = 150;
+
+/**
+ * The document the app opens by default, and the size the export baselines describe.
+ */
+export const DEFAULT_DOCUMENT_WIDTH = 800;
+export const DEFAULT_DOCUMENT_HEIGHT = 600;
+
+/**
+ * Map a point in DOCUMENT space to an offset within the canvas box.
+ *
+ * The canvas element is `w-full h-full` of its grid area, and `usePointerPosition` fits the
+ * document into that box and centres it, so a document point lands at a different offset
+ * for every canvas size. A gesture specified in canvas offsets is therefore specified
+ * relative to the window, and the document it actually touches changes whenever the canvas
+ * resizes — which is what coupled the export visual-regression baselines to the shell's
+ * layout. Fixing a desktop overflow that changed the canvas from 974x890 to 974x583 moved
+ * the export by 459 pixels with no change to the export path.
+ *
+ * This mirrors the app's own mapping exactly (`src/hooks/usePointerPosition.ts:72-89`:
+ * `scale = min(outerW/imageW, outerH/imageH)`, then the leftover split evenly as the
+ * offset), so a caller can name a document point and get the same pixel whatever the
+ * viewport.
+ */
+export function documentToCanvasOffset(
+  box: { width: number; height: number },
+  documentX: number,
+  documentY: number
+): { x: number; y: number } {
+  const scale = Math.min(box.width / DEFAULT_DOCUMENT_WIDTH, box.height / DEFAULT_DOCUMENT_HEIGHT);
+  const offsetX = (box.width - DEFAULT_DOCUMENT_WIDTH * scale) / 2;
+  const offsetY = (box.height - DEFAULT_DOCUMENT_HEIGHT * scale) / 2;
+
+  return { x: offsetX + documentX * scale, y: offsetY + documentY * scale };
+}
+
+/**
+ * The same mapping read off the live app, for asserting that `documentToCanvasOffset`
+ * still agrees with it.
+ *
+ * Returns the document point the app believes a given canvas offset refers to, which is
+ * `usePointerPosition`'s own inverse. If these two ever disagree, a document-space gesture
+ * is landing somewhere other than where the helper said, and every document-space spec is
+ * silently measuring the wrong pixel.
+ */
+export function canvasOffsetToDocument(
+  box: { width: number; height: number },
+  canvasX: number,
+  canvasY: number
+): { x: number; y: number } {
+  const scale = Math.min(box.width / DEFAULT_DOCUMENT_WIDTH, box.height / DEFAULT_DOCUMENT_HEIGHT);
+  const offsetX = (box.width - DEFAULT_DOCUMENT_WIDTH * scale) / 2;
+  const offsetY = (box.height - DEFAULT_DOCUMENT_HEIGHT * scale) / 2;
+
+  return { x: (canvasX - offsetX) / scale, y: (canvasY - offsetY) / scale };
+}
 
 export const CANVAS_REDRAW_TIMEOUT_MS = 10_000;
 export const CANVAS_REDRAW_POLL_INTERVAL_MS = 100;
@@ -172,6 +227,94 @@ export async function loadImageData(screenshot: Buffer): Promise<ImageDataResult
 }
 
 /**
+ * A clip positioned so the region it names is actually rendered, plus the undo for
+ * whatever scrolling that took.
+ */
+interface OnScreenClip {
+  clip: Required<ClipOptions>;
+  restore: () => Promise<void>;
+}
+
+/** Viewport size and the page's scrollable extent, read together so they cannot disagree. */
+interface PageViewport {
+  width: number;
+  height: number;
+  scrollX: number;
+  scrollY: number;
+  maxScrollY: number;
+}
+
+async function readPageViewport(page: Page): Promise<PageViewport> {
+  return page.evaluate(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+    scrollX: window.scrollX,
+    scrollY: window.scrollY,
+    maxScrollY: Math.max(0, document.documentElement.scrollHeight - window.innerHeight),
+  }));
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(value, max));
+}
+
+/**
+ * Returns a `page.screenshot`-ready clip for a region that is not currently in view, and
+ * puts the window back when the caller is done with it.
+ *
+ * `page.screenshot({ clip })` can only photograph what is on screen: Playwright trims the
+ * clip against the viewport, and a region that is entirely above or below it collapses to
+ * zero height and throws `Clipped area is either empty or outside the resulting image`.
+ *
+ * This is a SAFETY NET, not a workaround for a bug that is present. The rail now declares
+ * `min-h-0 overflow-y-auto`, so the page no longer outgrows a 720px viewport and no region
+ * of a 583px canvas can be off screen. It stays because the failure it prevents is silent
+ * and total — the capture throws, or worse, photographs the app's own dark header and
+ * reports success — and because "the page does not scroll" is a property of the current
+ * layout rather than of the helper's contract. If a future change reintroduces an
+ * overflowing page, the read below degrades to working instead of to a false negative.
+ *
+ * The scroll is restored rather than left in place because a caller's later
+ * `page.mouse` coordinates are viewport-relative and were built against the window it
+ * expects to still be in.
+ */
+async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<OnScreenClip> {
+  const viewport = await readPageViewport(page);
+  const pageRect = viewportRectToPageRect(clip, { x: viewport.scrollX, y: viewport.scrollY });
+  const alreadyVisible =
+    pageRect.y >= viewport.scrollY && pageRect.y + pageRect.height <= viewport.scrollY + viewport.height;
+
+  if (alreadyVisible) return { clip, restore: async () => undefined };
+
+  // Centre the region in the viewport, then let the page clamp it — near the top or the
+  // bottom of a tall document the ideal position is not reachable, and a request the
+  // browser cannot satisfy must not be sent as if it had been.
+  const targetY = clamp(pageRect.y - Math.round((viewport.height - pageRect.height) / 2), 0, viewport.maxScrollY);
+  await page.evaluate((y) => window.scrollTo(0, y), targetY);
+  const scrolledTo = await page.evaluate(() => window.scrollY);
+
+  return {
+    clip: { ...clip, y: pageRect.y - scrolledTo },
+    restore: async () => {
+      await page.evaluate(({ x, y }) => window.scrollTo(x, y), { x: viewport.scrollX, y: viewport.scrollY });
+    },
+  };
+}
+
+/**
+ * The window's scroll offset, read at the moment a caller needs it.
+ *
+ * The one place in the helpers that reads page state rather than deriving geometry from a
+ * box, and shaped like `getDevicePixelRatio` (cdp-helpers.ts): a page function, read at the
+ * call site. Caching it would be wrong rather than merely stale — `clickToolButton` scrolls
+ * the window by 440px in this build, so an offset read once is wrong by a different amount
+ * before and after any tool click.
+ */
+export async function getPageScroll(page: Page): Promise<{ x: number; y: number }> {
+  return page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
+}
+
+/**
  * Returns the workspace canvas locator.
  *
  * `data-testid="workspace-canvas"` is the only selector. An earlier version paired it
@@ -209,10 +352,13 @@ export async function takeLineScreenshot(
   }
   const screenshotPath = path.join(outputDir, `${name}.png`);
   await fs.mkdir(outputDir, { recursive: true });
-  const screenshot = await page.screenshot({
-    path: screenshotPath,
-    clip: actualClip,
-  });
+  const onScreen = await onScreenClip(page, actualClip);
+  let screenshot: Buffer;
+  try {
+    screenshot = await page.screenshot({ path: screenshotPath, clip: onScreen.clip });
+  } finally {
+    await onScreen.restore();
+  }
   await testInfo.attach(name, { path: screenshotPath, contentType: 'image/png' });
   return screenshot;
 }
@@ -377,7 +523,15 @@ export async function waitForCanvasPixels(
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {
-    if (await predicate(await page.screenshot({ clip }))) return;
+    // Re-derived every poll rather than hoisted: the window may have moved under us, and a
+    // stale clip photographs the wrong region. `onScreenClip` is a no-op when the region is
+    // already in view, which is every poll in the current layout.
+    const onScreen = await onScreenClip(page, clip);
+    try {
+      if (await predicate(await page.screenshot({ clip: onScreen.clip }))) return;
+    } finally {
+      await onScreen.restore();
+    }
     if (Date.now() >= deadline) {
       throw new Error(`Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms`);
     }

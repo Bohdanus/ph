@@ -9,6 +9,7 @@ import {
   type DurableDocument,
   type DurableFilter,
   type DurableHistoryEntry,
+  type DurableLayerPropertyPatch,
   type DurableLayerSnapshot,
   type DurableLayerSource,
   type DurableOperation,
@@ -239,7 +240,7 @@ function frameFromLegacy(
         : documentFrameFromSize(initialSize);
 }
 
-function entry(id: string, operation: DurableOperation, enabled = true): DurableHistoryEntry {
+function entry<Op extends DurableOperation>(id: string, operation: Op, enabled = true): DurableHistoryEntry<Op> {
   return Object.freeze({ id, schemaVersion: DURABLE_SCHEMA_VERSION, enabled, operation });
 }
 
@@ -269,7 +270,7 @@ export function deriveSetDocumentFrameEntry(
  * Structural guard for a durable selection snapshot.
  *
  * A key-absent `activeSelectionId` is ACCEPTED, because `replayHistory` reads it
- * as `next?.activeSelectionId ?? null` (`history-replay.ts:107`): a snapshot that
+ * as `next?.activeSelectionId ?? null` (`history-replay.ts:102`): a snapshot that
  * omits the id still retains its selections and only loses the active id.
  * Rejecting that shape here would make the shadow clear selections that legacy
  * replay keeps. The guard only asks whether the value can be read as a snapshot
@@ -323,6 +324,83 @@ export function deriveSetSelectionEntry(
       ? selectionSnapshot(previous.selections, previous.activeSelectionId)
       : selectionSnapshot(currentSelections.selections, currentSelections.activeSelectionId),
     after: selectionSnapshot(next.selections, next.activeSelectionId),
+  });
+  return entry(item.id, operation, isEntryEnabled(item));
+}
+
+/**
+ * The layer-property actions the append boundary translates, and the single
+ * property each one owns. This map is the only place membership is stated: a
+ * per-action if/else beside it would let the two disagree, and an action added
+ * here without a property arm would make conversion record no operation while
+ * the boundary reported an invalid value.
+ *
+ * The value is the closed set of properties an action may own, not every key
+ * `DurableLayerPropertyPatch` admits. Narrowing it here is what lets both the
+ * derivation and the append validator exhaustively switch on the owned key —
+ * widening it to `keyof DurableLayerPropertyPatch` would let a new action own
+ * `opacity` and fall into the visibility arm as a silent default.
+ */
+type LayerPropertyKey = 'visible' | 'name';
+
+const LAYER_PROPERTY_BY_ACTION = {
+  [SHOW_LAYER_ACTION]: 'visible',
+  [HIDE_LAYER_ACTION]: 'visible',
+  [RENAME_LAYER_ACTION]: 'name',
+} as const satisfies Partial<Record<ActionType, LayerPropertyKey>>;
+
+type LayerPropertyAction = keyof typeof LAYER_PROPERTY_BY_ACTION;
+type LayerPropertyOperation = Extract<DurableOperation, { kind: 'set-layer-properties' }>;
+
+export function isSetLayerPropertiesAction(actionName: ActionType): actionName is LayerPropertyAction {
+  return Object.hasOwn(LAYER_PROPERTY_BY_ACTION, actionName);
+}
+
+/**
+ * The property an action owns, or `null` when it is not a layer-property
+ * action. Callers that must check a planned operation against the legacy entry
+ * use this rather than re-deriving, so the check reads the action and not the
+ * derivation that produced the thing being checked.
+ */
+export function layerPropertyKeyFor(actionName: ActionType): LayerPropertyKey | null {
+  return isSetLayerPropertiesAction(actionName) ? LAYER_PROPERTY_BY_ACTION[actionName] : null;
+}
+
+/**
+ * The patch a planned entry carries, or `null` when there is no entry or it is
+ * not a layer-property operation. A writer needs this to apply the same patch
+ * the store will publish; keeping the operation-kind narrowing here means the
+ * writer does not restate which kind it is reading.
+ */
+export function derivedLayerPropertyPatch(
+  plannedEntry: DurableHistoryEntry | null | undefined
+): DurableLayerPropertyPatch | null {
+  const operation = plannedEntry?.operation;
+  return operation?.kind === 'set-layer-properties' ? operation.patch : null;
+}
+
+/**
+ * The single derivation of the durable layer-property operations supported at
+ * the append boundary. Keeping the action whitelist here makes conversion and
+ * a live writer use the same semantics without accepting arbitrary patches.
+ */
+export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistoryEntry<LayerPropertyOperation> | null {
+  if (!isSetLayerPropertiesAction(item.actionName)) return null;
+  let patch: DurableLayerPropertyPatch;
+  if (LAYER_PROPERTY_BY_ACTION[item.actionName] === 'name') {
+    const name = (item.args as { name?: unknown } | undefined)?.name;
+    if (typeof name !== 'string') return null;
+    patch = { name };
+  } else {
+    // Visibility comes from the action, never from `args.visible`: that is the
+    // rule legacy replay applies, and a hand-built args object must not be able
+    // to record an entry whose durable patch contradicts the action.
+    patch = { visible: item.actionName === SHOW_LAYER_ACTION };
+  }
+  const operation: LayerPropertyOperation = Object.freeze({
+    kind: 'set-layer-properties',
+    layerId: item.layerId,
+    patch: Object.freeze(patch),
   });
   return entry(item.id, operation, isEntryEnabled(item));
 }
@@ -502,45 +580,42 @@ export function legacyHistoryToDurable(
         const layer = convertLayer(runtimeLayer, documentId, registry);
         if (enabled) currentLayers.set(layer.id, layer);
         operation = Object.freeze({ kind: 'create-layer', layer });
-      } else if (item.actionName === SHOW_LAYER_ACTION || item.actionName === HIDE_LAYER_ACTION) {
-        operation = Object.freeze({
-          kind: 'set-layer-properties',
-          layerId: item.layerId,
-          patch: { visible: item.actionName === SHOW_LAYER_ACTION },
-        });
-        const layer = currentLayers.get(item.layerId);
-        if (enabled && layer)
-          currentLayers.set(
-            item.layerId,
-            cloneLayerSnapshot({ ...layer, visible: item.actionName === SHOW_LAYER_ACTION })
-          );
-      } else if (item.actionName === RENAME_LAYER_ACTION) {
-        const name = (item.args as { name?: unknown } | undefined)?.name;
-        if (typeof name === 'string') {
-          operation = Object.freeze({ kind: 'set-layer-properties', layerId: item.layerId, patch: { name } });
+      } else if (isSetLayerPropertiesAction(item.actionName)) {
+        const layerPropertiesEntry = deriveSetLayerPropertiesEntry(item);
+        if (layerPropertiesEntry) {
+          operation = layerPropertiesEntry.operation;
           const layer = currentLayers.get(item.layerId);
-          if (enabled && layer) currentLayers.set(item.layerId, cloneLayerSnapshot({ ...layer, name }));
+          if (enabled && layer) {
+            currentLayers.set(item.layerId, cloneLayerSnapshot({ ...layer, ...layerPropertiesEntry.operation.patch }));
+          }
         }
       } else if (item.actionName === REORDER_ACTION) {
         const args = item.args as { layerToMoveId?: LayerId; afterWhichLayerId?: LayerId | null } | undefined;
-        if (args?.layerToMoveId && currentLayers.has(args.layerToMoveId)) {
+        const layerToMoveId = args?.layerToMoveId;
+        const afterWhichLayerId = args?.afterWhichLayerId;
+        // `replayHistory` skips the move entirely when either id is absent
+        // (`history-replay.ts:127`), leaving the order untouched, so conversion
+        // records nothing and leaves `currentLayers` alone. A named but missing
+        // anchor is not a placement at the bottom: `remaining.indexOf` would be
+        // -1, and `+ 1` would record a move to index 0 that the document never
+        // performs. The cursor map below already treats a null operation as
+        // "map to the preceding durable cursor", the same as a dropped rename.
+        const anchorPresent = !afterWhichLayerId || currentLayers.has(afterWhichLayerId);
+        if (layerToMoveId && currentLayers.has(layerToMoveId) && anchorPresent) {
           const order = Object.fromEntries(
             [...currentLayers.values()]
               .sort((left, right) => left.order - right.order)
               .map((layer, index) => [layer.id, index])
           );
-          const moving = order[args.layerToMoveId];
-          const remaining = Object.keys(order).filter((id) => id !== args.layerToMoveId);
-          const targetIndex = args.afterWhichLayerId ? remaining.indexOf(args.afterWhichLayerId) + 1 : 0;
-          remaining.splice(Math.max(0, targetIndex), 0, args.layerToMoveId);
+          const remaining = Object.keys(order).filter((id) => id !== layerToMoveId);
+          const targetIndex = afterWhichLayerId ? remaining.indexOf(afterWhichLayerId) + 1 : 0;
+          remaining.splice(Math.max(0, targetIndex), 0, layerToMoveId);
           const orderByLayerId = Object.fromEntries(remaining.map((id, index) => [id, index]));
-          if (moving !== undefined) {
-            operation = Object.freeze({ kind: 'reorder-layers', orderByLayerId });
-            if (enabled) {
-              for (const [id, nextOrder] of Object.entries(orderByLayerId)) {
-                const layer = currentLayers.get(id);
-                if (layer) currentLayers.set(id, cloneLayerSnapshot({ ...layer, order: nextOrder }));
-              }
+          operation = Object.freeze({ kind: 'reorder-layers', orderByLayerId });
+          if (enabled) {
+            for (const [id, nextOrder] of Object.entries(orderByLayerId)) {
+              const layer = currentLayers.get(id);
+              if (layer) currentLayers.set(id, cloneLayerSnapshot({ ...layer, order: nextOrder }));
             }
           }
         }

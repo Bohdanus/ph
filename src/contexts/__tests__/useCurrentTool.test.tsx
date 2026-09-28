@@ -5,7 +5,16 @@ import type { ToolArgs } from '../tool-types.ts';
 import { CurrentToolProvider, useCurrentTool } from '../useCurrentTool.tsx';
 import { StoreProvider, useStore } from '../StoreContext.tsx';
 
-const { lastSavedSettings, seedShapeSettings } = vi.hoisted(() => {
+const { lastSavedSettings, seedDrawSettings, seedShapeSettings, seedTextSettings } = vi.hoisted(() => {
+  const makeSeedDrawSettings = () => ({
+    toolName: 'draw',
+    penType: 'pen',
+    lineWidth: 5,
+    alpha: 1,
+    color: '#000000',
+    lineDash: null,
+  });
+
   const makeSeedShapeSettings = () => ({
     toolName: 'shape',
     figure: 'rectangle',
@@ -17,29 +26,26 @@ const { lastSavedSettings, seedShapeSettings } = vi.hoisted(() => {
     lineDash: null,
   });
 
+  const makeSeedTextSettings = () => ({
+    toolName: 'text',
+    text: 'Hello',
+    fontSize: 64,
+    lineHeight: 1.1,
+    rect: null,
+    bold: false,
+    italic: false,
+    fontFamily: 'Arial',
+    align: 'left',
+  });
+
   return {
+    seedDrawSettings: makeSeedDrawSettings,
     seedShapeSettings: makeSeedShapeSettings,
+    seedTextSettings: makeSeedTextSettings,
     lastSavedSettings: {
-      draw: {
-        toolName: 'draw',
-        penType: 'pen',
-        lineWidth: 5,
-        alpha: 1,
-        color: '#000000',
-        lineDash: null,
-      },
+      draw: makeSeedDrawSettings(),
       shape: makeSeedShapeSettings(),
-      text: {
-        toolName: 'text',
-        text: 'Hello',
-        fontSize: 64,
-        lineHeight: 1.1,
-        rect: null,
-        bold: false,
-        italic: false,
-        fontFamily: 'Arial',
-        align: 'left',
-      },
+      text: makeSeedTextSettings(),
     },
   };
 });
@@ -48,9 +54,18 @@ const { saveLastSettingsMock } = vi.hoisted(() => ({ saveLastSettingsMock: vi.fn
 
 vi.mock('../../tools/settings.ts', () => ({ lastSavedSettings }));
 
-vi.mock('../../util/settings.ts', () => ({
-  saveLastSettings: saveLastSettingsMock,
-}));
+vi.mock('../../util/settings.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../util/settings.ts')>();
+  return {
+    ...actual,
+    // Record the raw commit and then delegate to the real persistence layer, so the
+    // spy still proves what the provider passed while the settings store receives it.
+    saveLastSettings: (args: ToolArgs) => {
+      saveLastSettingsMock(args);
+      return actual.saveLastSettings(args);
+    },
+  };
+});
 
 const shapeArgs = {
   toolName: 'shape',
@@ -93,9 +108,12 @@ function renderForShape() {
 describe('useCurrentTool', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // `lastSavedSettings` is mutable module state shared by every test in this
-    // file, so restore the seed before each one instead of trusting test order.
+    // `lastSavedSettings` is mutable module state that the real `saveLastSettings`
+    // now writes into, so restore every seed before each test instead of trusting
+    // test order.
+    lastSavedSettings.draw = seedDrawSettings();
     lastSavedSettings.shape = seedShapeSettings();
+    lastSavedSettings.text = seedTextSettings();
   });
 
   it('throws when used outside CurrentToolProvider', () => {
@@ -108,11 +126,6 @@ describe('useCurrentTool', () => {
     const { result } = renderWithProviders();
     expect(result.current.toolArgs.toolName).toBe('draw');
     expect(result.current.getToolArgs('draw')).toMatchObject({ penType: 'pen', lineWidth: 5 });
-  });
-
-  it('returns isToolDirty from store', () => {
-    const { result } = renderWithProviders();
-    expect(result.current.isToolDirty).toBe(false);
   });
 
   describe('setToolArgs', () => {
@@ -271,45 +284,6 @@ describe('useCurrentTool', () => {
       });
 
       expect(result.current.tool.getToolArgs('shape')).toMatchObject({ figure: 'oval', lineWidth: 3 });
-    });
-  });
-
-  describe('resetToLastSavedArgs', () => {
-    it('resets current tool to last saved settings', () => {
-      const { result } = renderWithProviders();
-      act(() => {
-        result.current.setToolArgs({
-          toolName: 'draw',
-          penType: 'spray',
-          lineWidth: 20,
-          alpha: 1,
-          color: '#000000',
-          lineDash: null,
-        });
-      });
-
-      act(() => {
-        result.current.resetToLastSavedArgs();
-      });
-
-      expect(result.current.getToolArgs('draw')).toMatchObject({ penType: 'pen', lineWidth: 5 });
-    });
-
-    it('resets specified tool to last saved settings', () => {
-      const { result } = renderForShape();
-      act(() => {
-        result.current.tool.setToolArgs({ ...shapeArgs, figure: 'oval', hasFill: true, lineWidth: 10 });
-      });
-
-      act(() => {
-        result.current.tool.resetToLastSavedArgs('shape');
-      });
-
-      expect(result.current.tool.getToolArgs('shape')).toMatchObject({
-        figure: 'rectangle',
-        hasFill: false,
-        lineWidth: 5,
-      });
     });
   });
 

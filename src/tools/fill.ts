@@ -1,4 +1,5 @@
 import { createFloodFillMask } from '../util/floodFill.ts';
+import { blendPixel } from '../util/pixels.ts';
 import type { ToolArgs } from '../contexts/tool-types.ts';
 import type { BitmapSource, Point, Size } from '../contexts/general-types.ts';
 import type { CreatorToolParams, ProcessorToolParams, ToolResult } from './toolProcessors.ts';
@@ -139,11 +140,15 @@ export const paintBucket =
           const pixelIndex = y * width + x;
           if (!region.mask[pixelIndex]) continue;
 
-          const dataIndex = pixelIndex * 4;
-          data[dataIndex] = Math.round(fillRed * alpha + data[dataIndex] * (1 - alpha));
-          data[dataIndex + 1] = Math.round(fillGreen * alpha + data[dataIndex + 1] * (1 - alpha));
-          data[dataIndex + 2] = Math.round(fillBlue * alpha + data[dataIndex + 2] * (1 - alpha));
-          data[dataIndex + 3] = Math.max(data[dataIndex + 3], Math.round(255 * alpha));
+          // A real source-over, not a lerp. Lerping straight RGB against the destination's
+          // straight RGB is only meaningful when the destination is opaque: at `alpha = 0.5` over
+          // a fully transparent region the destination's stored RGB is 0, so the old code wrote
+          // (128,0,0,128) — half of the fill mixed with half of nothing, i.e. half-black. Correct
+          // straight-alpha compositing gives (255,0,0,128): half coverage of clean red. Adobe
+          // describes Opacity as "lower opacity values create more transparent fills", which
+          // only holds if the fill colour survives the blend. `blendPixel` is the shared
+          // primitive and is what the gradient, smudge and clone-stamp paths already use.
+          blendPixel(data, pixelIndex * 4, { r: fillRed, g: fillGreen, b: fillBlue, a: 255 }, alpha);
         }
       }
     })();

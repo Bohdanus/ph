@@ -184,20 +184,59 @@ describe('DocumentPresentationScope ownership', () => {
     expect(bitmap.close).toHaveBeenCalledTimes(1);
   });
 
-  it('retires a replaced cache only when this boundary created it', () => {
+  it('retires a cache only when this boundary created it AND nothing names it', () => {
+    // The single-retirement form was deleted rather than kept as a second route. It
+    // had no production caller once `retireUnreferenced` existed, and it is exactly
+    // the API that caused the use-after-close: it closed by name with no liveness
+    // question, so a raster an adopted raster's history entry still named was
+    // closed on the promotion path. Two ways to retire, one of them unsafe, is a
+    // defect waiting for the next caller.
     const scope = new DocumentPresentationScope();
     const owned = createMockImageBitmap();
-    const borrowed = createMockImageBitmap(10, 10);
+    const alsoNamed = createMockImageBitmap(20, 20);
     scope.trackPublished('doc-1', owned);
+    scope.trackPublished('doc-1', alsoNamed);
+    // Never published: a raster borrowed from an import, a replay, or an
+    // in-flight materialization is not a candidate at all, so ownership still
+    // decides before liveness is even consulted.
+    const borrowed = createMockImageBitmap(10, 10);
+    const stranger = createMockImageBitmap(30, 30);
 
-    scope.retire(borrowed);
+    scope.retireUnreferenced('doc-1', () => new Set([alsoNamed, stranger, borrowed]));
+    expect(stranger.close).not.toHaveBeenCalled();
     expect(borrowed.close).not.toHaveBeenCalled();
+    // `alsoNamed` is published AND named, so liveness has to veto it — that is the
+    // case the deleted method got wrong.
+    expect(alsoNamed.close).not.toHaveBeenCalled();
+    expect(owned.close).toHaveBeenCalledTimes(1);
+    // A second call must not close the same raster twice.
+    scope.retireUnreferenced('doc-1', () => new Set());
+    expect(owned.close).toHaveBeenCalledTimes(1);
 
-    scope.retire(owned);
-    expect(owned.close).toHaveBeenCalledTimes(1);
-    // A second retirement must not close it twice.
-    scope.retire(owned);
-    expect(owned.close).toHaveBeenCalledTimes(1);
+    scope.dispose();
+  });
+
+  it('never asks for the liveness set when it owns nothing for the document', () => {
+    // The liveness question is the store's, and answering it is O(history) over an
+    // array that grows for the life of a session. It is passed as a thunk precisely
+    // so the ownership check above can refuse it: a document this scope has
+    // published nothing for has nothing to retire, whatever the answer says.
+    const scope = new DocumentPresentationScope();
+    const walk = vi.fn<() => ReadonlySet<BitmapSource>>(() => new Set());
+    const ownedElsewhere = createMockImageBitmap();
+    scope.trackPublished('doc-2', ownedElsewhere);
+
+    scope.retireUnreferenced('doc-1', walk);
+
+    expect(walk).not.toHaveBeenCalled();
+    expect(ownedElsewhere.close).not.toHaveBeenCalled();
+
+    // The control, so the assertion above cannot pass for the wrong reason: a
+    // document it DOES own asks exactly once, and the empty answer is honoured.
+    scope.retireUnreferenced('doc-2', walk);
+
+    expect(walk).toHaveBeenCalledTimes(1);
+    expect(ownedElsewhere.close).toHaveBeenCalledTimes(1);
 
     scope.dispose();
   });

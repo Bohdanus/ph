@@ -1,5 +1,6 @@
 import type { Ctx2D, Point, Pos } from '../contexts/general-types.ts';
 import type { DrawToolArgs } from '../tools/draw.ts';
+import { smoothStrokePoints } from '../tools/brush.ts';
 import { hexToRgb } from './rect.ts';
 
 export function pointsBoundingPos({ lineWidth = 1, points }: { lineWidth?: number; points: Point[] }): Pos {
@@ -86,10 +87,19 @@ export const drawLine = (params: DrawStrokeParams) => {
     args: { penType },
   } = params;
 
+  // Smoothing is a filter over the sampled path, applied once here so the live
+  // overlay (src/components/Main/DrawToolArea.tsx:39-43), the committed stroke and
+  // every replay of it all smooth identically. It runs before the renderer choice
+  // because both renderers consume the same point list, and it leaves the call
+  // counts of a single-path pen stroke untouched.
+  const sampled = params.args.points ?? [];
+  const points = smoothStrokePoints(sampled, params.args.smoothing ?? 0);
+  const stroke = points === sampled ? params : { ...params, args: { ...params.args, points } };
+
   if (penType === 'pen' || penType === 'pen-dashed') {
-    drawPen(params);
+    drawPen(stroke);
   } else if (penType === 'spray') {
-    drawSpray(params);
+    drawSpray(stroke);
   }
 };
 
