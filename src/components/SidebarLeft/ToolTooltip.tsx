@@ -50,7 +50,7 @@ const ToolTooltip = ({ children, label, shortcut }: ToolTooltipProps) => {
       {isVisible && (
         <AnchoredOverlay align="center" anchor={anchor} gap={12} measureKey={tooltipId}>
           <span
-            className="pointer-events-none z-50 flex items-center gap-2 whitespace-nowrap rounded-md bg-gray-950 px-2.5 py-1.5 text-xs font-medium text-white shadow-lg ring-1 ring-white/10 dark:bg-white dark:text-gray-950 dark:ring-black/10"
+            className="pointer-events-none flex items-center gap-2 whitespace-nowrap rounded-md bg-gray-950 px-2.5 py-1.5 text-xs font-medium text-white shadow-lg ring-1 ring-white/10 dark:bg-white dark:text-gray-950 dark:ring-black/10"
             id={tooltipId}
             role="tooltip"
           >
