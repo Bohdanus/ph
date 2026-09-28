@@ -365,13 +365,20 @@ describe('file locks make one-file-one-agent real', () => {
   it('hides an expired lock from everything that renders it, not just from a conflict check', () => {
     const a = boardFor('a');
     const { id } = a.createIssue({ title: 'lock outlives its lease' });
+    // The claim outlives the lock, so the ONLY thing that can empty this list
+    // later is the lock's own lease. With both leases equal, the assertion
+    // would pass for the wrong reason and then stop passing for a good one.
+    a.claimIssue(id, { leaseMs: 600_000 });
     a.holdFiles(['src/ghost.ts'], { issueId: id, leaseMs: 60_000 });
+    expect(a.locksFor(id)).toHaveLength(1);
+    expect(a.listIssues({ files: ['src/ghost.ts'], claimedBy: 'a' })).toHaveLength(1);
     advance(60_001);
     // `board show` and the FILES column of `board ready` read locksFor, and used
     // to advertise a lease that had already run out while `board check`, in the
     // same breath, called the file free.
+    expect(a.liveClaimOrNull(id)).not.toBeNull();
     expect(a.locksFor(id)).toHaveLength(0);
-    expect(a.listIssues({ files: ['src/ghost.ts'], claimedBy: 'someone-else' })).toHaveLength(0);
+    expect(a.listIssues({ files: ['src/ghost.ts'], claimedBy: 'a' })).toHaveLength(0);
     a.close();
   });
 
@@ -382,6 +389,70 @@ describe('file locks make one-file-one-agent real', () => {
     expect(a.listIssues({ claimedBy: 'a' }).map((issue) => issue.id)).toEqual([id]);
     advance(60_001);
     expect(a.listIssues({ claimedBy: 'a' })).toHaveLength(0);
+  });
+
+  it('checks an absolute path against a lock stored relative, and the reverse', () => {
+    const a = boardFor('a');
+    // `touchAgent` is what the CLI does on every invocation, and it is what
+    // teaches the board that `<dir>/wt-a` is a worktree of this repository.
+    a.touchAgent();
+    a.holdFiles(['src/x.ts']);
+    a.close();
+    const b = boardFor('b');
+    b.touchAgent();
+    // `board check` is the gate a shell branches on, so a pasted absolute path
+    // has to hit the same lock the hold stored in relative form. Normalising
+    // only on the write side made this report a held file as FREE.
+    expect(b.checkPath('src/x.ts').free).toBe(false);
+    // From B's OWN worktree…
+    expect(b.checkPath(`${b.identity.worktree}/src/x.ts`).free).toBe(false);
+    // …and from A's, which B only knows about because the board saw A in it.
+    expect(b.checkPath(`${a.identity.worktree}/src/x.ts`).holders[0].agent_id).toBe('a');
+    expect(b.checkPath(`${a.identity.worktree}/src/x.ts`).free).toBe(false);
+    b.close();
+  });
+
+  it('does not collapse a sibling directory whose name starts with the worktree', () => {
+    const a = boardFor('a');
+    const sibling = `${a.identity.worktree}-two/src/x.ts`;
+    a.holdFiles([sibling]);
+    const stored = a.locksHeldBy('a').map((lock) => lock.path);
+    // `/wt` must not chew `-two/src/x.ts` out of `/wt-two/src/x.ts`, and a path
+    // that does not exist is canonicalised through its deepest EXISTING
+    // ancestor — which must re-attach every component below it, or the lock
+    // lands on a file the caller never named.
+    expect(stored).toHaveLength(1);
+    expect(stored[0].endsWith('/wt-a-two/src/x.ts')).toBe(true);
+    expect(stored[0]).not.toBe('src/x.ts');
+    a.close();
+    const b = boardFor('b');
+    // Same string in, same lock found: the two ends agree.
+    expect(b.checkPath(sibling).holders.map((holder) => holder.agent_id)).toEqual(['a']);
+    expect(b.checkPath('src/x.ts').free).toBe(true);
+    b.close();
+  });
+
+  it('refuses a path that is nothing but the worktree, rather than locking nothing', () => {
+    const a = boardFor('a');
+    // The prefix strips to the empty string, and a lock on "" is a lock on a
+    // file no agent can name.
+    expect(() => a.holdFiles([`${a.identity.worktree}/`])).toThrow(/no file paths/);
+    expect(a.locksHeldBy('a')).toHaveLength(0);
+    a.close();
+  });
+
+  it('leaves a pre-existing lock attributed to the issue that took it', () => {
+    const a = boardFor('a');
+    const first = a.createIssue({ title: 'owns src/x.ts' });
+    a.holdFiles(['src/x.ts'], { issueId: first.id });
+    // A later claim names the same file. The file is already ours, so this is
+    // not a conflict — but the claim then fails, and the lock must not have been
+    // re-pointed at an issue we never took.
+    const second = a.createIssue({ title: 'the claim that will be refused' });
+    const taken = a.holdFiles(['src/x.ts'], { issueId: second.id });
+    expect(taken.acquired).toEqual([]);
+    expect(a.locksFor(first.id).map((lock) => lock.path)).toEqual(['src/x.ts']);
+    expect(a.locksFor(second.id)).toHaveLength(0);
   });
 });
 
@@ -419,9 +490,10 @@ describe('the resolution lifecycle separates a fix from its verification', () =>
     const { id } = a.createIssue({ title: 'named verifier' });
     a.claimIssue(id, { leaseMs: 60_000 });
     a.resolveIssue(id);
-    // The parameter that made the rule one flag wide: a caller could hand in
-    // the name of an agent that was not in the room and close its own work.
-    expect(a.closeIssue.length).toBeLessThanOrEqual(2);
+    // The parameter that made the rule one flag wide: a caller could hand in the
+    // name of an agent that was not in the room and close its own work. The
+    // assertion is that it no longer changes anything, not that it is absent
+    // from the signature.
     expect(() => a.closeIssue(id, { verifiedBy: 'some-other-agent' })).toThrow(/cannot also verify it/);
     a.close();
   });
@@ -626,28 +698,44 @@ describe('separate processes, not just separate connections', () => {
     after.close();
   }, 30_000);
 
-  it('survives ten processes opening a board that does not exist yet', async () => {
+  it('survives many processes opening a board that does not exist yet', async () => {
     /**
-     * The first-open race. `PRAGMA journal_mode` takes a lock on the file, and
-     * it used to run before `busy_timeout` was set, so a process that lost that
-     * race got SQLITE_BUSY immediately and the very first board command of the
-     * session failed with "database is locked". It reproduced on roughly one
+     * The first-open race. `PRAGMA journal_mode` needs a lock on the file that
+     * SQLite's busy handler does NOT wait for, and the version row used to be
+     * read-then-inserted outside a transaction. It reproduced on roughly one
      * process in twelve, intermittently, with every in-process test green —
      * which is to say it would have been found the first morning a swarm woke
      * up, and never before.
+     *
+     * Twenty-four processes, because ten was not enough: the first fix
+     * (reordering the pragmas) turned 74 failures per 640 into 2, and a
+     * ten-process test could not see the difference. This one asserts on the
+     * error text, so the failure mode names itself.
      */
     rmSync(dir, { recursive: true, force: true });
     const results = await Promise.all(
-      Array.from({ length: 10 }, (_, index) =>
+      Array.from({ length: 24 }, (_, index) =>
         spawnCli(['new', `first command from ${index}`, '--json'], `opener-${index}`)
       )
     );
     const failed = results.filter((result) => result.code !== 0);
     expect(failed.map((result) => result.err.split('\n')[0])).toEqual([]);
     const after = new Board({ dir, identity: identityFor('audit') }).open();
-    expect(after.listIssues()).toHaveLength(10);
+    expect(after.listIssues()).toHaveLength(24);
     after.close();
-  }, 30_000);
+  }, 60_000);
+
+  it('converts a fresh board to WAL exactly once, whoever gets there first', async () => {
+    rmSync(dir, { recursive: true, force: true });
+    const board = new Board({ dir, identity: identityFor('wal') }).open();
+    expect(board.currentJournalMode()).toBe('wal');
+    board.close();
+    // A second open must not re-attempt the conversion: the exclusive lock is
+    // only ever contended by the open that creates the file.
+    const again = new Board({ dir, identity: identityFor('wal') }).open();
+    expect(again.currentJournalMode()).toBe('wal');
+    again.close();
+  }, 15_000);
 });
 
 describe('durations', () => {

@@ -231,6 +231,25 @@ describe('planning the import', () => {
     expect(planImport([parsed], []).skip).toEqual([]);
   });
 
+  it('keeps the items under a live heading that merely contains a dead word', () => {
+    /**
+     * `## Fixed — a real P2 race in the adapter` contains "fixed" and is not a
+     * list of retired items. Suppressing the inline markers under ANY dead-word
+     * heading deleted both entries beneath it, which is the opposite of what
+     * this suppression is for.
+     */
+    const parsed = parseHandoffDoc({
+      file: 'HANDOFF.md',
+      text:
+        '## Fixed — a real P2 race in the adapter\n\n' +
+        '- **Item 1** is about the raster cache.\n' +
+        '- **Item 2** is about the replay coordinator.\n',
+    });
+    expect(parsed.items.map((item) => item.origin)).toEqual(['HANDOFF.md#1', 'HANDOFF.md#2']);
+    // Nothing is retired, so planImport files both.
+    expect(planImport([parsed], []).create.map((item) => item.origin)).toEqual(['HANDOFF.md#1', 'HANDOFF.md#2']);
+  });
+
   it('takes no item from the prose of a section the document has deleted', () => {
     // The shape HANDOFF.md uses: a deleted-items heading, then prose that
     // mentions the retired numbers while explaining what they were.

@@ -237,26 +237,39 @@ function scan(text) {
  * document states this, so a parser that read only one form would file entries
  * the document has already retired.
  */
+/**
+ * The item numbers a dead heading retires.
+ *
+ * Extracted so `assemble` can ask one question per heading — does this heading
+ * actually LIST retired items? — rather than re-deriving it. A section that
+ * lists numbers is a section about retired items, and its prose mentions them
+ * without being them. A heading that merely contains a dead word, like
+ * `## Fixed — a real P2 race in the adapter`, is a section about something else,
+ * and treating it as a retirement list deleted every entry beneath it.
+ */
+function retiredNumbersIn(record) {
+  if (record.kind !== 'heading' || !DEAD_HEADING.test(record.text)) return [];
+  const withoutSeverities = record.text.replace(SEVERITY_TOKEN, ' ');
+  const numbers = new Set();
+  for (const match of withoutSeverities.matchAll(NUMBER_OR_RANGE)) {
+    const from = Number(match[1]);
+    const to = match[2] === undefined ? from : Number(match[2]);
+
+    if (to < from || to - from > RANGE_LIMIT) {
+      numbers.add(from);
+      if (match[2] !== undefined) numbers.add(to);
+      continue;
+    }
+    for (let value = from; value <= to; value += 1) numbers.add(value);
+  }
+  return [...numbers].sort((a, b) => a - b);
+}
+
 function deadNumbersIn(records) {
   const numbers = new Set();
-
   for (const record of records) {
-    if (record.kind !== 'heading' || !DEAD_HEADING.test(record.text)) continue;
-
-    const withoutSeverities = record.text.replace(SEVERITY_TOKEN, ' ');
-    for (const match of withoutSeverities.matchAll(NUMBER_OR_RANGE)) {
-      const from = Number(match[1]);
-      const to = match[2] === undefined ? from : Number(match[2]);
-
-      if (to < from || to - from > RANGE_LIMIT) {
-        numbers.add(from);
-        if (match[2] !== undefined) numbers.add(to);
-        continue;
-      }
-      for (let value = from; value <= to; value += 1) numbers.add(value);
-    }
+    for (const value of retiredNumbersIn(record)) numbers.add(value);
   }
-
   return [...numbers].sort((a, b) => a - b);
 }
 
@@ -406,7 +419,12 @@ function assemble(base, { lines, records }) {
 
       if (DEAD_HEADING.test(record.text)) {
         close(record.line, 0);
-        inDeadSection = true;
+        // Only a heading that LISTS retired items closes the section to inline
+        // markers. `### Items 5, 7, 9 — deleted` is a section about retired
+        // items and its prose mentions them; `## Fixed — a real P2 race` is a
+        // section about a race, and suppressing the entries under it deleted
+        // them. The dead word alone is not enough.
+        inDeadSection = retiredNumbersIn(record).length > 0;
         continue;
       }
       // Any other heading ends the dead section, including one that opens no

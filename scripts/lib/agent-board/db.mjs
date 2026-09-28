@@ -30,7 +30,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -215,6 +215,39 @@ function msFromNow(ms, from = Date.now()) {
 }
 
 /**
+ * A synchronous sleep, because `node:sqlite` is synchronous and the retry loop
+ * that waits for another process to finish converting a journal cannot be an
+ * `await`. `Atomics.wait` is the one way to block a thread in Node without a
+ * child process; the CLI is a batch tool, so there is no event loop to starve.
+ */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Resolves the symlinks in a path that may not exist yet, by resolving its
+ * deepest existing ancestor and re-attaching the rest. Returns null when even
+ * the root cannot be resolved, so the caller can fall back rather than guess.
+ */
+function resolveSymlinksBestEffort(path) {
+  const parts = String(path).split('/');
+  for (let index = parts.length - 1; index > 0; index -= 1) {
+    const candidate = parts.slice(0, index).join('/');
+    try {
+      // Everything from `index` onwards is the part that does not exist yet, so
+      // it is re-attached verbatim. Building a tail by hand here lost the
+      // components between the resolved ancestor and the leaf, which quietly
+      // rewrote `/wt-a-two/src/x.ts` into `/src/x.ts` — a different file, under
+      // a different lock, with no error anywhere.
+      return join(realpathSync(candidate), ...parts.slice(index));
+    } catch {
+      // Not there: try the parent.
+    }
+  }
+  return null;
+}
+
+/**
  * The board. One instance per CLI invocation; the tests hold several, each on
  * its own directory, which is why the directory is a constructor argument
  * rather than a module global.
@@ -240,19 +273,56 @@ export class Board {
       throw new BoardError(`no board at ${this.path}`, { code: 2 });
     }
     this.db = new DatabaseSync(this.path);
-    // ORDER MATTERS. `busy_timeout` has to be in force before `journal_mode` is
-    // touched: setting WAL takes a lock on the database file, and without the
-    // timeout a second process that happens to be opening a board for the first
-    // time gets SQLITE_BUSY immediately instead of waiting. That is not a rare
-    // race — it is what happens the first morning the swarm starts, when every
-    // agent opens the board at once, and it surfaced as "database is locked"
-    // from this very line on one process in twelve, intermittently, with every
-    // single-process test in the suite green.
+    // ORDER MATTERS, and setting the timeout first is NECESSARY BUT NOT
+    // SUFFICIENT.
+    //
+    // The timeout first: without it, a second process opening a board gets
+    // SQLITE_BUSY immediately instead of waiting.
+    //
+    // The retry: SQLite does not run the busy handler for the exclusive lock a
+    // journal-mode conversion needs, so on a board that does not exist yet — the
+    // moment the whole swarm opens it at once — one process in three hundred
+    // still lost that lock and died with "database is locked". Reordering alone
+    // turned a 12% failure rate into a 0.2% one, which is worse than a fix
+    // because it looks like a fix.
+    //
+    // Giving up is survivable: WAL is what lets a reader run while a writer
+    // holds the write lock, and without it SQLite falls back to the rollback
+    // journal, where the same BEGIN IMMEDIATE transactions and the same
+    // busy_timeout still make every claim exclusive. Correctness comes from the
+    // transactions, not from this line; this line buys concurrency, and a board
+    // that stays on the rollback journal is slower, not wrong.
     this.db.exec('PRAGMA busy_timeout = 5000');
-    this.db.exec('PRAGMA journal_mode = WAL');
+    this.enableWriteAheadLog();
     this.db.exec('PRAGMA foreign_keys = ON');
     this.migrate();
     return this;
+  }
+
+  /**
+   * Puts the database in WAL, once, and never fails the caller for it.
+   *
+   * The conversion is skipped when the database is already in WAL, which is
+   * every open after the first — so on a busy board the lock is not contended
+   * at all, and the retry is here for the one open that creates the file.
+   */
+  enableWriteAheadLog({ attempts = 40, delayMs = 25 } = {}) {
+    if (this.currentJournalMode() === 'wal') return 'wal';
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        this.db.exec('PRAGMA journal_mode = WAL');
+        if (this.currentJournalMode() === 'wal') return 'wal';
+      } catch {
+        // Another process is converting it. Fall through and wait.
+      }
+      sleepSync(delayMs);
+    }
+    return this.currentJournalMode();
+  }
+
+  currentJournalMode() {
+    const row = this.db.prepare('PRAGMA journal_mode').get();
+    return String(row?.journal_mode ?? '').toLowerCase();
   }
 
   close() {
@@ -462,7 +532,7 @@ export class Board {
       // must not leave the importing agent holding sixty files' leases.
       const conflicts = [];
       if (holdFiles) {
-        for (const path of normalizePaths(files, { worktree: this.identity?.worktree })) {
+        for (const path of this.canonicalPaths(files)) {
           const holder = this.liveLocks().find((lock) => lock.path === path && lock.agent_id !== createdBy);
           if (holder) {
             conflicts.push({ path, holder });
@@ -596,12 +666,19 @@ export class Board {
       params.push(claimedBy, this.iso());
     }
     if (files && files.length > 0) {
-      where.push(
-        `EXISTS (SELECT 1 FROM file_locks f WHERE f.issue_id = issues.id AND f.agent_id = ? AND f.released_at IS NULL AND f.path IN (${files
-          .map(() => '?')
-          .join(',')}))`
-      );
-      params.push(claimedBy ?? this.identity?.agentId ?? 'unknown', ...files);
+      // Normalised, because `holdFiles` normalises: an absolute path here would
+      // never match the relative form it stored. And lease-filtered, because
+      // this query feeds a human a list of what is being worked on, which a
+      // lock whose lease ran out is not.
+      const wanted = this.canonicalPaths(files);
+      if (wanted.length > 0) {
+        where.push(
+          `EXISTS (SELECT 1 FROM file_locks f WHERE f.issue_id = issues.id AND f.agent_id = ? AND f.released_at IS NULL AND f.expires_at > ? AND f.path IN (${wanted
+            .map(() => '?')
+            .join(',')}))`
+        );
+        params.push(claimedBy ?? this.identity?.agentId ?? 'unknown', this.iso(), ...wanted);
+      }
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     return this.db
@@ -827,7 +904,7 @@ export class Board {
   holdFiles(paths, { issueId = null, leaseMs = DEFAULT_LEASE_MS, agent, force = false } = {}) {
     const who = agent ?? this.identity?.agentId;
     if (!who) throw new BoardError('no agent identity to hold with', { code: 1 });
-    const list = normalizePaths(paths, { worktree: this.identity?.worktree });
+    const list = this.canonicalPaths(paths);
     if (list.length === 0) throw new BoardError('no file paths given', { code: 1 });
     try {
       return this.transaction(() => {
@@ -895,6 +972,19 @@ export class Board {
     }
   }
 
+  /**
+   * Writes one file lock. Callers must check `liveLocks` for a conflict first:
+   * this function is unconditional by design, so that a re-hold extends a lease.
+   *
+   * It does NOT re-point `issue_id` on a lock the agent already holds. The
+   * attribution belongs to the issue that first took the file, and the one case
+   * where re-pointing looked useful is exactly the case where it lies: `claim
+   * --files` holds the files BEFORE it claims the issue, so a claim that is then
+   * refused still walked the attribution of a file the agent had held for some
+   * other issue all along. A second issue that needs the same file waits for the
+   * lock to lapse, which is the truth, rather than inheriting a pointer to work
+   * its holder never accepted.
+   */
   holdFileInTransaction(path, { issueId = null, agent, leaseMs = DEFAULT_LEASE_MS, at = this.now() } = {}) {
     const who = agent ?? this.identity?.agentId ?? 'unknown';
     this.db
@@ -902,7 +992,6 @@ export class Board {
         `INSERT INTO file_locks (path, agent_id, issue_id, worktree, acquired_at, expires_at, released_at)
          VALUES (?, ?, ?, ?, ?, ?, NULL)
          ON CONFLICT(path, agent_id) DO UPDATE SET
-           issue_id = COALESCE(excluded.issue_id, file_locks.issue_id),
            worktree = COALESCE(excluded.worktree, file_locks.worktree),
            acquired_at = excluded.acquired_at,
            expires_at = excluded.expires_at,
@@ -914,7 +1003,7 @@ export class Board {
 
   releaseFiles(paths, { agent, force = false } = {}) {
     const who = agent ?? this.identity?.agentId;
-    const list = normalizePaths(paths, { worktree: this.identity?.worktree });
+    const list = this.canonicalPaths(paths);
     return this.transaction(() => {
       const released = [];
       for (const path of list) {
@@ -938,11 +1027,103 @@ export class Board {
     });
   }
 
-  /** `board lock-check <path>`: exit 0 free, 1 held. Scriptable on its own. */
+  /**
+   * The path prefixes that mean "this repository" to this board.
+   *
+   * The caller's own worktree is the obvious one. The others are every worktree
+   * the board has seen an agent in, and they matter because a lock is stored
+   * repo-relative while a caller may hold an absolute path from a SIBLING
+   * worktree: `<wt-b>/src/x.ts` is the same file as `<wt-a>/src/x.ts`, and an
+   * agent that only knew its own root reported the file FREE — the silent,
+   * dangerous half of this rule, since the whole point of a lock is that the
+   * answer is not free.
+   *
+   * Longest first, so a worktree nested inside another's path cannot shadow it.
+   * Cached per Board: one instance is one CLI invocation, and the set can only
+   * grow as agents appear.
+   */
+  pathRoots() {
+    if (this._pathRoots) return this._pathRoots;
+    const roots = new Set();
+    if (this.identity?.worktree) roots.add(this.identity.worktree);
+    try {
+      for (const row of this.db.prepare('SELECT DISTINCT worktree FROM agents WHERE worktree IS NOT NULL').all()) {
+        roots.add(row.worktree);
+      }
+    } catch {
+      // No agents table yet, or no row: the caller's own worktree is enough.
+    }
+    this._pathRoots = [...roots]
+      .map((root) => `${String(root).split('\\').join('/').replace(/\/+$/, '')}/`)
+      .sort((a, b) => b.length - a.length);
+    return this._pathRoots;
+  }
+
+  /**
+   * The repo-relative form of a path, or undefined if it is not in this
+   * repository at all.
+   *
+   * The second attempt is not paranoia: on macOS `/tmp` is a symlink to
+   * `/private/tmp`, `git rev-parse --show-toplevel` returns the RESOLVED path,
+   * and a path typed by an agent or pasted from a shell keeps the symlink. So
+   * `<wt>/src/x.ts` and `/tmp/<wt>/src/x.ts` are the same file and one of them
+   * matched no root — and this function's caller is `board check`, whose entire
+   * job is to answer "may I edit this". It answered FREE.
+   *
+   * Only the deepest EXISTING ancestor is resolved, because the file a caller
+   * names usually does not exist yet and `realpathSync` refuses a path that
+   * does not.
+   */
+  toRepoPath(path) {
+    const direct = normalizePaths([path], { roots: this.pathRoots() })[0];
+    // Only an ABSOLUTE path can be a symlinked spelling of a relative one. A
+    // path that is already repo-relative is the canonical form, and resolving
+    // it against the process's directory would turn the stored answer into an
+    // absolute path that matches nothing.
+    if (direct === undefined) return undefined;
+    if (!String(path).trim().startsWith('/')) return direct;
+    if (direct !== String(path).trim().replace(/^\.\//, '')) return direct;
+    const resolved = resolveSymlinksBestEffort(path);
+    if (resolved === null) return direct;
+    return normalizePaths([resolved], { roots: this.pathRoots() })[0] ?? direct;
+  }
+
+  /**
+   * The canonical form of every path in a list: repo-relative where it can be,
+   * and with symlinks collapsed where it cannot.
+   *
+   * Every path that goes IN or comes OUT of a lock goes through here, on both
+   * sides. Canonicalising only when reading meant a path under a symlinked
+   * directory — `/tmp/…` on macOS — was stored unresolved by `holdFiles` and
+   * compared resolved by `checkPath`, so the two could never meet.
+   */
+  canonicalPaths(paths) {
+    const out = [];
+    for (const path of Array.isArray(paths) ? paths : [paths]) {
+      const canonical = this.toRepoPath(path);
+      if (canonical === undefined || canonical === '') continue;
+      if (!out.includes(canonical)) out.push(canonical);
+    }
+    return out;
+  }
+
+  /**
+   * `board check <path>`: exit 0 free, 1 held. Scriptable on its own, and the
+   * one query an agent or a shell is most likely to trust.
+   *
+   * It normalises its input with the SAME function `holdFiles` normalises with,
+   * and that is load-bearing rather than tidiness. The worktree-prefix strip
+   * went into `holdFiles` alone for a while, so a lock stored as `src/x.ts` was
+   * compared against `/…/worktree/src/x.ts` and reported FREE — this command
+   * exists to be the gate against two agents in one file, and it was inverted
+   * for exactly the input a caller is most likely to paste in.
+   */
   checkPath(path, { agent, at = this.now() } = {}) {
     const who = agent ?? this.identity?.agentId;
-    const holders = this.liveLocks(at).filter((lock) => lock.path === path && lock.agent_id !== who);
-    return { path, free: holders.length === 0, holders };
+    const normalized = this.toRepoPath(path);
+    if (normalized === undefined) return { path, free: true, holders: [] };
+    const holders = this.liveLocks(at).filter((lock) => lock.path === normalized && lock.agent_id !== who);
+    return { path: normalized, free: holders.length === 0, holders };
   }
 
   // --- lifecycle ----------------------------------------------------------
@@ -1149,25 +1330,37 @@ function existsDir(path) {
  * Paths are recorded as repo-relative, POSIX-separated, so that a lock taken
  * in one worktree matches the same file named in another.
  *
- * The worktree prefix is stripped because a machine resolves the same
+ * The worktree prefixes are stripped because a machine resolves the same
  * repository to different absolute paths — macOS answers `/private/var/...`
- * where Linux answers `/var/...` — and two agents on the same machine still
- * name the same file differently when one says `src/x.ts` and the other says
+ * where Linux answers `/var/...` — and two agents on one machine still name the
+ * same file differently when one says `src/x.ts` and the other says
  * `/Users/me/ph/.kilo/worktrees/agent-board/src/x.ts`. That is precisely when a
  * file lock stops working, so the comparison happens on the relative form.
- * An absolute path that is NOT under the caller's worktree is left alone
- * rather than guessed at: it is outside everything this board coordinates.
+ *
+ * A path that is not under ANY known worktree is left alone rather than guessed
+ * at: it is outside everything this board coordinates, and a wrong guess there
+ * is a lock on the wrong file.
  */
-export function normalizePaths(paths, { worktree = null } = {}) {
+export function normalizePaths(paths, { worktree = null, roots = null } = {}) {
   const list = Array.isArray(paths) ? paths : [paths];
-  const root = worktree ? `${String(worktree).split('\\').join('/').replace(/\/+$/, '')}/` : null;
+  const prefixes = (roots ?? (worktree ? [worktree] : []))
+    .map((root) => `${String(root).split('\\').join('/').replace(/\/+$/, '')}/`)
+    .sort((a, b) => b.length - a.length);
   const out = [];
   for (const raw of list) {
     if (typeof raw !== 'string') continue;
     const trimmed = raw.trim();
     if (!trimmed) continue;
     let normalized = trimmed.split('\\').join('/').replace(/^\.\//, '');
-    if (root && normalized.startsWith(root)) normalized = normalized.slice(root.length);
+    for (const prefix of prefixes) {
+      if (normalized.startsWith(prefix)) {
+        normalized = normalized.slice(prefix.length);
+        break;
+      }
+    }
+    // A bare worktree path normalises to nothing, and a lock on the empty string
+    // is a lock on a file no agent can name — so it is dropped, not stored.
+    if (normalized === '') continue;
     if (!out.includes(normalized)) out.push(normalized);
   }
   return out;
