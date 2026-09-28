@@ -445,3 +445,76 @@ It is worth knowing for what it is good: cost tracks blast radius, and so does r
 ## Architecture status
 
 `HistoryItem[]` is the **PRODUCTION REPLAY AUTHORITY**: history, `history-replay.ts`, runtime `Layer`s, and export. The durable document is shadow-only. Re-read code and plans before crossing the boundary. **DO NOT start single-writer cutover while `saveLayerCanvas()` promotes cached canvases outside reducer publication.**
+
+## The toolbar is a Photoshop clone — HARD REQUIREMENT
+
+**The Tools rail must be an exact clone of Adobe Photoshop's Tools panel. A tool that Photoshop
+does not have must be deleted and replaced by the Photoshop tool it stands in for.** This is a
+product requirement, not a preference, and it is not subject to local judgement.
+
+The bar is not a "Photoshop-inspired" surface with room for app-specific extras. A user switching
+from Photoshop must find the same tool in the same group, under the same name, at the same spot,
+reachable by the same letter. Anything this app invents breaks the muscle memory the whole
+product is borrowing.
+
+Concretely, and all of these are currently violations on `main`:
+
+- **No invented tools.** `draw` ("Draw Tool") is the only tool the app declares that Photoshop has
+  no counterpart for. It is a freehand-annotation layer tool. Photoshop's nearest is the Brush, and
+  the app already has a Brush. **It is to be deleted**, not relabelled.
+- **Adjustments are not tools.** `color` (labelled "Colors"), `levels` ("Levels") and `transform`
+  ("Transform") are `Image ▸ Adjustments` and `Edit ▸ Transform` commands, and Photoshop's Tools
+  panel contains no such entries. Photoshop's name for `color` is "Black and White", which is not a
+  tool either. These three are to leave the rail and become menu commands. They have **no
+  replacement tool** — Photoshop puts nothing there.
+- **No pseudo-tool.** `shape` is a grouping container carrying a `figure`; it is the one `ToolName`
+  the rail never displays, and Adobe has no tool by that name. Photoshop's shapes are Rectangle,
+  Ellipse, Triangle, Polygon, Line, Star and Custom Shape as **seven separate entries in one flyout**,
+  not five figures behind a tool that does not exist.
+- **Names are Adobe's, spelled Adobe's.** "Move Tool", "Rectangular Marquee Tool", "Ellipse Tool"
+  (not "Ellipse"), "Content-Aware Move tool" (hyphenated). The registry identifier is free —
+  `reposition` for the Move tool is acceptable — but the **rendered label is not**.
+- **A tool the app cannot actually do still belongs in the rail**, rendering Photoshop's real
+  options bar, because that is the contract. Eight tools currently render a `PlaceholderTool` chip
+  bar instead (all six Pen-family tools, Custom Shape, Color Replacement). Photoshop's grouping and
+  naming are the specification; the stub bar is the debt.
+
+**Verified inventory, 2026-09-28.** Adobe's current release is Photoshop 2026, version 27.x. Adobe
+publishes **no page that enumerates the Tools panel top-to-bottom**; they publish five topical
+overview tables (selection, retouch, painting, drawing, navigation-and-measuring) plus a Customize
+toolbar page that explains the grouping mechanism without ever listing the default groups. The
+group order below is therefore **reconstructed from two independent third-party 2026 toolbar
+diagrams, cross-checked against Adobe for membership**. Membership is Adobe-confirmed; **order and
+separator placement are not.** Treat the order as a good hypothesis, not as fact, and prefer a
+grouping a user can recognise over a grouping a source asserts.
+
+Adobe-confirmed tool names, by the overview table each comes from:
+
+| Adobe table                 | Tools                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Selection (upd. 2026-02-23) | Move, Rectangular Marquee, Elliptical Marquee, Single Row Marquee, Single Column Marquee, Lasso, Polygonal Lasso, Magnetic Lasso, Object Selection, Quick Selection, Magic Wand                                                                                                                                                                                            |
+| Retouch (upd. 2026-02-23)   | Spot Healing Brush, Healing Brush, Patch, Red Eye, Eraser, Background Eraser, Magic Eraser, Blur, Sharpen, Smudge, Dodge, Burn, Sponge                                                                                                                                                                                                                                     |
+| Painting (upd. 2025-10-27)  | Brush, Pencil, Color Replacement, Mixer Brush, History Brush, Art History Brush, Gradient, Paint Bucket, Eyedropper, Color Sampler, Clone Stamp, Pattern Stamp                                                                                                                                                                                                             |
+| Drawing (upd. 2025-10-27)   | Pen, Freeform Pen, Curvature Pen, Add Anchor Point, Delete Anchor Point, Convert Point, Rectangle, Ellipse, Triangle, Polygon, Star, Line, Custom Shape                                                                                                                                                                                                                    |
+| Type                        | Horizontal Type, Vertical Type, Vertical Type Mask, Horizontal Type Mask                                                                                                                                                                                                                                                                                                   |
+| Unverified family           | Adobe's navigation-and-measuring overview (upd. 2026-02-23) exists but only one line was retrievable: "Ruler tool Measures distances, locations, and angles." Hand, Rotate View, Zoom, Frame, Slice, Perspective Crop, Slice Select, Path Selection and Direct Selection are **not Adobe-table-confirmed** and are listed from the shortcut PDF and individual tool pages. |
+
+**Four 2026 candidates that are NOT Adobe-confirmed and must not ship as tools:** Adjustment Brush
+(two third-party diagrams, zero Adobe pages), Clone Source tool (one diagram's icon numbering has
+a gap where it would sit, the name was never printed), Selection Brush (Adobe documents it for
+Photoshop on the web, not the desktop panel), and Generate Image (a real feature, but its placement
+in the panel footer is unconfirmed).
+
+**Not tools, and not to be implemented as tools:** the foreground/background swatches, "Edit in Quick
+Mask Mode", the three screen-mode toggles, the `…` Edit Toolbar caret, the toolbar grip, and the
+Extra Tools container.
+
+**Naming traps in the source material, so nobody "fixes" them later:** Adobe's tables say
+"Elliptical Marquee tool" and "Ellipse tool" — two different words for two different tools. Adobe's
+painting table prints "Gradient tools" in the plural, which conflicts with the singular everywhere
+else; that one is a genuine Adobe-side inconsistency. "Content-Aware Move tool" is hyphenated.
+
+**What this costs.** See HANDOFF §68 for the file-by-file blast radius and the tests that pin tool
+names. The hand-copied tool lists in tests are the expensive part: `tool-processors.test.ts` alone
+carries four separate 41-name and 10-name lists, and `toolIcons.test.tsx` carries a 46-name union
+by hand. Add a tool and every one of them has to change.
