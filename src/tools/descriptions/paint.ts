@@ -40,7 +40,7 @@ export const paintDescriptions: Record<
       {
         control: 'Opacity',
         detail:
-          'A label with a numeric field, scrubbable by dragging the label, 0 to 100 percent. Default 100. A hard ceiling for one stroke, not a per-dab rate.',
+          'A label with a numeric field, scrubbable by dragging the label, 0 to 100 percent. Default 100. A hard ceiling for one stroke, not a per-dab rate. The app seeds its Brush at 90 percent, not Photoshop’s 100.',
         status: 'present',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:109',
       },
@@ -124,7 +124,7 @@ export const paintDescriptions: Record<
       'src/components/Common/AppKeyboardShortcuts.tsx:240',
     ],
     appNotes:
-      'A real painting tool, and the closest of the seven: a drag paints the foreground colour, one mouse-up is one history state, and Opacity behaves as Photoshop’s per-stroke ceiling because the stroke is a single alpha-weighted pass over the whole path. The divergences are structural. There is no Flow and therefore no within-stroke build-up; there is no tip, so no Hardness, Spacing, angle, roundness, shape dynamics, scattering or texture; there is no Airbrush, no stylus pressure, no symmetry and no Brush Settings panel. Mode offers sixteen canvas compositing operations rather than Photoshop’s thirty-plus, and it is applied to the layer the stroke creates rather than to the stroke’s own pixels. Size is capped at 500 px, not 5000, because a stroke is rasterized into a canvas padded by the full tip width and committed as its own layer. Smoothing is real but a different algorithm: it pulls each sampled interior point toward the midpoint of its neighbours, whereas Photoshop’s is a trailing anchor over the raw input stream, so the app has no catch-up and no pulled-string slack. The largest divergence is not in the bar at all — a brush stroke is committed by creating a NEW layer rather than by painting the active one.',
+      'A real painting tool, and the closest of the seven: a drag paints the foreground colour, one mouse-up is one history state, and Opacity behaves as Photoshop’s per-stroke ceiling because the stroke is a single alpha-weighted pass over the whole path, though the bar seeds it at 90 percent where Photoshop’s is 100. The divergences are structural. There is no Flow and therefore no within-stroke build-up; there is no tip, so no Hardness, Spacing, angle, roundness, shape dynamics, scattering or texture; there is no Airbrush, no stylus pressure, no symmetry and no Brush Settings panel. Mode offers sixteen canvas compositing operations rather than Photoshop’s thirty-plus, and it is applied to the layer the stroke creates rather than to the stroke’s own pixels. Size is capped at 500 px, not 5000, because a stroke is rasterized into a canvas padded by the full tip width and committed as its own layer. Smoothing is real but a different algorithm: it pulls each sampled interior point toward the midpoint of its neighbours, whereas Photoshop’s is a trailing anchor over the raw input stream, so the app has no catch-up and no pulled-string slack. The largest divergence is not in the bar at all — a brush stroke is committed by creating a NEW layer rather than by painting the active one. One caveat on the bindings above: `B` is the app’s only one. `AppKeyboardShortcuts.tsx` is the complete global table and registers no bracket, no digit and no Alt or Shift override for any paint tool, so `[`, `]`, `0`, `1` and both modifiers above are Photoshop’s own and this app binds none of them — there is no Alt eyedropper swap and no Shift straight-line constraint on a stroke.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://asktimgrey.com/2023/09/01/flow-versus-opacity-for-brushes',
@@ -170,7 +170,7 @@ export const paintDescriptions: Record<
       {
         control: 'Opacity',
         detail:
-          'A label with a numeric field, scrubbable by dragging the label, 0 to 100 percent. Default 100. A hard ceiling for one stroke.',
+          'A label with a numeric field, scrubbable by dragging the label, 0 to 100 percent. Default 100. A hard ceiling for one stroke. The app seeds its Pencil at 90 percent, not Photoshop’s 100.',
         status: 'present',
         appRef: 'src/components/ToolbarsRight/Paint/Paint.tsx:109',
       },
@@ -225,7 +225,7 @@ export const paintDescriptions: Record<
       'src/components/Common/AppKeyboardShortcuts.tsx:18',
     ],
     appNotes:
-      'The app renders the Pencil through the same bar factory as the Brush, with its own three synthetic presets, and its stroke is one round-capped pass of the same painter. That reproduces the hard edge, so the two agree on the one property that distinguishes them, but it is a hard edge by construction rather than by a hard tip: a round cap is aliased because the canvas rasterizes it that way, and there is no tip model that could be made soft. The Pencil’s one own feature, Auto Erase, is absent entirely — there is no background color in the app’s tool state, so the checkbox has nothing to decide between, and no component renders it. Mode offers sixteen canvas operations and is applied to the layer the stroke creates, not to the stroke’s pixels; Size is capped at 500 px rather than 5000. The Pencil has no keyboard shortcut of its own here: it is reached by cycling the Brush tile with Shift+B, where Photoshop binds it to N. As with the Brush, each stroke creates a new layer rather than painting the active one.',
+      'The app renders the Pencil through the same bar factory as the Brush, with its own three synthetic presets, and its stroke is one round-capped pass of the same painter. That reproduces the hard edge, so the two agree on the one property that distinguishes them, but it is a hard edge by construction rather than by a hard tip: a round cap is aliased because the canvas rasterizes it that way, and there is no tip model that could be made soft. The Pencil’s one own feature, Auto Erase, is absent entirely — there is no background color in the app’s tool state, so the checkbox has nothing to decide between, and no component renders it. Mode offers sixteen canvas operations and is applied to the layer the stroke creates, not to the stroke’s pixels; Size is capped at 500 px rather than 5000, and the shared bar seeds Opacity at 90 percent where Photoshop’s is 100. The `Alt` and `Shift` modifiers above are Photoshop’s own and the app binds neither: `AppKeyboardShortcuts.tsx` is the complete global table, it registers no Alt override and no Shift constraint for any paint tool, and `altKey` in a pointer handler is read only by the shape, the magnetic lasso, the elliptical selection and the clone stamp. The Pencil has no keyboard shortcut of its own here: it is reached by cycling the Brush tile with Shift+B, where Photoshop binds it to N. As with the Brush, each stroke creates a new layer rather than painting the active one.',
     sources: [
       'https://helpx.adobe.com/photoshop/using/painting-tools.html',
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/auto-erase-with-the-pencil-tool.html',
@@ -254,7 +254,8 @@ export const paintDescriptions: Record<
         control: 'Brush Preset Picker',
         detail:
           'The tip thumbnail and its chevron, opening a popout whose Size and Hardness change the tip temporarily, plus an Angle/Roundness widget, a settings gear, a New Preset button and a grid of tips.',
-        status: 'missing',
+        status: 'inert',
+        appRef: 'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:13',
       },
       {
         control: 'Size',
@@ -265,7 +266,8 @@ export const paintDescriptions: Record<
         control: 'Mode',
         detail:
           'The blend mode that decides which component of the pixel is transferred. Hue, Saturation, Color and Luminosity are the ones that make the tool a replacement rather than a paint; Adobe says to keep it set to Color, and the default options bar does.',
-        status: 'missing',
+        status: 'inert',
+        appRef: 'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:13',
       },
       {
         control: 'Opacity',
@@ -276,24 +278,28 @@ export const paintDescriptions: Record<
         control: 'Sampling',
         detail:
           'Three small icons. Continuous resamples the color under the crosshair as you drag; Once locks the color of the first click for the whole stroke; Background Swatch replaces only areas containing the current background color. Adobe does not state which is the default.',
-        status: 'missing',
+        status: 'inert',
+        appRef: 'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:13',
       },
       {
         control: 'Limits',
         detail:
           'A dropdown. Contiguous replaces colors contiguous with the pixel under the pointer; Discontiguous replaces the sampled color wherever it occurs under the pointer; Find Edges replaces connected areas containing the sampled color while preserving the sharpness of shape. Adobe does not state which is the default.',
-        status: 'missing',
+        status: 'inert',
+        appRef: 'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:13',
       },
       {
         control: 'Tolerance',
         detail:
           'A slider, 0 to 255, entered as a percentage. A low value replaces only colors very similar to the pixel clicked; a higher value widens the range. Adobe does not document a default; a widely-cited third-party value is 30 percent.',
-        status: 'missing',
+        status: 'inert',
+        appRef: 'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:13',
       },
       {
         control: 'Anti-aliased',
         detail: 'A checkbox giving the deposited color anti-aliased edges. On by default.',
-        status: 'missing',
+        status: 'inert',
+        appRef: 'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:13',
       },
     ],
     modifiers: [],
@@ -308,7 +314,7 @@ export const paintDescriptions: Record<
       'src/components/Common/AppKeyboardShortcuts.tsx:18',
     ],
     appNotes:
-      'Not a placeholder, and the bar is exactly what used to make it look like one. Its options bar IS a PlaceholderTool — six disabled chips naming Brush Preset Picker, Blend Mode, Sampling, Limits, Tolerance and Anti-alias render where the real controls belong, and none of them reads or writes anything — but the tool itself is routed into the same live gesture surface as the Brush, the Pencil and the Draw, and it has a `raster` commit and a real replayable processor, so a drag deposits a visible, undoable, replayable layer. That combination is why the verdict is `partial` and not `placeholder`: a placeholder options bar coexists here with a live gesture that paints the wrong pixels. What the tool paints is a spray-can stroke of the foreground color with `source-over` compositing, which is the opposite of the tool’s contract — it covers texture and luminosity where Photoshop preserves them, and it replaces nothing at all. Nothing in the tool’s state corresponds to any of the six chips either: there is no tolerance, no sampling mode, no limits mode and no anti-alias flag, and the app has no background color for Background Swatch to name. The `blendMode` field its args do carry seeds to Normal and is read only for a layer a paint tool creates, so the Color blend mode that makes this tool a replacement is unreachable. It also has no keyboard shortcut of its own: the app reaches it only by cycling the Brush tile with Shift+B, where Photoshop binds it separately.',
+      'Not a placeholder, and the bar is exactly what used to make it look like one. Its options bar IS a PlaceholderTool — six disabled chips naming Brush Preset Picker, Blend Mode, Sampling, Limits, Tolerance and Anti-alias render where the real controls belong, and none of them reads or writes anything — but the tool itself is routed into the same live gesture surface as the Brush, the Pencil and the Draw, and it has a `raster` commit and a real replayable processor, so a drag deposits a visible, undoable, replayable layer. That combination is why the verdict is `partial` and not `placeholder`: a placeholder options bar coexists here with a live gesture that paints the wrong pixels. Two of those chips do not even carry their own control’s name: the chip for `Mode` reads `Blend Mode`, and the chip for `Anti-aliased` reads `Anti-alias`, so those two rows are `inert` on a label that is nearly the control’s name rather than on an exact one. What the tool paints is a spray-can stroke with `source-over` compositing, and its color is not the foreground color: this bar is a PlaceholderTool with no `useCurrentTool`, so nothing here ever writes the store’s foreground into the tool’s args, and the stroke uses the `#000000` its args are seeded with. That is the opposite of the tool’s contract on three counts — it covers texture and luminosity where Photoshop preserves them, it replaces nothing at all, and the user has no way to change the color it lays down. Nothing in the tool’s state corresponds to any of the six chips either: there is no tolerance, no sampling mode, no limits mode and no anti-alias flag, and the app has no background color for Background Swatch to name. The `blendMode` field its args do carry seeds to Normal and is read only for a layer a paint tool creates, so the Color blend mode that makes this tool a replacement is unreachable. It also has no keyboard shortcut of its own: the app reaches it only by cycling the Brush tile with Shift+B, where Photoshop binds it separately.',
     sources: [
       'https://www.photoshopessentials.com/photo-editing/photoshop-color-replacement-tool-tutorial',
       'https://adobe.manymanuals.com/software/photoshop-cs4/user-manual-35148/215',
@@ -542,7 +548,8 @@ export const paintDescriptions: Record<
       'src/tools/toolsMap.ts:123',
       'src/tools/fill.ts:129',
       'src/tools/fill.ts:151',
-      'src/components/Main/FillToolArea.tsx:157',
+      'src/components/Main/FillToolArea.tsx:154',
+      'src/components/Main/FillToolArea.tsx:160',
       'src/components/ToolbarsRight/MagicEraser/PaintBucket.tsx:35',
       'src/tools/settings.ts:193',
       'src/components/Common/AppKeyboardShortcuts.tsx:314',
@@ -647,7 +654,7 @@ export const paintDescriptions: Record<
       'src/components/Common/AppKeyboardShortcuts.tsx:362',
     ],
     appNotes:
-      'The most nearly complete of the seven, and the only one whose Alt gesture is implemented. Alt-click sets the source at pointer-down and paints nothing; the source and the stroke are both rebased into the active layer’s frame, which is safe precisely because the processor only ever uses their difference. With no source set the gesture is refused outright — not-allowed cursor, no stroke, no history entry — rather than accepted and committed as a no-op that would make undo appear to do nothing. The copy is a genuine copy: a soft-edged tip and a straight-alpha source-over per texel, carrying the source texel’s own alpha so a clone out of a transparent region leaves the destination transparent rather than painting it opaque black, with every read indexed into an immutable copy of the raster and every write into the buffer, so no dab can sample a texel a previous dab laid down. That read-back is taken once per stroke and not per dab for a second reason worth naming: the live preview re-runs the processor on every pointer move but always against the store’s own pre-stroke raster, never the previous frame’s preview, and the commit re-runs it once more over the whole path before publishing. Aligned is the one control that is wired and still diverges, and the divergence is worth stating precisely because the checkbox is real and the arithmetic beneath it is not Adobe’s. Adobe fixes the offset at the displacement of the first stroke after the Alt-click and holds it for every later stroke; the app recomputes the offset from the current gesture’s own first point on every invocation, so the offset is constant within a stroke — which matches — and re-anchors at the start of each new one, which is exactly the drift the mode exists to remove. Unaligned is not the other half of Adobe’s pair either: Adobe keeps the sampling point fixed at the Alt-click and moves only the destination, while the app measures from the gesture’s current end, so the read point slides backwards as the drag progresses. Both arms are one subtraction, so this is a missing anchor rather than a wrong formula, and the fix is a stored offset on the args rather than new pixel code. Size, Hardness and Opacity are all wired and the tip is borrowed from the shared brush engine, so a soft Clone edge is the same soft edge the other paint tools stamp. Seven of the eleven controls are absent because the args type declares no field for any of them: Mode, Flow, both pressure toggles, Sample, Ignore Adjustment Layers and the Clone Source panel. Ignore Adjustment Layers has nothing to ignore in this app even in principle — a layer source is blank, an image, a tool or an affine transform, and Levels, Color, Transform and Blur are destructive operations on a raster rather than layers sitting above a clone target. Mode is the one that would change visible behavior: the tool is a raster commit on the active layer, so a blend mode is a composite against the layer beneath and the one primitive here takes no mode. Size is capped at 500 px rather than 5000. The layer gate refuses the Bedrock layer but does not check the layer’s lock flag, so a layer the UI presents as locked will still accept a cloned stroke — and that lock round-trips to PSD as composite and position protection, which means a layer can be protected in a saved file and freely overwritten in the editor.',
+      'The most nearly complete of the seven, and the only one whose Alt gesture is implemented. Alt-click sets the source at pointer-down and paints nothing; the source and the stroke are both rebased into the active layer’s frame, which is safe precisely because the processor only ever uses their difference. With no source set the gesture is refused outright — not-allowed cursor, no stroke, no history entry — rather than accepted and committed as a no-op that would make undo appear to do nothing. The copy is a genuine copy: a soft-edged tip and a straight-alpha source-over per texel, carrying the source texel’s own alpha so a clone out of a transparent region leaves the destination transparent rather than painting it opaque black, with every read indexed into an immutable copy of the raster and every write into the buffer, so no dab can sample a texel a previous dab laid down. That read-back is taken once per stroke and not per dab for a second reason worth naming: the live preview re-runs the processor on every pointer move but always against the store’s own pre-stroke raster, never the previous frame’s preview, and the commit re-runs it once more over the whole path before publishing. Aligned is the one control that is wired and still diverges, and the divergence is worth stating precisely because the checkbox is real and the arithmetic beneath it is not Adobe’s. Adobe fixes the offset at the displacement of the first stroke after the Alt-click and holds it for every later stroke; the app recomputes the offset from the current gesture’s own first point on every invocation, so the offset is constant within a stroke — which matches — and re-anchors at the start of each new one, which is exactly the drift the mode exists to remove. Unaligned is not the other half of Adobe’s pair either: Adobe keeps the sampling point fixed at the Alt-click and moves only the destination, while the app measures from the gesture’s current end, so the read point slides backwards as the drag progresses. Both arms are one subtraction, so this is a missing anchor rather than a wrong formula, and the fix is a stored offset on the args rather than new pixel code. Size, Hardness and Opacity are all wired and the tip is borrowed from the shared brush engine, so a soft Clone edge is the same soft edge the other paint tools stamp. Eight of the ten controls are absent because the args type declares no field for any of them: Brush Preset Picker, Mode, Flow, both pressure toggles, Sample, Ignore Adjustment Layers and the Clone Source panel. Ignore Adjustment Layers has nothing to ignore in this app even in principle — a layer source is blank, an image, a tool or an affine transform, and Levels, Color, Transform and Blur are destructive operations on a raster rather than layers sitting above a clone target. Mode is the one that would change visible behavior: the tool is a raster commit on the active layer, so a blend mode is a composite against the layer beneath and the one primitive here takes no mode. Size is capped at 500 px rather than 5000. The layer gate refuses the Bedrock layer but does not check the layer’s lock flag, so a locked layer still accepts a cloned stroke — and that lock round-trips to PSD as composite and position protection, which means a layer can be protected in a saved file and freely overwritten in the editor. The scope of that is worth stating precisely: `layer.locked` is only ever set true by importing a PSD, and no panel in this app renders a lock control or a lock icon, so there is no in-app route to a locked layer and nothing on screen to contradict the flag.',
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/repair-retouch/heal-clone/retouch-images-with-the-clone-stamp-tool.html',
       'https://helpx.adobe.com/photoshop/using/tool-techniques/clone-stamp-tool.html',

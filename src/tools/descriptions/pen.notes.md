@@ -19,7 +19,7 @@ The three facts that settle it, in the order they matter:
    (`src/tools/toolProcessors.ts:109`) — a zero-arity function returning a null bitmap, so a drag
    commits no pixels, records no history state and produces no durable operation. None of the six is a
    `creator`. `src/tools/__tests__/tool-processors.test.ts:338-343` pins all six commit kinds, and
-   `src/tools/__tests__/tool-processors.test.ts:697-698` pins that all six share the one stub instance.
+   `src/tools/__tests__/tool-processors.test.ts:695-696` pins that all six share the one stub instance.
 2. **All six render `PlaceholderTool`, through the same config key.** `src/tools/toolsMap.ts:127-152`
    calls `placeholderTool('<Tool> Tool', 'pen')` for all six — note `'pen'`, not each tool's own key.
    `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8-36` renders an amber dashed panel with a
@@ -37,6 +37,48 @@ concept at all**. `grep -rn "workPath|work path" src` returns nothing, and no co
 path that lives in that panel. There is nothing for them to edit, which is why a placeholder is the
 honest state rather than a gap someone forgot.
 
+## "No processor" is a claim about the pixel-free list, and these six are not on it
+
+The three anchor-point entries used to say each acts "over a tool that has no processor", and that is
+the one wording in this family that was strictly false while sounding like a caveat. In this codebase
+**no processor** has a precise meaning and it excludes these three: `src/tools/toolsMap.ts:124-126`
+uses the phrase for the eyedropper, whose absence is real because the eyedropper is the only tool in
+`PIXEL_FREE_TOOLS` and so genuinely carries only an icon and a bar. All six Pen tools are registered
+in `toolProcessors`, and all three anchor-point tools are wired to the same `unimplemented` instance
+the rest of the family uses — the same one this note's first fact above already names. The file's own
+`pen` entry had it right, and it now says so in all three, with
+`src/tools/toolProcessors.ts:109` cited in each entry so the "shared" is checkable rather than
+asserted.
+
+## The canvas and the keyboard, which are a different axis from the bar
+
+Everything above is about the options bar and the processor. Two further facts are about what a user
+can actually do with the tool, and they are the ones that survive a screenshot of the amber panel:
+
+- **No Pen tool has a gesture surface at all.** `src/components/Main/Main.tsx:60-75` turns a tool name
+  into an `interactionMode`, and none of the six appears in any branch of that chain, so
+  `interactionMode` stays its `'zoom'` default and `EventHandler` stays `DummyToolArea`
+  (`src/components/Main/Main.tsx:195`), which renders a `display: none` div
+  (`src/components/Main/DummyToolArea.tsx:15`). That is why no `modifiers` row in this family is
+  backed by anything, and why `Esc` and `Ctrl+Alt` are recorded as absent rather than merely unlisted.
+  For the record, the app binds `Escape` in exactly four places and none is a Pen tool:
+  `PolygonClickToolArea.tsx:915` and `FeatherMagneticLassoToolArea.tsx:535` (the lasso pair),
+  `ToolbarsRight/Text/FontSelect.tsx:55` and `ToolbarsRight/Transform/Transform.tsx:37`. The Escape
+  branch in `TextToolArea.tsx:116` is commented out, which is why the text tool is not in that list.
+- **The keyboard reaches three of the six.** The rail's Pen flyout lists six tools
+  (`toolbar-mapping.ts:100-105`) and `penGroup` holds three
+  (`src/components/Common/AppKeyboardShortcuts.tsx:32`), so `Shift+P` never reaches Add Anchor Point,
+  Delete Anchor Point or Convert Point — they are reachable from **no** key in the app, which is a
+  stronger statement than "they have no shortcut of their own" and the one the data file now makes.
+
+**Plain `P` is not "select the Pen tool", and the data file used to say it was.** `selectPenTool`
+(`src/components/Common/AppKeyboardShortcuts.tsx:148-157`) resolves to the already-active member of
+`penGroup` when the current tool is in it, and to `'pen'` otherwise. Two consequences the three `P`
+rows now state: `P` keeps the Freeform or the Curvature Pen where it is instead of snapping back to
+the Pen; and it never selects the Freeform or Curvature Pen from anything else, so the old wording on
+those two rows — "Selects the Freeform Pen tool" — was wrong in the same direction as the Pen's. The
+binding is also `enabled: hasImage` (`:387`), so it does nothing until an image is open.
+
 Two further app facts, both first-class and both test-pinned:
 
 - **The Freeform Pen and the Curvature Pen render the wrong chip list.** `toolbarPlaceholderConfig.ts:15-16`
@@ -53,7 +95,7 @@ Two further app facts, both first-class and both test-pinned:
   pins that legacy replay keeps authority for `pen` and `freeform-pen` through the injected raster
   adapter. So even a history item that names one of these tools cannot reach the durable path.
 
-Also worth recording: `src/components/SidebarLeft/toolIcons.tsx:74-78` gives the Pen, the Curvature Pen
+Also worth recording: `src/components/SidebarLeft/toolIcons.tsx:74-79` gives the Pen, the Curvature Pen
 and all three anchor-point tools the _same_ pen-nib icon; only the Freeform Pen has its own. Five of the
 six are visually indistinguishable in the rail.
 
@@ -204,7 +246,9 @@ the same `appRef`.
   at `src/components/Common/AppKeyboardShortcuts.tsx:32` for exactly the three pens — which matches
   Photoshop, which gives the three anchor-point tools no shortcut of their own.
 - `Ctrl+Enter` loads the path as a selection; `Ctrl+Alt` / `Cmd+Option` over an anchor point reaches the
-  Convert Point tool from the Direct Selection tool (`editing-paths.html`).
+  Convert Point tool from the Direct Selection tool (`editing-paths.html`). **Neither is bound.** There
+  is no `Enter` keybinding for any path in the app, and the shortcut matcher can express an `alt` guard
+  (`src/hooks/useKeyboardEvents.tsx:76`) that no registration uses.
 - **The cursor is the mode display, and Photoshop's own documentation says so.** The Pen becomes the Add
   or Delete Anchor Point tool as you move over a selected path, and Adobe's InDesign page for the same
   Pen spells out where Photoshop differs from its siblings: "In Photoshop, the pointer changes only

@@ -100,7 +100,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   smudge: {
     summary:
       'Drags the pixels under the brush along the stroke, picking up colour where the stroke begins and pushing it where you pull.',
-    implementation: 'implemented',
+    implementation: 'partial',
   },
   dodge: {
     summary:
@@ -208,7 +208,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   eyedropper: {
     summary:
       'Samples a color from anywhere in the image and makes it the foreground color, on a click rather than a drag.',
-    implementation: 'implemented',
+    implementation: 'partial',
   },
   draw: {
     summary:

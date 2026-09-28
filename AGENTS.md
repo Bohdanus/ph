@@ -72,6 +72,8 @@ npm run board             # the swarm board, live state: who holds what right no
 npm run board -- help     # the full command list
 npm run board -- ready    # the work queue an agent picks from
 npm run board -- watch    # the event log; --follow to tail it
+
+node scripts/worktree-inventory.mjs   # WORKTREES.json: what every worktree holds
 ```
 
 ## The swarm board
@@ -235,6 +237,137 @@ Five traps that cost real debugging time:
 - **Every worktree's dev server wants :5173.** Locally `reuseExistingServer` is on, so `test:e2e` can attach to a server another worktree started and then test _that_ checkout. Use `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` in a worktree. "My change did nothing" in e2e is this, not a cache.
 - **The main worktree is not stable while you work.** Other sessions commit into it concurrently. Re-read `git status` / `git diff` before staging, and stage only your own paths.
 
+## WORKTREES.json: the inventory of every worktree
+
+`WORKTREES.json` at the repository root is a generated inventory of every
+worktree: its branch, how far it has drifted from `main`, whether that branch
+is already landed, what the working tree holds that no commit does, which
+Kilo sessions ran there, and which of those are unfinished, blocked or dead.
+**It is regenerated, never hand-edited**, and it is the first thing to read
+before deleting a worktree or starting one that may already exist.
+
+```bash
+node scripts/worktree-inventory.mjs            # regenerate
+node scripts/worktree-inventory.mjs --check    # exit 1 if stale, write nothing
+node scripts/worktree-inventory.mjs --quiet    # totals only
+```
+
+**Read `recommendation` and `prunable`, never `ahead`/`behind` on their own.**
+`prunable: true` means ALL of these hold: it is not the main worktree, the
+branch is an ancestor of `main`, the working tree is clean, and no curated
+finding protects it. `recommendation` is the decision — `prune`, `salvage`,
+`review-residue`, `in-use`, or `keep` (the main checkout, which is never a
+deletion candidate) — and `statusReasons` is why, in the generator's own words,
+so you can check the reasoning rather than trust it.
+
+### "0 commits ahead of main" is NOT evidence that a worktree is disposable
+
+This is the single most expensive mistake available in this repository, and it
+has already happened. A branch created from `main` and never committed to
+reports **0 ahead**, is **an ancestor of main**, and can be holding **hours of
+uncommitted work that exists on no ref at all**. `git status --porcelain` being
+non-empty is the only check that sees it.
+
+So the generator gives that shape its own status, `uncommitted-only`, and never
+calls it prunable. `uncommitted-only` deliberately does **not** distinguish "a
+branch that landed and was then edited" from "a branch that never committed" —
+git cannot tell them apart, both report 0 ahead and an ancestor, and inventing
+a distinction git cannot support would be a false reassurance. The curated
+`mustNotPrune` flag in `scripts/lib/worktree-inventory/curated.mjs` is where a
+human records the claim git cannot.
+
+### `unfinished` and `dead` are separate, and they need different responses
+
+`chats.unfinished` holds sessions that have stopped with work outstanding:
+`active`, `abandoned-midflight` (a stale session whose last turn ended on a
+tool call rather than a completed stop), `blocked` (waiting on a human answer —
+go answer it), `died-at-birth` and `rejected-credits`. `chats.dead` holds the
+subset that will never produce anything: `died-at-birth`, `rejected-credits`
+and `orphaned` (the worktree directory no longer exists).
+
+**`rejected-credits` is a caller bug, not a session problem.** It means a
+launcher resolved a bare model name onto a paid GPT id and the subagent died at
+zero tokens with `APIError: Add credits to continue`. There is nothing to
+salvage and no work to redo — the fix is in the code that made the call, and it
+is the model policy at the top of this document. Count these before blaming a
+branch for making no progress.
+
+A session that is `active` is **never** reported as abandoned: recency is
+checked before the shape of the last turn, because a live machine's most recent
+turn always ends in a tool call, and treating that as stuck would cry wolf on
+every running agent. A `blocked` session is a live machine **waiting on a
+human** — go answer it.
+
+`blocked` is detected indirectly, from the runtime's own report that a managed
+session is waiting on a question. The signal is weak, so it is kept visible:
+`blockedOn` carries the question id and the reason names the evidence, rather
+than a flat `blocked` with nothing behind it.
+
+### `session.directory` is where a chat was OPENED, not where it is working
+
+**The only liveness signal that is not `session.directory` is the board's own
+`agents` record, and it is there because of this.** A session started in the
+main checkout and then driven into a task worktree keeps the main checkout as
+its `directory` for its whole life: measured on this repository, an agent
+working exclusively in `.kilo/worktrees/worktree-inventory` had **zero**
+sessions attributed to that path, and its worktree read `prunable` while it was
+being actively used. So `in-use` is set by **either** signal — a session
+inside the 30-minute window, or a board agent seen in that worktree inside it —
+and `board.agents` is on every record so you can see which one fired.
+
+The consequence for reading the file: `chats` is a view of _chat history per
+worktree path_, which is not the same as _work done in a worktree_. Treat a
+zero `chats.count` as "no chat was ever opened there", never as "nobody worked
+there".
+
+### The file is generated; the judgement is not
+
+Anything git or the session database can answer is read fresh on every run.
+Anything a human had to look at and decide lives in
+`scripts/lib/worktree-inventory/curated.mjs` and survives regeneration:
+
+```js
+'polygon-marching-ants': {
+  summary: 'Polygon-selection marching ants: the ants component, the hook, …',
+  issues: [{ ref: 'HANDOFF.md#48', title: 'eraser is hard-edged' }],
+  mustNotPrune: true,   // blocks prunable even when git says it is clean
+  landed: true,         // a CLAIM, asserted against git by a test
+  note: 'the tip is an old main commit, so git reports 0 ahead; the work is on no ref',
+},
+```
+
+**When you create a worktree, add its entry in the same change.** A new
+worktree with no curated entry still appears, with `summary: null` and
+`summarySource: "none"`, and a test reads the real `git worktree list` and fails
+on it — an undocumented worktree cannot be created quietly. An uncurated entry
+is a worktree nobody has written down what it is for, which is how a
+preservation branch gets mistaken for a disposable one.
+
+`mustNotPrune` is a tripwire, not a suggestion: it makes the generator refuse
+to call a worktree prunable even when git reports it landed and clean, and it
+exists for the case that has already cost real work here. A test requires every
+`mustNotPrune` entry to carry a `note` saying what would be lost, because a
+flag with no explanation is unfalsifiable.
+
+`landed: true` is a curator's **claim**, printed next to git's answer as
+`claimedLanded` against `mergedIntoMain`. A test re-derives it from
+`git merge-base --is-ancestor` and fails when the two disagree: an earlier
+version asserted `landed` for a worktree git reported as holding uncommitted
+work, and nothing noticed.
+
+**Never put a count in a summary.** "32 paths uncommitted" and "12 commits
+behind" were both wrong within hours, in a file whose whole purpose is to be
+trusted, and no test can catch a wrong number in prose. `dirty`, `untracked`,
+`ahead`, `behind` and `commitsAheadTruncated` are already on every record —
+describe WHAT a worktree holds and leave the arithmetic to the generator.
+
+**Regenerate and commit `WORKTREES.json` in the same change that adds or
+removes a worktree.** A stale inventory is worse than none: a reader cannot
+tell which parts are true. `--check` exists for a script or a hook that wants
+to fail on a stale file, and it names the per-worktree fields that drifted
+(`status`, `recommendation`, `prunable`, `ahead`, `behind`, `dirty`, …) rather
+than only reporting that something changed.
+
 ## Test traps
 
 - One setup file: **`src/test/setup.ts`** (jsdom, `OffscreenCanvas`, `createImageBitmap` polyfills). `src/__tests__/` holds `canvas-mock.ts` and shared `fixtures/`. Do not add a second setup file, or global mocks to a path expecting them to load.
@@ -362,3 +495,76 @@ It is worth knowing for what it is good: cost tracks blast radius, and so does r
 ## Architecture status
 
 `HistoryItem[]` is the **PRODUCTION REPLAY AUTHORITY**: history, `history-replay.ts`, runtime `Layer`s, and export. The durable document is shadow-only. Re-read code and plans before crossing the boundary. **DO NOT start single-writer cutover while `saveLayerCanvas()` promotes cached canvases outside reducer publication.**
+
+## The toolbar is a Photoshop clone — HARD REQUIREMENT
+
+**The Tools rail must be an exact clone of Adobe Photoshop's Tools panel. A tool that Photoshop
+does not have must be deleted and replaced by the Photoshop tool it stands in for.** This is a
+product requirement, not a preference, and it is not subject to local judgement.
+
+The bar is not a "Photoshop-inspired" surface with room for app-specific extras. A user switching
+from Photoshop must find the same tool in the same group, under the same name, at the same spot,
+reachable by the same letter. Anything this app invents breaks the muscle memory the whole
+product is borrowing.
+
+Concretely, and all of these are currently violations on `main`:
+
+- **No invented tools.** `draw` ("Draw Tool") is the only tool the app declares that Photoshop has
+  no counterpart for. It is a freehand-annotation layer tool. Photoshop's nearest is the Brush, and
+  the app already has a Brush. **It is to be deleted**, not relabelled.
+- **Adjustments are not tools.** `color` (labelled "Colors"), `levels` ("Levels") and `transform`
+  ("Transform") are `Image ▸ Adjustments` and `Edit ▸ Transform` commands, and Photoshop's Tools
+  panel contains no such entries. Photoshop's name for `color` is "Black and White", which is not a
+  tool either. These three are to leave the rail and become menu commands. They have **no
+  replacement tool** — Photoshop puts nothing there.
+- **No pseudo-tool.** `shape` is a grouping container carrying a `figure`; it is the one `ToolName`
+  the rail never displays, and Adobe has no tool by that name. Photoshop's shapes are Rectangle,
+  Ellipse, Triangle, Polygon, Line, Star and Custom Shape as **seven separate entries in one flyout**,
+  not five figures behind a tool that does not exist.
+- **Names are Adobe's, spelled Adobe's.** "Move Tool", "Rectangular Marquee Tool", "Ellipse Tool"
+  (not "Ellipse"), "Content-Aware Move tool" (hyphenated). The registry identifier is free —
+  `reposition` for the Move tool is acceptable — but the **rendered label is not**.
+- **A tool the app cannot actually do still belongs in the rail**, rendering Photoshop's real
+  options bar, because that is the contract. Eight tools currently render a `PlaceholderTool` chip
+  bar instead (all six Pen-family tools, Custom Shape, Color Replacement). Photoshop's grouping and
+  naming are the specification; the stub bar is the debt.
+
+**Verified inventory, 2026-09-28.** Adobe's current release is Photoshop 2026, version 27.x. Adobe
+publishes **no page that enumerates the Tools panel top-to-bottom**; they publish five topical
+overview tables (selection, retouch, painting, drawing, navigation-and-measuring) plus a Customize
+toolbar page that explains the grouping mechanism without ever listing the default groups. The
+group order below is therefore **reconstructed from two independent third-party 2026 toolbar
+diagrams, cross-checked against Adobe for membership**. Membership is Adobe-confirmed; **order and
+separator placement are not.** Treat the order as a good hypothesis, not as fact, and prefer a
+grouping a user can recognise over a grouping a source asserts.
+
+Adobe-confirmed tool names, by the overview table each comes from:
+
+| Adobe table                 | Tools                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Selection (upd. 2026-02-23) | Move, Rectangular Marquee, Elliptical Marquee, Single Row Marquee, Single Column Marquee, Lasso, Polygonal Lasso, Magnetic Lasso, Object Selection, Quick Selection, Magic Wand                                                                                                                                                                                            |
+| Retouch (upd. 2026-02-23)   | Spot Healing Brush, Healing Brush, Patch, Red Eye, Eraser, Background Eraser, Magic Eraser, Blur, Sharpen, Smudge, Dodge, Burn, Sponge                                                                                                                                                                                                                                     |
+| Painting (upd. 2025-10-27)  | Brush, Pencil, Color Replacement, Mixer Brush, History Brush, Art History Brush, Gradient, Paint Bucket, Eyedropper, Color Sampler, Clone Stamp, Pattern Stamp                                                                                                                                                                                                             |
+| Drawing (upd. 2025-10-27)   | Pen, Freeform Pen, Curvature Pen, Add Anchor Point, Delete Anchor Point, Convert Point, Rectangle, Ellipse, Triangle, Polygon, Star, Line, Custom Shape                                                                                                                                                                                                                    |
+| Type                        | Horizontal Type, Vertical Type, Vertical Type Mask, Horizontal Type Mask                                                                                                                                                                                                                                                                                                   |
+| Unverified family           | Adobe's navigation-and-measuring overview (upd. 2026-02-23) exists but only one line was retrievable: "Ruler tool Measures distances, locations, and angles." Hand, Rotate View, Zoom, Frame, Slice, Perspective Crop, Slice Select, Path Selection and Direct Selection are **not Adobe-table-confirmed** and are listed from the shortcut PDF and individual tool pages. |
+
+**Four 2026 candidates that are NOT Adobe-confirmed and must not ship as tools:** Adjustment Brush
+(two third-party diagrams, zero Adobe pages), Clone Source tool (one diagram's icon numbering has
+a gap where it would sit, the name was never printed), Selection Brush (Adobe documents it for
+Photoshop on the web, not the desktop panel), and Generate Image (a real feature, but its placement
+in the panel footer is unconfirmed).
+
+**Not tools, and not to be implemented as tools:** the foreground/background swatches, "Edit in Quick
+Mask Mode", the three screen-mode toggles, the `…` Edit Toolbar caret, the toolbar grip, and the
+Extra Tools container.
+
+**Naming traps in the source material, so nobody "fixes" them later:** Adobe's tables say
+"Elliptical Marquee tool" and "Ellipse tool" — two different words for two different tools. Adobe's
+painting table prints "Gradient tools" in the plural, which conflicts with the singular everywhere
+else; that one is a genuine Adobe-side inconsistency. "Content-Aware Move tool" is hyphenated.
+
+**What this costs.** See HANDOFF §68 for the file-by-file blast radius and the tests that pin tool
+names. The hand-copied tool lists in tests are the expensive part: `tool-processors.test.ts` alone
+carries four separate 41-name and 10-name lists, and `toolIcons.test.tsx` carries a 46-name union
+by hand. Add a tool and every one of them has to change.
