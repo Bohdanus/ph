@@ -1108,6 +1108,30 @@ export class Board {
   }
 
   /**
+   * The files an issue is ABOUT, as recorded when it was filed.
+   *
+   * Not the locks. Those are a different question — who is IN a file right now —
+   * and the import deliberately takes none, so a table that reported locks
+   * showed `-` for all fifty-four imported items and told an agent nothing about
+   * the work in front of it. The file list itself lives in the issue's own
+   * `issue.create` event, which is where both filing paths (`board new` and
+   * `board import`) put it, so it is there for every issue that exists.
+   */
+  issueFiles(issueId) {
+    const row = this.db
+      .prepare("SELECT data FROM events WHERE issue_id = ? AND kind = 'issue.create' ORDER BY seq ASC LIMIT 1")
+      .get(issueId);
+    if (!row?.data) return [];
+    try {
+      const files = JSON.parse(row.data)?.files;
+      return Array.isArray(files) ? this.canonicalPaths(files) : [];
+    } catch {
+      // A malformed event is a missing file list, not a crash in a listing.
+      return [];
+    }
+  }
+
+  /**
    * `board check <path>`: exit 0 free, 1 held. Scriptable on its own, and the
    * one query an agent or a shell is most likely to trust.
    *

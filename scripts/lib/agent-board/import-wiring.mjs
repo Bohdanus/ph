@@ -28,6 +28,27 @@ const DEFAULT_FILES = Object.keys(SCOPE_BY_FILE);
  */
 const NOT_ITEMS = new Set(['HANDOFF.md#0']);
 
+/**
+ * The documents carry their own urgency in the heading — `P0 — the durable
+ * replay path has no production caller`, `P2 — an empty CDP capture…` — and
+ * every imported item was landing on the board as `normal`.
+ *
+ * That is not a cosmetic gap. Priority is the column `board ready` SORTS on, so
+ * a flat priority column means the queue an agent works from is in document
+ * order rather than in order of how much damage the item does, and the P0s sit
+ * wherever their heading happened to be. The documents' P0..P3 map onto the
+ * board's four levels directly; anything unlabelled stays `normal` rather than
+ * being promoted or buried on a guess.
+ */
+const SEVERITY_HEADING = /^P(\d)\b/i;
+const SEVERITY_TO_PRIORITY = { 0: 'critical', 1: 'high', 2: 'normal', 3: 'low' };
+
+export function priorityOf(title) {
+  const match = SEVERITY_HEADING.exec(String(title ?? '').trim());
+  if (!match) return null;
+  return SEVERITY_TO_PRIORITY[match[1]] ?? null;
+}
+
 export async function importDocuments({ board, files = null, dryRun = false, cwd = process.cwd() } = {}) {
   const targets = files && files.length > 0 ? files : DEFAULT_FILES;
   const read = [];
@@ -64,6 +85,7 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
         title: item.title,
         body: item.body,
         scope,
+        priority: priorityOf(item.title) ?? 'normal',
         origin: item.origin,
         files: item.files ?? [],
         // The files an item names are context, not an intention to edit them

@@ -92,9 +92,22 @@ const VALUE_FLAGS = new Set([
   'since',
   'status',
   'until',
-  'verified-by',
   'file',
 ]);
+
+/**
+ * Flags that take a LIST, and therefore swallow every following token that is
+ * not itself a flag.
+ *
+ * `--files a.ts b.ts` was the form AGENTS.md documented, and it did not work:
+ * the parser took `a.ts` as the value and left `b.ts` as a positional, so it
+ * became part of the issue TITLE on `new` and was silently ignored on `claim`.
+ * A documented example that does not do what it says is worse than a missing
+ * one, so the parser learned the documented form instead of the doc being
+ * quietly changed. A comma-separated value still works, and repeating the flag
+ * still works.
+ */
+const LIST_FLAGS = new Set(['files', 'dep', 'file']);
 
 /**
  * A dependency-free argument parser, because an agent's first command in a
@@ -116,17 +129,27 @@ export function parseArgs(argv) {
     if (token.startsWith('--')) {
       const eq = token.indexOf('=');
       const name = eq === -1 ? token.slice(2) : token.slice(2, eq);
+      const key = name.replace(/-/g, '_');
       let value = eq === -1 ? undefined : token.slice(eq + 1);
       if (value === undefined) {
         const next = argv[i + 1];
         if (VALUE_FLAGS.has(name) && next !== undefined && !next.startsWith('--')) {
-          value = next;
-          i += 1;
+          if (LIST_FLAGS.has(name)) {
+            // A list flag is greedy: every following bare token belongs to it.
+            const values = [];
+            while (i + 1 < argv.length && !argv[i + 1].startsWith('--')) {
+              values.push(argv[i + 1]);
+              i += 1;
+            }
+            value = values.length > 0 ? values : true;
+          } else {
+            value = next;
+            i += 1;
+          }
         } else {
           value = true;
         }
       }
-      const key = name.replace(/-/g, '_');
       if (key in flags) {
         flags[key] = Array.isArray(flags[key]) ? [...flags[key], value] : [flags[key], value];
       } else {
@@ -292,19 +315,27 @@ export async function run(
         // The FILES column is the whole point of the table: an issue nobody has
         // claimed can still be one whose files another agent is already in, and
         // an agent that has to find that out by trying is an agent that just
-        // lost a file lock race for nothing.
+        // lost a file lock race for nothing. It reports the files the issue is
+        // ABOUT, not the locks it happens to hold — an imported item holds none,
+        // and a column that only ever said `-` told the reader nothing.
+        const foreignLocks = board.liveLocks().filter((lock) => lock.agent_id !== identity.agentId);
         const rows = issues.map((issue) => {
-          const locks = board.locksFor(issue.id);
-          const foreign = locks.filter((lock) => lock.agent_id !== identity.agentId);
+          const named = board.issueFiles(issue.id);
+          const held = foreignLocks.filter((lock) => named.includes(lock.path));
           return [
             issue.id,
             issue.priority,
             issue.scope,
             issue.origin ?? '-',
-            foreign.length
-              ? `${foreign.length}/${locks.length} held: ${foreign.map((lock) => lock.agent_id).join(',')}`
-              : locks.length
-                ? `${locks.length} free`
+            held.length
+              ? // The contended paths, by name: a count says something is busy
+                // and a name says which one, and the name is the part an agent
+                // has to act on.
+                `${held.length}/${named.length} held: ${held
+                  .map((lock) => `${lock.path} by ${lock.agent_id}`)
+                  .join(', ')}`
+              : named.length
+                ? `${named.length} free`
                 : '-',
             issue.title.slice(0, 70),
           ];

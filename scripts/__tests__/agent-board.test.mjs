@@ -819,6 +819,41 @@ describe('the command line', () => {
     expect(other.err).toMatch(/held by another agent/);
   });
 
+  it('shows, in `ready`, the files an issue is about and whether they are free', async () => {
+    const filed = JSON.parse(
+      (await cli(['new', 'P0 — the worst thing in the adapter', '--files', 'src/a.ts', 'src/b.ts', '--json'])).out
+    );
+    // The column reports the files the issue is ABOUT, and the same column
+    // reported locks — so an imported issue, which takes none on purpose, showed
+    // `-` for all fifty-four of them and told a reader nothing at all.
+    //
+    // Your own locks are not contention, so the filer sees its own files free.
+    expect((await cli(['ready'])).out).toContain('2 free');
+    // Somebody else sees exactly who is in them, by path.
+    const asOther = (await cli(['ready'], 'other')).out;
+    expect(asOther).toContain('2/2 held: src/a.ts by a, src/b.ts by a');
+    expect(asOther).toContain('src/a.ts');
+    expect(filed.id).toMatch(/^ph-\d+$/);
+  });
+
+  it('keeps a stray word out of the title when --files takes a list', async () => {
+    // `--files a.ts b.ts` used to take `a.ts` as the value and leave `b.ts` as a
+    // positional, which on `new` silently became part of the issue TITLE — the
+    // documented example in AGENTS.md did not do what it said.
+    const filed = JSON.parse((await cli(['new', 'A plain title', '--files', 'src/a.ts', 'src/b.ts', '--json'])).out);
+    const shown = JSON.parse((await cli(['show', filed.id, '--json'])).out);
+    expect(shown.issue.title).toBe('A plain title');
+    expect((await cli(['ready'])).out).toContain('2 free');
+  });
+
+  it('sorts ready by priority, not by the order the issues were filed', async () => {
+    await cli(['new', 'P3 — cosmetic', '--priority', 'low', '--json']);
+    await cli(['new', 'P0 — catastrophic', '--priority', 'critical', '--json']);
+    await cli(['new', 'P1 — important', '--priority', 'high', '--json']);
+    const { issues } = JSON.parse((await cli(['ready', '--json'])).out);
+    expect(issues.map((issue) => issue.priority)).toEqual(['critical', 'high', 'low']);
+  });
+
   it('exits 1 from `check` when a file is taken, so a shell can gate on it', async () => {
     await cli(['hold', 'src/taken.ts']);
     // Asked as a different agent: your own lock is not a conflict with yourself.
