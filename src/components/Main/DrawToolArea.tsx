@@ -153,12 +153,38 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
   };
 
   useEffect(() => {
-    // An unmount between claim and commit is an abort like any other. Paired with the provider-level
-    // `resetDocumentGestures`, this is what bounds a leaked claim to the mount that leaked it.
+    // Captured in the BODY, not read in the cleanup: React detaches refs in the mutation phase,
+    // before passive destroys run, so `overlayCtxRef.current` is already null by the time this
+    // returns.
+    const ctx = overlayCtxRef.current;
+
     return () => {
+      // An unmount between claim and commit is an abort like any other. Paired with the provider-level
+      // `resetDocumentGestures`, this is what bounds a leaked claim to the mount that leaked it.
       releaseDocumentClaim();
+
+      // Cancel FIRST, then clear: a frame still queued for `flushDrawingFrame` would otherwise
+      // repaint the stroke AFTER the clear and resurrect it. Cancel AND null, as the pointer-up
+      // route does, so nothing is left believing a frame is pending.
+      if (frameRequested.current !== null) {
+        cancelAnimationFrame(frameRequested.current);
+        frameRequested.current = null;
+      }
+
+      // The overlay canvas is shared, long-lived and only ever `display`-toggled
+      // (`Main.tsx:239-284`), which never touches a backing store, and the pointer-up clear at :146
+      // never runs for a gesture the user abandoned by switching tools — which is the ordinary way a
+      // stroke ends. Without this the last previewed stroke stays painted over the next tool's
+      // document. Safe for the reason it is safe in `useRect` and `MagicWandToolArea`: exactly one
+      // tool area is mounted at a time, and React runs passive destroys before passive creates, so
+      // an outgoing area's cleanup cannot wipe the incoming area's mount paint. The size is read off
+      // `ctx.canvas` at call time rather than off `totalSize` for the same reason as in `useRect`:
+      // a render-scope size frozen into this cleanup under-clears after a document resize.
+      if (ctx) {
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      }
     };
-  }, []);
+  }, [overlayCtxRef]);
 
   return (
     <div

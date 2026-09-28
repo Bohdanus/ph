@@ -1,4 +1,5 @@
 import { act, fireEvent, render } from '@testing-library/react';
+import { useEffect } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { isDocumentGestureOpen, readDocumentGesture, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 import { DrawToolArea } from '../DrawToolArea.tsx';
@@ -110,7 +111,10 @@ const makeMockContext = () => ({
   drawImage: vi.fn(),
   setTransform: vi.fn(),
   resetTransform: vi.fn(),
-  canvas: document.createElement('canvas'),
+  // The overlay backing store, and deliberately NOT the store's `totalSize` (300x200) below. A
+  // teardown that read a render-scope size would clear 300x200 and leave the right-hand and
+  // bottom strips of the real backing store painted, so the two have to be distinguishable.
+  canvas: Object.assign(document.createElement('canvas'), { width: 640, height: 480 }),
   strokeStyle: '#000000',
   fillStyle: '#000000',
   lineWidth: 1,
@@ -502,6 +506,107 @@ describe('DrawToolArea', () => {
       fireEvent.pointerDown(toolArea, { button: 2, pointerId: 7, clientX: 10, clientY: 20 });
 
       expect(isDocumentGestureOpen()).toBe(false);
+    });
+  });
+
+  /**
+   * The overlay canvas is shared, long-lived and only ever `display`-toggled
+   * (`Main.tsx:239-284`), and toggling `display` never touches a backing store. The pointer-up clear
+   * in `handlePointerUp` covers a committed stroke, so what it cannot cover is the ordinary way a
+   * stroke ends: the user switching tools with the button still down. Nothing else in the gesture
+   * clears the overlay, so the last previewed stroke stayed painted over the next tool's document.
+   */
+  describe('overlay teardown', () => {
+    it('clears the whole backing store on unmount, so an abandoned stroke cannot survive a tool switch', () => {
+      const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+      const { container, unmount } = render(
+        <DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      // The gesture is abandoned mid-drag: the pointer-up clear never runs for it.
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      fireEvent.pointerMove(toolArea, { button: 0, clientX: 30, clientY: 50 });
+      expect(drawLine).toHaveBeenCalled();
+
+      vi.mocked(overlayCtx.clearRect).mockClear();
+      unmount();
+
+      // 640x480 is the mock CANVAS, and the store's `totalSize` is 300x200: this asserts the
+      // backing store was read at call time rather than a render-scope size captured earlier, which
+      // would have frozen the first render's value and under-cleared after a document resize.
+      expect(overlayCtx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
+    });
+
+    it('drops a queued preview frame so it cannot repaint over the teardown clear', () => {
+      vi.useFakeTimers();
+      const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+      const { container, unmount } = render(
+        <DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      fireEvent.pointerMove(toolArea, { button: 0, clientX: 30, clientY: 50 });
+      // A frame is queued and NOT fired, so the preview is still pending.
+      vi.mocked(drawLine).mockClear();
+      vi.mocked(overlayCtx.clearRect).mockClear();
+
+      unmount();
+      act(() => {
+        vi.advanceTimersByTime(32);
+      });
+
+      // Cancel FIRST, then clear: a frame that survived would have repainted after the clear.
+      expect(drawLine).not.toHaveBeenCalled();
+      expect(overlayCtx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
+    });
+
+    it('clears nothing on mount, so the clear is unambiguously a teardown', () => {
+      const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+      render(<DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />);
+
+      expect(overlayCtx.clearRect).not.toHaveBeenCalled();
+    });
+
+    it("does not wipe the incoming area's mount paint, because destroys run before creates", () => {
+      // The safety argument for clearing a SHARED canvas on unmount is an ordering claim, so it is
+      // pinned rather than asserted in prose: exactly one tool area is mounted at a time
+      // (`Main.tsx:220-288` picks a single `EventHandler`), and React runs every passive destroy
+      // before every passive create. A tool area that paints in a mount effect —
+      // `MagicWandToolArea`, `EllipticalSelectionToolArea`, `QuickSelectionToolArea` — therefore
+      // paints AFTER this area's teardown clear, not before it. Flip the order in React and this
+      // test fails, which is the signal that the clear is no longer safe.
+      const order: string[] = [];
+      const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+      vi.mocked(overlayCtx.clearRect).mockImplementation(() => {
+        order.push('teardown-clear');
+      });
+      vi.mocked(overlayCtx.fillRect).mockImplementation(() => {
+        order.push('incoming-mount-paint');
+      });
+
+      function IncomingArea() {
+        const ctx = overlayCtx;
+        useEffect(() => {
+          ctx.fillRect(0, 0, 640, 480);
+        }, [ctx]);
+        return <div data-testid="incoming-area" />;
+      }
+
+      function Host({ phase }: { phase: 'outgoing' | 'incoming' }) {
+        return phase === 'outgoing' ? (
+          <DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />
+        ) : (
+          <IncomingArea />
+        );
+      }
+
+      const { rerender } = render(<Host phase="outgoing" />);
+      rerender(<Host phase="incoming" />);
+
+      expect(overlayCtx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 640, 480);
+      expect(order).toEqual(['teardown-clear', 'incoming-mount-paint']);
     });
   });
 });
