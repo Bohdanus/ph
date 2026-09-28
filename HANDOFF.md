@@ -998,7 +998,7 @@ replay authority.
 
 ---
 
-## 38. Two unbracketed writers leave the shared tool overlay context dirty, and two painters still inherit `globalAlpha`
+## 39. Two unbracketed writers leave the shared tool overlay context dirty, and two painters still inherit `globalAlpha`
 
 **Problem.** `Main.tsx:87` hands every tool area the _same_ `2d` context: the overlay canvas is
 mounted unconditionally and only its `display` is toggled (`Main.tsx:180-198`), so `getContext('2d')`
