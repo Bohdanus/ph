@@ -1808,10 +1808,45 @@ export class Board {
     }
     const total = [...byKind.values()].reduce((a, b) => a + b, 0);
     const count = (kind) => byKind.get(kind) ?? 0;
-    // Locking is one prefix across three verbs, so the share is computed rather
-    // than read off a single row: `hold`, `release` and `deny` are one
-    // behaviour, and the number that says what this tool IS is their sum.
-    const lockEvents = count('lock.hold') + count('lock.release') + count('lock.deny');
+    /**
+     * The unit of a row, read off the row rather than off a list kept beside it.
+     *
+     * Summing these into one total is what produced a published, wrong number.
+     * `lock.hold` is ONE event for a command that took any number of files (its
+     * message says so: "14 file(s)"), `lock.release` is ONE event PER FILE, and
+     * a good share of the holds took no files at all ("filed about 2 file(s),
+     * no locks taken" — the filer was refused). So an agent that holds fourteen
+     * files and later releases them writes 1 row and 14, and a share computed
+     * over the sum describes the ENCODING rather than the swarm: it reported
+     * that 66% of locking traffic was `lock.release`, which was an artifact, and
+     * that number reached AGENTS.md before anyone noticed.
+     *
+     * A row that names a path is about one file; a row that does not is about
+     * one command. That is derivable from the data, so it is derived, and the
+     * two are reported as two numbers rather than added into a third.
+     */
+    const perFile = new Map();
+    const perCommand = new Map();
+    for (const row of this.db
+      .prepare(
+        `SELECT kind, CASE WHEN path IS NULL THEN 0 ELSE 1 END AS is_file, COUNT(*) n
+         FROM events GROUP BY kind, is_file`
+      )
+      .all()) {
+      (row.is_file ? perFile : perCommand).set(row.kind, row.n);
+    }
+    const summed = (map) => [...map.values()].reduce((a, b) => a + b, 0);
+
+    /**
+     * The lock truth, from the table rather than from the log: one row per lock
+     * actually taken, which is the only count that answers "how much of this
+     * repository is under a lock right now".
+     */
+    const lockRows = this.db
+      .prepare('SELECT COUNT(*) taken, SUM(CASE WHEN released_at IS NULL THEN 1 ELSE 0 END) live FROM file_locks')
+      .get();
+    const taken = lockRows.taken ?? 0;
+    const liveLocks = lockRows.live ?? 0;
     const unreleased = this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL').all();
     const live = unreleased.filter((claim) => Date.parse(claim.lease_until) > at);
     const open = this.listIssues({ status: ['open', 'deferred'], limit: NO_LIMIT });
@@ -1819,8 +1854,18 @@ export class Board {
     return {
       total,
       byKind: Object.fromEntries([...byKind].sort((a, b) => b[1] - a[1])),
-      lockShare: total === 0 ? 0 : lockEvents / total,
-      lockEvents,
+      /**
+       * Split by unit, because the two are not additive and never were. Read
+       * these as two separate measures of activity, never as two halves of one
+       * number.
+       */
+      activity: {
+        perCommand: Object.fromEntries([...perCommand].sort((a, b) => b[1] - a[1])),
+        perFile: Object.fromEntries([...perFile].sort((a, b) => b[1] - a[1])),
+        perCommandTotal: summed(perCommand),
+        perFileTotal: summed(perFile),
+      },
+      locks: { taken, live: liveLocks, released: taken - liveLocks },
       claims: { total: unreleased.length, live: live.length, expired: unreleased.length - live.length },
       // Reclaims the board has made by itself, which is the number that says
       // whether maintenance is running — and it stays 0 on a healthy board,

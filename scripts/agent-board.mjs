@@ -805,20 +805,29 @@ export async function run(
 
       case 'health': {
         const report = board.health();
-        const pct = (n) => `${Math.round(n * 100)}%`;
-        const top = Object.entries(report.byKind).slice(0, 6);
-        const rows = top.map(([kind, n]) => [kind, n, pct(report.total === 0 ? 0 : n / report.total)]);
+        const rows = (map) =>
+          Object.entries(map)
+            .slice(0, 6)
+            .map(([kind, n]) => [kind, n]);
         emit(
           report,
           [
-            `${report.total} events · ${report.lockEvents} of them file locks (${pct(report.lockShare)})`,
-            report.lockShare > 0.5
-              ? '  → this is a FILE LOCK MANAGER. The issue tracker is the part nobody uses.'
-              : null,
+            `${report.total} events in the log, in two units that must not be added together:`,
             '',
-            ...(rows.length ? [columns(rows, ['KIND', 'N', 'SHARE']), ''] : []),
+            `  per COMMAND (one event each) — ${report.activity.perCommandTotal}:`,
+            ...(rows(report.activity.perCommand).length
+              ? [columns(rows(report.activity.perCommand), ['KIND', 'N'])]
+              : ['    (none)']),
+            `  per FILE (one event each) — ${report.activity.perFileTotal}:`,
+            ...(rows(report.activity.perFile).length
+              ? [columns(rows(report.activity.perFile), ['KIND', 'N'])]
+              : ['    (none)']),
+            '',
+            // The lock number comes from the table, not the log, because it is
+            // the only one of the three that counts the same thing twice.
+            `locks: ${report.locks.taken} taken · ${report.locks.live} still live · ${report.locks.released} released`,
             `claims: ${report.claims.live} live · ${report.claims.expired} expired of ${report.claims.total} unreleased`,
-            `sweeps run: ${report.sweeps}`,
+            `sweeps run: ${report.sweeps} (reclaims the board made by itself)`,
             `dependencies recorded: ${report.deps}`,
             `open issues: ${report.issues.live} live · ${report.issues.imported} imported`,
             // Each of these is a measurement, not a nag: the point of the

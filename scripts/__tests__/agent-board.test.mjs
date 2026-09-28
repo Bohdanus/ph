@@ -864,10 +864,60 @@ describe('the board maintains itself, because nobody remembers to', () => {
     a.createIssue({ title: 'one' });
     const report = a.health();
     expect(report.total).toBeGreaterThan(0);
-    expect(report.lockEvents).toBe(report.byKind['lock.hold'] ?? 0);
-    expect(report.lockShare).toBe(report.lockEvents / report.total);
     expect(report.sweeps).toBe(0);
     expect(report.issues.imported).toBe(0);
+    a.close();
+  });
+
+  it('counts one file lock as one lock, whatever the log says', () => {
+    // The log is not a source of truth about locks: holding is one event per
+    // command and releasing is one per file, so an agent that takes three files
+    // writes one row and, later, three. The table has one row per lock.
+    const a = boardFor('a');
+    a.holdFiles(['src/one.ts', 'src/two.ts', 'src/three.ts']);
+    const report = a.health();
+    expect(report.locks.taken).toBe(3);
+    expect(report.locks.live).toBe(3);
+    expect(report.locks.released).toBe(0);
+    a.close();
+  });
+
+  it('splits the activity mix by unit, because the two are not additive', () => {
+    /**
+     * The defect this pins. `health` summed per-command and per-file events into
+     * one total, reported a share computed over the sum, and that number reached
+     * AGENTS.md as a finding: "66% of all traffic is file locks, 66% of that is
+     * lock.release". Both halves described the ENCODING. Holding three files is
+     * ONE event; releasing them is THREE.
+     *
+     * The split is derived from the data — a row that names a path is about one
+     * file, a row that does not is about one command — so it cannot drift away
+     * from the event schema the way a hand-maintained list would.
+     */
+    const a = boardFor('a');
+    a.holdFiles(['src/one.ts', 'src/two.ts', 'src/three.ts']);
+    a.holdFiles(['src/four.ts']);
+    const { activity, byKind } = a.health();
+    // Both hold commands are per-command: one event each, whatever the count.
+    expect(activity.perCommand['lock.hold']).toBe(2);
+    expect(activity.perCommand['lock.release']).toBeUndefined();
+    // Nothing here named a path on a hold, so no hold is in the per-file bucket.
+    expect(activity.perFile['lock.hold']).toBeUndefined();
+    // The two buckets partition the kinds without pretending to be one number.
+    const kindsIn = (bucket) => Object.keys(bucket).reduce((sum, kind) => sum + byKind[kind], 0);
+    expect(kindsIn(activity.perCommand) + kindsIn(activity.perFile)).toBe(a.health().total);
+    expect(activity.perCommandTotal).toBe(kindsIn(activity.perCommand));
+    a.close();
+  });
+
+  it('never reports a share over the two units added together', () => {
+    // The shape is the guarantee: there is no `lockShare` to reach for, so the
+    // wrong number cannot be recomputed by the next agent from a stale comment.
+    const a = boardFor('a');
+    a.holdFiles(['src/one.ts']);
+    const report = a.health();
+    expect(report).not.toHaveProperty('lockShare');
+    expect(report).not.toHaveProperty('lockEvents');
     a.close();
   });
 
@@ -1676,24 +1726,27 @@ describe('the command line', () => {
   });
 
   it('reports what it is being used for, without hand-written SQL', async () => {
-    const { id } = JSON.parse((await cli(['new', 'traffic to measure', '--json'])).out);
+    await cli(['new', 'traffic to measure', '--json']);
     await cli(['hold', 'src/traffic.ts']);
     const { code, out } = await cli(['health', '--json']);
     expect(code).toBe(0);
     const report = JSON.parse(out);
     expect(report.total).toBeGreaterThan(0);
-    expect(report.lockEvents).toBeGreaterThan(0);
-    expect(report.lockShare).toBeGreaterThan(0);
-    // The share is the load-bearing number: it says what the tool IS, and it is
-    // what turned "the issue tracker is the product" from an assumption into a
-    // measurement.
-    expect(report.lockShare).toBeCloseTo(report.lockEvents / report.total, 10);
+    expect(report.locks.taken).toBeGreaterThan(0);
+    // The load-bearing part is the SPLIT, not a total: the old shape had one
+    // number that added per-command and per-file rows together and called it a
+    // share, and that number was published as a finding before it was caught.
+    expect(report.activity.perCommandTotal).toBeGreaterThan(0);
+    expect(report.activity.perCommand).toHaveProperty('lock.hold');
     expect(report.issues.live).toBeGreaterThanOrEqual(1);
     expect(report).toHaveProperty('idleLive');
-    // The human form names the finding rather than printing a number at nobody.
+    expect(report).not.toHaveProperty('lockShare');
+    // The human form says the units out loud, because the whole point is that a
+    // reader must not add them.
     const human = (await cli(['health'])).out;
-    expect(human).toMatch(/events/);
-    expect(human).toMatch(/file locks/);
+    expect(human).toMatch(/per COMMAND/);
+    expect(human).toMatch(/per FILE/);
+    expect(human).toMatch(/must not be added together/);
     expect(human).toMatch(/dependencies recorded/);
   });
 
