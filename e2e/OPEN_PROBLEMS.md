@@ -689,7 +689,7 @@ The comment describes a real precondition that nothing verifies. Fix: select a
 different tool first and assert the attribute _flips_, or assert against a tool that
 is not the default.
 
-## P1 — a dialog dismissal assertion is one rename from vacuous
+## P1 — the dialog-closed assertion is one rename from vacuous
 
 `e2e/export/helpers.ts:235`
 
@@ -707,7 +707,7 @@ uses `getByTestId('save-dialog')` with `toHaveCount(0)`, and the testid exists
 (`src/components/SaveDialog/SaveDialog.tsx:44`). The fix is already in this suite; it
 was only never copied into `export/helpers.ts`.
 
-## P1 — the keyboard-flow test asserts only that a menu went away
+## P1 — the keyboard-flow test asserts the menu closed and nothing else
 
 `e2e/sidebar-keyboard.spec.ts:80-89`
 
@@ -843,7 +843,7 @@ is the remaining half. `toolbar-helpers.unit.test.ts:839-843` pins the mangled
 behaviour against a fixture whose element name is already the substituted form, so
 fixing it means removing that pin in the same change.
 
-## P2 — `exportIcoAndVerify` never asserts the dialog went away
+## P2 — `exportIcoAndVerify` has no dialog-closed assertion
 
 `e2e/export/helpers.ts:335-392` against `:235`
 
@@ -1086,6 +1086,34 @@ it is wrong here — which is the evidence for deleting it rather than refreshin
 other citation in the file (`:167,184`) has already been replaced with prose, and that
 is the shape to use.
 
+## P2 — the tablet band's option row is 4 px narrower than its own test requires
+
+`e2e/responsive-shell.spec.ts:231-245`
+
+The two "makes the … option panel horizontally scrollable rather than unreachable"
+tests derive a `minWidth` and then assert the option row is at least that wide:
+
+```
+expect(metrics.overflowX, 'the tablet band must scroll the option row').toBe('auto');
+expect(metrics.scrollWidth, 'the option row must be wider than the window')
+  .toBeGreaterThanOrEqual(minWidth);   // :244 — expected >= 1036, received 1032
+```
+
+Both the Shape and Horizontal Type panels land 4 px short, and both fail
+**deterministically** — 2/2 in isolation, not only in a full run, so this is not the
+`vmThreads` pool flake that the two suites under `scripts/__tests__/` usually are. It
+is also not recent: it reproduces unchanged at `dcfff8e`, well before the branch
+landings that prompted the re-run that found it.
+
+The shortfall is small enough that the panel may still scroll in practice, which is
+why this is P2 and not P1 — the assertion is about a floor, and the product may well
+be fine while the floor is stale. The two candidates are not distinguishable from the
+failure alone: either `minWidth` is derived from something that has since narrowed
+(a breakpoint, a padding value, a font metric), or the option row lost 4 px of
+intrinsic width. Reading the `minWidth` derivation against the row it measures is
+the next step; a baseline re-record would be the wrong move, because the assertion
+is a floor and not a pixel snapshot.
+
 ---
 
 ## Checked here and rejected
@@ -1111,8 +1139,3 @@ and **is not a defect here**:
   baselines.** The first two are fixed (`noUnusedLocals` and `noUnusedParameters` are
   on, the count is 0); the CDP assertions now derive their scale; the orphans are
   recorded in the P3 entry above.
-
-<!-- Titles here avoid deleted/closed/done/resolved/fixed/landed/superseded:
-     handoff-import.mjs reads any of those in a heading as a RETIREMENT marker and drops
-     the entry from the board import. Three entries were invisible because their titles said
-     "closed" while their bodies described an OPEN defect. -->

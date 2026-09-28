@@ -184,14 +184,25 @@ what is new.
   command that releases an abandoned claim, and it releases a claim whose
   worktree no longer exists even when the lease has not run out.
 - **`swarm health` answers "is this thing being used, or only carried?"** It is
-  the traffic mix — events by kind, the share of them that are file locks, live
-  vs expired claims, reclaims so far, live vs imported issues, and live findings
-  idle for over six hours. It exists because this question was previously
-  answered by hand-writing SQL against the schema, which means the next agent
-  answers it differently or not at all. The two numbers that have changed a
-  decision: **locking is 66% of all traffic**, and **66% of that is `lock.release`**
-  — the board is a file-lock manager, and the issue tracker is the part nobody
-  uses. Read that before building more of the issue tracker.
+  the traffic mix, the locks, live vs expired claims, reclaims so far, live vs
+  imported issues, and live findings idle for over six hours. It exists because
+  this question was previously answered by hand-writing SQL against the schema,
+  which means the next agent answers it differently or not at all.
+- **The traffic mix is in TWO UNITS, and adding them is a mistake that shipped
+  a wrong number into this paragraph.** `lock.hold` is **one event per command**
+  (its message reads `14 file(s)`), `lock.release` is **one event per file**, and
+  a good share of holds took no files at all (`filed about 2 file(s), no locks
+taken` — the filer was refused). An earlier version of `health` summed them and
+  reported that 66% of all traffic was file locks, of which 66% was
+  `lock.release`. Both halves were artifacts of the encoding: measured one unit at
+  a time, `lock.hold` is the top per-command activity and `lock.release` is the
+  top per-file one, and the sum said more about the schema than about the agents.
+  `health` now splits by unit — **read `activity.perCommand` and
+  `activity.perFile` as two measures, never as two halves of one number** — and
+  takes the lock count from the `file_locks` table, which is the only one of the
+  three that counts the same thing twice. The conclusion that survived the
+  correction: **this is a file-lock manager, and the issue tracker is the part
+  nobody uses.** Read that before building more of the issue tracker.
 - **`swarm hold <path>` makes "never two agents on the same file" a refused
   write**, and the refusal names the holder. `swarm check <path>` exits 1 when
   somebody else holds it, so a shell can gate on it. `swarm claim --files a.ts

@@ -1785,12 +1785,7 @@ while it is. The rule is recorded here until the hold clears, and the AGENTS.md 
 be folded into the existing "Worktrees and dev servers" section at §194 rather than added as a
 new section, because the failure is an intensification of what that section already says.
 
-## 76. A closure check credited three corrections to a pass that had not made them
-
-<!-- The title deliberately avoids deleted/closed/done/resolved/fixed/landed/superseded:
-     handoff-import.mjs treats a heading containing any of those as a RETIREMENT marker and
-     drops the number from the import, which is why this entry was invisible to the board
-     and why scripts/__tests__/handoff-import.test.mjs was red on main. -->
+## 76. A closure check reported "3 FIXED" for work that was already fixed before it ran
 
 A verification pass was asked to confirm that 45 identified defects had been closed, and it
 reported **3 fixed, 41 absent, 1 regression**. All three "fixed" verdicts were wrong, in the same

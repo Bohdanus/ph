@@ -53,7 +53,7 @@ const openProblems = byFile('e2e/OPEN_PROBLEMS.md');
 const ORIGIN_SHAPE = /^[\w.-]+\.md#\d+$|^[\w.-]+\.md#[a-z0-9-]+$/;
 const KNOWN_EXTENSION =
   /\.(?:ts|tsx|js|jsx|mjs|cjs|json|jsonc|md|scss|css|yml|yaml|txt|png|avif|jpg|jpeg|gif|webp|ico|wasm|svg)$/i;
-const DEAD_WORD = /deleted|closed|done|resolved|fixed|landed|superseded/i;
+const DEAD_WORD = /(?:^|[\s\-–—(\[])(?:deleted|closed|done|resolved|fixed|landed|superseded)\b[)\].,;:!?'"’”]*$/i;
 
 /**
  * The same short list the parser uses for a file at the repository root, restated
@@ -319,6 +319,44 @@ describe('planning the import', () => {
         word
       ).toEqual(['HANDOFF.md#7']);
       expect(parsed.dead, word).toEqual([]);
+    }
+  });
+
+  it('keeps an item whose title merely mentions a dead word, number and all', () => {
+    /**
+     * The shape that cost §70, which is the shape the documents actually use.
+     * `retiredNumbersIn` harvests numbers out of a heading, so an anywhere-match
+     * on "fixed" picked up the `3` in `"3 FIXED"` and proved to itself that the
+     * heading was a list of retired items. The section was then closed without
+     * ever being opened, which is not a suppression but a deletion: a real
+     * defect left the import entirely, and the heading-count test reported 37
+     * headings against 36 items.
+     */
+    const parsed = parseHandoffDoc({
+      file: 'HANDOFF.md',
+      text:
+        '## 70. A closure check reported "3 FIXED" for work that was already fixed before it ran\n\n' +
+        'The checker counted work that was already done, so the count was never evidence.\n',
+    });
+    expect(parsed.items.map((item) => item.origin)).toEqual(['HANDOFF.md#70']);
+    expect(parsed.dead).toEqual([]);
+  });
+
+  it('keeps a severity item whose title merely mentions a dead word', () => {
+    // Three of the six dead-word headings in the three documents are severity
+    // items that say "closed" as part of what they are about, not as a status.
+    for (const heading of [
+      '## P1 — the dialog-closed assertion is one rename from vacuous',
+      '## P1 — the keyboard-flow test asserts the menu closed and nothing else',
+      '## P2 — `exportIcoAndVerify` has no dialog-closed assertion',
+    ]) {
+      const parsed = parseHandoffDoc({
+        file: 'e2e/OPEN_PROBLEMS.md',
+        text: `${heading}\n\nOne rename from vacuous is still a defect.\n`,
+      });
+      expect(parsed.dead, heading).toEqual([]);
+      expect(parsed.items, heading).toHaveLength(1);
+      expect(parsed.items[0].title, heading).toContain('closed');
     }
   });
 

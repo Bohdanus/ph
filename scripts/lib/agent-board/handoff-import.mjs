@@ -107,16 +107,21 @@ const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
  * looser net (a bare `dead`, or `close`) would swallow live entries — one real
  * heading ends in the word "dead" and means it as prose.
  *
- * The `\b` on both ends is load-bearing, not decoration. Without it the net is
- * a SUBSTRING net, and ordinary English words contain these seven: "abanDONEd"
- * matches `done`, so a live entry titled "A gesture abandoned by switching
- * tools" was read as a heading that LISTS retired items — and `assemble` then
- * drops the entry it numbered, because a section that lists numbers is a
- * section about finished ones. A live handoff item silently vanished from the
- * board import, and the only symptom was `board import` filing one item fewer
- * than the document has. Word boundaries keep the net on the seven words.
+ * The word must be the LAST one in the heading, which is what makes it a marker
+ * rather than a mention. It cannot be an anywhere-match: five live headings in
+ * these documents merely SAY a status word, and three of them say it as part of
+ * a hyphenated phrase — `## P1 — the dialog-closed assertion is one rename from
+ * vacuous`, `## P1 — the keyboard-flow test asserts the menu closed and nothing
+ * else`, `## 70. A closure check reported "3 FIXED" for work that was already
+ * fixed before it ran`. That last one also cost a whole item: an anywhere-match
+ * found "fixed", `retiredNumbersIn` then harvested the `3` out of `"3 FIXED"`, so
+ * the section was marked retired and §70 was never opened as an item at all —
+ * a real defect dropped out of the import, and the heading-count test reported 37
+ * headings against 36 items. The only retirement marker any of the three
+ * documents actually uses is `### Items 5, 7, 9, … — deleted`, which ends in
+ * the word. Anchoring to the end is what the documents do, not a guess.
  */
-const DEAD_HEADING = /\b(?:deleted|closed|done|resolved|fixed|landed|superseded)\b/i;
+const DEAD_HEADING = /(?:^|[\s\-–—(\[])(?:deleted|closed|done|resolved|fixed|landed|superseded)\b[)\].,;:!?'"’”]*$/i;
 
 /**
  * A leading item number, with or without its dot and with or without the `Item`
