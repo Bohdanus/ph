@@ -1,5 +1,12 @@
 # Open Unit-Test Issues
 
+> **Superseded.** Recovered from `stash@{0}` on 2026-09-28 and re-verified against
+> `main` at `446d7eb`: 13 of the 27 issues below were still real, and all 13 are
+> now fixed. The claims that did not survive verification are recorded, with what
+> replaced them, in **`AUDIT-STASHED-DOCS.md`** — read that instead of working
+> from this list. This file is kept only as the historical record of what was
+> stashed; do not add to it.
+
 Single problem-focused list for problems **in the test suite**. Production defects are registered
 in `HANDOFF.md` and are not repeated here.
 

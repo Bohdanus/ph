@@ -1,5 +1,12 @@
 # Next Tier 1 Target: `src/contexts/useLayer.ts` — Test Plan
 
+> **Superseded.** Recovered from `stash@{0}` on 2026-09-28. This plan is obsolete:
+> every Priority A-F area is now covered by six `useLayer.*` test files that did not
+> exist when it was written, and its Priority A "THE RACE" is not a real race — it
+> was never one. It did walk past two production defects, both now fixed. See
+> **`AUDIT-STASHED-DOCS.md`**. Kept as the historical record of what was stashed;
+> do not work from it.
+
 > **Priority:** High — 27.69% statement / 18.05% branch coverage. Central layer CRUD with the text-tool double-commit race.
 > **Source lines:** 604
 > **Estimated effort:** 2–3 focused test files

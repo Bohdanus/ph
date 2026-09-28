@@ -1,5 +1,14 @@
 # Tool Settings Persistence Inconsistency
 
+> **Resolved, and the plan is obsolete.** Recovered from `stash@{0}` on
+> 2026-09-28. The gap was closed by `8736334`, which applied Solution A and
+> Solution C in stronger form: `src/util/settings.ts:81` now carries a
+> `const _exhaustive: never = toolName` sentinel, so a missing arm fails
+> `npm run tsc` rather than being absorbed at runtime. Solution B would have
+> reintroduced the bug. Nothing here needs action; see
+> **`AUDIT-STASHED-DOCS.md`**. Kept as the historical record of what was
+> stashed.
+
 ## Status: Open
 
 ## Priority: Medium-High
