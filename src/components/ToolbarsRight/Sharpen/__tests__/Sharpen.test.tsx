@@ -49,7 +49,6 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', async () => {
           publish({ ...(toolState.initial as Record<string, unknown>), ...patch, toolName });
         },
         isToolDirty: false,
-        resetToLastSavedArgs: () => {},
       };
     },
   };

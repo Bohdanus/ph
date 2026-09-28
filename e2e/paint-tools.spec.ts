@@ -3,6 +3,7 @@ import { type BoundingBox, getWorkspaceCanvas, type ImageDataResult, loadImageDa
 import { setForegroundColor } from './helpers/color-helpers';
 import {
   clickToolButton,
+  FLYOUT_VISIBLE_TIMEOUT_MS,
   type FlyoutItem,
   navigateAndSelectInFlyout,
   openToolFlyoutViaKeyboard,
@@ -101,9 +102,6 @@ const SHARPEN_MOVE_THRESHOLD = 4;
 /** `SHARPEN_AMOUNT` for these tests: 100 is a factor of 1.0 and radius 2 a 5x5 window. */
 const SHARPEN_AMOUNT = '100';
 const SHARPEN_RADIUS = '2';
-
-/** `LONG_PRESS_MS` in `SidebarLeft.tsx:29` plus slack: the flyout opens on a timer, not an event. */
-const FLYOUT_LONG_PRESS_MS = 700;
 
 /** Exposure above which a dodge/burn stroke is visible; 0 is the exact no-op one test compares against. */
 const EXPOSURE_WORKING = '60';
@@ -403,9 +401,18 @@ async function longPressGroupTile(page: Page, group: readonly string[]): Promise
   for (const name of group) {
     const tile = page.getByTestId(`tool-button-${name}`);
     if ((await tile.count()) === 0) continue;
+    // Press, wait for THIS tile's flyout, then lift — in that order, because that is the
+    // gesture the app's own handler requires.
     await tile.dispatchEvent('pointerdown', { button: 0 });
-    // The flyout opens on a timer, so this is a real wait rather than an event wait.
-    await page.waitForTimeout(FLYOUT_LONG_PRESS_MS);
+    // `aria-expanded` is set from `openGroup === groupIndex` on the pressed tile, so it is
+    // true only once this group is the open one. This used to be a fixed
+    // `waitForTimeout(FLYOUT_LONG_PRESS_MS)`, which raced the app's 300ms timer with a
+    // margin — and `onPointerUp` calls `clearLongPressFlyout()` unconditionally, so a lift
+    // that arrived first cancelled the open outright: the menu never appeared, and the
+    // failure surfaced as a `toBeVisible()` timeout on a menu that had not been opened yet.
+    // That reads as a product defect rather than as a bad wait, which is how it kept being
+    // blamed on whichever tool the run happened to be on.
+    await expect(tile).toHaveAttribute('aria-expanded', 'true', { timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
     await tile.dispatchEvent('pointerup', { button: 0 });
     await expect(page.getByRole('menu')).toBeVisible();
     return;

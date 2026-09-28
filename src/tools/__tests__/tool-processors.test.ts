@@ -91,7 +91,6 @@ const asRecord = toolProcessors as unknown as Record<string, ToolProcessorDefini
 const optionsBarStore = vi.hoisted(() => ({ color: '#000000', toolName: 'brush' as string }));
 const optionsBarSetToolArgs = vi.hoisted(() => vi.fn());
 const optionsBarPatchToolArgs = vi.hoisted(() => vi.fn());
-const optionsBarReset = vi.hoisted(() => vi.fn());
 const optionsBarTempUpdateLayer = vi.hoisted(() => vi.fn());
 const optionsBarDispatch = vi.hoisted(() => vi.fn());
 const optionsBarCopySelection = vi.hoisted(() => vi.fn());
@@ -116,7 +115,6 @@ vi.mock('../../contexts/useCurrentTool.tsx', async () => {
       // renders at all is a bar that mounted on a well-formed args object.
       getToolArgs: (toolName: string) => seeded[toolName as keyof typeof seeded],
       patchToolArgs: optionsBarPatchToolArgs,
-      resetToLastSavedArgs: optionsBarReset,
     }),
   };
 });

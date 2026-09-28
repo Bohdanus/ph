@@ -1,4 +1,4 @@
-import { act, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UseRectProps } from '../../../hooks/useRect.ts';
 import { CropToolArea } from '../CropToolArea.tsx';
@@ -6,6 +6,12 @@ import { CropToolArea } from '../CropToolArea.tsx';
 const setToolArgsMock = vi.hoisted(() => vi.fn());
 
 const useRectProps = vi.hoisted((): { current: UseRectProps | null } => ({ current: null }));
+
+const pointerHandlers = vi.hoisted(() => ({
+  onPointerDown: vi.fn(),
+  onPointerMove: vi.fn(),
+  onPointerUp: vi.fn(),
+}));
 
 const overlayCtxRef = { current: null as CanvasRenderingContext2D | null };
 
@@ -49,9 +55,9 @@ vi.mock('../../../hooks/useRect.ts', () => ({
   useRect: (props: UseRectProps) => {
     useRectProps.current = props;
     return {
-      onPointerDown: vi.fn(),
-      onPointerMove: vi.fn(),
-      onPointerUp: vi.fn(),
+      onPointerDown: pointerHandlers.onPointerDown,
+      onPointerMove: pointerHandlers.onPointerMove,
+      onPointerUp: pointerHandlers.onPointerUp,
     };
   },
 }));
@@ -60,6 +66,9 @@ describe('CropToolArea', () => {
   beforeEach(() => {
     useRectProps.current = null;
     setToolArgsMock.mockClear();
+    pointerHandlers.onPointerDown.mockClear();
+    pointerHandlers.onPointerMove.mockClear();
+    pointerHandlers.onPointerUp.mockClear();
     toolArgsState.toolArgs = {
       toolName: 'crop',
       rect: null,
@@ -85,6 +94,14 @@ describe('CropToolArea', () => {
       const el = container.firstElementChild as HTMLDivElement;
       expect(el).not.toBeNull();
       expect(el.tagName).toBe('DIV');
+
+      fireEvent.pointerDown(el, { button: 0, clientX: 5, clientY: 5 });
+      fireEvent.pointerMove(el, { clientX: 6, clientY: 6 });
+      fireEvent.pointerUp(el, { button: 0, clientX: 6, clientY: 6 });
+
+      expect(pointerHandlers.onPointerDown).toHaveBeenCalledTimes(1);
+      expect(pointerHandlers.onPointerMove).toHaveBeenCalledTimes(1);
+      expect(pointerHandlers.onPointerUp).toHaveBeenCalledTimes(1);
     });
   });
 

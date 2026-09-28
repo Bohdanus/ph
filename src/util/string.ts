@@ -35,5 +35,15 @@ export function deleteCharAt(str: string, charIndex: number): string {
 
 export function ellipsify(str: string = '', maxLength: number = 20): string {
   if (str.length <= maxLength) return str;
-  return str.slice(0, maxLength - 3) + '...';
+  if (maxLength < 3) return '...'.slice(0, Math.max(0, maxLength));
+
+  const budget = maxLength - 3;
+  let end = 0;
+  for (const seg of segmenter.segment(str)) {
+    const next = seg.index + seg.segment.length;
+    if (next > budget) break;
+    end = next;
+  }
+
+  return str.slice(0, end) + '...';
 }

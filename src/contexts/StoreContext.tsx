@@ -17,14 +17,15 @@ import type { HistoryItem } from './history-types.ts';
 import { updateHistoryTimeline, type HistoryTimeline } from './history-timeline.ts';
 import { cloneDocumentFrame, documentFrameFromSize, documentFrameSize, type DocumentFrame } from './document-frame.ts';
 import { createHistoryItem } from './history-utils.ts';
-import { reorderLayers } from './layer-utils.ts';
+import { getSortedLayersArray, reorderLayers } from './layer-utils.ts';
 import { freezeDurableDocument, type DurableDocument, type DurableHistoryEntry } from './history-model.ts';
 import {
   convertLegacyHistorySafely,
   type DurableConversionStatus,
   type MigrationDiagnostic,
 } from './history-adapter.ts';
-import { decideDurableAppend, durableAppendDiagnostic } from './history-append.ts';
+import { decideDurableAppend, deriveReorderLayersEntry, durableAppendDiagnostic } from './history-append.ts';
+import { replayDurableDocument } from './durable-replay.ts';
 import { getAssetRegistry } from './asset-registry.ts';
 import {
   closePresentationBitmap,
@@ -201,6 +202,16 @@ type Action =
    * by the time this runs, so the transition publishes nothing; it exists so the
    * presentation scope learns about them and the scope's completeness guarantee
    * covers every bitmap the store holds rather than only the ones it materialized.
+   *
+   * Publishing state from adoption would be a bug, not a missing feature: the
+   * writer has already published the layer records these rasters live in, so a
+   * reducer that moved state here would either re-publish that same record or
+   * invent a transition no writer asked for. The action is therefore a
+   * deliberate no-op rather than a forgotten arm — but the reducer has no
+   * `ADOPT_LAYER_BITMAPS` case, because the dispatcher registers the bitmaps and
+   * returns without ever forwarding the action, so `default: return state` is
+   * what covers it. An arm here would be unreachable code describing a path that
+   * does not exist.
    */
   | { type: 'ADOPT_LAYER_BITMAPS'; payload: { bitmaps: readonly BitmapSource[] } }
   /**
@@ -366,6 +377,26 @@ function createReorderHistoryItem(intent: ReorderLayersIntent): HistoryItem {
   });
 }
 
+/**
+ * The live record's layer order, bottom first: index 0 is the bottom of the
+ * stack, which is the same sequence `reorderLayers` mutates, `replayHistory`
+ * replays, and the durable converter normalizes its own snapshots into.
+ *
+ * Read here, at the store, rather than in the hook: a drag dispatches 200 ms
+ * after the row that started it was rendered, so a closure's copy of the layer
+ * record is stale by exactly the interval in which a rename or a second reorder
+ * can land.
+ *
+ * This is `getSortedLayersArray` rather than a local sort on purpose. The order
+ * this reads IS the feature — everything downstream is derived from the sequence
+ * it produces — so a private copy of the comparator would be a second
+ * implementation of a load-bearing rule, and the parity test would pin the test's
+ * copy rather than this one.
+ */
+function layerOrderBottomFirst(layers: LayersRecord): LayerId[] {
+  return getSortedLayersArray(layers).map((layer) => layer.id);
+}
+
 function reorderLayersFromState(layers: LayersRecord, intent: ReorderLayersIntent): LayersRecord {
   if (!layers[intent.layerToMoveId]) return layers;
   if (intent.afterWhichLayerId && !layers[intent.afterWhichLayerId]) return layers;
@@ -496,15 +527,6 @@ function reducer(state: StoreData, action: Action): StoreData {
       }
       return published === state.layers ? state : { ...state, layers: published };
     }
-    case 'ADOPT_LAYER_BITMAPS':
-      // Ownership bookkeeping, and nothing else. The bitmaps are already in the
-      // layer records by the time this action is dispatched, so there is no
-      // state to publish and nothing to invalidate. The dispatcher registers
-      // them with the presentation scope and returns WITHOUT reaching this arm,
-      // so it is the typed landing place for the action rather than a live
-      // path — which is why the dispatcher's comment, not this one, is the one
-      // that has to stay true.
-      return state;
     case 'BATCH_UPDATES':
       // Metadata-only in production (the sole writer passes `fileName` and
       // `hasUnsavedChanges`). The wider legacy payload type still admits
@@ -730,7 +752,11 @@ function retireDepartedPresentationBitmaps(
   documentId: string,
   state: StoreData
 ): void {
-  presentationScope.retireUnreferenced(documentId, collectLivePresentationBitmaps(state.layers, state.history));
+  // The thunk is the cost control, not a style choice: `state` is the post-transition
+  // record, and a document the scope has published nothing for has nothing to
+  // retire, so walking the unbounded history to answer a question that cannot change
+  // the outcome is the regression this defers behind the scope's ownership check.
+  presentationScope.retireUnreferenced(documentId, () => collectLivePresentationBitmaps(state.layers, state.history));
 }
 
 /** Ids whose candidate record is not the stored record, added or removed ids included. */
@@ -809,11 +835,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
     if (action.type === 'ADOPT_LAYER_BITMAPS') {
       // Registration is ownership bookkeeping, not a transition: the layer
-      // records that reference these rasters are already published, so the
-      // reducer arm is a no-op and the state is deliberately left alone. The
-      // writer dispatches this AFTER the edit that published the layer, so a
-      // registration is never filed under the document that has just been
-      // replaced.
+      // records that reference these rasters are already published, so there is
+      // nothing for the reducer to do and the action is deliberately not
+      // forwarded to it. The writer dispatches this AFTER the edit that published
+      // the layer, so a registration is never filed under the document that has
+      // just been replaced.
       for (const bitmap of action.payload.bitmaps) {
         presentationScope.trackPublished(currentState.documentId, bitmap);
       }
@@ -847,22 +873,55 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (action.type === 'REORDER_LAYERS') {
       const intent = { ...action.payload };
       const historyItem = action.historyItem ?? createReorderHistoryItem(intent);
-      const timeline = updateHistoryTimeline(
-        {
-          entries: currentState.history,
-          cursor: currentState.historyIndex,
-          branchRevision: currentState.branchRevision,
-        },
-        { type: 'append', entry: historyItem }
-      );
-      // Reorder intentionally takes the existing conversion path. It has no
-      // durable append plan, so the shadow is rebuilt from the legacy timeline.
-      const converted = buildDurableDocument(
-        currentState,
-        [...timeline.entries],
-        timeline.cursor,
-        timeline.branchRevision
-      );
+      const prior = {
+        entries: currentState.history,
+        cursor: currentState.historyIndex,
+        branchRevision: currentState.branchRevision,
+      };
+      const timeline = updateHistoryTimeline(prior, { type: 'append', entry: historyItem });
+      // A reorder's durable operation names the resulting order of every layer,
+      // so it is planned here, where the pre-append record is authoritative, and
+      // it is checked against a second, independent copy of the rule. The
+      // shadow's OWN layer order is supplied too, and compared as a sequence: a
+      // published map is a fresh normalisation of the order, so publishing one
+      // while the two models already disagree about the order would overwrite
+      // that disagreement with a document no reconversion would reproduce.
+      const base = currentState.durableStatus === 'current' ? currentState.durableDocument : null;
+      const preLayerOrder = layerOrderBottomFirst(currentState.layers);
+      const durableLayerOrder = base
+        ? Object.values(replayDurableDocument(base, base.cursor).layers)
+            .sort((left, right) => left.snapshot.order - right.snapshot.order)
+            .map((layer) => layer.snapshot.id)
+        : null;
+      // The record is reordered by `intent` while the durable map is derived from
+      // the history item's args, because that is what a replay reads. Production
+      // never supplies its own item, so the two are the same move by
+      // construction — but a supplied item that disagreed with the payload would
+      // leave the shadow describing one move and the document another, and the
+      // plan is refused rather than reconciled, because nothing here can tell
+      // which of the two is the intent.
+      const args = historyItem.args as { layerToMoveId?: LayerId; afterWhichLayerId?: LayerId | null } | undefined;
+      const itemMatchesIntent =
+        args?.layerToMoveId === intent.layerToMoveId &&
+        (args?.afterWhichLayerId ?? null) === (intent.afterWhichLayerId ?? null);
+      const decision = decideDurableAppend({
+        documentId: currentState.documentId,
+        base,
+        prior,
+        next: timeline,
+        entry: historyItem,
+        planned: itemMatchesIntent ? deriveReorderLayersEntry(historyItem, preLayerOrder) : null,
+        documentRevision: currentState.documentRevision,
+        preLayerOrder,
+        durableLayerOrder,
+      });
+      const converted =
+        decision.outcome === 'published'
+          ? { status: 'current' as const, document: decision.document, diagnostics: currentState.durableDiagnostics }
+          : buildDurableDocument(currentState, [...timeline.entries], timeline.cursor, timeline.branchRevision);
+      if (decision.outcome === 'mismatch') {
+        converted.diagnostics = [...converted.diagnostics, durableAppendDiagnostic(historyItem, decision.reason)];
+      }
       const nextLayers = reorderLayersFromState(currentState.layers, intent);
       const committedAction: ReorderLayersAction = {
         ...action,

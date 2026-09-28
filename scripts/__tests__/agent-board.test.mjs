@@ -15,12 +15,12 @@
  */
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Board, BoardError, parseDuration } from '../lib/agent-board/db.mjs';
+import { Board, BoardError, isImportedOrigin, parseDuration } from '../lib/agent-board/db.mjs';
 import { resolveIdentity } from '../lib/agent-board/identity.mjs';
 import { run } from '../agent-board.mjs';
 
@@ -33,6 +33,7 @@ import { run } from '../agent-board.mjs';
  * runner that does not provide it.
  */
 const CLI = resolve(import.meta.dirname ?? process.cwd(), '..', 'agent-board.mjs');
+const PACKAGE_JSON = resolve(import.meta.dirname ?? process.cwd(), '..', '..', 'package.json');
 
 let dir;
 const agents = {};
@@ -104,7 +105,7 @@ describe('schema', () => {
   it('creates itself on first open and is idempotent', () => {
     const board = boardFor('a');
     const version = board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-    expect(Number(version.value)).toBe(1);
+    expect(Number(version.value)).toBe(2);
     board.close();
     board.open();
     expect(board.db.prepare('SELECT COUNT(*) AS n FROM issues').get().n).toBe(0);
@@ -146,8 +147,8 @@ describe('issues', () => {
   it('is idempotent on origin, so an import can be run twice', () => {
     const board = boardFor('a');
     const first = board.createIssue({ title: 'x', origin: 'HANDOFF.md#12' });
-    const second = board.createIssue({ title: 'x again', origin: 'HANDOFF.md#12' });
-    expect(second).toEqual({ id: first.id, created: false });
+    const second = board.createIssue({ title: 'x', origin: 'HANDOFF.md#12' });
+    expect(second).toEqual({ id: first.id, created: false, drift: false });
     expect(board.listIssues()).toHaveLength(1);
   });
 
@@ -344,7 +345,35 @@ describe('file locks make one-file-one-agent real', () => {
     b.close();
   });
 
-  it('normalizes paths so the same file from two worktrees is one lock', () => {
+  it('makes the same file one lock across two REAL worktrees', async () => {
+    /**
+     * Two spellings in the same worktree proved only that `./x` and `x` are one
+     * path. What has to hold is that `src/a.ts` in one worktree and the absolute
+     * path to that same file in another are ONE lock — and the second worktree
+     * has to be able to learn about the first without either of them having
+     * spoken to the board yet.
+     */
+    const repo = join(dir, 'repo');
+    const sibling = join(dir, 'sibling');
+    mkdirSync(repo);
+    execFileSync('git', ['init', '--quiet'], { cwd: repo });
+    execFileSync('git', ['commit', '--quiet', '--allow-empty', '-m', 'init'], { cwd: repo });
+    execFileSync('git', ['worktree', 'add', '--quiet', sibling, '-b', 'sibling'], { cwd: repo });
+
+    const a = new Board({ dir: join(dir, 'shared'), identity: { agentId: 'A', worktree: repo } }).open();
+    // A holds the sibling's file by ABSOLUTE path, having never met B.
+    a.holdFiles([`${sibling}/src/a.ts`]);
+    expect(a.locksHeldBy('A').map((lock) => lock.path)).toEqual(['src/a.ts']);
+
+    const b = new Board({ dir: join(dir, 'shared'), identity: { agentId: 'B', worktree: sibling } }).open();
+    // B checks it relatively, on a board that has never seen B or a run from it.
+    expect(b.checkPath('src/a.ts').free).toBe(false);
+    expect(() => b.holdFiles(['src/a.ts'])).toThrow(/held by another agent/);
+    a.close();
+    b.close();
+  }, 15_000);
+
+  it('normalizes paths so the same file from two spellings is one lock', () => {
     const board = boardFor('a');
     board.holdFiles(['./src/util/draw.ts', 'src/util/draw.ts']);
     expect(board.locksHeldBy('a').map((lock) => lock.path)).toEqual(['src/util/draw.ts']);
@@ -373,8 +402,8 @@ describe('file locks make one-file-one-agent real', () => {
     expect(a.locksFor(id)).toHaveLength(1);
     expect(a.listIssues({ files: ['src/ghost.ts'], claimedBy: 'a' })).toHaveLength(1);
     advance(60_001);
-    // `board show` and the FILES column of `board ready` read locksFor, and used
-    // to advertise a lease that had already run out while `board check`, in the
+    // `swarm show` and the FILES column of `swarm ready` read locksFor, and used
+    // to advertise a lease that had already run out while `swarm check`, in the
     // same breath, called the file free.
     expect(a.liveClaimOrNull(id)).not.toBeNull();
     expect(a.locksFor(id)).toHaveLength(0);
@@ -400,7 +429,7 @@ describe('file locks make one-file-one-agent real', () => {
     a.close();
     const b = boardFor('b');
     b.touchAgent();
-    // `board check` is the gate a shell branches on, so a pasted absolute path
+    // `swarm check` is the gate a shell branches on, so a pasted absolute path
     // has to hit the same lock the hold stored in relative form. Normalising
     // only on the write side made this report a held file as FREE.
     expect(b.checkPath('src/x.ts').free).toBe(false);
@@ -412,47 +441,183 @@ describe('file locks make one-file-one-agent real', () => {
     b.close();
   });
 
-  it('does not collapse a sibling directory whose name starts with the worktree', () => {
+  it('refuses a path outside every worktree, in both commands that take one', () => {
     const a = boardFor('a');
-    const sibling = `${a.identity.worktree}-two/src/x.ts`;
-    a.holdFiles([sibling]);
-    const stored = a.locksHeldBy('a').map((lock) => lock.path);
-    // `/wt` must not chew `-two/src/x.ts` out of `/wt-two/src/x.ts`, and a path
-    // that does not exist is canonicalised through its deepest EXISTING
-    // ancestor — which must re-attach every component below it, or the lock
-    // lands on a file the caller never named.
-    expect(stored).toHaveLength(1);
-    expect(stored[0].endsWith('/wt-a-two/src/x.ts')).toBe(true);
-    expect(stored[0]).not.toBe('src/x.ts');
-    a.close();
-    const b = boardFor('b');
-    // Same string in, same lock found: the two ends agree.
-    expect(b.checkPath(sibling).holders.map((holder) => holder.agent_id)).toEqual(['a']);
-    expect(b.checkPath('src/x.ts').free).toBe(true);
-    b.close();
+    const outside = `${a.identity.worktree}-two/src/x.ts`;
+    // Not locked, and not reported free either. A path the board cannot compare
+    // with any lock is not a free file — it is a path this board does not cover,
+    // and saying `free` there is how a shell gates on the wrong answer.
+    expect(() => a.holdFiles([outside])).toThrow(/not inside this repository/);
+    const report = a.checkPath(outside);
+    expect(report.free).toBe(false);
+    expect(report.outside).toBe(true);
+    // A directory whose name merely STARTS with a worktree's is not that
+    // worktree, and the separator is what says so.
+    expect(a.locksHeldBy('a')).toHaveLength(0);
   });
-
   it('refuses a path that is nothing but the worktree, rather than locking nothing', () => {
     const a = boardFor('a');
     // The prefix strips to the empty string, and a lock on "" is a lock on a
     // file no agent can name.
-    expect(() => a.holdFiles([`${a.identity.worktree}/`])).toThrow(/no file paths/);
+    // The refusal now names WHY: a worktree root is not a file in it, and the
+    // reason is more use to a caller than "no file paths".
+    expect(() => a.holdFiles([`${a.identity.worktree}/`])).toThrow(/not inside this repository/);
     expect(a.locksHeldBy('a')).toHaveLength(0);
     a.close();
   });
 
-  it('leaves a pre-existing lock attributed to the issue that took it', () => {
+  it('keeps a file held for an UNCLAIMED issue, which is the normal case', () => {
+    /**
+     * The invariant B1 was about, at the layer it actually failed. The first fix
+     * counted pairings with a LIVE CLAIM, so `swarm hold src/x.ts --issue ph-2`
+     * — reserving a file for work not yet started, the documented workflow —
+     * did not count, and `release ph-1` freed a file the agent was in. Silent,
+     * in normal use, with no error anywhere.
+     */
     const a = boardFor('a');
-    const first = a.createIssue({ title: 'owns src/x.ts' });
+    const first = a.createIssue({ title: 'first' });
+    const second = a.createIssue({ title: 'not claimed yet' });
+    a.claimIssue(first.id, { leaseMs: 600_000 });
     a.holdFiles(['src/x.ts'], { issueId: first.id });
-    // A later claim names the same file. The file is already ours, so this is
-    // not a conflict — but the claim then fails, and the lock must not have been
-    // re-pointed at an issue we never took.
-    const second = a.createIssue({ title: 'the claim that will be refused' });
-    const taken = a.holdFiles(['src/x.ts'], { issueId: second.id });
-    expect(taken.acquired).toEqual([]);
-    expect(a.locksFor(first.id).map((lock) => lock.path)).toEqual(['src/x.ts']);
-    expect(a.locksFor(second.id)).toHaveLength(0);
+    a.holdFiles(['src/x.ts'], { issueId: second.id });
+
+    a.releaseClaim(first.id);
+    expect(a.checkPath('src/x.ts', { agent: 'rival' }).free).toBe(false);
+    // And it is freed once the last issue that named it is CLOSED, because a
+    // closed issue is the one state in which nobody is editing its files.
+    a.releaseClaim(second.id);
+    expect(a.checkPath('src/x.ts', { agent: 'rival' }).free).toBe(false);
+    a.claimIssue(second.id, { leaseMs: 600_000 });
+    a.resolveIssue(second.id);
+    a.closeIssue(second.id, { agent: 'verifier' });
+    expect(a.checkPath('src/x.ts', { agent: 'rival' }).free).toBe(true);
+  });
+
+  it('finds a held file through a path that walks out and back', () => {
+    const a = boardFor('a');
+    a.holdFiles(['src/held.ts']);
+    a.close();
+    const b = boardFor('b');
+    // `src/../src/held.ts` is the same file, and it used to answer FREE: the one
+    // answer this board must never get wrong, from a spelling an agent's own
+    // tooling produces.
+    for (const spelling of ['src/../src/held.ts', './src/../src/held.ts', 'src/./held.ts']) {
+      expect(b.checkPath(spelling).free, spelling).toBe(false);
+    }
+    expect(() => b.holdFiles(['src/../src/held.ts'])).toThrow(/held by another agent/);
+    b.close();
+  });
+
+  it('does not truncate `list`, the command an agent greps to ask if work is filed', () => {
+    const board = boardFor('a');
+    for (let index = 0; index < 240; index += 1) board.createIssue({ title: `issue ${index}` });
+    // 240 issues and a 200-row answer: a false negative here files a DUPLICATE of
+    // work already tracked, and nothing tells the reader the list was cut.
+    expect(board.listIssues()).toHaveLength(240);
+  });
+
+  it('refuses a path that climbs out of the repository, in both commands', () => {
+    const a = boardFor('a');
+    // `../../etc/passwd` names a real file, and a lock on it collides with
+    // nothing this board tracks — so it is refused rather than stored, and
+    // `check` says the same thing `hold` does instead of answering "free".
+    for (const escape of ['../../etc/passwd', '../outside.ts', '/etc/hosts']) {
+      expect(() => a.holdFiles([escape]), escape).toThrow(/not inside this repository/);
+      const report = a.checkPath(escape);
+      expect(report.free, escape).toBe(false);
+      expect(report.outside, escape).toBe(true);
+    }
+    expect(a.locksHeldBy('a')).toHaveLength(0);
+  });
+
+  it('lets two issues of ONE agent share a file, and keeps it when one is released', () => {
+    /**
+     * The blocker. A lock used to carry the issue that took it, so "release the
+     * locks of issue X" freed the file for an agent still working it on issue Y
+     * — and the next agent to ask was told, truthfully, that nobody had it.
+     */
+    const a = boardFor('a');
+    const first = a.createIssue({ title: 'first' });
+    const second = a.createIssue({ title: 'second' });
+    a.claimIssue(first.id, { leaseMs: 600_000 });
+    a.holdFiles(['src/shared.ts'], { issueId: first.id });
+    a.claimIssue(second.id, { leaseMs: 600_000 });
+    a.holdFiles(['src/shared.ts'], { issueId: second.id });
+    // ONE lock, TWO pairings: the lock outlives any single issue.
+    expect(a.locksHeldBy('a').filter((lock) => lock.path === 'src/shared.ts')).toHaveLength(1);
+    expect(a.locksFor(first.id).map((lock) => lock.path)).toEqual(['src/shared.ts']);
+    expect(a.locksFor(second.id).map((lock) => lock.path)).toEqual(['src/shared.ts']);
+
+    a.releaseClaim(first.id);
+    // The file is still in use, by the second issue, so it is STILL HELD.
+    expect(a.checkPath('src/shared.ts', { agent: 'someone-else' }).free).toBe(false);
+    a.close();
+    const b = boardFor('b');
+    expect(b.checkPath('src/shared.ts').free).toBe(false);
+    expect(() => b.holdFiles(['src/shared.ts'])).toThrow(/held by another agent/);
+    b.close();
+  });
+
+  it('frees a file once the LAST issue using it is released', () => {
+    const a = boardFor('a');
+    const first = a.createIssue({ title: 'first' });
+    const second = a.createIssue({ title: 'second' });
+    a.claimIssue(first.id, { leaseMs: 600_000 });
+    a.holdFiles(['src/last.ts'], { issueId: first.id });
+    a.claimIssue(second.id, { leaseMs: 600_000 });
+    a.holdFiles(['src/last.ts'], { issueId: second.id });
+    a.releaseClaim(first.id);
+    expect(a.checkPath('src/last.ts', { agent: 'x' }).free).toBe(false);
+    a.releaseClaim(second.id);
+    expect(a.checkPath('src/last.ts', { agent: 'x' }).free).toBe(true);
+  });
+
+  it('frees the files a reopened issue was holding', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'reopened with a file' });
+    a.claimIssue(id, { leaseMs: 600_000 });
+    a.holdFiles(['src/reopen.ts'], { issueId: id });
+    // Reopening left the lock live for the rest of the lease while advertising
+    // the issue as ready, so the next agent took it and was then refused its
+    // own file by the agent who reopened it.
+    a.reopenIssue(id);
+    expect(a.checkPath('src/reopen.ts', { agent: 'x' }).free).toBe(true);
+    expect(a.readyIssues().map((issue) => issue.id)).toEqual([id]);
+  });
+
+  it('never caps the numbers it reports, however large the board gets', () => {
+    const board = boardFor('a');
+    for (let index = 0; index < 260; index += 1) board.createIssue({ title: `issue ${index}` });
+    // 260 issues, and the counts said 200 with no indication of a cap: a
+    // truncated list is merely short, a truncated COUNT is wrong.
+    expect(board.status().counts.open).toBe(260);
+    expect(board.readyIssues()).toHaveLength(260);
+    expect(board.listIssues({ limit: 500 })).toHaveLength(260);
+  });
+
+  it('records drift when a document renumbers an item under a known origin', () => {
+    const board = boardFor('a');
+    const first = board.createIssue({ title: 'Alpha defect', origin: 'HANDOFF.md#2' });
+    // Same origin, different defect: the document's item 2 was renumbered, or
+    // re-titled, or replaced. The board must not silently keep the old title.
+    const again = board.createIssue({ title: 'Newly inserted defect', origin: 'HANDOFF.md#2' });
+    expect(again).toMatchObject({ id: first.id, created: false, drift: true });
+    expect(board.getIssue(first.id).title).toBe('Alpha defect');
+    const drift = board.events({ kind: 'origin.drift' });
+    expect(drift).toHaveLength(1);
+    expect(drift[0].message).toContain('Newly inserted defect');
+    expect(JSON.parse(drift[0].data)).toMatchObject({ origin: 'HANDOFF.md#2' });
+  });
+
+  it('reports no drift when the same origin arrives with the same title', () => {
+    const board = boardFor('a');
+    const first = board.createIssue({ title: 'Stable', origin: 'HANDOFF.md#7' });
+    expect(board.createIssue({ title: 'Stable', origin: 'HANDOFF.md#7' })).toEqual({
+      id: first.id,
+      created: false,
+      drift: false,
+    });
+    expect(board.events({ kind: 'origin.drift' })).toHaveLength(0);
   });
 });
 
@@ -620,6 +785,10 @@ describe('the event log is the swarm talking', () => {
       'issue.comment',
       'lock.hold',
       'issue.resolve',
+      // A close releases the claim's files, so the lock's release is in the
+      // thread between the resolution and the close, and a reader can see that
+      // the files went back at the moment the work was declared finished.
+      'lock.release',
       'issue.close',
     ]);
     expect(events.map((event) => event.seq)).toEqual([...events.map((event) => event.seq)].sort((a, b) => a - b));
@@ -641,6 +810,121 @@ describe('the event log is the swarm talking', () => {
     const [event] = board.events({ since: 0, kind: 'note' });
     expect(event.issue_id).toBeNull();
     expect(event.message).toBe('I am touching StoreContext for the next hour');
+  });
+});
+
+describe('the schema this script writes', () => {
+  /**
+   * A v1 board, built by hand from the old shape.
+   *
+   * Three things here were wrong before they were pinned. The version row was
+   * only ever INSERTed, so a migrated board stayed at v1 and re-migrated on
+   * every open; then the fix that corrected that stamped the version even when
+   * no migration had run; and then that one discarded the migration's return
+   * value, which put the first bug back. A lock whose `issue_id` named a missing
+   * issue — which v1 accepted, because that column had no foreign key — aborted
+   * the whole migration under v2's foreign keys, leaving a board no command
+   * could open, and therefore no way to repair it.
+   */
+  const buildV1Board = (target) => {
+    const db = new DatabaseSync(join(target, 'board.db'));
+    db.exec(`
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE issues (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+        scope TEXT NOT NULL DEFAULT 'prod', status TEXT NOT NULL DEFAULT 'open',
+        priority TEXT NOT NULL DEFAULT 'normal', origin TEXT, created_by TEXT NOT NULL,
+        resolver TEXT, resolved_at TEXT, verified_by TEXT, verified_at TEXT,
+        defer_reason TEXT, defer_until TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+      CREATE TABLE file_locks (
+        path TEXT NOT NULL, agent_id TEXT NOT NULL, issue_id TEXT, worktree TEXT,
+        acquired_at TEXT NOT NULL, expires_at TEXT NOT NULL, released_at TEXT,
+        PRIMARY KEY (path, agent_id));
+      CREATE TABLE events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, agent_id TEXT NOT NULL,
+        kind TEXT NOT NULL, issue_id TEXT, path TEXT, message TEXT, data TEXT);
+    `);
+    const now = new Date().toISOString();
+    const future = new Date(Date.now() + 3_600_000).toISOString();
+    db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', '1')").run();
+    db.prepare('INSERT INTO issues (id, title, created_by, created_at, updated_at) VALUES (?,?,?,?,?)').run(
+      'ph-1',
+      'a v1 defect',
+      'old',
+      now,
+      now
+    );
+    db.prepare('INSERT INTO file_locks (path, agent_id, issue_id, acquired_at, expires_at) VALUES (?,?,?,?,?)').run(
+      'src/good.ts',
+      'old',
+      'ph-1',
+      now,
+      future
+    );
+    // What v1 accepted and v2 must survive: a lock naming an issue that is gone.
+    db.prepare('INSERT INTO file_locks (path, agent_id, issue_id, acquired_at, expires_at) VALUES (?,?,?,?,?)').run(
+      'src/orphan.ts',
+      'old',
+      'ph-404',
+      now,
+      future
+    );
+    db.close();
+  };
+
+  it('migrates a v1 board once, advances the version, and survives a dangling id', () => {
+    buildV1Board(dir);
+    const first = boardFor('a');
+    expect(first.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value).toBe('2');
+    // The attribution v1 DID know about is carried forward, and the dangling one
+    // is named in the log rather than silently dropped or fatally re-attempted.
+    expect(first.locksFor('ph-1').map((lock) => lock.path)).toEqual(['src/good.ts']);
+    const migration = first.events({ kind: 'board.migrate' });
+    expect(migration).toHaveLength(1);
+    expect(JSON.parse(migration[0].data)).toMatchObject({ moved: 1, dropped_dangling_issue: 1 });
+    first.close();
+
+    // A second open must not re-migrate, or every command anyone ever runs
+    // repeats the work.
+    const second = boardFor('a');
+    expect(second.events({ kind: 'board.migrate' })).toHaveLength(1);
+    expect(second.locksFor('ph-1').map((lock) => lock.path)).toEqual(['src/good.ts']);
+    second.close();
+  });
+
+  it('refuses a board written by a newer script, without having touched it', () => {
+    buildV1Board(dir);
+    const raw = new DatabaseSync(join(dir, 'board.db'));
+    raw.prepare("UPDATE meta SET value = '99' WHERE key = 'schema_version'").run();
+    // A board from a newer script need not have a table THIS script declares —
+    // which is exactly why the guard has to run before `exec(SCHEMA)`, whose
+    // CREATE TABLE IF NOT EXISTS would otherwise re-create it, leaving a board
+    // half-adopting the very schema it is refusing.
+    raw.exec('DROP TABLE file_locks');
+    raw.close();
+
+    expect(() => boardFor('a')).toThrow(/schema is v99/);
+    const after = new DatabaseSync(join(dir, 'board.db'));
+    const tables = after.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all();
+    expect(tables.map((row) => row.name)).not.toContain('file_locks');
+    after.close();
+  });
+
+  it('does not stamp a version it did not earn', () => {
+    buildV1Board(dir);
+    const raw = new DatabaseSync(join(dir, 'board.db'));
+    // An unreadable version row reads as "no version" — and "no version" must
+    // not be taken as licence to claim the board is current. An earlier fix
+    // stamped v2 whenever no migration had run, which announces a migrated
+    // board while every lock's attribution still sits in a column nothing reads.
+    raw.prepare("UPDATE meta SET value = 'unknown' WHERE key = 'schema_version'").run();
+    raw.close();
+
+    const board = boardFor('a');
+    const version = board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get().value;
+    expect(String(version)).not.toBe('2');
+    // And nothing was silently moved on its way past.
+    expect(board.db.prepare('SELECT COUNT(*) AS n FROM issue_locks').get().n).toBe(0);
   });
 });
 
@@ -725,7 +1009,11 @@ describe('separate processes, not just separate connections', () => {
     after.close();
   }, 60_000);
 
-  it('converts a fresh board to WAL exactly once, whoever gets there first', async () => {
+  it('converts a fresh board to WAL once, and skips the conversion afterwards', async () => {
+    // The name used to claim "whoever gets there first", which is a claim about
+    // a RACE, and the test was single-process and sequential: delete the retry
+    // loop in enableWriteAheadLog and it still passed. The race is covered by the
+    // twenty-four-process test above; this one covers the skip.
     rmSync(dir, { recursive: true, force: true });
     const board = new Board({ dir, identity: identityFor('wal') }).open();
     expect(board.currentJournalMode()).toBe('wal');
@@ -817,6 +1105,271 @@ describe('the command line', () => {
     const other = await cli(['hold', 'src/util/draw.ts'], 'b');
     expect(other.code).toBe(4);
     expect(other.err).toMatch(/held by another agent/);
+  });
+
+  it('shows, in `ready`, the files an issue is about and whether they are free', async () => {
+    const filed = JSON.parse(
+      (await cli(['new', 'P0 — the worst thing in the adapter', '--files', 'src/a.ts', 'src/b.ts', '--json'])).out
+    );
+    // The column reports the files the issue is ABOUT, and the same column
+    // reported locks — so an imported issue, which takes none on purpose, showed
+    // `-` for all fifty-four of them and told a reader nothing at all.
+    //
+    // Your own locks are not contention, so the filer sees its own files free.
+    expect((await cli(['ready'])).out).toContain('2 free');
+    // Somebody else sees exactly who is in them, by path.
+    const asOther = (await cli(['ready'], 'other')).out;
+    expect(asOther).toContain('2/2 held: src/a.ts by a, src/b.ts by a');
+    expect(asOther).toContain('src/a.ts');
+    expect(filed.id).toMatch(/^ph-\d+$/);
+  });
+
+  it('reads a title typed before or after a global flag, and after a normal one', async () => {
+    // The help lists --json, --agent and --dir as GLOBAL, and a global flag
+    // before the command emptied the title: `board --json new "title"` — a
+    // normal way to type it — failed with "new needs a title". The test helper
+    // always appends its flags LAST, so it could never see this; these call the
+    // CLI with the flags genuinely first.
+    const withFlagsFirst = async (argv) => {
+      const out = [];
+      const err = [];
+      const code = await run([...argv, '--dir', dir], {
+        cwd: dir,
+        out: { write: (chunk) => out.push(chunk) },
+        err: { write: (chunk) => err.push(chunk) },
+      });
+      return { code, out: out.join(''), err: err.join('') };
+    };
+
+    const first = await withFlagsFirst(['--json', '--agent', 'a', 'new', 'title after a global flag']);
+    expect(first.code, first.err).toBe(0);
+    const id = JSON.parse(first.out).id;
+    expect(JSON.parse((await cli(['show', id, '--json'])).out).issue.title).toBe('title after a global flag');
+    // A title after an ordinary flag is refused loudly rather than emptied.
+    expect((await withFlagsFirst(['new', '--scope', 'history', 'a title'])).code).toBe(1);
+  });
+
+  it('refuses a check that cannot answer, rather than answering "free"', async () => {
+    await cli(['hold', 'src/held.ts']);
+    // Four ways of asking nothing, or asking about something this board does not
+    // cover. All of them used to answer `free` and exit 0 — the exit code that
+    // means a gate may proceed.
+    for (const args of [
+      ['check', ''],
+      ['check', '--files'],
+      ['check', '/etc/hosts'],
+    ]) {
+      const result = await cli(args, 'b');
+      expect(result.code, args.join(' ')).toBe(1);
+      expect(result.out, args.join(' ')).not.toMatch(/^free:/);
+    }
+    // And a genuine free file still answers 0.
+    expect((await cli(['check', 'src/free.ts'], 'b')).code).toBe(0);
+  });
+
+  it('claims a missing issue as NOT FOUND, not as a raw constraint error', async () => {
+    const result = await cli(['claim', 'ph-404', '--files', 'src/z.ts']);
+    // The locks are taken before the claim is validated, and the foreign key
+    // fired first: a stack trace, and exit 1 for what the table calls 2.
+    expect(result.code).toBe(2);
+    expect(result.err).toMatch(/no such issue: ph-404/);
+    expect(result.err).not.toMatch(/FOREIGN KEY/);
+    // And no lock was left behind by the attempt.
+    expect((await cli(['check', 'src/z.ts'], 'b')).code).toBe(0);
+  });
+
+  it('lists every issue, at the CLI, with no cap to discover', async () => {
+    const bulk = await cli(['new', 'the first of many', '--json']);
+    expect(bulk.code).toBe(0);
+    await cli(['new', 'and a second', '--json']);
+    // The API-level cap is pinned elsewhere; this is the command an agent runs.
+    const listed = JSON.parse((await cli(['list', '--json'])).out);
+    expect(listed.issues.length).toBeGreaterThanOrEqual(2);
+    expect((await cli(['ready', '--json'])).out).toContain('and a second');
+  });
+
+  it('keeps a stray word out of the title when --files takes a list', async () => {
+    // `--files a.ts b.ts` used to take `a.ts` as the value and leave `b.ts` as a
+    // positional, which on `new` silently became part of the issue TITLE — the
+    // documented example in AGENTS.md did not do what it said.
+    const filed = JSON.parse((await cli(['new', 'A plain title', '--files', 'src/a.ts', 'src/b.ts', '--json'])).out);
+    const shown = JSON.parse((await cli(['show', filed.id, '--json'])).out);
+    expect(shown.issue.title).toBe('A plain title');
+    expect((await cli(['ready'])).out).toContain('2 free');
+  });
+
+  it('sorts ready by priority, not by the order the issues were filed', async () => {
+    await cli(['new', 'P3 — cosmetic', '--priority', 'low', '--json']);
+    await cli(['new', 'P0 — catastrophic', '--priority', 'critical', '--json']);
+    await cli(['new', 'P1 — important', '--priority', 'high', '--json']);
+    const { issues } = JSON.parse((await cli(['ready', '--json'])).out);
+    expect(issues.map((issue) => issue.priority)).toEqual(['critical', 'high', 'low']);
+  });
+
+  /**
+   * The failure this pins. A fresh session asked the board what the agents on
+   * this repo were doing, was told the board was empty, and the board was not:
+   * it had 196 events in it. Kilo ships a built-in tool ALSO called `board_read`,
+   * scoped to one session and its task children, so outside a fan-out it reports
+   * "no messages" truthfully and knows nothing about this repository. The swarm
+   * board could not defend itself from that, because nothing it printed ever said
+   * which board it was or where it lived.
+   */
+  it('says which board it is on a bare `board`, and on `--help`', async () => {
+    const bare = await cli([]);
+    expect(bare.code).toBe(0);
+    // The file it just read. Two boards exist on this machine at once and only
+    // one of them is about this repository.
+    expect(bare.out).toContain(join(dir, 'board.db'));
+    // The distinction, by the name that caused it.
+    expect(bare.out).toContain('board_read');
+    // AND the live state, so the command that settles the question also answers
+    // it: this is a board with things on it, not an empty one.
+    expect(bare.out).toMatch(/\d+ (ready|open|claimed)/);
+
+    // `--help` is the other thing a fresh agent reaches for first.
+    const help = await cli(['help']);
+    expect(help.out).toContain('board_read');
+    expect(help.out).toMatch(/different thing/i);
+  });
+
+  it('puts a bare `swarm` and a typed `status` in the same state, differently introduced', async () => {
+    // The banner is for the invocation where the tool itself is in question. An
+    // agent that already typed `status` wants the status, and a parser reading
+    // this output should not have to skip a paragraph of prose to find it.
+    expect((await cli([])).out).toMatch(/^swarm —/);
+    expect((await cli(['status'])).out).not.toMatch(/Kilo's built-in board_read/);
+    // Both name the database, so neither can be confused with the other board.
+    expect((await cli(['status'])).out).toContain(join(dir, 'board.db'));
+  });
+
+  /**
+   * The rename is the fix; the prose about the rename is the receipt. Adding
+   * `board` back as an alias would pass every test above and restore the exact
+   * collision this work exists to remove, so the script name is pinned here
+   * instead of being trusted to stay deleted.
+   */
+  it('has no `board` npm script, so the ambiguous name cannot come back', async () => {
+    const scripts = JSON.parse(readFileSync(PACKAGE_JSON, 'utf8')).scripts;
+    expect(Object.keys(scripts)).toContain('swarm');
+    expect(Object.keys(scripts)).not.toContain('board');
+    // And nothing in the tracked documentation still teaches the old name.
+    const readme = readFileSync(join(import.meta.dirname, '..', '..', 'AGENTS.md'), 'utf8');
+    expect(readme).not.toMatch(/npm run board\b/);
+  });
+
+  it('ranks a live swarm finding above a handoff import of the same priority', async () => {
+    // Same priority on purpose: priority is the one signal the filer stated, and
+    // it is not what separates these. The import is filed FIRST, so the old
+    // tie-break (file order) put it first too and the live finding was buried at
+    // the bottom of a fifty-row queue.
+    await cli(['new', 'imported mirror', '--priority', 'normal', '--origin', 'HANDOFF.md#1', '--json']);
+    await cli(['new', 'imported mirror two', '--priority', 'normal', '--origin', 'HANDOFF.md#2', '--json']);
+    const live = JSON.parse((await cli(['new', 'found by a peer', '--priority', 'normal', '--json'])).out);
+    const { issues } = JSON.parse((await cli(['ready', '--json'])).out);
+    expect(issues[0].id).toBe(live.id);
+    // And the flag that takes the whole argument away.
+    const onlyLive = JSON.parse((await cli(['ready', '--live', '--json'])).out);
+    expect(onlyLive.issues.map((issue) => issue.id)).toEqual([live.id]);
+  });
+
+  it('still ranks priority above provenance, because priority is the stated intent', async () => {
+    // The opposite order from the test above, and the one that must NOT change:
+    // a P0 outranks a normal live finding even though the live one is the
+    // swarm's own work. Making `live` sort first would be a different, worse bug.
+    await cli(['new', 'P0 from a document', '--priority', 'critical', '--origin', 'HANDOFF.md#1', '--json']);
+    const live = JSON.parse((await cli(['new', 'peer finding', '--priority', 'normal', '--json'])).out);
+    const { issues } = JSON.parse((await cli(['ready', '--json'])).out);
+    expect(issues[0].priority).toBe('critical');
+    expect(issues.at(-1).id).toBe(live.id);
+  });
+
+  it('puts a startable issue above one another agent is already inside', async () => {
+    // The lock is taken FIRST, by somebody else. Filing an issue `--files` a
+    // path TAKES that path for the filer, so `new` first and `hold` after
+    // produces no contention at all — and the filer's own lock is deliberately
+    // not contention, so that mistake leaves this test green against a ranking
+    // that does not work.
+    await cli(['hold', 'src/shared.ts'], 'other');
+    const busy = JSON.parse(
+      (await cli(['new', 'contended work', '--priority', 'normal', '--files', 'src/shared.ts', '--json'])).out
+    );
+    const free = JSON.parse(
+      (await cli(['new', 'startable work', '--priority', 'normal', '--files', 'src/mine.ts', '--json'])).out
+    );
+    const { issues } = JSON.parse((await cli(['ready', '--json'])).out);
+    // Filed second, so file order would put the contended one first.
+    expect(issues[0].id).toBe(free.id);
+    expect(issues.at(-1).id).toBe(busy.id);
+  });
+
+  it('reads provenance off the origin grammar, and a live finding is never an import', async () => {
+    // The classifier decides what outranks what, so its edges are pinned
+    // directly rather than only through a ranking that could hide a mistake.
+    // Every real origin the importer writes, and every shape a live finding
+    // actually takes.
+    for (const origin of [
+      'HANDOFF.md#1',
+      'HANDOFF.md#65',
+      'TEST-FLAKES.md#8',
+      'OPEN_PROBLEMS.md#p3-10-orphaned-committed-baselines-2-1-mb',
+      // The scope map is what knows the `e2e/` prefix, not the origin — but an
+      // origin carrying it must still read as an import, because reading it as
+      // `live` is what puts a mirror at the head of the work queue.
+      'e2e/OPEN_PROBLEMS.md#p2-an-empty-cdp-capture',
+    ]) {
+      expect(isImportedOrigin(origin), origin).toBe(true);
+    }
+    for (const origin of [
+      null,
+      undefined,
+      '',
+      'main: 2026-09-28',
+      'main: 2026-09-28 operator request',
+      'agent-board-init',
+      // Near misses that are NOT the importer's grammar.
+      'HANDOFF.md',
+      'HANDOFF.md#',
+      'HANDOFF.md#Not-A-Slug',
+      '#1',
+    ]) {
+      expect(isImportedOrigin(origin), String(origin)).toBe(false);
+    }
+  });
+
+  it('says how much of the ready queue is imported prose rather than work', async () => {
+    // Fifty-six rows in one priority band reads as fifty-six things to do. The
+    // table cannot say otherwise: the ORIGIN column is per-row and a reader
+    // scanning the top ten never reaches the arithmetic.
+    await cli(['new', 'import one', '--priority', 'normal', '--origin', 'HANDOFF.md#1', '--json']);
+    await cli(['new', 'import two', '--priority', 'normal', '--origin', 'TEST-FLAKES.md#3', '--json']);
+    // The bare filename is what the importer actually writes — `e2e/` belongs to
+    // the scope map, not the origin. The path-qualified form is asserted below,
+    // because a pattern that only matched the bare one would call it `live`.
+    await cli(['new', 'import three', '--priority', 'normal', '--origin', 'OPEN_PROBLEMS.md#p3-thing', '--json']);
+    await cli(['new', 'a live finding', '--priority', 'normal', '--json']);
+
+    const human = (await cli(['ready'])).out;
+    expect(human).toMatch(/1 live · 3 imported from the handoff documents/);
+    expect(human).toMatch(/1 startable now/);
+
+    const { liveCount, importedCount, startableCount, issues } = JSON.parse((await cli(['ready', '--json'])).out);
+    expect({ liveCount, importedCount, startableCount }).toEqual({
+      liveCount: 1,
+      importedCount: 3,
+      startableCount: 1,
+    });
+    // The per-issue flag, so a consumer does not have to re-derive the grammar.
+    expect(issues.map((issue) => issue.live)).toEqual([true, false, false, false]);
+  });
+
+  it('explains an empty `--live` rather than printing a bare header', async () => {
+    await cli(['new', 'import only', '--origin', 'HANDOFF.md#1', '--json']);
+    const onlyLive = await cli(['ready', '--live']);
+    expect(onlyLive.code).toBe(0);
+    expect(onlyLive.out).toMatch(/--live: nothing ready, because all 1 ready issues are handoff imports/);
+    // The queue is not empty. Saying "nothing ready" here would be the old lie.
+    expect(onlyLive.out).not.toMatch(/^nothing ready/m);
   });
 
   it('exits 1 from `check` when a file is taken, so a shell can gate on it', async () => {
@@ -981,26 +1534,51 @@ describe('the command line', () => {
     const bad = await cli(['frobnicate']);
     expect(bad.code).toBe(1);
     expect(bad.err).toContain('unknown command: frobnicate');
-    expect(bad.err).toContain('agent board');
+    expect(bad.err).toContain('swarm');
   });
 
-  it('emits JSON for every machine-facing command', async () => {
+  it('emits valid JSON for EVERY machine-facing command, driven from the list', async () => {
     const { id } = JSON.parse((await cli(['new', 'json shaped', '--json'])).out);
-    await cli(['claim', id, '--json']);
-    // `watch` is absent on purpose: it is a stream of lines an agent reads
-    // while it works, and there is no single document for it to be.
-    for (const args of [
+    await cli(['claim', id, '--files', 'src/json.ts', '--json']);
+    /**
+     * Driven from a list rather than hand-picked. A previous version of this
+     * test named five of the twenty-one commands, so regressing `--json` on any
+     * of the other sixteen passed it verbatim — the test's name was a claim
+     * about coverage it did not make. `watch` is the one documented exception:
+     * it is a stream of lines, and there is no single document for it to be.
+     */
+    const other = JSON.parse((await cli(['new', 'a second issue', '--json'])).out);
+    const invocations = [
+      ['init', '--json'],
+      ['new', 'another one', '--json'],
       ['list', '--json'],
       ['ready', '--json'],
-      ['status', '--json'],
       ['show', id, '--json'],
+      ['claim', id, '--json'],
+      ['heartbeat', id, '--json'],
+      ['hold', 'src/other.ts', '--json'],
+      ['check', 'src/other.ts', '--json'],
+      ['comment', id, 'a note on the issue', '--json'],
+      ['note', 'a note to the swarm', '--json'],
+      ['dep', other.id, id, '--json'],
+      ['release', id, '--json'],
+      ['unlock', 'src/other.ts', '--json'],
+      ['defer', id, '--reason', 'parked for now', '--json'],
+      ['reopen', id, '--json'],
+      ['claim', id, '--json'],
+      ['resolve', id, '--json'],
+      ['close', id, '--json'],
+      ['status', '--json'],
+      ['doctor', '--json'],
       ['export', '--json'],
-    ]) {
-      const result = await cli(args);
-      expect(result.code).toBe(0);
-      expect(() => JSON.parse(result.out)).not.toThrow();
+      ['import', '--dry-run', '--json'],
+    ];
+    for (const args of invocations) {
+      const result = await cli(args, args[0] === 'close' ? 'verifier' : 'a');
+      expect(result.code, `${args.join(' ')} exited ${result.code}: ${result.err}`).toBe(0);
+      expect(() => JSON.parse(result.out), `${args.join(' ')} printed non-JSON`).not.toThrow();
     }
-  });
+  }, 30_000);
 
   it('streams the event log as readable lines for `watch`', async () => {
     const { id } = JSON.parse((await cli(['new', 'watched', '--json'])).out);

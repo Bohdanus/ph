@@ -157,6 +157,15 @@ export const DrawToolArea = ({ className, overlayCtxRef }: DrawHandlerProps) => 
     // `resetDocumentGestures`, this is what bounds a leaked claim to the mount that leaked it.
     return () => {
       releaseDocumentClaim();
+
+      // A frame left pending across an unmount would paint into the overlay, which is ONE context
+      // for the whole session and is handed to the next tool, so a stroke from an area that no
+      // longer owns it lands on the next tool's canvas. Cancelled and nulled, as `EraserToolArea`
+      // does.
+      if (frameRequested.current !== null) {
+        cancelAnimationFrame(frameRequested.current);
+        frameRequested.current = null;
+      }
     };
   }, []);
 
