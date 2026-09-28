@@ -60,17 +60,10 @@ export type ShapeGeometry = {
 
 const LINE_ANGLE_STEP = Math.PI / 4;
 
-const snapLineGeometry = (
-  anchor: Point,
-  pointer: Point,
-  altKey: boolean,
-  shiftKey: boolean
-): ShapeGeometry => {
+const snapLineGeometry = (anchor: Point, pointer: Point, altKey: boolean, shiftKey: boolean): ShapeGeometry => {
   if (!shiftKey) {
     return {
-      start: altKey
-        ? { x: anchor.x * 2 - pointer.x, y: anchor.y * 2 - pointer.y }
-        : { x: anchor.x, y: anchor.y },
+      start: altKey ? { x: anchor.x * 2 - pointer.x, y: anchor.y * 2 - pointer.y } : { x: anchor.x, y: anchor.y },
       end: { x: pointer.x, y: pointer.y },
     };
   }
