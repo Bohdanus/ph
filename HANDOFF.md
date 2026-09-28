@@ -1471,3 +1471,45 @@ passes. The overlay-teardown fix deliberately leaves it alone, because clearing 
 clearing a canvas this area never painted.
 
 **Files.** `src/components/Main/EraserToolArea.tsx:11-13,20-31`
+
+---
+
+## 70. A tool whose settings do not fit a shared arm must not be in that arm
+
+`src/util/settings.ts:64-82`
+
+`color-replacement` was persisted by the bare-`{ toolName }` group further down the same
+function, which writes no settings at all. It therefore had a real options bar whose
+Tolerance, Limits and Sampling controls existed nowhere: the sliders the user could see were
+not the settings the tool read, and `defaultSettings` was the whole of its state. It now has
+its own typed arm, which persists its controls and omits `points` and `sampleColor` on the
+precedent the draw and fill arms set.
+
+**The rule this establishes, because the bug was a silent data loss rather than a crash:** a
+group that persists one key may not absorb a tool that has more than one. The two `else if`
+arms are now mutually exclusive, and a third tool needing real settings must get a third arm
+rather than being added to either. The visible symptom — a bar full of controls that change
+nothing — reads as a UI bug and is actually a persistence bug, so it is worth checking
+`src/util/settings.ts` before checking the component.
+
+---
+
+## 71. A clean merge is not a correct one
+
+`src/tools/settings.ts:164-181`
+
+`defaultSettings['color-replacement']` acquired `smoothing` and `blendMode` by merge. Both
+belong to the paint panel, this file merged **without a single conflict marker**, and the
+result was wrong: the entry was typed against `ColorReplacementToolArgs`, which has neither
+key, and the only thing that noticed was the `satisfies` excess-property check.
+
+**That is the whole content of this item.** A textual merge reports what it reconciled, which
+is not the same question as whether the result is right, and the two answers diverged here
+with no marker, no warning and a green `tsc` had the `satisfies` not been there. Both keys
+are now gone and their absence is documented in place rather than left as an omission, so a
+later merge that reintroduces them has something to contradict.
+
+The defence is the `satisfies` clause on every `defaultSettings` entry, and it is the reason
+to keep it: it is the only check standing between a merge and a defaults table that
+compiles. **Keep it on every entry, and treat a defaults entry that typechecks against a type
+it does not belong to as a merge bug, not a style question.**
