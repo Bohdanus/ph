@@ -49,12 +49,47 @@ type PromotionRequest = Readonly<{ layerId: string; canvas: BitmapSource }>;
  */
 const closeOf = (bitmap: unknown) => (bitmap as unknown as { close: ReturnType<typeof vi.fn> }).close;
 
-/** Materializes each requested canvas into the bitmap the map names. */
+/**
+ * Materializes each requested canvas into the bitmap the map names.
+ *
+ * An unmapped canvas throws rather than yielding a throwaway bitmap: a silent
+ * fallback would publish a cache no assertion can reach, so a mistyped request
+ * would leave the test green while testing nothing.
+ */
 function stubPromotion(byCanvas: ReadonlyMap<BitmapSource, BitmapSource>): void {
   vi.stubGlobal(
     'createImageBitmap',
-    vi.fn(async (source: unknown) => byCanvas.get(source as BitmapSource) ?? createMockImageBitmap(100, 80))
+    vi.fn(async (source: unknown) => {
+      const bitmap = byCanvas.get(source as BitmapSource);
+      if (!bitmap) throw new Error('unmapped canvas in promotion');
+      return bitmap;
+    })
   );
+}
+
+/**
+ * Materializes any canvas into a DISTINCT cache per call, and reads back the one
+ * most recently minted.
+ *
+ * A stub that always answered with the same object would hand a "fresh" cache the
+ * identity of the retired one, so two promotions in one test could silently share
+ * a bitmap — the exact confusion this file exists to rule out.
+ */
+function stubFreshPromotion(width = 100, height = 80): () => ImageBitmap {
+  const minted: ImageBitmap[] = [];
+  vi.stubGlobal(
+    'createImageBitmap',
+    vi.fn(async () => {
+      const bitmap = createMockImageBitmap(width, height);
+      minted.push(bitmap);
+      return bitmap;
+    })
+  );
+  return () => {
+    const bitmap = minted.at(-1);
+    if (!bitmap) throw new Error('no presentation cache has been materialized');
+    return bitmap;
+  };
 }
 
 function canvas(width = 100, height = 80): BitmapSource {
@@ -83,12 +118,13 @@ function renderWithProbe() {
     }, [store, dispatch]);
     return null;
   };
-  render(
+  const { unmount } = render(
     <StoreProvider>
       <Probe />
     </StoreProvider>
   );
   return {
+    unmount,
     store: () => {
       if (!probeRef.current) throw new Error('Probe not rendered');
       return probeRef.current.store;
@@ -323,19 +359,17 @@ describe('retirement at the APPLY_HISTORY_REPLAY call site', () => {
   });
 
   it('leaves a borrowed raster the scope never published open on the replay path', async () => {
-    const owned = createMockImageBitmap(100, 80);
     const borrowed = createMockImageBitmap(10, 10);
     const staged = createMockOffscreenCanvas(100, 80);
-    vi.stubGlobal(
-      'createImageBitmap',
-      vi.fn(async () => owned)
-    );
+    const latestOwnedCache = stubFreshPromotion();
     const { store, dispatch } = renderWithProbe();
     replaceDocument(dispatch(), {
       [layerId]: layerWithCanvas(layerId, staged),
       [secondLayerId]: { ...layerWithCanvas(secondLayerId, null), bitmap: borrowed },
     });
     await publish(store(), [{ layerId, canvas: staged }]);
+    const owned = latestOwnedCache();
+    expect(layerAt(store, layerId).bitmap).toBe(owned);
     expect(layerAt(store, secondLayerId).bitmap).toBe(borrowed);
 
     // The borrowed layer is named by `previous` and gone from `next`, so `retire`
@@ -425,6 +459,53 @@ describe('retirement at the COMMIT_DOCUMENT_EDIT call site', () => {
     expect(closeOf(cacheB)).not.toHaveBeenCalled();
   });
 
+  it('closes EVERY departed cache of one transition, not just the first', async () => {
+    // The single-removal test above cannot tell "closed the one departure" from
+    // "closed every departure", because one transition there had one candidate.
+    // A multi-select delete or a multi-layer merge drops several at once, so the
+    // loop's cardinality is pinned here: both departures are closed, and the
+    // surviving layer's unpublished cache is not closed a third time.
+    const cacheA = createMockImageBitmap(100, 80);
+    const cacheB = createMockImageBitmap(60, 40);
+    const stagedA = createMockOffscreenCanvas(100, 80);
+    const stagedB = createMockOffscreenCanvas(60, 40);
+    stubPromotion(
+      new Map([
+        [stagedA, cacheA],
+        [stagedB, cacheB],
+      ])
+    );
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), {
+      [layerId]: layerWithCanvas(layerId, stagedA),
+      [secondLayerId]: layerWithCanvas(secondLayerId, stagedB),
+      [thirdLayerId]: layerWithCanvas(thirdLayerId, canvas(30, 20)),
+    });
+    await publish(store(), [
+      { layerId, canvas: stagedA },
+      { layerId: secondLayerId, canvas: stagedB },
+    ]);
+    // Exactly two caches are scope-owned here: layer-3 is never promoted, so it
+    // contributes no candidate and proves the loop does not over-close either.
+    expect(layerAt(store, layerId).bitmap).toBe(cacheA);
+    expect(layerAt(store, secondLayerId).bitmap).toBe(cacheB);
+    expect(layerAt(store, thirdLayerId).bitmap).toBeNull();
+
+    commit(
+      dispatch(),
+      {
+        layers: { [thirdLayerId]: layerAt(store, thirdLayerId) },
+        deletedLayers: { [layerId]: layerAt(store, layerId), [secondLayerId]: layerAt(store, secondLayerId) },
+      },
+      REMOVE_ACTION
+    );
+
+    expect(store().layers[layerId]).toBeUndefined();
+    expect(store().layers[secondLayerId]).toBeUndefined();
+    expect(closeOf(cacheA)).toHaveBeenCalledTimes(1);
+    expect(closeOf(cacheB)).toHaveBeenCalledTimes(1);
+  });
+
   it('closes nothing when a commit changes a layer without touching its cache', async () => {
     const cache = createMockImageBitmap(100, 80);
     const staged = createMockOffscreenCanvas(100, 80);
@@ -494,19 +575,17 @@ describe('retirement at the COMMIT_DOCUMENT_EDIT call site', () => {
   });
 
   it('leaves a borrowed raster the scope never published open on the commit path', async () => {
-    const owned = createMockImageBitmap(100, 80);
     const borrowed = createMockImageBitmap(10, 10);
     const staged = createMockOffscreenCanvas(100, 80);
-    vi.stubGlobal(
-      'createImageBitmap',
-      vi.fn(async () => owned)
-    );
+    const latestOwnedCache = stubFreshPromotion();
     const { store, dispatch } = renderWithProbe();
     replaceDocument(dispatch(), {
       [layerId]: layerWithCanvas(layerId, staged),
       [secondLayerId]: { ...layerWithCanvas(secondLayerId, null), bitmap: borrowed },
     });
     await publish(store(), [{ layerId, canvas: staged }]);
+    const owned = latestOwnedCache();
+    expect(layerAt(store, layerId).bitmap).toBe(owned);
     expect(layerAt(store, secondLayerId).bitmap).toBe(borrowed);
 
     commit(
