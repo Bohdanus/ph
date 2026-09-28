@@ -623,7 +623,12 @@ describe('toolsMap wiring', () => {
     // every remaining placeholder is an unimplemented tool and every one of them
     // carries the badge. Their bars are asserted in
     // `src/components/ToolbarsRight/Paint/__tests__/Paint.test.tsx`.
-    for (const toolName of ['color-replacement', 'pen', 'custom-shape'] as const) {
+    //
+    // `color-replacement` was on this list and is not any more: it is a built tool now,
+    // with `ColorReplacementToolArea` and its own options bar, so there is no placeholder
+    // left to carry a badge. Listing it here failed on the badge being absent, which is
+    // the test reporting the tool got built rather than a defect.
+    for (const toolName of ['pen', 'custom-shape'] as const) {
       const { unmount } = render(React.createElement(toolsMap[toolName].toolboxComponent));
 
       expect(screen.getAllByText('TODO').length, toolName).toBeGreaterThan(0);

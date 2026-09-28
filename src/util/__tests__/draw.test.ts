@@ -173,9 +173,26 @@ describe('drawSpray', () => {
       penType: 'spray' as const,
     };
     drawSpray({ args, ctx });
+    const rgb = hexToRgb('#ff0000');
     expect(ctx.createRadialGradient).toHaveBeenCalledTimes(2);
-    expect(gradient.addColorStop).toHaveBeenCalledWith(0, `rgba(${hexToRgb('#ff0000')}, ${0.8 / 4})`);
-    expect(gradient.addColorStop).toHaveBeenCalledWith(1, `rgba(${hexToRgb('#ff0000')}, 0)`);
+
+    // Three stops, not two, and the middle one is what makes the dab a dab. The old pen
+    // ran the peak straight to transparent, so every dab was a soft grey blur with no
+    // centre; the core holds the full peak across the inner quarter of the radius and only
+    // then falls off, which is what the eye reads as sprayed paint rather than fog.
+    expect(gradient.addColorStop).toHaveBeenCalledWith(0, `rgba(${rgb}, 0.32)`);
+    expect(gradient.addColorStop).toHaveBeenCalledWith(0.25, `rgba(${rgb}, 0.32)`);
+    expect(gradient.addColorStop).toHaveBeenCalledWith(1, `rgba(${rgb}, 0)`);
+    // 0.8 * 0.4 rounds to 0.32; the unrounded product is 0.32000000000000006 and the string
+    // is compared literally, so the rounding is load-bearing rather than cosmetic.
+    expect(gradient.addColorStop).not.toHaveBeenCalledWith(0, `rgba(${rgb}, 0.32000000000000006)`);
+
+    // Size is a DIAMETER on every other pen, so the radius is half of it. Spending the
+    // whole `lineWidth` as the radius painted a 200px blot from Size 100 and overflowed the
+    // `pointsBoundingPos` crop padding, which is how a size control that reads 10 could
+    // cover five times the requested area.
+    expect(ctx.createRadialGradient).toHaveBeenCalledWith(5, 5, 0, 5, 5, 5);
+    expect(ctx.arc).toHaveBeenCalledWith(5, 5, 5, 0, Math.PI * 2);
     expect(ctx.arc).toHaveBeenCalledTimes(2);
     expect(ctx.fill).toHaveBeenCalledTimes(2);
   });
