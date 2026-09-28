@@ -1579,3 +1579,44 @@ six wide and its `Shift+U` cycle is four, and `Shift+U` from the Triangle or Pol
 them but **restarts** at the rectangle. Nothing tests that claim. And `availableTools` /
 `extraTools` have **no production consumer at all** — only tests read them — so a silent omission
 there produces three green tests over an incomplete app.
+
+## 69. `git stash` is not just shared in this repo — an empty push makes `pop` a coin toss
+
+**Do not use `git stash` in this repository. Use a worktree.** `AGENTS.md` already says the stash
+lives in the common git dir and is therefore shared across every worktree; §194. What that does not
+say is the part that actually bites, and it cost a real recovery this session.
+
+`git stash push` **exits 0 and prints nothing when the working tree is clean**, and creates no
+entry. The `pop` that follows is therefore not paired with the `push` that made it safe: it takes
+`stash@{0}`, which belongs to whoever pushed last.
+
+Measured here. A `git stash push -u -m "verify-baseline"` in the main worktree found nothing to
+stash, so it silently did nothing. The `git stash pop` two commands later popped **another agent's**
+stash — `fix/flyout-longpress-race`, left on `e2e/helpers/toolbar-helpers.ts` — into the main
+worktree, where it conflicted, and left the shared checkout in a merge-conflict state that another
+session could have walked into. `AGENTS.md` also says never to repair a conflict in the main
+worktree, and the cheapest correct repair here was `git reset --hard HEAD`, which is safe **only**
+because `git status --porcelain` showed exactly one path, the conflicted one. That check is the
+reason the recovery was one command instead of an archaeology project, and it is not a check to
+skip.
+
+**The work was not lost**, and that is worth stating precisely rather than as reassurance. The
+stashed file was already committed at `07c1cf1`; `git diff stash@{0} 07c1cf1 -- <file>` differs by
+exactly one doc comment, and the committed version is the _better_ one — it names the element and
+explains why a bare line number rots. The stash entry was intact afterwards and the owning
+worktree was clean. Had it not been committed, the entry itself would still have been recoverable,
+because a conflicted `pop` does not drop the entry.
+
+**The general rule, and the part worth not generalising from the happy ending:** a stash is a
+_shared, unordered stack_, and a `pop` is a **destructive operation on another session's work**.
+`git stash list` is global, so its top entry is not yours by default. If a worktree needs to be set
+aside, create a worktree or a branch — that costs one command and holds nothing but your own files.
+The escape hatch remains `HUSKY=0 git commit`; there is no reason in this repository that reaches
+for a stash at all.
+
+**What the operator asked for on top of this**: a standing rule in `AGENTS.md` that `git stash` is
+not to be used here, because it is shared. That edit is **not landed** — `AGENTS.md` is held by
+`audit/chat-audit` with a live lease, and `npm run swarm -- hold AGENTS.md` is correctly refused
+while it is. The rule is recorded here until the hold clears, and the AGENTS.md paragraph should
+be folded into the existing "Worktrees and dev servers" section at §194 rather than added as a
+new section, because the failure is an intensification of what that section already says.
