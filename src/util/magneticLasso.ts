@@ -4,12 +4,18 @@ import { distanceBetweenPoints } from './selection.ts';
 const MAX_MAGNETIC_PATH_AREA = 32_000;
 const LINE_SAMPLE_STEP = 2;
 
+/**
+ * `gradientMagnitude` is the only per-pixel buffer the path search reads, and
+ * `maxGradient` is the normalisation it compares against. `luma` and
+ * `gradientDirection` are computed by `createEdgeMapFromImageData` and
+ * deliberately not retained: the Sobel pass needs the luma plane while it runs
+ * and nothing downstream reads the direction, so returning either would hold 4
+ * more bytes per pixel for the whole draft.
+ */
 export type EdgeMap = {
   width: number;
   height: number;
-  luma: Float32Array;
   gradientMagnitude: Float32Array;
-  gradientDirection: Float32Array;
   maxGradient: number;
 };
 
@@ -48,6 +54,21 @@ function roundPoint(point: Point): Point {
 
 function getIndex(x: number, y: number, width: number): number {
   return y * width + x;
+}
+
+/**
+ * Alpha-composited luminance: `rgbLuma * alpha + 255 * (1 - alpha)`, so a
+ * transparent pixel behaves as white rather than as black and cannot be told
+ * apart from an unpainted background.
+ *
+ * Exported because the luma plane is a local of `createEdgeMapFromImageData`
+ * rather than part of the returned `EdgeMap`: this is where the rule lives, and
+ * it is the observable a caller or a test can check.
+ */
+export function computeLuma(red: number, green: number, blue: number, alpha: number): number {
+  const normalizedAlpha = alpha / 255;
+  const rgbLuma = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  return rgbLuma * normalizedAlpha + 255 * (1 - normalizedAlpha);
 }
 
 function heapPush(heap: HeapNode[], node: HeapNode): void {
@@ -124,15 +145,13 @@ export function createEdgeMapFromImageData(imageData: ImageData): EdgeMap {
   const { width, height, data } = imageData;
   const luma = new Float32Array(width * height);
   const gradientMagnitude = new Float32Array(width * height);
-  const gradientDirection = new Float32Array(width * height);
   let maxGradient = 0;
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const dataIndex = getIndex(x, y, width) * 4;
-      const alpha = data[dataIndex + 3] / 255;
-      const rgbLuma = data[dataIndex] * 0.2126 + data[dataIndex + 1] * 0.7152 + data[dataIndex + 2] * 0.0722;
-      luma[getIndex(x, y, width)] = rgbLuma * alpha + 255 * (1 - alpha);
+      const pixelIndex = getIndex(x, y, width);
+      const dataIndex = pixelIndex * 4;
+      luma[pixelIndex] = computeLuma(data[dataIndex], data[dataIndex + 1], data[dataIndex + 2], data[dataIndex + 3]);
     }
   }
 
@@ -153,12 +172,11 @@ export function createEdgeMapFromImageData(imageData: ImageData): EdgeMap {
       const index = getIndex(x, y, width);
 
       gradientMagnitude[index] = magnitude;
-      gradientDirection[index] = Math.atan2(gy, gx);
       maxGradient = Math.max(maxGradient, magnitude);
     }
   }
 
-  return { width, height, luma, gradientMagnitude, gradientDirection, maxGradient };
+  return { width, height, gradientMagnitude, maxGradient };
 }
 
 export function clampPointToEdgeMap(edgeMap: EdgeMap, point: Point): Point {
