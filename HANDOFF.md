@@ -160,27 +160,6 @@ paths become observable instead of silent.
 
 ---
 
-## 6. P0 — `StoreContext` has two implementations of every commit transition
-
-**Problem.** The dispatcher fast-paths bypasses the reducer and hand-builds
-`latestStateRef.current`, because the reducer must stay a pure transition. But the hand-built copy
-omits `hasUnsavedChanges: true`, which the reducer sets in four branches
-(`StoreContext.tsx:342`, `:353`, `:406`, `:429`).
-
-Two writers for the same state transition will disagree. This one disagrees today, with no
-symptom, because nothing reads the flag on those paths. It is the same class of bug as
-`PUBLISH_DURABLE_REPLAY` (added `323d664`, deleted `2f051a0`): a second, parallel state path that
-looks correct in isolation.
-
-`UPDATE_LAYERS` (item 13) is the same shape: a public action with a hand-written reducer branch
-and zero production callers.
-
-**Fix.** Extract the shared post-commit projection into one function that both the reducer and the
-dispatcher call, so the flag cannot be forgotten. If that is not feasible, assert the equivalence
-in a test that dispatches through the hook and compares against the reducer result.
-
-**Files.** `src/contexts/StoreContext.tsx`
-
 ---
 
 ## 7. The save/merge path bypasses the presentation scope entirely
@@ -305,7 +284,7 @@ context value. No production code consumes it — the only callers are
 
 It is dead in production but live as an _interface_: any component can append a `HistoryItem`
 through a path that does not go through `COMMIT_DOCUMENT_EDIT`, so it bypasses the append boundary,
-the durable publication, and the `hasUnsavedChanges`/dispatcher equivalence of item 6.
+the durable publication, and the shared `hasUnsavedChanges`/dispatcher projection.
 
 **Fix.** Remove it from the returned context object. If a second writer is genuinely needed, route
 it through `COMMIT_DOCUMENT_EDIT` so it participates in the single-writer contract.
@@ -314,38 +293,25 @@ it through `COMMIT_DOCUMENT_EDIT` so it participates in the single-writer contra
 
 ---
 
-## 15. Only the crop and selection writers reach the append boundary; the rest reconvert the whole timeline
+## 15. `reorder-layers` remains conversion-only at the append boundary
 
-**Problem.** `translate` (`history-append.ts:121`) handles exactly two action kinds:
-`SET_DOCUMENT_FRAME_ACTION` (`:122`) and `SELECTION_ACTION` (`:138`). Everything else returns
-`unsupported-history-feature` (`:154-158`), so a `COMMIT_DOCUMENT_EDIT` with no planned entry
-reconverts the whole timeline at `StoreContext.tsx:747-758`.
+**Problem.** The append boundary now translates `set-document-frame`, `set-selection`, and the
+canonical `show`/`hide`/`rename` layer-property actions. `useLayer.updateLayer` plans those actions
+through `planHistoryAppend`, while `moveLayerAfter` (`useLayer.ts:451-469`) still supplies no
+`durableEntry`, so each reorder reconverts the whole timeline.
 
-Derived writer inventory, from the `type: 'COMMIT_DOCUMENT_EDIT'` dispatch sites in non-test
-source. Three sites hand the store a `durableEntry`:
+Reorder is not safe to publish from the producer's intent alone. Durable conversion normalizes the
+current order to `0..n-1` before applying the move (`history-adapter.ts:547-567`), while legacy replay
+skips a missing anchor (`history-replay.ts:122-130`). `validatePlannedDurableEntry` cannot prove an
+`orderByLayerId` map without the authoritative logical order immediately before the append. The
+delayed UI reorder also means a hook-captured order is not a sufficient store precondition.
 
-- `useLayer.ts:597` — `applyDocumentCrop`, `set-document-frame`
-- `useSelectionHistory.ts:158` — `clearSelections`, `set-selection`
-- `useSelectionHistory.ts:240` — `commitSelection` (`'create'` / `'move'`), `set-selection`
+**Fix.** Add store-side pre-state derivation and validation for `reorder-layers`, then route the
+writer through the existing `published` / `preconditions` / `mismatch` decision. Do not collapse
+that three-way decision to a boolean or manufacture an order map when the anchor is missing.
 
-Eleven further sites have production callers and carry no `durableEntry`, so each one
-reconverts: `useLayer.ts:166, 293, 310, 374, 408, 432, 452, 638`, `useApp.ts:159` (the tool-switch
-deselect, which builds its `SELECTION_ACTION` at `:165-174` without planning), and the two
-`useSelectionHistory.ts:174, 256` plan-failure fallbacks. `useHistory.ts:52` (`addHistoryEntry`) is
-the fifteenth site and has no production caller at all (item 14). `APPLY_HISTORY_REPLAY` and
-`REPLACE_DOCUMENT` remain legacy-only.
-
-The selection pair covers every selection-creating gesture, so no selection now reaches the timeline
-only as a later entry's `previousSelectionState`. The one remaining gap is the polygon's anchor/body
-drag (item 30), which appends nothing rather than reconverting.
-
-The next slices are already named in the readiness docs: `set-layer-properties` and
-`reorder-layers`.
-
-**Fix.** Convert one writer at a time, smallest first (`set-layer-properties`). Keep the
-`published` / `preconditions` / `mismatch` three-way decision — do not collapse it to a boolean.
-
-**Files.** `src/contexts/history-append.ts`, `src/contexts/StoreContext.tsx`
+**Files.** `src/contexts/history-adapter.ts`, `src/contexts/history-append.ts`,
+`src/contexts/StoreContext.tsx`, `src/contexts/useLayer.ts`
 
 ---
 
@@ -1508,6 +1474,7 @@ tight for the product — that is the operator's call, and it must be made here 
 branch: the derivation above is what makes a different number defensible, not the number itself.
 
 **Files.** `src/contexts/avif-utils.ts:4-5,15,24-26`, `src/contexts/tiff-utils.ts:11-27`
+
 ---
 
 ## Tool surface - the eraser, fill and eyedropper tranche
@@ -1758,3 +1725,20 @@ agent not checked `Main.tsx:53`.
 
 **Files.** `src/tools/toolProcessors.ts:103,237,268`,
 `src/components/Main/Main.tsx:53,177`, `toolbar-mapping.ts:47-71`
+
+---
+
+## 54. The durable append fast path does not reconcile asset ownership
+
+**Problem.** `decideDurableAppend` publishes a cloned durable document directly, while full
+conversion wraps asset-bearing operations in `beginDocumentAssetTransaction` / commit / reconcile
+(`history-adapter.ts:676-690`). The current append slice is safe because layer-property operations
+carry no assets, but the next asset-bearing operation could publish a document without registering
+or retiring its raster ownership.
+
+**Fix.** Extend the single-writer publication path with the asset-registry transaction before
+publishing the first durable operation that introduces or replaces an asset. Keep the property-only
+path free of unnecessary asset work.
+
+**Files.** `src/contexts/history-append.ts`, `src/contexts/StoreContext.tsx`,
+`src/contexts/history-adapter.ts`

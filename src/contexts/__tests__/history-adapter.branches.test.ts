@@ -7,11 +7,18 @@ import {
   convertLegacyHistory,
   convertLegacyHistorySafely,
   createDurableDocument,
+  deriveSetLayerPropertiesEntry,
+  isSetLayerPropertiesAction,
   legacyHistoryToDurable,
   setDurableCursor,
   toggleDurableEntry,
 } from '../history-adapter.ts';
-import { DURABLE_SCHEMA_VERSION, collectDurableAssetIds, type DurableDocument } from '../history-model.ts';
+import {
+  DURABLE_SCHEMA_VERSION,
+  collectDurableAssetIds,
+  type DurableDocument,
+  type DurableLayerPropertyPatch,
+} from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerSource } from '../layer-types.ts';
 import {
@@ -770,6 +777,92 @@ describe('conversion entry points', () => {
   });
 });
 
+describe('deriveSetLayerPropertiesEntry', () => {
+  it.each([
+    { label: 'show', actionName: SHOW_LAYER_ACTION },
+    { label: 'hide', actionName: HIDE_LAYER_ACTION },
+    { label: 'rename', actionName: RENAME_LAYER_ACTION },
+  ] satisfies ReadonlyArray<{ label: string; actionName: ActionType }>)('accepts $label', ({ actionName }) => {
+    expect(isSetLayerPropertiesAction(actionName)).toBe(true);
+  });
+
+  it.each([
+    { label: 'a tool action', actionName: TOOL_ACTION },
+    { label: 'a new layer', actionName: NEW_LAYER_ACTION },
+    { label: 'a removal', actionName: REMOVE_ACTION },
+    { label: 'a merge', actionName: MERGE_ACTION },
+    { label: 'a reorder', actionName: REORDER_ACTION },
+    { label: 'a selection change', actionName: SELECTION_ACTION },
+    { label: 'a document frame change', actionName: SET_DOCUMENT_FRAME_ACTION },
+    { label: 'a document open', actionName: OPEN_DOCUMENT_ACTION },
+  ] satisfies ReadonlyArray<{ label: string; actionName: ActionType }>)('refuses $label', ({ actionName }) => {
+    // The whitelist is what stops a writer from turning an arbitrary action into
+    // a durable patch, so it is closed in both directions.
+    expect(isSetLayerPropertiesAction(actionName)).toBe(false);
+    expect(
+      deriveSetLayerPropertiesEntry({ id: 'x', actionName, layerId: 'layer-1', args: { name: 'Renamed' } })
+    ).toBeNull();
+  });
+
+  it.each([
+    { label: 'show', actionName: SHOW_LAYER_ACTION, patch: { visible: true } },
+    { label: 'hide', actionName: HIDE_LAYER_ACTION, patch: { visible: false } },
+    { label: 'a rename', actionName: RENAME_LAYER_ACTION, args: { name: 'Renamed' }, patch: { name: 'Renamed' } },
+    { label: 'a rename to an empty name', actionName: RENAME_LAYER_ACTION, args: { name: '' }, patch: { name: '' } },
+  ] satisfies ReadonlyArray<{
+    label: string;
+    actionName: ActionType;
+    args?: object;
+    patch: DurableLayerPropertyPatch;
+  }>)('derives $label as the one property the action owns', ({ actionName, args, patch }) => {
+    const derived = deriveSetLayerPropertiesEntry({
+      id: 'prop-1',
+      actionName,
+      layerId: 'layer-1',
+      ...(args ? { args } : {}),
+    });
+
+    expect(derived).toEqual({
+      id: 'prop-1',
+      schemaVersion: DURABLE_SCHEMA_VERSION,
+      enabled: true,
+      operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch },
+    });
+    const operation = derived?.operation;
+    const derivedPatch = operation?.kind === 'set-layer-properties' ? operation.patch : null;
+    expect(Object.isFrozen(operation)).toBe(true);
+    expect(Object.isFrozen(derivedPatch)).toBe(true);
+  });
+
+  it('derives nothing from a rename that carries no string name', () => {
+    const derive = (args?: object) =>
+      deriveSetLayerPropertiesEntry({
+        id: 'rename',
+        actionName: RENAME_LAYER_ACTION,
+        layerId: 'layer-1',
+        ...(args ? { args } : {}),
+      });
+
+    expect(derive({ name: null })).toBeNull();
+    expect(derive({ name: ['Renamed'] })).toBeNull();
+    expect(derive({ name: { text: 'Renamed' } })).toBeNull();
+    expect(derive({ opacity: 1 })).toBeNull();
+    expect(derive()).toBeNull();
+  });
+
+  it('carries the disabled state of the legacy item onto the derived entry', () => {
+    const derived = deriveSetLayerPropertiesEntry({
+      id: 'hide-disabled',
+      actionName: HIDE_LAYER_ACTION,
+      layerId: 'layer-1',
+      disabled: true,
+    });
+
+    expect(derived).toMatchObject({ id: 'hide-disabled', enabled: false });
+    expect(derived?.operation).toEqual({ kind: 'set-layer-properties', layerId: 'layer-1', patch: { visible: false } });
+  });
+});
+
 describe('legacyHistoryToDurable layer bookkeeping actions', () => {
   it.each([
     { label: 'show', actionName: SHOW_LAYER_ACTION, expectedVisible: true },
@@ -806,6 +899,106 @@ describe('legacyHistoryToDurable layer bookkeeping actions', () => {
 
     expect(converted.document.history[0]?.enabled).toBe(false);
     expect(converted.document.baseline.layers[0].visible).toBe(true);
+    registry.shutdown();
+  });
+
+  it('records a disabled rename without applying it to the running layer set', () => {
+    const registry = new AssetRegistry();
+
+    const converted = convert(
+      [
+        {
+          id: 'rename',
+          actionName: RENAME_LAYER_ACTION,
+          layerId: 'layer-1',
+          args: { name: 'Renamed' },
+          disabled: true,
+        },
+      ],
+      registry
+    );
+
+    // The entry is still recorded, so an undo that re-enables it replays the name
+    // the legacy timeline describes. `enabled` is the only gate on it, and the
+    // running layer set is left alone.
+    expect(converted.diagnostics).toEqual([]);
+    expect(converted.document.history[0]).toMatchObject({
+      enabled: false,
+      operation: { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Renamed' } },
+    });
+    expect(converted.document.baseline.layers[0].name).toBe('layer-1');
+    registry.shutdown();
+  });
+
+  it('records exactly one property per entry and leaves the pre-history baseline alone', () => {
+    const registry = new AssetRegistry();
+
+    const converted = convert(
+      [
+        { id: 'hide', actionName: HIDE_LAYER_ACTION, layerId: 'layer-1' },
+        { id: 'rename', actionName: RENAME_LAYER_ACTION, layerId: 'layer-1', args: { name: 'Renamed' } },
+      ],
+      registry
+    );
+
+    expect(converted.diagnostics).toEqual([]);
+    // One property per entry: a hide that also renamed, or a rename that also
+    // hid, would move a property the legacy item never described.
+    expect(converted.document.history.map((entry) => entry.operation)).toEqual([
+      { kind: 'set-layer-properties', layerId: 'layer-1', patch: { visible: false } },
+      { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Renamed' } },
+    ]);
+    expect(converted.legacyCursorToDurableCursor).toEqual([-1, 0, 1]);
+    // The baseline is the state those entries replay from, so it holds the
+    // pre-history layer rather than the renamed and hidden one.
+    expect(converted.document.baseline.layers[0]).toMatchObject({
+      name: 'layer-1',
+      visible: true,
+      opacity: 1,
+      locked: false,
+      blendMode: 'source-over',
+      pos: { x: 0, y: 0, width: 100, height: 80 },
+    });
+    registry.shutdown();
+  });
+
+  it('keeps recording a property action for a layer an earlier entry removed', () => {
+    const registry = new AssetRegistry();
+
+    const converted = convert(
+      [
+        { id: 'remove', actionName: REMOVE_ACTION, layerId: 'layer-1' },
+        { id: 'hide', actionName: HIDE_LAYER_ACTION, layerId: 'layer-1' },
+        { id: 'rename', actionName: RENAME_LAYER_ACTION, layerId: 'layer-1', args: { name: 'Renamed' } },
+      ],
+      registry
+    );
+
+    // A property action resolves no layer, so it must not turn a rename of a
+    // removed layer into the `Layer is unavailable` failure that voids the whole
+    // conversion: the legacy timeline replays all three.
+    expect(converted.diagnostics).toEqual([]);
+    expect(converted.document.history.map((entry) => entry.operation)).toEqual([
+      { kind: 'remove-layer', layerId: 'layer-1' },
+      { kind: 'set-layer-properties', layerId: 'layer-1', patch: { visible: false } },
+      { kind: 'set-layer-properties', layerId: 'layer-1', patch: { name: 'Renamed' } },
+    ]);
+    registry.shutdown();
+  });
+
+  it('resolves the layer for a tool action that follows a property action', () => {
+    const registry = new AssetRegistry();
+
+    const converted = convert(
+      [
+        { id: 'hide', actionName: HIDE_LAYER_ACTION, layerId: 'layer-1' },
+        { id: 'blur', actionName: TOOL_ACTION, layerId: 'layer-1', args: { toolName: 'blur', radius: 2 } },
+      ],
+      registry
+    );
+
+    expect(converted.diagnostics).toEqual([]);
+    expect(converted.document.history[1]?.operation).toMatchObject({ kind: 'apply-filter' });
     registry.shutdown();
   });
 

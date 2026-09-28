@@ -11,12 +11,18 @@ import {
 import { createMockStoreState, type MockStoreState } from '@/__tests__/fixtures/store.ts';
 import { createMockLayer, createMockLayers } from '@/__tests__/fixtures/layer.ts';
 import { createMockCanvas } from '@/__tests__/fixtures/canvas.ts';
+import { DURABLE_SCHEMA_VERSION } from '@/contexts/history-model.ts';
 
 /**
  * `LayersTab` owns no dispatch of its own: every mutation it performs is delegated to
  * `useLayers()`. These tests therefore keep the **real** `useLayer` hook and replace only
  * the store boundary, so each assertion names the exact action object that reaches the
- * reducer — action type, `updates` patch, and the appended history entry.
+ * reducer — action type, `updates` patch, the appended history entry, and the durable
+ * entry `useLayer.updateLayer` plans alongside it for every layer-property action.
+ *
+ * The durable entry is the canonical `set-layer-properties` operation derived from the
+ * action name, not the raw `Partial<Layer>` patch, so it is asserted in full here: an
+ * inexact matcher would let a drifting `layerId`, `enabled` flag, or schema version pass.
  *
  * `createHistoryItem` mints a random uuid, so `uuid` is stubbed to keep the history
  * entries byte-for-byte comparable.
@@ -142,6 +148,16 @@ describe('LayersTab actions reaching the store', () => {
           actionName: HIDE_LAYER_ACTION,
           args: { visible: false },
         },
+        durableEntry: {
+          id: 'history-id',
+          schemaVersion: DURABLE_SCHEMA_VERSION,
+          enabled: true,
+          operation: {
+            kind: 'set-layer-properties',
+            layerId: 'layer-3',
+            patch: { visible: false },
+          },
+        },
       },
     });
   });
@@ -172,6 +188,16 @@ describe('LayersTab actions reaching the store', () => {
           layerId: 'only-layer',
           actionName: SHOW_LAYER_ACTION,
           args: { visible: true },
+        },
+        durableEntry: {
+          id: 'history-id',
+          schemaVersion: DURABLE_SCHEMA_VERSION,
+          enabled: true,
+          operation: {
+            kind: 'set-layer-properties',
+            layerId: 'only-layer',
+            patch: { visible: true },
+          },
         },
       },
     });
@@ -205,6 +231,16 @@ describe('LayersTab actions reaching the store', () => {
           layerId: 'layer-3',
           actionName: RENAME_LAYER_ACTION,
           args: { name: 'Sky' },
+        },
+        durableEntry: {
+          id: 'history-id',
+          schemaVersion: DURABLE_SCHEMA_VERSION,
+          enabled: true,
+          operation: {
+            kind: 'set-layer-properties',
+            layerId: 'layer-3',
+            patch: { name: 'Sky' },
+          },
         },
       },
     });

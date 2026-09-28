@@ -9,6 +9,7 @@ import {
   type DurableDocument,
   type DurableFilter,
   type DurableHistoryEntry,
+  type DurableLayerPropertyPatch,
   type DurableLayerSnapshot,
   type DurableLayerSource,
   type DurableOperation,
@@ -327,6 +328,37 @@ export function deriveSetSelectionEntry(
   return entry(item.id, operation, isEntryEnabled(item));
 }
 
+export function isSetLayerPropertiesAction(actionName: ActionType): boolean {
+  return actionName === SHOW_LAYER_ACTION || actionName === HIDE_LAYER_ACTION || actionName === RENAME_LAYER_ACTION;
+}
+
+/**
+ * The single derivation of the durable layer-property operations supported at
+ * the append boundary. Keeping the action whitelist here makes conversion and
+ * a live writer use the same semantics without accepting arbitrary patches.
+ */
+export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistoryEntry | null {
+  let patch: DurableLayerPropertyPatch;
+  if (item.actionName === SHOW_LAYER_ACTION || item.actionName === HIDE_LAYER_ACTION) {
+    patch = { visible: item.actionName === SHOW_LAYER_ACTION };
+  } else if (item.actionName === RENAME_LAYER_ACTION) {
+    const name = (item.args as { name?: unknown } | undefined)?.name;
+    if (typeof name !== 'string') return null;
+    patch = { name };
+  } else {
+    return null;
+  }
+  return entry(
+    item.id,
+    Object.freeze({
+      kind: 'set-layer-properties',
+      layerId: item.layerId,
+      patch: Object.freeze(patch),
+    }),
+    isEntryEnabled(item)
+  );
+}
+
 function diagnosticFromError(error: unknown, item?: HistoryItem): MigrationDiagnostic {
   return {
     ...(item ? { historyId: item.id, actionName: item.actionName } : {}),
@@ -502,24 +534,15 @@ export function legacyHistoryToDurable(
         const layer = convertLayer(runtimeLayer, documentId, registry);
         if (enabled) currentLayers.set(layer.id, layer);
         operation = Object.freeze({ kind: 'create-layer', layer });
-      } else if (item.actionName === SHOW_LAYER_ACTION || item.actionName === HIDE_LAYER_ACTION) {
-        operation = Object.freeze({
-          kind: 'set-layer-properties',
-          layerId: item.layerId,
-          patch: { visible: item.actionName === SHOW_LAYER_ACTION },
-        });
-        const layer = currentLayers.get(item.layerId);
-        if (enabled && layer)
-          currentLayers.set(
-            item.layerId,
-            cloneLayerSnapshot({ ...layer, visible: item.actionName === SHOW_LAYER_ACTION })
-          );
-      } else if (item.actionName === RENAME_LAYER_ACTION) {
-        const name = (item.args as { name?: unknown } | undefined)?.name;
-        if (typeof name === 'string') {
-          operation = Object.freeze({ kind: 'set-layer-properties', layerId: item.layerId, patch: { name } });
+      } else if (isSetLayerPropertiesAction(item.actionName)) {
+        const layerPropertiesEntry = deriveSetLayerPropertiesEntry(item);
+        if (layerPropertiesEntry) {
+          const layerPropertiesOperation = layerPropertiesEntry.operation;
+          operation = layerPropertiesOperation;
           const layer = currentLayers.get(item.layerId);
-          if (enabled && layer) currentLayers.set(item.layerId, cloneLayerSnapshot({ ...layer, name }));
+          if (enabled && layer && layerPropertiesOperation.kind === 'set-layer-properties') {
+            currentLayers.set(item.layerId, cloneLayerSnapshot({ ...layer, ...layerPropertiesOperation.patch }));
+          }
         }
       } else if (item.actionName === REORDER_ACTION) {
         const args = item.args as { layerToMoveId?: LayerId; afterWhichLayerId?: LayerId | null } | undefined;
