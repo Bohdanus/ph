@@ -28,5 +28,3 @@ test('screenshot of canvas area contains drawn black line', async ({ page }, tes
   const screenshot = await takeLineScreenshot(page, box!, 'drawn-line', testInfo);
   await expect(hasDarkPixels(screenshot)).resolves.toBe(true);
 });
-
-// sync probe
