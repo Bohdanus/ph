@@ -1,10 +1,11 @@
 ## 0. Branch state — read before the problem list
 
-**Most recent:** the reorder append-boundary slice (`7366e0e`, branch
-`history/reorder-durable-append`) landed on `main` from `da5f719`. It publishes `reorder-layers`
-through the single-writer decision and found one real defect on the way, recorded in §15. §16 and
-§17 also had line citations re-derived in that branch, because the slice grew both
-`history-append.ts` and `StoreContext.tsx` and every citation into them moved.
+**Most recent:** the reorder append-boundary slice (`history/reorder-durable-append`, base
+`da5f719`, merged with `main` at `5bd2bdf`) publishes `reorder-layers` through the single-writer
+decision and found one real defect on the way, recorded in §15. It grew both `history-append.ts`
+and `StoreContext.tsx`, and merging `main` moved `useLayer.ts` as well, so every citation into those
+three files was re-derived twice — once for the slice and once for the merge. §16 and §17 had
+citations re-derived in the same branch.
 
 **A standing defect in this file that is not an item: most of its line-numbered citations are
 stale.** An audit of all 210 of them found 60 resolving to the wrong code and 30 resolving to a
@@ -97,7 +98,7 @@ they _were_, because both were silent-corruption classes rather than visible bre
 
 Production still runs legacy `HistoryItem[]` → `replayHistory` (`useHistory.ts:81`) → runtime
 `Layer` → `layer-renderer.ts:65-146` → canvas. `durableDocument`, `durableStatus` and
-`durableDiagnostics` are computed at `StoreContext.tsx:654-691` and read by nothing outside that
+`durableDiagnostics` are computed at `StoreContext.tsx:658-695` and read by nothing outside that
 file. `StoreContext.durable-boundary.test.tsx:573-583` actively pins the absence — it asserts that
 `replayCoordinator`, `presentationMaterialization` and `getReplayRevisionToken` are _not_ in the
 store. The suite is green and is enforcing the absence of the feature.
@@ -117,7 +118,7 @@ cutover. `materializeLayer` / `materializeDocument` have zero callers, so the fi
 is the first time that code executes against real state.
 
 **Also wrong at the boundary.** The runtime path feeds an _untransformed_ bitmap — `layer.tmpCanvas
-?? layer.bitmap` (`useLayer.ts:550`) — straight into a pixel processor (`useLayer.ts:564`); the
+?? layer.bitmap` (`useLayer.ts:557`) — straight into a pixel processor (`useLayer.ts:571`); the
 durable path materializes the retained presentation first
 (`materialization.ts:270-276`). Wiring the durable path without reconciling these changes pixel-tool
 results.
@@ -247,8 +248,8 @@ kind and its four test blocks.
 
 ## 15. `reorder-layers` is published; a self-anchored move is a real converter defect
 
-**Status.** The append-boundary publication landed as `7366e0e` on
-`history/reorder-durable-append`. A reorder is planned, validated and published by the same
+**Status.** The append-boundary publication landed on `history/reorder-durable-append`. A reorder
+is planned, validated and published by the same
 `published` / `preconditions` / `mismatch` decision the frame, selection and layer-property appends
 use. What remains here is one real defect the slice found, and the conversion-only inventory.
 
@@ -260,17 +261,17 @@ sufficient: the store publishes only on `outcome === 'published'` and otherwise 
 
 | Site                                    | Action             | Why                                           |
 | --------------------------------------- | ------------------ | --------------------------------------------- |
-| `useLayer.ts:167` `_addLayer`           | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
-| `useLayer.ts:305` `updateLayerByTool`   | `TOOL_ACTION`      | asset-bearing                                 |
-| `useLayer.ts:328` `updateLayerByTool`   | `TOOL_ACTION`      | asset-bearing                                 |
-| `useLayer.ts:392-403` `commitDirtyTool` | `TOOL_ACTION`      | asset-bearing; one commit per pending edit    |
-| `useLayer.ts:426` `removeLayer`         | `REMOVE_ACTION`    | needs layer retirement, see §54               |
-| `useLayer.ts:655` `mergeAllLayers`      | `MERGE_ACTION`     | asset-bearing, retires layers                 |
+| `useLayer.ts:170` `_addLayer`           | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
+| `useLayer.ts:308` `updateLayerByTool`   | `TOOL_ACTION`      | asset-bearing                                 |
+| `useLayer.ts:337` `updateLayerByTool`   | `TOOL_ACTION`      | asset-bearing                                 |
+| `useLayer.ts:400-411` `commitDirtyTool` | `TOOL_ACTION`      | asset-bearing; one commit per pending edit    |
+| `useLayer.ts:421` `removeLayer`         | `REMOVE_ACTION`    | needs layer retirement, see §54               |
+| `useLayer.ts:668` `mergeAllLayers`      | `MERGE_ACTION`     | asset-bearing, retires layers                 |
 | `useSelectionHistory.ts:149`            | `SELECTION_ACTION` | `catch` fallback when planning throws         |
 | `useSelectionHistory.ts:305`            | `SELECTION_ACTION` | `catch` fallback when planning throws         |
 
 Three sites have no `durableEntry` concept and reconvert unconditionally: `useHistory.ts:117`
-`resetHistoryTo` (`APPLY_HISTORY_REPLAY`), `useLayer.ts:176` and `useApp.ts:116` (both
+`resetHistoryTo` (`APPLY_HISTORY_REPLAY`), `useLayer.ts:180` and `useApp.ts:116` (both
 `REPLACE_DOCUMENT`). The `useHistory.ts:52 addHistoryEntry` row this table used to carry is
 **deleted**: that symbol no longer exists anywhere in `src/`, and "see item 14" pointed at a
 reader that no longer had a referent.
@@ -286,10 +287,10 @@ exists, and that single gap is what keeps the majority of these writers here.
 
 The blocker was that a reorder's durable operation cannot be derived from the history item: it names
 the resulting order of **every** layer, and the item carries only intent. The store now plans it
-from `state.layers` read at the boundary (`StoreContext.tsx:380 layerOrderBottomFirst`), which is
+from `state.layers` read at the boundary (`StoreContext.tsx:386 layerOrderBottomFirst`), which is
 the same record `reorderLayers` is about to mutate. Three things make that safe:
 
-- **`reorderOrderAfterIntent` (`history-append.ts:217`) is a second implementation, not a call into
+- **`reorderOrderAfterIntent` (`history-append.ts:229`) is a second implementation, not a call into
   the converter's.** The converter's copy is an inline arm inside `legacyHistoryToDurable`, so
   calling it would reproduce a bug in it rather than catch one. Two copies can drift, so
   `history-append.reorder.test.ts` pins them against each other against a real converter run over
@@ -395,10 +396,10 @@ pushed and no diagnostic is recorded. `convertLegacyHistorySafely` then commits 
 document-frame change.
 
 On the append path the omission is also undiagnosed: a null planned entry yields
-`outcome: 'preconditions'` (`history-append.ts:565`), not `'mismatch'`, so no
+`outcome: 'preconditions'` (`history-append.ts:590`), not `'mismatch'`, so no
 `durable-append-mismatch` is appended either. `unavailable` (`history-append.ts:81`) records a
 `warning`-severity diagnostic for a refused translation — the module has no `console.warn`, and
-"the boundary warns" was never true; but `useLayer.ts:615` destructures only `entry` and
+"the boundary warns" was never true; but `useLayer.ts:622` destructures only `entry` and
 `durableEntry` and discards the rest.
 
 Two clarifications that bound the severity, both verified: the tightening is **correct**
@@ -407,7 +408,7 @@ has no validation at all, so the change removes a shadow/legacy divergence rathe
 one), and the repeated cursor index is **not** a defect (`-1` is a defined baseline sentinel).
 
 Not reachable from production: the only writer, `applyDocumentCrop`, rejects `width/height <= 0`
-(`useLayer.ts:607`) and `!isValidDocumentFrame` (`:610`) before dispatching. There is no history
+(`useLayer.ts:614`) and `!isValidDocumentFrame` (`:617`) before dispatching. There is no history
 persistence and document load creates a single `OPEN_DOCUMENT_ACTION` (`useApp.ts:120-126`). This
 is a latent robustness gap, not a live bug. Coverage is thin: `history-adapter.branches.test.ts:320`
 covers only a
@@ -424,13 +425,13 @@ operation, so the shadow reports the omission instead of claiming `current`.
 
 > **Fixed on `fix/unit-tests` (`b027de3`).** Open on `main`; delete after the merge. See §0.
 
-**Problem.** `planHistoryAppend` (`history-append.ts:288`) runs `translate()` before
+**Problem.** `planHistoryAppend` (`history-append.ts:300`) runs `translate()` before
 `validateTimeline()`, so an `error`-severity duplicate-id diagnostic coexists with a non-null
 `durableEntry`. That is intentional. The gap is downstream: `decideDurableAppend` never re-checks
-uniqueness. `validatePlannedDurableEntry` (`history-append.ts:458`) compares `planned.id` to
+uniqueness. `validatePlannedDurableEntry` (`history-append.ts:483`) compares `planned.id` to
 `entry.id` (planned-versus-
 legacy agreement, **not** timeline uniqueness); `next.entries[next.entries.length - 1] !== entry`
-(`history-append.ts:583`) is a reference check on the same object. The conversion loop has no
+(`history-append.ts:608`) is a reference check on the same object. The conversion loop has no
 uniqueness check,
 `freezeDurableDocument` only clones and freezes, and `history-timeline.ts:31-32` appends
 unconditionally.
@@ -439,7 +440,7 @@ So a duplicate id on the published path yields a durable document with two same-
 since the id is a lookup key (`history-adapter.ts:796`, `history-timeline.ts:24`) a later toggle
 hits the wrong entry. The invariant rests entirely on a diagnostic that is computed and discarded.
 
-The cursor branch is largely redundant: `decideDurableAppend` (`history-append.ts:574`) requires
+The cursor branch is largely redundant: `decideDurableAppend` (`history-append.ts:599`) requires
 `prior.cursor === prior.entries.length - 1`, so any out-of-range cursor already falls back.
 
 Both branches are unreachable from production — `planHistoryAppend` is called with no `id`, so
@@ -982,7 +983,7 @@ the placeholder is a commented-out JSX line: `src/components/SidebarLeft/Sidebar
 is `{/*<Zoom />*/}`.
 
 **Why it is not a wiring bug.** There is no view transform to wire. The store's
-zoom data is entirely commented out — `src/contexts/StoreContext.tsx:1157-1163` is
+zoom data is entirely commented out — `src/contexts/StoreContext.tsx:1166-1172` is
 `// const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });` and the rest
 of that block — and `usePointerPosition` maps client coordinates to image pixels
 through a `scale` supplied by the host rather than owning a view transform itself.
@@ -998,7 +999,7 @@ conversion reading from it, is the shape the commented-out code was reaching for
 Do not start with a Hand tool; start with the scope, and the three tools fall out.
 
 **Files.** `src/components/SidebarLeft/SidebarLeft.tsx:432`,
-`src/contexts/StoreContext.tsx:1157-1163`, `src/hooks/usePointerPosition.ts`,
+`src/contexts/StoreContext.tsx:1166-1172`, `src/hooks/usePointerPosition.ts`,
 `src/components/Main/Main.tsx:60`
 
 ---
@@ -1134,7 +1135,7 @@ drawer had one that was removed rather than shipped broken.
 
 **Why the obvious implementation is wrong.** A slider would reach for
 `updateLayer(id, { opacity }, TOOL_ACTION)`, because that is the signature every
-other layer property write uses (`src/contexts/useLayer.ts:446`). It fails three
+other layer property write uses (`src/contexts/useLayer.ts:453`). It fails three
 times, all silently. `updateLayer` only plans a durable append when
 `isSetLayerPropertiesAction(actionName)` is true, and `TOOL_ACTION` is not in that
 whitelist, so the entry never gets a durable translation. `history-replay.ts:146`
@@ -1179,7 +1180,7 @@ There is no longer an `UPDATE_LAYERS` shortcut to avoid: it was removed as an un
 second writer surface, so `updateLayer` with a whitelisted action is the only way to set a
 layer property.
 
-**Files.** `src/contexts/layer-types.ts:58`, `src/contexts/useLayer.ts:446`,
+**Files.** `src/contexts/layer-types.ts:58`, `src/contexts/useLayer.ts:453`,
 `src/contexts/history-model.ts:80`, `src/contexts/history-adapter.ts:355,387`,
 `src/contexts/history-replay.ts:112,146`, `src/contexts/useHistory.ts:14,22`,
 `src/contexts/psd-utils.ts:159,229`
