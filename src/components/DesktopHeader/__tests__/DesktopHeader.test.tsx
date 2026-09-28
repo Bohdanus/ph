@@ -60,7 +60,7 @@ vi.mock('../../../contexts/ThemeContext.tsx', () => ({
   useTheme: () => themeState,
 }));
 
-const NEW_CONFIRM_MESSAGE = 'All unsaved changes to current image will be lost. Continue?.';
+const NEW_CONFIRM_MESSAGE = 'Discard unsaved changes and start a new image?';
 const OPEN_CONFIRM_MESSAGE = 'Discard unsaved changes and open another file?';
 
 const defaultStore = {
@@ -395,21 +395,23 @@ describe('DesktopHeader Edit menu actions', () => {
 });
 
 describe('DesktopHeader File > New', () => {
-  it('creates a blank image from the dialog result and closes the menu', async () => {
+  it('creates a blank image without a discard prompt on a pristine document and closes the menu', async () => {
     const params = { color: '#ff0000', opacity: 0.5, size: { width: 640, height: 480 }, isBedrock: true };
-    const confirm = stubConfirm(true);
+    const confirm = stubConfirm(false);
     file.openNewImageDialog.mockResolvedValue(params);
     render(<DesktopHeader />);
 
     await clickFileMenuItem('header-file-new-button');
 
-    expect(confirm).toHaveBeenCalledExactlyOnceWith(NEW_CONFIRM_MESSAGE);
+    // A pristine document has nothing to discard, so it must never be asked about one.
+    expect(confirm).not.toHaveBeenCalled();
     expect(app.setBlankImage).toHaveBeenCalledExactlyOnceWith(params);
     expect(screen.queryByTestId('header-file-new-button')).toBeNull();
   });
 
   it('skips the new document dialog when the user dismisses the confirmation', async () => {
     const confirm = stubConfirm(false);
+    storeState.hasUnsavedChanges = true;
     file.openNewImageDialog.mockResolvedValue({
       color: '#ffffff',
       opacity: 1,
@@ -423,30 +425,46 @@ describe('DesktopHeader File > New', () => {
     expect(confirm).toHaveBeenCalledExactlyOnceWith(NEW_CONFIRM_MESSAGE);
     expect(file.openNewImageDialog).not.toHaveBeenCalled();
     expect(app.setBlankImage).not.toHaveBeenCalled();
-    // setOpenMenu(null) runs after the guard, so an aborted New still closes the menu.
-    expect(screen.queryByTestId('header-file-new-button')).toBeNull();
+    // The guard returns before setOpenMenu(null), so a dismissed discard leaves the menu
+    // standing and the document exactly as it was.
+    expect(screen.getByTestId('header-file-new-button')).toBeInTheDocument();
   });
 
-  it.fails(
-    'asks before discarding a document that really has unsaved changes (DesktopHeader.tsx:114 uses || so confirm is skipped exactly when it matters)',
-    async () => {
-      const confirm = stubConfirm(false);
-      storeState.hasUnsavedChanges = true;
-      file.openNewImageDialog.mockResolvedValue({
-        color: '#ffffff',
-        opacity: 1,
-        size: { width: 8, height: 8 },
-        isBedrock: true,
-      });
-      render(<DesktopHeader />);
+  it('asks before discarding a document that really has unsaved changes', async () => {
+    const confirm = stubConfirm(false);
+    storeState.hasUnsavedChanges = true;
+    file.openNewImageDialog.mockResolvedValue({
+      color: '#ffffff',
+      opacity: 1,
+      size: { width: 8, height: 8 },
+      isBedrock: true,
+    });
+    render(<DesktopHeader />);
 
-      await clickFileMenuItem('header-file-new-button');
+    await clickFileMenuItem('header-file-new-button');
 
-      expect(confirm).toHaveBeenCalledExactlyOnceWith(NEW_CONFIRM_MESSAGE);
-      expect(file.openNewImageDialog).not.toHaveBeenCalled();
-      expect(app.setBlankImage).not.toHaveBeenCalled();
-    }
-  );
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(NEW_CONFIRM_MESSAGE);
+    expect(file.openNewImageDialog).not.toHaveBeenCalled();
+    expect(app.setBlankImage).not.toHaveBeenCalled();
+  });
+
+  it('asks before discarding a text draft the document is not yet tracking as an unsaved change', async () => {
+    const confirm = stubConfirm(false);
+    storeState.currentArgs = {
+      current: {
+        toolName: 'text',
+        text: 'draft',
+        rect: { x: 0, y: 0, width: 10, height: 10 },
+      },
+    } as unknown as { current: ToolArgs };
+    file.openNewImageDialog.mockResolvedValue(null);
+    render(<DesktopHeader />);
+
+    await clickFileMenuItem('header-file-new-button');
+
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(NEW_CONFIRM_MESSAGE);
+    expect(file.openNewImageDialog).not.toHaveBeenCalled();
+  });
 
   it('leaves the document untouched when the dialog is cancelled and still closes the menu', async () => {
     stubConfirm(true);
