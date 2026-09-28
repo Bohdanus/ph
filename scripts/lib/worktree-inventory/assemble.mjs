@@ -119,9 +119,11 @@ export function buildInventory({
       prunable: verdict.prunable,
       mergeConflict: verdict.mergeConflict,
       mergeConflictFiles: verdict.mergeConflictFiles,
-      // Disambiguates the two things `mergeConflict: null` can mean: the check
-      // was skipped (already on main, or detached), or it was attempted and
-      // could not be answered.
+      // "We have an answer", not "the check ran". It does NOT disambiguate the
+      // two things `mergeConflict: null` can mean: `mergeVerdict` returns
+      // 'unknown' for a skipped check (already on main, or detached) and for a
+      // check that ran and could not be answered, and both land here as false.
+      // Callers must treat false as *no answer*, never as "skipped".
       mergeChecked: verdict.mergeChecked,
       riskScore: riskScore(verdict),
       statusReasons: verdict.reasons,

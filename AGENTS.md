@@ -59,6 +59,18 @@ The e2e suite is headless by default and must stay that way. A headed browser pu
 
 `kilo.jsonc` denies most of these at the permission layer and `e2e/global-setup.ts` refuses the rest, so the rule survives a model that has forgotten it. **DO NOT "FIX" A FAILURE BY FLIPPING THE MODE** — a headed run fails a disjoint set of tests, on a documented and reproducible set. If something only reproduces visually, that is the operator's call; ask them to run `npm run test:e2e:headed` themselves.
 
+**Two rows have weaker coverage than the table implies, and the difference matters
+only when an operator is looking at a prompt.**
+
+- `--debug` is an **`ask`**, not a `deny`, at the permission layer (`kilo.jsonc`), so
+  approving the prompt is possible — and the `global-setup.ts` argv guard throws
+  anyway, so the run still does not start headed. Layered, not open.
+- `test.use({ headless: false })` **inside a single spec file is blocked by nothing.**
+  `global-setup.ts` inspects the _project_ scope and names the per-spec hole
+  explicitly: the specs import `test` straight from `@playwright/test`, so no shared
+  fixture layer can see it. Read the table's last row as "do not do this", not as
+  "something will stop you".
+
 ## Commands
 
 ```bash
@@ -117,10 +129,27 @@ prints `N live · M imported from the handoff documents · K startable now`, and
 - **`ready` is not a page of the import.** The limit is applied _after_ ranking.
   Slicing first is how a fifty-row queue ends up showing the same fifty rows
   forever, with the live work never on the page at all.
+- **The summary line is a human format, and it is not unconditional.** A run that
+  finds nothing ready prints `nothing ready: everything open is claimed, blocked, or
+closed` and **no counts at all** — the summary is the other branch of the same
+  ternary (`agent-board.mjs:492-496`) — and `--json` emits `liveCount` /
+  `importedCount` / `startableCount` as fields rather than prose. The third segment
+  also carries the suffix `— nobody else is in the files`, so match on the numbers,
+  not the sentence.
+- **`startable` means "live AND inside nobody else's files", and the zero case does
+  not say which half failed.** On a board with no live issues at all it still prints
+  `none startable now: every live issue is inside a file another agent holds`, which
+  is a cause it has not checked. Read the `N live` number before believing the
+  sentence attached to `K`.
 - **Filing an issue with `--files` TAKES those files for the filer.** So a test
   or a script that files `--files src/x.ts` and then has _another_ agent hold
   `src/x.ts` has a refused hold and no contention at all, and a filer's own lock
   is deliberately not contention. Take the other agent's lock FIRST.
+- **"Contended" and "claimed" are different axes, and both are filters.** `ready`
+  drops a claimed issue entirely (`db.mjs:897`); `contended` means a _live lock held
+  by an agent other than the one running `ready`_, on a path in the issue's file
+  list (`agent-board.mjs:402-411`). An issue can be unclaimed and still contended,
+  and the reverse.
 - **Provenance is read off the origin grammar** (`isImportedOrigin` in
   `db.mjs`): `<file>.md#<number-or-slug>`. A live finding has no origin, or a
   free-text one (`main: 2026-09-28`). The pattern tolerates a path prefix on
@@ -235,13 +264,15 @@ b.ts` takes both, and gives back **only the ones it took** if the claim is
 It is a command, not a gate. Nothing in `.husky/` calls it, and no commit may be
 blocked on it.
 
-### The board is cross-session, so a merge can announce itself
+### The swarm board is cross-session, so a merge can announce itself
 
-The database is global with **no session scoping at all** — `scripts/agent-board.mjs`
-never mentions a session id, and identity is the git branch — so a `swarm note` from
-one worktree is in the same log every other session's `swarm watch --follow` tails.
-That is the whole reason the board can prevent a merge mess, and it is why these four
-are not optional politeness:
+The database is global and **nothing in it is scoped to a session**: identity is the
+git branch, and the `agents` table's `session_id` column records only the first Kilo
+run to touch a branch and is never read back (`db.mjs:132`, written from
+`KILO_RUN_ID` at `:611`/`:624`, referenced by no query). So a `swarm note` from one
+worktree is in the same log every other session's `swarm watch --follow` tails. That
+is the whole reason the board can prevent a merge mess, and it is why these six are
+not optional politeness:
 
 - **Claim before the first edit**, not after: `swarm claim <id> --files <paths you will
 touch>`, or `swarm hold <path>` for a path with no issue. `swarm check <paths>` before
@@ -271,9 +302,12 @@ touch>`, or `swarm hold <path>` for a path with no issue. `swarm check <paths>` 
   refusal names the holder precisely so a second reader finds out, and editing
   anyway makes the hold a lie.
 
+## Running commands
+
 - **RUN FROM THE REPO ROOT** (`ph`), via the shell tool's `workdir`. A parent directory silently resolves the wrong package and the wrong tsconfig.
-- **`npm run tsc` IS THE ONLY TRUSTWORTHY TYPECHECK. NEVER GATE ON `npx tsc --noEmit`.** `tsc -b` covers `tsconfig.app/node/e2e.json`, so it also checks the Playwright specs and the test files. `npx tsc --noEmit` resolves the app tsconfig alone, which excludes tests: it exits 0 while the tests do not compile.
+- **`npm run tsc` IS THE ONLY TRUSTWORTHY TYPECHECK. NEVER GATE ON `npx tsc --noEmit`.** `tsc -b` covers `tsconfig.app/node/e2e.json`, so it also checks the Playwright specs and the test files. `npx tsc --noEmit` at the root resolves the **solution stub** and type-checks **zero files**, for the reason in the next bullet — it is not a narrower project, it is an empty one.
 - **The bare `npx tsc` type-checks ZERO files and always exits 0.** The root `tsconfig.json` is a solution stub — `"files": []`, no `include`, three `references` — so `npx tsc --showConfig -p tsconfig.json` prints `{"compilerOptions": {}}` and the references. It is indistinguishable from a pass, and `.claude/settings.local.json` in the operator's ROOT checkout carries a `"allow": ["Bash(npx tsc:*)"]` wildcard that auto-approves exactly that command. That file is untracked and globally gitignored (`~/.config/git/ignore` has `**/.claude/settings.local.json`), so no worktree, `git status` or `git ls-files` can see it — its absence from your worktree is not its absence from the machine. Only `npm run tsc` (`tsc -b`) type-checks anything.
+  - **It is the stub, not a missing `exclude`, that makes the stub empty.** `tsconfig.app.json` has **no** `exclude` and its `include` is `["src", "toolbar-mapping.ts"]`, so the app project pulls in its test files rather than hiding them. Any future note explaining the trap as "the app tsconfig excludes tests" is wrong on both clauses.
 - `npm run test` is `pool: 'vmThreads'`, `maxWorkers: 4` — a timing-sensitive test that only fails in a full run is usually the pool, not the code.
 - `npm run test:e2e` starts Vite on :5173 itself. Pass `--retries=1` for a trace; `trace: 'on-first-retry'` yields nothing at the local `retries: 0`.
 
@@ -342,14 +376,14 @@ node scripts/worktree-inventory.mjs --quiet    # totals only
 **Read `action` first.** Every record carries one value, and it is the whole
 answer — which of the three things is it:
 
-| `action`    | meaning                                           | do this           |
-| ----------- | ------------------------------------------------- | ----------------- |
-| `land`      | clean tree, commits ahead of `main`, merges clean | merge it          |
-| `at-risk`   | work on no ref, or the merge needs a human        | save it           |
-| `dispose`   | on `main`, clean, nothing protects it             | delete it         |
-| `in-use`    | an agent or a session is active there             | leave it          |
-| `keep`      | the main checkout                                 | never a candidate |
-| `undecided` | cannot be told from what is known                 | do not remove     |
+| `action`    | meaning                                                                                         | do this           |
+| ----------- | ----------------------------------------------------------------------------------------------- | ----------------- |
+| `land`      | clean tree, commits ahead of `main`, merges clean                                               | merge it          |
+| `at-risk`   | work on no ref, the merge needs a human, or git says disposable and a curated finding disagrees | save it           |
+| `dispose`   | on `main`, clean, nothing protects it                                                           | delete it         |
+| `in-use`    | an agent or a session is active there                                                           | leave it          |
+| `keep`      | the main checkout                                                                               | never a candidate |
+| `undecided` | cannot be told from what is known                                                               | do not remove     |
 
 **`land` is a point-in-time answer, not a licence.** It is true against the
 `mainHead` and the tree state recorded in this file, and is only as fresh as
@@ -359,6 +393,15 @@ generate yourself — and note that a worktree with **no liveness signal at all*
 (`chats.count` 0 and `board.agents` empty) is the one most likely to have
 changed since, because nothing here can see that somebody walked away from it.
 That happened to a `land` entry within minutes of it being written.
+
+**`at-risk` has a third source the table's one-liner used to leave out, and it is
+the one that reads as nonsense.** A worktree git reports as **already merged and
+clean**, which a curated finding protects, is `at-risk` (`classify.mjs:262-264`,
+`REVIEW_RESIDUE`): "git says this is disposable, but a curated finding says
+otherwise." That is neither work on no ref nor a merge needing a human — the
+branch is _on_ `main` — so the table's "save it" reads as nonsense against it. If
+`at-risk` and `mergedIntoMain` are both true, the live question is which curated
+entry is protecting it, and the answer is in `summary` and `note`.
 
 **`mustNotPrune` vetoes `land` as well as `dispose`.** It is a human claim that
 something here is not accounted for, and a merge recommendation is as much a
@@ -382,12 +425,23 @@ and merge, versus go and save — so they are separate values now.
 store and touches no working tree, index or ref, so it is safe to run across
 every worktree. `mergeConflictFiles` names the files that collide. It is
 `null` — never `false` — when the merge could not be attempted, because an
-unknown is not a licence to land. `mergeChecked` distinguishes "not checked"
-from "checked and unanswerable". `mergeConflictFiles` names the collisions,
+unknown is not a licence to land. `mergeConflictFiles` names the collisions,
 because "this branch conflicts" sends somebody to investigate and "it conflicts
 in these files" is the work. Roughly three quarters of the clean unmerged
 branches here conflict, which is not a fact you can guess from
 `ahead`/`behind`.
+
+**`mergeChecked` means "we have an answer", not "the check ran".** It is
+`mergeState !== 'unknown'` (`classify.mjs:313`), and `mergeVerdict` returns
+`'unknown'` for **both** reasons a `mergeConflict` can be `null` — the check was
+skipped, because the branch is already on `main` or detached (`git.mjs:266`), and
+the check ran and could not be answered (`git.mjs:231`). So `mergeChecked: false`
+means _no answer_, and the field does **not** tell you which of the two happened;
+`mergeConflict: null` with `mergeChecked: false` is the entire vocabulary. Measured
+on the generated file, every `null` record is `mergeChecked: false` — there is no
+combination that separates the two cases. An earlier version of this document
+claimed the opposite, and so did the comment in `assemble.mjs`. Treat unknown as
+unknown and re-run the check yourself before acting on it.
 
 `prunable: true` remains the strict disposal test: it is not the main worktree,
 the branch is an ancestor of `main`, the working tree is clean, and no curated
@@ -412,12 +466,17 @@ human records the claim git cannot.
 
 ### `unfinished` and `dead` are separate, and they need different responses
 
-`chats.unfinished` holds sessions that have stopped with work outstanding:
-`active`, `abandoned-midflight` (a stale session whose last turn ended on a
+`chats.unfinished` holds **six** states (`chats.mjs:57-64`): `active`,
+`abandoned-midflight` (a stale session whose last turn ended on a
 tool call rather than a completed stop), `blocked` (waiting on a human answer —
-go answer it), `died-at-birth` and `rejected-credits`. `chats.dead` holds the
+go answer it), `died-at-birth`, `rejected-credits` and `orphaned` (the worktree
+directory no longer exists). `chats.dead` holds the
 subset that will never produce anything: `died-at-birth`, `rejected-credits`
-and `orphaned` (the worktree directory no longer exists).
+and `orphaned`. `orphaned` is in both lists and `finished` is in neither; a
+session that is neither unfinished nor dead is `finished`. An earlier version of
+this paragraph listed only five and dropped `orphaned` from `unfinished`, which is
+invisible on a board whose only live states happen to be `active` and
+`abandoned-midflight` — so the omission survives every casual read.
 
 **`rejected-credits` is a caller bug, not a session problem.** It means a
 launcher resolved a bare model name onto a paid GPT id and the subagent died at
@@ -499,8 +558,12 @@ and `board.agents` is on every record so you can see which one fired.
 
 The consequence for reading the file: `chats` is a view of _chat history per
 worktree path_, which is not the same as _work done in a worktree_. Treat a
-zero `chats.count` as "no chat was ever opened there", never as "nobody worked
-there".
+zero `chats.count` as "no chat was opened there", never as "nobody worked
+there". It is also **windowed** — the query filters `time_updated >=` a cutoff
+(`chats.mjs:109`) at `--window-hours`, 24 by default
+(`worktree-inventory.mjs:57`) — so the precise reading is "no top-level session
+opened at that path inside the window", and a worktree worked on last week scores
+the same zero.
 
 ### The file is generated; the judgement is not
 
@@ -509,14 +572,30 @@ Anything a human had to look at and decide lives in
 `scripts/lib/worktree-inventory/curated.mjs` and survives regeneration:
 
 ```js
+// scripts/lib/worktree-inventory/curated.mjs — these two are verbatim, and the
+// difference between them is the whole reason to read both.
 'polygon-marching-ants': {
-  summary: 'Polygon-selection marching ants: the ants component, the hook, …',
-  issues: [{ ref: 'HANDOFF.md#48', title: 'eraser is hard-edged' }],
+  summary: 'Polygon-selection marching ants: the ants component, …',
   mustNotPrune: true,   // blocks prunable even when git says it is clean
+  note: 'git reports this as merged and 0 ahead because the branch sits on an
+          old main commit. The work exists on no ref.',
+},                      // note: no `issues`, and NO `landed`
+'ps-pixel-tools': {
+  summary: 'Eraser, Magic Eraser, Paint Bucket and Clone Stamp as four tool
+            areas plus toolbars, with their tools and tests. …',
+  issues: [{ ref: 'HANDOFF.md#48', title: 'eraser is hard-edged; …' }],
+  mustNotPrune: true,
   landed: true,         // a CLAIM, asserted against git by a test
-  note: 'the tip is an old main commit, so git reports 0 ahead; the work is on no ref',
+  note: 'Reported as merged for the same reason as polygon-marching-ants: …',
 },
 ```
+
+**Those two entries are not interchangeable, and the sample that used to sit here
+made them look like one shape.** The earlier version showed `polygon-marching-ants`
+carrying `issues` **and** `landed: true`, which is wrong in both directions: it has
+neither, and copying it produces a `landed: true` that the test below fails
+immediately, because that worktree is not on `main`. `issues` and `landed` belong
+to `ps-pixel-tools`. Read the file, do not work from a sample in prose.
 
 **When you create a worktree, add its entry in the same change.** A new
 worktree with no curated entry still appears, with `summary: null` and
@@ -555,7 +634,7 @@ than only reporting that something changed.
 - One setup file: **`src/test/setup.ts`** (jsdom, `OffscreenCanvas`, `createImageBitmap` polyfills). `src/__tests__/` holds `canvas-mock.ts` and shared `fixtures/`. Do not add a second setup file, or global mocks to a path expecting them to load.
 - `useHistory` tests mock `useStore` directly, not via `renderHook` + `StoreProvider`: the provider pulls in the durable replay/materialization path, which does not survive the test environment.
 - `ToolbarsRight` tests use hoisted `vi.hoisted()` mocks, so module hoisting keeps working. Match the shape.
-- `e2e/**` is excluded from `npm run test`, and `**/__tests__/**` / `*.unit.test.ts` are excluded from Playwright. A Playwright spec in jsdom, or an e2e helper test in a browser, fails in a way that looks like a product bug.
+- `e2e/**` is excluded from `npm run test`, and Playwright's `testIgnore` is `['**/__tests__/**', '**/*.unit.spec.ts', '**/*.unit.test.ts']` — three patterns, not two. A Playwright spec in jsdom, or an e2e helper test in a browser, fails in a way that looks like a product bug.
 - **`toBeVisible()` does not test clipping, and jsdom cannot test layout at all.** The
   left rail is `overflow-y-auto`, which makes CSS compute `overflow-x: auto` too, so the
   rail clips on BOTH axes and paints nothing of what a child positions outside its own
@@ -574,8 +653,11 @@ than only reporting that something changed.
   is the built-in `node:sqlite`, and it is tested there deliberately: a test file
   for a Node script in a second Vitest project would be a second project to keep
   in step. `node:sqlite` does work under `pool: 'vmThreads'`, and
-  `scripts/__tests__/agent-board.test.mjs` asserts exactly that, so a pool change
-  fails as a named test rather than as an unrelated import error.
+  `scripts/__tests__/agent-board.test.mjs` opens a `DatabaseSync(':memory:')`,
+  writes and reads a row. That is a **behavioural** probe, not a config assertion:
+  it never reads `vitest.config.ts`, so it fails when a pool or environment change
+  takes the binding away, and passes silently through one that keeps it. Scope the
+  claim to the binding, not to the pool.
 
 ## Gates
 
@@ -583,33 +665,33 @@ than only reporting that something changed.
 
 Two hooks, each a one-line wrapper over a `package.json` script, so the hook and the command a developer or CI can run by hand cannot drift:
 
-On the default headless run **no e2e test fails**: 194 pass, 2 are skipped by
-declaration (196 total). Measured on `feat/tool-descriptions` merged with `main` at
-`f7757cf`, 2026-09-28. **The absolute count is not the point and it will go stale again —
-the contract is that the number of failures is zero**, and a run that reports any is a
-defect or an infrastructure failure, never a known-failing test. Note what a failure of
-the second kind looks like: the Vite dev server dying mid-run turns every subsequent
-spec into `ERR_CONNECTION_REFUSED` and reports a wall of red that is not one failure but
-zero. Re-run on a fresh `PLAYWRIGHT_PORT` before believing a large red count.
+| hook                | script        | runs                                                                              |
+| ------------------- | ------------- | --------------------------------------------------------------------------------- |
+| `.husky/pre-commit` | `gate:commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` (`tsc` -> `build`) |
+| `.husky/pre-push`   | `gate:push`   | `npm run test` — the full app suite                                               |
+
+On the default headless e2e run **no test fails**. That is the whole contract, and it
+is a contract about the number of _failures_, not about any particular total: an
+earlier version of this line carried "194 pass, 2 skipped (196 total), measured at
+`f7757cf`" and it was already ~40 declarations stale within the day, so the count is
+gone rather than refreshed. A run that reports any failure is a defect or an
+infrastructure failure, never a known-failing test. Note what a failure of the second
+kind looks like: the Vite dev server dying mid-run turns every subsequent spec into
+`ERR_CONNECTION_REFUSED` and reports a wall of red that is not one failure but zero.
+Re-run on a fresh `PLAYWRIGHT_PORT` before believing a large red count.
 
 Three defect groups used to fail here and have since been fixed in this repository —
 the CDP capture-size assertions, the keyboard flyout race, and the `levels.spec.ts`
 canvas lookup. Each explains a shape the suite must not drift back into, and that
 shape is now held by a tripwire in the test code rather than by a paragraph in a doc:
 the fix removed the entry and pinned the replacement contract in the same change.
-
-| hook                | script        | runs                                                                              |
-| ------------------- | ------------- | --------------------------------------------------------------------------------- |
-| `.husky/pre-commit` | `gate:commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` (`tsc` -> `build`) |
-| `.husky/pre-push`   | `gate:push`   | `npm run test` — the full app suite                                               |
-
 Both are reached through a shared entry point in the common git dir, not through husky; see "Worktrees and dev servers". `HUSKY=0 git commit` is the escape hatch.
 
 - **The commit gate and these docs carry NO wall-clock numbers.** Every cost figure written into a hook comment or a doc in this repo has gone stale, and one of them — "the app suite is likely minutes" — was never measured at all and was the stated reason for a design decision that then shipped. Measure before you design; do not leave a number behind.
-- `test:e2e:unit` is **not** an e2e run — `vitest --config vitest.e2e.config.ts`, node environment, no browser — and it is **not in the commit gate**. It is the only coverage of the e2e helper functions, because `vitest.config.ts` excludes `e2e/**`, and that coverage is not optional: the `e2e-unit` CI job runs it as its own blocking step, and a separate blocking job so a break in the app pipeline cannot remove the only gate on `e2e/`. Run it by hand when you touch anything under `e2e/`, the way `test:e2e` is run when a change is user-visible. `test:e2e:unit:coverage` re-runs it under `--coverage` and is CI-only.
+- `test:e2e:unit` is **not** an e2e run — `vitest --run --config vitest.e2e.config.ts`, node environment, no browser — and it is **not in the commit gate**. (The `--run` matters: the doc used to quote the command without it, and a copy of that string gets a watch-mode run rather than a one-shot.) It is the only coverage of the e2e helper functions, because `vitest.config.ts` excludes `e2e/**`, and that coverage is not optional: the `e2e-unit` CI job runs it as its own blocking step, and a separate blocking job so a break in the app pipeline cannot remove the only gate on `e2e/`. Run it by hand when you touch anything under `e2e/`, the way `test:e2e` is run when a change is user-visible. `test:e2e:unit:coverage` re-runs it under `--coverage` and is CI-only.
 - **The commit gate runs no app unit test, and that is deliberate.** `npm run test` is the whole-tree check: run it on demand, and `gate:push` runs it for you. The scoped fan-out that used to sit in the gate is a command now — see below. Accepted cost: a test that was already failing before the commit started is caught at push, in CI, or when someone runs `npm run test` — and this repo's worktrees are full of commits that needed exactly that catch.
 - `*.{ts,tsx}` uses ESLint + Prettier; `*.{js,jsx,mjs,cjs,scss,css,jsonc,yml,yaml,md,json}` uses Prettier only. **Do not add ESLint for the latter group**: no config covers it, and doing so breaks Markdown/SCSS commits. `scripts/*.js` is in that second group.
-- **`lint:check` lints `git ls-files`, not `.`.** `scripts/lint-tracked.js` is the only place the two extension lists live, and they are the same rule on both sides: `lint:check` covers every tracked file of those types, `.husky/pre-commit` covers the staged subset. A filesystem-scoped command took `.kilo/`'s 121 worktrees, `dist/`, and generated e2e output as input, and needed a hand-maintained `.prettierignore` to stop `npm run format` rewriting them — that file is gone because nothing it listed is tracked. The tracked images, `src/components/SidebarLeft/snippet.txt`, `index.html` and the dotfiles are **not** linted, deliberately; the globs in the script are where that decision is written down. **Legacy files being outside the linted set is not a problem to solve.**
+- **`lint:check` lints `git ls-files`, not `.`.** `scripts/lint-tracked.js` is the only place the two extension lists live, and they are the same rule on both sides: `lint:check` covers every tracked file of those types, `.husky/pre-commit` covers the staged subset. A filesystem-scoped command took `.kilo/`'s worktrees, `dist/`, and generated e2e output as input, and needed a hand-maintained `.prettierignore` to stop `npm run format` rewriting them — that file is gone because nothing it listed is tracked. The tracked images, `src/components/SidebarLeft/snippet.txt` (the only tracked `.txt`) and `index.html` are **not** linted, deliberately. **"The dotfiles are not linted" is not quite true and should not be repeated:** it means dotfiles with no linted extension — `.gitattributes`, `.gitignore`, `.nvmrc`, `.prettierrc` — while `.copilot-instructions.md` is a dotfile that _is_ linted, because it matches `*.md`. The globs in the script are where that decision is written down. **Legacy files being outside the linted set is not a problem to solve.**
 - `--fail-on-changes --no-stash` leaves formatter fixes unstaged and blocks the commit; never allow hooks to rewrite the index. `--no-stash` is not optional: without it lint-staged keeps its backup stash every time it declines to revert, so each blocked commit leaves a `WIP on <branch>` entry behind.
 - `build` is not redundant with `tsc`: `vite build` strips types without checking them, and it alone catches Sass, wasm, PostCSS, and import resolution. **No `lint:check` in any local gate**: locally, `lint-staged` covers the staged subset and nothing more, so a file already committed unformatted, a rule-changing branch switch, or a bad rebase surface in `ci` rather than at commit time.
 - No coverage and no Playwright, at any local gate.
@@ -689,27 +771,48 @@ from Photoshop must find the same tool in the same group, under the same name, a
 reachable by the same letter. Anything this app invents breaks the muscle memory the whole
 product is borrowing.
 
-Concretely, and all of these are currently violations on `main`:
+Concretely, and all of these are currently violations on `main`. The rail's groups, flyouts
+and rendered labels are all defined in **`toolbar-mapping.ts` at the repository root** — not
+under `src/components/` — so that is the first file to read.
 
-- **No invented tools.** `draw` ("Draw Tool") is the only tool the app declares that Photoshop has
-  no counterpart for. It is a freehand-annotation layer tool. Photoshop's nearest is the Brush, and
-  the app already has a Brush. **It is to be deleted**, not relabelled.
+- **No invented tools.** `draw` ("Draw Tool") is the clearest case, and it is **one of five**
+  tool ids the app declares that Photoshop has no counterpart for: `draw`, `color`, `levels`,
+  `transform` and `shape`, which are the five bullets that follow. Do not scope the work to
+  `draw` and declare the requirement met. `draw` itself is a freehand-annotation layer tool;
+  Photoshop's nearest is the Brush, and the app already has a Brush. **It is to be deleted**,
+  not relabelled.
 - **Adjustments are not tools.** `color` (labelled "Colors"), `levels` ("Levels") and `transform`
   ("Transform") are `Image ▸ Adjustments` and `Edit ▸ Transform` commands, and Photoshop's Tools
   panel contains no such entries. Photoshop's name for `color` is "Black and White", which is not a
   tool either. These three are to leave the rail and become menu commands. They have **no
-  replacement tool** — Photoshop puts nothing there.
-- **No pseudo-tool.** `shape` is a grouping container carrying a `figure`; it is the one `ToolName`
-  the rail never displays, and Adobe has no tool by that name. Photoshop's shapes are Rectangle,
-  Ellipse, Triangle, Polygon, Line, Star and Custom Shape as **seven separate entries in one flyout**,
-  not five figures behind a tool that does not exist.
+  replacement tool** — Photoshop puts nothing there. `toolbar-mapping.ts` already exports
+  `extraTools = ['color', 'levels', 'transform']`, so the extraction is half-staged: the flag
+  exists, the rail entries do not.
+- **No pseudo-tool.** `shape` is a grouping container carrying a `figure`, and Adobe has no tool
+  by that name. It is not uniquely undisplayed, which is the trap in deleting it: `rectangle`,
+  `ellipse`, `triangle`, `polygon` and `line` are **also** registry ids the rail never names, so
+  "the one `ToolName` the rail never displays" points at the wrong target. `shape` is the only
+  id the flyout routes every figure through. Photoshop's shapes are Rectangle, Ellipse, Triangle,
+  Polygon, Line, Star and Custom Shape as **seven separate entries in one flyout**; the flyout
+  has **six** today (`toolbar-mapping.ts:108-115`) and `Star` is the missing one.
 - **Names are Adobe's, spelled Adobe's.** "Move Tool", "Rectangular Marquee Tool", "Ellipse Tool"
-  (not "Ellipse"), "Content-Aware Move tool" (hyphenated). The registry identifier is free —
-  `reposition` for the Move tool is acceptable — but the **rendered label is not**.
+  (not "Ellipse"). The registry identifier is free — `reposition` for the Move tool is
+  acceptable — but the **rendered label is not**. The first three are already exact on `main`;
+  the only labels that do not end in `" Tool"` are the three this section already flags
+  (`Colors`, `Levels`, `Transform`). "Content-Aware Move tool" is hyphenated in Adobe's tables
+  but **no such tool exists in the app yet**, so there is nothing to rename — when it lands,
+  render it that way.
 - **A tool the app cannot actually do still belongs in the rail**, rendering Photoshop's real
-  options bar, because that is the contract. Eight tools currently render a `PlaceholderTool` chip
-  bar instead (all six Pen-family tools, Custom Shape, Color Replacement). Photoshop's grouping and
+  options bar, because that is the contract. **Seven** tools currently render a `PlaceholderTool`
+  chip bar instead — the six Pen-family tools and Custom Shape. Photoshop's grouping and
   naming are the specification; the stub bar is the debt.
+  - **Color Replacement is NOT on that list and must not be put back on it.** It left the
+    roster: `toolsMap.ts:117-121` wires the real `ColorReplacement.tsx`,
+    `toolbarPlaceholderConfig.ts:13-16` records the removal, and
+    `tool-processors.test.ts:592-615` and `:617-635` assert the real bar. An earlier version
+    of this document listed it and said "eight"; the two counts are `grep -c "placeholderTool("
+src/tools/toolsMap.ts` and the membership of `placeholderNames` in the same test, and both
+    answer seven.
 
 **Verified inventory, 2026-09-28.** Adobe's current release is Photoshop 2026, version 27.x. Adobe
 publishes **no page that enumerates the Tools panel top-to-bottom**; they publish five topical
@@ -747,6 +850,11 @@ painting table prints "Gradient tools" in the plural, which conflicts with the s
 else; that one is a genuine Adobe-side inconsistency. "Content-Aware Move tool" is hyphenated.
 
 **What this costs.** See HANDOFF §68 for the file-by-file blast radius and the tests that pin tool
-names. The hand-copied tool lists in tests are the expensive part: `tool-processors.test.ts` alone
-carries four separate 41-name and 10-name lists, and `toolIcons.test.tsx` carries a 46-name union
-by hand. Add a tool and every one of them has to change.
+names. The hand-copied tool lists in tests are the expensive part: the registry holds **41**
+`ToolName`s, and `tool-processors.test.ts` carries **sixteen** hand-written name lists — two of
+them exhaustive at 41 entries each (`dispatchTable`, `icons`), the rest ranging from 40 down to 2,
+and **none of length 10**. An earlier version of this line said "four separate 41-name and 10-name
+lists", which understated the work about fourfold. `toolIcons.test.tsx` carries a 46-name union by
+hand (46 = the 41 tool ids plus 5 `shape-*` figure icons), byte-identical to `ToolIconName` in
+`SidebarLeft/types.ts`; keep it that way. Add a tool and every one of them has to change. Count the
+lists before estimating an edit, and do not trust a number written here — every one has gone stale.

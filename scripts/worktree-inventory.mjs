@@ -342,6 +342,7 @@ function describeDrift(currentText, nextText) {
     'untracked',
     'mergeConflict',
     'mergeConflictFiles',
+    'mergeChecked',
   ];
 
   for (const w of b.worktrees ?? []) {
