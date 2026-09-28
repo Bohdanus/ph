@@ -292,6 +292,33 @@ const initialState: StoreData = {
   isToolDirty: false,
 };
 
+type CommitDocumentEditAction = Extract<Action, { type: 'COMMIT_DOCUMENT_EDIT' }>;
+
+function projectCommitDocumentEdit(
+  state: StoreData,
+  action: CommitDocumentEditAction,
+  timeline: HistoryTimeline
+): StoreData {
+  const updates = action.payload.updates ?? {};
+  const nextFrame = updates.documentFrame;
+  return {
+    ...state,
+    ...updates,
+    ...(nextFrame ? { documentFrame: cloneDocumentFrame(nextFrame), totalSize: documentFrameSize(nextFrame) } : {}),
+    history: [...timeline.entries],
+    historyIndex: timeline.cursor,
+    branchRevision: timeline.branchRevision,
+    ...(action.payload.durableDocument !== undefined
+      ? {
+          durableDocument: action.payload.durableDocument,
+          durableStatus: action.payload.durableStatus ?? (action.payload.durableDocument ? 'current' : 'unavailable'),
+          durableDiagnostics: action.payload.durableDiagnostics ?? [],
+        }
+      : {}),
+    hasUnsavedChanges: true,
+  };
+}
+
 function commitSelection(state: StoreData, selection: Selection): StoreData {
   const committedSelection: Selection = {
     ...selection,
@@ -436,25 +463,7 @@ function reducer(state: StoreData, action: Action): StoreData {
         { entries: state.history, cursor: state.historyIndex, branchRevision: state.branchRevision },
         { type: 'append', entry: action.payload.historyItem }
       );
-      const updates = action.payload.updates ?? {};
-      const nextFrame = updates.documentFrame;
-      return {
-        ...state,
-        ...updates,
-        ...(nextFrame ? { documentFrame: cloneDocumentFrame(nextFrame), totalSize: documentFrameSize(nextFrame) } : {}),
-        history: [...timeline.entries],
-        historyIndex: timeline.cursor,
-        branchRevision: timeline.branchRevision,
-        ...(action.payload.durableDocument !== undefined
-          ? {
-              durableDocument: action.payload.durableDocument,
-              durableStatus:
-                action.payload.durableStatus ?? (action.payload.durableDocument ? 'current' : 'unavailable'),
-              durableDiagnostics: action.payload.durableDiagnostics ?? [],
-            }
-          : {}),
-        hasUnsavedChanges: true,
-      };
+      return projectCommitDocumentEdit(state, action, timeline);
     }
     case 'APPLY_HISTORY_REPLAY': {
       const replayUpdates = action.payload.updates;
@@ -762,19 +771,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           durableAppendDiagnostic(action.payload.historyItem, planned.reason),
         ];
       }
-      const nextState: StoreData = {
-        ...currentState,
-        ...updates,
-        ...(nextFrame ? { documentFrame: cloneDocumentFrame(nextFrame), totalSize: documentFrameSize(nextFrame) } : {}),
-        history: [...timeline.entries],
-        historyIndex: timeline.cursor,
-        branchRevision: timeline.branchRevision,
-        durableDocument: converted.document,
-        durableStatus: converted.status,
-        durableDiagnostics: converted.diagnostics,
-      };
-      latestStateRef.current = nextState;
-      rawDispatch({
+      const committedAction: CommitDocumentEditAction = {
         ...action,
         payload: {
           ...action.payload,
@@ -782,12 +779,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           durableStatus: converted.status,
           durableDiagnostics: converted.diagnostics,
         },
-      });
+      };
+      const nextState = projectCommitDocumentEdit(currentState, committedAction, timeline);
+      latestStateRef.current = nextState;
+      rawDispatch(committedAction);
       // Retirement runs after the transition is published, and only against the
       // record that transition actually produced: a delete, a merge, and a
       // commit that swaps a layer's cache all leave a published bitmap behind
-      // with no remaining reference. `hasUnsavedChanges` is the reducer's to set;
-      // the hand-built projection above deliberately leaves it to the reducer.
+      // with no remaining reference. The shared projection above matches the
+      // reducer fields, including the dirty flag, before the queued transition.
       retireDepartedPresentationBitmaps(presentationScope, currentState.layers, nextState.layers);
       return;
     }

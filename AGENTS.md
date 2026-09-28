@@ -77,7 +77,14 @@ npm run build           # production bundle, and a real CI step
 
 ## Worktrees and dev servers
 
-One git worktree per task, all under `.kilo/worktrees/`. Five traps that cost real debugging time:
+**HARD RULE: 99% OF WORK IS DONE IN ITS OWN WORKTREE UNDER `.kilo/worktrees/`, ON ITS OWN BRANCH. THE MAIN WORKTREE IS FOR READING AND MERGING ONLY.**
+
+- One task is one worktree and one branch, lowercase prefix (`fix/…`, `feat/…`, `e2e/…`, `cleanup/…`, `audit/…`). A second worktree for the same task is a fork you reconcile by hand.
+- **Already compliant if the session you are running in IS a worktree** — an Agent Manager worktree session, or any checkout under `.kilo/worktrees/`. `git rev-parse --show-toplevel` before you assume you are on main; never nest a second worktree inside one.
+- The 1%: a read-only investigation, an operator-requested one-line doc fix, a hotfix the operator asked for on main. None of those is a feature.
+- **Never commit feature work in the main worktree**, and stage only your own paths everywhere. Do not edit in main and move the change to a worktree afterwards: that leaves an unreviewed diff in a shared checkout and a worktree that does not build.
+
+Five traps that cost real debugging time:
 
 - **A worktree used to run no commit gate at all, silently.** `core.hooksPath` was `.husky/_` — a directory husky generates during `npm install` and keeps untracked — and git resolves a relative `core.hooksPath` against the root of the worktree it is running in. Every worktree made by `git worktree add` had no `.husky/_`, so git found no hook, ran nothing, and exited 0. The commit landed with no warning and nothing in its output to notice. 89 of 118 worktrees were in that state while 96 had a populated `node_modules`, so "just run npm install" was never the fix. `core.hooksPath` now points at `<common git dir>/hooks-gate`, which every worktree shares, and the tracked `.husky/pre-commit` is what runs. **If a hook ever stops firing, run `git config core.hooksPath` first and assume nothing.** Re-install with `npm install` (the `prepare` script).
 - **A worktree on an older commit blocks with a specific message, not a mystery one.** Its `.husky/pre-commit` still sources husky's generated preamble, which only an install in _that_ worktree ever created. The dispatcher names the cause; bring the worktree up to date, or `git config --unset core.hooksPath`. It blocks rather than skipping on purpose: a gate that cannot run must not let a commit through.
@@ -130,6 +137,23 @@ It is worth knowing for what it is good: cost tracks blast radius, and so does r
 - **Dependency licences are not a gate.** The allow/deny list and the high-severity threshold are in `DEPENDENCIES.md`, enforced by nothing; `npm audit --audit-level=high` in `ci` is the vulnerability half and it does run.
 
 **DO NOT WEAKEN A GATE TO GET GREEN: no skips, raised thresholds, deleted assertions, or re-recorded baselines.** Fix the defect or leave the recording decision to the operator.
+
+## Definition of Done
+
+**A TASK IS NOT DONE UNTIL THE WORK IS MERGED INTO `main` AFTER A THOROUGH CODE REVIEW. NOT "IMPLEMENTED", "COMMITTED", "PUSHED", "PR OPEN", OR "THE TESTS PASS".**
+
+1. **Isolated**, in its own worktree on its own branch.
+2. **Green locally**: `lint:check`, `tsc`, `build`, `test`; `test:e2e` when the change is user-visible, `test:e2e:unit` when it touches an e2e helper. "It was already failing" is a fact to report, not a reason to stop.
+3. **Covered** by a test that fails without the change. A fix that cannot be pinned by a test is a fix that comes back.
+4. **Documented**: handoff docs updated, and any new gate, test trap, or architecture boundary written down where the next agent looks.
+5. **Reviewed by someone else**, thoroughly: the diff, the surrounding code, the tests, and its own load-bearing claim re-run. Not the author. A finding sends the task back.
+6. **Merged into `main`**: conflicts resolved in the worktree, pushed, `main` green afterwards.
+7. **Reported as done**: what changed, what validation ran, what the review said.
+
+- **A green gate is the floor, not the review.** `gate:commit` and `gate:push` are mechanical, and a review that was not performed is not a review that found nothing.
+- **Never weaken a gate to reach "done"** — no skipped tests, raised thresholds, deleted assertions, or re-recorded baselines.
+- **A blocked merge is not done.** Operator decision pending, a defect the operator wants kept, a conflict that needs judgement: say so and name what is outstanding. Reporting "done" with an unmerged branch is the failure mode this section exists to prevent.
+- Only step 6 writes to `main` (plus a hotfix the operator asked for on main).
 
 ## E2E failures
 

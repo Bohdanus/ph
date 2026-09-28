@@ -4,9 +4,16 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { StoreProvider, useStore, type StoreData, type StoreDispatch } from '../StoreContext.tsx';
 import type { Selection } from '../general-types.ts';
+import { deriveSetDocumentFrameEntry, deriveSetLayerPropertiesEntry } from '../history-adapter.ts';
+import type { DurableHistoryEntry } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer } from '../layer-types.ts';
-import { OPEN_DOCUMENT_ACTION, TOOL_ACTION } from '../../util/constants.ts';
+import {
+  OPEN_DOCUMENT_ACTION,
+  RENAME_LAYER_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
+  TOOL_ACTION,
+} from '../../util/constants.ts';
 import { getAssetRegistry } from '../asset-registry.ts';
 
 const layerId = 'layer-1';
@@ -810,6 +817,193 @@ describe('StoreContext document frame derivation', () => {
 
     expect(store().documentFrame).toEqual(keptFrame);
     expect(store().totalSize).toEqual({ width: 400, height: 300 });
+  });
+});
+
+describe('StoreContext COMMIT_DOCUMENT_EDIT projection parity', () => {
+  const nextFrame = { x: 20, y: 10, width: 200, height: 150 };
+
+  function renameItem(id: string, name: string): HistoryItem {
+    return { id, actionName: RENAME_LAYER_ACTION, layerId, args: { name } };
+  }
+
+  function cropItem(id: string): HistoryItem {
+    return {
+      id,
+      actionName: SET_DOCUMENT_FRAME_ACTION,
+      layerId: 'document',
+      args: { previousFrame: defaultFrame, nextFrame },
+    };
+  }
+
+  /**
+   * Everything a commit moves. The refs and callbacks in `StoreData` are
+   * provider-owned and mean nothing per transition, so they are the only fields
+   * left out of the comparison.
+   */
+  function comparable(store: StoreData) {
+    return {
+      documentId: store.documentId,
+      documentRevision: store.documentRevision,
+      branchRevision: store.branchRevision,
+      history: store.history.map((item) => item.id),
+      historyIndex: store.historyIndex,
+      hasUnsavedChanges: store.hasUnsavedChanges,
+      documentFrame: store.documentFrame,
+      totalSize: store.totalSize,
+      layers: Object.fromEntries(
+        Object.entries(store.layers).map(([id, layer]) => [id, { name: layer.name, visible: layer.visible }])
+      ),
+      durableStatus: store.durableStatus,
+      durableDocument: store.durableDocument,
+      durableDiagnostics: store.durableDiagnostics,
+    };
+  }
+
+  /**
+   * The dispatcher builds the next state itself before queueing the transition,
+   * so a second commit in the same React batch is decided against that build
+   * rather than against the reducer's output. Batching is therefore the only way
+   * to observe the projection, and comparing it against the flushed run is the
+   * only way to prove the two agree.
+   *
+   * The first commit supplies a plan that disagrees with the legacy entry, so
+   * the store reports a mismatch rather than publishing. That is what makes the
+   * two store paths distinguishable: a publication carries the previous
+   * diagnostics forward and a whole-timeline reconversion replaces them, so a
+   * surviving diagnostic proves the second commit published.
+   */
+  function commitPair(batched: boolean) {
+    const { store, dispatch } = renderWithProbe();
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: {
+          documentId: 'doc-parity',
+          history: [baselineItem()],
+          historyIndex: 0,
+          updates: { layers: { [layerId]: makeLayer() }, totalSize: initialSize, documentFrame: defaultFrame },
+        },
+      });
+    });
+
+    const rename = renameItem('rename-1', 'Renamed');
+    const wrongPlan = {
+      ...(deriveSetLayerPropertiesEntry(rename) as DurableHistoryEntry),
+      operation: { kind: 'set-layer-properties', layerId, patch: { name: 'Somewhere else' } },
+    } as DurableHistoryEntry;
+    const crop = cropItem('crop-1');
+    const cropPlan = deriveSetDocumentFrameEntry(crop, defaultFrame);
+
+    const renameCommit = () =>
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { layers: { [layerId]: { ...makeLayer(), name: 'Renamed' } } },
+          historyItem: rename,
+          durableEntry: wrongPlan,
+        },
+      });
+    // This commit says nothing about layers, so it can only keep the record the
+    // first one published if that record reached the state it is read from.
+    const cropCommit = () =>
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { documentFrame: nextFrame, totalSize: { width: 200, height: 150 } },
+          historyItem: crop,
+          durableEntry: cropPlan,
+        },
+      });
+
+    if (batched) {
+      act(() => {
+        renameCommit();
+        cropCommit();
+      });
+    } else {
+      act(renameCommit);
+      act(cropCommit);
+    }
+    return comparable(store());
+  }
+
+  it('publishes the same state for two commits batched together as for two flushed apart', () => {
+    expect(commitPair(true)).toEqual(commitPair(false));
+  });
+
+  it('carries the first commit forward into a second commit dispatched in the same batch', () => {
+    const state = commitPair(true);
+
+    expect(state.history).toEqual(['baseline', 'rename-1', 'crop-1']);
+    expect(state.historyIndex).toBe(2);
+    expect(state.branchRevision).toBe(2);
+    expect(state.hasUnsavedChanges).toBe(true);
+    // The second commit carried no layers of its own, so the renamed record can
+    // only survive if the projection the dispatcher built for the first commit
+    // published it and the second commit read it back.
+    expect(state.layers).toEqual({ [layerId]: { name: 'Renamed', visible: true } });
+    expect(state.documentFrame).toEqual(nextFrame);
+    expect(state.totalSize).toEqual({ width: 200, height: 150 });
+    // The second commit published onto the first one's document: the planted
+    // mismatch diagnostic survived, and both entries are in the shadow.
+    expect(state.durableStatus).toBe('current');
+    expect(state.durableDiagnostics.map((diagnostic) => diagnostic.code)).toEqual(['durable-append-mismatch']);
+    expect(state.durableDocument!.history.map((entry) => entry.id)).toEqual(['rename-1', 'crop-1']);
+    expect(state.durableDocument!.cursor).toBe(1);
+  });
+
+  it('a commit flags unsaved changes even when its own updates try to clear the flag', () => {
+    const { store, dispatch } = renderWithProbe();
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: { documentId: 'doc-dirty', history: [baselineItem()], updates: { totalSize: initialSize } },
+      });
+    });
+    expect(store().hasUnsavedChanges).toBe(false);
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { hasUnsavedChanges: false, fileName: 'edited.psd' },
+          historyItem: toolItem('blur-edit', 'blur', { radius: 2 }),
+        },
+      });
+    });
+
+    expect(store().fileName).toBe('edited.psd');
+    // The flag is assigned after the updates spread, so the same payload that
+    // writes other metadata cannot use a commit to clear the dirty state.
+    expect(store().hasUnsavedChanges).toBe(true);
+  });
+
+  it('keeps the dirty flag set across a second commit batched behind the first', () => {
+    const { store, dispatch } = renderWithProbe();
+    act(() => {
+      dispatch()({
+        type: 'REPLACE_DOCUMENT',
+        payload: { documentId: 'doc-dirty-batch', history: [baselineItem()], updates: { totalSize: initialSize } },
+      });
+    });
+
+    act(() => {
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: { historyItem: renameItem('rename-1', 'Renamed') },
+      });
+      dispatch()({
+        type: 'COMMIT_DOCUMENT_EDIT',
+        payload: {
+          updates: { hasUnsavedChanges: false },
+          historyItem: toolItem('blur-edit', 'blur', { radius: 2 }),
+        },
+      });
+    });
+
+    expect(store().history).toHaveLength(3);
+    expect(store().hasUnsavedChanges).toBe(true);
   });
 });
 

@@ -50,46 +50,63 @@ export const LINE_START_Y = 150;
 export const LINE_END_X = 350;
 export const LINE_END_Y = 150;
 
-/** The document's own size, which every export baseline is recorded at. */
-export const DOCUMENT_WIDTH = 800;
-export const DOCUMENT_HEIGHT = 600;
+/**
+ * The document the app opens by default, and the size the export baselines describe.
+ */
+export const DEFAULT_DOCUMENT_WIDTH = 800;
+export const DEFAULT_DOCUMENT_HEIGHT = 600;
 
 /**
- * Maps a DOCUMENT point to a point inside the canvas box, inverting the `object-contain`
- * letterbox the app renders the document into (`src/components/Main/Main.tsx:241`).
+ * Map a point in DOCUMENT space to an offset within the canvas box.
  *
- * `page.mouse` speaks viewport pixels, so a stroke has to be aimed at where the document
- * actually landed inside the box. Doing that by hardcoding box-relative numbers makes every
- * recorded baseline a pin on the TOOLBAR's height, not on the export: the export fixture
- * drew at box y=150, and the document row that lands on depends on
- * `(boxHeight - DOCUMENT_HEIGHT * scale) / 2`, which is a property of the surrounding chrome.
- * That is how a sidebar layout change invalidated seven image baselines
- * (`e2e/OPEN_PROBLEMS.md` P1). Aiming in document space removes the coupling: the same call
- * produces the same export whatever the toolbar does.
+ * The canvas element is `w-full h-full` of its grid area, and `usePointerPosition` fits the
+ * document into that box and centres it, so a document point lands at a different offset
+ * for every canvas size. A gesture specified in canvas offsets is therefore specified
+ * relative to the window, and the document it actually touches changes whenever the canvas
+ * resizes — which is what coupled the export visual-regression baselines to the shell's
+ * layout. Fixing a desktop overflow that changed the canvas from 974x890 to 974x583 moved
+ * the export by 459 pixels with no change to the export path.
  *
- * The scale is width-limited whenever the box is wider than the document's aspect, which is
- * what `min()` selects here; the letterbox offsets then centre the result on the other axis.
+ * This mirrors the app's own mapping exactly (`src/hooks/usePointerPosition.ts:72-89`:
+ * `scale = min(outerW/imageW, outerH/imageH)`, then the leftover split evenly as the
+ * offset), so a caller can name a document point and get the same pixel whatever the
+ * viewport.
  */
-export function documentToBoxPoint(
-  box: Pick<BoundingBox, 'width' | 'height'>,
-  point: { x: number; y: number }
+export function documentToCanvasOffset(
+  box: { width: number; height: number },
+  documentX: number,
+  documentY: number
 ): { x: number; y: number } {
-  const scale = Math.min(box.width / DOCUMENT_WIDTH, box.height / DOCUMENT_HEIGHT);
-  return {
-    x: (box.width - DOCUMENT_WIDTH * scale) / 2 + point.x * scale,
-    y: (box.height - DOCUMENT_HEIGHT * scale) / 2 + point.y * scale,
-  };
+  const scale = Math.min(box.width / DEFAULT_DOCUMENT_WIDTH, box.height / DEFAULT_DOCUMENT_HEIGHT);
+  const offsetX = (box.width - DEFAULT_DOCUMENT_WIDTH * scale) / 2;
+  const offsetY = (box.height - DEFAULT_DOCUMENT_HEIGHT * scale) / 2;
+
+  return { x: offsetX + documentX * scale, y: offsetY + documentY * scale };
+}
+
+/**
+ * The same mapping read off the live app, for asserting that `documentToCanvasOffset`
+ * still agrees with it.
+ *
+ * Returns the document point the app believes a given canvas offset refers to, which is
+ * `usePointerPosition`'s own inverse. If these two ever disagree, a document-space gesture
+ * is landing somewhere other than where the helper said, and every document-space spec is
+ * silently measuring the wrong pixel.
+ */
+export function canvasOffsetToDocument(
+  box: { width: number; height: number },
+  canvasX: number,
+  canvasY: number
+): { x: number; y: number } {
+  const scale = Math.min(box.width / DEFAULT_DOCUMENT_WIDTH, box.height / DEFAULT_DOCUMENT_HEIGHT);
+  const offsetX = (box.width - DEFAULT_DOCUMENT_WIDTH * scale) / 2;
+  const offsetY = (box.height - DEFAULT_DOCUMENT_HEIGHT * scale) / 2;
+
+  return { x: (canvasX - offsetX) / scale, y: (canvasY - offsetY) / scale };
 }
 
 export const CANVAS_REDRAW_TIMEOUT_MS = 10_000;
 export const CANVAS_REDRAW_POLL_INTERVAL_MS = 100;
-
-/**
- * Slack around a stroke when asking whether it fits on screen. It only decides how much of
- * the page has to be scrollable for a stroke to count as in view, never where the stroke
- * lands, so it is deliberately not a measurement of anything.
- */
-const STROKE_VIEWPORT_MARGIN_PX = 40;
 
 export interface DominantColor {
   red: number;
@@ -210,36 +227,6 @@ export async function loadImageData(screenshot: Buffer): Promise<ImageDataResult
 }
 
 /**
- * Returns the workspace canvas locator.
- *
- * `data-testid="workspace-canvas"` is the only selector. An earlier version paired it
- * with `page.locator('canvas').nth(1)` via `.or()`, which was never a priority: `.or()`
- * returns the union of both sides, so as soon as the test id existed the locator
- * resolved to 2 elements and every `boundingBox()` call raised a strict mode
- * violation. The fallback was a document index anyway, and it was a wrong one - the
- * Draw toolbar mounts a preview canvas ahead of the workspace, and unmounting it when
- * another tool is selected shifted the index onto a hidden overlay.
- *
- * The app publishes the test id, so the fallback has no remaining job.
- */
-export function getWorkspaceCanvas(page: Page): Locator {
-  return page.getByTestId('workspace-canvas');
-}
-
-/**
- * The window's scroll offset, read at the moment a caller needs it.
- *
- * The one place in the helpers that reads page state rather than deriving geometry from a
- * box, and shaped like `getDevicePixelRatio` (cdp-helpers.ts): a page function, read at the
- * call site. Caching it would be wrong rather than merely stale — `clickToolButton` scrolls
- * the window by 440px in this build, so an offset read once is wrong by a different amount
- * before and after any tool click.
- */
-export async function getPageScroll(page: Page): Promise<{ x: number; y: number }> {
-  return page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
-}
-
-/**
  * A clip positioned so the region it names is actually rendered, plus the undo for
  * whatever scrolling that took.
  */
@@ -278,17 +265,18 @@ function clamp(value: number, min: number, max: number): number {
  * `page.screenshot({ clip })` can only photograph what is on screen: Playwright trims the
  * clip against the viewport, and a region that is entirely above or below it collapses to
  * zero height and throws `Clipped area is either empty or outside the resulting image`.
- * That is a real outcome, not a misconfiguration — this app is 1177px tall in Playwright's
- * 720px window, and `paint-options.spec.ts` reads its 60px stroke from 0.7 of the canvas
- * box height, which measures to y=748: measured, the clip throws as given and captures
- * correctly once the window is scrolled to 448. A spec cannot express that scroll, because
- * the clip it built is a viewport rect and the page may move under it, so the read does it
- * itself and gives the scroll back.
+ *
+ * This is a SAFETY NET, not a workaround for a bug that is present. The rail now declares
+ * `min-h-0 overflow-y-auto`, so the page no longer outgrows a 720px viewport and no region
+ * of a 583px canvas can be off screen. It stays because the failure it prevents is silent
+ * and total — the capture throws, or worse, photographs the app's own dark header and
+ * reports success — and because "the page does not scroll" is a property of the current
+ * layout rather than of the helper's contract. If a future change reintroduces an
+ * overflowing page, the read below degrades to working instead of to a false negative.
  *
  * The scroll is restored rather than left in place because a caller's later
  * `page.mouse` coordinates are viewport-relative and were built against the window it
- * expects to still be in — `select-move.spec.ts` drags from a box it measured earlier, and
- * a capture that quietly left the page scrolled would move that drag by the same 440px.
+ * expects to still be in.
  */
 async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<OnScreenClip> {
   const viewport = await readPageViewport(page);
@@ -314,15 +302,35 @@ async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<On
 }
 
 /**
- * Captures the `clip` region and attaches it under `name`.
+ * The window's scroll offset, read at the moment a caller needs it.
  *
- * `box` and `clip` are viewport-relative, and that is the space `page.screenshot` wants:
- * Playwright trims the clip against the viewport and adds `window.scrollX/Y` itself before
- * it reaches CDP. Do NOT run this clip through `viewportRectToPageRect` — see the note
- * there. `captureCanvasScreenshot` in cdp-helpers.ts is the one that DOES need it, because
- * it bypasses Playwright and speaks CDP directly. A region that is off screen is scrolled
- * to for the capture and scrolled back afterwards, on the same terms as `waitForCanvasPixels`.
+ * The one place in the helpers that reads page state rather than deriving geometry from a
+ * box, and shaped like `getDevicePixelRatio` (cdp-helpers.ts): a page function, read at the
+ * call site. Caching it would be wrong rather than merely stale — `clickToolButton` scrolls
+ * the window by 440px in this build, so an offset read once is wrong by a different amount
+ * before and after any tool click.
  */
+export async function getPageScroll(page: Page): Promise<{ x: number; y: number }> {
+  return page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }));
+}
+
+/**
+ * Returns the workspace canvas locator.
+ *
+ * `data-testid="workspace-canvas"` is the only selector. An earlier version paired it
+ * with `page.locator('canvas').nth(1)` via `.or()`, which was never a priority: `.or()`
+ * returns the union of both sides, so as soon as the test id existed the locator
+ * resolved to 2 elements and every `boundingBox()` call raised a strict mode
+ * violation. The fallback was a document index anyway, and it was a wrong one - the
+ * Draw toolbar mounts a preview canvas ahead of the workspace, and unmounting it when
+ * another tool is selected shifted the index onto a hidden overlay.
+ *
+ * The app publishes the test id, so the fallback has no remaining job.
+ */
+export function getWorkspaceCanvas(page: Page): Locator {
+  return page.getByTestId('workspace-canvas');
+}
+
 export async function takeLineScreenshot(
   page: Page,
   box: BoundingBox,
@@ -347,10 +355,7 @@ export async function takeLineScreenshot(
   const onScreen = await onScreenClip(page, actualClip);
   let screenshot: Buffer;
   try {
-    screenshot = await page.screenshot({
-      path: screenshotPath,
-      clip: onScreen.clip,
-    });
+    screenshot = await page.screenshot({ path: screenshotPath, clip: onScreen.clip });
   } finally {
     await onScreen.restore();
   }
@@ -463,37 +468,14 @@ export async function drawLine(
   endY: number,
   options: DrawLineOptions = {}
 ): Promise<void> {
-  const from = { x: box.x + startX, y: box.y + startY };
-  const to = { x: box.x + endX, y: box.y + endY };
-  // A stroke outside the window is not drawn at all: `page.mouse` is viewport-relative
-  // and Chrome never delivers an event below the fold, so the app never sees the pointer
-  // and the read that follows waits out its timeout on a region nothing was painted into.
-  // `paint-options.spec.ts` measures its 60px stroke to y=880 in a 720px window for exactly
-  // this reason. Scrolling the stroke into view and back keeps the point on the canvas in
-  // the same place — only the window moves — and `onScreenClip` returns the SAME rect when
-  // it is already in view, so every stroke that draws today is dispatched identically.
-  const strokeRect: Required<ClipOptions> = {
-    x: Math.min(from.x, to.x) - STROKE_VIEWPORT_MARGIN_PX,
-    y: Math.min(from.y, to.y) - STROKE_VIEWPORT_MARGIN_PX,
-    width: Math.abs(to.x - from.x) + STROKE_VIEWPORT_MARGIN_PX * 2,
-    height: Math.abs(to.y - from.y) + STROKE_VIEWPORT_MARGIN_PX * 2,
-  };
-  const onScreen = await onScreenClip(page, strokeRect);
-  const shiftX = onScreen.clip.x - strokeRect.x;
-  const shiftY = onScreen.clip.y - strokeRect.y;
-
-  try {
-    await page.mouse.move(from.x + shiftX, from.y + shiftY);
-    await page.mouse.down();
-    if (options.steps === undefined) {
-      await page.mouse.move(to.x + shiftX, to.y + shiftY);
-    } else {
-      await page.mouse.move(to.x + shiftX, to.y + shiftY, { steps: interpolationSteps(options.steps) });
-    }
-    await page.mouse.up();
-  } finally {
-    await onScreen.restore();
+  await page.mouse.move(box.x + startX, box.y + startY);
+  await page.mouse.down();
+  if (options.steps === undefined) {
+    await page.mouse.move(box.x + endX, box.y + endY);
+  } else {
+    await page.mouse.move(box.x + endX, box.y + endY, { steps: interpolationSteps(options.steps) });
   }
+  await page.mouse.up();
 }
 
 /**
@@ -529,12 +511,6 @@ export interface WaitForCanvasPixelsOptions {
  *
  * The single poll loop: every redraw wait below is a specialization of it, so the
  * timeout, the interval and the error wording can only be changed in one place.
- *
- * `clip` is viewport-relative — the space `boundingBox()` reports and the space
- * `page.screenshot` takes, because Playwright applies the scroll offset itself. It is
- * forwarded unconverted on purpose; see `viewportRectToPageRect` for the measurement that
- * says so and for the one capture path that needs the opposite. What it does need is for
- * the region to be ON SCREEN, which is what `onScreenClip` arranges.
  */
 export async function waitForCanvasPixels(
   page: Page,
@@ -545,18 +521,21 @@ export async function waitForCanvasPixels(
   const timeoutMs = options.timeoutMs ?? CANVAS_REDRAW_TIMEOUT_MS;
   const pollIntervalMs = options.pollIntervalMs ?? CANVAS_REDRAW_POLL_INTERVAL_MS;
   const deadline = Date.now() + timeoutMs;
-  const onScreen = await onScreenClip(page, clip);
 
-  try {
-    for (;;) {
+  for (;;) {
+    // Re-derived every poll rather than hoisted: the window may have moved under us, and a
+    // stale clip photographs the wrong region. `onScreenClip` is a no-op when the region is
+    // already in view, which is every poll in the current layout.
+    const onScreen = await onScreenClip(page, clip);
+    try {
       if (await predicate(await page.screenshot({ clip: onScreen.clip }))) return;
-      if (Date.now() >= deadline) {
-        throw new Error(`Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms`);
-      }
-      await page.waitForTimeout(pollIntervalMs);
+    } finally {
+      await onScreen.restore();
     }
-  } finally {
-    await onScreen.restore();
+    if (Date.now() >= deadline) {
+      throw new Error(`Canvas did not render ${options.description ?? 'the expected pixels'} within ${timeoutMs}ms`);
+    }
+    await page.waitForTimeout(pollIntervalMs);
   }
 }
 

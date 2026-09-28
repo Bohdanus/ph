@@ -44,6 +44,7 @@ import type { TransformToolArgs } from '../tools/transform.ts';
 import type { NewHistoryItem } from './history-types.ts';
 import { createHistoryItem } from './history-utils.ts';
 import { planHistoryAppend } from './history-append.ts';
+import { isSetLayerPropertiesAction } from './history-adapter.ts';
 import type { LayerPresentationRequest } from './layer-presentation.ts';
 import {
   canvasRectToDocumentFrame,
@@ -430,16 +431,26 @@ export const useLayers = () => {
   const updateLayer = (id: LayerId, patch: Partial<Layer>, actionName: ActionType) => {
     const layer = layers[id];
     if (!layer) return;
-    const newLayers = { ...layers, [id]: { ...layer, ...patch } } as LayersRecord;
+    const item = { layerId: id, actionName, args: patch };
+    const planned = isSetLayerPropertiesAction(actionName)
+      ? planHistoryAppend({
+          item,
+          timeline: { entries: history, cursor: historyIndex, branchRevision },
+          currentFrame: documentFrame,
+        })
+      : null;
+    const runtimePatch = isSetLayerPropertiesAction(actionName)
+      ? planned?.durableEntry?.operation.kind === 'set-layer-properties'
+        ? planned.durableEntry.operation.patch
+        : patch
+      : patch;
+    const newLayers = { ...layers, [id]: { ...layer, ...runtimePatch } } as LayersRecord;
     dispatch({
       type: 'COMMIT_DOCUMENT_EDIT',
       payload: {
         updates: { layers: newLayers },
-        historyItem: createHistoryItem({
-          layerId: id,
-          actionName,
-          args: patch,
-        }),
+        historyItem: planned?.entry ?? createHistoryItem(item),
+        ...(planned ? { durableEntry: planned.durableEntry } : {}),
       },
     });
     drawAllLayers();
@@ -593,11 +604,9 @@ export const useLayers = () => {
     const nextFrame = canvasRectToDocumentFrame({ x, y, width, height }, documentFrame);
     if (!isValidDocumentFrame(nextFrame) || documentFrameEquals(documentFrame, nextFrame)) return false;
 
-    // Document-frame changes are the first appends planned through the Phase 1
-    // boundary. The planned durable entry is not published yet: the store still
-    // rebuilds its diagnostic shadow from the legacy timeline, and that shadow is
-    // the only durable signal the UI reports, so the plan's own diagnostics are
-    // deliberately not surfaced here.
+    // The append boundary derives the same durable entry as the adapter. The
+    // store publishes it only when its preconditions prove the durable shadow
+    // still describes this legacy append; otherwise it rebuilds the shadow.
     const { entry, durableEntry } = planHistoryAppend({
       item: {
         layerId: 'document',

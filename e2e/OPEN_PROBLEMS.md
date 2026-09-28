@@ -635,3 +635,46 @@ single-tool groups`.
   `playwright.config.ts` starts `npm run dev`. Nothing establishes that
   `vite build` output renders byte-identically, so a future switch to serving
   `dist/` should be treated as a possible baseline-affecting change.
+
+## P2 — the export line is specified in document space; the ICO line still is not
+
+`e2e/export/helpers.ts`, `setupIcoTest`
+
+`setupExportTest` used to draw at canvas-relative offsets (`150,150` to `350,150`), which
+made the export a function of the window rather than of the document. The canvas is
+`w-full h-full` of a grid area the shell sizes, and `usePointerPosition` fits the document
+into it and centres it, so the same offsets marked different document points at different
+canvas sizes. The baselines encoded one particular canvas height: fixing a real desktop
+overflow moved the canvas from 974x890 to 974x583 and shifted the export by 459 pixels with
+no change anywhere in the export path.
+
+`setupExportTest` now specifies the line in document space and maps it in with
+`documentToCanvasOffset`, which mirrors the app's own contain-fit, and pins the committed
+pixels by using the document points the old offsets mapped to. `the export is independent of
+the canvas height` in the same spec asserts the property directly, and
+`e2e/helpers/__tests__/document-mapping.unit.test.ts` pins the mapping.
+
+`setupIcoTest` is untouched and still strokes at `ICON_STROKE` canvas-relative offsets
+against a 256x256 document. It escapes harm today because it compares in-browser against the
+source canvas rather than against a committed baseline, so a moved line still matches itself.
+It is one layout change away from the same class of failure, and the fix is the same: map
+`ICON_STROKE` through `documentToCanvasOffset` with a 256x256 document.
+
+## P2 — an explicit redraw clip is in page coordinates, and a canvas-relative one passes for the wrong reason
+
+`e2e/helpers/canvas-helpers.ts`, `buildClip`
+
+`buildClip` returns an explicit `clip` exactly as given; only its own default,
+`canvasRedrawClip`, adds the canvas box origin. A caller that passes canvas-relative
+offsets therefore polls the wrong region of the page.
+
+The failure mode is the dangerous shape rather than an obvious one: the wrong region is
+still a region, and `hasDarkPixels` may be satisfied by something that was already dark —
+the app's `#212529` header, for one. The wait returns, the stroke is not what was observed,
+and the test continues on a false positive. A clip that lands on empty canvas instead fails
+loudly, which is the better of the two outcomes and is not guaranteed.
+
+`setupExportTest` hit this while being decoupled and passed anyway, which is why
+`e2e/export/__tests__/helpers.unit.test.ts` pins the clip in page coordinates with literal
+values. Worth knowing before passing a custom clip anywhere in this suite: the two forms
+differ by the box origin and nothing in the types distinguishes them.

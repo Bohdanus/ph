@@ -103,15 +103,24 @@ genuine segment boundaries (`materialization.ts:264-291`), so this is **half-fix
 _inter-intra-segment_ interleaving is still grouped.
 
 `materialization.ordering.test.ts:415` is `it.fails('applies interleaved affine and filter
-operations in original order, not grouped by type')`. The pin is a tripwire — it fails the moment
-the defect is fixed.
+operations in original order, not grouped by type')`. **The pin is inert — it cannot be removed in
+the same change as the fix, because it never observes the defect.** It spies on
+`HTMLCanvasElement.prototype.getContext` (`:428-429`), but `materialization.ts:55` short-circuits to
+`OffscreenCanvas`, `src/test/setup.ts:53-54` installs a global one unconditionally, and that test
+file never stubs it. A probe replicating the pin's instrument recorded **zero** calls on both
+`transform` and `drawImage`, so its assertions fail on `0` rather than on the grouping — and
+`0 !== 2` before and after a fix alike. A correct fix is forced to leave the pin, or to rewrite
+assertions that still measure nothing. `AGENTS.md` counts 34 `it.fails` blocks and treats each as a
+live tripwire; this one is not. See `FOCUSED-REVIEW-2026-09-28.md` §1.
 
 Both the durable-replay handoff and the consolidated handoff gate Phase 3 on this. It is also a
 correctness bug in the shared pipeline, so it blocks item 1 as well as the phase gate.
 
 **Fix.** Make `renderRetainedSegment` a fold over the operation list in order, keeping the
-raster-processor boundary but not reordering within a segment. Remove the `it.fails` in the same
-change.
+raster-processor boundary but not reordering within a segment. **Re-instrument the pin first**, with
+`vi.stubGlobal('OffscreenCanvas', …)` as `materialization.assets.test.ts:134` does, and add
+`expect(recordedContexts.length).toBeGreaterThan(0)` as a positive control — it fails today and is
+what makes the pin a tripwire. Only then can the `it.fails` be removed in the same change.
 
 **Files.** `src/contexts/materialization.ts`,
 `src/contexts/__tests__/materialization.ordering.test.ts`
@@ -159,27 +168,6 @@ paths become observable instead of silent.
 **Files.** `src/App.tsx`, `src/components/**` (new boundary component)
 
 ---
-
-## 6. P0 — `StoreContext` has two implementations of every commit transition
-
-**Problem.** The dispatcher fast-paths bypasses the reducer and hand-builds
-`latestStateRef.current`, because the reducer must stay a pure transition. But the hand-built copy
-omits `hasUnsavedChanges: true`, which the reducer sets in four branches
-(`StoreContext.tsx:342`, `:353`, `:406`, `:429`).
-
-Two writers for the same state transition will disagree. This one disagrees today, with no
-symptom, because nothing reads the flag on those paths. It is the same class of bug as
-`PUBLISH_DURABLE_REPLAY` (added `323d664`, deleted `2f051a0`): a second, parallel state path that
-looks correct in isolation.
-
-`UPDATE_LAYERS` (item 13) is the same shape: a public action with a hand-written reducer branch
-and zero production callers.
-
-**Fix.** Extract the shared post-commit projection into one function that both the reducer and the
-dispatcher call, so the flag cannot be forgotten. If that is not feasible, assert the equivalence
-in a test that dispatches through the hook and compares against the reducer result.
-
-**Files.** `src/contexts/StoreContext.tsx`
 
 ---
 
@@ -305,7 +293,7 @@ context value. No production code consumes it — the only callers are
 
 It is dead in production but live as an _interface_: any component can append a `HistoryItem`
 through a path that does not go through `COMMIT_DOCUMENT_EDIT`, so it bypasses the append boundary,
-the durable publication, and the `hasUnsavedChanges`/dispatcher equivalence of item 6.
+the durable publication, and the shared `hasUnsavedChanges`/dispatcher projection.
 
 **Fix.** Remove it from the returned context object. If a second writer is genuinely needed, route
 it through `COMMIT_DOCUMENT_EDIT` so it participates in the single-writer contract.
@@ -314,38 +302,25 @@ it through `COMMIT_DOCUMENT_EDIT` so it participates in the single-writer contra
 
 ---
 
-## 15. Only the crop and selection writers reach the append boundary; the rest reconvert the whole timeline
+## 15. `reorder-layers` remains conversion-only at the append boundary
 
-**Problem.** `translate` (`history-append.ts:121`) handles exactly two action kinds:
-`SET_DOCUMENT_FRAME_ACTION` (`:122`) and `SELECTION_ACTION` (`:138`). Everything else returns
-`unsupported-history-feature` (`:154-158`), so a `COMMIT_DOCUMENT_EDIT` with no planned entry
-reconverts the whole timeline at `StoreContext.tsx:747-758`.
+**Problem.** The append boundary now translates `set-document-frame`, `set-selection`, and the
+canonical `show`/`hide`/`rename` layer-property actions. `useLayer.updateLayer` plans those actions
+through `planHistoryAppend`, while `moveLayerAfter` (`useLayer.ts:451-469`) still supplies no
+`durableEntry`, so each reorder reconverts the whole timeline.
 
-Derived writer inventory, from the `type: 'COMMIT_DOCUMENT_EDIT'` dispatch sites in non-test
-source. Three sites hand the store a `durableEntry`:
+Reorder is not safe to publish from the producer's intent alone. Durable conversion normalizes the
+current order to `0..n-1` before applying the move (`history-adapter.ts:547-567`), while legacy replay
+skips a missing anchor (`history-replay.ts:122-130`). `validatePlannedDurableEntry` cannot prove an
+`orderByLayerId` map without the authoritative logical order immediately before the append. The
+delayed UI reorder also means a hook-captured order is not a sufficient store precondition.
 
-- `useLayer.ts:597` — `applyDocumentCrop`, `set-document-frame`
-- `useSelectionHistory.ts:158` — `clearSelections`, `set-selection`
-- `useSelectionHistory.ts:240` — `commitSelection` (`'create'` / `'move'`), `set-selection`
+**Fix.** Add store-side pre-state derivation and validation for `reorder-layers`, then route the
+writer through the existing `published` / `preconditions` / `mismatch` decision. Do not collapse
+that three-way decision to a boolean or manufacture an order map when the anchor is missing.
 
-Eleven further sites have production callers and carry no `durableEntry`, so each one
-reconverts: `useLayer.ts:166, 293, 310, 374, 408, 432, 452, 638`, `useApp.ts:159` (the tool-switch
-deselect, which builds its `SELECTION_ACTION` at `:165-174` without planning), and the two
-`useSelectionHistory.ts:174, 256` plan-failure fallbacks. `useHistory.ts:52` (`addHistoryEntry`) is
-the fifteenth site and has no production caller at all (item 14). `APPLY_HISTORY_REPLAY` and
-`REPLACE_DOCUMENT` remain legacy-only.
-
-The selection pair covers every selection-creating gesture, so no selection now reaches the timeline
-only as a later entry's `previousSelectionState`. The one remaining gap is the polygon's anchor/body
-drag (item 30), which appends nothing rather than reconverting.
-
-The next slices are already named in the readiness docs: `set-layer-properties` and
-`reorder-layers`.
-
-**Fix.** Convert one writer at a time, smallest first (`set-layer-properties`). Keep the
-`published` / `preconditions` / `mismatch` three-way decision — do not collapse it to a boolean.
-
-**Files.** `src/contexts/history-append.ts`, `src/contexts/StoreContext.tsx`
+**Files.** `src/contexts/history-adapter.ts`, `src/contexts/history-append.ts`,
+`src/contexts/StoreContext.tsx`, `src/contexts/useLayer.ts`
 
 ---
 
@@ -474,33 +449,6 @@ block rather than porting it.
 
 **Files.** `src/contexts/layer-utils.ts`, `src/contexts/__tests__/layer-utils.test.ts`,
 `src/contexts/__tests__/useHistory.test.tsx`
-
----
-
-## 20. No durable-path test materializes a `rectangle`, `ellipse` or `line` vector source
-
-**Problem.** `history-adapter.ts:185` maps all six of `shape`, `rectangle`, `ellipse`, `triangle`,
-`polygon`, `line` to `kind: 'vector'`, and `materialization.ts:168` then throws
-`Source tool ${toolName} is not a deterministic creator` for any of them whose registry entry lacks
-`creator: true`. The registry now flags all six (`toolProcessors.ts:124, 220-224`), but the only
-durable test that _successfully_ pushes a vector source through `materializeLayer` uses
-`toolName: 'shape'`
-(`materialization.assets.test.ts:406-425`) — so the `rectangle`/`ellipse`/`line` entries were never
-exercised end to end, and nothing in `src/contexts/__tests__` would have caught them missing the
-flag. `history-adapter.tool-conversion.test.ts:76-80` pins only the adapter half.
-
-Nothing in production reaches this code: `materializeLayer` and `materializeDocument` have no
-non-test importer (item 1), so the throw is latent.
-
-**Fix.** In `materialization.assets.test.ts`, extend the existing vector-source case into an
-`it.each` over `['shape', 'rectangle', 'ellipse', 'triangle', 'polygon', 'line']` with the matching
-`args` per tool, asserting `materializeLayer` resolves and yields a bitmap for every one. That
-converts the registry flag into a contract the durable path checks instead of a declaration in
-`toolProcessors.test.ts`. Belongs with the migration work, not with a registry edit.
-
-**Files.** `src/contexts/__tests__/materialization.assets.test.ts`
-
----
 
 ---
 
@@ -1476,38 +1424,126 @@ attributes are pinned rather than assumed.
 
 ---
 
-## 45. The raster budget is a ceiling the operator set, and the AVIF half of it is still below the app's own maximum
+## 45. The AVIF encoder enforces the raster budget on save, and the codecs' ceilings still disagree
 
-**Problem.** `MAX_TIFF_BYTES` / `MAX_TIFF_PIXELS` in `src/contexts/tiff-utils.ts:15-27` are a
-product decision, not a security constant, and nothing records where the numbers came from — so the
-next session will "tidy" them back to a round figure and nobody will notice. The two ceilings, and
-the reject-don't-clamp behaviour above them, are:
+**What is fixed.** `encodeAvif` (`avif-utils.ts:32`) called the codec on an unbounded canvas while
+`loadAvifFile` (`:20`) refused anything over `MAX_AVIF_PIXELS`, so `New ▸ A3 @ 1200 dpi` followed by
+`Save as AVIF` wrote a file this build then refused to reopen. Both sides now share one
+`assertPixelBudget(width, height, 'open' | 'save')` (`:14`), called on the encode path at `:37`
+before the pixels are read, on the same rationale `tiff-utils.ts:168-174` already uses for TIFF:
+whatever this build writes it has to be able to read back. Pinned by three new cases in
+`src/contexts/__tests__/avif-utils.test.ts` plus the pre-existing load-side pin — over-budget
+rejection, the guard running before `getImageData`, the exact-budget boundary (`10000 × 8000`
+encodes, `10000 × 8001` does not), and the load-side string preserved byte for byte. The stale
+`NewImageDialog.tsx:77-78` / `:158` / `:178` citation in `tiff-utils.ts:8-9` now points at the real
+`:208-209` / `:289` / `:308`.
 
-- `MAX_TIFF_BYTES = 1_600_000_000` — the app's largest creatable document
-  (10000 × 10000 = 1e8 px, `NewImageDialog.tsx:208-209` clamps each axis to 10000 and both inputs
-  declare `max="10000"` at `:158`/`:178`) at 16 bytes per pixel, which is the largest per-pixel
-  buffer `UTIF.decodeImage` can build for a 4-sample page: `Math.min(32, t258[0])` bits per sample
-  (`UTIF.js:116`) times 4 samples.
-- `MAX_TIFF_PIXELS = MAX_TIFF_BYTES / 8` = 200,000,000 — the same budget read at 8 bytes per
-  pixel, the largest per-pixel buffer a displayable 16-bit RGBA page declares. Two times the app's
-  own maximum, so a document the dialog can create has headroom.
-- Above either ceiling the file is **rejected with an error, never clamped or downscaled**. That is
-  deliberate: a clamp silently hands the user a smaller image than the file they opened, and a
-  rejected file loses nothing.
+**Remaining verification — a ceiling decision that belongs to the operator, not to a fix branch.**
+Three numbers still disagree, and enforcing the budget on the encoder made the disagreement a
+capability loss rather than a latent trap:
 
-**The residual defect.** `MAX_AVIF_PIXELS` in `src/contexts/avif-utils.ts:5` is still
-`80_000_000` — below the 100 MP the New Image dialog can create, and applied to `loadAvifFile`
-(`:15`) but never to `encodeAvif` (`:24-26`). So `New ▸ A3 @ 1200 dpi`, then `Save as AVIF`,
-produces a file this build refuses to reopen. This is the same asymmetry the TIFF budget had; the
-TIFF side is fixed and this side is not.
+| ceiling                             | value       | where                        |
+| ----------------------------------- | ----------- | ---------------------------- |
+| largest document the app can create | 100,000,000 | `NewImageDialog.tsx:208-209` |
+| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:13`           |
+| TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:23`           |
 
-**Fix.** Replace `MAX_AVIF_PIXELS` with the same `MAX_TIFF_PIXELS` derivation, or export one
-`MAX_RASTER_PIXELS` from a module both codecs import so the two cannot drift again, and add the
-same budget call to `encodeAvif`. If the ceiling itself is wrong — if 200 MP is too generous or too
-tight for the product — that is the operator's call, and it must be made here rather than in a fix
-branch: the derivation above is what makes a different number defensible, not the number itself.
+So a document between 80 MP and 100 MP **cannot be saved as AVIF at all** — `saveImageToDisk` throws
+with the budget message, and `useFile.tsx:119-135` surfaces it as an alert. Before the guard it saved
+and then failed to reopen, which is the worse failure, so the change is right; the cost is real and
+the number was not chosen by whoever added the guard.
 
-**Files.** `src/contexts/avif-utils.ts:4-5,15,24-26`, `src/contexts/tiff-utils.ts:11-27`
+**Decided 2026-09-28: the 80 MP ceiling stands.** The operator was asked to choose between raising
+`MAX_AVIF_PIXELS` to TIFF's `MAX_CREATABLE_DOCUMENT_PIXELS` derivation and accepting the export loss,
+and chose to keep 80 MP. So **New ▸ A3 @ 1200 dpi is not AVIF-exportable in this build, by
+decision** — do not "fix" that by raising the number without asking again. The remaining work on this
+entry is the other-format gap below, not the ceiling.
+
+**The rule that must survive.** Above a ceiling the file is **rejected with an error, never clamped
+or downscaled**: a clamp silently hands the user a smaller image than the one they opened, and a
+rejected file loses nothing. The TIFF byte ceiling also has a recorded provenance worth keeping —
+`MAX_TIFF_BYTES` is the app's largest creatable document at 16 bytes per pixel, the largest buffer
+`UTIF.decodeImage` can build for a 4-sample page (`Math.min(32, t258[0])` bits per sample,
+`UTIF.js:116`, times 4 samples) — and `MAX_TIFF_PIXELS` is that same budget read at 8 bytes per
+pixel, so the two agree by construction rather than by coincidence. That derivation is what makes a
+different number defensible if the ceiling is ever revisited.
+
+**Also unfixed, and the same drift, larger than item 45 first claimed.** Four ceilings exist and two
+are below what the dialog can create:
+
+| ceiling                             | value       | where                        |
+| ----------------------------------- | ----------- | ---------------------------- |
+| largest document the app can create | 100,000,000 | `NewImageDialog.tsx:208-209` |
+| affine transform                    | 67,108,864  | `affine-transform.ts:34`     |
+| PSD                                 | 67,108,864  | `psd-utils.ts:36`            |
+| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:13`           |
+| TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:12-23`        |
+
+The two 64 MP constants are the same number written twice, independently, in files that do not
+import each other. A 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as AVIF and not
+as PSD — and the PSD cap is recorded nowhere. "One exported `MAX_RASTER_PIXELS`" would have to
+reconcile **four** constants, not one.
+
+**And four of the six codecs have no budget at all, or check theirs too late.**
+
+| codec | loader budget                   | encoder budget            | check before the allocation?                 |
+| ----- | ------------------------------- | ------------------------- | -------------------------------------------- |
+| avif  | yes                             | yes                       | yes                                          |
+| tiff  | yes (pixels + bytes)            | yes (+ a dead byte check) | yes — the only genuine pre-decode load check |
+| bmp   | **none** — bounded by file size | **none**                  | n/a                                          |
+| gif   | **none**                        | 65535/axis                | **no**                                       |
+| ico   | **none**                        | 1..256/axis               | **no**                                       |
+| svg   | **none**                        | **none**                  | n/a                                          |
+| psd   | yes                             | yes                       | yes — the reference implementation           |
+
+The three that are actionable without an architecture decision, all in files no campaign owns:
+
+- **TIFF's byte predictor ignores the tiled-allocation branch.** `tiff-utils.ts:102` is the whole
+  predictor and never reads `t322` (TileWidth) or `t323` (TileLength), but `UTIF.js:132` allocates a
+  **separate** per-tile buffer for a tiled page. The page
+  `{t256:[1000], t257:[1000], t258:[8,8,8,8], t322:[23170], t323:[23170]}` predicts 4,000,000 bytes
+  — comfortably inside the 1.6 GB ceiling — while UTIF allocates **2,147,395,600 (2.15 GB)**. A
+  ~200-byte file forces a 2.15 GB allocation, through the exact mechanism `tiff-utils.ts:74-88`
+  documents as the module's reason for existing. Fix: also predict
+  `Math.ceil(t322[0] * t323[0] * bitsPerPixel / 8)` and return the larger; a present `t322` with a
+  missing `t323` should return `null`, which `assertByteBudget:34` already refuses like over-ceiling.
+- **GIF checks the ceiling after allocating the whole raster.** `gif-utils.ts:10` runs
+  `getCanvasImageData(canvas)` before the `65535` check at `:14`, so a 70000×100000 canvas allocates
+  28 GB before the line that would refuse it — the same ordering defect this item's AVIF half had.
+  `gif-utils.test.ts:472-480` cannot catch it: it mocks `getContext` to report a width no real canvas
+  has and never asserts `getImageData` was not called. Fix: hoist both checks above `:10`.
+- **ICO checks the ceiling after PNG-encoding the entire canvas.** `ico-utils.ts:114` runs
+  `canvasToPngBlob` before the 256 check at `:116`, so `Save as ICO` on a 10000×10000 document pays
+  a full PNG encode of a 400 MP raster and then throws. The test double stubs `toBlob` with a 3-byte
+  blob, so nothing detects it. Fix: move `:115-118` above `:114`.
+
+**And one round-trip asymmetry.** ICO's loader (`ico-utils.ts:23`) validates only
+`dibSize < 40 || width <= 0 || rawHeight <= 0 || rawHeight % 2 !== 0`; the 256 ceiling at `:84-85` is
+used for **entry selection** only, and the geometry actually decoded is read from the DIB at `:18-19`
+and never compared to 256. **A file that opens cannot be saved back.**
+
+**BMP is the worst amplification.** `bmp-utils.ts:46-47` bounds the input by its on-disk byte length
+and then allocates `width * height * 4` regardless of depth, so the ratio is exactly
+`32 / bitsPerPixel` — a 20000×40000 1-bpp BMP needs 100 MB on disk and allocates **3.2 GB**, with no
+absolute pixel ceiling anywhere in the file. `bmp-utils.test.ts`'s largest geometry is 8×8, so no
+test can reach an interesting ratio.
+
+**Owned, so recorded not fixed:** `image-load-save-utils.ts:113-136` is the load path for GIF and SVG
+and bounds nothing — the whole file is base64-encoded into a data URL and handed to `new Image()`.
+That is where a shared load-side ceiling would have to live for those two formats. Separately,
+TIFF's save-side byte check at `:175` is provably dead (`MAX_TIFF_PIXELS * 4` is always below
+`MAX_TIFF_BYTES`) and its message says "Decoding it" on a save; AVIF's `assertPixelBudget` has no
+finite/integer guard, so a decoded `width: -5, height: -3` passes the budget and reaches
+`createImageData(-5, -3)`, throwing a DOM `IndexSizeError` instead of an actionable message.
+
+**Files.** `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts:8-9,74-102,175`,
+`src/contexts/bmp-utils.ts:45-47`, `src/contexts/gif-utils.ts:10-16`, `src/contexts/ico-utils.ts:18-23,84-85,113-118`,
+`src/contexts/__tests__/avif-utils.test.ts`, `src/contexts/image-load-save-utils.ts:150-172`,
+`src/contexts/affine-transform.ts:34`, `src/contexts/psd-utils.ts:36`
+
+**Files.** `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts:8-9`,
+`src/contexts/__tests__/avif-utils.test.ts`, `src/contexts/image-load-save-utils.ts:150-172`
+
 ---
 
 ## Tool surface - the eraser, fill and eyedropper tranche
@@ -1758,47 +1794,296 @@ agent not checked `Main.tsx:53`.
 **Files.** `src/tools/toolProcessors.ts:103,237,268`,
 `src/components/Main/Main.tsx:53,177`, `toolbar-mapping.ts:47-71`
 
-## 54. The eight-tool tranche is ready; the seven export baselines need one re-record
+---
 
-**Status.** The merge is done and every non-visual gate is green. What remains is a single
-recording decision, and the groundwork for it is now finished.
+## 54. The durable append fast path does not reconcile asset ownership
 
-**What landed.** The eight tools `main` lacked — `elliptical-selection`,
-`quick-selection`, `clone-stamp`, `sharpen`, `smudge`, `dodge`, `burn`, `gradient` — each with a
-`ToolName` key, a `toolProcessors` entry, a `toolsMap` entry, an icon, an options-bar panel, a
-`Main` tool area and e2e coverage. Plus the `toolLayerBlendMode` per-layer blend seam in
-`src/contexts/layer-utils.ts`, which is the seam entry 50 used to be blocked on.
+**Problem.** `decideDurableAppend` publishes a cloned durable document directly, while full
+conversion wraps asset-bearing operations in `beginDocumentAssetTransaction` / commit / reconcile
+(`history-adapter.ts:676-690`). The current append slice is safe because layer-property operations
+carry no assets, but the next asset-bearing operation could publish a document without registering
+or retiring its raster ownership.
 
-**The overflow cause is fixed and measured.** The toolbar defaults to two columns, and the
-`<aside>` declares `min-h-0 overflow-y-auto` (`src/components/SidebarLeft/SidebarLeft.tsx:324`).
-That aside's min-content height was the grid row floor, which dragged the `h-full` canvas up and
-outgrew a 720px viewport by 457px. Scrolling inside the column removes the coupling: the canvas is
-now **583px tall in both layouts**, so the toolbar no longer sets its height, and
-`e2e/sidebar-layout.spec.ts` pins that the page does not scroll.
+**Fix.** Extend the single-writer publication path with the asset-registry transaction before
+publishing the first durable operation that introduces or replaces an asset. Keep the property-only
+path free of unnecessary asset work.
 
-**The export fixture is now layout-independent.** `setupExportTest` aims in DOCUMENT space through
-`documentToBoxPoint` rather than at fixed box offsets, and the redraw poll is aimed the same way.
-Before this, every export baseline was a pin on the sidebar's height rather than on the export.
+**Files.** `src/contexts/history-append.ts`, `src/contexts/StoreContext.tsx`,
+`src/contexts/history-adapter.ts`
 
-**The remaining decision.** The canvas is 583px tall where the seven baselines in
-`e2e/export/visual-regression.spec.ts:37` were recorded at 840px, so the recorded pixels are stale
-whatever the fixture does. One `--update-snapshots` is the fix. It is worth doing now and not
-before: until it happens, any sidebar change invalidates them again, which is what has happened
-twice.
+---
 
-**Do not** reach the pixels by raising `DEFAULT_MAX_DIFF_PIXELS`, or by nudging the two document
-coordinates in `e2e/export/helpers.ts` until the count hits zero. The second fits a constant to the
-old box and is wrong again the moment the box moves.
+## 55. The `EXCLUDED-touched-by-prior-campaigns` manifest is not a safe boundary
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:32,324`,
-`e2e/helpers/canvas-helpers.ts`, `e2e/export/helpers.ts`,
-`e2e/export/visual-regression.spec.ts:37`, `e2e/sidebar-layout.spec.ts`
+**Problem.** `.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt` is
+what a fixer reads to learn which files a prior campaign owns, and item 39 in this file is written
+entirely in terms of it. It lists 136 files (`wc -l`). Reconstructing the true set from the session store
+instead — every `apply_patch` / `edit` / `write` target in a session whose `model.providerID` is
+`openai`, which is 60 GPT sessions — returns **72 `src/` files the manifest does not list**, and
+several of them are load-bearing for entries above:
 
-## 55. Two flood-fill modules coexist, split by tolerance scale, and that boundary is load-bearing
+| not in the manifest                                                                                | which entry depends on it |
+| -------------------------------------------------------------------------------------------------- | ------------------------- |
+| `src/contexts/history-model.ts`                                                                    | 10, 11, 12                |
+| `src/contexts/durable-replay.ts`, `replay-coordinator.ts`, `replay-checkpoints.ts`                 | 1, 12                     |
+| `src/contexts/psd-utils.ts`                                                                        | 7                         |
+| `src/contexts/useSelectionHistory.ts`                                                              | 15, 33                    |
+| `src/contexts/selection-baseline.ts`                                                               | 31                        |
+| `src/components/HistoryControls/HistoryControls.tsx`, `AppKeyboardShortcuts.tsx`, `UndoButton.tsx` | 37                        |
+| `src/components/SidebarLeft/toolIcons.tsx`                                                         | 46                        |
+| `src/components/SaveDialog/__tests__/SaveDialog.test.tsx`                                          | 44                        |
+| `src/hooks/useAnts.ts`, `src/util/canvas.ts`                                                       | 39                        |
+| `src/components/Main/CropToolArea.tsx`, `TextToolArea.tsx`                                         | 22                        |
+
+So an entry whose `Files` line names only unlisted files reads as unblocked when it is not: items 7,
+10, 12, 22, 31, 37, 39, 44 and 46 all do. Item 39's own text is the tell — it says `src/tools/draw.ts`
+is "**not** in the EXCLUDED list" and therefore needs coordination; it is not in the list because
+the list is incomplete, not because the file is free.
+
+**A second, live ownership axis the manifest has no notion of: 40 branches are unmerged.**
+`git branch --no-merged main` returns 41, and `merge/ps-tool-expansion` alone diffs 121 files against
+`main` — including `src/tools/settings.ts`, `src/contexts/layer-utils.ts`,
+`src/components/Main/Main.tsx`, `toolbar-mapping.ts` and every `SidebarLeft` suite. `src/util/floodFill.ts`
+is renamed to `src/util/flood-fill.ts` there, so item 49's files are mid-migration. The GPT-owned
+unmerged branches are `history-presentation-lifecycle`, `history-selection-baseline-parity`,
+`history-append-readiness`, `history-selection-append-support`,
+`history-selection-creation-writer`, and `fix/unit-tests` (the branch that closes items 16-19).
+
+**Fix.** Regenerate the manifest from the session store rather than maintaining it by hand, and
+extend it with the unmerged-branch file set. Until then, treat "not in the manifest" as carrying no
+information at all, and derive ownership the way this entry does before touching anything.
+
+**Reproduce the 72.** The `lightshopy.com` clone is the reason both path prefixes and the
+`edit`/`write` tools are in this, not just `apply_patch`:
+
+```bash
+GPT="SELECT id FROM session WHERE json_extract(model,'$.providerID')='openai' OR json_extract(model,'$.id') LIKE '%gpt%'"
+{ sqlite3 ~/.local/share/kilo/kilo.db "WITH g AS ($GPT) SELECT json_extract(p.data,'$.state.input.patchText') FROM part p JOIN g ON g.id=p.session_id WHERE json_extract(p.data,'$.tool')='apply_patch'" 2>/dev/null \
+    | perl -ne 'while(/\*\*\* (?:Update|Add|Delete) File: (\S+)/g){ print "$1\n" }'
+  sqlite3 ~/.local/share/kilo/kilo.db "WITH g AS ($GPT) SELECT json_extract(p.data,'$.state.input.filePath') FROM part p JOIN g ON g.id=p.session_id WHERE json_extract(p.data,'$.tool') IN ('edit','write')" 2>/dev/null
+} | sed -e 's#^/Users/bkalynovskyi/ph/##' -e 's#^/Users/bkalynovskyi/WebstormProjects/lightshopy\.com/##' -e 's#^\.kilo/worktrees/[^/]*/##' \
+  | sort -u > /tmp/gpt_paths.txt
+comm -23 /tmp/gpt_paths.txt <(sort .kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt) | grep '^src/' | wc -l   # -> 72
+```
+
+`session.model` is a TEXT column holding JSON, so the filter is `json_extract`, not a plain column
+comparison. Dropping the clone prefix lowers the count to 39, which is how a `grep -rn lightshopy`
+over the store misses a third of the corpus.
+
+**Verified by cross-check, not assertion:** the reconstruction also audited the other write vectors
+and found them clean — of 974 `bash` calls in GPT sessions there is no `sed -i`, `perl -i`, `tee`,
+`patch`, `git apply` or shell redirect that writes a tracked file. The only files the tool-call
+reconstruction misses are `package.json` and `package-lock.json`, via `npm install ag-psd` and
+`npm uninstall @floating-ui/react`. Note also that `/Users/bkalynovskyi/WebstormProjects/lightshopy.com`
+is a **clone of this same repository** (identical `origin`, and this HEAD is a descendant of its
+`1ddc968`), so 317 of those commands target this codebase from another path and a
+`grep -rn 'lightshopy'` on the session store misses them.
+
+**Files.** `.kilo/reviews/2026-09-27-untouched/scope/EXCLUDED-touched-by-prior-campaigns.txt` (not
+tracked; gitignored under `.kilo/`), and the `Files` line of every entry named in the table above.
+
+## 56. Layer opacity has no writer, and the obvious one is discarded by replay without a word
+
+**Problem.** `Layer.opacity` is a required field (`src/contexts/tool-types.ts:93`),
+PSD import populates and validates it (`src/contexts/psd-utils.ts:159,229`), and
+`materialization.ts:162` applies it to the document frame. Nothing in the app ever
+writes it. There is no opacity control in the desktop shell, and the mobile layers
+drawer had one that was removed rather than shipped broken.
+
+**Why the obvious implementation is wrong.** A slider would reach for
+`updateLayer(id, { opacity }, TOOL_ACTION)`, because that is the signature every
+other layer property write uses (`src/contexts/useLayer.ts:431`). It fails three
+times, all silently. `updateLayer` only plans a durable append when
+`isSetLayerPropertiesAction(actionName)` is true, and `TOOL_ACTION` is not in that
+whitelist, so the entry never gets a durable translation. `history-replay.ts:146`
+reads `if (!layer || !toolArgs?.toolName) continue;`, and a property patch carries
+no `toolName` in its args, so legacy replay skips it and the document after an undo
+diverges from the document before. And `getHistoryItemTitle`
+(`src/contexts/useHistory.ts:23`) returns `(args as ToolArgs).toolName` for a
+`TOOL_ACTION`, which is `undefined` here, so the history panel grows an untitled row
+per step. A slider drag writes one of each per step: dragging the handle to 50% would
+leave ~100 untitled, unreplayable entries in the timeline.
+
+**Fix — a real action, added to the existing layer-property path.** The rename /
+show / hide writer already reaches the append boundary, and it does so through a
+single canonical derivation that both conversion and the live writer share. Opacity
+belongs there, not in a hand-rolled arm, and not in `TOOL_ACTION`. Five places:
+
+- `src/util/constants.ts` — a `SET_LAYER_OPACITY_ACTION` next to
+  `SHOW_LAYER_ACTION`/`HIDE_LAYER_ACTION`/`RENAME_LAYER_ACTION`.
+- `src/contexts/history-model.ts:80` — add `opacity` to
+  `DurableLayerPropertyPatch`. The type is `Readonly<…>`, which is deliberate: it is
+  what stops a writer smuggling an arbitrary `Partial<Layer>` through the append
+  boundary as a patch the validator then has to re-derive.
+- `src/contexts/history-adapter.ts:331` and `:340` — add the action to
+  `isSetLayerPropertiesAction` and give `deriveSetLayerPropertiesEntry` its branch.
+  Adding it to the first without the second makes `updateLayer` plan an append that
+  resolves to no durable entry, and it silently falls back to the raw patch.
+- `src/contexts/history-replay.ts:112-121` — the legacy arm beside the
+  show/hide and rename arms, writing `{ ...layer, opacity }` the way those write
+  `visible` and `name`. This is the arm that made the `TOOL_ACTION` route wrong, and
+  without it undo/redo leaves the document inconsistent.
+- `src/contexts/useHistory.ts:15` — a real title. Not a correctness fix: the
+  `return actionName` fallback at `:28` already yields a non-empty string for a
+  purpose-built action, so the `undefined` above is specific to `TOOL_ACTION`. It
+  matters because `SHOW_LAYER_ACTION` and friends already render their raw constant
+  name in the History panel, and a fourth raw constant is a worse answer than a
+  fifth proper title.
+
+`updateLayer` itself needs no change: given a whitelisted action it already replaces
+the caller's patch with the canonical one from the planned durable entry.
+
+Do not reuse `UPDATE_LAYERS` — item 13 records that it is an unguarded escape hatch.
+
+**Files.** `src/contexts/tool-types.ts:93`, `src/contexts/useLayer.ts:431`,
+`src/contexts/history-model.ts:80`, `src/contexts/history-adapter.ts:330,342`,
+`src/contexts/history-replay.ts:112,146`, `src/contexts/useHistory.ts:15,23`,
+`src/contexts/psd-utils.ts:159,229`
+
+## 57. The mobile shell has no colour control at all
+
+**Problem.** The desktop rail carries the foreground and background swatches, a swap
+and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:380-425`).
+The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
+no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
+use whatever colour the document happened to be created with, and the foreground colour
+cannot be changed at all.
+
+An earlier draft of this feature carried a `MobileColorPalette` component. It was
+never imported by anything, so it shipped no reachable UI while its own test file
+passed against the component in isolation. It was deleted rather than wired, because
+choosing which tools expose it is a design decision on the lowest-priority surface in
+the app, and shipping an unreachable one is worse than shipping none.
+
+**Fix.** Port the desktop's swatch pair and swap into `MobileBottomBar` or
+`MobileLayersDrawer` — it is one `useStore` read of `color` and `backgroundColor`,
+and the same two hidden `<input type="color">` elements, so the colour model stays
+whatever the desktop uses. A richer picker (a palette, a hex field) is a separate
+decision. Note the swatches are 32px in the desktop rail; on a touch surface they need
+the same 44px floor as the other mobile controls, which is why they should be built
+for mobile rather than copied across.
+
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:380-425`,
+`src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
+
+---
+
+## 58. A single brush stroke makes the durable document un-materializable, and it voids the whole document
+
+**Problem.** `convertSource` (`history-adapter.ts:166-171`) routes a layer source's `args.toolName`
+to `text` or `vector` for exactly two cases — `'text'`, and the six shape names — and to
+`legacy-tool` for everything else. `materialization.ts:156` throws on `legacy-tool`
+**unconditionally**, and `materializeDocument` releases every taken lease and rethrows (`:347-350`),
+so a single unconvertible layer voids the entire document rather than itself.
+
+`useLayer.ts:244-249` writes `args: { ...args }` from the concrete tool, so `args.toolName` is
+`'brush' | 'pencil' | 'color-replacement'`, never `'draw'`. **All three painting tools take the
+`legacy-tool` route.** The second thing a user does in a session is draw a stroke, so this is not a
+latent shape of the cutover — it is what the cutover would do.
+
+The irony worth recording: `toolProcessors.draw:145-151` is a genuine `creator: true`, so a
+deterministic creator for exactly this exists and is simply unreachable, because the adapter never
+routes to it.
+
+**Latent today** — `materializeLayer`/`materializeDocument` have no production caller (item 1). That is
+the only reason this is P1 rather than P0, and it is the same reason item 1 should not be treated as
+one wiring step.
+
+**Fix.** Either route those three tools to a typed source via the existing `draw` creator, or make
+`materializeDocument` isolate per-layer failure — materialize the rest, record the failed layer — so
+one unconvertible layer cannot void a document. The second is worth doing regardless: the
+whole-document rethrow at `:347-350` is what turns any per-layer defect into a total one.
+
+**Test that fails without the fix.** A brush history item through `legacyHistoryToDurable` must not
+yield `source.kind === 'legacy-tool'`. And `materializeDocument` over a replay containing a brush
+layer plus two good layers must resolve with the good layers present.
+
+**Files.** `src/contexts/history-adapter.ts:164-183`, `src/contexts/materialization.ts:156,347-350`,
+`src/contexts/useLayer.ts:244-249`, `src/tools/toolProcessors.ts:145-151`
+
+---
+
+## 59. Three selection tools claim `creator: true` and cannot create anything
+
+**Problem.** `materializeLayer` trusts the `creator` flag as its only gate
+(`materialization.ts:167-168`). All three `commit: 'selection'` entries claim it —
+`polygonal-lasso` (`toolProcessors.ts:160-166`), `freehand-lasso` (`:167-173`) and
+`rectangular-selection` (`:186-192`) — and all three processors are pass-throughs over a `bitmap`
+that is `undefined` on a creator call:
+
+```ts
+export const rectangularSelection =
+  ({ bitmap }: ProcessorToolParams) =>
+  () => [bitmap];
+```
+
+- `rectangular-selection` → `[undefined]`, caught by `if (!created) throw` (`:172`), message blames
+  the tool.
+- `polygonal-lasso` / `freehand-lasso` with empty `points` → `copyPolygonToCanvas` returns a **1×1
+  canvas**, which is truthy, so the guard **accepts it** and the layer silently materializes blank.
+  With non-empty points it throws an unrelated `SelectionCanvasContextError`.
+
+**Why this is a landmine rather than a typo.** The flag is currently unreachable from production
+precisely _because_ item 58's throw fires first. So the lie is invisible today and becomes live the
+moment item 58 or item 1 is fixed — which makes it a trap laid for whoever does that work.
+
+**Fix.** Drop `creator: true` from all three. They are `commit: 'selection'` mutators, not creators.
+Every genuine creator was checked and honours its curried `params.size`; a repo-wide grep for
+`Math.random|Date.now|new Date(|performance.now|crypto.` across `src/tools/` returns **zero**, so the
+flag is a sound determinism signal wherever it is honestly set.
+
+**Test that fails without the fix.** For every entry claiming `creator: true`, call
+`imageProcessor({ size: { width: 8, height: 8 } })(args)` and assert a returned bitmap with finite
+`width`/`height` ≥ 1. Fails today for the two lasso tools.
+
+**Files.** `src/tools/toolProcessors.ts:160-192`, `src/tools/selection.ts:15-21`,
+`src/tools/rectangularSelection.ts:9-13`, `src/contexts/materialization.ts:167-172`
+
+> > > > > > > main
+
+## 60. The eight-tool tranche is merged; two of the fixes it replaced were carrying defects
+
+**Status.** The `ps/tool-expansion` tranche is merged and every gate is green, e2e included. The
+seven `visual-regression` baselines pass against the **committed** pixels: nothing was re-recorded.
+
+The layout overflow is fixed, but it was fixed twice: this branch arrived at
+`min-h-0 overflow-y-auto` independently, and `main`'s responsive work had already added it. The
+merge keeps `main`'s class, which is a superset (`overscroll-contain` added).
+
+**What landed.** Eight tools `main` lacked — `elliptical-selection`, `quick-selection`,
+`clone-stamp`, `sharpen`, `smudge`, `dodge`, `burn`, `gradient` — each with a `ToolName` key, a
+`toolProcessors` entry, a `toolsMap` entry, an icon, an options-bar panel, a `Main` tool area and
+e2e coverage. Plus the `toolLayerBlendMode` blend seam, which entry 50 was blocked on.
+
+**Four defects in `main`'s surviving tool versions**, found by comparing them against the
+discarded branch, and fixed here with tests that fail without the change:
+
+- The eraser previewed with `destination-out` onto an overlay cleared to fully transparent every
+  frame. That computes `da' = da * (1 - sa)` = 0, so the preview was arithmetically incapable of
+  drawing anything and the stroke only appeared on pointer-up. It previews through
+  `tempUpdateLayer` now, which makes the preview and the commit the same operation.
+- The eraser and the fill tools would edit the bedrock layer, which has nothing beneath it to
+  restore. Both refuse it now, as the other raster tools already did.
+- The eyedropper ran its click through `canvasToDocumentPoint` and used the result as a canvas
+  index, but the composited canvas is drawn in FRAME space, so the offset was added twice: after a
+  crop trimming 100px off the left, a click read 100px to the right, and a click past the right
+  edge read outside the bitmap and dispatched nothing at all. An existing test asserted the wrong
+  pixel.
+- The paint bucket lerped two straight RGB values, which only means anything over an opaque
+  destination; at 50% over transparency it wrote half-black instead of half the fill colour. It
+  composites through the shared `blendPixel` now.
+
+**The generalisable lesson, and the reason this entry exists.** Both surviving implementations and
+the branch that was discarded were "done", with passing tests. Two of `main`'s carried defects the
+branch had already fixed, and in one case a test asserted the defect. Choosing a winner between two
+finished implementations on the strength of "this one is the one that is live" would have shipped
+all four. Compare them.
+
+## 61. Two flood-fill modules coexist, split by tolerance scale, and the boundary is load-bearing
 
 **Problem.** `src/util/floodFill.ts` and `src/util/flood-fill.ts` are two BFS flood fills with the
 same function names (`createContiguousMask`/`createContiguousScan`, `enqueuePixel`,
-`isPixelWithinTolerance`, …). A reader reasonably concludes one is a stale copy to delete, and
+`isPixelWithinTolerance`). A reader reasonably concludes one is a stale copy to delete, and
 deleting the wrong one silently changes which scale a tool's Tolerance slider uses.
 
 **Why both are still here.** They serve different scales, and the split is by consumer, not by
@@ -1810,23 +2095,70 @@ accident:
 | `src/util/flood-fill.ts` | **0-100** | `src/tools/quickSelection.ts`, `src/util/magicWand.ts` |
 
 Adobe's Paint Bucket page states "Enter a Tolerance value (0-255)", which is why the bucket uses
-255 and the magic wand (0-100, per the wand's own bar) uses 100. `floodFill.ts` also scales its
-threshold against a squared 3-channel maximum and bounds its writes to the region, so a large
-fill does not walk the whole layer.
+255 and the magic wand (0-100, per its own bar) uses 100. `floodFill.ts` also scales its threshold
+against a squared 3-channel maximum and bounds its writes to the region, so a large fill does not
+walk the whole layer.
 
-**Do not merge them without changing a tolerance scale.** Consolidating means one threshold
-formula with a parameterised maximum, and the per-tool scale then has to be stated at the call
-site. That is a real change to a load-bearing number in four tools, not a refactor.
+**Do not merge them without changing a tolerance scale.** Consolidating means one threshold formula
+with a parameterised maximum, and each tool's scale then has to be stated at the call site. That is
+a change to a load-bearing number in four tools, not a refactor.
 
-**The alpha question, settled.** `floodFill.ts` compares RGB only, so a fully transparent pixel
-is colour-identical to an opaque black one, and a fill at Tolerance 0 on a PNG cut-out floods the
-whole silhouette including the transparency. That is deliberate, it is pinned by a test
-(`src/util/__tests__/floodFill.test.ts`, `describe('alpha does not participate')`), and it matches
-Adobe: their Paint Bucket page's own tip for this case is "To avoid filling transparent areas,
-lock the layer's transparency in the Layers panel" — i.e. Photoshop floods them too unless
-transparency is locked. The discarded `flood-fill.ts` compared 4 channels including alpha, which
-is a defensible improvement but a **deviation** from Adobe, and it is the one difference its own
-branch pinned in the opposite direction. It was not adopted.
+**The alpha question, settled.** `floodFill.ts` compares RGB only, so a fully transparent pixel is
+colour-identical to an opaque black one, and a fill at Tolerance 0 on a PNG cut-out floods the
+whole silhouette including the transparency. That is deliberate and pinned by a test
+(`src/util/__tests__/floodFill.test.ts`, `describe('alpha does not participate')`). It matches
+Adobe: their Paint Bucket page's own tip for this case is "To avoid filling transparent areas, lock
+the layer's transparency in the Layers panel", i.e. Photoshop floods them too unless transparency is
+locked. The discarded `flood-fill.ts` compared 4 channels including alpha, which is a defensible
+improvement but a **deviation**, and it is the one difference its own branch pinned in the opposite
+direction. Not adopted.
 
 **Files.** `src/util/floodFill.ts`, `src/util/flood-fill.ts`, `src/tools/fill.ts`,
 `src/tools/quickSelection.ts`, `src/util/magicWand.ts`
+
+## 62. The 3824-pixel baseline failure was a wrong constant, not a host difference, and the two look alike
+
+**What was recorded, and what was wrong.** All seven `comparePixels` baselines in
+`e2e/export/visual-regression.spec.ts:37` failed on a clean `main` at a constant 3824 pixels, ratio
+0.0080, deterministically. The recorded diagnosis was that the committed pixels came from a
+different machine — "font rasterisation, colour management, or a canvas accelerator path". That
+diagnosis was wrong, and it is worth keeping this entry because **a systematic shift and a
+rendering difference are not distinguishable from the diff count alone.**
+
+They are distinguishable from the geometry. Decoding `drawing.png` and the export the run
+produced:
+
+| image                   | stroke rows       | stroke columns |
+| ----------------------- | ----------------- | -------------- |
+| committed `drawing.png` | 73-82 (centre 78) | 118-291        |
+| this host's export      | 53-62 (centre 55) | 119-291        |
+
+Two ten-pixel bands, twenty-three rows apart, with per-channel deltas of a whole 229. That is a
+stroke drawn where the fixture asked for it, not a font. The columns already agreed to within a
+pixel, which is what a pure vertical offset looks like and is not what a colour-management
+difference looks like.
+
+**The cause.** `e8f17ba` specified the export line in document space — correctly, and the change
+that made the export a function of the document rather than of the window — but derived the
+document points by inverting the contain-fit at a 974x**890** box. The recording geometry was
+974x**840**, whose letterbox is `54.75px` rather than `79.75px`, putting box row 150 on document
+row **78.234086** instead of 57.700205. The committed pixels were right the whole time and the
+constant was wrong; every one of the seven formats missed by the same 3824 because the line was in
+one place and the fixture was asking for another.
+
+**The lesson worth carrying.** A fix that makes a test layout-independent is verifiable on its own:
+two different layouts must produce the same export, and `visual-regression.spec.ts` now asserts
+that directly. That property is what made the diagnosis possible at all — the failure was
+byte-identical across the responsive work, the two-column default and eight new tools, which is
+what a host difference would also look like, and what a constant error looks like too. When a
+pixel-comparison delta is constant across unrelated changes, decode the images and look at the
+geometry before theorising about the environment. A 229-value delta on every channel of a
+ten-pixel band is a coordinate, not a colour space.
+
+**Do not** "fix" this by re-recording. The baselines are the ones the export actually produces, and
+re-recording would have overwritten correct pixels to hide a one-line arithmetic error, on the
+understanding that the committed data was bad.
+
+**Files.** `e2e/export/helpers.ts:85-116`,
+`e2e/helpers/__tests__/document-mapping.unit.test.ts`,
+`e2e/export/visual-regression.spec.ts:37`
