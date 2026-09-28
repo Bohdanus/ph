@@ -1373,15 +1373,30 @@ both built from the same stale `args`: the second object carries the new second
 value over the **old** first value, and the first change is gone. The rAF does not
 queue, so nothing merges them either.
 
-Reproduced deterministically in a browser, not inferred: fill grayscale to 50, then
-sepia to 100, with no wait between them. On the first pass the store holds
-`grayscale: 0, sepia: 100` — the label still reads "Grayscale 0%". On the second and
-third passes of the same sequence both values hold, because by then the closure has
-already caught up. So the defect needs a cold panel and a user who touches two
-controls quickly, which is exactly what a person adjusting an image does.
+Reproduced in a real browser as well, but that reproduction is not the evidence —
+it is a single observation, not a deterministic one. Two `page.locator().fill()`
+calls on a range input are two CDP round trips, so whether a frame lands between
+them is timing, and a run that happens to straddle one will not lose the edit. In
+one measured run the first pass lost the grayscale value and the second and third
+kept it, which is the shape a race has and is worth knowing for. **The evidence is
+the jsdom tests below**, which drive the handlers directly and cannot miss it.
 
-It is not reachable from jsdom, and the existing `Color` unit tests do not reach it:
-they call the handlers through the rendered control and assert one value at a time.
+**The behaviour is already pinned, and pinned on purpose.** Two tests in
+`src/components/ToolbarsRight/Colors/__tests__/Color.test.tsx` assert the loss:
+
+- `'coalesces a burst of changes across different sliders into one frame'`
+  (`:190`) fires all three sliders before the stubbed rAF and expects
+  `{ grayscale: 0, sepia: 0, saturation: 30 }` — the first two gone. Its own
+  comment says this documents the lost-update behaviour "rather than a merge".
+- `'drops the earlier in-frame edit when two different sliders move before the
+frame runs'` (`:213`) fires grayscale and sepia and expects
+  `{ grayscale: 0, sepia: 20 }`.
+
+So **fixing this turns both tests red, and flipping those two assertions is part
+of the fix rather than a gate being weakened** — they currently encode the defect
+as the expected result, which is what a characterisation test does. Whoever does
+this should say so in the commit, because "two unrelated Colors tests started
+failing" otherwise reads as a regression.
 
 **Fix.** Make the pending object the source of truth for the next one, rather than
 the render closure:
@@ -1392,13 +1407,15 @@ pendingUpdateRef.current = { ...base, grayscale };
 ```
 
 Every handler builds on `base`, so a second change in the same frame inherits the
-first instead of discarding it. Keep the render-time `args` only as the fallback
-when nothing is pending. Worth checking `Blur.tsx` and `Levels.tsx` for the same
-shape — they were not audited here.
+first instead of discarding it. `pendingUpdateRef.current` is cleared in the rAF
+itself (`:36`) and in `discardAdjustment` (`:115`), so it holds exactly the
+unpublished edits, and `args` is the right fallback for the first change of a
+frame. Worth checking `Blur.tsx` and `Levels.tsx` for the same shape — they were
+not audited here.
 
-**Test that fails without the fix.** Set grayscale to 50 and sepia to 100 with no
-frame in between, then assert the grayscale label reads "Grayscale 50%". A test that
-waits on each control's accessible name between the two changes cannot see this, and
-must not: it is a race, and the test for a race is the one that does not wait.
+**Test that fails without the fix.** The two above. A test that waits on each
+control's accessible name between the two changes cannot see this, and must not:
+it is a race, and the test for a race is the one that does not wait.
 
-**Files.** `src/components/ToolbarsRight/Colors/Color.tsx:28-56`
+**Files.** `src/components/ToolbarsRight/Colors/Color.tsx:28-56`,
+`src/components/ToolbarsRight/Colors/__tests__/Color.test.tsx:190,213`

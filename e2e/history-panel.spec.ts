@@ -127,10 +127,12 @@ test.describe('History panel', () => {
     await waitForCanvasPixels(page, firstClip, hasDarkPixels, { description: 'the re-enabled entry' });
   });
 
-  test('the panel says so when there is no history yet', async ({ page }) => {
-    // The panel only renders once the store has a document, and the document's own opening
-    // entry is already there, so this pins the empty state through the New Image dialog:
-    // a second document starts a second timeline rather than inheriting the first one's.
+  test('a new document starts a fresh timeline, not the previous one', async ({ page }) => {
+    // The panel only renders once the store has a document, and a document's own opening
+    // entry is already on its timeline — so the count here is 1, never 0, and
+    // `HistoryTab`'s "No history yet." branch is unreachable for a real document. What is
+    // worth pinning is that a second document does not inherit the first one's entries,
+    // which only a count of exactly 1 can say.
     await expect(historyRows(page)).not.toHaveCount(0);
 
     page.on('dialog', (dialog) => void dialog.accept());

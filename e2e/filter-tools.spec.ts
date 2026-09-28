@@ -45,6 +45,20 @@ const OFF_THE_LINE = 12;
 /** Between the two observed values (255 untouched, 218 blurred) and clear of both. */
 const UNTOUCHED_RED = 245;
 const BLURRED_RED = 240;
+/**
+ * The violet reads red 128, green 96, blue 160, so `red - blue` starts at **−32** and a
+ * 50% grayscale leaves it negative. `sepia` is the only thing in this test that can make
+ * the difference positive, so this threshold needs no knowledge of the exact filter
+ * coefficients — only that the sign flips.
+ */
+const SEPIA_RED_OVER_BLUE = 20;
+
+/**
+ * The half-width of the square the sample window averages, in capture pixels. 3 is a 7x7
+ * average: wide enough to absorb a capture's resampling, narrow enough that a 20px shape
+ * stroke still has a solid interior in it.
+ */
+const SAMPLE_RADIUS = 3;
 
 const hasPaintedPixel: CanvasPixelPredicate = async (screenshot) => {
   const { width, height, data } = await loadImageData(screenshot);
@@ -59,11 +73,18 @@ const hasPaintedPixel: CanvasPixelPredicate = async (screenshot) => {
 
 async function canvasBox(page: Page): Promise<BoundingBox> {
   const box = await getWorkspaceCanvas(page).boundingBox();
-  if (!box) throw new Error('The workspace canvas has no box, so strokes cannot be placed');
+  if (!box) throw new Error('The workspace canvas has no box, so the gesture cannot be placed');
   return box;
 }
 
 /**
+ * The three helpers above — `canvasBox`, `hasPaintedPixel`, `sampleDocumentPoint` — are
+ * deliberately local rather than added to `e2e/helpers/`: nothing in the shared module
+ * changes, so no existing spec's behaviour can move underneath a commit that is only
+ * adding coverage. `shape-tools.spec.ts` carries byte-identical copies; if one of them is
+ * promoted into the shared module, all three go together, because two same-named helpers
+ * that differ by a sampling radius is the trap this comment exists to prevent.
+ *
  * A 17px window centred on a DOCUMENT point, read from a live screenshot of the page.
  *
  * Every coordinate in this file is named in document space and converted here, because
@@ -87,7 +108,7 @@ async function sampleDocumentPoint(
   const screenshot = await page.screenshot({
     clip: { x: box.x + offset.x - half, y: box.y + offset.y - half, width: half * 2 + 1, height: half * 2 + 1 },
   });
-  return getColorAtPoint(screenshot, half, half, 3);
+  return getColorAtPoint(screenshot, half, half, SAMPLE_RADIUS);
 }
 
 const channelSpread = (c: { red: number; green: number; blue: number }): number =>
@@ -96,20 +117,32 @@ const channelSpread = (c: { red: number; green: number; blue: number }): number 
 /** A drag given in document coordinates, performed at the box's own scale. */
 async function dragAcrossDocument(
   page: Page,
-  box: BoundingBox,
   from: { x: number; y: number },
   to: { x: number; y: number }
 ): Promise<void> {
+  // Measured here rather than taken from the caller: a box captured before a tool switch is
+  // stale the moment the new options bar changes the height of the toolbar, and the drag
+  // then lands somewhere other than the two document points it names.
+  const box = await canvasBox(page);
   const start = documentToCanvasOffset(box, from.x, from.y);
   const end = documentToCanvasOffset(box, to.x, to.y);
   await drawLine(page, box, start.x, start.y, end.x, end.y, { steps: 10 });
 }
 
-async function drawVioletStroke(page: Page, box: BoundingBox): Promise<void> {
+/**
+ * Draws the stroke and RETURNS the box it drew with. The box has to be the one the gesture
+ * used, not one measured later: the sample point is derived by converting a box-relative
+ * offset out into document space, and a box measured after a tool switch describes a
+ * different set of canvas offsets. The clip waits re-measure, because a clip is about where
+ * the canvas is now, not where the stroke is.
+ */
+async function drawVioletStroke(page: Page): Promise<BoundingBox> {
   await clickToolButton(page, 'draw');
   await setForegroundColor(page, VIOLET, true);
+  const box = await canvasBox(page);
   await drawLine(page, box, STROKE_START_X, STROKE_ROW, STROKE_END_X, STROKE_ROW);
   await waitForCanvasPixels(page, canvasRedrawClip(box), hasPaintedPixel, { description: 'the stroke' });
+  return box;
 }
 
 /**
@@ -123,13 +156,14 @@ async function drawVioletStroke(page: Page, box: BoundingBox): Promise<void> {
  * stroke's own edge against the transparent surround. A corner-to-corner stroke's bounding
  * box is the whole document, which is the only cheap way to get that room.
  */
-async function drawCornerToCornerStroke(page: Page): Promise<{ box: BoundingBox; onLine: { x: number; y: number } }> {
-  const box = await canvasBox(page);
+async function drawCornerToCornerStroke(page: Page): Promise<{ onLine: { x: number; y: number } }> {
   await clickToolButton(page, 'draw');
   await setForegroundColor(page, '#000000', true);
-  await dragAcrossDocument(page, box, { x: 0, y: 0 }, { x: DOCUMENT_WIDTH, y: DOCUMENT_HEIGHT });
+  await dragAcrossDocument(page, { x: 0, y: 0 }, { x: DOCUMENT_WIDTH, y: DOCUMENT_HEIGHT });
+  // Measured after the tool is chosen, for the clip only: the drag itself measures its own.
+  const box = await canvasBox(page);
   await waitForCanvasPixels(page, canvasRedrawClip(box), hasDarkPixels, { description: 'the base stroke' });
-  return { box, onLine: { x: DOCUMENT_WIDTH / 2, y: DOCUMENT_HEIGHT / 2 } };
+  return { onLine: { x: DOCUMENT_WIDTH / 2, y: DOCUMENT_HEIGHT / 2 } };
 }
 
 /**
@@ -153,11 +187,10 @@ test.describe('Adjustment tools', () => {
   test.describe('Colors', () => {
     test('grayscale reaches the pixels, and Reset puts them back', async ({ page }, testInfo) => {
       test.setTimeout(60_000);
-      const box = await canvasBox(page);
-      await drawVioletStroke(page, box);
+      const drawBox = await drawVioletStroke(page);
       // The stroke was placed in box-relative offsets, so the point to sample has to be
       // converted OUT of that space rather than into it.
-      const sample = canvasOffsetToDocument(box, SAMPLE_X, STROKE_ROW);
+      const sample = canvasOffsetToDocument(drawBox, SAMPLE_X, STROKE_ROW);
 
       const original = await sampleDocumentPoint(page, sample.x, sample.y);
       expect(original, 'the stroke must be on the canvas to be adjusted').toBeTruthy();
@@ -178,7 +211,8 @@ test.describe('Adjustment tools', () => {
       await grayscale.fill('100');
       await expect(grayscale, 'the store took the value, not just the input').toHaveAccessibleName('Grayscale 100%');
       await expect(reset, 'moving a control is what creates the preview to discard').toBeEnabled();
-      await waitForCanvasPixels(page, canvasRedrawClip(box), hasPaintedPixel, { description: 'the grey stroke' });
+      const liveBox = await canvasBox(page);
+      await waitForCanvasPixels(page, canvasRedrawClip(liveBox), hasPaintedPixel, { description: 'the grey stroke' });
       const greyed = await sampleDocumentPoint(page, sample.x, sample.y);
       expect(greyed, 'the greyscaled stroke must still be on the canvas').toBeTruthy();
       // `grayscale(100%)` is a greyscale, so the three channels have to converge. The raw
@@ -190,7 +224,9 @@ test.describe('Adjustment tools', () => {
       await reset.click();
       await expect(reset, 'there is no preview left to discard').toBeDisabled();
       await expect(grayscale, 'the sliders return to their defaults').toHaveAccessibleName('Grayscale 0%');
-      await waitForCanvasPixels(page, canvasRedrawClip(box), hasPaintedPixel, { description: 'the restored stroke' });
+      await waitForCanvasPixels(page, canvasRedrawClip(await canvasBox(page)), hasPaintedPixel, {
+        description: 'the restored stroke',
+      });
       const restored = await sampleDocumentPoint(page, sample.x, sample.y);
       expect(channelSpread(restored!), 'discarding the preview did not put the pixels back').toBeGreaterThan(12);
       // The same colour, not merely some colour: the panel restored the committed stroke
@@ -200,13 +236,12 @@ test.describe('Adjustment tools', () => {
           12
         );
       }
-      await takeLineScreenshot(page, box, 'colors-restored', testInfo);
+      await takeLineScreenshot(page, await canvasBox(page), 'colors-restored', testInfo);
     });
 
     test('grayscale and sepia are separate controls and neither moves the other', async ({ page }) => {
-      const box = await canvasBox(page);
-      await drawVioletStroke(page, box);
-      const sample = canvasOffsetToDocument(box, SAMPLE_X, STROKE_ROW);
+      const drawBox = await drawVioletStroke(page);
+      const sample = canvasOffsetToDocument(drawBox, SAMPLE_X, STROKE_ROW);
 
       await openToolFlyout(page, 'color');
       await selectFromFlyout(page, { toolName: 'color', label: 'Colors' });
@@ -226,18 +261,17 @@ test.describe('Adjustment tools', () => {
       await expect(sepia).toHaveAccessibleName('Sepia 100%');
       await expect(grayscale, 'the two controls carry independent state').toHaveAccessibleName('Grayscale 50%');
 
-      // `sepia()` is a warm matrix: on a violet pixel it lifts green well above where the
-      // violet put it and leaves red above blue. Neither happens at the defaults, so this is
-      // the filter reaching the raster rather than a readout changing.
+      // `sepia()` is a warm matrix, so it pushes red above blue. The violet starts with red
+      // BELOW blue (128 vs 160) and a 50% grayscale does not change the sign, so the
+      // difference is the quantity to poll: a threshold on any single channel passes before
+      // sepia has touched a pixel, because the raw violet's green is already 96.
+      const redMinusBlue = async () => {
+        const toned = await sampleDocumentPoint(page, sample.x, sample.y);
+        return toned ? toned.red - toned.blue : -999;
+      };
       await expect
-        .poll(
-          async () => {
-            const toned = await sampleDocumentPoint(page, sample.x, sample.y);
-            return toned ? toned.green : 0;
-          },
-          { message: 'the sepia stop must reach the pixels' }
-        )
-        .toBeGreaterThan(60);
+        .poll(redMinusBlue, { message: 'the sepia stop must reach the pixels' })
+        .toBeGreaterThan(SEPIA_RED_OVER_BLUE);
       const toned = await sampleDocumentPoint(page, sample.x, sample.y);
       expect(toned!.red, 'a sepia pixel is warm, so red leads').toBeGreaterThan(toned!.blue);
     });
@@ -258,14 +292,6 @@ test.describe('Adjustment tools', () => {
       expect(before, 'the sample point must exist on the canvas').toBeTruthy();
       expect(before!.red, 'it is the layer over the white bedrock to begin with').toBeGreaterThan(UNTOUCHED_RED);
 
-      // `ctx.filter = 'blur(0px)'` is a documented no-op, so this is the control reaching
-      // the raster and the raster agreeing: nothing moved at zero.
-      await radius.fill('0');
-      await expect(radius).toHaveValue('0');
-      await expect
-        .poll(async () => (await sampleDocumentPoint(page, beside.x, beside.y))?.red ?? 0)
-        .toBeGreaterThan(UNTOUCHED_RED);
-
       await radius.fill(BLUR_RADIUS);
       await expect(radius).toHaveValue(BLUR_RADIUS);
       // The filter runs over the whole layer, so the stroke's own colour arrives at a point
@@ -276,6 +302,19 @@ test.describe('Adjustment tools', () => {
           message: 'the blur must carry colour off the stroke into its own layer',
         })
         .toBeLessThan(BLURRED_RED);
+
+      // Zero has to be a ROUND TRIP to be tested at all. It is also this control's seeded
+      // default, and a controlled input set to the value it already holds fires no store
+      // update — so `fill('0')` on a cold panel changes nothing and the assertion would be
+      // comparing the pre-blur pixels with themselves. Going up first and back down is the
+      // only shape in which "a radius of zero is a no-op" can fail.
+      await radius.fill('0');
+      await expect(radius).toHaveValue('0');
+      await expect
+        .poll(async () => (await sampleDocumentPoint(page, beside.x, beside.y))?.red ?? 0, {
+          message: 'a radius of zero must put every pixel back exactly where it was',
+        })
+        .toBeGreaterThan(UNTOUCHED_RED);
     });
 
     test('the reset control discards the preview and only the preview', async ({ page }) => {
@@ -314,7 +353,7 @@ test.describe('Adjustment tools', () => {
       // A 100px drag across an 800px document. The projection clamps to [0, 1], so the fill
       // covers the whole layer: black behind the start, white past the end. A drag as wide
       // as the document would hide exactly that, which is why it is short.
-      await dragAcrossDocument(page, box, { x: 400, y: 300 }, { x: 500, y: 300 });
+      await dragAcrossDocument(page, { x: 400, y: 300 }, { x: 500, y: 300 });
 
       await expect
         .poll(async () => (await sampleDocumentPoint(page, 700, 300))?.red ?? 0, {
@@ -339,11 +378,10 @@ test.describe('Adjustment tools', () => {
       await drawCornerToCornerStroke(page);
 
       await clickToolButton(page, 'gradient');
-      const box = await canvasBox(page);
       await page.locator('#gradient-color-b').fill('#ff0000');
       await expect(page.locator('#gradient-color-b')).toHaveValue('#ff0000');
 
-      await dragAcrossDocument(page, box, { x: 400, y: 300 }, { x: 500, y: 300 });
+      await dragAcrossDocument(page, { x: 400, y: 300 }, { x: 500, y: 300 });
 
       await expect
         .poll(

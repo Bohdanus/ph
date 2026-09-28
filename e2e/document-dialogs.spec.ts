@@ -83,9 +83,14 @@ test.describe('Document dialogs', () => {
       const width = page.getByTestId('new-image-width-input');
       const submit = page.getByTestId('new-image-dialog-submit-button');
 
-      // `NewImageDialog` performs no clamping of its own: `min`, `max` and `required` on
-      // the input are the whole of its validation, and only a browser enforces those. A
-      // jsdom test cannot see this, because jsdom does not implement form validation.
+      // The WIDTH FIELD clamps nothing itself: `min`, `max` and `required` on the input are
+      // the whole of its validation, and only a browser enforces those. The dialog does
+      // clamp elsewhere — the preset and DPI paths both go through
+      // `Math.min(10000, Math.max(1, w))` — but neither is on this path, which is why
+      // typing past the bound is refused rather than quietly capped. This has to be a
+      // browser test: jsdom exposes `validity`, so the property assertions here would pass
+      // under jsdom, but it does not BLOCK a form submit the way a browser does, and the
+      // refusal is the thing being pinned.
       await width.fill('0');
       await submit.click();
       await expect(page.getByTestId('new-image-dialog'), 'the dialog stays open').toBeVisible();

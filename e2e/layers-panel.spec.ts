@@ -107,33 +107,57 @@ test.describe('Layers panel', () => {
     await clickToolButton(page, 'draw');
     await setForegroundColor(page, '#000000', true);
     const drawBox = await canvasBox(page);
-    await drawLine(page, drawBox, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y);
-    await waitForCanvasPixels(page, canvasRedrawClip(drawBox), hasDarkPixels, { description: 'the stroke' });
+    // Two strokes 200px apart, on two layers. A single stroke on one layer would make the
+    // first half of this test unfalsifiable: erasing the layer that holds nothing changes no
+    // pixel, so "the pixels did not change" is also what "nothing happened at all" looks
+    // like. A second layer, and a history row to prove the gesture was processed, are what
+    // make the negative half mean something.
+    await drawLine(page, drawBox, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_START_Y);
+    const firstClip = canvasRedrawClip(drawBox);
+    await waitForCanvasPixels(page, firstClip, hasDarkPixels, { description: 'the first stroke' });
+    await drawLine(page, drawBox, LINE_START_X, LINE_START_Y + 200, LINE_END_X, LINE_START_Y + 200);
+    const secondClip = { ...firstClip, y: firstClip.y + 200 };
+    await waitForCanvasPixels(page, secondClip, hasDarkPixels, { description: 'the second stroke' });
+    // Every history row, not just the draw ones: an eraser commit is titled after the
+    // eraser, and the count is what says the gesture was processed at all.
+    const historyRows = page.getByTitle('Click to go back to this state');
+    await expect(historyRows, 'the document entry plus one per stroke').toHaveCount(3);
 
     // The eraser edits the ACTIVE layer in place, so it is the tool that makes
-    // `setActiveLayer` observable in pixels. The draw tool could not: it commits a new
-    // layer every time and never touches the one that was active. It is a secondary
-    // member of the brush group, so it comes out of the flyout.
+    // `setActiveLayer` observable. The draw tool could not: it commits a new layer every
+    // time and never touches the one that was active. It is a secondary member of the brush
+    // group, so it comes out of the flyout.
     await openToolFlyout(page, 'brush');
     await selectFromFlyout(page, { toolName: 'eraser', label: 'Eraser Tool' });
     // The eraser bar is a different height from the draw bar, so the canvas box moves.
     // Measuring it once and reusing it is the defect `e2e/OPEN_PROBLEMS.md` records.
     const eraserBox = await canvasBox(page);
-    const eraserClip = canvasRedrawClip(eraserBox);
+    const eraserFirst = canvasRedrawClip(eraserBox);
+    const eraserSecond = { ...eraserFirst, y: eraserFirst.y + 200 };
 
-    await activateRow(layerRow(page, 'Blank 1'));
-    await drawLine(page, eraserBox, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y, { steps: 20 });
+    await activateRow(layerRow(page, 'draw 2'));
+    await drawLine(page, eraserBox, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_START_Y, { steps: 20 });
+    // The history row is the observable that the erase was PROCESSED. Without it the pixel
+    // check below passes on its first poll, before the app has done anything, and the test
+    // is green whether or not `activateRow` worked.
+    await expect(historyRows, 'the erase committed an entry on the active layer').toHaveCount(4);
     await expect
-      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserClip })), {
-        message: 'the stroke is on the other layer, so erasing the active one must leave it alone',
+      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserSecond })), {
+        message: 'the second stroke is on the other layer, so erasing the active one must leave it alone',
       })
       .toBe(true);
 
-    await activateRow(layerRow(page, 'draw 2'));
-    await drawLine(page, eraserBox, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y, { steps: 20 });
-    await waitForCanvasPixels(page, eraserClip, hasNoDarkPixels, {
+    await activateRow(layerRow(page, 'draw 3'));
+    await drawLine(page, eraserBox, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_START_Y, { steps: 20 });
+    await expect(historyRows, 'and the second erase committed one too').toHaveCount(5);
+    await waitForCanvasPixels(page, eraserFirst, hasNoDarkPixels, {
       description: 'the erased stroke, on the layer that is active now',
     });
+    await expect
+      .poll(async () => hasDarkPixels(await page.screenshot({ clip: eraserSecond })), {
+        message: 'the other layer is untouched by both erases',
+      })
+      .toBe(true);
   });
 
   test('a layer name is edited in place, and Escape reverts the edit', async ({ page }) => {

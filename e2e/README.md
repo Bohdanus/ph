@@ -39,7 +39,7 @@ purpose:
 | Dialogs and the document      | `document-dialogs`, `select-move` (crop)                                                            |
 | Pixel-affecting tools         | `paint-tools`, `paint-options`, `pen-types`, `shape-tools`, `filter-tools`, `erase-fill-eyedropper` |
 | Selections                    | `selection-tools`, `select-move`                                                                    |
-| Shell and viewport            | `responsive-shell`, `mobile-shell`, `viewport-drawing`, `dpr-check`                                 |
+| Shell and viewport            | `responsive-shell`, `mobile-shell`, `viewport-drawing`, `check-dpr`                                 |
 
 `layers.spec.ts` and `layers-panel.spec.ts` overlap deliberately: the first is
 about the stack a tool sees, the second about the panel that edits it. Splitting

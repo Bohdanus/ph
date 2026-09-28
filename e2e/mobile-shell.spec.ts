@@ -2,10 +2,12 @@ import { expect, type Page, test } from '@playwright/test';
 import { drawLine, getWorkspaceCanvas } from './helpers/canvas-helpers';
 
 /**
- * The mobile shell replaces the desktop chrome below 768 CSS pixels, which
- * `MOBILE_MEDIA_QUERY` states as `(width < 768px)` so that the JS boundary and the one
- * Tailwind compiles are the same string. 390x844 is the reference phone size, well clear of
- * the boundary, so a test cannot drift into the tablet band by rounding.
+ * Below 768 CSS pixels the mobile chrome is shown and the desktop chrome is hidden —
+ * `MobileShell` stays MOUNTED at every width and is hidden with `md:hidden`, so nothing is
+ * torn down at the boundary. `MOBILE_MEDIA_QUERY` states that boundary as `(width < 768px)`
+ * so the JS check and the query Tailwind emits are the same string. 390x844 is the
+ * reference phone size, well clear of the boundary, so a test cannot drift into the tablet
+ * band by rounding.
  */
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -27,11 +29,14 @@ test.describe('Mobile shell', () => {
     await expect(mobileHeader(page)).toBeVisible();
   });
 
-  test('the canvas is still the canvas, and the footer still reports the document', async ({ page }) => {
+  test('the shell replaces the desktop chrome, and hides the footer with the rest of it', async ({ page }) => {
     // The shell's own contract: it renders no canvas of its own, so `Main` is still the one
-    // drawing and the document is still 800x600.
+    // drawing. The footer's dimensions readout is `max-md:hidden`, so a phone cannot see it
+    // — and asserting its text while it is `display: none` would pass on content no user
+    // can reach, which is why the assertion is that it is hidden.
+    await expect(getWorkspaceCanvas(page), 'the canvas is the desktop Main, still mounted').toBeVisible();
     await expect(bottomBar(page)).toBeVisible();
-    await expect(page.locator('footer')).toContainText('Dimensions: 800 × 600 px');
+    await expect(page.locator('footer'), 'the dimensions readout is desktop-only below md').toBeHidden();
   });
 
   test('the bottom bar selects a tool, and marks exactly the active group', async ({ page }) => {
@@ -63,9 +68,11 @@ test.describe('Mobile shell', () => {
     await bottomBar(page).getByRole('button', { name: 'Brush Tool' }).click();
     await toggle.click();
 
+    // The sheet's outer div is rendered whether or not the sheet is open — only its content
+    // is gated on `isOpen` — so `mobile-tool-sheet` being visible says nothing and is not
+    // asserted. The content is the assertion.
     const sheet = page.getByTestId('mobile-tool-sheet');
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(sheet).toBeVisible();
     // The bottom bar holds one tile per GROUP, so a five-member group is otherwise
     // unreachable on a phone. The sheet is the only place the other members exist.
     const picker = sheet.getByRole('group', { name: 'Brush tools' });
@@ -109,8 +116,10 @@ test.describe('Mobile shell', () => {
     await expect(root).toHaveClass(/\blight\b/);
     await page.getByTestId('mobile-menu-button').click();
     await page.getByTestId('mobile-menu-theme-button').click();
+    // The stored value first: it is the semantic signal and the one that survives a reload,
+    // while the class is the rendered consequence of it.
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('theme'))).toBe('dark');
     await expect(root).toHaveClass(/\bdark\b/);
-    await expect(page.evaluate(() => localStorage.getItem('theme'))).resolves.toBe('dark');
   });
 
   test('the layers drawer hides a layer, and the header badge counts the layers', async ({ page }) => {

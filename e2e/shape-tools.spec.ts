@@ -17,8 +17,12 @@ import { setForegroundColor } from './helpers/color-helpers';
 const THIN_THICKNESS = '4';
 const WIDE_THICKNESS = '40';
 
-/** 15x the authored ratio, with headroom: the tip is authored in document pixels and
- * measured in capture ones, so it also carries the canvas scale and the device pixel ratio. */
+/**
+ * The authored ratio is 40/4 = 10x. Three is asserted, which is a third of that: the tip is
+ * authored in document pixels and measured in capture ones, so the measurement also carries
+ * the canvas scale and the device pixel ratio, and the ratio is taken on the OUTER bounds of
+ * a stroke, where the round caps and the antialiasing add to both ends.
+ */
 const WIDE_TO_THIN_MIN_RATIO = 3;
 
 const BLUE = '#0000ff';
@@ -26,6 +30,13 @@ const STROKE_BLACK = '#000000';
 
 type Point = { x: number; y: number };
 type Rect = { from: Point; to: Point };
+
+/**
+ * The half-width of the square the sample window averages, in capture pixels. 3 is a 7x7
+ * average: wide enough to absorb a capture's resampling, narrow enough that a 20px shape
+ * stroke still has a solid interior in it.
+ */
+const SAMPLE_RADIUS = 3;
 
 const hasPaintedPixel: CanvasPixelPredicate = async (screenshot) => {
   const { width, height, data } = await loadImageData(screenshot);
@@ -38,9 +49,17 @@ const hasPaintedPixel: CanvasPixelPredicate = async (screenshot) => {
   return false;
 };
 
+/**
+ * The three helpers below — `canvasBox`, `documentClip`, `sampleDocumentPoint` — are
+ * deliberately local rather than added to `e2e/helpers/`: nothing in the shared module
+ * changes, so no existing spec's behaviour can move underneath a commit that is only
+ * adding coverage. `filter-tools.spec.ts` carries byte-identical copies; if one of them is
+ * promoted into the shared module, all three go together, because two same-named helpers
+ * that differ by a sampling radius is the trap this comment exists to prevent.
+ */
 async function canvasBox(page: Page): Promise<BoundingBox> {
   const box = await getWorkspaceCanvas(page).boundingBox();
-  if (!box) throw new Error('The workspace canvas has no box, so shapes cannot be placed');
+  if (!box) throw new Error('The workspace canvas has no box, so the gesture cannot be placed');
   return box;
 }
 
@@ -80,7 +99,7 @@ async function sampleDocumentPoint(
   const screenshot = await page.screenshot({
     clip: { x: box.x + offset.x - half, y: box.y + offset.y - half, width: half * 2 + 1, height: half * 2 + 1 },
   });
-  return getColorAtPoint(screenshot, half, half, 2);
+  return getColorAtPoint(screenshot, half, half, SAMPLE_RADIUS);
 }
 
 /** A drag given in document coordinates, performed at the box's own contain scale. */
