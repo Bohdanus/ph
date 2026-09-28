@@ -388,6 +388,34 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     await expect(page.getByRole('menu')).toBeHidden();
   });
 
+  test('crossing into mobile closes the flyout, which the rail hiding cannot do on its own', async ({ page }) => {
+    // Below `md` the rail is `display: none` rather than restyled, and the portal escapes
+    // that — so nothing about the menu's own placement stops it. Its anchor's box is zeroed
+    // by the hiding, which the clamp turns into the viewport's top-left corner, leaving a
+    // menu painted and clickable over a mobile shell with no tile under it.
+    await openToolFlyout(page, 'brush');
+    await expect(page.getByRole('menu')).toBeVisible();
+
+    await page.setViewportSize({ width: 600, height: 720 });
+
+    await expect(page.getByRole('menu')).toBeHidden();
+  });
+
+  test('Escape hands focus back to the tile that opened the menu', async ({ page }) => {
+    // The menu is portalled into `document.body`, so unmounting it takes the focused item
+    // with it. Measured without this, focus landed on `document.body` and the next Tab
+    // restarted at the document's first tabbable — 16 tab stops before the rail.
+    const brushButton = page.getByTestId('tool-button-brush');
+    await expect(brushButton).toBeVisible();
+    await longPressWithMouse(page, 'brush');
+    await expect(page.getByRole('menu')).toBeVisible();
+
+    await page.keyboard.press('Escape');
+
+    await expect(page.getByRole('menu')).toBeHidden();
+    await expect(brushButton).toBeFocused();
+  });
+
   test('a hovered tool tooltip is painted, not clipped by the rail', async ({ page }) => {
     const button = page.getByTestId('tool-button-brush');
     await expect(button).toBeVisible();

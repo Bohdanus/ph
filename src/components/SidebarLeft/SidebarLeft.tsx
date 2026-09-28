@@ -6,7 +6,7 @@ import ToolTooltip from './ToolTooltip.tsx';
 import { toolIcons } from './toolIcons.tsx';
 import { slugifyToolLabel, toolbarMap, type ToolbarTool, type ToolbarToolGroup } from '../../../toolbar-mapping.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
-import { useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
+import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
 
 const TOOL_BUTTON_BASE_CLASS =
   'group relative flex h-11 w-11 items-center justify-center rounded-md border text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 focus:ring-offset-gray-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:focus:ring-offset-gray-800';
@@ -39,6 +39,7 @@ const SidebarLeft = () => {
   // itself scrolls — which it now can, and which two columns mostly avoids.
   const [isSingleColumn, setIsSingleColumn] = useState(false);
   const isTablet = useIsTabletViewport();
+  const isMobile = useIsMobileViewport();
   const longPressFlyoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const suppressLongPressRef = useRef(false);
   const longPressOpenedRef = useRef(false);
@@ -56,18 +57,22 @@ const SidebarLeft = () => {
   // changed, which is what stops that from re-rendering forever.
   const [flyoutAnchor, setFlyoutAnchor] = useState<{ groupIndex: string; element: HTMLLIElement } | null>(null);
 
-  // The two layouts number the same groups differently — `two-column-3` above the tablet
-  // boundary, `0-2` below it — so a crossing leaves `openGroup` matching nothing and the
-  // flyout vanishes without having been closed. Crossing back matches the stale group again
-  // and the menu reopens by itself, with nothing the user did to open it.
+  // Both breakpoints are watched, not just the tablet one, because each renames the group
+  // keys. Below `md` the rail is `display: none` rather than restyled, and the portal escapes
+  // that, so a menu opened at desktop width stays painted and clickable at the top-left of a
+  // mobile shell with no tile under it. Above `md` but below `lg` the keys change from
+  // `two-column-N` to `N-M`, so a crossing leaves `openGroup` matching nothing and the flyout
+  // vanishes unclosed — then matches again on the way back and reopens by itself, with
+  // nothing the user did to open it.
   //
-  // Adjusted during render rather than in an effect, because this state is derived from a
-  // prop, which is what React's own guidance says to handle this way. `set-state-in-effect`
-  // rejects the effect form, and an effect would also leave a commit in which the stale
-  // group is still open.
-  const [lastIsTablet, setLastIsTablet] = useState(isTablet);
-  if (lastIsTablet !== isTablet) {
-    setLastIsTablet(isTablet);
+  // Adjusted during render rather than in an effect, because this state is derived from
+  // props, which is what React's own guidance says to handle this way. `set-state-in-effect`
+  // rejects the effect form, and an effect would also leave a commit in which the stale group
+  // is still open.
+  const railLayout = isMobile ? 'mobile' : isTablet ? 'tablet' : 'desktop';
+  const [lastRailLayout, setLastRailLayout] = useState(railLayout);
+  if (lastRailLayout !== railLayout) {
+    setLastRailLayout(railLayout);
     setOpenGroup(null);
     setFlyoutAnchor(null);
   }
@@ -118,10 +123,27 @@ const SidebarLeft = () => {
    * the two-column keys with the one-column ones, so the guard below can match a group
    * whose tile is detached, and the overlay would measure a detached box.
    */
-  const closeFlyout = useCallback(() => {
-    setOpenGroup(null);
-    setFlyoutAnchor(null);
-  }, []);
+  /**
+   * `restoreFocus` is for the closes a KEYBOARD performed, and only those. The menu lives in
+   * `document.body`, so unmounting it takes the focused element with it: measured in Chrome,
+   * Escape and Enter-select both dropped focus on `document.body` and Tab landed on the
+   * document's first tabbable, which is 16 tab stops before the rail. A menu pattern has to
+   * hand focus back to the button that opened it.
+   *
+   * It is deliberately not done on the closes a POINTER performed. An outside click or a
+   * click on the tile has already put focus where the user asked for it, and stealing it back
+   * to the tile would undo their click.
+   */
+  const closeFlyout = useCallback(
+    (restoreFocus = false) => {
+      if (restoreFocus) {
+        flyoutAnchor?.element.querySelector<HTMLButtonElement>('button')?.focus();
+      }
+      setOpenGroup(null);
+      setFlyoutAnchor(null);
+    },
+    [flyoutAnchor]
+  );
 
   const scheduleFlyoutOpen = (groupIndex: string) => {
     clearLongPressFlyout();
@@ -143,7 +165,7 @@ const SidebarLeft = () => {
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        closeFlyout();
+        closeFlyout(true);
       }
     };
 
@@ -324,7 +346,7 @@ const SidebarLeft = () => {
                 // what a `role="menu"` is supposed to do. Closing here stops the menu
                 // outliving the focus that opened it.
                 if (event.key === 'Tab') {
-                  closeFlyout();
+                  closeFlyout(true);
                   return;
                 }
 
@@ -368,7 +390,11 @@ const SidebarLeft = () => {
                       onClick={() => {
                         setPrimaryTools((current) => ({ ...current, [groupIndex]: tool }));
                         selectTool(tool);
-                        closeFlyout();
+                        // Enter on an item is the menu's primary action, and the unmount takes
+                        // the focused item with it, so focus is handed back to the tile that
+                        // still exists. This is the path that stranded a keyboard user furthest:
+                        // on `document.body`, 16 tab stops from the rail they were choosing from.
+                        closeFlyout(true);
                       }}
                       role="menuitemradio"
                       type="button"

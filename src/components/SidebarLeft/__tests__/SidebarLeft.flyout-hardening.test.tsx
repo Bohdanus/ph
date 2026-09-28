@@ -89,6 +89,10 @@ const DESKTOP_HEIGHT = 800;
 // The first width inside `TABLET_MEDIA_QUERY`, so the rail switches to its one-column
 // layout and every group key changes with it.
 const TABLET_WIDTH = 900;
+// The first width inside `MOBILE_MEDIA_QUERY`, where the rail is hidden outright rather than
+// restyled. Nothing about the menu's own placement changes, because it is portalled to the
+// body and the hiding is a class on the rail.
+const MOBILE_WIDTH = 600;
 
 /** A rail tile: the `<li>` a flyout is anchored to is 56px wide, as a real tile is. */
 const TILE_WIDTH = 56;
@@ -353,5 +357,84 @@ describe('SidebarLeft flyout hardening', () => {
       setViewportWidth(DESKTOP_WIDTH);
     });
     expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  /**
+   * Below `md` the rail is `display: none`, not restyled, and the portal escapes that — so
+   * nothing about the menu's own placement stops it. Measured in Chrome, a flyout opened at
+   * desktop width stayed painted and clickable at the top-left of the mobile shell with no
+   * tile under it, because the hidden tile's zeroed box clamped the menu into the corner.
+   * The tablet boundary above is a different failure with the same cause: there the menu
+   * vanishes and comes BACK. This one needs closing explicitly.
+   */
+  it('closes an open flyout when the rail is hidden by the mobile breakpoint', () => {
+    render(<SidebarLeft />);
+    openFlyout(toolbarButtonByName('brush'));
+    expect(menuByName('Brush Tool tools')).not.toBeNull();
+
+    act(() => {
+      setViewportWidth(MOBILE_WIDTH);
+    });
+
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it.each([
+    ['Escape', (_menu: HTMLElement) => fireEvent.keyDown(window, { key: 'Escape' })],
+    ['Tab', (menu: HTMLElement) => fireEvent.keyDown(menu, { key: 'Tab' })],
+  ])('hands focus back to the tile when %s closes the menu', (_label, close) => {
+    render(<SidebarLeft />);
+    const tile = toolbarButtonByName('brush');
+    openFlyout(tile);
+
+    const menu = screen.getByRole('menu');
+    screen.getAllByRole('menuitemradio')[0].focus();
+    act(() => {
+      close(menu);
+    });
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    // The menu is portalled into `document.body`, so unmounting it takes the focused item
+    // with it. Without this, focus lands on `document.body` and the next Tab restarts at the
+    // document's first tabbable — 16 tab stops before the rail the user was choosing from.
+    expect(tile).toHaveFocus();
+  });
+
+  it('hands focus back to the tile when an item is chosen, which is the path that stranded it furthest', () => {
+    render(<SidebarLeft />);
+    const tile = toolbarButtonByName('brush');
+    openFlyout(tile);
+
+    const pencil = screen.getByRole('menuitemradio', { name: 'Pencil Tool' });
+    act(() => {
+      pencil.focus();
+    });
+    act(() => {
+      fireEvent.click(pencil);
+    });
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(goToTool).toHaveBeenCalledWith('pencil');
+    expect(tile).toHaveFocus();
+  });
+
+  it('leaves focus alone when a pointer closes the menu, so the click target keeps it', () => {
+    render(<SidebarLeft />);
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    openFlyout(toolbarButtonByName('brush'));
+
+    act(() => {
+      outside.focus();
+      fireEvent.click(outside);
+    });
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    // Stealing focus back to the tile here would undo the click the user just made.
+    expect(outside).toHaveFocus();
+
+    act(() => {
+      outside.remove();
+    });
   });
 });
