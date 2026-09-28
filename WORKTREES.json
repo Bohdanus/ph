@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-28T20:10:43.075Z",
+  "generatedAt": "2026-09-28T20:17:59.376Z",
   "generator": "scripts/worktree-inventory.mjs",
   "base": "main",
-  "mainHead": "d8eec97e876f4b78affc12a0cd2ba7357261551c",
+  "mainHead": "69f42c5f438ff118808aa05b054b1e5eea4d5b1d",
   "chatWindowMs": 86400000,
   "dataSources": {
     "git": {
@@ -24,20 +24,20 @@
   },
   "totals": {
     "worktrees": 68,
-    "prunable": 3,
+    "prunable": 1,
     "salvage": 64,
-    "inUse": 1,
-    "holdingUncommittedWork": 23,
+    "inUse": 3,
+    "holdingUncommittedWork": 25,
     "withoutSummary": 2,
     "byStatus": {
-      "uncommitted-only": 16,
-      "unmerged-work": 48,
-      "landed": 4
+      "uncommitted-only": 18,
+      "unmerged-work": 47,
+      "landed": 3
     },
     "byRecommendation": {
       "salvage": 64,
-      "in-use": 1,
-      "prune": 3
+      "in-use": 3,
+      "prune": 1
     },
     "byChatState": {
       "finished": 64,
@@ -66,7 +66,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 58,
+      "behind": 64,
       "mergedIntoMain": true,
       "dirty": 1,
       "untracked": 0,
@@ -101,94 +101,15 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [
+          {
+            "agentId": "feat/agent-board",
+            "branch": "feat/agent-board",
+            "lastSeenMs": 1790607407708,
+            "live": false
+          }
+        ],
         "held": false
-      }
-    },
-    {
-      "name": "board-entrypoint",
-      "path": ".kilo/worktrees/board-entrypoint",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/board-entrypoint",
-      "branch": "fix/board-entrypoint",
-      "isPrimary": false,
-      "head": "4f3dec7bab58ee7a8041caf1d6a0a91ae768a8f3",
-      "detached": false,
-      "status": "uncommitted-only",
-      "recommendation": "salvage",
-      "prunable": false,
-      "riskScore": 90,
-      "statusReasons": [
-        "the branch reports 0 commits ahead of main and is an ancestor of it",
-        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
-        "git cannot distinguish this from a branch that landed and was then edited",
-        "work here is not reachable from any commit on this branch"
-      ],
-      "ahead": 0,
-      "behind": 8,
-      "mergedIntoMain": true,
-      "dirty": 3,
-      "untracked": 0,
-      "dirtyPaths": [
-        "scripts/__tests__/agent-board.test.mjs",
-        "scripts/agent-board.mjs",
-        "scripts/lib/agent-board/db.mjs"
-      ],
-      "lastCommit": {
-        "sha": "4f3dec7bab58ee7a8041caf1d6a0a91ae768a8f3",
-        "subject": "merge: fix(review) — close seven review findings and the eighth found while fixing them",
-        "date": "2026-09-28T21:49:12+02:00",
-        "author": "Bohdan"
-      },
-      "commitsAhead": [],
-      "commitsAheadTruncated": false,
-      "claimedLanded": true,
-      "summary": "A short-lived worktree on the board entrypoint fix, now merged: its branch is an ancestor of main and its working tree is clean.",
-      "summarySource": "curated",
-      "issues": [],
-      "inferredBoardIssues": [],
-      "note": null,
-      "liveNote": null,
-      "mustNotPrune": false,
-      "chats": {
-        "count": 0,
-        "chatIds": [],
-        "subagentCount": 0,
-        "byState": {},
-        "activeChatIds": [],
-        "unfinishedChatIds": [],
-        "lastActivity": null,
-        "unfinished": [],
-        "dead": []
-      },
-      "board": {
-        "claims": [
-          {
-            "issueId": "ph-58",
-            "agentId": "fix/board-entrypoint",
-            "branch": "fix/board-entrypoint",
-            "leaseUntil": "2026-09-28T20:41:32.693Z"
-          }
-        ],
-        "fileLocks": [
-          {
-            "path": "scripts/agent-board.mjs",
-            "agentId": "fix/board-entrypoint",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:41:32.692Z"
-          },
-          {
-            "path": "scripts/lib/agent-board/db.mjs",
-            "agentId": "fix/board-entrypoint",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:41:32.692Z"
-          },
-          {
-            "path": "scripts/__tests__/agent-board.test.mjs",
-            "agentId": "fix/board-entrypoint",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:41:32.692Z"
-          }
-        ],
-        "held": true
       }
     },
     {
@@ -205,7 +126,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 53,
+      "behind": 59,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -246,6 +167,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -268,7 +190,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 166,
+      "behind": 172,
       "mergedIntoMain": true,
       "dirty": 9,
       "untracked": 1,
@@ -314,6 +236,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -336,7 +259,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 166,
+      "behind": 172,
       "mergedIntoMain": true,
       "dirty": 15,
       "untracked": 1,
@@ -393,6 +316,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -415,7 +339,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 166,
+      "behind": 172,
       "mergedIntoMain": true,
       "dirty": 5,
       "untracked": 1,
@@ -457,6 +381,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -479,7 +404,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 166,
+      "behind": 172,
       "mergedIntoMain": true,
       "dirty": 15,
       "untracked": 1,
@@ -531,6 +456,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -553,7 +479,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 166,
+      "behind": 172,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 3,
@@ -593,6 +519,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -610,7 +537,7 @@
       "riskScore": 90,
       "statusReasons": ["45 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 45,
-      "behind": 8,
+      "behind": 14,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -746,6 +673,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -763,7 +691,7 @@
       "riskScore": 90,
       "statusReasons": ["24 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 24,
-      "behind": 99,
+      "behind": 105,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -899,6 +827,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -916,7 +845,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 106,
+      "behind": 112,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -957,6 +886,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -974,7 +904,7 @@
       "riskScore": 90,
       "statusReasons": ["2 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 2,
-      "behind": 106,
+      "behind": 112,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1020,6 +950,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1037,7 +968,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 106,
+      "behind": 112,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1078,6 +1009,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1095,7 +1027,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 101,
+      "behind": 107,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1136,6 +1068,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1153,7 +1086,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 106,
+      "behind": 112,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1194,6 +1127,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1211,7 +1145,7 @@
       "riskScore": 90,
       "statusReasons": ["2 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 2,
-      "behind": 106,
+      "behind": 112,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1257,6 +1191,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1274,7 +1209,7 @@
       "riskScore": 90,
       "statusReasons": ["2 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 2,
-      "behind": 106,
+      "behind": 112,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1320,6 +1255,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1337,7 +1273,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 106,
+      "behind": 112,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1378,6 +1314,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1395,7 +1332,7 @@
       "riskScore": 90,
       "statusReasons": ["2 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 2,
-      "behind": 106,
+      "behind": 112,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1441,6 +1378,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1458,7 +1396,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 106,
+      "behind": 112,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1499,6 +1437,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1516,7 +1455,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 96,
+      "behind": 102,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1562,6 +1501,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1579,7 +1519,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 96,
+      "behind": 102,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1629,6 +1569,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1646,7 +1587,7 @@
       "riskScore": 90,
       "statusReasons": ["3 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 3,
-      "behind": 96,
+      "behind": 102,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1697,6 +1638,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1714,7 +1656,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 39,
+      "behind": 45,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1760,6 +1702,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1777,7 +1720,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 264,
+      "behind": 270,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1823,6 +1766,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1840,7 +1784,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 264,
+      "behind": 270,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1890,6 +1834,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1907,7 +1852,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 96,
+      "behind": 102,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1948,6 +1893,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -1970,7 +1916,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 85,
+      "behind": 91,
       "mergedIntoMain": true,
       "dirty": 5,
       "untracked": 0,
@@ -2016,6 +1962,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -2037,7 +1984,7 @@
         "commits here are not on main"
       ],
       "ahead": 22,
-      "behind": 53,
+      "behind": 59,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 1,
@@ -2178,6 +2125,14 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [
+          {
+            "agentId": "fix/oracle-axes",
+            "branch": "fix/oracle-axes",
+            "lastSeenMs": 1790613413791,
+            "live": false
+          }
+        ],
         "held": false
       }
     },
@@ -2195,7 +2150,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 62,
+      "behind": 68,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2245,6 +2200,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -2262,7 +2218,7 @@
       "riskScore": 90,
       "statusReasons": ["2 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 2,
-      "behind": 96,
+      "behind": 102,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2313,6 +2269,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -2330,7 +2287,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 264,
+      "behind": 270,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2376,6 +2333,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -2393,7 +2351,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 96,
+      "behind": 102,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2439,6 +2397,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -2456,7 +2415,7 @@
       "riskScore": 90,
       "statusReasons": ["4 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 4,
-      "behind": 53,
+      "behind": 59,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2521,6 +2480,14 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [
+          {
+            "agentId": "fix/spray-then-color-replacement",
+            "branch": "fix/spray-then-color-replacement",
+            "lastSeenMs": 1790609701101,
+            "live": false
+          }
+        ],
         "held": false
       }
     },
@@ -2538,7 +2505,7 @@
       "riskScore": 90,
       "statusReasons": ["2 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 2,
-      "behind": 246,
+      "behind": 252,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2597,6 +2564,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -2614,7 +2582,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 264,
+      "behind": 270,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2664,6 +2632,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -2681,7 +2650,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 264,
+      "behind": 270,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2731,6 +2700,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -2748,7 +2718,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 62,
+      "behind": 68,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2794,6 +2764,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -2811,7 +2782,7 @@
       "riskScore": 90,
       "statusReasons": ["2 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 2,
-      "behind": 53,
+      "behind": 59,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2862,6 +2833,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -2884,7 +2856,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 100,
+      "behind": 106,
       "mergedIntoMain": true,
       "dirty": 3,
       "untracked": 0,
@@ -2919,6 +2891,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -2936,7 +2909,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 234,
+      "behind": 240,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2979,6 +2952,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -3000,7 +2974,7 @@
         "commits here are not on main"
       ],
       "ahead": 1,
-      "behind": 234,
+      "behind": 240,
       "mergedIntoMain": false,
       "dirty": 1,
       "untracked": 0,
@@ -3048,6 +3022,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -3069,7 +3044,7 @@
         "commits here are not on main"
       ],
       "ahead": 1,
-      "behind": 234,
+      "behind": 240,
       "mergedIntoMain": false,
       "dirty": 1,
       "untracked": 0,
@@ -3117,6 +3092,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -3138,7 +3114,7 @@
         "commits here are not on main"
       ],
       "ahead": 1,
-      "behind": 234,
+      "behind": 240,
       "mergedIntoMain": false,
       "dirty": 1,
       "untracked": 0,
@@ -3190,7 +3166,7 @@
             "id": "ses_f1b3877baffeulCrn1qWWgBo2p",
             "title": "Review selection baseline history replay fix",
             "state": "abandoned-midflight",
-            "idleMs": 81110698,
+            "idleMs": 81546999,
             "reasons": ["idle for 23h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 3,
             "creditsFailures": 0,
@@ -3202,6 +3178,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -3223,7 +3200,7 @@
         "commits here are not on main"
       ],
       "ahead": 1,
-      "behind": 234,
+      "behind": 240,
       "mergedIntoMain": false,
       "dirty": 3,
       "untracked": 0,
@@ -3279,6 +3256,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -3301,7 +3279,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 234,
+      "behind": 240,
       "mergedIntoMain": true,
       "dirty": 12,
       "untracked": 2,
@@ -3353,6 +3331,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -3375,7 +3354,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 234,
+      "behind": 240,
       "mergedIntoMain": true,
       "dirty": 10,
       "untracked": 1,
@@ -3424,6 +3403,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -3446,7 +3426,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 234,
+      "behind": 240,
       "mergedIntoMain": true,
       "dirty": 14,
       "untracked": 2,
@@ -3500,6 +3480,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -3517,7 +3498,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 255,
+      "behind": 261,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3563,6 +3544,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -3585,7 +3567,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 166,
+      "behind": 172,
       "mergedIntoMain": true,
       "dirty": 12,
       "untracked": 5,
@@ -3638,6 +3620,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -3655,7 +3638,7 @@
       "riskScore": 90,
       "statusReasons": ["4 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 4,
-      "behind": 165,
+      "behind": 171,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3716,6 +3699,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -3733,7 +3717,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 62,
+      "behind": 68,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3781,6 +3765,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -3798,7 +3783,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 62,
+      "behind": 68,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3846,6 +3831,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -3863,7 +3849,7 @@
       "riskScore": 90,
       "statusReasons": ["3 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 3,
-      "behind": 245,
+      "behind": 251,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3919,6 +3905,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -3941,7 +3928,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 166,
+      "behind": 172,
       "mergedIntoMain": true,
       "dirty": 2,
       "untracked": 25,
@@ -4019,6 +4006,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -4036,7 +4024,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 255,
+      "behind": 261,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4082,6 +4070,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -4099,7 +4088,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 111,
+      "behind": 117,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4145,6 +4134,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -4166,7 +4156,7 @@
         "commits here are not on main"
       ],
       "ahead": 1,
-      "behind": 165,
+      "behind": 171,
       "mergedIntoMain": false,
       "dirty": 36,
       "untracked": 13,
@@ -4268,6 +4258,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -4285,7 +4276,7 @@
       "riskScore": 90,
       "statusReasons": ["1 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 1,
-      "behind": 255,
+      "behind": 261,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4331,6 +4322,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -4348,7 +4340,7 @@
       "riskScore": 90,
       "statusReasons": ["20 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 20,
-      "behind": 53,
+      "behind": 59,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4484,6 +4476,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -4501,7 +4494,7 @@
       "riskScore": 90,
       "statusReasons": ["15 commit(s) ahead of main", "commits here are not on main"],
       "ahead": 15,
-      "behind": 62,
+      "behind": 68,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4617,6 +4610,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -4639,7 +4633,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 166,
+      "behind": 172,
       "mergedIntoMain": true,
       "dirty": 8,
       "untracked": 6,
@@ -4689,6 +4683,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -4711,7 +4706,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 33,
+      "behind": 39,
       "mergedIntoMain": true,
       "dirty": 1,
       "untracked": 0,
@@ -4746,518 +4741,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
-        "held": false
-      }
-    },
-    {
-      "name": "worktree-inventory",
-      "path": ".kilo/worktrees/worktree-inventory",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/worktree-inventory",
-      "branch": "chore/worktree-inventory",
-      "isPrimary": false,
-      "head": "55b52d46a56878a60aef357d8effc8a5d930d929",
-      "detached": false,
-      "status": "unmerged-work",
-      "recommendation": "salvage",
-      "prunable": false,
-      "riskScore": 90,
-      "statusReasons": [
-        "4 commit(s) ahead of main",
-        "the working tree holds uncommitted changes",
-        "commits here are not on main"
-      ],
-      "ahead": 4,
-      "behind": 1,
-      "mergedIntoMain": false,
-      "dirty": 1,
-      "untracked": 0,
-      "dirtyPaths": ["scripts/lib/worktree-inventory/curated.mjs"],
-      "lastCommit": {
-        "sha": "55b52d46a56878a60aef357d8effc8a5d930d929",
-        "subject": "Merge branch 'main' into chore/worktree-inventory",
-        "date": "2026-09-28T22:07:13+02:00",
-        "author": "Bohdan"
-      },
-      "commitsAhead": [
-        {
-          "sha": "55b52d4",
-          "subject": "Merge branch 'main' into chore/worktree-inventory",
-          "date": "2026-09-28T22:07:13+02:00"
-        },
-        {
-          "sha": "9969fcf",
-          "subject": "chore: refresh WORKTREES.json after merging main",
-          "date": "2026-09-28T22:06:37+02:00"
-        },
-        {
-          "sha": "b760234",
-          "subject": "Merge branch 'main' into chore/worktree-inventory",
-          "date": "2026-09-28T22:04:28+02:00"
-        },
-        {
-          "sha": "b6453a9",
-          "subject": "feat(scripts): inventory every worktree, its chats, and what would be lost",
-          "date": "2026-09-28T22:04:16+02:00"
-        }
-      ],
-      "commitsAheadTruncated": false,
-      "claimedLanded": null,
-      "summary": null,
-      "summarySource": "none",
-      "issues": [],
-      "inferredBoardIssues": [
-        {
-          "id": "ph-56",
-          "title": "Worktree inventory: committed WORKTREES.json + generator + AGENTS.md protocol scripts/worktree-inventory.mjs scripts/lib/worktree-inventory/ AGENTS.md",
-          "status": "open",
-          "inferred": true
-        }
-      ],
-      "note": null,
-      "liveNote": null,
-      "mustNotPrune": false,
-      "chats": {
-        "count": 0,
-        "chatIds": [],
-        "subagentCount": 0,
-        "byState": {},
-        "activeChatIds": [],
-        "unfinishedChatIds": [],
-        "lastActivity": null,
-        "unfinished": [],
-        "dead": []
-      },
-      "board": {
-        "claims": [],
-        "fileLocks": [],
-        "held": false
-      }
-    },
-    {
-      "name": "ph",
-      "path": ".",
-      "absolutePath": "/Users/bkalynovskyi/ph",
-      "branch": "main",
-      "isPrimary": true,
-      "head": "d8eec97e876f4b78affc12a0cd2ba7357261551c",
-      "detached": false,
-      "status": "landed",
-      "recommendation": "in-use",
-      "prunable": false,
-      "riskScore": 70,
-      "statusReasons": ["this is the main worktree", "the main worktree is never a deletion candidate"],
-      "ahead": 0,
-      "behind": 0,
-      "mergedIntoMain": true,
-      "dirty": 0,
-      "untracked": 0,
-      "dirtyPaths": [],
-      "lastCommit": {
-        "sha": "d8eec97e876f4b78affc12a0cd2ba7357261551c",
-        "subject": "docs: the toolbar is a Photoshop clone — hard requirement",
-        "date": "2026-09-28T22:07:54+02:00",
-        "author": "Bohdan"
-      },
-      "commitsAhead": [],
-      "commitsAheadTruncated": false,
-      "claimedLanded": null,
-      "summary": null,
-      "summarySource": "none",
-      "issues": [],
-      "inferredBoardIssues": [
-        {
-          "id": "ph-48",
-          "title": "P3 — 10 orphaned committed baselines (2.1 MB)",
-          "status": "open",
-          "inferred": true
-        },
-        {
-          "id": "ph-55",
-          "title": "SidebarLeft flyout: main is FIXED and GREEN; the e2e 'regression' is a cold dev server, not the flyout",
-          "status": "open",
-          "inferred": true
-        },
-        {
-          "id": "ph-56",
-          "title": "Worktree inventory: committed WORKTREES.json + generator + AGENTS.md protocol scripts/worktree-inventory.mjs scripts/lib/worktree-inventory/ AGENTS.md",
-          "status": "open",
-          "inferred": true
-        },
-        {
-          "id": "ph-57",
-          "title": "Land the e2e campaign: resolve main's 4 conflicts in-branch, re-gate, merge to main",
-          "status": "claimed",
-          "inferred": true
-        }
-      ],
-      "note": null,
-      "liveNote": null,
-      "mustNotPrune": false,
-      "chats": {
-        "count": 59,
-        "chatIds": [
-          "ses_f1703646effe9LHAl5QgqHkEbj",
-          "ses_f1717029bffeO2Tgiso7XjVWvz",
-          "ses_f1678e1ecffeE6PmxFG4SH1MGO",
-          "ses_f1692fbb5ffe48aRfBKFyv739e",
-          "ses_f167d43ebffenKG4aRh8qnMKN5",
-          "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
-          "ses_f1871204bffeRe2NIbxXCnD0pm",
-          "ses_f16a47026ffe4E7yDrTCIlcxiX",
-          "ses_f186d820cffemRcv5u3Ujt0loP",
-          "ses_f17003e8fffeTmqmKJJ8HdjxLR",
-          "ses_f16a16804ffeyKdmJvqkcycAPP",
-          "ses_f16a15fa5ffe1PwuLhjqzgIKJC",
-          "ses_f16a16e21ffegLu8CGxV0xLEWB",
-          "ses_f1701a523ffesHL1bcorTrl1aK",
-          "ses_f1763fd78ffexVHsrYlKSNjHER",
-          "ses_f17911ee2ffeO8dSeE8cd1tMkZ",
-          "ses_f176830acffeGHUHk4zTvjuZpS",
-          "ses_f17c5b574ffezknC6ZFbsJ0sn2",
-          "ses_f179166a9ffeXZ67RuGHySxSd4",
-          "ses_f19255ffeffeoIHsBg83P5Ad2d",
-          "ses_f17ab7224ffeiL2s4m0SMavPvT",
-          "ses_f174eec52ffedigagDe7uAkRob",
-          "ses_f1758cc6bffeKMl2aVqf4HIWW2",
-          "ses_f17814e67ffeOru2rhgVgAb9a5",
-          "ses_f17706177ffeyNZDwR7gDyRRop",
-          "ses_f190b8410ffeL5LtNDypEnN4ta",
-          "ses_f19198b50ffeOEneL9LZDKmx3A",
-          "ses_f19079bddffeznUGVtqL6E25sn",
-          "ses_f19083a9cffeb60hHd1mbZe53L",
-          "ses_f1907b5aeffeY64jTbPUwGBxtW",
-          "ses_f19131b3bffewHIkf9etTBcDJj",
-          "ses_f17a1a002ffeZZ5ThA6HyJxSMX",
-          "ses_f183c1278ffeKasYccZfSRd2rk",
-          "ses_f17c4f7e2ffevV44uEqAYErWgv",
-          "ses_f17a83a74ffe3W1hKpk48bi0Vc",
-          "ses_f17cfd36bffeCpk9Ac0xqKkHgu",
-          "ses_f181a116cffetjn4phXC6usX2P",
-          "ses_f1809d5d8ffenV0KDFd0mtp088",
-          "ses_f18cb10c7ffeQyGIipjfTQJifF",
-          "ses_f180b0fd5ffeog2iFzrH7W0g8P",
-          "ses_f184d1a91ffewITcJ0CsWRg6oj",
-          "ses_f183ab42cffeVdFwk5GNadKyhe",
-          "ses_f1836b1c9ffe7WvTOINtNpqYXL",
-          "ses_f192bace7ffey3pRuSit8WG2aA",
-          "ses_f18832af5ffeXbCemD94rM0jHP",
-          "ses_f188e4a9cffeInu3BgEOVA4f8p",
-          "ses_f18bd914effecDrg4iZUmzqjN2",
-          "ses_f18b4ae0fffe01UhHJ4cy2Az2k",
-          "ses_f18c693bcffeOzoS0QNborLXQe",
-          "ses_f18e2e39dffeoIi55hnGDXAbrq",
-          "ses_f18fda674ffeWTznmY4gmRESfm",
-          "ses_f1911d712ffeAjEIDP1DVNq5iH",
-          "ses_f192ff346ffem0cOIKSfCureoH",
-          "ses_f1933fccdffegKI6LRlw40mieK",
-          "ses_f1b1bccb8ffezV30btswKOivND",
-          "ses_f19365ab4ffefSJC5XwcDdHYDB",
-          "ses_f193e8052ffeVVaAGYQ2JynBym",
-          "ses_f1ba92bedffeb9De69jCNMC00Q",
-          "ses_f1befb6fbffegECpPfEV29dU3m"
-        ],
-        "subagentCount": 0,
-        "byState": {
-          "active": 7,
-          "finished": 47,
-          "abandoned-midflight": 4,
-          "blocked": 1
-        },
-        "activeChatIds": [
-          "ses_f1703646effe9LHAl5QgqHkEbj",
-          "ses_f1717029bffeO2Tgiso7XjVWvz",
-          "ses_f1678e1ecffeE6PmxFG4SH1MGO",
-          "ses_f1692fbb5ffe48aRfBKFyv739e",
-          "ses_f167d43ebffenKG4aRh8qnMKN5",
-          "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
-          "ses_f1871204bffeRe2NIbxXCnD0pm"
-        ],
-        "unfinishedChatIds": [
-          "ses_f1703646effe9LHAl5QgqHkEbj",
-          "ses_f1717029bffeO2Tgiso7XjVWvz",
-          "ses_f1678e1ecffeE6PmxFG4SH1MGO",
-          "ses_f1692fbb5ffe48aRfBKFyv739e",
-          "ses_f167d43ebffenKG4aRh8qnMKN5",
-          "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
-          "ses_f1871204bffeRe2NIbxXCnD0pm",
-          "ses_f174eec52ffedigagDe7uAkRob",
-          "ses_f18cb10c7ffeQyGIipjfTQJifF",
-          "ses_f183ab42cffeVdFwk5GNadKyhe",
-          "ses_f19365ab4ffefSJC5XwcDdHYDB",
-          "ses_f1ba92bedffeb9De69jCNMC00Q"
-        ],
-        "lastActivity": 1790626233796,
-        "unfinished": [
-          {
-            "id": "ses_f1703646effe9LHAl5QgqHkEbj",
-            "title": "Increasing e2e test coverage",
-            "state": "active",
-            "idleMs": 9279,
-            "reasons": ["last message 0m ago"],
-            "toolErrors": 3,
-            "creditsFailures": 1,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f1717029bffeO2Tgiso7XjVWvz",
-            "title": "Worktree inventory JSON and agents.md update",
-            "state": "active",
-            "idleMs": 12722,
-            "reasons": ["last message 0m ago"],
-            "toolErrors": 9,
-            "creditsFailures": 15,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f1678e1ecffeE6PmxFG4SH1MGO",
-            "title": "Fix board service and launch as daemon",
-            "state": "active",
-            "idleMs": 71505,
-            "reasons": ["last message 1m ago"],
-            "toolErrors": 0,
-            "creditsFailures": 1,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f1692fbb5ffe48aRfBKFyv739e",
-            "title": "Recent tool description audit",
-            "state": "active",
-            "idleMs": 125564,
-            "reasons": ["last message 2m ago"],
-            "toolErrors": 0,
-            "creditsFailures": 1,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f167d43ebffenKG4aRh8qnMKN5",
-            "title": "E2E orchestrator continuation next steps",
-            "state": "active",
-            "idleMs": 167205,
-            "reasons": ["last message 3m ago"],
-            "toolErrors": 5,
-            "creditsFailures": 0,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
-            "title": "Clean and merge stale worktrees into main",
-            "state": "active",
-            "idleMs": 441884,
-            "reasons": ["last message 7m ago"],
-            "toolErrors": 1,
-            "creditsFailures": 1,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f1871204bffeRe2NIbxXCnD0pm",
-            "title": "Fix handoff doc issues and merge to main",
-            "state": "active",
-            "idleMs": 1178826,
-            "reasons": ["last message 20m ago"],
-            "toolErrors": 2,
-            "creditsFailures": 3,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f174eec52ffedigagDe7uAkRob",
-            "title": "-- del --",
-            "state": "abandoned-midflight",
-            "idleMs": 14762342,
-            "reasons": ["idle for 4h and the last turn ended on \"tool-calls\", not a completed stop"],
-            "toolErrors": 2,
-            "creditsFailures": 0,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f18cb10c7ffeQyGIipjfTQJifF",
-            "title": "-- e2e orchestrator",
-            "state": "abandoned-midflight",
-            "idleMs": 23679294,
-            "reasons": ["idle for 7h and the last turn ended on \"tool-calls\", not a completed stop"],
-            "toolErrors": 7,
-            "creditsFailures": 0,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f183ab42cffeVdFwk5GNadKyhe",
-            "title": "-- PNG todo --",
-            "state": "abandoned-midflight",
-            "idleMs": 30949442,
-            "reasons": ["idle for 9h and the last turn ended on \"tool-calls\", not a completed stop"],
-            "toolErrors": 2,
-            "creditsFailures": 1,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f19365ab4ffefSJC5XwcDdHYDB",
-            "title": "New session - 2026-09-28T06:52:49.867Z",
-            "state": "abandoned-midflight",
-            "idleMs": 47289572,
-            "reasons": ["idle for 13h and the last turn ended on \"tool-calls\", not a completed stop"],
-            "toolErrors": 4,
-            "creditsFailures": 0,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f1ba92bedffeb9De69jCNMC00Q",
-            "title": "$$$ History migration architecture and planning $$$",
-            "state": "blocked",
-            "idleMs": 73892831,
-            "reasons": [
-              "last turn completed 21h ago and nothing has happened since",
-              "an agent_manager call reported a managed session waiting for input"
-            ],
-            "toolErrors": 8,
-            "creditsFailures": 0,
-            "blockedOn": "que_0e4b3e885001PBylIpsTKfV71Q"
-          }
-        ],
-        "dead": []
-      },
-      "board": {
-        "claims": [
-          {
-            "issueId": "ph-57",
-            "agentId": "integration/e2e-campaign-final",
-            "branch": "main",
-            "leaseUntil": "2026-09-28T20:39:40.672Z"
-          }
-        ],
-        "fileLocks": [
-          {
-            "path": "TEST-FLAKES.md",
-            "agentId": "integration/e2e-campaign-final",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:39:00.975Z"
-          },
-          {
-            "path": "e2e/helpers/toolbar-helpers.ts",
-            "agentId": "integration/e2e-campaign-final",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:39:00.976Z"
-          },
-          {
-            "path": "e2e/helpers/__tests__/toolbar-helpers.unit.test.ts",
-            "agentId": "integration/e2e-campaign-final",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:39:00.976Z"
-          },
-          {
-            "path": "scripts/__tests__/handoff-import.test.mjs",
-            "agentId": "integration/e2e-campaign-final",
-            "issueId": null,
-            "expiresAt": "2026-09-28T20:39:00.976Z"
-          }
-        ],
-        "held": true
-      }
-    },
-    {
-      "name": "e2e-coverage-2",
-      "path": ".kilo/worktrees/e2e-coverage-2",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-coverage-2",
-      "branch": "e2e/coverage-2",
-      "isPrimary": false,
-      "head": "13f44a1f78807e4c3e26d792680d99934cd76ec9",
-      "detached": false,
-      "status": "landed",
-      "recommendation": "prune",
-      "prunable": true,
-      "riskScore": 10,
-      "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
-      "ahead": 0,
-      "behind": 1,
-      "mergedIntoMain": true,
-      "dirty": 0,
-      "untracked": 0,
-      "dirtyPaths": [],
-      "lastCommit": {
-        "sha": "13f44a1f78807e4c3e26d792680d99934cd76ec9",
-        "subject": "merge: main, and re-derive the two citations main moved",
-        "date": "2026-09-28T22:04:22+02:00",
-        "author": "Bohdan"
-      },
-      "commitsAhead": [],
-      "commitsAheadTruncated": false,
-      "claimedLanded": null,
-      "summary": "Broad e2e coverage tranche spanning keyboard, layers, history, dialogs, adjustments, shapes and the mobile shell, plus corrections to two false explanations in a toolbar test.",
-      "summarySource": "curated",
-      "issues": [],
-      "inferredBoardIssues": [],
-      "note": null,
-      "liveNote": null,
-      "mustNotPrune": false,
-      "chats": {
-        "count": 0,
-        "chatIds": [],
-        "subagentCount": 0,
-        "byState": {},
-        "activeChatIds": [],
-        "unfinishedChatIds": [],
-        "lastActivity": null,
-        "unfinished": [],
-        "dead": []
-      },
-      "board": {
-        "claims": [],
-        "fileLocks": [],
-        "held": false
-      }
-    },
-    {
-      "name": "handoff-citation-rotation",
-      "path": ".kilo/worktrees/handoff-citation-rotation",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/handoff-citation-rotation",
-      "branch": "docs/handoff-citation-rotation",
-      "isPrimary": false,
-      "head": "1fbdbf5d0a2f8c9f01b36f69208182637a48d897",
-      "detached": false,
-      "status": "landed",
-      "recommendation": "prune",
-      "prunable": true,
-      "riskScore": 10,
-      "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
-      "ahead": 0,
-      "behind": 18,
-      "mergedIntoMain": true,
-      "dirty": 0,
-      "untracked": 0,
-      "dirtyPaths": [],
-      "lastCommit": {
-        "sha": "1fbdbf5d0a2f8c9f01b36f69208182637a48d897",
-        "subject": "docs(handoff): correct one false §1 claim and record two surviving bad citations",
-        "date": "2026-09-28T21:26:18+02:00",
-        "author": "Bohdan"
-      },
-      "commitsAhead": [],
-      "commitsAheadTruncated": false,
-      "claimedLanded": null,
-      "summary": "Rotates the line-numbered citations in the handoff documents after they were invalidated by file growth, and corrects one false claim in section 1.",
-      "summarySource": "curated",
-      "issues": [
-        {
-          "ref": "HANDOFF.md#worktree-hygiene",
-          "title": "growing a file silently invalidates every file.ts:NNN below it"
-        }
-      ],
-      "inferredBoardIssues": [],
-      "note": null,
-      "liveNote": null,
-      "mustNotPrune": false,
-      "chats": {
-        "count": 0,
-        "chatIds": [],
-        "subagentCount": 0,
-        "byState": {},
-        "activeChatIds": [],
-        "unfinishedChatIds": [],
-        "lastActivity": null,
-        "unfinished": [],
-        "dead": []
-      },
-      "board": {
-        "claims": [],
-        "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
@@ -5269,17 +4753,37 @@
       "isPrimary": false,
       "head": "13f44a1f78807e4c3e26d792680d99934cd76ec9",
       "detached": false,
-      "status": "landed",
-      "recommendation": "prune",
-      "prunable": true,
-      "riskScore": 10,
-      "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
+      "status": "uncommitted-only",
+      "recommendation": "salvage",
+      "prunable": false,
+      "riskScore": 90,
+      "statusReasons": [
+        "the branch reports 0 commits ahead of main and is an ancestor of it",
+        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
+        "git cannot distinguish this from a branch that landed and was then edited",
+        "work here is not reachable from any commit on this branch"
+      ],
       "ahead": 0,
-      "behind": 1,
+      "behind": 7,
       "mergedIntoMain": true,
-      "dirty": 0,
+      "dirty": 14,
       "untracked": 0,
-      "dirtyPaths": [],
+      "dirtyPaths": [
+        "src/tools/descriptions/eyedropper-draw.notes.md",
+        "src/tools/descriptions/eyedropper-draw.ts",
+        "src/tools/descriptions/focus.notes.md",
+        "src/tools/descriptions/focus.ts",
+        "src/tools/descriptions/paint.notes.md",
+        "src/tools/descriptions/paint.ts",
+        "src/tools/descriptions/pen.ts",
+        "src/tools/descriptions/selection.notes.md",
+        "src/tools/descriptions/selection.ts",
+        "src/tools/descriptions/shape.ts",
+        "src/tools/descriptions/transform.notes.md",
+        "src/tools/descriptions/transform.ts",
+        "src/tools/descriptions/type-crop.notes.md",
+        "src/tools/descriptions/type-crop.ts"
+      ],
       "lastCommit": {
         "sha": "13f44a1f78807e4c3e26d792680d99934cd76ec9",
         "subject": "merge: main, and re-derive the two citations main moved",
@@ -5365,7 +4869,647 @@
             "expiresAt": "2026-09-28T20:55:15.126Z"
           }
         ],
+        "agents": [],
         "held": true
+      }
+    },
+    {
+      "name": "worktree-inventory",
+      "path": ".kilo/worktrees/worktree-inventory",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/worktree-inventory",
+      "branch": "chore/worktree-inventory",
+      "isPrimary": false,
+      "head": "69f42c5f438ff118808aa05b054b1e5eea4d5b1d",
+      "detached": false,
+      "status": "uncommitted-only",
+      "recommendation": "salvage",
+      "prunable": false,
+      "riskScore": 90,
+      "statusReasons": [
+        "the branch reports 0 commits ahead of main and is an ancestor of it",
+        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
+        "git cannot distinguish this from a branch that landed and was then edited",
+        "work here is not reachable from any commit on this branch"
+      ],
+      "ahead": 0,
+      "behind": 0,
+      "mergedIntoMain": true,
+      "dirty": 5,
+      "untracked": 0,
+      "dirtyPaths": [
+        "AGENTS.md",
+        "scripts/__tests__/worktree-inventory.test.mjs",
+        "scripts/lib/worktree-inventory/assemble.mjs",
+        "scripts/lib/worktree-inventory/board.mjs",
+        "scripts/lib/worktree-inventory/classify.mjs"
+      ],
+      "lastCommit": {
+        "sha": "69f42c5f438ff118808aa05b054b1e5eea4d5b1d",
+        "subject": "Merge branch 'main' into chore/worktree-inventory",
+        "date": "2026-09-28T22:12:11+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": null,
+      "summarySource": "none",
+      "issues": [],
+      "inferredBoardIssues": [
+        {
+          "id": "ph-56",
+          "title": "Worktree inventory: committed WORKTREES.json + generator + AGENTS.md protocol scripts/worktree-inventory.mjs scripts/lib/worktree-inventory/ AGENTS.md",
+          "status": "open",
+          "inferred": true
+        }
+      ],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [],
+        "agents": [
+          {
+            "agentId": "chore/worktree-inventory",
+            "branch": "chore/worktree-inventory",
+            "lastSeenMs": 1790614059708,
+            "live": false
+          }
+        ],
+        "held": false
+      }
+    },
+    {
+      "name": "board-entrypoint",
+      "path": ".kilo/worktrees/board-entrypoint",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/board-entrypoint",
+      "branch": "fix/board-entrypoint",
+      "isPrimary": false,
+      "head": "4f3dec7bab58ee7a8041caf1d6a0a91ae768a8f3",
+      "detached": false,
+      "status": "uncommitted-only",
+      "recommendation": "in-use",
+      "prunable": false,
+      "riskScore": 70,
+      "statusReasons": [
+        "the branch reports 0 commits ahead of main and is an ancestor of it",
+        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
+        "git cannot distinguish this from a branch that landed and was then edited",
+        "the board saw agent fix/board-entrypoint in this worktree inside the last 30 minutes"
+      ],
+      "ahead": 0,
+      "behind": 14,
+      "mergedIntoMain": true,
+      "dirty": 3,
+      "untracked": 0,
+      "dirtyPaths": [
+        "scripts/__tests__/agent-board.test.mjs",
+        "scripts/agent-board.mjs",
+        "scripts/lib/agent-board/db.mjs"
+      ],
+      "lastCommit": {
+        "sha": "4f3dec7bab58ee7a8041caf1d6a0a91ae768a8f3",
+        "subject": "merge: fix(review) — close seven review findings and the eighth found while fixing them",
+        "date": "2026-09-28T21:49:12+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": true,
+      "summary": "A short-lived worktree on the board entrypoint fix, now merged: its branch is an ancestor of main and its working tree is clean.",
+      "summarySource": "curated",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [
+          {
+            "issueId": "ph-58",
+            "agentId": "fix/board-entrypoint",
+            "branch": "fix/board-entrypoint",
+            "leaseUntil": "2026-09-28T20:41:32.693Z"
+          }
+        ],
+        "fileLocks": [
+          {
+            "path": "scripts/agent-board.mjs",
+            "agentId": "fix/board-entrypoint",
+            "issueId": null,
+            "expiresAt": "2026-09-28T20:41:32.692Z"
+          },
+          {
+            "path": "scripts/lib/agent-board/db.mjs",
+            "agentId": "fix/board-entrypoint",
+            "issueId": null,
+            "expiresAt": "2026-09-28T20:41:32.692Z"
+          },
+          {
+            "path": "scripts/__tests__/agent-board.test.mjs",
+            "agentId": "fix/board-entrypoint",
+            "issueId": null,
+            "expiresAt": "2026-09-28T20:41:32.692Z"
+          }
+        ],
+        "agents": [
+          {
+            "agentId": "fix/board-entrypoint",
+            "branch": "fix/board-entrypoint",
+            "lastSeenMs": 1790625677855,
+            "live": true
+          }
+        ],
+        "held": true
+      }
+    },
+    {
+      "name": "e2e-coverage-2",
+      "path": ".kilo/worktrees/e2e-coverage-2",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-coverage-2",
+      "branch": "e2e/coverage-2",
+      "isPrimary": false,
+      "head": "13f44a1f78807e4c3e26d792680d99934cd76ec9",
+      "detached": false,
+      "status": "landed",
+      "recommendation": "in-use",
+      "prunable": false,
+      "riskScore": 70,
+      "statusReasons": [
+        "the branch is an ancestor of main and the working tree is clean",
+        "the board saw agent e2e/coverage-2 in this worktree inside the last 30 minutes"
+      ],
+      "ahead": 0,
+      "behind": 7,
+      "mergedIntoMain": true,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
+      "lastCommit": {
+        "sha": "13f44a1f78807e4c3e26d792680d99934cd76ec9",
+        "subject": "merge: main, and re-derive the two citations main moved",
+        "date": "2026-09-28T22:04:22+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": "Broad e2e coverage tranche spanning keyboard, layers, history, dialogs, adjustments, shapes and the mobile shell, plus corrections to two false explanations in a toolbar test.",
+      "summarySource": "curated",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [],
+        "agents": [
+          {
+            "agentId": "e2e/coverage-2",
+            "branch": "e2e/coverage-2",
+            "lastSeenMs": 1790624904462,
+            "live": true
+          }
+        ],
+        "held": false
+      }
+    },
+    {
+      "name": "ph",
+      "path": ".",
+      "absolutePath": "/Users/bkalynovskyi/ph",
+      "branch": "main",
+      "isPrimary": true,
+      "head": "69f42c5f438ff118808aa05b054b1e5eea4d5b1d",
+      "detached": false,
+      "status": "landed",
+      "recommendation": "in-use",
+      "prunable": false,
+      "riskScore": 70,
+      "statusReasons": ["this is the main worktree", "the main worktree is never a deletion candidate"],
+      "ahead": 0,
+      "behind": 0,
+      "mergedIntoMain": true,
+      "dirty": 1,
+      "untracked": 0,
+      "dirtyPaths": ["WORKTREES.json"],
+      "lastCommit": {
+        "sha": "69f42c5f438ff118808aa05b054b1e5eea4d5b1d",
+        "subject": "Merge branch 'main' into chore/worktree-inventory",
+        "date": "2026-09-28T22:12:11+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": null,
+      "summarySource": "none",
+      "issues": [],
+      "inferredBoardIssues": [
+        {
+          "id": "ph-48",
+          "title": "P3 — 10 orphaned committed baselines (2.1 MB)",
+          "status": "open",
+          "inferred": true
+        },
+        {
+          "id": "ph-55",
+          "title": "SidebarLeft flyout: main is FIXED and GREEN; the e2e 'regression' is a cold dev server, not the flyout",
+          "status": "open",
+          "inferred": true
+        },
+        {
+          "id": "ph-56",
+          "title": "Worktree inventory: committed WORKTREES.json + generator + AGENTS.md protocol scripts/worktree-inventory.mjs scripts/lib/worktree-inventory/ AGENTS.md",
+          "status": "open",
+          "inferred": true
+        },
+        {
+          "id": "ph-57",
+          "title": "Land the e2e campaign: resolve main's 4 conflicts in-branch, re-gate, merge to main",
+          "status": "claimed",
+          "inferred": true
+        }
+      ],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 59,
+        "chatIds": [
+          "ses_f1717029bffeO2Tgiso7XjVWvz",
+          "ses_f1703646effe9LHAl5QgqHkEbj",
+          "ses_f1678e1ecffeE6PmxFG4SH1MGO",
+          "ses_f1692fbb5ffe48aRfBKFyv739e",
+          "ses_f167d43ebffenKG4aRh8qnMKN5",
+          "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
+          "ses_f1871204bffeRe2NIbxXCnD0pm",
+          "ses_f16a47026ffe4E7yDrTCIlcxiX",
+          "ses_f186d820cffemRcv5u3Ujt0loP",
+          "ses_f17003e8fffeTmqmKJJ8HdjxLR",
+          "ses_f16a16804ffeyKdmJvqkcycAPP",
+          "ses_f16a15fa5ffe1PwuLhjqzgIKJC",
+          "ses_f16a16e21ffegLu8CGxV0xLEWB",
+          "ses_f1701a523ffesHL1bcorTrl1aK",
+          "ses_f1763fd78ffexVHsrYlKSNjHER",
+          "ses_f17911ee2ffeO8dSeE8cd1tMkZ",
+          "ses_f176830acffeGHUHk4zTvjuZpS",
+          "ses_f17c5b574ffezknC6ZFbsJ0sn2",
+          "ses_f179166a9ffeXZ67RuGHySxSd4",
+          "ses_f19255ffeffeoIHsBg83P5Ad2d",
+          "ses_f17ab7224ffeiL2s4m0SMavPvT",
+          "ses_f174eec52ffedigagDe7uAkRob",
+          "ses_f1758cc6bffeKMl2aVqf4HIWW2",
+          "ses_f17814e67ffeOru2rhgVgAb9a5",
+          "ses_f17706177ffeyNZDwR7gDyRRop",
+          "ses_f190b8410ffeL5LtNDypEnN4ta",
+          "ses_f19198b50ffeOEneL9LZDKmx3A",
+          "ses_f19079bddffeznUGVtqL6E25sn",
+          "ses_f19083a9cffeb60hHd1mbZe53L",
+          "ses_f1907b5aeffeY64jTbPUwGBxtW",
+          "ses_f19131b3bffewHIkf9etTBcDJj",
+          "ses_f17a1a002ffeZZ5ThA6HyJxSMX",
+          "ses_f183c1278ffeKasYccZfSRd2rk",
+          "ses_f17c4f7e2ffevV44uEqAYErWgv",
+          "ses_f17a83a74ffe3W1hKpk48bi0Vc",
+          "ses_f17cfd36bffeCpk9Ac0xqKkHgu",
+          "ses_f181a116cffetjn4phXC6usX2P",
+          "ses_f1809d5d8ffenV0KDFd0mtp088",
+          "ses_f18cb10c7ffeQyGIipjfTQJifF",
+          "ses_f180b0fd5ffeog2iFzrH7W0g8P",
+          "ses_f184d1a91ffewITcJ0CsWRg6oj",
+          "ses_f183ab42cffeVdFwk5GNadKyhe",
+          "ses_f1836b1c9ffe7WvTOINtNpqYXL",
+          "ses_f192bace7ffey3pRuSit8WG2aA",
+          "ses_f18832af5ffeXbCemD94rM0jHP",
+          "ses_f188e4a9cffeInu3BgEOVA4f8p",
+          "ses_f18bd914effecDrg4iZUmzqjN2",
+          "ses_f18b4ae0fffe01UhHJ4cy2Az2k",
+          "ses_f18c693bcffeOzoS0QNborLXQe",
+          "ses_f18e2e39dffeoIi55hnGDXAbrq",
+          "ses_f18fda674ffeWTznmY4gmRESfm",
+          "ses_f1911d712ffeAjEIDP1DVNq5iH",
+          "ses_f192ff346ffem0cOIKSfCureoH",
+          "ses_f1933fccdffegKI6LRlw40mieK",
+          "ses_f1b1bccb8ffezV30btswKOivND",
+          "ses_f19365ab4ffefSJC5XwcDdHYDB",
+          "ses_f193e8052ffeVVaAGYQ2JynBym",
+          "ses_f1ba92bedffeb9De69jCNMC00Q",
+          "ses_f1befb6fbffegECpPfEV29dU3m"
+        ],
+        "subagentCount": 0,
+        "byState": {
+          "active": 7,
+          "finished": 47,
+          "abandoned-midflight": 4,
+          "blocked": 1
+        },
+        "activeChatIds": [
+          "ses_f1717029bffeO2Tgiso7XjVWvz",
+          "ses_f1703646effe9LHAl5QgqHkEbj",
+          "ses_f1678e1ecffeE6PmxFG4SH1MGO",
+          "ses_f1692fbb5ffe48aRfBKFyv739e",
+          "ses_f167d43ebffenKG4aRh8qnMKN5",
+          "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
+          "ses_f1871204bffeRe2NIbxXCnD0pm"
+        ],
+        "unfinishedChatIds": [
+          "ses_f1717029bffeO2Tgiso7XjVWvz",
+          "ses_f1703646effe9LHAl5QgqHkEbj",
+          "ses_f1678e1ecffeE6PmxFG4SH1MGO",
+          "ses_f1692fbb5ffe48aRfBKFyv739e",
+          "ses_f167d43ebffenKG4aRh8qnMKN5",
+          "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
+          "ses_f1871204bffeRe2NIbxXCnD0pm",
+          "ses_f174eec52ffedigagDe7uAkRob",
+          "ses_f18cb10c7ffeQyGIipjfTQJifF",
+          "ses_f183ab42cffeVdFwk5GNadKyhe",
+          "ses_f19365ab4ffefSJC5XwcDdHYDB",
+          "ses_f1ba92bedffeb9De69jCNMC00Q"
+        ],
+        "lastActivity": 1790626664091,
+        "unfinished": [
+          {
+            "id": "ses_f1717029bffeO2Tgiso7XjVWvz",
+            "title": "Worktree inventory JSON and agents.md update",
+            "state": "active",
+            "idleMs": 15285,
+            "reasons": ["last message 0m ago"],
+            "toolErrors": 9,
+            "creditsFailures": 15,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f1703646effe9LHAl5QgqHkEbj",
+            "title": "Increasing e2e test coverage",
+            "state": "active",
+            "idleMs": 445580,
+            "reasons": ["last message 7m ago"],
+            "toolErrors": 3,
+            "creditsFailures": 1,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f1678e1ecffeE6PmxFG4SH1MGO",
+            "title": "Fix board service and launch as daemon",
+            "state": "active",
+            "idleMs": 507806,
+            "reasons": ["last message 8m ago"],
+            "toolErrors": 0,
+            "creditsFailures": 1,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f1692fbb5ffe48aRfBKFyv739e",
+            "title": "Recent tool description audit",
+            "state": "active",
+            "idleMs": 561865,
+            "reasons": ["last message 9m ago"],
+            "toolErrors": 0,
+            "creditsFailures": 1,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f167d43ebffenKG4aRh8qnMKN5",
+            "title": "E2E orchestrator continuation next steps",
+            "state": "active",
+            "idleMs": 603506,
+            "reasons": ["last message 10m ago"],
+            "toolErrors": 5,
+            "creditsFailures": 0,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
+            "title": "Clean and merge stale worktrees into main",
+            "state": "active",
+            "idleMs": 878185,
+            "reasons": ["last message 15m ago"],
+            "toolErrors": 1,
+            "creditsFailures": 1,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f1871204bffeRe2NIbxXCnD0pm",
+            "title": "Fix handoff doc issues and merge to main",
+            "state": "active",
+            "idleMs": 1615127,
+            "reasons": ["last message 27m ago"],
+            "toolErrors": 2,
+            "creditsFailures": 3,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f174eec52ffedigagDe7uAkRob",
+            "title": "-- del --",
+            "state": "abandoned-midflight",
+            "idleMs": 15198643,
+            "reasons": ["idle for 4h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "toolErrors": 2,
+            "creditsFailures": 0,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f18cb10c7ffeQyGIipjfTQJifF",
+            "title": "-- e2e orchestrator",
+            "state": "abandoned-midflight",
+            "idleMs": 24115595,
+            "reasons": ["idle for 7h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "toolErrors": 7,
+            "creditsFailures": 0,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f183ab42cffeVdFwk5GNadKyhe",
+            "title": "-- PNG todo --",
+            "state": "abandoned-midflight",
+            "idleMs": 31385743,
+            "reasons": ["idle for 9h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "toolErrors": 2,
+            "creditsFailures": 1,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f19365ab4ffefSJC5XwcDdHYDB",
+            "title": "New session - 2026-09-28T06:52:49.867Z",
+            "state": "abandoned-midflight",
+            "idleMs": 47725873,
+            "reasons": ["idle for 13h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "toolErrors": 4,
+            "creditsFailures": 0,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f1ba92bedffeb9De69jCNMC00Q",
+            "title": "$$$ History migration architecture and planning $$$",
+            "state": "blocked",
+            "idleMs": 74329132,
+            "reasons": [
+              "last turn completed 21h ago and nothing has happened since",
+              "an agent_manager call reported a managed session waiting for input"
+            ],
+            "toolErrors": 8,
+            "creditsFailures": 0,
+            "blockedOn": "que_0e4b3e885001PBylIpsTKfV71Q"
+          }
+        ],
+        "dead": []
+      },
+      "board": {
+        "claims": [
+          {
+            "issueId": "ph-57",
+            "agentId": "integration/e2e-campaign-final",
+            "branch": "main",
+            "leaseUntil": "2026-09-28T20:39:40.672Z"
+          }
+        ],
+        "fileLocks": [
+          {
+            "path": "TEST-FLAKES.md",
+            "agentId": "integration/e2e-campaign-final",
+            "issueId": null,
+            "expiresAt": "2026-09-28T20:39:00.975Z"
+          },
+          {
+            "path": "e2e/helpers/toolbar-helpers.ts",
+            "agentId": "integration/e2e-campaign-final",
+            "issueId": null,
+            "expiresAt": "2026-09-28T20:39:00.976Z"
+          },
+          {
+            "path": "e2e/helpers/__tests__/toolbar-helpers.unit.test.ts",
+            "agentId": "integration/e2e-campaign-final",
+            "issueId": null,
+            "expiresAt": "2026-09-28T20:39:00.976Z"
+          },
+          {
+            "path": "scripts/__tests__/handoff-import.test.mjs",
+            "agentId": "integration/e2e-campaign-final",
+            "issueId": null,
+            "expiresAt": "2026-09-28T20:39:00.976Z"
+          },
+          {
+            "path": "src/tools/descriptions/transform.notes.md",
+            "agentId": "fix/tool-description-truth",
+            "issueId": null,
+            "expiresAt": "2026-09-28T20:57:13.815Z"
+          }
+        ],
+        "agents": [
+          {
+            "agentId": "main",
+            "branch": "main",
+            "lastSeenMs": 1790626334324,
+            "live": true
+          },
+          {
+            "agentId": "integration/e2e-campaign-final",
+            "branch": "main",
+            "lastSeenMs": 1790625280670,
+            "live": true
+          },
+          {
+            "agentId": "fix/tool-description-truth",
+            "branch": "main",
+            "lastSeenMs": 1790626333692,
+            "live": true
+          }
+        ],
+        "held": true
+      }
+    },
+    {
+      "name": "handoff-citation-rotation",
+      "path": ".kilo/worktrees/handoff-citation-rotation",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/handoff-citation-rotation",
+      "branch": "docs/handoff-citation-rotation",
+      "isPrimary": false,
+      "head": "1fbdbf5d0a2f8c9f01b36f69208182637a48d897",
+      "detached": false,
+      "status": "landed",
+      "recommendation": "prune",
+      "prunable": true,
+      "riskScore": 10,
+      "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
+      "ahead": 0,
+      "behind": 24,
+      "mergedIntoMain": true,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
+      "lastCommit": {
+        "sha": "1fbdbf5d0a2f8c9f01b36f69208182637a48d897",
+        "subject": "docs(handoff): correct one false §1 claim and record two surviving bad citations",
+        "date": "2026-09-28T21:26:18+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": "Rotates the line-numbered citations in the handoff documents after they were invalidated by file growth, and corrects one false claim in section 1.",
+      "summarySource": "curated",
+      "issues": [
+        {
+          "ref": "HANDOFF.md#worktree-hygiene",
+          "title": "growing a file silently invalidates every file.ts:NNN below it"
+        }
+      ],
+      "inferredBoardIssues": [],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [],
+        "agents": [],
+        "held": false
       }
     }
   ]

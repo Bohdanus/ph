@@ -56,11 +56,15 @@ export function buildInventory({
     const curated = curatedFor(wt.name) ?? null;
     const chatSessions = chatAudit.byDirectory.get(wt.path) ?? [];
     const chatSummary = summariseChats(chatSessions);
-    const verdict = classify(wt, { chatSummary, chatSessions, curated, nowMs: effectiveNow });
+    // Declared before `classify` reads it: the board's agent record is the
+    // only liveness signal for a session opened in the main checkout and then
+    // driven into a task worktree.
+    const boardAgents = board.agents?.get(wt.path) ?? [];
+    const verdict = classify(wt, { chatSummary, chatSessions, curated, nowMs: effectiveNow, boardAgents });
 
-    const claims = board.claims.get(wt.path) ?? [];
-    const fileLocks = board.fileLocks.get(wt.path) ?? [];
-    const inferredBoardIssues = inferBoardIssues(board.issues, { branch: wt.branch, name: wt.name });
+    const claims = board.claims?.get(wt.path) ?? [];
+    const fileLocks = board.fileLocks?.get(wt.path) ?? [];
+    const inferredBoardIssues = inferBoardIssues(board.issues ?? [], { branch: wt.branch, name: wt.name });
 
     // Unfinished is a first-class field, not a footnote: an operator reading
     // this file needs to know which entries still have an agent mid-struggle
@@ -141,6 +145,7 @@ export function buildInventory({
       board: {
         claims,
         fileLocks,
+        agents: boardAgents,
         held: claims.length + fileLocks.length > 0,
       },
     };

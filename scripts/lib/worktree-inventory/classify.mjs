@@ -100,11 +100,16 @@ export function hasUnfinishedChats(sessions = []) {
  * worktree nobody has written about is still inventoried, just with no
  * editorial summary.
  */
-export function classify(wt, { chatSummary, chatSessions, curated, nowMs }) {
+export function classify(wt, { chatSummary, chatSessions, curated, nowMs, boardAgents = [] }) {
   const reasons = [];
   const uncommitted = isWorkingTreeHeld(wt);
   const unmerged = hasUnmergedCommits(wt);
-  const live = hasLiveSession(chatSummary, nowMs);
+  const liveAgent = boardAgents.find((a) => a.live);
+  // EITHER source makes a worktree in-use. The session database is blind to a
+  // session that was opened in the main checkout and then driven into a task
+  // worktree — its `directory` never changes — so the board's own agent record
+  // is the only signal that covers that case.
+  const live = hasLiveSession(chatSummary, nowMs) || Boolean(liveAgent);
 
   let status;
   if (wt.detached) {
@@ -154,7 +159,11 @@ export function classify(wt, { chatSummary, chatSessions, curated, nowMs }) {
     reasons.push('the main worktree is never a deletion candidate');
   } else if (live) {
     recommendation = RECOMMENDATION.IN_USE;
-    reasons.push('a session messaged inside the last 30 minutes');
+    reasons.push(
+      hasLiveSession(chatSummary, nowMs)
+        ? 'a session messaged inside the last 30 minutes'
+        : `the board saw agent ${liveAgent.agentId} in this worktree inside the last 30 minutes`
+    );
   } else if (status === STATUS.UNCOMMITTED_ONLY) {
     recommendation = RECOMMENDATION.SALVAGE;
     reasons.push('work here is not reachable from any commit on this branch');

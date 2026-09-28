@@ -211,7 +211,9 @@ describe('readBoard: liveness of claims and locks', () => {
              CREATE TABLE claims (issue_id TEXT, agent_id TEXT, worktree TEXT, branch TEXT,
                                   lease_until TEXT, released_at TEXT);
              CREATE TABLE file_locks (path TEXT, agent_id TEXT, issue_id TEXT, worktree TEXT,
-                                     expires_at TEXT, released_at TEXT);`);
+                                     expires_at TEXT, released_at TEXT);
+             CREATE TABLE agents (agent_id TEXT, kind TEXT, worktree TEXT, branch TEXT,
+                                 session_id TEXT, last_seen TEXT);`);
     db.prepare('INSERT INTO issues VALUES (?,?,?,?,?,?)').run('ph-1', 'an issue', 'prod', 'open', 'high', 'x');
     db.prepare('INSERT INTO claims VALUES (?,?,?,?,?,?)').run(
       'ph-1',
@@ -277,6 +279,72 @@ describe('readBoard: liveness of claims and locks', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('marks an agent live inside the 30-minute window, by worktree', () => {
+    // The session database is blind to a session opened in the main checkout
+    // and then driven into a task worktree: its `directory` never changes, so
+    // that worktree reads as prunable while it is being actively used. The
+    // board records the worktree, so it is the only signal that covers it.
+    const dir = mkdtempSync(join(tmpdir(), 'wtinv-board-'));
+    const db = new DatabaseSync(join(dir, 'board.db'));
+    try {
+      db.exec(`CREATE TABLE issues (id TEXT, title TEXT, scope TEXT, status TEXT, priority TEXT, origin TEXT);
+               CREATE TABLE claims (issue_id TEXT, agent_id TEXT, worktree TEXT, branch TEXT,
+                                    lease_until TEXT, released_at TEXT);
+               CREATE TABLE file_locks (path TEXT, agent_id TEXT, issue_id TEXT, worktree TEXT,
+                                       expires_at TEXT, released_at TEXT);
+               CREATE TABLE agents (agent_id TEXT, kind TEXT, worktree TEXT, branch TEXT,
+                                   session_id TEXT, last_seen TEXT);`);
+      db.prepare('INSERT INTO agents VALUES (?,?,?,?,?,?)').run(
+        'chore/x',
+        'kilo',
+        '/wt',
+        'chore/x',
+        'sid',
+        new Date(NOW - 60_000).toISOString()
+      );
+      db.prepare('INSERT INTO agents VALUES (?,?,?,?,?,?)').run(
+        'old/y',
+        'kilo',
+        '/wt',
+        'old/y',
+        'sid',
+        new Date(NOW - 6 * 3600_000).toISOString()
+      );
+      db.close();
+
+      const board = readBoard(process.cwd(), { nowMs: NOW, dbPath: join(dir, 'board.db') });
+      const agents = board.agents.get('/wt');
+      expect(agents).toHaveLength(2);
+      expect(agents.filter((a) => a.live).map((a) => a.agentId)).toEqual(['chore/x']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('makes a worktree in-use from the board record even with no chat in it', () => {
+    const v = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+      boardAgents: [{ agentId: 'chore/x', lastSeenMs: NOW - 30_000, live: true }],
+    });
+    expect(v.recommendation).toBe(RECOMMENDATION.IN_USE);
+    expect(v.prunable).toBe(false);
+    expect(v.reasons.join(' ')).toContain('chore/x');
+  });
+
+  it('still prunes when the board agent is stale', () => {
+    const v = classify(wt({ ahead: 0, mergedIntoBase: true }), {
+      chatSummary: noChats,
+      chatSessions: noSessions,
+      curated: null,
+      nowMs: NOW,
+      boardAgents: [{ agentId: 'chore/x', lastSeenMs: NOW - 6 * 3600_000, live: false }],
+    });
+    expect(v.prunable).toBe(true);
   });
 
   it('degrades to an empty board, not a crash, when the database is absent', () => {

@@ -1,6 +1,19 @@
 /**
  * The board's contribution to the inventory: which worktree holds a live
- * claim, which files are locked, and which issue a worktree is tracking.
+ * claim, which files are locked, which agent was last seen in which worktree,
+ * and which issue a worktree is tracking.
+ *
+ * WHY THE AGENTS TABLE IS THE BETTER LIVENESS SIGNAL
+ * ---------------------------------------------------
+ * `session.directory` in the Kilo database records where a session was OPENED,
+ * not where it is working. A session started in the main checkout and then
+ * driven into a task worktree is recorded against the main checkout for its
+ * whole life — measured on this repository, an agent working exclusively in
+ * `.kilo/worktrees/worktree-inventory` had zero sessions attributed to that
+ * path and its worktree read as `prunable` while it was being actively used.
+ * The board's `agents` table records the worktree, so it answers the question
+ * the session database cannot. Both are reported, and either makes a worktree
+ * in-use.
  *
  * READ-ONLY, AND DEGRADES TO NOTHING
  * -----------------------------------
@@ -14,6 +27,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 import { isAbsolute, join } from 'node:path';
+import { LIVE_WINDOW_MS } from './classify.mjs';
 
 /**
  * The board's database path, resolved exactly as `agent-board` resolves it.
@@ -69,7 +83,7 @@ function isLive(row, timestampField, nowMs) {
 export function readBoard(cwd, { nowMs = Date.now(), dbPath = resolveBoardDb(cwd) } = {}) {
   const db = openBoard(dbPath);
   if (!db) {
-    return { available: false, dbPath, claims: new Map(), fileLocks: new Map(), issues: [] };
+    return { available: false, dbPath, claims: new Map(), fileLocks: new Map(), agents: new Map(), issues: [] };
   }
 
   try {
@@ -84,6 +98,8 @@ export function readBoard(cwd, { nowMs = Date.now(), dbPath = resolveBoardDb(cwd
       .prepare('SELECT path, agent_id, issue_id, worktree, expires_at, released_at FROM file_locks')
       .all()
       .filter((l) => isLive(l, 'expires_at', nowMs));
+
+    const agents = db.prepare('SELECT agent_id, kind, worktree, branch, session_id, last_seen FROM agents').all();
 
     const claimsByWorktree = new Map();
     for (const c of claims) {
@@ -101,11 +117,26 @@ export function readBoard(cwd, { nowMs = Date.now(), dbPath = resolveBoardDb(cwd
       locksByWorktree.set(key, list);
     }
 
+    const agentsByWorktree = new Map();
+    for (const a of agents) {
+      const key = a.worktree ?? '';
+      const list = agentsByWorktree.get(key) ?? [];
+      const seen = Date.parse(a.last_seen);
+      list.push({
+        agentId: a.agent_id,
+        branch: a.branch,
+        lastSeenMs: Number.isNaN(seen) ? null : seen,
+        live: !Number.isNaN(seen) && seen > nowMs - LIVE_WINDOW_MS,
+      });
+      agentsByWorktree.set(key, list);
+    }
+
     return {
       available: true,
       dbPath,
       claims: claimsByWorktree,
       fileLocks: locksByWorktree,
+      agents: agentsByWorktree,
       issues,
     };
   } finally {

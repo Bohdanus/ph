@@ -270,6 +270,23 @@ session is waiting on a question. The signal is weak, so it is kept visible:
 `blockedOn` carries the question id and the reason names the evidence, rather
 than a flat `blocked` with nothing behind it.
 
+### `session.directory` is where a chat was OPENED, not where it is working
+
+**The only liveness signal that is not `session.directory` is the board's own
+`agents` record, and it is there because of this.** A session started in the
+main checkout and then driven into a task worktree keeps the main checkout as
+its `directory` for its whole life: measured on this repository, an agent
+working exclusively in `.kilo/worktrees/worktree-inventory` had **zero**
+sessions attributed to that path, and its worktree read `prunable` while it was
+being actively used. So `in-use` is set by **either** signal — a session
+inside the 30-minute window, or a board agent seen in that worktree inside it —
+and `board.agents` is on every record so you can see which one fired.
+
+The consequence for reading the file: `chats` is a view of _chat history per
+worktree path_, which is not the same as _work done in a worktree_. Treat a
+zero `chats.count` as "no chat was ever opened there", never as "nobody worked
+there".
+
 ### The file is generated; the judgement is not
 
 Anything git or the session database can answer is read fresh on every run.
