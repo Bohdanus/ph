@@ -27,7 +27,7 @@ import {
   type FlyoutItem,
 } from '../toolbar-helpers';
 
-const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks } = vi.hoisted(() => {
+const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks, attributeChecks } = vi.hoisted(() => {
   type Target = {
     __elements: Array<{
       visible: boolean;
@@ -46,6 +46,12 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks } = vi.hois
   const recordedVisibilityChecks: Check[] = [];
   const recordedHiddenChecks: Check[] = [];
   const recordedTextChecks: Array<{ target: Target; expected: string }> = [];
+  const recordedAttributeChecks: Array<{
+    target: Target;
+    name: string;
+    expected: string;
+    options?: { timeout?: number };
+  }> = [];
 
   const locatorLabel = (target: Target): string => {
     const testId = target.__elements[0]?.testId;
@@ -82,6 +88,7 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks } = vi.hois
       }
     }),
     toHaveAttribute: vi.fn(async (name: string, expected: string, options?: { timeout?: number }) => {
+      recordedAttributeChecks.push({ target, name, expected, options });
       // An attribute assertion is a CONDITION wait, so the app's pending work gets the
       // chance to run before the answer is read. That is what makes it a usable stand-in
       // for `openToolFlyout`'s wait on `aria-expanded`: the long-press timer is armed by
@@ -101,6 +108,7 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks } = vi.hois
     visibilityChecks: recordedVisibilityChecks,
     hiddenChecks: recordedHiddenChecks,
     textChecks: recordedTextChecks,
+    attributeChecks: recordedAttributeChecks,
   };
 });
 
@@ -1078,6 +1086,36 @@ describe('Toolbar Helpers', () => {
       expect(dom.dispatched.map((event) => event.type)).toEqual(['pointerdown', 'pointerup']);
       expect(dom.dispatched.map((event) => event.options)).toEqual([{ button: 0 }, { button: 0 }]);
       expect(dom.mocks.waitForTimeout).not.toHaveBeenCalled();
+    });
+
+    it('spends the shared timeout on the expanded wait, and the shared timeout has a floor', async () => {
+      // Two separate claims, and the second is the one that catches a change.
+      //
+      // Consistency: the wait is handed the EXPORTED constant rather than a literal of its
+      // own, so the helper, `paint-tools.spec.ts` and this file cannot drift apart — which
+      // is the whole reason the constant is exported.
+      //
+      // Floor: importing the constant means it cannot pin its own value, because the
+      // assertion would move with it. A restated literal would pin the value but reintroduce
+      // the two-literal hazard, and the value is not the contract. The contract is that the
+      // budget is big enough for a busy main thread: this wait is the entire margin the
+      // gesture has, since `onPointerUp` cancels the open outright, so too small a budget
+      // fails a gesture that would have worked. Measured here as a bound, which is what
+      // catches 2000 -> 200 without restating 2000.
+      const dom = createFakeDom();
+      const { menu } = addFlyout(dom, [{ testId: flyoutItemTestId('levels', 'Levels') }], { visible: false });
+      const button = dom.add({ testId: 'tool-button-reposition' });
+      button.onLongPress = () => {
+        menu.visible = true;
+        button.attributes['aria-expanded'] = 'true';
+      };
+
+      await openToolFlyout(dom.page, 'Select & Move');
+
+      const wait = attributeChecks.find((check) => check.name === 'aria-expanded');
+      expect(wait?.expected).toBe('true');
+      expect(wait?.options).toEqual({ timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
+      expect(FLYOUT_VISIBLE_TIMEOUT_MS).toBeGreaterThanOrEqual(1000);
     });
 
     it('lifts only after the flyout is open, so a late timer cannot cancel the open', async () => {
