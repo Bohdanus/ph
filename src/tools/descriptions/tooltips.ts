@@ -208,7 +208,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   eyedropper: {
     summary:
       'Samples a color from anywhere in the image and makes it the foreground color, on a click rather than a drag.',
-    implementation: 'implemented',
+    implementation: 'partial',
   },
   draw: {
     summary:

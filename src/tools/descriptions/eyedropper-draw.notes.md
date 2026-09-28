@@ -261,13 +261,15 @@ whenever the two disagree (`Draw.tsx:29-33`), and the renderers consume `args.co
 `hexToRgb(args.color)` inside `drawSpray` (`src/util/draw.ts:162`). So `appNotes` and `purpose` keep
 the foreground-colour statement and only the resampling clause was cut.
 
-**Two consequences of the one-stroke, one-layer design, which the data file now records.** The
+**One consequence of the one-stroke-per-layer design, which the data file now records.** The
 renderers issue a single `beginPath`/`moveTo`/`stroke()` per stroke at the tool's `globalAlpha`
 (`src/util/draw.ts:151-154`, `src/tools/draw.ts:77`), so a stroke that crosses itself does not
-compound within that stroke, and because every stroke is its own layer (`creator: true`,
-`src/tools/toolProcessors.ts:151-153`), a second stroke composites a second semi-transparent layer
-over the first rather than adding to the same one. The `Opacity` row's build-up sentence is
-Photoshop's, and `appNotes` is where the divergence is stated.
+compound within that stroke. That is the whole of the `Opacity` divergence, and it is the one an
+earlier pass stated wrongly: it also claimed that "a second stroke lays a second semi-transparent
+layer over the first rather than adding to the same one", and a second Photoshop stroke is _also_ a
+separate compositing pass over the same pixels that reaches the same value, so that clause named a
+difference that is not one. The `Opacity` row's build-up sentence is Photoshop's, and `appNotes` is
+where the divergence is stated.
 
 ### Modifiers and bracket keys, both absent
 

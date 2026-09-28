@@ -311,7 +311,6 @@ export const paintDescriptions: Record<
       'src/tools/toolProcessors.ts:276',
       'src/tools/settings.ts:159',
       'src/tools/draw.ts:71',
-      'src/components/ToolbarsRight/Paint/Paint.tsx:64',
       'src/components/Common/AppKeyboardShortcuts.tsx:18',
     ],
     appNotes:

@@ -226,7 +226,9 @@ Photoshop type layer re-renders from the font at the new size and stays crisp.
 shift/mod variants — plus three `Escape`/`Enter`/`Backspace`/`Delete` registrations in each of
 the two lasso tool areas (`PolygonClickToolArea.tsx:914-948`,
 `FeatherMagneticLassoToolArea.tsx:534-568`) and one `Escape` in the font popup
-(`FontSelect.tsx:54-62`). Nothing else in `src/` calls `useKeyDownShortcut`. The four
+(`FontSelect.tsx:54-62`). Those are every call site of that hook in `src/`; the raw `onKeyDown`
+handlers elsewhere (the transform box, the two dialogs, the sidebar's own fields) are not in it.
+Nothing else in `src/` calls `useKeyDownShortcut`. The four
 Photoshop rows the previous pass carried were all unbound, and two of them contradicted a
 sentence already in the same file:
 
@@ -400,7 +402,7 @@ Twelve controls. `present` 0 · `partial` 3 · `inert` 0 · `missing` 9.
 | 3   | Straighten / Curve / Content-Aware / Default | `missing` | —                                               |
 | 4   | Fill (incl. Content-Aware Fill)              | `missing` | —                                               |
 | 5   | Delete Cropped Pixels                        | `missing` | —                                               |
-| 6   | Show Cropped Area                            | `missing` | —                                               |
+| 6   | Show Cropped Area                            | `partial` | `src/hooks/useRect.ts:167`                      |
 | 7   | Enable Crop Shield                           | `partial` | `src/hooks/useRect.ts:167`                      |
 | 8   | Use Classic Mode                             | `missing` | —                                               |
 | 9   | Auto Center Preview                          | `missing` | —                                               |
@@ -408,7 +410,7 @@ Twelve controls. `present` 0 · `partial` 3 · `inert` 0 · `missing` 9.
 | 11  | Grid                                         | `missing` | —                                               |
 | 12  | Done / Cancel                                | `partial` | `src/components/ToolbarsRight/Crop/Crop.tsx:79` |
 
-Why the three `partial` verdicts:
+Why the four `partial` verdicts:
 
 - **Aspect ratio — `partial`,** not `present`. The mechanism is right: a choice constrains the
   rect during the drag through `useRect`, and it is wired end to end. The set is wrong. The
@@ -424,14 +426,29 @@ Why the three `partial` verdicts:
   draft rect, which is the same pair of effects as the check mark and the cross. There is no
   Enter, no Return, no double-click and no Escape.
 
-**Show Cropped Area was `partial` on the same line and is now `missing`, because two distinct
-Photoshop controls cannot both be `partial` on one statement.** The mask at
-`useRect.ts:162-172` fills the whole canvas with `rgba(0, 0, 0, 0.7)` and then clears the
-crop rect, so the dim is drawn _outside_ the box — that is the crop shield's job, and the only
-treatment the app draws. Photoshop's **Show Cropped Area** is the other one: it shades the
-_discarded image inside_ the box, and `CropToolArea` passes no `hideBlend` and nothing else
-that would draw a second overlay, so nothing in the app renders it. The previous pass filed
-one line of code under both names, which made the app look two controls deep where it is one.
+**Show Cropped Area and Enable Crop Shield are both `partial` on the same line, and that is the
+finding, not a double-count.** Both attempts to file them separately were wrong in opposite
+directions. The first pass cited `useRect.ts:167` under both names, which made the app look two
+controls deep where it draws one overlay. A later pass therefore denied one of them, and wrote that
+"Photoshop's Show Cropped Area shades the discarded image inside the box, and nothing in the app
+draws that" — false twice over. The app does draw a dim: the mask at `useRect.ts:164-172` fills the
+whole canvas with `rgba(0, 0, 0, 0.7)` and then clears the crop rect, and `CropToolArea` passes no
+`hideBlend`, which is the only flag `drawMask` consults (`useRect.ts:164`), so that branch runs whenever
+there is a rect to draw. And the dimmed region is the one _outside_ the box, so "inside" was wrong about the
+app's own drawing whatever Photoshop does. It is also wrong about Photoshop: Adobe's own sentence for
+the control is "Displays the cropped-out area as a shaded overlay", with no region attached, and
+Adobe's sentence for Enable Crop Shield is "Applies a color overlay outside the crop area" — so the
+two cover the same region and differ in that this one is a plain shade and that one is a colour and
+an opacity you choose. The `detail` no longer says "inside the crop box", for the same reason.
+
+The correct reading is that one rendering backs two Photoshop controls, and each diverges from its
+own counterpart: the app's treatment is welded on with nothing on screen to change its colour,
+opacity or existence, and both its shade and its 0.7 are constants where the Crop Shield is the
+control Adobe documents as adjustable. So both rows are `partial`, both cite the same line, and
+`appNotes` says why one rendering backs two. The earlier reasoning — that two distinct
+Photoshop controls cannot both be `partial` on one statement — is sound as a rule about
+double-counting a _control_, and wrong as applied here, because the claim being filed is the
+behaviour, not the control.
 
 **No `inert` control here either, also checked rather than assumed.** `CropToolArgs` has
 three keys — `rect`, `preRatioRect`, `aspectRatio` — plus the seed in
@@ -496,15 +513,19 @@ see the discarded area again, and undo is not a control on the bar.
 
 ### Which Photoshop crop keys the app actually binds
 
-**`C`, and only `C`.** The complete key table is the same one given for the type tool above:
-`AppKeyboardShortcuts.tsx` plus the two lasso tool areas and the font popup, and nothing else
-in `src/`. Against that table, every non-`C` row the previous pass carried is false:
+**`C`, and only `C`.** The `useKeyDownShortcut` table is the one given for the type tool above —
+`AppKeyboardShortcuts.tsx` (letters only: `b c e g i j l m o p s t u v w y z`, plus shift and mod
+variants), the two lasso tool areas and the font popup, and those are every call site of that hook in
+`src/`. It is not the whole of the app's key handling: the transform box, the two dialogs and the
+sidebar's own fields each attach a raw `onKeyDown`, which is why the `Esc` and `Enter` rows below
+name those rather than claiming the table is exhaustive. Against it, every non-`C` row the previous
+pass carried is false:
 
 | Photoshop key        | What the app actually does                                                                                                                                                                                                                        |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Shift+C`            | The crop tile is a **single entry** (`toolbar-mapping.ts:59`), and the `c` registration passes no `shift`, so this re-selects Crop. There is no flyout to cycle, and Perspective Crop, Slice and Slice Select are not in `ToolArgsByName` at all. |
-| `Enter` / `Return`   | Unbound. `Enter` is registered only in `PolygonClickToolArea.tsx:922` and `FeatherMagneticLassoToolArea.tsx:542`. `CropToolArea` calls no `useKeyDownShortcut`.                                                                                   |
-| `Esc`                | Unbound for the crop. `Escape` is registered only in those two lasso areas and in `FontSelect.tsx:54`.                                                                                                                                            |
+| `Enter` / `Return`   | Unbound for the crop. `Enter` is registered in `PolygonClickToolArea.tsx:922` and `FeatherMagneticLassoToolArea.tsx:542`, and handled raw in the sidebar's own fields; `CropToolArea` calls no `useKeyDownShortcut`.                              |
+| `Esc`                | Unbound for the crop. `Escape` is registered in those two lasso areas and in `FontSelect.tsx:54`, and handled raw by the transform box (`Transform.tsx:37`), the two dialogs and the layer-rename field.                                          |
 | `O`                  | **Switches tools.** `AppKeyboardShortcuts.tsx:329-334` binds `o` to `selectTonalTool`, whose group is `['dodge', 'burn']` (`:31`). Pressing it while cropping leaves the crop for the Dodge tool, which is the opposite of cycling an overlay.    |
 | `Shift+O`            | Same handler with `shift: true` (`:336-342`), so it also leaves the crop — it toggles between Dodge and Burn.                                                                                                                                     |
 | `X`                  | Unbound. There is no `x` registration anywhere in `src/`; `matchesShortcut` is case-insensitive, so this is not a capitalisation miss.                                                                                                            |

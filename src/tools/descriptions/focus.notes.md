@@ -250,15 +250,17 @@ and the app matches Photoshop's layering rule without having been told to. The g
 press/move/release on the active layer (`src/components/Main/SmudgeToolArea.tsx:62`), registered
 as `raster` (`src/tools/toolProcessors.ts:231`).
 
-Four controls are `missing` for structural reasons the component itself states. **Mode** is missing
+Three controls are `missing` for structural reasons the component itself states. **Mode** is missing
 because **no control anywhere in the app edits a layer's blend mode** — the earlier wording here
 said "a layer's blend mode is a layer property the Layers panel owns", and that was false: a grep
 for `blendMode` across `src/components/` returns only the paint tool's own `Mode` select
 (`src/components/ToolbarsRight/Paint/Paint.tsx:173`). `Layer.blendMode` is a data field written
 from paint-tool args (`src/tools/brush.ts:85`) and set by the PSD importer
 (`src/contexts/psd-utils.ts:161`), and nothing else can change it. Finger Painting is missing
-because `SmudgeToolArgs` has no field for it, Sample All Layers because the processor is handed one
-layer's bitmap, and the preset picker because this editor has one tip shape. `Alt` is not bound.
+because `SmudgeToolArgs` has no field for it and Sample All Layers because the processor is handed
+one layer's bitmap. The preset picker is `partial` rather than absent because this editor has one
+tip shape and no presets, though Size and Hardness — the preset's two live parameters — are both
+there. `Alt` is not bound.
 
 **Why `partial` and not `implemented`.** There is no build-up while the button is held. The shared
 stroke hook appends a point to the gesture in `handlePointerMove`

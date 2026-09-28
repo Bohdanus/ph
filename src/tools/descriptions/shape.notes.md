@@ -416,27 +416,30 @@ names rather than filler — `src/components/ToolbarsRight/toolbarPlaceholderCon
 
 **The chip list is why nine of this entry's `options` rows were wrong, and the fix is a status, not a
 sentence.** This entry had inherited the shared `sharedFigureOptions` consts, which carry the shape
-**bar's** statuses and the shape bar's `appRef`s — for a tool that never renders that bar. Three of
-them were `partial` and four `missing`; the correct reading is:
+**bar's** statuses and the shape bar's `appRef`s — for a tool that never renders that bar. Six of the
+nine rows below were `partial` and three were `missing`; the correct reading is:
 
-| Row               | Was     | Now       | Why                                                                                                               |
-| ----------------- | ------- | --------- | ----------------------------------------------------------------------------------------------------------------- |
-| `Mode`            | partial | `inert`   | chip "Tool Mode" is on screen, nothing reads it                                                                   |
-| `Fill`            | missing | `inert`   | chip "Fill" is on screen, nothing reads it                                                                        |
-| `Stroke`          | partial | `inert`   | chip "Stroke" is on screen, nothing reads it                                                                      |
-| `Shape Picker`    | missing | `inert`   | chip "Shape Picker" is on screen, nothing reads it                                                                |
-| `Shape W&H`       | partial | `inert`   | chip "W/H" is on screen, nothing reads it; the two `window.prompt` calls the other six figures get never run here |
-| `Path Operations` | missing | `inert`   | chip "Path Operations" is on screen, nothing reads it                                                             |
-| `Stroke width`    | partial | `missing` | no chip in this tool's list, and the bar that carries it never renders                                            |
-| `Stroke type`     | partial | `missing` | same                                                                                                              |
-| `Opacity`         | partial | `missing` | same                                                                                                              |
+| Row               | Was     | Now       | Why                                                                                                                |
+| ----------------- | ------- | --------- | ------------------------------------------------------------------------------------------------------------------ |
+| `Mode`            | partial | `inert`   | chip "Tool Mode" is on screen, nothing reads it                                                                    |
+| `Fill`            | missing | `inert`   | chip "Fill" is on screen, nothing reads it                                                                         |
+| `Stroke`          | partial | `inert`   | chip "Stroke" is on screen, nothing reads it                                                                       |
+| `Shape Picker`    | missing | `inert`   | chip "Shape Picker" is on screen, nothing reads it                                                                 |
+| `Shape W&H`       | partial | `inert`   | chip "W/H" is on screen, nothing reads it; the two `window.prompt` calls the other five figures get never run here |
+| `Path Operations` | missing | `inert`   | chip "Path Operations" is on screen, nothing reads it                                                              |
+| `Stroke width`    | partial | `missing` | no chip in this tool's list, and the bar that carries it never renders                                             |
+| `Stroke type`     | partial | `missing` | same                                                                                                               |
+| `Opacity`         | partial | `missing` | same                                                                                                               |
 
 The `inert` / `missing` split is the whole point of the two statuses, and it is the same split the Pen
 family already makes. `inert` is "declared **or displayed**, and nothing is wired behind it", whose
 second shape is spelled out in `types.ts` as "a label on a placeholder chip that no component ever
 reads" — which is these six exactly. `missing` would deny a fact a screenshot shows. The other three
 go the other way: no chip exists, and the real bar does not render, so there is nothing to point at
-and no `appRef` is carried.
+and no `appRef` is carried. A `missing` row must not carry the key at all, so those three are built
+with a rest-destructuring helper (`withoutAppRef` in `shape.ts`) rather than with
+`{ ...shared, appRef: undefined }`, which leaves a present, value-less key on the row and
+contradicts the contract.
 
 **The chip list is not the only reason the shape bar does not render.** The canvas dispatch
 `src/components/Main/Main.tsx:67-75` names `shape`, `rectangle`, `ellipse`, `triangle`, `polygon` and

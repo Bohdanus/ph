@@ -209,18 +209,27 @@ shadow would use".
 under "The align buttons" below — there is no Adobe page naming a bar control for the align target,
 and the menu sentence does not imply one.
 
-**`reposition` has zero `partial` rows now, and the two that were `partial` were the wrong kind of
-error.** `Auto-Select` and `Show Transform Controls` were filed `partial` on the strength of the
-_behaviour_ each describes — the tool does hit-test to the layer under the pointer, and the shared
-`useRect` overlay does draw corner handles on the active layer. A behaviour is not a control. The
-Move options bar renders three items (`src/components/ToolbarsRight/Move/Reposition.tsx`: the
+**`reposition` has two `partial` rows, and they are `partial` on a behaviour, not on a control.**
+`Auto-Select` and `Show Transform Controls` have been through both wrong answers. The first pass
+filed them `partial` on the strength of the _behaviour_ each describes — the tool does hit-test to
+the layer under the pointer, and the shared `useRect` overlay does draw corner handles on the
+active layer — without noticing that the behaviour is _unconditional_, which is the whole point.
+A later pass then swung both to `missing` on the reading that the app does not render them. That
+is the opposite error, and the contract settles it: `types.ts` names "a control welded to one of its
+states" as an explicit marker of `partial` on the `implementation` value, and
+`src/tools/descriptions/__tests__/toolDescriptions.test.ts:86` only withholds the `appRef`
+requirement from a `missing` row. A checkbox that is permanently on is a behaviour the app has and
+the user cannot turn off, which is a divergence from Photoshop's default, not a capability the app
+lacks. Both rows are therefore `partial` again.
+
+The Move options bar renders three items (`src/components/ToolbarsRight/Move/Reposition.tsx`: the
 active layer's name, a Merge all button and a hint), and a search of `src/` and `e2e/` for
 `auto-select` / `autoSelect` / `showTransformControls` finds no control anywhere — the only matches
-are this family's own prose. Under the type contract (`types.ts`) `partial` is "the control exists
-and is wired", and these two are `missing` on the strict reading: the app does not render them. The
-`appRef`s went with the statuses, because an `appRef` is defined as the app's _rendering_ of the
-control and there is no rendering to point at. The hit-test itself is still cited, as an
-`implementationRef` (`MoveToolArea.tsx:176`), where it belongs.
+are this family's own prose. So there is no _control_ to cite, and the `appRef` on each row is the
+behaviour the app performs instead: `MoveToolArea.tsx:176` for the hit test that resolves and
+activates the layer under the pointer, and `MoveToolArea.tsx:117` for the `useRect` call that draws
+the handles. `appNotes` says so on the record, because an `appRef` that is not a rendering of a
+control is otherwise indistinguishable from a mis-derived one.
 
 **`levels` lost two `partial` rows in this pass too, and the census above follows the data file.**
 The per-tool table in "## `levels`" below previously marked `Input Levels: black point` and
@@ -246,16 +255,16 @@ Distribution**, to get the effect you want." Everything else in the bar has to b
 align, transform and keyboard pages, which is why half of this tool's rows are sourced from pages
 about other features.
 
-| control                    | what it is in Photoshop                                                                                                                       | status  | appRef |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------ |
-| Tool Preset Picker         | Tool icon + flyout at the far left; Control-click for Reset Tool / Reset All Tools. The escape hatch from per-tool stickiness                 | missing |        |
-| Auto-Select                | Checkbox; resolves the target by hit test to the topmost layer with pixels under the cursor, rather than moving the active layer              | missing |        |
-| Auto-Select: Group / Layer | Menu beside the checkbox: Layer takes the individual layer, Group takes the whole group it belongs to                                         | missing |        |
-| Show Transform Controls    | Checkbox that puts the transform box and handles on the selected layer _without_ entering transform mode; dragging a handle is what starts it | missing |        |
-| Align                      | Six buttons at 2+ selected: Top Edges, Vertical Centers, Bottom Edges, Left Edges, Horizontal Centers, Right Edges                            | missing |        |
-| Distribute                 | The distribute row at 3+ selected: the same six commands to space layers evenly, plus the Horizontally and Vertically spacing buttons         | missing |        |
-| Width                      | Numeric percent text box for layer width, with the Link icon on by default since 21.0                                                         | missing |        |
-| Height                     | Numeric percent text box for layer height, linked to Width                                                                                    | missing |        |
+| control                    | what it is in Photoshop                                                                                                                       | status  | appRef                                     |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------ |
+| Tool Preset Picker         | Tool icon + flyout at the far left; Control-click for Reset Tool / Reset All Tools. The escape hatch from per-tool stickiness                 | missing |                                            |
+| Auto-Select                | Checkbox; resolves the target by hit test to the topmost layer with pixels under the cursor, rather than moving the active layer              | partial | `src/components/Main/MoveToolArea.tsx:176` |
+| Auto-Select: Group / Layer | Menu beside the checkbox: Layer takes the individual layer, Group takes the whole group it belongs to                                         | missing |                                            |
+| Show Transform Controls    | Checkbox that puts the transform box and handles on the selected layer _without_ entering transform mode; dragging a handle is what starts it | partial | `src/components/Main/MoveToolArea.tsx:117` |
+| Align                      | Six buttons at 2+ selected: Top Edges, Vertical Centers, Bottom Edges, Left Edges, Horizontal Centers, Right Edges                            | missing |                                            |
+| Distribute                 | The distribute row at 3+ selected: the same six commands to space layers evenly, plus the Horizontally and Vertically spacing buttons         | missing |                                            |
+| Width                      | Numeric percent text box for layer width, with the Link icon on by default since 21.0                                                         | missing |                                            |
+| Height                     | Numeric percent text box for layer height, linked to Width                                                                                    | missing |                                            |
 
 **Show Transform Controls** is the row that is easiest to get backwards, and the row that this pass
 corrected. The _Photoshop_ formulation is the one to keep: checking the box does _not_ start a
@@ -264,14 +273,19 @@ That is exactly why it exists — it is how you scale and rotate a layer without
 and Adobe's Free Transform page reaches the same state the long way round ("choose the Move tool.
 Then select Show Transform Controls in the options bar").
 
-The **app** renders no such checkbox, so the row is `missing` and not `partial`. It was previously
-`partial` on the reasoning that "the overlay and its handles do render
-(`MoveToolArea.tsx:117`)" — which conflates the control with the overlay. What renders at
-`MoveToolArea.tsx:117` is the `useRect({ isMoveTool: true })` call that draws a **plain resize
-rectangle** on whichever layer is active, unconditionally: no checkbox gates it, so it is not the
-rendering of Show Transform Controls and the row cannot cite it as an `appRef`. It is a resize
-rect — no rotation outside the box, no numeric W/H, no reference point. The geometric half of the
-tool is gone, and with it the two things `Cmd+T` and Move are supposed to share.
+The **app** renders no such checkbox, so the behaviour is welded on and the row is `partial` on
+that, not on a control it can point at. It was previously `partial` on the reasoning that "the
+overlay and its handles do render (`MoveToolArea.tsx:117`)" — which conflates the control with the
+overlay, and then a later pass swung it to `missing`, which is the opposite error: `types.ts` names
+"a control welded to one of its states" as a `partial` marker, and a row whose behaviour is
+permanently on is not a capability the app lacks. What renders at `MoveToolArea.tsx:117` is the
+`useRect({ isMoveTool: true })` call that draws a **plain resize rectangle** on whichever layer is
+active, unconditionally: no checkbox gates it, so the citation is the behaviour and not a control,
+and that is what the row's `appRef` names. It is a resize rect — no rotation outside the box, no
+numeric W/H, no reference point. The geometric half of the tool is gone, and with it the two
+things `Cmd+T` and Move are supposed to share. **Auto-Select** is the same shape and is argued at
+length further down: the hit test at `MoveToolArea.tsx:176` always runs, and its `appRef` is that
+line for the same reason.
 
 **The align buttons** are where the pre-existing corpus had a single row of widget names and no
 behaviour, and the behaviour is the interesting part:

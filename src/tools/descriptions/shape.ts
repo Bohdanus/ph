@@ -13,7 +13,10 @@ const fillControl: ToolControl = {
   detail:
     'The interior colour of the shape, as a swatch offering None, Solid Color, Gradient or Pattern. Fill and Stroke are independent: a shape can have a fill and no stroke, or the reverse.',
   status: 'partial',
-  appRef: 'src/tools/shape.ts:144',
+  // The bar's one `Filled` checkbox, which is this control's whole rendering here. The
+  // processor lines it used to cite (`setShapeCtx`) read `hasFill`; they are where the
+  // value is consumed, not where the control is drawn.
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:204',
 };
 
 const strokeControl: ToolControl = {
@@ -21,7 +24,9 @@ const strokeControl: ToolControl = {
   detail:
     'The colour of the outline, as a second swatch with the same None / Solid Color / Gradient / Pattern choices. Set it to None to draw a fill with no outline.',
   status: 'partial',
-  appRef: 'src/tools/shape.ts:143',
+  // The same checkbox as `Fill`, which is the point: one rendering backs both rows, and
+  // what it cannot express is either swatch's own menu.
+  appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:204',
 };
 
 const strokeWidthControl: ToolControl = {
@@ -185,6 +190,17 @@ const shapeToolShortcuts: readonly ToolShortcut[] = [shapeGroupShortcut, shapeCy
  * The controls with no chip in the list are `missing` and carry no `appRef` at all.
  */
 const CUSTOM_SHAPE_CHIPS = 'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:28';
+
+/**
+ * Drop the `appRef` key rather than blanking it.
+ *
+ * `{ ...shared, appRef: undefined }` satisfies the type and puts a present, value-less
+ * key on the row, which is the opposite of what the contract asks for: `appRef` is required
+ * for every status except `missing` and must be absent from a `missing` row. Rest-destructuring
+ * is the only form that makes the property genuinely not exist, so `'appRef' in row` is false
+ * and the generated table and the `Object.keys` walk both agree with the contract.
+ */
+const withoutAppRef = ({ appRef: _appRef, ...control }: ToolControl): ToolControl => control;
 
 export const shapeDescriptions: Record<
   'shape' | 'rectangle' | 'ellipse' | 'line' | 'triangle' | 'polygon' | 'custom-shape',
@@ -407,12 +423,12 @@ export const shapeDescriptions: Record<
         appRef: CUSTOM_SHAPE_CHIPS,
       },
       { ...strokeControl, status: 'inert', appRef: CUSTOM_SHAPE_CHIPS },
-      { ...strokeWidthControl, status: 'missing', appRef: undefined },
-      { ...strokeTypeControl, status: 'missing', appRef: undefined },
-      { ...weightControl, status: 'missing', appRef: undefined },
-      { ...opacityControl, status: 'missing', appRef: undefined },
-      { ...pixelBlendModeControl, status: 'missing', appRef: undefined },
-      { ...antiAliasControl, status: 'missing', appRef: undefined },
+      withoutAppRef({ ...strokeWidthControl, status: 'missing' }),
+      withoutAppRef({ ...strokeTypeControl, status: 'missing' }),
+      withoutAppRef({ ...weightControl, status: 'missing' }),
+      withoutAppRef({ ...opacityControl, status: 'missing' }),
+      withoutAppRef({ ...pixelBlendModeControl, status: 'missing' }),
+      withoutAppRef({ ...antiAliasControl, status: 'missing' }),
       {
         control: 'Shape Picker',
         detail:
@@ -423,14 +439,14 @@ export const shapeDescriptions: Record<
       {
         ...shapeWHControl,
         detail:
-          'Exact width and height for the next shape. The app puts this name on the chip list, but nothing reads it: this tool has no canvas gesture, so the pair of `window.prompt` calls the other six figures get never runs for it.',
+          'Exact width and height for the next shape. The app puts this name on the chip list, but nothing reads it: this tool has no canvas gesture, so the pair of `window.prompt` calls the other five figures get never runs for it.',
         status: 'inert',
         appRef: CUSTOM_SHAPE_CHIPS,
       },
       { ...pathOperationsControl, status: 'inert', appRef: CUSTOM_SHAPE_CHIPS },
-      { ...pathArrangementControl, status: 'missing', appRef: undefined },
-      { ...pathAlignmentControl, status: 'missing', appRef: undefined },
-      { ...gearControl, status: 'missing', appRef: undefined },
+      withoutAppRef({ ...pathArrangementControl, status: 'missing' }),
+      withoutAppRef({ ...pathAlignmentControl, status: 'missing' }),
+      withoutAppRef({ ...gearControl, status: 'missing' }),
     ],
     modifiers: [
       {
@@ -452,7 +468,7 @@ export const shapeDescriptions: Record<
       'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:28',
     ],
     appNotes:
-      "Registered, selectable, and a dead button. The processor row declares commit: 'unimplemented' and wires the shared unimplemented rasterizer, the tools map renders PlaceholderTool with a TODO badge, and the only state the settings hold is the tool name — no shape preset, no fill, no geometry. The placeholder panel does list Photoshop’s real control names for this bar, so the six chips a user sees are the genuine Photoshop set rather than placeholders for placeholders: Tool Mode, Fill, Stroke, W/H, Shape Picker, Path Operations. That is why those six rows read `inert` and not `missing` — the names are on screen and nothing is wired behind any of them, which is the exact shape the `inert` status exists for. The three rows that were `partial` above are also `missing` rather than partial, but for the opposite reason: Stroke width, Stroke type and Opacity have no chip in this tool's list at all, and the real shape bar that carries them never renders here, because this tool is absent from the canvas dispatch that gives the other six figures their gesture surface. It is a `display: none` area, so the three modifiers named above — Shift, Alt and Space — are bound to nothing either, and the app’s Shift constraint, which squares the drag box for every figure except the line, has no drag to apply to. Subtract needs a multi-subpath model with a fill rule, which a single convex outline cannot express, so the boolean operations are not a bar toggle away; they are a data-model decision first.",
+      "Registered, selectable, and a dead button. The processor row declares commit: 'unimplemented' and wires the shared unimplemented rasterizer, the tools map renders PlaceholderTool with a TODO badge, and the only state the settings hold is the tool name — no shape preset, no fill, no geometry. The placeholder panel does list Photoshop’s real control names for this bar, so the six chips a user sees are the genuine Photoshop set rather than placeholders for placeholders: Tool Mode, Fill, Stroke, W/H, Shape Picker, Path Operations. That is why those six rows read `inert` and not `missing` — the names are on screen and nothing is wired behind any of them, which is the exact shape the `inert` status exists for. The three rows that were `partial` above are also `missing` rather than partial, but for the opposite reason: Stroke width, Stroke type and Opacity have no chip in this tool's list at all, and the real shape bar that carries them never renders here, because this tool is absent from the canvas dispatch that gives the other five figures their gesture surface. It is a `display: none` area, so the three modifiers named above — Shift, Alt and Space — are bound to nothing either, and the app’s Shift constraint, which squares the drag box for every figure except the line, has no drag to apply to. Subtract needs a multi-subpath model with a fill rule, which a single convex outline cannot express, so the boolean operations are not a bar toggle away; they are a data-model decision first.",
     sources: [
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/draw-custom-shapes.html',
       'https://www.photoshopessentials.com/basics/how-to-draw-custom-shapes-in-photoshop/',
