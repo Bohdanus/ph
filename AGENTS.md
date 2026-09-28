@@ -94,65 +94,41 @@ One git worktree per task, all under `.kilo/worktrees/`. Three traps that cost r
 
 ### Local
 
-Two husky hooks, both delegating to a script in `package.json`, so the gated sequence is a command anyone can run by hand:
+`gate:commit`: `lint-staged --fail-on-changes --no-stash`, then `gate:verify` (`tsc` -> `build` -> `test:e2e:unit`). `test:staged` then runs related tests. `gate:push` runs the full app suite.
 
-| Command               | Runs from           | Contents                                                       |
-| --------------------- | ------------------- | -------------------------------------------------------------- |
-| `npm run gate:commit` | `.husky/pre-commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` |
-| `npm run gate:verify` | —                   | `tsc` -> `build` -> `test:e2e:unit`                            |
-| `npm run test:staged` | `.husky/pre-commit` | `vitest related` over the staged paths, after `gate:commit`    |
-| `npm run gate:push`   | `.husky/pre-push`   | `test` — the full app suite, and nothing else                  |
+- `gate:verify` proves types/build; `test:staged` catches behavior that those pass. `test:staged` needs no guard, but is incomplete: an unimported file passes it; `gate:push` covers that.
+- Keep the staged-path pipeline NUL-safe: `git diff --cached --name-only -z | xargs -0`. Unquoted command substitution can word-split/glob-expand into a silent `No test files found` pass.
+- `*.{ts,tsx}` uses ESLint + Prettier; `*.{js,scss,jsonc,yml,yaml,md,json}` uses Prettier only. **Do not add ESLint for the latter group**: no config covers it, and doing so breaks Markdown/SCSS commits.
+- `--fail-on-changes --no-stash` leaves formatter fixes unstaged and blocks the commit; never allow hooks to rewrite the index.
+- `build` is not redundant with `tsc`: it catches Sass, wasm, PostCSS, and import resolution. **NO LOCAL `lint:check`**; whole-tree linting is CI-only.
 
-The commit hook is two gates because they answer different questions. `gate:verify` asks "does the tree still build and typecheck". `test:staged` asks "did this commit break a test covering the files in it" — and only that. Both `tsc` and `build` PASS a flipped numeric threshold, a renamed branch or a dropped case, so without the second gate such a change commits cleanly and dies in CI: the same class of fix that has repeatedly needed its own worktree ("Fix 12 failing useHistory tests", "Fix 3 failing replay-coordinator tests", "Fix failing useApp.psd tests", "Fix failing useRect tests").
+### CI
 
-- `test:staged` is a 2.8s scoped run where the full suite is 7-14s, and it is unconditionally safe in Vitest 5: no matching staged path reports `No test files found` and exits 0, and a staged path outside `src/` (`.md`, an `e2e/**` helper, a binary asset) also exits 0 without running the whole suite. It therefore needs no `--passWithNoTests` and no guard. What it does **not** give you is completeness: a file with no test importing it passes, which is why the full suite still runs at push.
-- A **merge commit** is index-vs-`HEAD`, so `git diff --cached` reports every file the merge brings in rather than what was staged: 120 merged `src` paths measure 9.8s and 81 test files, making the hook ~19s instead of ~12s. Slower, never a false pass. The selection derives from Vite's module graph, so it is not stable across environments (a staged `package.json` selects all 180 test files in a warm checkout, none in a fresh install). Do not rely on a staged non-`src` file dragging in its dependents.
-- The staged list is read with `-z` and passed through `xargs -0` **ON PURPOSE**. An unquoted `$(git diff --cached --name-only)` word-splits and glob-expands, and the failure is SILENT: a path expanding to nothing makes vitest report `No test files found` and exit 0, so the gate appears to pass while testing nothing. The shell form works today only by accident of the current tree (no tracked name contains a space or glob metacharacter); `src/components/[id]/`-style paths are the plausible next break. Empty input is a true no-op — BSD `xargs` does not invoke the command at all — so a docs-only commit costs 0.04s.
-- `lint-staged` formats two groups. `*.{ts,tsx}` gets `eslint --fix` and `prettier --write`; `*.{js,scss,jsonc,yml,yaml,md,json}` gets `prettier --write` only, because no ESLint config covers those and **adding one would break every commit touching a `.md` or `.scss` file**. The second group deliberately includes `.js`, `.scss` and `.jsonc`: `prettier --check .` matches all of them, and anything it matches but lint-staged does not is formatted by nobody at commit time and fails in CI instead.
-- `--fail-on-changes` is why the hook is trustworthy: by default lint-staged re-adds whatever `--fix`/`--write` changed, so the commit ends up containing code that was never staged and never read. With the flag the fix stays in the working tree, the index is untouched, and the commit is blocked. `--no-stash` makes that clean — without it a blocked commit leaves a `WIP on <branch>` stash behind. Together: no index rewrite, no residue. Cost is one extra round trip per commit that touched an unformatted file; `npm run format` removes it. One residue does survive: `.git/lint-staged_unstaged.patch` after any blocked commit, and nothing removes it.
-- `build` is in the commit hook because it is not redundant with `tsc`: `vite build` runs Babel and esbuild, which strip types without checking them, so it catches Sass, wasm resolution, PostCSS and import resolution that `tsc` cannot, while `tsc` catches types the bundle never sees. `gate:verify`'s name predates its contents — it runs no lint and no app test, which is why it is a distinct row.
-- **NOTHING LOCAL RUNS `lint:check` ANY MORE** (`gate:push` used to). Whole-repo `eslint . --cache` and `prettier --check .` are CI-only, so an already-committed unformatted file, a branch switch that changes lint rules, and a bad rebase are all caught by the `ci` job rather than locally. lint-staged covers the staged files, which is what the `.scss` gap needed.
-- `gate:push` does **not** repeat `gate:commit`. It used to, reasoning that a push can follow `--no-verify`, a rebase or a cherry-pick — sound for `tsc`, but it re-ran 9s of deterministic checks to protect 7s of suite time and ran `test:e2e:unit` twice per push. A rebase that broke the build is caught by `ci` in about a minute.
-- Measured, for judging a future change to this table: `build` 1.7s, `test:e2e:unit` 1.1s, `test:staged` 2.8s, `tsc -b` 5s, `gate:commit` end to end ~9s, `test:staged` adding ~3s, `test` 7-14s.
+- `ci`: lint, high-severity audit, typecheck, TS-project coverage assertion, coverage tests, build.
+- `e2e-unit`: e2e helper tests and coverage.
+- `e2e`: headless Playwright.
+- `dependency-review` (PRs): policy in `.github/dependency-review-config.yml`.
 
-### CI (Node 24 from `.nvmrc`, which is also what `engines` requires)
+**DO NOT WEAKEN A GATE TO GET GREEN: no skips, raised thresholds, deleted assertions, or re-recorded baselines.** Fix the defect or leave the recording decision to the operator.
 
-Four gating jobs on every push and PR to `main`, plus `workflow_dispatch`:
+## E2E failures
 
-- `ci` — `lint:check` -> `npm audit --audit-level=high` -> `tsc` -> an assertion that every tracked `.ts`/`.tsx` is inside some project's `include` -> `test --coverage` -> `build`. Uploads `coverage/`.
-- `e2e-unit` — `test:e2e:unit` -> `test:e2e:unit:coverage`, uploads `coverage-e2e/`. Separate from `ci` so a break in the app pipeline cannot skip the only gate on `e2e/`.
-- `e2e` — the Playwright specs. It used to be `continue-on-error`, justified by five failing specs that are now fixed; the job was reporting a state the suite no longer had, so it is a gate. What it does not rest on: the CDP capture assertions are mode- and host-independent by construction, so the disjoint per-mode failing sets that justified `continue-on-error` are empty by design, not by observation.
-- `dependency-review` — pull requests only. Enforces `.github/dependency-review-config.yml`: denies GPL-3.0-only and AGPL-3.0-only, fails on a high-severity advisory, allowlists MIT, Apache-2.0, BSD-2/3-Clause, ISC, MPL-2.0, CC0-1.0, Unlicense, WTFPL, Zlib, CC-BY-4.0 and CC-BY-SA-4.0. That list was written when nothing read the file, so no dependency has ever been checked against it; tightening it is a policy call, not a cleanup.
-
-**DO NOT WEAKEN A GATE TO GET GREEN: no skips, no raised thresholds, no deleted assertions, no re-recorded visual baselines.** Each is either a real defect with a named fix, or a recording decision that belongs to the operator.
-
-## Known failures and how to read one
-
-On the default headless run **no e2e test fails**: 97 pass, 2 are skipped by declaration. Stable across repeated full runs. Three defect groups used to fail and have since been fixed here — the CDP capture-size assertions, the keyboard flyout race, the `levels.spec.ts` canvas lookup. Their pin survives in `e2e/OPEN_PROBLEMS.md` rather than being deleted, because each explains a shape the suite must not drift back into. That pin is the whole of the allowed residue: it lives only as long as the tripwire does, and the fix that removes the tripwire removes the entry with it.
-
-- The remaining `e2e/OPEN_PROBLEMS.md` entries are **latent** defects no current run trips. Read it before investigating a failure; a new failure is a new defect, not a known one.
-- A **pin** is a unit test that asserts the current broken behaviour on purpose. It is a tripwire that FAILS the moment the defect is fixed, so a fix MUST remove the pin in the same change. The same rule governs the app's `expected-fail` tests: an expected failure is a declaration about current behaviour, not a skipped requirement.
-- **DO NOT widen a threshold, add a skip, or re-record a visual baseline to make a test green.**
-- Baselines are now genuinely compared: `visual-regression.spec.ts` re-records only under an explicit `--update-snapshots`, so a green run means the pixels matched.
-- Read a failure from disk, never from a viewer: `screenshot: 'only-on-failure'` puts a PNG in the failing test's `outputDir` under `test-results/`, and the `list` reporter on stdout is the pass/fail record (in CI it also writes `test-results/results.json`). A `trace.zip` needs the trace viewer, which is a window — ask the operator.
+- Read `e2e/OPEN_PROBLEMS.md` first. A new failure is a new defect.
+- A pin/`expected-fail` is a tripwire for broken behavior; remove it in the same change that fixes the defect.
+- Visual baselines re-record only with `--update-snapshots`; green means pixels matched.
+- Read failures from `test-results/`; `trace.zip` needs a window, so ask the operator.
 
 ## Handoff documents
 
-`HANDOFF.md`, `.kilo/plans/` and `e2e/OPEN_PROBLEMS.md` are strictly problem-focused and todo-oriented: **NO changelog, NO "work completed", NO status summaries.** Each entry is a validated issue with a problem statement, the affected files, and an actionable fix. Verify every claim against the working tree first — stale line numbers send the next session after a bug that does not exist.
+`HANDOFF.md`, `.kilo/plans/`, and `e2e/OPEN_PROBLEMS.md`: validated, actionable problems only. **NO changelog, completion notes, or status summaries.** Verify against the tree.
 
-### Writing is the default, not a favour
-
-**LEAVE A HANDOFF DOC, OR EDIT THE EXISTING ONE, WHENEVER YOU FIND A validated ISSUE, a strong recommendation, or a finding worth preserving. DO NOT ASK PERMISSION.** The strongest case by far is a confirmed defect: you investigated, it is real, and nobody else knows. Not finding anything is the only reason to leave the doc alone.
-
-**Handoff docs are maintained like source: THEY SHIP WITH THE CODE.** The edit belongs in the same commit as the work that produced the finding. A stale entry is not neutral — the next session spends a full investigation on a bug that is already gone, and a missing entry loses the only record of a real one.
+**WRITE OR UPDATE THE HANDOFF WITHOUT ASKING** for every validated issue, strong recommendation, or durable finding. Ship it with the work.
 
 ### Lifecycle: entries die, they never get reworded
 
-- **Fixed and verified DELETES the entry.** Verified means another subagent, a review, or a test confirmed it — not the fixer's own say-so. The same change that fixes an issue removes it.
-- **NEVER rewrite an open problem into a closed one.** "issue X fixed in abc123" is a new entry wearing the old one's name. Delete it.
-- **A trail of fixed issues is pollution.** Retained "fixed" notes are prose the next session reads instead of a problem it can act on, and they bury the problems still open. The only residue a fix may leave is a tripwire in the test code, not a paragraph in the doc.
-- **Unverified is not closed.** A fix that landed without a check leaves the entry alive: tighten it to say exactly what still needs verifying, and let that verification delete it.
+- **Verified fix: DELETE the entry.** Verification is another agent, review, or test, not the fixer's claim.
+- **Never rewrite an open problem as closed.** Keep unverified work as the exact remaining verification; keep only test tripwires after a fix.
 
 ## Architecture status
 
-The legacy `HistoryItem[]` path is the **PRODUCTION REPLAY AUTHORITY**: it writes history, replays through `history-replay.ts`, renders runtime `Layer` objects and exports from the runtime canvas and layers. The durable document is still a shadow projection, NOT the authority for rendering. Treat that as the state to read, not a fact to assume — the history work is in flight. Re-read the code and the plans before designing across the legacy/durable boundary. **DO NOT start a single-writer cutover while `saveLayerCanvas()` can still promote cached canvases outside reducer publication.**
+`HistoryItem[]` is the **PRODUCTION REPLAY AUTHORITY**: history, `history-replay.ts`, runtime `Layer`s, and export. The durable document is shadow-only. Re-read code and plans before crossing the boundary. **DO NOT start single-writer cutover while `saveLayerCanvas()` promotes cached canvases outside reducer publication.**
