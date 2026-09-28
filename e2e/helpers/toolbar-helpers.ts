@@ -161,42 +161,42 @@ export async function clickToolButton(page: Page, toolName: string): Promise<voi
 }
 
 /**
-/**
  * The app's long-press threshold, in milliseconds.
  *
  * Mirrored from `scheduleFlyoutOpen` in `src/components/SidebarLeft/SidebarLeft.tsx`, which
- * opens a group's flyout from `setTimeout(() => openFlyout(groupIndex), 300)`. The app exports
- * no constant for it, so 300 is duplicated here and the app is the only authority on the
- * value: the waits below are expressed against this, never against a second literal, so raising
- * the app's threshold cannot quietly leave a wait behind it.
+ * opens a group's flyout from a `setTimeout(..., 300)`. The app exports no constant for it, so
+ * 300 is duplicated here and the app is the only authority on the value: the defensive waits
+ * below are expressed against this, never against a second literal, so raising the app's
+ * threshold cannot quietly leave a wait behind it.
  */
 export const LONG_PRESS_DELAY_MS = 300;
 
 /**
- * How long to wait for a flyout to be open.
- *
- * A budget for a CONDITION wait, not a deadline the app has to beat: the long-press timer in
- * `SidebarLeft` fires 300ms after pointerdown, and the rest of this budget absorbs scheduler
- * jitter on a loaded machine. It is deliberately much larger than the 300ms it waits on — the
- * helper used to race a hard 350ms sleep against that same 300ms timer, leaving 50ms of margin,
- * which is the defect `openToolFlyout` documents.
- *
- * Exported so the unit test pins this number instead of restating it: two literals for one
- * timeout is how `LONG_PRESS_DELAY_MS` came to be 300 in one place and 350 in another while only
- * `300 + 50 === 350` kept them compatible.
- */
-export const FLYOUT_VISIBLE_TIMEOUT_MS = 2000;
-
-/**
  * Slack for the settle wait in {@link verifyHoverDoesNotOpenFlyout}, whose assertion is
- * negative. Hover dispatches no `pointerdown`, so nothing ever schedules a flyout and the wait
- * is defensive only; it is still expressed against the app's delay rather than as a second
- * hardcoded number.
+ * NEGATIVE. Hover dispatches no `pointerdown`, so nothing ever schedules a flyout and the
+ * wait can only be defensive; it is still expressed against the app's delay rather than as a
+ * bare number, because that is what makes the number's provenance readable.
  */
 const HOVER_SETTLE_BUFFER_MS = 100;
 
 /**
- * Opens a tool flyout via long-press (300ms) for grouped tools.
+ * How long to wait for a flyout to be open.
+ *
+ * This is a budget for a CONDITION wait, not a deadline the app has to beat: the
+ * long-press timer in `SidebarLeft` fires 300ms after pointerdown, and the rest of
+ * this budget absorbs scheduler jitter on a loaded machine. It is deliberately much
+ * larger than the 300ms it is waiting on — the old helper instead raced a hard 350ms
+ * sleep against that same 300ms timer, leaving 50ms of margin, which is the defect
+ * `openToolFlyout` documents.
+ *
+ * Exported so the unit test pins this number instead of restating it: two literals
+ * for one timeout is how `LONG_PRESS_DELAY_MS` came to be 300 in one place and 350 in
+ * another while only `300 + 50 === 350` kept them compatible.
+ */
+export const FLYOUT_VISIBLE_TIMEOUT_MS = 2000;
+
+/**
+ * Opens a tool flyout via long-press for grouped tools.
  * Use this instead of clickToolButton when you need to select a non-primary
  * tool from a flyout group (e.g., Lasso, Colors, Brush, Pen, Shape).
  *
@@ -226,10 +226,7 @@ export async function openToolFlyout(page: Page, toolName: string): Promise<void
   const button = page.getByTestId(`tool-button-${normalizedName}`);
   await expect(button).toBeVisible();
 
-  // Press, and do NOT wait a fixed interval before lifting. The wait below is the
-  // condition that the press actually opened this group; a timer here can only ever
-  // guess at when the app's own 300ms timer fired, and a guess that loses the race is
-  // indistinguishable from a gesture the app rejected.
+  // Press.
   await button.dispatchEvent('pointerdown', { button: 0 });
 
   // Wait for THIS tile's flyout to be open before lifting.
@@ -332,9 +329,6 @@ export async function verifyHoverDoesNotOpenFlyout(page: Page, toolName: string)
   await expect(button).toBeVisible();
 
   await button.hover();
-  // Hover fires no `pointerdown`, so the app never calls `scheduleFlyoutOpen` and there is
-  // no pending timer to race. The wait is defensive, and it outlasts the app's own delay so
-  // this keeps meaning "hover did not open it" if the threshold is ever raised.
   await page.waitForTimeout(LONG_PRESS_DELAY_MS + HOVER_SETTLE_BUFFER_MS);
 
   // Flyout should not be visible
