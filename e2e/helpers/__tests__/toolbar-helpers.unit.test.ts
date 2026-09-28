@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, expectTypeOf } from 'vitest';
 import type { Mock } from 'vitest';
 import type { Page } from '@playwright/test';
+import { createScrollModel } from './canvas-helpers.fixtures';
 import { slugifyToolLabel, toolbarMap } from '../../../toolbar-mapping.ts';
 import {
   TOOL_NAME_MAP,
@@ -143,7 +144,11 @@ type MockPage = {
   getByRole: Mock<(role: string, options?: { name?: RegExp | string }) => MockLocator>;
   waitForTimeout: Mock<(timeout: number) => Promise<void>>;
   keyboard: { press: Mock<(key: string) => Promise<void>> };
+  evaluate: Mock<Page['evaluate']>;
 };
+
+/** The offset Playwright's scroll-into-view produces when a toolbar button is clicked. */
+const SCROLLED_BY_CLICK = 440;
 
 interface FakeDom {
   page: MockPage & Page;
@@ -155,6 +160,9 @@ interface FakeDom {
   focused: FakeElement[];
   focusElement: (element: FakeElement) => void;
   hovers: FakeElement[];
+  /** Where the window ended up, and every `window.scrollTo` the code under test issued. */
+  windowScroll: () => { x: number; y: number };
+  scrollRequests: () => Array<{ x: number; y: number }>;
 }
 
 function matchesAccessibleName(element: FakeElement, name?: RegExp | string): boolean {
@@ -163,7 +171,8 @@ function matchesAccessibleName(element: FakeElement, name?: RegExp | string): bo
   return element.name.toLowerCase() === name.toLowerCase();
 }
 
-function createFakeDom(): FakeDom {
+function createFakeDom(domOptions: { scrollOnClick?: boolean } = {}): FakeDom {
+  const { scrollOnClick = false } = domOptions;
   const clicked: FakeElement[] = [];
   const activated: FakeElement[] = [];
   const dispatched: Array<{ element: FakeElement; type: string; options?: Record<string, unknown> }> = [];
@@ -172,6 +181,9 @@ function createFakeDom(): FakeDom {
 
   let active: FakeElement | null = null;
   let elapsedMs = 0;
+  // One model for the whole fake, so the window a click moved is the window the next
+  // `evaluate` reads and the one a restore writes.
+  const scrollModel = createScrollModel();
 
   const createElement = (spec: FakeElementSpec): FakeElement => ({
     testId: spec.testId ?? null,
@@ -281,6 +293,14 @@ function createFakeDom(): FakeDom {
       click: vi.fn(async (options?: { button?: string }) => {
         const element = primary();
         if (element) clickElement(element, options);
+        // Playwright scrolls a target into view before clicking it. The left toolbar is
+        // 1177px tall in a 720px window, so a click on a tool near the bottom of it lands
+        // with the window at 440 — which is what `preservingScroll` exists to undo.
+        if (scrollOnClick) {
+          void scrollModel.evaluate(() => {
+            window.scrollTo(0, SCROLLED_BY_CLICK);
+          }, undefined);
+        }
       }),
       count: vi.fn(async () => matches.length),
       dispatchEvent: vi.fn(async (type: string, options?: Record<string, unknown>) => {
@@ -338,13 +358,30 @@ function createFakeDom(): FakeDom {
         if (active) pressKey(active, key);
       }),
     },
+    // A toolbar click must not move the window, so the helpers read the scroll before the
+    // click and write it back after. This models the window those two calls see: a click
+    // can move it — that is what Playwright's scroll-into-view does — and the fake lets a
+    // test make it do so.
+    evaluate: scrollModel.evaluate,
   };
 
   // Playwright's Page exposes far more surface than the helpers touch, so the
   // fake is materialized from a bare object and the declared type stays authoritative.
   const page: MockPage & Page = Object.assign(Object.create(null), mocks);
 
-  return { page, mocks, add, clicked, activated, dispatched, focused, focusElement, hovers };
+  return {
+    page,
+    mocks,
+    add,
+    clicked,
+    activated,
+    dispatched,
+    focused,
+    focusElement,
+    hovers,
+    windowScroll: () => ({ x: scrollModel.scrollX(), y: scrollModel.scrollY() }),
+    scrollRequests: () => scrollModel.scrollRequests(),
+  };
 }
 
 interface FakeFlyoutItem {
@@ -701,6 +738,89 @@ describe('Toolbar Helpers', () => {
           label: string;
         }>();
       });
+    });
+  });
+
+  // The regression: Playwright scrolls a target into view before clicking it, and the left
+  // toolbar is 1177px tall inside a 720px window, so a tool click drags the page 440px
+  // down. Every spec that measures the canvas afterwards then gets `y: -340` where it used
+  // to get `y: 100`, and 19 of them failed. A tool click has to mean "this tool is active"
+  // and nothing else, so these pin that the window is where the caller left it.
+  describe('window scroll across a toolbar click', () => {
+    it('puts the window back when the click scrolled it to reach the button', async () => {
+      const dom = createFakeDom({ scrollOnClick: true });
+      dom.add({ testId: 'tool-button-draw' });
+
+      await clickToolButton(dom.page, 'draw');
+
+      // The click scrolled the window to 440 and the helper put it back to 0, in that order.
+      expect(dom.scrollRequests()).toEqual([
+        { x: 0, y: SCROLLED_BY_CLICK },
+        { x: 0, y: 0 },
+      ]);
+      expect(dom.windowScroll()).toEqual({ x: 0, y: 0 });
+    });
+
+    it('asks the window to return to where the caller had it, not to the top of the page', async () => {
+      const dom = createFakeDom({ scrollOnClick: true });
+      dom.add({ testId: 'tool-button-draw' });
+      await dom.page.evaluate(() => window.scrollTo(120, 300));
+      dom.add({ testId: 'tool-button-brush' });
+
+      await clickToolButton(dom.page, 'draw');
+
+      expect(dom.windowScroll()).toEqual({ x: 120, y: 300 });
+      expect(dom.scrollRequests().at(-1)).toEqual({ x: 120, y: 300 });
+    });
+
+    it('restores the window on the role fallback too, which is a different locator', async () => {
+      const dom = createFakeDom({ scrollOnClick: true });
+      // The role fallback matches "Select and Move": the helper expands `&` before building
+      // the pattern, because the legacy label spells the word out.
+      dom.add({ name: 'Select and Move' });
+
+      await clickToolButton(dom.page, 'Select & Move');
+
+      expect(dom.windowScroll()).toEqual({ x: 0, y: 0 });
+    });
+
+    it('restores the window after a flyout selection', async () => {
+      const dom = createFakeDom({ scrollOnClick: true });
+      const menu = dom.add({ role: 'menu', visible: false });
+      dom.add({ testId: 'tool-button-brush' }, menu);
+      dom.add({ testId: 'tool-flyout-item-pencil-pencil-tool' }, menu);
+      menu.visible = true;
+
+      await selectFromFlyout(dom.page, { toolName: 'pencil', label: 'Pencil Tool' });
+
+      expect(dom.windowScroll()).toEqual({ x: 0, y: 0 });
+    });
+
+    it('restores the window after the layout toggle', async () => {
+      const dom = createFakeDom({ scrollOnClick: true });
+      dom.add({ testId: 'toolbar-layout-toggle' });
+
+      await toggleToolbarLayout(dom.page);
+
+      expect(dom.windowScroll()).toEqual({ x: 0, y: 0 });
+    });
+
+    it('leaves the window alone when the click did not move it', async () => {
+      const dom = createFakeDom();
+      dom.add({ testId: 'tool-button-draw' });
+
+      await clickToolButton(dom.page, 'draw');
+
+      // The click never moved the window, so the only request is the restore back to the
+      // position it was already at — one write, not the two the scrolled case needs. That
+      // difference is what tells this apart from "the click moved and the restore worked".
+      expect(dom.scrollRequests()).toEqual([{ x: 0, y: 0 }]);
+    });
+
+    it('still throws when the tool does not exist, rather than swallowing the lookup failure', async () => {
+      const dom = createFakeDom({ scrollOnClick: true });
+
+      await expect(clickToolButton(dom.page, 'draw')).rejects.toThrow(/no clickable button found/);
     });
   });
 

@@ -1,6 +1,8 @@
 import { type Page, type TestInfo } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { getPageScroll } from './canvas-helpers';
+import { viewportRectToPageRect } from './screenshot-scale';
 
 interface BoundingBox {
   x: number;
@@ -49,12 +51,27 @@ export async function captureCanvasScreenshot(
   // onto the element's CSS box proportionally, and screenshot-scale.ts is the single
   // implementation both select-move.spec.ts and viewport-drawing.spec.ts use. See
   // cdp-helpers.spec.ts, which pins this behaviour at deviceScaleFactor 1 and 2.
-  const captureClip = {
-    x: clip?.x ?? box.x,
-    y: clip?.y ?? box.y,
-    width: clip?.width ?? box.width,
-    height: clip?.height ?? box.height,
-  };
+  //
+  // `box` and `clip` arrive viewport-relative (that is what `boundingBox()` returns),
+  // but this helper talks to CDP directly and so bypasses the translation Playwright
+  // would otherwise apply: `Page.captureScreenshot` reads its clip against the DOCUMENT
+  // origin. That asymmetry is the whole reason the conversion is here and not in the
+  // callers -- `page.screenshot` and this function want opposite spaces for the same
+  // numbers. Measured: this app is 1177px tall in a 720px window, `clickToolButton`
+  // scrolls it 440px, and the canvas box moves from y=100 to y=-340; captured
+  // untranslated, the region came back 440px away from the one measured, which reads as
+  // a wrong answer rather than an error. The offset is read here, per capture, because
+  // the window scrolls between captures. `viewportRectToPageRect` carries the detail.
+  const scroll = await getPageScroll(page);
+  const captureClip = viewportRectToPageRect(
+    {
+      x: clip?.x ?? box.x,
+      y: clip?.y ?? box.y,
+      width: clip?.width ?? box.width,
+      height: clip?.height ?? box.height,
+    },
+    scroll
+  );
 
   try {
     const { data } = await cdp.send('Page.captureScreenshot', {

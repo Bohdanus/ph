@@ -40,6 +40,8 @@ interface HarnessOptions {
   response?: { data?: string };
   sendError?: Error;
   detachError?: Error;
+  /** The window offset `captureCanvasScreenshot` reads before it builds its clip. */
+  scroll?: { x: number; y: number };
 }
 
 interface CdpHarness {
@@ -78,9 +80,12 @@ function createCdpHarness(outputDir: string, options: HarnessOptions = {}): CdpH
     return { send, detach } as unknown as CDPSession;
   });
   const context = vi.fn<() => BrowserContext>().mockReturnValue({ newCDPSession } as unknown as BrowserContext);
+  const scroll = options.scroll ?? { x: 0, y: 0 };
+  const evaluate = vi.fn(async (pageFunction: () => unknown) => pageFunction()) as unknown as Mock<Page['evaluate']>;
+  vi.stubGlobal('window', { scrollX: scroll.x, scrollY: scroll.y });
 
   return {
-    page: createPageMock({ context }),
+    page: createPageMock({ context, evaluate }),
     send,
     detach,
     newCDPSession,
@@ -264,7 +269,9 @@ describe('CDP Helpers', () => {
 
     it('forwards a negative clip origin to CDP unchanged instead of clamping it', async () => {
       // A canvas scrolled partly out of the viewport has a negative origin. Clamping
-      // it to 0 would capture a different region than the caller measured.
+      // it to 0 would capture a different region than the caller measured. At scroll 0
+      // a negative origin is already a document origin, so the translation below is the
+      // identity and this still holds.
       const outputDir = await makeOutputDir('negative-clip');
       const { page, send } = createCdpHarness(outputDir);
       const { testInfo } = createTestInfoMock(outputDir);
@@ -274,6 +281,74 @@ describe('CDP Helpers', () => {
       expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
         format: 'png',
         clip: { x: -20, y: -10, width: 30, height: 40, scale: 1 },
+      });
+    });
+
+    // The regression this translation exists for. `Page.captureScreenshot` is called
+    // directly here, so Playwright never gets to apply the window offset that
+    // `page.screenshot({ clip })` applies on the caller's behalf: measured on a marker at
+    // document y=600 with the window scrolled to 440, a viewport-relative clip captures
+    // nothing and the page-relative one captures the marker. Sending `box`/`clip` raw
+    // therefore put every CDP read 440px from the region the caller measured, which reads
+    // as a wrong answer rather than an error.
+    it('translates a viewport-relative clip into the page coordinates CDP wants', async () => {
+      const outputDir = await makeOutputDir('scrolled-clip');
+      const { page, send } = createCdpHarness(outputDir, { scroll: { x: 0, y: 440 } });
+      const { testInfo } = createTestInfoMock(outputDir);
+
+      await captureCanvasScreenshot(page, { ...BOX, y: -340 }, testInfo, 'scrolled');
+
+      expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
+        format: 'png',
+        clip: { x: BOX.x, y: 100, width: BOX.width, height: BOX.height, scale: 1 },
+      });
+    });
+
+    it('translates an explicit clip, not just the fallback box', async () => {
+      const outputDir = await makeOutputDir('scrolled-explicit-clip');
+      const { page, send } = createCdpHarness(outputDir, { scroll: { x: 30, y: 440 } });
+      const { testInfo } = createTestInfoMock(outputDir);
+
+      await captureCanvasScreenshot(page, BOX, testInfo, 'scrolled-clip', {
+        x: BOX.x + 20,
+        y: -190,
+        width: 100,
+        height: 60,
+      });
+
+      expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
+        format: 'png',
+        clip: { x: BOX.x + 50, y: 250, width: 100, height: 60, scale: 1 },
+      });
+    });
+
+    it('reads the window offset once per capture, not once per module', async () => {
+      // The offset is read at the call site on purpose: `clickToolButton` scrolls the
+      // window, so an offset cached at import time is a different number before and after
+      // any tool click.
+      const outputDir = await makeOutputDir('scroll-read-per-capture');
+      const { page, send } = createCdpHarness(outputDir, { scroll: { x: 0, y: 440 } });
+      const { testInfo } = createTestInfoMock(outputDir);
+
+      await captureCanvasScreenshot(page, BOX, testInfo, 'first');
+      await captureCanvasScreenshot(page, BOX, testInfo, 'second');
+
+      expect((page.evaluate as unknown as Mock).mock.calls.length).toBe(2);
+      for (const call of send.mock.calls) {
+        expect(call[1].clip.y).toBe(BOX.y + 440);
+      }
+    });
+
+    it('sends the untranslated clip at scroll 0, so nothing moves when the page does not', async () => {
+      const outputDir = await makeOutputDir('unscrolled-clip');
+      const { page, send } = createCdpHarness(outputDir, { scroll: { x: 0, y: 0 } });
+      const { testInfo } = createTestInfoMock(outputDir);
+
+      await captureCanvasScreenshot(page, BOX, testInfo, 'unscrolled', { x: 10, y: 20, width: 30, height: 40 });
+
+      expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
+        format: 'png',
+        clip: { x: 10, y: 20, width: 30, height: 40, scale: 1 },
       });
     });
 

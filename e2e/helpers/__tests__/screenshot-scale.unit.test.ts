@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { cssPointToImage, imageBoundsToCss, imagePointToCss, type CssBox, type ImageSize } from '../screenshot-scale';
+import {
+  cssPointToImage,
+  imageBoundsToCss,
+  imagePointToCss,
+  viewportRectToPageRect,
+  type CssBox,
+  type ImageSize,
+} from '../screenshot-scale';
 
 /** Workspace canvas box as reported by Playwright in the e2e specs. */
 const BOX: CssBox = { x: 100, y: 50, width: 400, height: 300 };
@@ -287,5 +294,74 @@ describe('imagePointToCss and cssPointToImage are inverses', () => {
     const bottomRight = cssPointToImage(image, BOX, { x: BOX.x + BOX.width, y: BOX.y + BOX.height });
     expect(topLeft).toEqual({ x: 0, y: 0 });
     expect(bottomRight).toEqual({ x: 800, y: 600 });
+  });
+});
+
+/**
+ * The translation `captureCanvasScreenshot` needs, in the app's own numbers: the page is
+ * 1177px tall in a 720px window, `clickToolButton` scrolls it 440px, and the workspace
+ * canvas goes from `y: 100` to `y: -340`. Raw, that clip reaches a capture 440px away from
+ * the region the caller measured — a wrong answer, not an error.
+ */
+describe('viewportRectToPageRect', () => {
+  const RECT: CssBox = { x: 56, y: -340, width: 320, height: 120 };
+
+  it('returns the rect unchanged when the window is not scrolled', () => {
+    expect(viewportRectToPageRect(RECT, { x: 0, y: 0 })).toEqual(RECT);
+  });
+
+  it('adds a vertical scroll to the origin and leaves the extent alone', () => {
+    expect(viewportRectToPageRect(RECT, { x: 0, y: 440 })).toEqual({ x: 56, y: 100, width: 320, height: 120 });
+  });
+
+  it('adds both offsets for a window scrolled on both axes', () => {
+    expect(viewportRectToPageRect(RECT, { x: 30, y: 440 })).toEqual({ x: 86, y: 100, width: 320, height: 120 });
+  });
+
+  it('translates a negative origin into a positive one when the window has scrolled back', () => {
+    // The measured `clickToolButton` pair: same document position, opposite window.
+    expect(viewportRectToPageRect({ ...RECT, y: 100 }, { x: 0, y: 440 })).toEqual({
+      x: 56,
+      y: 540,
+      width: 320,
+      height: 120,
+    });
+  });
+
+  it('adds a fractional scroll exactly rather than rounding it to a device pixel', () => {
+    // 0.5px of scroll is real: it comes from a zoomed or fractional-DPR window, and a
+    // clip rounded here is a clip that no longer lines up with the pixels it addresses.
+    expect(viewportRectToPageRect(RECT, { x: 0, y: 440.5 })).toEqual({ x: 56, y: 100.5, width: 320, height: 120 });
+    expect(viewportRectToPageRect(RECT, { x: 12.25, y: 0.5 })).toEqual({
+      x: 68.25,
+      y: -339.5,
+      width: 320,
+      height: 120,
+    });
+  });
+
+  it('translates a zero-size rect, which is a position and not an area', () => {
+    expect(viewportRectToPageRect({ x: 56, y: -340, width: 0, height: 0 }, { x: 0, y: 440 })).toEqual({
+      x: 56,
+      y: 100,
+      width: 0,
+      height: 0,
+    });
+  });
+
+  it('keeps a zero scroll a value rather than treating it as absent', () => {
+    // A `||` here would substitute the box for a zero and capture the whole canvas.
+    expect(viewportRectToPageRect(RECT, { x: 0, y: 0 }).x).toBe(RECT.x);
+  });
+
+  it('does not mutate the rect it was given', () => {
+    const rect: CssBox = { ...RECT };
+    viewportRectToPageRect(rect, { x: 30, y: 440 });
+    expect(rect).toEqual(RECT);
+  });
+
+  it('is a pure function of its two arguments', () => {
+    const scroll = { x: 30, y: 440 };
+    expect(viewportRectToPageRect(RECT, scroll)).toEqual(viewportRectToPageRect(RECT, scroll));
   });
 });
