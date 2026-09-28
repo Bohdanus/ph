@@ -26,11 +26,12 @@ import { createPortal } from 'react-dom';
  *
  * Both anchors are the overlay's PARENT — the tool tile, and the tooltip's wrapper span —
  * and React attaches a parent's ref after its child's layout effects. An overlay reading
- * the anchor from a ref therefore measures one commit too early, and neither of the two
- * available workarounds is free: a `setState` to force a second pass is exactly what
- * `react-hooks/set-state-in-effect` rejects, and measuring in a passive effect costs a
- * frame in which the overlay is `visibility: hidden`, during which the flyout's
- * `requestAnimationFrame` focus lands on an element that cannot take focus.
+ * the anchor from a ref therefore measures one commit too early, and both of the ways to
+ * paper over that are worse than the problem: asking for a second commit with a `setState`
+ * in the effect costs a commit and is what `react-hooks/set-state-in-effect` rejects, and
+ * moving the measurement to a passive effect costs a frame in which the overlay is
+ * `visibility: hidden` — during which the flyout's `requestAnimationFrame` focus lands on
+ * an element that cannot take focus, which is what the `sidebar-keyboard` e2e caught.
  *
  * So the caller resolves the anchor through a callback ref and passes the element in. The
  * state update from a ref callback is flushed before the browser paints, so the overlay
@@ -62,9 +63,12 @@ type AnchoredOverlayProps = {
   /** Margin kept clear against every viewport edge, in px. */
   viewportPadding?: number;
   /**
-   * Re-measures the overlay when this changes, and only then. A caller that replaces the
-   * content behind a reused instance — a flyout that switches to a different group — has
-   * no ref to reattach and would otherwise keep the previous size.
+   * Re-measures the overlay when this changes, and only then. The effect re-runs on its own
+   * whenever the anchor or a placement option changes, so this is only needed by a caller
+   * whose overlay keeps its identity while its CONTENT changes size — a tooltip whose label
+   * changed under it. The flyout passes its group index; that key cannot change under a
+   * live instance, because the overlay is rendered inside the open group's own tile and
+   * switching groups unmounts it, so it is there to be explicit rather than load-bearing.
    */
   measureKey?: string;
 };
@@ -73,9 +77,6 @@ type Position = { top: number; left: number };
 
 /** Kept clear of the viewport edges so an overlay never sits flush against the screen edge. */
 const VIEWPORT_PADDING = 8;
-
-/** Where an unmeasured overlay waits: outside every viewport, and invisible while there. */
-const OFFSCREEN = -9999;
 
 const clampToViewport = (value: number, size: number, extent: number, padding: number): number => {
   const maximum = Math.max(padding, extent - size - padding);
@@ -100,12 +101,17 @@ const AnchoredOverlay = ({
     const anchorRect = anchor.getBoundingClientRect();
     const width = overlay.offsetWidth;
     const height = overlay.offsetHeight;
-    const { innerWidth, innerHeight } = window;
+    // A `position: fixed` box is laid out against the viewport MINUS a classic
+    // scrollbar, which `window.innerWidth` includes, so the right-edge clamp can overshoot
+    // by the scrollbar's width. `documentElement.clientWidth` is the same box the
+    // containing block actually is.
+    const viewportWidth = document.documentElement.clientWidth;
+    const viewportHeight = document.documentElement.clientHeight;
 
     // Preferred side is the anchor's trailing edge, which for a left-hand rail is the
     // right. Flip to the leading edge only when the trailing one cannot hold the whole
     // overlay; if neither side fits, clamp the preferred side rather than choosing.
-    const fitsTrailing = anchorRect.right + gap + width <= innerWidth - viewportPadding;
+    const fitsTrailing = anchorRect.right + gap + width <= viewportWidth - viewportPadding;
     const fitsLeading = anchorRect.left - gap - width >= viewportPadding;
     const unclampedLeft = fitsTrailing
       ? anchorRect.right + gap
@@ -115,8 +121,8 @@ const AnchoredOverlay = ({
 
     const unclampedTop = align === 'center' ? anchorRect.top + (anchorRect.height - height) / 2 : anchorRect.top;
 
-    const left = clampToViewport(unclampedLeft, width, innerWidth, viewportPadding);
-    const top = clampToViewport(unclampedTop, height, innerHeight, viewportPadding);
+    const left = clampToViewport(unclampedLeft, width, viewportWidth, viewportPadding);
+    const top = clampToViewport(unclampedTop, height, viewportHeight, viewportPadding);
 
     // Keep the same object when nothing moved, so a measurement that agrees with the
     // current position does not re-render.
@@ -144,9 +150,27 @@ const AnchoredOverlay = ({
 
   const style: CSSProperties = {
     position: 'fixed',
-    top: position?.top ?? OFFSCREEN,
-    left: position?.left ?? OFFSCREEN,
+    // Measured at 0,0 rather than off-screen: an unmeasured box is shrink-to-fit, and at
+    // `left: -9999` it is measured against a viewport 9999px wider than the one it will
+    // occupy, so a long label could report a width it never actually has. `visibility:
+    // hidden` is what keeps it unseen, and it also means the unmeasured box cannot take a
+    // pointer event.
+    top: position?.top ?? 0,
+    left: position?.left ?? 0,
     visibility: position === null ? 'hidden' : undefined,
+    // The wrapper is a positioning box, not a target. With `pointer-events: auto` it
+    // shrink-wraps the child and, when two overlays overlap, whichever portal was appended
+    // last swallows the other's pointer events: right-clicking a tile opens the flyout
+    // immediately and the hover tooltip 250ms later, so the tooltip's box landed on top of
+    // the first flyout item and the click reached neither. Children that need to be
+    // clickable say so themselves — the flyout's `<ul>` does, the tooltip's span already
+    // says `pointer-events-none`.
+    pointerEvents: 'none',
+    // The children carried `z-50`, which did nothing: neither is a positioned element nor
+    // a flex or grid item. With the wrapper at `z-index: auto` the overlay would be
+    // ordered among body's children by append time and lose to any neighbour with a
+    // `z-index` of 1 or more. This is the stacking level the classes were asking for.
+    zIndex: 50,
   };
 
   return createPortal(
