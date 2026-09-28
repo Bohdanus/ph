@@ -199,6 +199,19 @@ function ago(iso, at = Date.now()) {
   return `${Math.round(delta / 86_400_000)}d ago`;
 }
 
+/**
+ * A title, clipped to a column, MARKED as clipped.
+ *
+ * `slice(0, 70)` with no ellipsis produced a row that read as a finished
+ * sentence — `reorder-layers is the next append-boundary writer, and it is now
+ * unb` — and an agent working from a truncated title cannot tell that it is
+ * looking at half of one.
+ */
+function truncate(text, width) {
+  const value = String(text);
+  return value.length <= width ? value : `${value.slice(0, width - 1)}…`;
+}
+
 function remaining(iso, at = Date.now()) {
   const delta = Date.parse(iso) - at;
   if (!Number.isFinite(delta) || delta <= 0) return 'expired';
@@ -246,8 +259,17 @@ export async function run(
   const board = new Board({ dir: flags.dir ? String(flags.dir) : resolveBoardDir({ cwd, env }), identity });
   const json = Boolean(flags.json);
   const emit = (payload, text) => {
-    if (json) out.write(`${JSON.stringify(payload, null, 2)}\n`);
-    else out.write(`${text}\n`);
+    if (json) {
+      out.write(`${JSON.stringify(payload, null, 2)}\n`);
+      return;
+    }
+    // `null` means "this command's output IS the payload`: board export has
+    // no human form, and printing an empty line for it is not one.
+    if (text === null) {
+      out.write(`${JSON.stringify(payload)}\n`);
+      return;
+    }
+    out.write(`${text}\n`);
   };
 
   try {
@@ -304,7 +326,7 @@ export async function run(
           issue.priority,
           issue.scope,
           board.liveClaimOrNull(issue.id)?.agent_id ?? '-',
-          issue.title.slice(0, 70),
+          truncate(issue.title, 70),
         ]);
         emit({ issues }, columns(rows, ['ID', 'STATUS', 'PRIORITY', 'SCOPE', 'CLAIMED BY', 'TITLE']));
         return 0;
@@ -337,7 +359,7 @@ export async function run(
               : named.length
                 ? `${named.length} free`
                 : '-',
-            issue.title.slice(0, 70),
+            truncate(issue.title, 70),
           ];
         });
         emit(
@@ -473,7 +495,10 @@ export async function run(
           { report },
           busy.length
             ? busy.map((entry) => `${entry.path} held by ${entry.holders.map((h) => h.agent_id).join(', ')}`).join('\n')
-            : `free: ${paths.join(', ')}`
+            : // The NORMALISED paths, not the ones typed: the free line quoted a
+              // /tmp/… spelling while the JSON beside it carried /private/tmp/…,
+              // and the two answers disagreed about the same file.
+              `free: ${report.map((entry) => entry.path ?? path).join(', ')}`
         );
         return busy.length === 0 ? 0 : 1;
       }
@@ -641,6 +666,9 @@ export async function run(
           [
             `${result.created.length} filed`,
             result.skipped.length ? `${result.skipped.length} already on the board` : null,
+            result.drifted.length
+              ? `${result.drifted.length} DRIFTED — the document's item under that number is a different defect (board show <id>)`
+              : null,
             result.dead.length ? `${result.dead.length} skipped as already closed in their document` : null,
           ]
             .filter(Boolean)
@@ -651,6 +679,9 @@ export async function run(
 
       case 'export': {
         const issues = board.listIssues({ limit: Number.MAX_SAFE_INTEGER });
+        // ALWAYS JSON, with or without the flag: the help says this command
+        // dumps the board as JSON, and a bare `board export` used to print a
+        // single newline, which is not a dump of anything.
         emit(
           {
             dir: board.dir,
@@ -660,7 +691,11 @@ export async function run(
             locks: board.db.prepare('SELECT * FROM file_locks').all(),
             agents: board.agents(),
           },
-          ''
+          // Without the flag this used to print a single newline. The help says
+          // this command dumps the board as JSON, so it dumps JSON: the payload
+          // IS the output, and a human who wants prose has `--json` off the
+          // critical path rather than having to know that.
+          json ? undefined : null
         );
         return 0;
       }

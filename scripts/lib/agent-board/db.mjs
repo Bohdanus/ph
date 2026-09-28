@@ -34,7 +34,7 @@ import { existsSync, mkdirSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /**
  * Default lease. Long enough that an agent mid-refactor does not lose its
@@ -42,6 +42,9 @@ const SCHEMA_VERSION = 1;
  * abandoned claim returns to the swarm without anyone noticing the gap.
  */
 export const DEFAULT_LEASE_MS = 45 * 60 * 1000;
+
+/** "No cap" for an internal aggregation, as opposed to a displayed page. */
+const NO_LIMIT = Number.MAX_SAFE_INTEGER;
 
 const PRIORITY_ORDER = { critical: 0, high: 1, normal: 2, low: 3 };
 export const PRIORITIES = Object.keys(PRIORITY_ORDER);
@@ -137,16 +140,39 @@ CREATE TABLE IF NOT EXISTS claims (
   released_at TEXT
 );
 
+-- A file lock: one row per (path, agent), and NOTHING about which issue it
+-- belongs to.
+--
+-- That separation is the point of this table's shape, and its absence was the
+-- source of two blockers in review. The lock used to carry an issue_id, so
+-- "release the locks of issue X" was a WHERE on that column -- and an agent
+-- working two issues at once had the second issue's file freed by releasing the
+-- first. Whoever held that file afterwards was told, truthfully, that nobody
+-- had it. One column could only hold one answer, so two different questions
+-- ("who is in this file" and "which issues is this agent using it for") were
+-- forced to share it. issue_locks below is the second question's own table, and
+-- one lock may appear in as many of those rows as there are issues it is
+-- legitimately being used for.
 CREATE TABLE IF NOT EXISTS file_locks (
   path        TEXT NOT NULL,
   agent_id    TEXT NOT NULL,
-  issue_id    TEXT,
   worktree    TEXT,
   acquired_at TEXT NOT NULL,
   expires_at  TEXT NOT NULL,
   released_at TEXT,
   PRIMARY KEY (path, agent_id)
 );
+
+/** "Issue X is being worked on using file Y." Many rows may name one lock. */
+CREATE TABLE IF NOT EXISTS issue_locks (
+  issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+  path       TEXT NOT NULL,
+  agent_id   TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (issue_id, path)
+);
+
+CREATE INDEX IF NOT EXISTS issue_locks_path_idx ON issue_locks(path);
 
 CREATE TABLE IF NOT EXISTS events (
   seq      INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -344,7 +370,8 @@ export class Board {
   }
 
   /**
-   * Creates the schema, and refuses to write over a newer one.
+   * Creates the schema, migrates it forward, and refuses to write over a newer
+   * one.
    *
    * The version row is written with a plain conditional insert rather than a
    * read followed by an insert. The read-then-insert was outside any
@@ -354,7 +381,9 @@ export class Board {
    * constraint that has nothing to do with what the user asked for.
    */
   migrate() {
+    const existing = this.currentSchemaVersion();
     this.db.exec(SCHEMA);
+    if (existing === 1) this.migrateFileLockAttribution();
     this.db
       .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING')
       .run('schema_version', String(SCHEMA_VERSION));
@@ -365,6 +394,39 @@ export class Board {
         { code: 1 }
       );
     }
+  }
+
+  currentSchemaVersion() {
+    try {
+      const row = this.db.prepare('SELECT value FROM meta WHERE key = ?').get('schema_version');
+      return row ? Number(row.value) : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * v1 → v2: a lock's `issue_id` became a row in `issue_locks`.
+   *
+   * Best-effort by necessity and not by choice: a v1 board could only record
+   * ONE issue per lock, so for an agent working two issues with one file it
+   * recorded the first and silently lost the second. The migration carries
+   * forward what v1 believed, which is the most that was ever written down.
+   */
+  migrateFileLockAttribution() {
+    const columns = this.db.prepare('PRAGMA table_info(file_locks)').all();
+    if (!columns.some((column) => column.name === 'issue_id')) return;
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO issue_locks (issue_id, path, agent_id, created_at)
+         SELECT issue_id, path, agent_id, acquired_at FROM file_locks
+         WHERE issue_id IS NOT NULL AND released_at IS NULL`
+      )
+      .run();
+    this.addEvent('board.migrate', {
+      message: 'v1 → v2: file-lock attribution moved to issue_locks',
+      data: { from: 1, to: 2 },
+    });
   }
 
   /**
@@ -433,7 +495,15 @@ export class Board {
 
   // --- agents -------------------------------------------------------------
 
-  /** Records that an agent exists and refreshes its liveness. */
+  /**
+   * Records that an agent exists and refreshes its liveness.
+   *
+   * `session_id` is written on INSERT and never updated: a branch outlives the
+   * sessions that work in it, and overwriting the column on every touch kept
+   * only the most recent run — which is the opposite of what the column is for.
+   * A branch worked from three sessions wants to be findable from all three, so
+   * the FIRST is kept and the live one is visible in `agents` via `last_seen`.
+   */
   touchAgent(identity = this.identity) {
     if (!identity?.agentId) return;
     const ts = this.iso();
@@ -444,7 +514,6 @@ export class Board {
          ON CONFLICT(agent_id) DO UPDATE SET
            worktree = COALESCE(excluded.worktree, agents.worktree),
            branch = COALESCE(excluded.branch, agents.branch),
-           session_id = COALESCE(excluded.session_id, agents.session_id),
            last_seen = excluded.last_seen,
            last_pid = excluded.last_pid`
       )
@@ -514,8 +583,29 @@ export class Board {
     }
     return this.transaction(() => {
       if (origin) {
-        const existing = this.db.prepare('SELECT id FROM issues WHERE origin = ?').get(origin);
-        if (existing) return { id: existing.id, created: false };
+        const existing = this.db.prepare('SELECT id, title FROM issues WHERE origin = ?').get(origin);
+        if (existing) {
+          /**
+           * DRIFT. `origin` is a NUMBER, so an item that is renumbered upstream
+           * keeps an origin the board already knows while the document's item
+           * under that number is a different defect — and the board would then
+           * show a correct-looking origin beside a stale title, claimable work
+           * for a defect the document no longer contains.
+           *
+           * Recorded, never corrected. Only an agent reading both documents
+           * knows whether item 2 was renumbered, re-titled, or replaced.
+           */
+          if (existing.title !== String(title).trim()) {
+            this.recordDrift(existing.id, {
+              origin,
+              boardTitle: existing.title,
+              docTitle: String(title).trim(),
+              agent: createdBy,
+            });
+            return { id: existing.id, created: false, drift: true };
+          }
+          return { id: existing.id, created: false, drift: false };
+        }
       }
       const id = this.nextIssueId();
       const ts = this.iso();
@@ -673,11 +763,12 @@ export class Board {
       const wanted = this.canonicalPaths(files);
       if (wanted.length > 0) {
         where.push(
-          `EXISTS (SELECT 1 FROM file_locks f WHERE f.issue_id = issues.id AND f.agent_id = ? AND f.released_at IS NULL AND f.expires_at > ? AND f.path IN (${wanted
+          `EXISTS (SELECT 1 FROM issue_locks l WHERE l.issue_id = issues.id AND l.agent_id = ? AND l.path IN (${wanted
             .map(() => '?')
-            .join(',')}))`
+            .join(',')})
+            AND EXISTS (SELECT 1 FROM file_locks f WHERE f.path = l.path AND f.agent_id = l.agent_id AND f.released_at IS NULL AND f.expires_at > ?))`
         );
-        params.push(claimedBy ?? this.identity?.agentId ?? 'unknown', this.iso(), ...wanted);
+        params.push(claimedBy ?? this.identity?.agentId ?? 'unknown', ...wanted, this.iso());
       }
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -700,9 +791,9 @@ export class Board {
    * still a lease nobody can hold past, and there is no process that would have
    * to be responsible for sweeping it.
    */
-  readyIssues({ limit = 50 } = {}) {
+  readyIssues({ limit = NO_LIMIT } = {}) {
     const at = this.now();
-    return this.listIssues({})
+    return this.listIssues({ limit: NO_LIMIT })
       .filter((issue) => READY_STATUSES.has(issue.status))
       .filter((issue) => {
         // A `claimed` issue whose lease ran out is back on offer: the status
@@ -719,7 +810,7 @@ export class Board {
 
   /** Issues whose open deps are not yet closed, whatever their own status. */
   blockedIssues() {
-    return this.listIssues({}).filter(
+    return this.listIssues({ limit: NO_LIMIT }).filter(
       (issue) =>
         issue.status !== 'closed' &&
         this.deps(issue.id).some(({ depends_on }) => {
@@ -849,9 +940,10 @@ export class Board {
       this.db
         .prepare('UPDATE claims SET released_at = ?, lease_until = ? WHERE issue_id = ?')
         .run(this.iso(), this.iso(), id);
-      this.db
-        .prepare('UPDATE file_locks SET released_at = ? WHERE issue_id = ? AND agent_id = ? AND released_at IS NULL')
-        .run(this.iso(), id, claim.agent_id);
+      // The locks go through the pairing table, so a file this agent is still
+      // using for ANOTHER live claim survives. Dropping them by `issue_id` is
+      // what told the next agent a file was free while it was being edited.
+      const freed = this.releaseIssueLocksInTransaction(id, at);
       if (['claimed'].includes(currentStatus(this.db, id))) {
         this.db.prepare('UPDATE issues SET status = ?, updated_at = ? WHERE id = ?').run('open', this.iso(), id);
       }
@@ -859,9 +951,9 @@ export class Board {
         issue: id,
         agent: claim.agent_id,
         message: reason ?? 'released',
-        data: { by: who, forced: Boolean(force) },
+        data: { by: who, forced: Boolean(force), files_released: freed },
       });
-      return { id, released: true };
+      return { id, released: true, files_released: freed };
     });
   }
 
@@ -885,10 +977,10 @@ export class Board {
    * `liveLocks`, and never through this.
    */
   locksFor(issueId, at = this.now()) {
-    return this.db
-      .prepare('SELECT * FROM file_locks WHERE issue_id = ? AND released_at IS NULL')
-      .all(issueId)
-      .filter((lock) => Date.parse(lock.expires_at) > at);
+    const live = new Map(this.liveLocks(at).map((lock) => [`${lock.path} ${lock.agent_id}`, lock]));
+    return this.issueLocks(issueId, at)
+      .map((pairing) => live.get(`${pairing.path} ${pairing.agent_id}`))
+      .filter(Boolean);
   }
 
   locksHeldBy(agent, at = this.now()) {
@@ -973,32 +1065,79 @@ export class Board {
   }
 
   /**
-   * Writes one file lock. Callers must check `liveLocks` for a conflict first:
-   * this function is unconditional by design, so that a re-hold extends a lease.
+   * Writes one file lock, and — when the lock is for an issue — records the
+   * pairing. Callers must check `liveLocks` for a conflict first: this function
+   * is unconditional by design, so that a re-hold extends a lease.
    *
-   * It does NOT re-point `issue_id` on a lock the agent already holds. The
-   * attribution belongs to the issue that first took the file, and the one case
-   * where re-pointing looked useful is exactly the case where it lies: `claim
-   * --files` holds the files BEFORE it claims the issue, so a claim that is then
-   * refused still walked the attribution of a file the agent had held for some
-   * other issue all along. A second issue that needs the same file waits for the
-   * lock to lapse, which is the truth, rather than inheriting a pointer to work
-   * its holder never accepted.
+   * The lock and the pairing are two rows because they are two facts. "This
+   * agent is in this file" outlives any single issue, and "this issue is being
+   * worked on with this file" is what a release has to undo. Forcing the second
+   * into a column on the first is what let releasing one issue free a file
+   * another live issue was using.
    */
   holdFileInTransaction(path, { issueId = null, agent, leaseMs = DEFAULT_LEASE_MS, at = this.now() } = {}) {
     const who = agent ?? this.identity?.agentId ?? 'unknown';
     this.db
       .prepare(
-        `INSERT INTO file_locks (path, agent_id, issue_id, worktree, acquired_at, expires_at, released_at)
-         VALUES (?, ?, ?, ?, ?, ?, NULL)
+        `INSERT INTO file_locks (path, agent_id, worktree, acquired_at, expires_at, released_at)
+         VALUES (?, ?, ?, ?, ?, NULL)
          ON CONFLICT(path, agent_id) DO UPDATE SET
            worktree = COALESCE(excluded.worktree, file_locks.worktree),
            acquired_at = excluded.acquired_at,
            expires_at = excluded.expires_at,
            released_at = NULL`
       )
-      .run(path, who, issueId, this.identity?.worktree ?? null, this.iso(), msFromNow(leaseMs, at));
+      .run(path, who, this.identity?.worktree ?? null, this.iso(), msFromNow(leaseMs, at));
+    if (issueId) {
+      this.db
+        .prepare(
+          `INSERT INTO issue_locks (issue_id, path, agent_id, created_at) VALUES (?, ?, ?, ?)
+           ON CONFLICT(issue_id, path) DO NOTHING`
+        )
+        .run(issueId, path, who, this.iso());
+    }
     return path;
+  }
+
+  /** The live file locks an issue is being worked on with. */
+  issueLocks(issueId, at = this.now()) {
+    return this.db
+      .prepare('SELECT * FROM issue_locks WHERE issue_id = ?')
+      .all(issueId)
+      .filter((row) => this.liveLocks(at).some((lock) => lock.path === row.path && lock.agent_id === row.agent_id));
+  }
+
+  /**
+   * Undoes one issue's hold on its files — and releases the underlying lock
+   * ONLY for the paths this issue was the last user of.
+   *
+   * An agent working two issues with one file holds one lock and two pairings.
+   * Releasing the first pairing must not free the file out from under the
+   * second: that is the bug where the next agent is told, truthfully, that
+   * nobody has a file somebody is in the middle of editing.
+   */
+  releaseIssueLocksInTransaction(issueId, at = this.now()) {
+    const pairings = this.db.prepare('SELECT * FROM issue_locks WHERE issue_id = ?').all(issueId);
+    const freed = [];
+    for (const pairing of pairings) {
+      this.db.prepare('DELETE FROM issue_locks WHERE issue_id = ? AND path = ?').run(issueId, pairing.path);
+      const stillInUse = this.db
+        .prepare('SELECT issue_id FROM issue_locks WHERE path = ? AND agent_id = ?')
+        .all(pairing.path, pairing.agent_id)
+        .filter((row) => this.liveClaimOrNull(row.issue_id, at));
+      if (stillInUse.length > 0) continue;
+      this.db
+        .prepare('UPDATE file_locks SET released_at = ? WHERE path = ? AND agent_id = ? AND released_at IS NULL')
+        .run(this.iso(), pairing.path, pairing.agent_id);
+      freed.push(pairing.path);
+      this.addEvent('lock.release', {
+        issue: issueId,
+        agent: pairing.agent_id,
+        path: pairing.path,
+        message: 'released with the issue that held it',
+      });
+    }
+    return freed;
   }
 
   releaseFiles(paths, { agent, force = false } = {}) {
@@ -1046,12 +1185,35 @@ export class Board {
     if (this._pathRoots) return this._pathRoots;
     const roots = new Set();
     if (this.identity?.worktree) roots.add(this.identity.worktree);
+    /**
+     * From GIT, not from the `agents` table. Worktrees are a property of the
+     * repository — `git worktree list` names all of them, including any that has
+     * never run a command — and learning the roots from who has spoken last
+     * left a window exactly where it does damage: agent A holds
+     * `<worktree-B>/src/x.ts` by absolute path, agent B has never run a board
+     * command, so B's `src/x.ts` matched no root, B's hold was GRANTED, and one
+     * file ended up with two live locks and each agent told the other was not
+     * in it. The agents table stays as a fallback for a board used with `--dir`
+     * outside a repository, where git has nothing to enumerate.
+     */
+    try {
+      const listed = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+        cwd: this.identity?.worktree ?? process.cwd(),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      for (const line of listed.split('\n')) {
+        if (line.startsWith('worktree ')) roots.add(line.slice('worktree '.length).trim());
+      }
+    } catch {
+      // Not a repository, or git refused: what is left is enough.
+    }
     try {
       for (const row of this.db.prepare('SELECT DISTINCT worktree FROM agents WHERE worktree IS NOT NULL').all()) {
         roots.add(row.worktree);
       }
     } catch {
-      // No agents table yet, or no row: the caller's own worktree is enough.
+      // No agents table yet, or no row.
     }
     this._pathRoots = [...roots]
       .map((root) => `${String(root).split('\\').join('/').replace(/\/+$/, '')}/`)
@@ -1117,6 +1279,30 @@ export class Board {
    * `issue.create` event, which is where both filing paths (`board new` and
    * `board import`) put it, so it is there for every issue that exists.
    */
+  /**
+   * Records that a document's numbering and the board no longer agree.
+   *
+   * `origin` is a NUMBER, so a renumbered, re-titled or replaced item upstream
+   * leaves the board holding a correct-looking origin beside a stale title — in
+   * `ready`, claimable, while the document describes something else entirely.
+   * That is the one way this board can be confidently wrong, and it is
+   * detectable with one comparison because both sides are already here.
+   *
+   * Recorded and never corrected. Only an agent reading both documents knows
+   * whether item 2 was renumbered, re-titled, or replaced — and correcting it
+   * automatically would overwrite the board's copy of a defect with a title the
+   * board has never seen. An event, so it survives the command that saw it.
+   */
+  recordDrift(issueId, { origin, boardTitle, docTitle, agent } = {}) {
+    this.addEvent('origin.drift', {
+      issue: issueId,
+      agent: agent ?? this.identity?.agentId ?? 'unknown',
+      message: `the document's ${origin} is now "${docTitle}"; the board has "${boardTitle}"`,
+      data: { origin, board_title: boardTitle, doc_title: docTitle },
+    });
+    return { issue: issueId, origin, boardTitle, docTitle };
+  }
+
   issueFiles(issueId) {
     const row = this.db
       .prepare("SELECT data FROM events WHERE issue_id = ? AND kind = 'issue.create' ORDER BY seq ASC LIMIT 1")
@@ -1260,6 +1446,10 @@ export class Board {
       }
       if (claim) {
         this.db.prepare('UPDATE claims SET released_at = ? WHERE issue_id = ?').run(this.iso(), id);
+        // A reopened issue is advertised as ready while its own file locks stay
+        // live for the rest of the lease, so the next agent reads "ready", takes
+        // it, and is then refused its own file by the agent who reopened it.
+        this.releaseIssueLocksInTransaction(id);
       }
       this.db
         .prepare(
@@ -1279,7 +1469,8 @@ export class Board {
    */
   status({ at = this.now() } = {}) {
     const byStatus = Object.fromEntries(STATUSES.map((s) => [s, 0]));
-    for (const issue of this.listIssues({})) byStatus[issue.status] = (byStatus[issue.status] ?? 0) + 1;
+    for (const issue of this.listIssues({ limit: NO_LIMIT }))
+      byStatus[issue.status] = (byStatus[issue.status] ?? 0) + 1;
     const locks = this.liveLocks(at);
     const unreleased = this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL').all();
     const claims = unreleased.filter((claim) => Date.parse(claim.lease_until) > at);

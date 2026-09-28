@@ -15,6 +15,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { BoardError } from './db.mjs';
 import { SCOPE_BY_FILE, parseHandoffDoc, planImport } from './handoff-import.mjs';
 
 const DEFAULT_FILES = Object.keys(SCOPE_BY_FILE);
@@ -53,15 +54,33 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
   const targets = files && files.length > 0 ? files : DEFAULT_FILES;
   const read = [];
   for (const file of targets) {
-    const text = readFileSync(`${cwd}/${file}`, 'utf8');
+    let text;
+    try {
+      text = readFileSync(`${cwd}/${file}`, 'utf8');
+    } catch (error) {
+      // A missing document is a condition an agent can act on, not a stack
+      // trace. A `BoardError` carries the message to the CLI's handler, which
+      // prints it and sets the exit code; an ENOENT escaped as a raw exception
+      // and dumped a Node call stack at whoever ran the command.
+      throw new BoardError(
+        `cannot read ${file} from ${cwd}: ${error.code ?? error.message}. ` +
+          'The board imports the handoff documents from the repository root — run it from there, ' +
+          'or pass --file with a path this board can read.',
+        { code: 1 }
+      );
+    }
     read.push({ file, text, parsed: parseHandoffDoc({ file, text }) });
   }
 
-  const known = new Set(
+  // origin → title, not just origin: a bare origin cannot tell a re-run from a
+  // document whose item 2 was renumbered upstream and now names a different
+  // defect entirely. `createIssue` re-checks the same thing when it is called
+  // directly; the planner is where an import decides, and it had no way to.
+  const known = new Map(
     board.db
-      .prepare('SELECT origin FROM issues WHERE origin IS NOT NULL')
+      .prepare('SELECT origin, title FROM issues WHERE origin IS NOT NULL')
       .all()
-      .map((row) => row.origin)
+      .map((row) => [row.origin, row.title])
   );
   const plan = planImport(
     read.map((entry) => entry.parsed),
@@ -70,6 +89,7 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
 
   const created = [];
   const skipped = [...plan.skip];
+  const drifted = [...(plan.drift ?? [])];
   const dead = read.flatMap((entry) => (entry.parsed.dead ?? []).map((number) => `${entry.file}#${number}`));
   const notItems = [];
   const fileable = plan.create.filter((item) => {
@@ -79,6 +99,24 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
   });
 
   if (!dryRun) {
+    // A drift the planner found is recorded, not just printed: the import
+    // classifies a known origin before `createIssue` is ever reached, so the
+    // event has to be written from here or the disagreement leaves no trace
+    // beyond the one line on somebody's terminal.
+    for (const origin of drifted) {
+      const item = read.flatMap((entry) => entry.parsed.items).find((candidate) => candidate.origin === origin);
+      const filed = board.findIssue(origin);
+      if (item && filed) {
+        board.transaction(() =>
+          board.recordDrift(filed.id, {
+            origin,
+            boardTitle: filed.title,
+            docTitle: item.title,
+            agent: board.identity?.agentId,
+          })
+        );
+      }
+    }
     for (const item of fileable) {
       const scope = scopeForOrigin(item.origin);
       const result = board.createIssue({
@@ -95,6 +133,7 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
         data: { source: 'handoff-import' },
       });
       if (result.created) created.push({ id: result.id, origin: item.origin, scope });
+      else if (result.drift) drifted.push(item.origin);
       else skipped.push(item.origin);
     }
   } else {
@@ -111,6 +150,7 @@ export async function importDocuments({ board, files = null, dryRun = false, cwd
     })),
     created,
     skipped,
+    drifted,
     dead,
     notItems,
   };

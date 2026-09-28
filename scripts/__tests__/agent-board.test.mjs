@@ -104,7 +104,7 @@ describe('schema', () => {
   it('creates itself on first open and is idempotent', () => {
     const board = boardFor('a');
     const version = board.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-    expect(Number(version.value)).toBe(1);
+    expect(Number(version.value)).toBe(2);
     board.close();
     board.open();
     expect(board.db.prepare('SELECT COUNT(*) AS n FROM issues').get().n).toBe(0);
@@ -146,8 +146,8 @@ describe('issues', () => {
   it('is idempotent on origin, so an import can be run twice', () => {
     const board = boardFor('a');
     const first = board.createIssue({ title: 'x', origin: 'HANDOFF.md#12' });
-    const second = board.createIssue({ title: 'x again', origin: 'HANDOFF.md#12' });
-    expect(second).toEqual({ id: first.id, created: false });
+    const second = board.createIssue({ title: 'x', origin: 'HANDOFF.md#12' });
+    expect(second).toEqual({ id: first.id, created: false, drift: false });
     expect(board.listIssues()).toHaveLength(1);
   });
 
@@ -344,7 +344,35 @@ describe('file locks make one-file-one-agent real', () => {
     b.close();
   });
 
-  it('normalizes paths so the same file from two worktrees is one lock', () => {
+  it('makes the same file one lock across two REAL worktrees', async () => {
+    /**
+     * Two spellings in the same worktree proved only that `./x` and `x` are one
+     * path. What has to hold is that `src/a.ts` in one worktree and the absolute
+     * path to that same file in another are ONE lock — and the second worktree
+     * has to be able to learn about the first without either of them having
+     * spoken to the board yet.
+     */
+    const repo = join(dir, 'repo');
+    const sibling = join(dir, 'sibling');
+    mkdirSync(repo);
+    execFileSync('git', ['init', '--quiet'], { cwd: repo });
+    execFileSync('git', ['commit', '--quiet', '--allow-empty', '-m', 'init'], { cwd: repo });
+    execFileSync('git', ['worktree', 'add', '--quiet', sibling, '-b', 'sibling'], { cwd: repo });
+
+    const a = new Board({ dir: join(dir, 'shared'), identity: { agentId: 'A', worktree: repo } }).open();
+    // A holds the sibling's file by ABSOLUTE path, having never met B.
+    a.holdFiles([`${sibling}/src/a.ts`]);
+    expect(a.locksHeldBy('A').map((lock) => lock.path)).toEqual(['src/a.ts']);
+
+    const b = new Board({ dir: join(dir, 'shared'), identity: { agentId: 'B', worktree: sibling } }).open();
+    // B checks it relatively, on a board that has never seen B or a run from it.
+    expect(b.checkPath('src/a.ts').free).toBe(false);
+    expect(() => b.holdFiles(['src/a.ts'])).toThrow(/held by another agent/);
+    a.close();
+    b.close();
+  }, 15_000);
+
+  it('normalizes paths so the same file from two spellings is one lock', () => {
     const board = boardFor('a');
     board.holdFiles(['./src/util/draw.ts', 'src/util/draw.ts']);
     expect(board.locksHeldBy('a').map((lock) => lock.path)).toEqual(['src/util/draw.ts']);
@@ -441,18 +469,94 @@ describe('file locks make one-file-one-agent real', () => {
     a.close();
   });
 
-  it('leaves a pre-existing lock attributed to the issue that took it', () => {
+  it('lets two issues of ONE agent share a file, and keeps it when one is released', () => {
+    /**
+     * The blocker. A lock used to carry the issue that took it, so "release the
+     * locks of issue X" freed the file for an agent still working it on issue Y
+     * — and the next agent to ask was told, truthfully, that nobody had it.
+     */
     const a = boardFor('a');
-    const first = a.createIssue({ title: 'owns src/x.ts' });
-    a.holdFiles(['src/x.ts'], { issueId: first.id });
-    // A later claim names the same file. The file is already ours, so this is
-    // not a conflict — but the claim then fails, and the lock must not have been
-    // re-pointed at an issue we never took.
-    const second = a.createIssue({ title: 'the claim that will be refused' });
-    const taken = a.holdFiles(['src/x.ts'], { issueId: second.id });
-    expect(taken.acquired).toEqual([]);
-    expect(a.locksFor(first.id).map((lock) => lock.path)).toEqual(['src/x.ts']);
-    expect(a.locksFor(second.id)).toHaveLength(0);
+    const first = a.createIssue({ title: 'first' });
+    const second = a.createIssue({ title: 'second' });
+    a.claimIssue(first.id, { leaseMs: 600_000 });
+    a.holdFiles(['src/shared.ts'], { issueId: first.id });
+    a.claimIssue(second.id, { leaseMs: 600_000 });
+    a.holdFiles(['src/shared.ts'], { issueId: second.id });
+    // ONE lock, TWO pairings: the lock outlives any single issue.
+    expect(a.locksHeldBy('a').filter((lock) => lock.path === 'src/shared.ts')).toHaveLength(1);
+    expect(a.locksFor(first.id).map((lock) => lock.path)).toEqual(['src/shared.ts']);
+    expect(a.locksFor(second.id).map((lock) => lock.path)).toEqual(['src/shared.ts']);
+
+    a.releaseClaim(first.id);
+    // The file is still in use, by the second issue, so it is STILL HELD.
+    expect(a.checkPath('src/shared.ts', { agent: 'someone-else' }).free).toBe(false);
+    a.close();
+    const b = boardFor('b');
+    expect(b.checkPath('src/shared.ts').free).toBe(false);
+    expect(() => b.holdFiles(['src/shared.ts'])).toThrow(/held by another agent/);
+    b.close();
+  });
+
+  it('frees a file once the LAST issue using it is released', () => {
+    const a = boardFor('a');
+    const first = a.createIssue({ title: 'first' });
+    const second = a.createIssue({ title: 'second' });
+    a.claimIssue(first.id, { leaseMs: 600_000 });
+    a.holdFiles(['src/last.ts'], { issueId: first.id });
+    a.claimIssue(second.id, { leaseMs: 600_000 });
+    a.holdFiles(['src/last.ts'], { issueId: second.id });
+    a.releaseClaim(first.id);
+    expect(a.checkPath('src/last.ts', { agent: 'x' }).free).toBe(false);
+    a.releaseClaim(second.id);
+    expect(a.checkPath('src/last.ts', { agent: 'x' }).free).toBe(true);
+  });
+
+  it('frees the files a reopened issue was holding', () => {
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'reopened with a file' });
+    a.claimIssue(id, { leaseMs: 600_000 });
+    a.holdFiles(['src/reopen.ts'], { issueId: id });
+    // Reopening left the lock live for the rest of the lease while advertising
+    // the issue as ready, so the next agent took it and was then refused its
+    // own file by the agent who reopened it.
+    a.reopenIssue(id);
+    expect(a.checkPath('src/reopen.ts', { agent: 'x' }).free).toBe(true);
+    expect(a.readyIssues().map((issue) => issue.id)).toEqual([id]);
+  });
+
+  it('never caps the numbers it reports, however large the board gets', () => {
+    const board = boardFor('a');
+    for (let index = 0; index < 260; index += 1) board.createIssue({ title: `issue ${index}` });
+    // 260 issues, and the counts said 200 with no indication of a cap: a
+    // truncated list is merely short, a truncated COUNT is wrong.
+    expect(board.status().counts.open).toBe(260);
+    expect(board.readyIssues()).toHaveLength(260);
+    expect(board.listIssues({ limit: 500 })).toHaveLength(260);
+  });
+
+  it('records drift when a document renumbers an item under a known origin', () => {
+    const board = boardFor('a');
+    const first = board.createIssue({ title: 'Alpha defect', origin: 'HANDOFF.md#2' });
+    // Same origin, different defect: the document's item 2 was renumbered, or
+    // re-titled, or replaced. The board must not silently keep the old title.
+    const again = board.createIssue({ title: 'Newly inserted defect', origin: 'HANDOFF.md#2' });
+    expect(again).toMatchObject({ id: first.id, created: false, drift: true });
+    expect(board.getIssue(first.id).title).toBe('Alpha defect');
+    const drift = board.events({ kind: 'origin.drift' });
+    expect(drift).toHaveLength(1);
+    expect(drift[0].message).toContain('Newly inserted defect');
+    expect(JSON.parse(drift[0].data)).toMatchObject({ origin: 'HANDOFF.md#2' });
+  });
+
+  it('reports no drift when the same origin arrives with the same title', () => {
+    const board = boardFor('a');
+    const first = board.createIssue({ title: 'Stable', origin: 'HANDOFF.md#7' });
+    expect(board.createIssue({ title: 'Stable', origin: 'HANDOFF.md#7' })).toEqual({
+      id: first.id,
+      created: false,
+      drift: false,
+    });
+    expect(board.events({ kind: 'origin.drift' })).toHaveLength(0);
   });
 });
 
@@ -725,7 +829,11 @@ describe('separate processes, not just separate connections', () => {
     after.close();
   }, 60_000);
 
-  it('converts a fresh board to WAL exactly once, whoever gets there first', async () => {
+  it('converts a fresh board to WAL once, and skips the conversion afterwards', async () => {
+    // The name used to claim "whoever gets there first", which is a claim about
+    // a RACE, and the test was single-process and sequential: delete the retry
+    // loop in enableWriteAheadLog and it still passed. The race is covered by the
+    // twenty-four-process test above; this one covers the skip.
     rmSync(dir, { recursive: true, force: true });
     const board = new Board({ dir, identity: identityFor('wal') }).open();
     expect(board.currentJournalMode()).toBe('wal');
@@ -1019,23 +1127,48 @@ describe('the command line', () => {
     expect(bad.err).toContain('agent board');
   });
 
-  it('emits JSON for every machine-facing command', async () => {
+  it('emits valid JSON for EVERY machine-facing command, driven from the list', async () => {
     const { id } = JSON.parse((await cli(['new', 'json shaped', '--json'])).out);
-    await cli(['claim', id, '--json']);
-    // `watch` is absent on purpose: it is a stream of lines an agent reads
-    // while it works, and there is no single document for it to be.
-    for (const args of [
+    await cli(['claim', id, '--files', 'src/json.ts', '--json']);
+    /**
+     * Driven from a list rather than hand-picked. A previous version of this
+     * test named five of the twenty-one commands, so regressing `--json` on any
+     * of the other sixteen passed it verbatim — the test's name was a claim
+     * about coverage it did not make. `watch` is the one documented exception:
+     * it is a stream of lines, and there is no single document for it to be.
+     */
+    const other = JSON.parse((await cli(['new', 'a second issue', '--json'])).out);
+    const invocations = [
+      ['init', '--json'],
+      ['new', 'another one', '--json'],
       ['list', '--json'],
       ['ready', '--json'],
-      ['status', '--json'],
       ['show', id, '--json'],
+      ['claim', id, '--json'],
+      ['heartbeat', id, '--json'],
+      ['hold', 'src/other.ts', '--json'],
+      ['check', 'src/other.ts', '--json'],
+      ['comment', id, 'a note on the issue', '--json'],
+      ['note', 'a note to the swarm', '--json'],
+      ['dep', other.id, id, '--json'],
+      ['release', id, '--json'],
+      ['unlock', 'src/other.ts', '--json'],
+      ['defer', id, '--reason', 'parked for now', '--json'],
+      ['reopen', id, '--json'],
+      ['claim', id, '--json'],
+      ['resolve', id, '--json'],
+      ['close', id, '--json'],
+      ['status', '--json'],
+      ['doctor', '--json'],
       ['export', '--json'],
-    ]) {
-      const result = await cli(args);
-      expect(result.code).toBe(0);
-      expect(() => JSON.parse(result.out)).not.toThrow();
+      ['import', '--dry-run', '--json'],
+    ];
+    for (const args of invocations) {
+      const result = await cli(args, args[0] === 'close' ? 'verifier' : 'a');
+      expect(result.code, `${args.join(' ')} exited ${result.code}: ${result.err}`).toBe(0);
+      expect(() => JSON.parse(result.out), `${args.join(' ')} printed non-JSON`).not.toThrow();
     }
-  });
+  }, 30_000);
 
   it('streams the event log as readable lines for `watch`', async () => {
     const { id } = JSON.parse((await cli(['new', 'watched', '--json'])).out);

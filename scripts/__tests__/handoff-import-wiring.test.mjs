@@ -115,6 +115,32 @@ describe('the import of the handoff documents', () => {
     expect(board.readyIssues().map((issue) => issue.title)).toEqual(['P0 — the worst thing', 'P2 — the smaller thing']);
   });
 
+  /**
+   * HANDOFF.md's section 0 is a PREAMBLE an agent reads before the problem
+   * list, and no parser can tell a numbered section from a numbered defect.
+   * The exclusion is a named origin, and nothing referenced it: renumbering
+   * the preamble would have filed the whole branch-state section as a defect
+   * with no test to notice.
+   */
+  it('excludes the named non-items, and reports which they were', async () => {
+    writeFileSync(
+      join(dir, 'HANDOFF.md'),
+      [
+        '## 0. Branch state — read this first',
+        '',
+        'The worktree is on feat/x.',
+        '',
+        '## 1. A real defect',
+        '',
+        'It is in `src/real.ts`.',
+        '',
+      ].join('\n')
+    );
+    const board = boardFor();
+    const result = await importDocuments({ board, files: ['HANDOFF.md'], cwd: dir });
+    expect(result.notItems).toEqual(['HANDOFF.md#0']);
+    expect(board.listIssues().map((issue) => issue.origin)).toEqual(['HANDOFF.md#1']);
+  });
   it('records the files an item is about, so `ready` can show them', async () => {
     writeFileSync(
       join(dir, 'HANDOFF.md'),
