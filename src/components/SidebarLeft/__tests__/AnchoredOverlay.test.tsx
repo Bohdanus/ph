@@ -249,4 +249,38 @@ describe('AnchoredOverlay', () => {
 
     expect(position().top).toBe(300);
   });
+
+  it('re-measures when the window resizes under it', () => {
+    renderOverlay({
+      anchor: { left: 1100, top: 100, width: 56, height: 44 },
+      overlaySize: { width: 200, height: 120 },
+    });
+
+    // 1156 + 8 + 200 overflows 1280, so the overlay is on the anchor's leading edge.
+    expect(position()).toEqual({ position: 'fixed', left: 892, top: 100 });
+
+    // A wider window is a wider viewport to clamp against, and the same overlay now fits
+    // on the trailing side. Without the resize listener it would sit on the wrong side
+    // until something else happened to re-measure it.
+    setViewport(1600, 720);
+    act(() => {
+      fireEvent.resize(window);
+    });
+
+    expect(position()).toEqual({ position: 'fixed', left: 1164, top: 100 });
+  });
+
+  it('renders nothing while the anchor is unresolved', () => {
+    // The caller resolves the anchor from a callback ref, so there is a commit in which
+    // the overlay's anchor is not known. Rendering it anyway would place it against
+    // nothing — and a flyout placed against nothing is an open menu nobody can see.
+    render(
+      <AnchoredOverlay anchor={null}>
+        <ul data-testid="overlay" role="menu" />
+      </AnchoredOverlay>
+    );
+
+    expect(screen.queryByTestId('overlay')).toBeNull();
+    expect(document.body.querySelector('[role="menu"]')).toBeNull();
+  });
 });
