@@ -154,6 +154,19 @@ Five traps that cost real debugging time:
 - `useHistory` tests mock `useStore` directly, not via `renderHook` + `StoreProvider`: the provider pulls in the durable replay/materialization path, which does not survive the test environment.
 - `ToolbarsRight` tests use hoisted `vi.hoisted()` mocks, so module hoisting keeps working. Match the shape.
 - `e2e/**` is excluded from `npm run test`, and `**/__tests__/**` / `*.unit.test.ts` are excluded from Playwright. A Playwright spec in jsdom, or an e2e helper test in a browser, fails in a way that looks like a product bug.
+- **`toBeVisible()` does not test clipping, and jsdom cannot test layout at all.** The
+  left rail is `overflow-y-auto`, which makes CSS compute `overflow-x: auto` too, so the
+  rail clips on BOTH axes and paints nothing of what a child positions outside its own
+  56px. A flyout or tooltip laid out there stayed in the DOM, with a non-empty box, at the
+  right coordinates, and was invisible — and every assertion available at the time passed:
+  `toBeVisible()` only checks for a box and a `visibility` value, and
+  `openToolFlyout` dispatches `pointerdown` straight at the element, which never goes
+  through hit testing. Pin placement with `elementFromPoint` at the element's centre, from
+  REAL `page.mouse` input, and pin the arithmetic separately in jsdom by stubbing
+  `getBoundingClientRect` and `offsetWidth`/`offsetHeight`:
+  `e2e/sidebar-flyout.spec.ts` and `AnchoredOverlay.test.tsx`. A popover that must escape
+  a scroll container goes through `SidebarLeft/AnchoredOverlay.tsx`, which portals to
+  `document.body` — `overflow: clip` still clips, so no value on the rail can fix it.
 - **`scripts/__tests__/*.test.mjs` runs under the root jsdom project and must stay
   environment-agnostic.** The swarm board is a Node script whose only dependency
   is the built-in `node:sqlite`, and it is tested there deliberately: a test file
