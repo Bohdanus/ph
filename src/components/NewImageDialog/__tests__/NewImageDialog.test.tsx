@@ -504,6 +504,35 @@ describe('NewImageDialog focus ownership', () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
+  it('closes on a <body>-targeted Escape, which the panel handler never sees', () => {
+    const { onClose } = renderDialog();
+
+    // A re-render can unmount the focused control, which drops focus on <body> without
+    // dispatching focusout or focusin, so no containment arm sees it, and a keydown on
+    // <body> never reaches the panel's React onKeyDown at all. The document capture-phase
+    // arm is therefore the only listener that ever sees this key, and it has to dispatch
+    // the close itself: a listener that merely swallowed the key left a dialog that could
+    // not be closed by keyboard at all, which is a trap.
+    (document.activeElement as HTMLElement).remove();
+    expect(document.activeElement).toBe(document.body);
+
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('never mounts focus on the header close button, which is first in document order', () => {
+    renderDialog();
+
+    // The first focusable in document order is the header close button, so a mount that
+    // focused "the first control" would autofocus a button, which is not text-like and so
+    // re-opens the shortcut hole the focus move is there to close. SaveDialog pins this
+    // for the same reason; both dialogs now take it from one hook, so both hold it.
+    expect(dialogFocusables()[0]).toBe(screen.getByTestId('new-image-dialog-close-button'));
+    expect(document.activeElement).toBe(presetSelect());
+    expect(document.activeElement).not.toBe(dialogFocusables()[0]);
+  });
+
   it('restores focus to the element that opened it once it closes', () => {
     render(<DialogHarness />);
     const trigger = screen.getByTestId('file-new-trigger');

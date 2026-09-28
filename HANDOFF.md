@@ -31,7 +31,11 @@ they resolve, and they carry the identifier they name:
   (`StoreContext.tsx:386-388`); it holds no boundary, no state and no `state.layers`. The read is
   `StoreContext.tsx:885`. A `grep` for `layerOrderBottomFirst` confirms 386 is "the right place".
   The code at both locations is correct — only the citation is wrong, so fixing it is a re-derivation
-  from the sentence, not an edit to `StoreContext.tsx`.
+  from the sentence, not an edit to `StoreContext.tsx`. **Closed 2026-09-28:** §15 now cites
+  `StoreContext.tsx:890 layerOrderBottomFirst(currentState.layers)`, the boundary read. Note that
+  rotating the citation to the _declaration_ would have been the wrong fix and a second audit caught
+  it — the declaration moved 386 → 396 in the same change, so a line-tracking rotation would have
+  looked correct and pointed at the helper again.
 - **§1's `StoreContext.tsx:658-695` is the right function at the wrong layer.** 658-695 is
   `buildDurableDocument`, which does derive the shadow, but it returns `{ status, document,
 diagnostics }`. None of the three `StoreData` field names occurs in the range except a read of the
@@ -51,13 +55,27 @@ here independently and are deleted.
 
 **Read this before working on any item below.** Items 1, 2, 4, 10, 11, 12, 16, 17, 31 and 32 all
 live in `history-adapter.ts`, `history-append.ts`, `history-timeline.ts`, `selection-baseline.ts`,
-`useSelectionHistory.ts` or `useHistory.ts` — the files the history-migration roadmap edits.
-Fixing them outside the migration duplicated work and produced a `useHistory.ts` conflict the first
-time it was attempted. **Read the migration's own handoffs first:**
-`.kilo/plans/history-migration-consolidated-handoff.md` and
+`useSelectionHistory.ts`, `useHistory.ts` **or `StoreContext.tsx`** — the files the
+history-migration roadmap edits. Fixing them outside the migration duplicated work and produced a
+`useHistory.ts` conflict the first time it was attempted. **Read the migration's own handoffs
+first:** `.kilo/plans/history-migration-consolidated-handoff.md` and
 `.kilo/plans/history-migration-08-phase1-writer-readiness.md`. Those live under `.kilo/`, which
 `AGENTS.md` says is gitignored and machine-local, so they are a pointer and not a durable location:
 the reasoning in them has to be re-derived if the machine is lost.
+
+`StoreContext.tsx` was missing from that list until 2026-09-28, which made the list read as
+complete when it was not: item 1's own `**Files.**` line names it, so the item this paragraph
+claims "lives in" a six-file set was in fact seven. A finding whose fix lands in
+`StoreContext.tsx`'s `APPLY_HISTORY_REPLAY` dispatch is therefore migration-owned — the
+`APPLY_HISTORY_REPLAY` arm is the entry point for undo, redo and `toggleDisabled`, all of which the
+roadmap is reshaping.
+
+**Ownership label: `[OWNED — history-migration roadmap, GPT-model session]`.** Everything matching
+that label is worked by a GPT-model session running the migration, and a free-model session must not
+pick it up. The repo's convention is a bracketed suffix on the entry heading naming the OWNING
+WORK, not a per-finding model field — `FOCUSED-REVIEW-2026-09-28.md:13` uses the same shape
+(`[FREE]`, `[OWNED — report only]`), and `assigned to` returns zero hits in every root `*.md`. Apply
+it to any item whose fix lands in a file the list above names.
 
 Two questions the plan answers, recorded so they are not re-litigated:
 
@@ -321,7 +339,7 @@ exists, and that single gap is what keeps the majority of these writers here.
 
 The blocker was that a reorder's durable operation cannot be derived from the history item: it names
 the resulting order of **every** layer, and the item carries only intent. The store now plans it
-from `state.layers` read at the boundary (`StoreContext.tsx:386 layerOrderBottomFirst`), which is
+from `state.layers` read at the boundary (`StoreContext.tsx:890 layerOrderBottomFirst(currentState.layers)`), which is
 the same record `reorderLayers` is about to mutate. Three things make that safe:
 
 - **`reorderOrderAfterIntent` (`history-append.ts:229`) is a second implementation, not a call into
@@ -659,7 +677,7 @@ them:**
 
 **Problem.** `getHistoryItemTitle` (`useHistory.ts:14`) special-cases a tool source (`:17-19`),
 `TOOL_ACTION` (`:21-23`) and the crop (`:25`), and otherwise **falls through to the raw action
-name** (`:27`). `HistoryTab.tsx:22` renders that string, so a `SELECTION_ACTION` entry is labelled
+name** (`:27`). `HistoryTab.tsx:69` renders that string, so a `SELECTION_ACTION` entry is labelled
 with the constant's own value.
 
 That was invisible while selections wrote no history. It is not any more. Every one of these appends
@@ -675,7 +693,7 @@ one real entry through `commitSelection` / `clearSelections` / `appendSelectionC
 
 So every selection change in a session adds a row, and **one gesture can add more than one kind**: a
 lasso gesture appends a creation and a later drag appends a separate move, both labelled identically.
-Each row is also a navigation target (`resetHistoryTo(originalIndex)` at `HistoryTab.tsx:27`) and
+Each row is also a navigation target (`resetHistoryTo(originalIndex)` at `HistoryTab.tsx:74`) and
 carries a disable toggle (`:45`), so a user can step onto or disable a row whose label says nothing
 about what it did — and there is no way to tell a creation from a move from a clear, since all three
 carry the same `layerId: 'selection'` and the same action name.
@@ -710,11 +728,11 @@ encodes, `10000 × 8001` does not), and the load-side string preserved byte for 
 Three numbers still disagree, and enforcing the budget on the encoder made the disagreement a
 capability loss rather than a latent trap:
 
-| ceiling                             | value       | where                        |
-| ----------------------------------- | ----------- | ---------------------------- |
-| largest document the app can create | 100,000,000 | `NewImageDialog.tsx:208-209` |
-| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:13`           |
-| TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:23`           |
+| ceiling                             | value       | where                                     |
+| ----------------------------------- | ----------- | ----------------------------------------- |
+| largest document the app can create | 100,000,000 | `NewImageDialog.tsx:96-97` and `:129-130` |
+| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:13`                        |
+| TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:23`                        |
 
 So a document between 80 MP and 100 MP **cannot be saved as AVIF at all** — `saveImageToDisk` throws
 with the budget message, and `useFile.tsx:119-135` surfaces it as an alert. Before the guard it saved
@@ -739,13 +757,13 @@ different number defensible if the ceiling is ever revisited.
 **Also unfixed, and the same drift, larger than item 45 first claimed.** Four ceilings exist and two
 are below what the dialog can create:
 
-| ceiling                             | value       | where                        |
-| ----------------------------------- | ----------- | ---------------------------- |
-| largest document the app can create | 100,000,000 | `NewImageDialog.tsx:208-209` |
-| affine transform                    | 67,108,864  | `affine-transform.ts:34`     |
-| PSD                                 | 67,108,864  | `psd-utils.ts:36`            |
-| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:13`           |
-| TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:12-23`        |
+| ceiling                             | value       | where                                     |
+| ----------------------------------- | ----------- | ----------------------------------------- |
+| largest document the app can create | 100,000,000 | `NewImageDialog.tsx:96-97` and `:129-130` |
+| affine transform                    | 67,108,864  | `affine-transform.ts:34`                  |
+| PSD                                 | 67,108,864  | `psd-utils.ts:36`                         |
+| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:13`                        |
+| TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:12-23`                     |
 
 The two 64 MP constants are the same number written twice, independently, in files that do not
 import each other. A 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as AVIF and not
@@ -1333,17 +1351,15 @@ It is **not** exploitable today, and the reason is not the code. Every press run
 `abortSelectionDrag()` first, which always closes this component's own claim, and
 `polygon-selection` has no second claimant. It is recorded because the protection is an accident of
 the current press routing rather than a property of the function, and the freehand twin was one line
-away from the same failure. **`claimDocumentGesture` returning `false` must be honoured at every
+away from the same failure.
+
+**A leak is now more expensive than when this was written (2026-09-28).** The gate used to cover the
+keyboard only, so a stranded claim cost the keyboard. It now also covers the Undo and Redo buttons,
+the history-list row clicks, and the history entries' enabled-state toggles — five `useHistory()`
+call sites in all. One leaked claim therefore disables undo, redo, rewind and step-toggling at
+once, and the only recovery is a remount. **`claimDocumentGesture` returning `false` must be honoured at every
 call site**: take the ref, and any state flag, only when the claim succeeds — as `DrawToolArea`,
 `ShapeToolArea`, `EraserToolArea`, `MoveToolArea` and the freehand branch now all do.
-
-## 61. Three overlay painters leave a pending animation frame across unmount
-
-`DrawToolArea`, `ShapeToolArea` and `useRect` each hold a `frameRequested` ref they schedule with
-`requestAnimationFrame` and cancel only in `handlePointerUp`. `EraserToolArea` cancels it in its
-unmount effect; these three do not. The gap is pre-existing in all of them, so this is defence in
-depth rather than a regression, and the worst case is one extra overlay paint after the area
-unmounts, which self-heals on the next press. Two lines each.
 
 ## 62. The error boundary's fallback is auto-placed, not placed where the region was
 
