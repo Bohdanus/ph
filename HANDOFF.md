@@ -998,7 +998,7 @@ replay authority.
 
 ---
 
-## 40. `SaveDialog` has the same unowned keyboard as `NewImageDialog` had, and no dialog in the app is marked as one
+## 44. `SaveDialog` has the same unowned keyboard as `NewImageDialog` had, and no dialog in the app is marked as one
 
 **Problem.** `NewImageDialog` no longer has this defect, but its sibling never had the fix.
 `SaveDialog.tsx:32` is the same `fixed inset-0 z-[1050]` overlay with `outline-none
