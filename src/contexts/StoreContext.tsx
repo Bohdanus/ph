@@ -883,7 +883,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       latestStateRef.current = nextState;
       rawDispatch(committedAction);
-      retireDepartedPresentationBitmaps(presentationScope, currentState.layers, nextState.layers);
+      retireDepartedPresentationBitmaps(presentationScope, currentState.documentId, nextState);
       return;
     }
     if (action.type === 'COMMIT_DOCUMENT_EDIT') {
