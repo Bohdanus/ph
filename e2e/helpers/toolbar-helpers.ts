@@ -136,6 +136,31 @@ export async function clickToolButton(page: Page, toolName: string): Promise<voi
 }
 
 /**
+ * The app's long-press threshold, in milliseconds.
+ *
+ * Mirrored from `scheduleFlyoutOpen` in `src/components/SidebarLeft/SidebarLeft.tsx:83-90`,
+ * which opens a group's flyout from `setTimeout(() => openFlyout(groupIndex), 300)`. The app
+ * exports no constant for it, so 300 is duplicated here and the app is the only authority on
+ * the value: every wait below is expressed against this, never against a second literal, so
+ * raising the app's threshold cannot quietly leave a wait behind it.
+ */
+export const LONG_PRESS_DELAY_MS = 300;
+
+/**
+ * Slack added to {@link LONG_PRESS_DELAY_MS} before `pointerup`, so the release cannot land
+ * in the same millisecond the app's timer fires and turn a long press into a plain click.
+ */
+const LONG_PRESS_BUFFER_MS = 50;
+
+/**
+ * Slack for the settle wait in {@link verifyHoverDoesNotOpenFlyout}, whose assertion is
+ * negative. Hover dispatches no `pointerdown`, so nothing ever schedules a flyout and the
+ * wait is defensive only; it is still expressed against the app's delay rather than as a
+ * second hardcoded number.
+ */
+const HOVER_SETTLE_BUFFER_MS = 100;
+
+/**
  * Opens a tool flyout via long-press (300ms) for grouped tools.
  * Use this instead of clickToolButton when you need to select a non-primary
  * tool from a flyout group (e.g., Lasso, Colors, Brush, Pen, Shape).
@@ -146,10 +171,11 @@ export async function openToolFlyout(page: Page, toolName: string): Promise<void
   const button = page.getByTestId(`tool-button-${normalizedName}`);
   await expect(button).toBeVisible();
 
-  // Long-press: dispatch pointerdown on the button element, wait 350ms, then pointerup
-  // This matches SidebarLeft.tsx's onPointerDown/onPointerUp handlers (lines 222-241)
+  // Long-press: dispatch pointerdown on the button element, hold past the app's delay,
+  // then pointerup. This matches SidebarLeft.tsx's onPointerDown/onPointerUp handlers
+  // (lines 212-231).
   await button.dispatchEvent('pointerdown', { button: 0 });
-  await page.waitForTimeout(350); // 300ms long-press delay + buffer
+  await page.waitForTimeout(LONG_PRESS_DELAY_MS + LONG_PRESS_BUFFER_MS);
   await button.dispatchEvent('pointerup', { button: 0 });
 
   // Wait for flyout to appear (all flyouts have role="menu")
@@ -233,7 +259,10 @@ export async function verifyHoverDoesNotOpenFlyout(page: Page, toolName: string)
   await expect(button).toBeVisible();
 
   await button.hover();
-  await page.waitForTimeout(400); // Longer than long-press delay
+  // Hover fires no `pointerdown`, so the app never calls `scheduleFlyoutOpen` and there is
+  // no pending timer to race. The wait is defensive, and it outlasts the app's own delay so
+  // this keeps meaning "hover did not open it" if the threshold is ever raised.
+  await page.waitForTimeout(LONG_PRESS_DELAY_MS + HOVER_SETTLE_BUFFER_MS);
 
   // Flyout should not be visible
   await expect(page.getByRole('menu')).toBeHidden();

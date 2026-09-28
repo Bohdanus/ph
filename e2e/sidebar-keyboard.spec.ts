@@ -85,7 +85,11 @@ test.describe('SidebarLeft - Keyboard Navigation', () => {
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('Enter');
 
+    // The menu closing only says Enter dismissed the flyout; it passes just as well if the
+    // keypress activated nothing at all. The tile is what proves the selection landed:
+    // picking an item from a group makes that tool the tile's primary, so the group button
+    // re-labels from "Colors" to "Levels" and its test id moves with it.
     await expect(page.getByRole('menu')).toBeHidden();
-    // Levels tool should now be selected (would need verifyPrimaryTool for 'levels')
+    await verifyPrimaryTool(page, 'levels', 'Levels');
   });
 });
