@@ -242,7 +242,63 @@ green. **Capture the assertion, not just the test name**, and record whether it
 was a timeout or a value mismatch: a timeout points at the focus/async
 interaction in 3, a value mismatch points at ordering.
 
-## 8. Files
+## 8. A third, NAMED observation — the first Playwright page loads in a cold checkout time out
+
+This one is not a flake at all. It is deterministic, it reproduces on the first
+run in a fresh checkout, and it is regularly misdiagnosed as a product defect in
+whichever spec happened to run first.
+
+`npm run test:e2e` starts Vite, and Vite transforms `src/` on first request. A
+spec's `beforeEach` that does `await page.goto('/')` and then
+`expect(canvas).toBeVisible()` is racing that transform against Playwright's
+default 5s assertion budget. On a cold server the first several page loads lose.
+
+Measured on clean main, `npx playwright test e2e/sidebar-flyout.spec.ts`:
+
+| run               | result                                                       |
+| ----------------- | ------------------------------------------------------------ |
+| first, cold Vite  | 5 failed, 13 passed — every failure in the same `beforeEach` |
+| second, warm Vite | 0 failed, 18 passed                                          |
+
+Every one of the five failures was the identical assertion, on the identical
+line, and none of them was a flyout assertion:
+
+```
+Error: expect(locator).toBeVisible() failed
+Locator: getByTestId('workspace-canvas')
+Error: element(s) not found          # 5s budget, e2e/sidebar-flyout.spec.ts:111
+```
+
+The diagnostic detail is the shape of it: the failures were **tests 1-6** — the
+first page loads — while tests 7-19 ran the _same_ `beforeEach` and all passed.
+On the warm re-run the same tests dropped from 8.9s to 2.0-3.2s. A defect in the
+spec under test cannot select the first five tests and spare the next fourteen.
+
+**This is why the flyout looked broken to several agents at once.** The clipping
+fix had already landed in `dd92374`/`5c7cb73`, and the suite was green, but a cold
+run put five red lines on the screen inside `sidebar-flyout.spec.ts`, and the
+natural reading is that the flyout regressed. Two other worktrees
+(`fix-flyout-hit`, `fix-flyout-longpress`) were started against that reading, and
+both turned out to be re-deriving work main had already merged. The cost was
+four branches and two unmerged patches for a defect that was never there.
+
+Two things follow, and they are different:
+
+1. **Warm the dev server before the first test.** A single request to the base URL
+   in `e2e/global-setup.ts`, retried until it answers, pays Vite's transform cost
+   once instead of once per early test. This belongs in the global setup rather
+   than in any spec, because the failure is a property of the server, not of the
+   spec that noticed it.
+2. **Do not diagnose a Playwright failure from the spec it appeared in.** Read the
+   failing line. A `beforeEach` failure is the harness, not the subject; and if the
+   red tests are the first N in file order, suspect the server before the
+   application.
+
+Not yet done. The warm-up in (1) is a one-request change to a file nothing else
+touches, and it is left alone here so it does not ride in on a toolbar fix that
+does not need it.
+
+## 9. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -251,3 +307,7 @@ interaction in 3, a value mismatch points at ordering.
 - `src/contexts/avif-utils.ts` — the encoder whose budget check changed nearby
 - `.husky/pre-push` — where `npm run test` now runs
 - `AGENTS.md`, "`test:staged` is a command, not a gate" — where it lives now, and what it costs
+- `playwright.config.ts:106-120` — the `webServer` block, and why an explicit
+  `PLAYWRIGHT_PORT` disables server reuse
+- `e2e/global-setup.ts` — where the warm-up in section 8 belongs
+- `e2e/sidebar-flyout.spec.ts:111` — the `beforeEach` that loses the race

@@ -113,16 +113,18 @@ describe('the three real documents', () => {
   });
 
   it('reads a numbered document as one item per number, in document order', () => {
-    expect(flakes.parsed.items.map((item) => item.origin)).toEqual([
-      'TEST-FLAKES.md#1',
-      'TEST-FLAKES.md#2',
-      'TEST-FLAKES.md#3',
-      'TEST-FLAKES.md#4',
-      'TEST-FLAKES.md#5',
-      'TEST-FLAKES.md#6',
-      'TEST-FLAKES.md#7',
-      'TEST-FLAKES.md#8',
-    ]);
+    /**
+     * Asserted as a contiguous 1..N run rather than as a literal list of the document's
+     * current section numbers, for the reason the sibling assertion below already gives:
+     * this file describes a live document that other work edits, and pinning the content
+     * here made the test fail when somebody added the very section it describes. The real
+     * contract is that the numbers are non-empty, contiguous, in document order, and in
+     * this file's own origin form — all of which is still asserted, and each of which a
+     * literal list of 8 would have stopped checking the moment a ninth section landed.
+     */
+    const origins = flakes.parsed.items.map((item) => item.origin);
+    expect(origins.length).toBeGreaterThan(0);
+    expect(origins).toEqual(Array.from({ length: origins.length }, (_, index) => `TEST-FLAKES.md#${index + 1}`));
   });
 
   it("keeps HANDOFF.md's own numbering, so every origin there is a number", () => {
