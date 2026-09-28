@@ -488,7 +488,9 @@ describe('paint tool raster processors', () => {
     expect(recorded.stroke).not.toHaveBeenCalled();
     expect(recorded.lineWidth).toBe(1);
     const gradientCall = (recorded.createRadialGradient.mock.calls as unknown as number[][])[0];
-    expect(gradientCall[5]).toBe(6);
+    // Half the lineWidth: the Size slider is a diameter on every other pen, so the spray
+    // spends half of it as the gradient radius.
+    expect(gradientCall[5]).toBe(3);
     expect(gradientCall[0]).toBe(stroke[0].x);
     expect(recorded.arc).toHaveBeenCalledTimes(1);
   });
