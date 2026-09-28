@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-28T21:04:39.303Z",
+  "generatedAt": "2026-09-28T21:06:35.707Z",
   "generator": "scripts/worktree-inventory.mjs",
   "base": "main",
   "mainHead": "d16c228535740a0af807cf8635e772039c12d669",
@@ -19,10 +19,11 @@
     "board": {
       "ok": true,
       "path": "/Users/bkalynovskyi/ph/.git/agent-board/board.db",
-      "issues": 59
+      "issues": 60
     }
   },
   "readyToLand": [
+    "board-entrypoint",
     "e2ewt-adjustments",
     "e2ewt-file-roundtrip",
     "e2ewt-text-tool",
@@ -34,10 +35,15 @@
     "ps-brush-tip-core-72c775ad4e905a94",
     "ps-shape-geometry"
   ],
-  "disposalCandidates": ["e2e-coverage-2", "handoff-citation-rotation", "tool-truth", "worktree-inventory"],
+  "disposalCandidates": [
+    "e2e-coverage-2",
+    "fix-e2e-findings",
+    "handoff-citation-rotation",
+    "tool-truth",
+    "worktree-inventory"
+  ],
   "atRisk": [
     "agent-board",
-    "board-entrypoint",
     "board-file-index",
     "e2e-1-export-oracle",
     "e2e-2-draw-specs",
@@ -91,31 +97,31 @@
     "text-tool-requirements"
   ],
   "totals": {
-    "worktrees": 69,
-    "prunable": 4,
-    "readyToLand": 10,
-    "disposalCandidates": 4,
-    "atRisk": 53,
-    "salvage": 53,
+    "worktrees": 70,
+    "prunable": 5,
+    "readyToLand": 11,
+    "disposalCandidates": 5,
+    "atRisk": 52,
+    "salvage": 52,
     "inUse": 2,
-    "holdingUncommittedWork": 23,
-    "withoutSummary": 3,
+    "holdingUncommittedWork": 22,
+    "withoutSummary": 4,
     "byStatus": {
-      "uncommitted-only": 16,
-      "unmerged-work": 48,
-      "landed": 5
+      "uncommitted-only": 15,
+      "unmerged-work": 49,
+      "landed": 6
     },
     "byRecommendation": {
-      "salvage": 53,
+      "salvage": 52,
       "in-use": 2,
-      "ready-to-land": 10,
-      "prune": 4
+      "ready-to-land": 11,
+      "prune": 5
     },
     "byAction": {
-      "at-risk": 53,
+      "at-risk": 52,
       "in-use": 2,
-      "land": 10,
-      "dispose": 4
+      "land": 11,
+      "dispose": 5
     },
     "byChatState": {
       "finished": 61,
@@ -188,80 +194,6 @@
             "agentId": "feat/agent-board",
             "branch": "feat/agent-board",
             "lastSeenMs": 1790607407708,
-            "live": false
-          }
-        ],
-        "held": false
-      }
-    },
-    {
-      "name": "board-entrypoint",
-      "path": ".kilo/worktrees/board-entrypoint",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/board-entrypoint",
-      "branch": "fix/board-entrypoint",
-      "isPrimary": false,
-      "head": "4f3dec7bab58ee7a8041caf1d6a0a91ae768a8f3",
-      "detached": false,
-      "status": "uncommitted-only",
-      "recommendation": "salvage",
-      "action": "at-risk",
-      "prunable": false,
-      "mergeConflict": null,
-      "mergeConflictFiles": [],
-      "mergeChecked": false,
-      "riskScore": 90,
-      "statusReasons": [
-        "the branch reports 0 commits ahead of main and is an ancestor of it",
-        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
-        "git cannot distinguish this from a branch that landed and was then edited",
-        "work here is not reachable from any commit on this branch"
-      ],
-      "ahead": 0,
-      "behind": 25,
-      "mergedIntoMain": true,
-      "dirty": 4,
-      "untracked": 0,
-      "dirtyPaths": [
-        "AGENTS.md",
-        "scripts/__tests__/agent-board.test.mjs",
-        "scripts/agent-board.mjs",
-        "scripts/lib/agent-board/db.mjs"
-      ],
-      "lastCommit": {
-        "sha": "4f3dec7bab58ee7a8041caf1d6a0a91ae768a8f3",
-        "subject": "merge: fix(review) — close seven review findings and the eighth found while fixing them",
-        "date": "2026-09-28T21:49:12+02:00",
-        "author": "Bohdan"
-      },
-      "commitsAhead": [],
-      "commitsAheadTruncated": false,
-      "claimedLanded": true,
-      "summary": "A short-lived worktree on the board entrypoint fix, now merged: its branch is an ancestor of main and its working tree is clean.",
-      "summarySource": "curated",
-      "issues": [],
-      "inferredBoardIssues": [],
-      "note": null,
-      "liveNote": null,
-      "mustNotPrune": false,
-      "chats": {
-        "count": 0,
-        "chatIds": [],
-        "subagentCount": 0,
-        "byState": {},
-        "activeChatIds": [],
-        "unfinishedChatIds": [],
-        "lastActivity": null,
-        "unfinished": [],
-        "dead": []
-      },
-      "board": {
-        "claims": [],
-        "fileLocks": [],
-        "agents": [
-          {
-            "agentId": "fix/board-entrypoint",
-            "branch": "fix/board-entrypoint",
-            "lastSeenMs": 1790625677855,
             "live": false
           }
         ],
@@ -3154,7 +3086,7 @@
             "id": "ses_f1b3877baffeulCrn1qWWgBo2p",
             "title": "Review selection baseline history replay fix",
             "state": "abandoned-midflight",
-            "idleMs": 84346926,
+            "idleMs": 84463330,
             "reasons": ["idle for 23h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 3,
             "creditsFailures": 0,
@@ -4692,7 +4624,7 @@
       "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/land-and-dispose",
       "branch": "feat/land-and-dispose",
       "isPrimary": false,
-      "head": "c5d6f82eecf8f036e6f7f560f5f74a9dc246f323",
+      "head": "3c3c2ab8121005e80bbcc267c47b57d5f12299ef",
       "detached": false,
       "status": "unmerged-work",
       "recommendation": "in-use",
@@ -4703,22 +4635,32 @@
       "mergeChecked": true,
       "riskScore": 70,
       "statusReasons": [
-        "2 commit(s) ahead of main",
+        "4 commit(s) ahead of main",
         "the board saw agent feat/land-and-dispose in this worktree inside the last 30 minutes"
       ],
-      "ahead": 2,
-      "behind": 4,
+      "ahead": 4,
+      "behind": 0,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
       "dirtyPaths": [],
       "lastCommit": {
-        "sha": "c5d6f82eecf8f036e6f7f560f5f74a9dc246f323",
+        "sha": "3c3c2ab8121005e80bbcc267c47b57d5f12299ef",
         "subject": "Merge branch 'main' into feat/land-and-dispose",
-        "date": "2026-09-28T23:01:55+02:00",
+        "date": "2026-09-28T23:05:49+02:00",
         "author": "Bohdan"
       },
       "commitsAhead": [
+        {
+          "sha": "3c3c2ab",
+          "subject": "Merge branch 'main' into feat/land-and-dispose",
+          "date": "2026-09-28T23:05:49+02:00"
+        },
+        {
+          "sha": "7572232",
+          "subject": "chore: refresh WORKTREES.json after merging main",
+          "date": "2026-09-28T23:05:28+02:00"
+        },
         {
           "sha": "c5d6f82",
           "subject": "Merge branch 'main' into feat/land-and-dispose",
@@ -4884,10 +4826,10 @@
         "chatIds": [
           "ses_f162b4452ffei0YUQf4OjQiJn7",
           "ses_f1678e1ecffeE6PmxFG4SH1MGO",
-          "ses_f1717029bffeO2Tgiso7XjVWvz",
-          "ses_f1692fbb5ffe48aRfBKFyv739e",
           "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
+          "ses_f1717029bffeO2Tgiso7XjVWvz",
           "ses_f167d43ebffenKG4aRh8qnMKN5",
+          "ses_f1692fbb5ffe48aRfBKFyv739e",
           "ses_f1703646effe9LHAl5QgqHkEbj",
           "ses_f1871204bffeRe2NIbxXCnD0pm",
           "ses_f16a47026ffe4E7yDrTCIlcxiX",
@@ -4953,25 +4895,25 @@
         "activeChatIds": [
           "ses_f162b4452ffei0YUQf4OjQiJn7",
           "ses_f1678e1ecffeE6PmxFG4SH1MGO",
-          "ses_f1717029bffeO2Tgiso7XjVWvz",
-          "ses_f1692fbb5ffe48aRfBKFyv739e",
           "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
-          "ses_f167d43ebffenKG4aRh8qnMKN5"
+          "ses_f1717029bffeO2Tgiso7XjVWvz",
+          "ses_f167d43ebffenKG4aRh8qnMKN5",
+          "ses_f1692fbb5ffe48aRfBKFyv739e"
         ],
         "unfinishedChatIds": [
           "ses_f162b4452ffei0YUQf4OjQiJn7",
           "ses_f1678e1ecffeE6PmxFG4SH1MGO",
-          "ses_f1717029bffeO2Tgiso7XjVWvz",
-          "ses_f1692fbb5ffe48aRfBKFyv739e",
           "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
+          "ses_f1717029bffeO2Tgiso7XjVWvz",
           "ses_f167d43ebffenKG4aRh8qnMKN5",
+          "ses_f1692fbb5ffe48aRfBKFyv739e",
           "ses_f174eec52ffedigagDe7uAkRob",
           "ses_f18cb10c7ffeQyGIipjfTQJifF",
           "ses_f183ab42cffeVdFwk5GNadKyhe",
           "ses_f19365ab4ffefSJC5XwcDdHYDB",
           "ses_f1ba92bedffeb9De69jCNMC00Q"
         ],
-        "lastActivity": 1790629479303,
+        "lastActivity": 1790629595707,
         "unfinished": [
           {
             "id": "ses_f162b4452ffei0YUQf4OjQiJn7",
@@ -4987,29 +4929,9 @@
             "id": "ses_f1678e1ecffeE6PmxFG4SH1MGO",
             "title": "Fix board service and launch as daemon",
             "state": "active",
-            "idleMs": 15050,
+            "idleMs": 5764,
             "reasons": ["last message 0m ago"],
             "toolErrors": 0,
-            "creditsFailures": 1,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f1717029bffeO2Tgiso7XjVWvz",
-            "title": "Worktree inventory JSON and agents.md update",
-            "state": "active",
-            "idleMs": 20191,
-            "reasons": ["last message 0m ago"],
-            "toolErrors": 11,
-            "creditsFailures": 17,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f1692fbb5ffe48aRfBKFyv739e",
-            "title": "Recent tool description audit",
-            "state": "active",
-            "idleMs": 95220,
-            "reasons": ["last message 2m ago"],
-            "toolErrors": 1,
             "creditsFailures": 1,
             "blockedOn": null
           },
@@ -5017,27 +4939,47 @@
             "id": "ses_f16a8e2b2ffeAtJJd9fjaUD3Pb",
             "title": "Clean and merge stale worktrees into main",
             "state": "active",
-            "idleMs": 160428,
-            "reasons": ["last message 3m ago"],
+            "idleMs": 49441,
+            "reasons": ["last message 1m ago"],
             "toolErrors": 1,
             "creditsFailures": 1,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f1717029bffeO2Tgiso7XjVWvz",
+            "title": "Worktree inventory JSON and agents.md update",
+            "state": "active",
+            "idleMs": 50001,
+            "reasons": ["last message 1m ago"],
+            "toolErrors": 11,
+            "creditsFailures": 17,
             "blockedOn": null
           },
           {
             "id": "ses_f167d43ebffenKG4aRh8qnMKN5",
             "title": "E2E orchestrator continuation next steps",
             "state": "active",
-            "idleMs": 200673,
-            "reasons": ["last message 3m ago"],
+            "idleMs": 71936,
+            "reasons": ["last message 1m ago"],
             "toolErrors": 6,
             "creditsFailures": 0,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f1692fbb5ffe48aRfBKFyv739e",
+            "title": "Recent tool description audit",
+            "state": "active",
+            "idleMs": 211624,
+            "reasons": ["last message 4m ago"],
+            "toolErrors": 1,
+            "creditsFailures": 1,
             "blockedOn": null
           },
           {
             "id": "ses_f174eec52ffedigagDe7uAkRob",
             "title": "-- del --",
             "state": "abandoned-midflight",
-            "idleMs": 17998570,
+            "idleMs": 18114974,
             "reasons": ["idle for 5h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 2,
             "creditsFailures": 0,
@@ -5047,8 +4989,8 @@
             "id": "ses_f18cb10c7ffeQyGIipjfTQJifF",
             "title": "-- e2e orchestrator",
             "state": "abandoned-midflight",
-            "idleMs": 26915522,
-            "reasons": ["idle for 7h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 27031926,
+            "reasons": ["idle for 8h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 7,
             "creditsFailures": 0,
             "blockedOn": null
@@ -5057,8 +4999,8 @@
             "id": "ses_f183ab42cffeVdFwk5GNadKyhe",
             "title": "-- PNG todo --",
             "state": "abandoned-midflight",
-            "idleMs": 34185670,
-            "reasons": ["idle for 9h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 34302074,
+            "reasons": ["idle for 10h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 2,
             "creditsFailures": 1,
             "blockedOn": null
@@ -5067,7 +5009,7 @@
             "id": "ses_f19365ab4ffefSJC5XwcDdHYDB",
             "title": "New session - 2026-09-28T06:52:49.867Z",
             "state": "abandoned-midflight",
-            "idleMs": 50525800,
+            "idleMs": 50642204,
             "reasons": ["idle for 14h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 4,
             "creditsFailures": 0,
@@ -5077,7 +5019,7 @@
             "id": "ses_f1ba92bedffeb9De69jCNMC00Q",
             "title": "$$$ History migration architecture and planning $$$",
             "state": "blocked",
-            "idleMs": 77129059,
+            "idleMs": 77245463,
             "reasons": [
               "last turn completed 21h ago and nothing has happened since",
               "an agent_manager call reported a managed session waiting for input"
@@ -5096,15 +5038,196 @@
             "agentId": "main",
             "branch": "main",
             "leaseUntil": "2026-09-28T21:07:54.762Z"
+          },
+          {
+            "issueId": "ph-60",
+            "agentId": "fix/e2e-transferred-findings",
+            "branch": "main",
+            "leaseUntil": "2026-09-28T21:51:56.684Z"
           }
         ],
-        "fileLocks": [],
+        "fileLocks": [
+          {
+            "path": "e2e/helpers/canvas-helpers.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/cdp-helpers.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/screenshot-scale.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/toolbar-helpers.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/export/helpers.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "package.json",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/image-comparison.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/color-helpers.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/canvas-helpers.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/cdp-helpers.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/__tests__/canvas-helpers.fixtures.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/__tests__/toolbar-helpers.unit.test.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/__tests__/image-comparison.unit.test.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/__tests__/screenshot-scale.unit.test.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/helpers/__tests__/canvas-interaction.unit.test.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/export/__tests__/helpers.unit.test.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/export/visual-regression.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/export/ico.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/export/photopea.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/color.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/levels.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/sidebar-keyboard.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/sidebar-flyout.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/select-move.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/sidebar-layout.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/check-dpr.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "e2e/shape-tools.spec.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          },
+          {
+            "path": "playwright.config.ts",
+            "agentId": "fix/e2e-transferred-findings",
+            "issueId": null,
+            "expiresAt": "2026-09-28T21:51:56.680Z"
+          }
+        ],
         "agents": [
           {
             "agentId": "main",
             "branch": "main",
-            "lastSeenMs": 1790626984257,
-            "live": false
+            "lastSeenMs": 1790629595594,
+            "live": true
           },
           {
             "agentId": "integration/e2e-campaign-final",
@@ -5117,9 +5240,93 @@
             "branch": "main",
             "lastSeenMs": 1790626333692,
             "live": false
+          },
+          {
+            "agentId": "fix/e2e-transferred-findings",
+            "branch": "main",
+            "lastSeenMs": 1790629616647,
+            "live": true
           }
         ],
         "held": true
+      }
+    },
+    {
+      "name": "board-entrypoint",
+      "path": ".kilo/worktrees/board-entrypoint",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/board-entrypoint",
+      "branch": "fix/board-entrypoint",
+      "isPrimary": false,
+      "head": "ae15031b14a754ab21df36111e849853cb111db3",
+      "detached": false,
+      "status": "unmerged-work",
+      "recommendation": "ready-to-land",
+      "action": "land",
+      "prunable": false,
+      "mergeConflict": false,
+      "mergeConflictFiles": [],
+      "mergeChecked": true,
+      "riskScore": 30,
+      "statusReasons": [
+        "2 commit(s) ahead of main",
+        "the working tree is clean and the merge into the base branch applies with no conflict"
+      ],
+      "ahead": 2,
+      "behind": 0,
+      "mergedIntoMain": false,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
+      "lastCommit": {
+        "sha": "ae15031b14a754ab21df36111e849853cb111db3",
+        "subject": "Merge branch 'main' into fix/board-entrypoint",
+        "date": "2026-09-28T23:05:59+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [
+        {
+          "sha": "ae15031",
+          "subject": "Merge branch 'main' into fix/board-entrypoint",
+          "date": "2026-09-28T23:05:59+02:00"
+        },
+        {
+          "sha": "fc97b0f",
+          "subject": "fix(board): name which board it is, and make `ready` able to answer",
+          "date": "2026-09-28T23:05:33+02:00"
+        }
+      ],
+      "commitsAheadTruncated": false,
+      "claimedLanded": true,
+      "summary": "A short-lived worktree on the board entrypoint fix, now merged: its branch is an ancestor of main and its working tree is clean.",
+      "summarySource": "curated",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [],
+        "agents": [
+          {
+            "agentId": "fix/board-entrypoint",
+            "branch": "fix/board-entrypoint",
+            "lastSeenMs": 1790625677855,
+            "live": false
+          }
+        ],
+        "held": false
       }
     },
     {
@@ -5913,6 +6120,63 @@
             "live": false
           }
         ],
+        "held": false
+      }
+    },
+    {
+      "name": "fix-e2e-findings",
+      "path": ".kilo/worktrees/fix-e2e-findings",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/fix-e2e-findings",
+      "branch": "fix/e2e-transferred-findings",
+      "isPrimary": false,
+      "head": "d16c228535740a0af807cf8635e772039c12d669",
+      "detached": false,
+      "status": "landed",
+      "recommendation": "prune",
+      "action": "dispose",
+      "prunable": true,
+      "mergeConflict": null,
+      "mergeConflictFiles": [],
+      "mergeChecked": false,
+      "riskScore": 10,
+      "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
+      "ahead": 0,
+      "behind": 0,
+      "mergedIntoMain": true,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
+      "lastCommit": {
+        "sha": "d16c228535740a0af807cf8635e772039c12d669",
+        "subject": "merge: the tool descriptions tell the truth",
+        "date": "2026-09-28T23:02:13+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": null,
+      "summarySource": "none",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [],
+        "agents": [],
         "held": false
       }
     },
