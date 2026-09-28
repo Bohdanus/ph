@@ -292,6 +292,11 @@ const Main = () => {
   return (
     <main
       ref={containerRef}
+      // The element `usePointerPosition` measures the contain fit against, and the element
+      // it publishes that fit on as `data-fit-*` (see `FIT_ATTRIBUTES`). The test id is what
+      // lets the e2e suite name that element instead of selecting a bare `main` tag and
+      // trusting that it is the one the fit was computed from.
+      data-testid="workspace-container"
       className={`relative overflow-y-auto [grid-area:main] mobile-safe-bottom ${
         isDragging
           ? 'bg-gray-100 dark:bg-gray-800 border-2 border-dashed border-blue-500'
