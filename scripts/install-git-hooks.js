@@ -57,6 +57,16 @@ if [ ! -f "$hook" ]; then
 \texit 1
 fi
 
+# A checkout from before the shared entry point sources husky's generated
+# preamble, which only an install in that worktree ever created. Name it, rather
+# than letting sh report a missing path with nothing to connect it to.
+if grep -q 'husky\\.sh' "$hook" && [ ! -f "$(dirname "$hook")/_/husky.sh" ]; then
+\techo "gate: $hook predates the shared entry point and needs husky's generated preamble." >&2
+\techo "gate: bring the worktree up to date (merge or rebase onto main), or run" >&2
+\techo "gate: 'npm install' here, or 'git config --unset core.hooksPath'." >&2
+\texit 1
+fi
+
 sh -e "$hook" "$@"
 `;
 }
@@ -80,6 +90,8 @@ function main() {
     // Not set, or set to an empty value.
   }
 
+  // Written before the early return below: a dispatcher whose template changed
+  // has to be refreshed even when the path is already correct.
   for (const name of HOOKS) {
     const file = path.join(hooksDir, name);
     writeFileSync(file, dispatcher(name));
@@ -87,16 +99,14 @@ function main() {
   }
 
   if (current === hooksDir) {
-    console.log(`gate: hooks already installed at ${hooksDir}`);
+    console.log(`gate: refreshed ${HOOKS.join(', ')} at ${hooksDir} (core.hooksPath unchanged)`);
     return;
   }
 
   git(['config', 'core.hooksPath', hooksDir]);
   console.log(
     `gate: core.hooksPath ${current === null ? '(unset)' : current} -> ${hooksDir}` +
-      (current !== null && current !== '.husky/_'
-        ? ''
-        : '  [was the per-worktree husky path, which worktrees do not have]')
+      (current === '.husky/_' ? '  [was the per-worktree husky path, which worktrees do not have]' : '')
   );
 }
 
