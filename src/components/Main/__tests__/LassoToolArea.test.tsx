@@ -7,12 +7,20 @@ import { PolygonClickToolArea } from '../PolygonClickToolArea.tsx';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 
 const dispatchMock = vi.hoisted(() => vi.fn());
-const storeState = vi.hoisted((): { activeSelectionId: string | null; selections: Selection[] } => ({
-  activeSelectionId: null,
-  selections: [],
-}));
+const storeState = vi.hoisted(
+  (): {
+    activeSelectionId: string | null;
+    selectionDraft: { status: 'idle' | 'draft'; sourceTool?: 'polygonal-lasso' | 'freehand-lasso' };
+    selections: Selection[];
+  } => ({
+    activeSelectionId: null,
+    selectionDraft: { status: 'idle' },
+    selections: [],
+  })
+);
 const currentToolState = vi.hoisted(() => ({ toolName: 'polygonal-lasso' }));
 const shortcutHandlers = vi.hoisted(() => new Map<string, () => void>());
+const rawShortcuts = vi.hoisted(() => new Map<string, { key: string; enabled?: boolean; onKeyDown: () => void }>());
 
 // Mock dependencies
 vi.mock('../../../hooks/usePointerPosition.ts', () => ({
@@ -30,7 +38,14 @@ vi.mock('../../../hooks/usePolylineAnts.ts', () => ({
 }));
 
 vi.mock('../../../hooks/useKeyboardEvents.tsx', () => ({
-  useKeyDownShortcut: (shortcut: { key: string; onKeyDown: () => void }) => {
+  useKeyDownShortcut: (shortcut: { key: string; enabled?: boolean; onKeyDown: () => void }) => {
+    // `rawShortcuts` keeps the registration object so a test can assert what the
+    // hook was handed, and the mock runs on every render, so it tracks the live
+    // gate as the draft's anchor mirror re-renders this component. The mocked
+    // store never re-renders it on its own, so a test that needs one stands in
+    // an interaction that does. `shortcutHandlers` stays a direct call into
+    // `onKeyDown` so the handler itself can be exercised on its own.
+    rawShortcuts.set(shortcut.key, shortcut);
     shortcutHandlers.set(shortcut.key, shortcut.onKeyDown);
   },
 }));
@@ -40,12 +55,12 @@ vi.mock('../../../contexts/StoreContext.tsx', () => ({
     {
       activeSelectionId: storeState.activeSelectionId,
       containerRef: { current: document.createElement('div') },
-      // The single-writer hook reads the legacy timeline so it can plan the
-      // append. An empty timeline at cursor -1 is what a store with nothing
-      // appended yet actually looks like, and `planHistoryAppend` reports the
-      // out-of-range cursor as a diagnostic rather than refusing the edit.
       history: [],
       historyIndex: -1,
+      // The Backspace/Delete registrations no longer gate on this field, but a
+      // test still sets it to model what a mid-draft `'move'` commit or the
+      // sidebar deselect leaves in the store.
+      selectionDraft: storeState.selectionDraft,
       selections: storeState.selections,
       toolOverlayRef: { current: document.createElement('canvas') },
       totalSize: { width: 800, height: 600 },
@@ -67,9 +82,11 @@ describe('PolygonClickToolArea', () => {
   beforeEach(() => {
     dispatchMock.mockClear();
     storeState.activeSelectionId = null;
+    storeState.selectionDraft = { status: 'idle' };
     storeState.selections = [];
     currentToolState.toolName = 'polygonal-lasso';
     shortcutHandlers.clear();
+    rawShortcuts.clear();
   });
 
   const createMockContext = () =>
@@ -642,7 +659,7 @@ describe('PolygonClickToolArea', () => {
       expect(dispatchMock).not.toHaveBeenCalled();
     });
 
-    it('clears selections with Backspace when no draft in progress', () => {
+    it('dispatches nothing with Backspace or Delete when no draft is in progress', () => {
       storeState.selections = [LASSO_SELECTION];
       storeState.activeSelectionId = 'sel-1';
       const mockCtx = createMockContext();
@@ -650,46 +667,100 @@ describe('PolygonClickToolArea', () => {
 
       dispatchMock.mockClear();
       shortcutHandlers.get('Backspace')?.();
+      shortcutHandlers.get('Delete')?.();
 
-      // Backspace over an empty draft no longer dispatches a raw
-      // `CLEAR_SELECTIONS` reducer action: it is a document edit that appends to
-      // history, so the deselect is undoable like any other. One dispatch carries
-      // both the history item and the resulting selection state, so the two
-      // cannot disagree.
-      //
-      // `durableEntry` is deliberately not matched. The store publishes the
-      // planned entry only when its durable document still describes the
-      // timeline the plan was made against, and the boundary's failure fallback
-      // omits it entirely; both are correct. `id` is a fresh uuid per call.
-      expect(dispatchMock).toHaveBeenCalledTimes(1);
-      expect(dispatchMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: 'COMMIT_DOCUMENT_EDIT',
-          payload: expect.objectContaining({
-            historyItem: expect.objectContaining({
-              id: expect.any(String),
-              actionName: SELECTION_ACTION,
-              args: expect.objectContaining({
-                previousSelectionState: {
-                  selections: [LASSO_SELECTION],
-                  activeSelectionId: 'sel-1',
-                },
-                nextSelectionState: { selections: [], activeSelectionId: null },
-              }),
-            }),
-            // The visible half of the same transition. `selectionDraft` and
-            // `selectionCleared` are asserted too: they are the other two fields
-            // the raw reducer arm moved, so leaving them out would let the hook
-            // silently stop resetting the draft or repainting the overlay.
-            updates: expect.objectContaining({
-              activeSelectionId: null,
-              selectionCleared: expect.objectContaining({ status: 'cleared', version: 1 }),
-              selectionDraft: { status: 'idle' },
-              selections: [],
-            }),
-          }),
-        })
+      // These keys reach the whole app rather than the canvas, so with no draft
+      // in progress they must leave the committed selection alone instead of
+      // appending a deselect the user never asked for.
+      expect(dispatchMock).not.toHaveBeenCalled();
+      // Both registrations are gated on a draft as well, so the key is not even
+      // consumed — no `preventDefault` and no `allowInInput`, which is what keeps
+      // a Backspace inside a text field deleting the character it was aimed at.
+      expect(rawShortcuts.get('Backspace')?.enabled).toBe(false);
+      expect(rawShortcuts.get('Delete')?.enabled).toBe(false);
+    });
+
+    it('registers Backspace and Delete only while a draft is in progress', () => {
+      const mockCtx = createMockContext();
+      const { container } = render(
+        <PolygonClickToolArea overlayCtxRef={{ current: mockCtx }} className="test-lasso-area" />
       );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      // No draft, so no anchor to pop and the keys are not even consumed.
+      expect(rawShortcuts.get('Backspace')?.enabled).toBe(false);
+      expect(rawShortcuts.get('Delete')?.enabled).toBe(false);
+
+      // One click is the draft's first anchor, which is all the gate needs: the
+      // handler pops while there is anything left to pop.
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 400, clientY: 400 });
+
+      // The other half of the gate: with a draft there is an anchor to pop, so
+      // the keys have to be live — see the removal cases above.
+      expect(rawShortcuts.get('Backspace')?.enabled).toBe(true);
+      expect(rawShortcuts.get('Delete')?.enabled).toBe(true);
+    });
+
+    it('keeps Backspace and Delete live when the store draft is cleared mid-draft', () => {
+      const mockCtx = createMockContext();
+      const overlayCtxRef = { current: mockCtx };
+      const { container, rerender } = render(
+        <PolygonClickToolArea overlayCtxRef={overlayCtxRef} className="test-lasso-area" />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+      const storeRerender = () =>
+        rerender(<PolygonClickToolArea overlayCtxRef={overlayCtxRef} className="test-lasso-area" />);
+
+      // A polygonal draft of three anchors, drawn with no committed selection:
+      // the tool refuses to start a draft while one is active.
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 400, clientY: 400 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 500, clientY: 400 });
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 500, clientY: 500 });
+      // `START_SELECTION_DRAFT` is what sets the store flag in production.
+      storeState.selectionDraft = { status: 'draft', sourceTool: 'polygonal-lasso' };
+
+      expect(rawShortcuts.get('Backspace')?.enabled).toBe(true);
+
+      // Now a committed selection appears and the user drags it. The drag no
+      // longer writes the store per pointer move: it accumulates in a ref and is
+      // published once, at release, as a `'move'` commit — and that single commit
+      // is what carries `selectionDraft: { status: 'idle' }` into the store while
+      // the polygonal draft's own anchors are still on the overlay. The drag is
+      // reachable mid-draft because `handlePointerDown` hit-tests committed
+      // selections before it refuses to start a point.
+      storeState.selections = [LASSO_SELECTION];
+      storeState.activeSelectionId = 'sel-1';
+      storeRerender();
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 12, clientY: 15 });
+      fireEvent.pointerMove(toolArea, { clientX: 14, clientY: 18 });
+      // Mid-drag nothing has reached the store: the preview is painted from the
+      // ref, so this is the gesture main deliberately made free of dispatch.
+      expect(selectionEdits()).toHaveLength(0);
+
+      fireEvent.pointerUp(toolArea, { clientX: 14, clientY: 18 });
+
+      // One commit for the whole gesture, and it is the store's draft field
+      // being closed from under the live draft.
+      expect(selectionEdits()).toHaveLength(1);
+      expect(selectionEdits()[0].payload.updates.selectionDraft).toEqual({ status: 'idle' });
+      // The mocked store does not reduce, so apply what the real reducer would.
+      storeState.selectionDraft = { status: 'idle' };
+      storeRerender();
+
+      // The gate follows the draft's own anchors, so neither this writer nor the
+      // sidebar deselect can take it away while the draft is live.
+      expect(rawShortcuts.get('Backspace')?.enabled).toBe(true);
+      expect(rawShortcuts.get('Delete')?.enabled).toBe(true);
+
+      // And the key still removes the anchor it was aimed at.
+      dispatchMock.mockClear();
+      vi.mocked(mockCtx.clearRect).mockClear();
+
+      shortcutHandlers.get('Backspace')?.();
+
+      expect(mockCtx.clearRect).toHaveBeenCalled();
+      expect(dispatchMock).not.toHaveBeenCalled();
     });
 
     it('dispatches nothing with Backspace when there is neither a draft nor a selection', () => {
@@ -699,9 +770,9 @@ describe('PolygonClickToolArea', () => {
       dispatchMock.mockClear();
       shortcutHandlers.get('Backspace')?.();
 
-      // The writer guards on the selection state itself, so an already-empty
-      // document records nothing: no history entry describing a change that did
-      // not happen, and no edit flagging the document dirty.
+      // Nothing to remove and nothing to deselect, so the document records no
+      // edit: no history entry describing a change that did not happen, and no
+      // edit flagging the document dirty.
       expect(dispatchMock).not.toHaveBeenCalled();
     });
 
