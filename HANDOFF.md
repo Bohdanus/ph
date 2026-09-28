@@ -1784,3 +1784,41 @@ not to be used here, because it is shared. That edit is **not landed** — `AGEN
 while it is. The rule is recorded here until the hold clears, and the AGENTS.md paragraph should
 be folded into the existing "Worktrees and dev servers" section at §194 rather than added as a
 new section, because the failure is an intensification of what that section already says.
+
+## 76. A closure check credited three corrections to a pass that had not made them
+
+<!-- The title deliberately avoids deleted/closed/done/resolved/fixed/landed/superseded:
+     handoff-import.mjs treats a heading containing any of those as a RETIREMENT marker and
+     drops the number from the import, which is why this entry was invisible to the board
+     and why scripts/__tests__/handoff-import.test.mjs was red on main. -->
+
+A verification pass was asked to confirm that 45 identified defects had been closed, and it
+reported **3 fixed, 41 absent, 1 regression**. All three "fixed" verdicts were wrong, in the same
+direction and for the same reason: the pass was given the _merged_ tree, where `main` had already
+absorbed the corrections, and compared it against nothing. It read the presence of a correct value
+as the work of a fix that had not happened there.
+
+Re-derived against the actual pre-fix commit `13f44a1`, all three were already correct:
+
+| Reported as fixed by the fix pass               | Actually already true at `13f44a1`          |
+| ----------------------------------------------- | ------------------------------------------- |
+| color-replacement `placeholder` → `partial`     | `'partial'` already, `paint.ts:301`         |
+| rectangle and ellipse `implemented` → `partial` | `'partial'` already, `shape.ts:199,226`     |
+| levels black/white point `partial` → `missing`  | `'missing'` already, `transform.ts:301,315` |
+
+So the honest tally of that closure check is **0 fixed, 42 absent, 1 regression** — it was
+measuring the tree, not the diff. The regression it _did_ find is real and was fixed: a new
+`Shift` 45° modifier row for the polygonal lasso, added by the same pass that was meant to remove
+that defect class.
+
+**The check is not worthless, and the failure is not a bad method — it is a missing baseline.** A
+closure check must be given the commit the fix was supposed to start from, and must assert against
+that, or every value that a _concurrent_ session fixed in the same window is silently credited to
+the fixer. Here `main` moved several times while the work was in flight; the audit read a moving
+target and reported the motion as work. The concrete form of the rule: **`git show <fix-parent>:<path>`
+is the only honest baseline**, and when the pass cannot name that commit its "already fixed"
+verdicts are unattributable and must be reported as unknown rather than as a win.
+
+This is the same shape as §0's standing note about stale citations, one layer up: there, a citation
+moved and still read plausibly; here, a _verdict_ moved and was credited to the wrong commit. A
+plausible reading is not evidence of when it became true.

@@ -192,8 +192,9 @@ describe('drawSpray', () => {
     // was the whole `lineWidth`, so a 200px blot was painted at Size 100 and overflowed the
     // padding `pointsBoundingPos` reserves for the layer crop.
     expect(ctx.createRadialGradient).toHaveBeenCalledWith(5, 5, 0, 5, 5, 5);
+    // The dab is a filled circle, not a path: the radius is the same 5 the gradient was
+    // built with, so a mismatch between the two would stamp paint the gradient never covers.
     expect(ctx.arc).toHaveBeenCalledWith(5, 5, 5, 0, Math.PI * 2);
-
     expect(ctx.arc).toHaveBeenCalledTimes(2);
     expect(ctx.fill).toHaveBeenCalledTimes(2);
   });

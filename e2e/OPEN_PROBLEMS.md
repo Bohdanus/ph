@@ -689,7 +689,7 @@ The comment describes a real precondition that nothing verifies. Fix: select a
 different tool first and assert the attribute _flips_, or assert against a tool that
 is not the default.
 
-## P1 — the dialog-closed assertion is one rename from vacuous
+## P1 — a dialog dismissal assertion is one rename from vacuous
 
 `e2e/export/helpers.ts:235`
 
@@ -707,7 +707,7 @@ uses `getByTestId('save-dialog')` with `toHaveCount(0)`, and the testid exists
 (`src/components/SaveDialog/SaveDialog.tsx:44`). The fix is already in this suite; it
 was only never copied into `export/helpers.ts`.
 
-## P1 — the keyboard-flow test asserts the menu closed and nothing else
+## P1 — the keyboard-flow test asserts only that a menu went away
 
 `e2e/sidebar-keyboard.spec.ts:80-89`
 
@@ -843,7 +843,7 @@ is the remaining half. `toolbar-helpers.unit.test.ts:839-843` pins the mangled
 behaviour against a fixture whose element name is already the substituted form, so
 fixing it means removing that pin in the same change.
 
-## P2 — `exportIcoAndVerify` has no dialog-closed assertion
+## P2 — `exportIcoAndVerify` never asserts the dialog went away
 
 `e2e/export/helpers.ts:335-392` against `:235`
 
@@ -1111,3 +1111,8 @@ and **is not a defect here**:
   baselines.** The first two are fixed (`noUnusedLocals` and `noUnusedParameters` are
   on, the count is 0); the CDP assertions now derive their scale; the orphans are
   recorded in the P3 entry above.
+
+<!-- Titles here avoid deleted/closed/done/resolved/fixed/landed/superseded:
+     handoff-import.mjs reads any of those in a heading as a RETIREMENT marker and drops
+     the entry from the board import. Three entries were invisible because their titles said
+     "closed" while their bodies described an OPEN defect. -->

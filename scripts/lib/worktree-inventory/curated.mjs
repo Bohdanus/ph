@@ -48,7 +48,7 @@ export const CURATED = {
   'agent-board': {
     summary:
       'The swarm board itself: scripts/agent-board.mjs and its node:sqlite storage under the common git directory.',
-    landed: true,
+    note: 'The board work itself is on main. A later `wip(salvage)` commit (3f1d0e2) sits on this branch on top of that, carrying an uncommitted board-schema migration test suite that was on no ref when the owning worktree was swept. It does not pass as it stands — one of the 74 tests in `agent-board.test.mjs` fails on this branch — so the claim is retracted rather than asserted. Landing it is a real fix, not a deletion.',
   },
   'board-file-index': {
     summary:
@@ -591,10 +591,64 @@ export const CURATED = {
       "Landed: the board command is `swarm` (it was `board`, which is also the name of Kilo's unrelated built-in tool), and `ready` ranks by priority, then live-before-imported, then startable-before-contended.",
     landed: true,
   },
+  // A test-pin tranche: one worktree per subsystem, each pinning behaviour that
+  // currently has no test. All sit on the same merge commit and are unmerged.
+  'durable-replay-pins': {
+    summary: 'Pins durable-replay behaviour that currently has no test asserting it.',
+  },
+  'harness-integrity-pins': {
+    summary:
+      'Pins the test harness invariants themselves, including the context factory that a prior audit showed returns a different object per call.',
+  },
+  'hooks-pins': {
+    summary: 'Pins the commit-gate hooks, which were the subject of the silent-no-gate bug in 89 of 118 worktrees.',
+  },
+  'main-tool-area-pins': {
+    summary: 'Pins Main and the tool areas, whose overlay painters were the subject of the unmount-frame defect.',
+  },
+  'selection-pixel-pins': {
+    summary: 'Pins selection pixel behaviour.',
+  },
+  'store-history-pins': {
+    summary: 'Pins StoreContext and history behaviour that no test currently covers.',
+  },
+  'tools-registry-pins': {
+    summary: 'Pins the tool registry, where a pixel-free tool is not a typecheck error.',
+  },
+  'ui-shell-pins': {
+    summary: 'Pins UI shell behaviour.',
+  },
+  'swarm-file-index': {
+    summary: 'The durable issue_files index on the board, so a file named by an open issue counts as held.',
+  },
+  'swarm-lease': {
+    summary: 'A board worktree on lease behaviour, sitting on the merge that landed the brush-tip-core branch.',
+    mustNotPrune: true,
+    note: 'Holds an uncommitted change and is branched from a main that is already moving; the lease semantics it is about are still the open board item.',
+  },
+  'test-review-harness': {
+    summary: 'A review of the test harness itself, branched from main while the inventory work was in flight.',
+  },
+  'test-review-leaks': {
+    summary: 'A review looking for leaks between test and production state.',
+  },
+  'test-review-parser': {
+    summary: 'A review of parser behaviour under test.',
+  },
+  'test-review-titles': {
+    summary: 'A review of how tests are titled and grouped.',
+  },
+  'test-review-vacuous': {
+    summary: 'A review hunting assertions that cannot fail — the same class this repository has been bitten by twice.',
+  },
+  'chat-audit': {
+    summary:
+      'Reads every agent transcript in a 30-hour window and records what each one actually delivered, so the inventory answers whether work is finished instead of inferring it from turn shape.',
+  },
   'fix-e2e-findings': {
     summary:
       'Moves e2e findings off their original branches and onto the documents, so the defects are recorded where an agent will read them.',
-    landed: true,
+    note: 'This said `landed: true`; it has since taken more commits and holds uncommitted work, so the claim is retracted rather than left to contradict git.',
   },
   'handoff-citation-rotation': {
     summary:

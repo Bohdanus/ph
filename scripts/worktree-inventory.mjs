@@ -39,6 +39,7 @@ import { pathToFileURL } from 'node:url';
 import { collectWorktrees, findMissingWorktrees } from './lib/worktree-inventory/git.mjs';
 import { auditChats } from './lib/worktree-inventory/chats.mjs';
 import { readBoard } from './lib/worktree-inventory/board.mjs';
+import { loadChatAudit } from './lib/worktree-inventory/chat-audit.mjs';
 import { buildInventory, serialise, formatCanonical } from './lib/worktree-inventory/assemble.mjs';
 
 const USAGE = `worktree inventory — regenerate WORKTREES.json
@@ -105,6 +106,52 @@ function printSummary(inventory, quiet) {
       `${t.holdingUncommittedWork} holding uncommitted work · ${t.withoutSummary} without a summary\n`
   );
 
+  // The read audit, before the worktree table. A computed chat state cannot
+  // tell you an agent reported "Done" for a branch that was never merged, and
+  // that is the question this file is for.
+  if (inventory.readUnfinished?.length) {
+    const counts = {};
+    for (const r of inventory.readUnfinished) counts[r.readState] = (counts[r.readState] ?? 0) + 1;
+    const shape = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${v} ${k}`)
+      .join(' · ');
+    process.stdout.write(
+      `\nREAD FROM TRANSCRIPTS — ${inventory.readUnfinished.length} sessions not finished: ${shape}\n`
+    );
+    for (const r of inventory.readUnfinished) {
+      // The tag used to read `r.workOnNoRef`, a key the projection never had,
+      // so it was always undefined and never printed. It is derived here
+      // instead, from the same numbers the top-level list uses.
+      const onNoRef = r.modifiedFiles > 0 && r.commitsAheadOfMain === 0;
+      const tag = onNoRef ? ' [WORK ON NO REF at asOf]' : r.readRisk === 'high' ? ' [high risk]' : '';
+      process.stdout.write(`  ${r.readState.padEnd(11)}${tag}\n      ${r.id}\n`);
+      if (r.note) process.stdout.write(`      ${r.note}\n`);
+    }
+  }
+  const stillHeld = (inventory.workOnNoRef ?? []).filter((r) => r.stillOnNoRef === true);
+  if ((inventory.workOnNoRef ?? []).length > 0) {
+    process.stdout.write(
+      `\nWORK THAT WAS ON NO REF at ${inventory.dataSources.readAudit.asOf} ` +
+        `(${stillHeld.length} still held, ${inventory.workOnNoRef.length - stillHeld.length} landed since):\n`
+    );
+    for (const r of inventory.workOnNoRef) {
+      const state =
+        r.stillOnNoRef === true ? 'STILL ON NO REF' : r.stillOnNoRef === null ? 'DIRECTORY GONE' : 'landed since';
+      process.stdout.write(`  ${r.directory.padEnd(42)} ${state}\n`);
+    }
+  }
+  if (inventory.readLostWorktree?.length) {
+    process.stdout.write(
+      `\nWORK TREES THAT WERE DELETED OUT FROM UNDER AN AGENT ` +
+        `(${inventory.readLostWorktreeHighRisk} of ${inventory.readLostWorktree.length} rated high risk):\n`
+    );
+    for (const r of inventory.readLostWorktree) {
+      process.stdout.write(`  ${r.readRisk.padEnd(6)} ${r.readState.padEnd(10)} ${r.directory}\n`);
+      if (r.note && r.readRisk !== 'low') process.stdout.write(`          ${r.note}\n`);
+    }
+  }
+
   // The two answers the file exists to give, listed before the evidence.
   if (inventory.readyToLand.length > 0) {
     process.stdout.write(`\nREADY TO LAND (clean, unmerged, merges with no conflict):\n`);
@@ -163,6 +210,11 @@ function main() {
 
   const chatAudit = auditChats({ sinceMs: nowMs - windowMs, nowMs, existingPaths });
   const board = readBoard(root, { nowMs });
+  // The read audit is a human pass over transcripts, so it is NOT filtered by
+  // the window: it is a fixed record of what those sessions were found to be
+  // doing. Sessions in it that fall outside the current window simply have no
+  // computed counterpart, and the two views are expected to disagree.
+  const readAudit = loadChatAudit();
 
   const inventory = buildInventory({
     worktrees,
@@ -171,6 +223,7 @@ function main() {
     mainHead,
     board,
     chatAudit,
+    readAudit,
     nowMs,
     chatWindowMs: windowMs,
   });

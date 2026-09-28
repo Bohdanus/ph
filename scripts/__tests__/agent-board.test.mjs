@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Board, BoardError, isImportedOrigin, parseDuration } from '../lib/agent-board/db.mjs';
+import { Board, BoardError, IDLE_LIVE_MS, isImportedOrigin, parseDuration } from '../lib/agent-board/db.mjs';
 import { resolveIdentity } from '../lib/agent-board/identity.mjs';
 import { run } from '../agent-board.mjs';
 
@@ -769,6 +769,135 @@ describe('doctor reclaims what dead agents left', () => {
   });
 });
 
+describe('the board maintains itself, because nobody remembers to', () => {
+  it('keeps my own claim alive because my worktree is still there', () => {
+    const a = boardFor('a');
+    mkdirSync(join(dir, 'wt-a'), { recursive: true });
+    const { id } = a.createIssue({ title: 'a task that outlives its lease' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.close();
+    // An hour later, and nobody has sent a heartbeat. That is not negligence:
+    // `claim.renew` fired ONCE in 308 events, because a lease that depends on
+    // the holder remembering is not a liveness signal, it is a countdown that
+    // always runs out. What an agent cannot forget is that it exists.
+    advance(3_600_000);
+    const later = boardFor('a');
+    expect(later.autoSweep().renewed).toEqual([id]);
+    expect(later.getIssue(id).status).toBe('claimed');
+    // And nothing for a sweep to find, which is the point: it was never stale.
+    expect(later.doctor({ dryRun: true })).toHaveLength(0);
+    later.close();
+  });
+
+  it('releases a claim whose worktree is gone, with nobody running doctor', () => {
+    // `doctor` had been invoked ZERO times in 308 events while four of five
+    // unreleased claims sat expired on the board. Not because nobody needed it:
+    // because remembering to run it is the discipline a lease cannot rely on.
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'the agent walked away' });
+    a.claimIssue(id, { leaseMs: 86_400_000 });
+    a.close();
+    rmSync(join(dir, 'wt-a'), { recursive: true, force: true });
+
+    const b = boardFor('b');
+    const { released } = b.autoSweep();
+    expect(released.length).toBeGreaterThan(0);
+    expect(b.getIssue(id).status).toBe('open');
+    b.close();
+  });
+
+  it('renews nothing for an agent that cannot show it still exists', () => {
+    // No `wt-a` on disk. An agent with no worktree has no evidence of life, so
+    // it keeps the old manual contract rather than being believed on its word.
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'outside a worktree' });
+    a.claimIssue(id, { leaseMs: 60_000 });
+    a.close();
+    advance(120_000);
+    const later = boardFor('a');
+    expect(later.autoSweep().renewed).toEqual([]);
+    expect(later.getIssue(id).status).toBe('open');
+    later.close();
+  });
+
+  it('records a sweep only when it actually reclaimed something', () => {
+    // The sweep runs on every command. An event per invocation turned a
+    // six-event board into one that was two-thirds sweep noise — the same
+    // flood the tailing fix was written for — and `health` would inflate the
+    // very number it was reporting. A sweep that found nothing is not a fact.
+    const a = boardFor('a');
+    expect(a.health().sweeps).toBe(0);
+    for (let index = 0; index < 10; index += 1) a.autoSweep();
+    expect(a.events({ since: 0, limit: 1000 }).filter((e) => e.kind === 'doctor.run')).toHaveLength(0);
+    expect(a.health().sweeps).toBe(0);
+
+    // Now something IS stale, and the reclaim is on the record.
+    const { id } = a.createIssue({ title: 'abandoned mid-task' });
+    a.claimIssue(id, { leaseMs: 1 });
+    rmSync(join(dir, 'wt-a'), { recursive: true, force: true });
+    a.autoSweep();
+    expect(a.events({ since: 0, limit: 1000 }).filter((e) => e.kind === 'doctor.run')).toHaveLength(1);
+    expect(a.health().sweeps).toBe(1);
+    a.close();
+  });
+
+  it('writes a renew event only when the lease actually needed it', () => {
+    // Every command writing a `claim.renew` would turn the log into the thing
+    // `watch` already had to be fixed for once: a few hundred events reprinted
+    // on every poll, forever, and never anything new.
+    const a = boardFor('a');
+    mkdirSync(join(dir, 'wt-a'), { recursive: true });
+    const { id } = a.createIssue({ title: 'busy' });
+    a.claimIssue(id, { leaseMs: 86_400_000 });
+    a.close();
+    const later = boardFor('a');
+    // The lease is a day out, so ten commands in a row renew nothing.
+    for (let index = 0; index < 10; index += 1) later.autoSweep();
+    expect(later.events({ since: 0, limit: 1000 }).filter((e) => e.kind === 'claim.renew')).toHaveLength(0);
+    later.close();
+  });
+
+  it('reports the traffic mix and says what the board actually is', () => {
+    // The question was previously answered by hand-writing SQL against a
+    // schema, which means the next agent answers it differently or not at all.
+    const a = boardFor('a');
+    a.createIssue({ title: 'one' });
+    const report = a.health();
+    expect(report.total).toBeGreaterThan(0);
+    expect(report.lockEvents).toBe(report.byKind['lock.hold'] ?? 0);
+    expect(report.lockShare).toBe(report.lockEvents / report.total);
+    expect(report.sweeps).toBe(0);
+    expect(report.issues.imported).toBe(0);
+    a.close();
+  });
+
+  it('counts the handoff import and the live work separately', () => {
+    const a = boardFor('a');
+    a.createIssue({ title: 'imported', origin: 'HANDOFF.md#1' });
+    a.createIssue({ title: 'imported too', origin: 'e2e/OPEN_PROBLEMS.md#p2-thing' });
+    a.createIssue({ title: 'a peer finding' });
+    a.createIssue({ title: 'from a branch', origin: 'main: 2026-09-28' });
+    const { issues } = a.health();
+    expect(issues).toMatchObject({ open: 4, live: 2, imported: 2 });
+    a.close();
+  });
+
+  it('reports an idle live finding rather than deleting it', () => {
+    // A finding nobody has come back for is one that has not been moved to the
+    // handoff docs, which is where a finding is supposed to end up. Deleting it
+    // would destroy a real observation because nobody happened to be looking.
+    const a = boardFor('a');
+    const { id } = a.createIssue({ title: 'found once, never revisited' });
+    expect(a.health().idleLive).toEqual([]);
+    advance(IDLE_LIVE_MS + 1_000);
+    const idle = a.health().idleLive;
+    expect(idle.map((issue) => issue.id)).toEqual([id]);
+    // Still there. Reported is not the same as removed.
+    expect(a.getIssue(id).status).toBe('open');
+    a.close();
+  });
+});
+
 describe('the event log is the swarm talking', () => {
   it('orders every mutation under one increasing sequence', () => {
     const board = boardFor('a');
@@ -1502,14 +1631,23 @@ describe('the command line', () => {
     expect(shown.locks).toHaveLength(0);
   });
 
-  it('reports status, including a claim nobody is holding any more', async () => {
+  it('reclaims an expired claim by itself, so none of them pile up', async () => {
+    // stayed recorded until somebody remembered to run `doctor`, and in four
+    // hours across thirteen agents that happened ZERO times, so four of five
+    // unreleased claims sat expired on the board the whole time. The pile-up was
+    // not the behaviour under test, it was the defect — `expiredClaims` counted
+    // how much nobody was maintaining.
     await cli(['new', 'stale one', '--json']);
     const { id } = JSON.parse((await cli(['new', 'claimed by a', '--lease', '1ms', '--json'])).out);
     await cli(['claim', id, '--lease', '1ms']);
     await new Promise((resolve) => setTimeout(resolve, 20));
+    // The very next command is the sweep. Nothing was asked to do it.
     const status = JSON.parse((await cli(['status', '--json'])).out);
-    expect(status.expiredClaims).toBe(1);
+    expect(status.expiredClaims).toBe(0);
     expect(status.ready).toBe(2);
+    // And it is a real release, not a hidden one: the issue is back on offer
+    // and somebody else can take it.
+    expect(JSON.parse((await cli(['show', id, '--json'])).out).issue.status).toBe('open');
   });
 
   it('runs doctor over an orphaned worktree and says what it released', async () => {
@@ -1535,6 +1673,48 @@ describe('the command line', () => {
     expect(bad.code).toBe(1);
     expect(bad.err).toContain('unknown command: frobnicate');
     expect(bad.err).toContain('swarm');
+  });
+
+  it('reports what it is being used for, without hand-written SQL', async () => {
+    const { id } = JSON.parse((await cli(['new', 'traffic to measure', '--json'])).out);
+    await cli(['hold', 'src/traffic.ts']);
+    const { code, out } = await cli(['health', '--json']);
+    expect(code).toBe(0);
+    const report = JSON.parse(out);
+    expect(report.total).toBeGreaterThan(0);
+    expect(report.lockEvents).toBeGreaterThan(0);
+    expect(report.lockShare).toBeGreaterThan(0);
+    // The share is the load-bearing number: it says what the tool IS, and it is
+    // what turned "the issue tracker is the product" from an assumption into a
+    // measurement.
+    expect(report.lockShare).toBeCloseTo(report.lockEvents / report.total, 10);
+    expect(report.issues.live).toBeGreaterThanOrEqual(1);
+    expect(report).toHaveProperty('idleLive');
+    // The human form names the finding rather than printing a number at nobody.
+    const human = (await cli(['health'])).out;
+    expect(human).toMatch(/events/);
+    expect(human).toMatch(/file locks/);
+    expect(human).toMatch(/dependencies recorded/);
+  });
+
+  it('leaves `doctor` unswept, so `--dry-run` can still answer "what is stale"', async () => {
+    // A sweep before every command would make the explicit one decorative: the
+    // real sweep would already have run, and `doctor --dry-run` — the command a
+    // loop reads to decide what to fix — would report nothing, truthfully and
+    // uselessly.
+    const repo = join(dir, 'repo2');
+    mkdirSync(repo);
+    execFileSync('git', ['init', '--quiet'], { cwd: repo });
+    const { id } = JSON.parse((await cli(['new', 'will go stale', '--json'], 'a', repo)).out);
+    await cli(['claim', id, '--lease', '24h', '--files', 'src/stale.ts'], 'a', repo);
+    rmSync(repo, { recursive: true, force: true });
+
+    const dry = await cli(['doctor', '--dry-run', '--json']);
+    expect(JSON.parse(dry.out).findings.length).toBeGreaterThan(0);
+    // Any OTHER command does sweep, so the difference is the exemption and not
+    // the sweep being broken.
+    await cli(['status']);
+    expect(JSON.parse((await cli(['doctor', '--dry-run', '--json'])).out).findings).toEqual([]);
   });
 
   it('emits valid JSON for EVERY machine-facing command, driven from the list', async () => {
