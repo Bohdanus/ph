@@ -625,9 +625,12 @@ describe('toolsMap wiring', () => {
     // `src/components/ToolbarsRight/Paint/__tests__/Paint.test.tsx`.
     //
     // `color-replacement` was on this list and is not any more: it is a built tool now,
-    // with `ColorReplacementToolArea` and its own options bar, so there is no placeholder
-    // left to carry a badge. Listing it here failed on the badge being absent, which is
-    // the test reporting the tool got built rather than a defect.
+    // with its own `ColorReplacementToolArea` and its own `ColorReplacement.tsx` options
+    // bar, so there is no placeholder left to carry a badge. It is not merely deleted from
+    // this list — it is in `realBarNames`, so the test above now asserts the OPPOSITE of
+    // this one for it, which is the stronger half: one assertion that a tool is not a stub
+    // is worth more than the stub assertion it replaces.
+
     for (const toolName of ['pen', 'custom-shape'] as const) {
       const { unmount } = render(React.createElement(toolsMap[toolName].toolboxComponent));
 

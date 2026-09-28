@@ -116,16 +116,21 @@ const luminance = (r: number, g: number, b: number): number =>
   LUMINANCE_RED * r + LUMINANCE_GREEN * g + LUMINANCE_BLUE * b;
 
 /**
- * The distance a pixel may sit from the sampled colour and still count as a match.
+ * The factor that puts this tool's 0-100 Tolerance onto `createFloodFillMask`'s 0-255 argument.
  *
- * `createFloodFillMask` scales its own 0-255 argument onto the same 3-channel maximum
- * (`src/util/floodFill.ts:70-74`), so passing `tolerance * 255 / 100` puts both Limits modes on
- * one identical predicate. `COLOR_REPLACEMENT_TOLERANCE_DISCONTINUOUS_FILL_TOLERANCE` is that
- * conversion, named and exported so the two modes cannot drift apart silently: a Discontinuous
- * stroke and a Contiguous one must reject the same pixels, or Limits stops being a choice about
- * extent and becomes a choice about which pixels exist.
+ * `getToleranceDistance` reads its argument as `(t / 255) * MAX_COLOR_DISTANCE`
+ * (`src/util/floodFill.ts:70-74`, with `MAX_TOLERANCE = 255` at `:21`), while
+ * `toleranceDistanceSquared` above reads this tool's as `(t / 100) * MAX_COLOR_DISTANCE` over an
+ * identical `MAX_COLOR_DISTANCE`. Multiplying by `255 / 100` therefore makes the delegated flood
+ * and the inline `matchMask` predicate above reject exactly the same pixels, which is what makes
+ * Limits a choice about how far the replacement REACHES rather than about which pixels exist.
+ *
+ * It is a scale, not a tolerance, and it is named for what it converts. The name it replaces read
+ * `..._DISCONTINUOUS_FILL_TOLERANCE` while its only call site is the Contiguous branch, one screen
+ * below the Disconnected one it claimed to describe — which is the worst possible place for a
+ * constant whose whole job is to stop the two branches drifting apart.
  */
-export const COLOR_REPLACEMENT_TOLERANCE_DISCONTINUOUS_FILL_TOLERANCE = 255 / COLOR_REPLACEMENT_TOLERANCE_MAX;
+export const COLOR_REPLACEMENT_TOLERANCE_TO_FILL_TOLERANCE_SCALE = 255 / COLOR_REPLACEMENT_TOLERANCE_MAX;
 
 /** The maximum distance this tool's tolerance maps onto, squared, so no per-pixel `Math.sqrt`. */
 const toleranceDistanceSquared = (tolerance: number): number => {
@@ -377,7 +382,7 @@ export const createColorReplacementPlan = (
         imageData,
         { x, y },
         {
-          tolerance: args.tolerance * COLOR_REPLACEMENT_TOLERANCE_DISCONTINUOUS_FILL_TOLERANCE,
+          tolerance: args.tolerance * COLOR_REPLACEMENT_TOLERANCE_TO_FILL_TOLERANCE_SCALE,
           contiguous: true,
         }
       );

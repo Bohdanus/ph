@@ -17,7 +17,7 @@ import {
   createStrokeCoverage,
   replaceColorPreservingLuminance,
   samplePixelAt,
-  COLOR_REPLACEMENT_TOLERANCE_DISCONTINUOUS_FILL_TOLERANCE,
+  COLOR_REPLACEMENT_TOLERANCE_TO_FILL_TOLERANCE_SCALE,
   COLOR_REPLACEMENT_TOLERANCE_MAX,
   type ColorReplacementToolArgs,
 } from '../colorReplacement.ts';
@@ -308,8 +308,10 @@ describe('createColorReplacementPlan — Limits', () => {
   it('uses one tolerance metric for both limits, so neither mode can reject a pixel the other admits', () => {
     // The conversion constant is what makes Discontinuous's inline predicate and Contiguous's
     // delegated `createFloodFillMask` flood the same set. A drift here would make Limits a choice
-    // about which pixels EXIST rather than about how far the replacement reaches.
-    expect(COLOR_REPLACEMENT_TOLERANCE_DISCONTINUOUS_FILL_TOLERANCE).toBeCloseTo(2.55, 6);
+    // about which pixels EXIST rather than about how far the replacement reaches. It is a SCALE
+    // from this tool's 0-100 onto the flood fill's 0-255, and both are read against the same
+    // `sqrt(3 * 255^2)` maximum, so 100 on one side is 255 on the other.
+    expect(COLOR_REPLACEMENT_TOLERANCE_TO_FILL_TOLERANCE_SCALE).toBeCloseTo(2.55, 6);
 
     // A field of a colour nothing like the sample: a low tolerance rejects everything in both
     // modes, which is the invariant.
