@@ -281,4 +281,42 @@ describe('calculateNewRect', () => {
     );
     expect(result!.y2).toBe(3 * 16 * 1.2 + 2 * 5);
   });
+
+  it('returns null when there is no rect, instead of growing one at the document origin', () => {
+    const canvasRef = makeCanvasRef(50);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: 'hi',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: null,
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+    expect(result).toBeNull();
+  });
+
+  it('returns null for an empty draft with no rect too, so the guard precedes the !text branch', () => {
+    // The `!text` branch turns a zero-area drag into a non-degenerate rect so the overlay
+    // mask is visible pre-typing. That is load-bearing for `TextToolArea`, which always
+    // has a rect. Without a rect there is no drag to keep visible, and the old
+    // substitution produced a 2px box at (0,0) for a user who had placed nothing.
+    const canvasRef = makeCanvasRef(0);
+    const result = calculateNewRect(
+      {
+        ...baseArgs,
+        text: '',
+        fontSize: 16,
+        lineHeight: 1.2,
+        rect: null,
+        align: 'left',
+      } as TextToolArgs,
+      canvasRef,
+      imageSize
+    );
+    expect(result).toBeNull();
+  });
 });
