@@ -9,16 +9,19 @@ spec helpers themselves. The application under test is `src/` in this repository
 - [`MIGRATION-TODO.md`](MIGRATION-TODO.md) — what the move into this repository left
   undone: open fixes, pipeline gaps, and carried-over debt.
 
+The tree, at the level of shape rather than of inventory. New spec files land here
+constantly, so read the directory instead of a list, and keep no counts in this
+comment — a count here is only correct until the next merge.
+
 ```
 e2e/
-├── *.spec.ts            # 13 top-level specs: canvas redraw, colour, layers,
-│                        #   levels, pen types, eraser / fill / eyedropper,
-│                        #   select/move, sidebar flyout / keyboard / layout,
-│                        #   responsive shell, viewport drawing, DPR
-├── export/              # 6 export-format specs + committed visual-regression baselines
-├── global-setup.ts      # refuses --headed / --ui / --debug before a window exists
-└── helpers/             # 7 shared helper modules
-    └── __tests__/       # Node-environment unit tests for those helpers
+├── *.spec.ts            # top-level app specs
+├── export/              # export-format specs + committed visual-regression baselines
+├── helpers/             # shared helper modules, each with a unit file in
+│   │                    #   __tests__/ and a Playwright spec beside the
+│   │                    #   browser-facing ones
+│   └── __tests__/       # Node-environment unit tests for the helper modules
+└── global-setup.ts      # refuses --headed / --ui / --debug before a window exists
 ```
 
 ## Run it headless
@@ -274,8 +277,11 @@ Per-run generated output — the actual exported files — is disposable and lan
 under the test's own output dir in `test-results/`, which is gitignored. Clear it
 with `npm run test:e2e:clean`.
 
-`.gitattributes` marks `visual-regression.spec.ts-snapshots/**` as `binary` so the
-committed pixels can never be rewritten by line-ending normalisation.
+`.gitattributes` marks every committed image corpus under `e2e/` `binary`, by path
+rather than by a `*.png`-style pattern, so committed pixels can never be rewritten by
+line-ending normalisation. Read the file for the current list rather than trusting a
+copy of it here — each new corpus needs its own rule, and the file is the only place
+that stays right.
 
 ## Current status
 

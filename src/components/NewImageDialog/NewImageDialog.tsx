@@ -68,10 +68,16 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
     if (!panel) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
 
-    // Containment, leg 1: a click on the panel's own non-interactive text (the title,
-    // the "Opacity:" label, which has no htmlFor) blurs the focused control and leaves
-    // focus on <body>. It dispatches focusout with a null relatedTarget and no focusin
-    // at all, so it is this arm, not leg 2, that has to catch it.
+    // Containment, leg 1: a click on the panel's own non-interactive text blurs the
+    // focused control and leaves focus on <body>. The title is plain text and never takes
+    // focus, so nothing follows it: the focusout carries a null relatedTarget and no
+    // focusin ever arrives. The "Opacity:" label is associated with its slider by htmlFor,
+    // so clicking it does eventually focus the range input — but that is the label's
+    // activation behaviour, which runs after the blur, so the focusout still arrives with
+    // a null relatedTarget first. Both are therefore this arm's, not leg 2's: leg 2 only
+    // sees a focusin, and the window between the blur and the follow-up focus is exactly
+    // the one that leaves focus on <body>, where Tab walks out of the modal and
+    // isEditableTarget is false so Cmd+Z reaches the shortcut layer.
     const onFocusOut = (event: FocusEvent) => {
       const next = event.relatedTarget;
       if (next instanceof Node && panel.contains(next)) return;
@@ -262,11 +268,16 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
                     onChange={(e) => setBackground(e.target.value)}
                     className="h-10 w-full rounded border px-3 py-2 text-gray-700 dark:border-gray-600 dark:bg-gray-700"
                     disabled={opacity === 0}
+                    data-testid="new-image-background-color-input"
                   />
-                  <label className="mt-2 block text-sm font-bold text-gray-700 dark:text-gray-300">
+                  <label
+                    htmlFor="opacityInput"
+                    className="mt-2 block text-sm font-bold text-gray-700 dark:text-gray-300"
+                  >
                     Opacity: {(opacity * 100).toFixed(0)}%
                   </label>
                   <input
+                    id="opacityInput"
                     type="range"
                     min="0"
                     max="1"
@@ -274,6 +285,7 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
                     value={opacity}
                     onChange={(e) => setOpacity(parseFloat(e.target.value))}
                     className="mt-2 w-full"
+                    data-testid="new-image-opacity-input"
                   />
                 </div>
               </div>

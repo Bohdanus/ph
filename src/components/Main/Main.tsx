@@ -238,6 +238,7 @@ const Main = () => {
         </div>
         <canvas
           ref={toolOverlayRef}
+          data-testid="tool-overlay-canvas"
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
             // One entry per mode whose mounted area paints into `overlayCtxRef` — the
@@ -277,6 +278,7 @@ const Main = () => {
         />
         <canvas
           ref={rectOverlayRef}
+          data-testid="rect-overlay-canvas"
           className="h-full w-full object-contain absolute pointer-events-none"
           style={{
             display: ['reposition'].includes(interactionMode) ? 'block' : 'none',
