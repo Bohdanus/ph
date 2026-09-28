@@ -254,6 +254,74 @@ own message and that no CDP session was opened. `createTestInfoMock()`
 (`e2e/helpers/__tests__/canvas-helpers.fixtures.ts:121`) already makes `outputDir`
 optional, so the double needs no change.
 
+## P2 — `toBeDisabled()` on an `<option>` is retargeted to its `<select>` and always reports enabled
+
+`@playwright/test` 1.63.0, `elementState('disabled')` → `retarget(node, 'follow-label')`
+
+Every options bar in this repository wraps its own control in a `<label>`
+(`src/components/ToolbarsRight/Eraser/Eraser.tsx:47-59` and every sibling bar), so the
+markup that makes a control's accessible name is the same markup that defeats the
+assertion on it. Playwright's `disabled` state does not test the element the locator
+resolved: `retarget` first walks a non-form-control up to
+`button, [role=button], [role=checkbox], [role=radio]`, and then — for the
+`follow-label` behaviour it uses for `disabled` — up to `element.closest('label')` and
+returns `enclosingLabel.control`. An `<option>` is neither a form control nor a member
+of that first selector list, and its ancestor _is_ the label, so the check is made
+against the `<select>`, which carries no `disabled` attribute. The result is
+`Received: enabled` for an option that demonstrably has `disabled=""` and
+`option.disabled === true`.
+
+This is a wrong-pass: a bar that removed the attribute, or that enabled a mode it
+cannot render, would still be reported as correct. It is also invisible in jsdom —
+`src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx:89` asserts
+`expect(options[0]).toBeDisabled()` with `@testing-library/jest-dom` and passes,
+because that matcher reads the DOM property directly and has no retarget step. A
+jsdom pass is therefore not evidence that the browser assertion works.
+
+Workaround used in `e2e/erase-fill-eyedropper.spec.ts:326`: assert the attribute and
+the enabled set, both read straight off the DOM.
+
+```ts
+await expect(brushOption).toHaveAttribute('disabled', '');
+const selectable = await mode
+  .locator('option')
+  .evaluateAll((nodes) =>
+    nodes.filter((n) => !(n as HTMLOptionElement).disabled).map((n) => (n as HTMLOptionElement).value)
+  );
+expect(selectable).toEqual(['pencil', 'block']);
+```
+
+`toHaveAttribute` is unaffected (it reads the resolved element), and the enabled set is
+the same fact stated as what a user can actually choose. No fix is proposed here: the
+retarget is upstream behaviour, and the only way to remove it from the assertions is
+to stop wrapping the control in its label, which is the repo's markup convention.
+
+## P2 — a cached canvas box addresses a different pixel after a tool switch
+
+`e2e/canvas-helpers.ts` consumers; measured on `Desktop Chrome` (1280x720), 2026-09-28
+
+The workspace canvas element is `width: 100%; height: 100%` of a CSS grid row, and the
+row's height is the active tool's options bar. Switching from the Eraser bar to the
+Magic Eraser bar changes the bar's height, the main area resizes, and the canvas box
+moves. A spec that measures the box once and reuses it afterwards is then clicking and
+sampling a different pixel — with no error anywhere, because every coordinate is
+still a valid number.
+
+Measured on this suite: a `boundingBox()` of `{x: 56, y: 100, width: 974, height: 890}`
+taken under the Eraser bar addressed a point 20 CSS px higher under the Magic Eraser
+bar, which is enough to move a 24-CSS-px stroke out of the sampled window entirely.
+The symptom is not a failure but a _wrong_ one: the magic eraser appeared to erase the
+whole line and a bucket appeared to fill nothing, and both readings were artefacts of
+the stale box. `usePointerPosition` centres the 800x600 document inside the canvas, so
+the vertical offset is the product of two scales (`974/800` and `890/600`) rather than
+one, and a cached box cannot be corrected after the fact.
+
+Fix: measure the box immediately before every gesture and every capture, or measure it
+once per tool after the options bar for that tool has rendered. `e2e/erase-fill-eyedropper.spec.ts`
+threads a `canvasBox(page)` call through `stroke`, `clickAt`, `readPixel`,
+`measureErasedWidth` and `slabClip` for this reason. A helper that returns the box
+alongside the capture it took would make the mistake harder to make.
+
 ## Fixed — Enter did not reliably close the flyout (was P2, a real race)
 
 `e2e/sidebar-keyboard.spec.ts:76` and `:88`

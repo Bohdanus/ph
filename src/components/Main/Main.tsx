@@ -10,6 +10,9 @@ import { PolygonClickToolArea } from './PolygonClickToolArea.tsx';
 import { RectangularSelectionToolArea } from './RectangularSelectionToolArea.tsx';
 import { FeatherMagneticLassoToolArea } from './FeatherMagneticLassoToolArea.tsx';
 import { MagicWandToolArea } from './MagicWandToolArea.tsx';
+import { EraserToolArea } from './EraserToolArea.tsx';
+import { FillToolArea } from './FillToolArea.tsx';
+import { EyedropperToolArea } from './EyedropperToolArea.tsx';
 import { useTheme } from '../../contexts/ThemeContext.tsx';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { PRIMARY_BUTTON_LARGE, TEXT_LINK_BUTTON } from '../ToolbarsRight/buttonStyles.ts';
@@ -73,6 +76,16 @@ const Main = () => {
     interactionMode = 'magic-wand';
   } else if (toolName === 'rectangular-selection') {
     interactionMode = 'rectangular-selection';
+  } else if (toolName === 'eraser') {
+    // Its own mode, not 'draw': the eraser is a drag area like `DrawToolArea`, but it commits to
+    // the ACTIVE layer through `updateLayerByTool` instead of creating one, so it is not that
+    // component with different args.
+    interactionMode = 'eraser';
+  } else if (toolName === 'magic-eraser' || toolName === 'paint-bucket') {
+    // One area, two tools: they differ only in what their processor writes into the fill mask.
+    interactionMode = 'fill';
+  } else if (toolName === 'eyedropper') {
+    interactionMode = 'eyedropper';
   }
 
   useEffect(() => {
@@ -142,7 +155,10 @@ const Main = () => {
       | typeof PolygonClickToolArea
       | typeof FeatherMagneticLassoToolArea
       | typeof MagicWandToolArea
-      | typeof RectangularSelectionToolArea;
+      | typeof RectangularSelectionToolArea
+      | typeof EraserToolArea
+      | typeof FillToolArea
+      | typeof EyedropperToolArea;
 
     let EventHandler: ToolAreaComponent = DummyToolArea;
     if (hasImage) {
@@ -155,6 +171,9 @@ const Main = () => {
       else if (interactionMode === 'feather-magnetic-lasso') EventHandler = FeatherMagneticLassoToolArea;
       else if (interactionMode === 'magic-wand') EventHandler = MagicWandToolArea;
       else if (interactionMode === 'rectangular-selection') EventHandler = RectangularSelectionToolArea;
+      else if (interactionMode === 'eraser') EventHandler = EraserToolArea;
+      else if (interactionMode === 'fill') EventHandler = FillToolArea;
+      else if (interactionMode === 'eyedropper') EventHandler = EyedropperToolArea;
       else EventHandler = DummyToolArea;
     }
 
@@ -191,6 +210,10 @@ const Main = () => {
               'feather-magnetic-lasso',
               'magic-wand',
               'rectangular-selection',
+              // Only the eraser. The fill and the eyedropper commit on the click itself and never
+              // draw a preview, so keeping the overlay hidden for them is what stops a stale
+              // overlay from an earlier tool from sitting on top of the document.
+              'eraser',
             ].includes(interactionMode)
               ? 'block'
               : 'none',

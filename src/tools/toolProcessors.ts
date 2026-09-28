@@ -4,8 +4,10 @@ import { blur } from './blur.ts';
 import { colors } from './colors.ts';
 import { crop } from './crop.ts';
 import { draw, type DrawToolArgs } from './draw.ts';
+import { eraser } from './eraser.ts';
 import { featherMagneticLasso } from './featherMagneticLasso.ts';
 import { levels } from './levels.ts';
+import { magicEraser, paintBucket } from './fill.ts';
 import { magicWand } from './magicWand.ts';
 import { rectangularSelection } from './rectangularSelection.ts';
 import { reposition } from './reposition.ts';
@@ -58,6 +60,32 @@ export type ToolProcessorDefinition = {
   imageProcessor: (param: ProcessorToolParams | CreatorToolParams) => (args: ToolArgs) => ToolResult;
 };
 
+/**
+ * Tools that rasterize nothing, commit no pixels and record no history state.
+ *
+ * The eyedropper belongs here and not under `commit: 'unimplemented'`: it is a working tool, not a
+ * dead button. Adobe's rule is that a history state comes from a change to pixels, and sampling
+ * changes only the app's foreground colour, so it has no `commit` kind, no `replay()` descriptor,
+ * no `HistoryItem` and no durable operation. `unimplemented` cannot express that — it means "this
+ * tool does not work yet", and it is read as exactly that by `src/components/Main/Main.tsx`'s tool
+ * dispatch. Naming the set is also what lets a consumer of `toolProcessors` distinguish "this tool
+ * has no processor" from "this tool name does not exist".
+ */
+export const PIXEL_FREE_TOOLS = ['eyedropper'] as const satisfies readonly ToolName[];
+
+/** The tools that do have a processor, which is the registry's key set. */
+export type PixelToolName = Exclude<ToolName, (typeof PIXEL_FREE_TOOLS)[number]>;
+
+/**
+ * The one place a `ToolName` is looked up by name, because the registry is keyed by
+ * `PixelToolName` and a name from outside the registry is a real possibility: a history item or a
+ * layer source can name any tool, and a pixel-free tool resolves to nothing. Every caller that
+ * indexes `toolProcessors` with a dynamic name goes through here rather than casting at the
+ * call site, so the one cast in the codebase for this is visible.
+ */
+export const findToolProcessor = (toolName: ToolName): ToolProcessorDefinition | undefined =>
+  (toolProcessors as Partial<Record<ToolName, ToolProcessorDefinition>>)[toolName];
+
 const buildDrawArgs = (args: ToolArgs, penType: 'pen' | 'spray', lineWidth?: number): DrawToolArgs =>
   ({
     ...(args as Partial<DrawToolArgs>),
@@ -74,7 +102,7 @@ const DEFAULT_PENCIL_LINE_WIDTH = 3;
 
 const unimplemented = () => () => [null as never] as ToolResult;
 
-export const toolProcessors: Record<ToolName, ToolProcessorDefinition> = {
+export const toolProcessors: Record<PixelToolName, ToolProcessorDefinition> = {
   reposition: {
     commit: 'geometry',
     replay: replay('geometry', false),
@@ -190,6 +218,21 @@ export const toolProcessors: Record<ToolName, ToolProcessorDefinition> = {
       const [canvas] = draw({ size: params.size } as CreatorToolParams)(buildDrawArgs(args, 'spray'));
       return [canvas];
     },
+  },
+  eraser: {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    imageProcessor: (params) => (args) => eraser(params)(args),
+  },
+  'magic-eraser': {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    imageProcessor: (params) => (args) => magicEraser(params)(args),
+  },
+  'paint-bucket': {
+    commit: 'raster',
+    replay: replay('raster-processor', true),
+    imageProcessor: (params) => (args) => paintBucket(params)(args),
   },
   pen: { commit: 'unimplemented', replay: replay('unimplemented', false, false), imageProcessor: unimplemented },
   'freeform-pen': {

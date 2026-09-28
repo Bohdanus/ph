@@ -41,7 +41,7 @@ import {
   TOOL_ACTION,
 } from '../util/constants.ts';
 import { getTransformFromHistoryArgs, isTrapezoidOnlyTransform, validateAffineTransform } from './affine-transform.ts';
-import { toolProcessors } from '../tools/toolProcessors.ts';
+import { findToolProcessor } from '../tools/toolProcessors.ts';
 
 export class UnsupportedHistoryFeatureError extends Error {
   readonly code = 'unsupported-history-feature';
@@ -351,7 +351,7 @@ function operationForTool(item: HistoryItem, layer: DurableLayerSnapshot): Durab
   const args = (candidate && candidate.args && typeof candidate.args === 'object' ? candidate.args : item.args) as
     ToolArgs | undefined;
   if (!args || typeof args !== 'object' || typeof args.toolName !== 'string') return null;
-  const processor = toolProcessors[args.toolName];
+  const processor = findToolProcessor(args.toolName);
   if (!processor) throw new UnsupportedHistoryFeatureError(`Unknown processor ${args.toolName}`, item.id);
 
   if (args.toolName === 'transform') {

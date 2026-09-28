@@ -7,13 +7,17 @@ import { ColorReplacementIcon } from './icons/ColorReplacementIcon';
 import { CropIcon } from './icons/CropIcon';
 import { DrawIcon } from './icons/DrawIcon';
 import { EllipseShapeIcon } from './icons/EllipseShapeIcon';
+import { EraserIcon } from './icons/EraserIcon';
+import { EyedropperIcon } from './icons/EyedropperIcon';
 import { FeatherMagneticLassoIcon } from './icons/FeatherMagneticLassoIcon';
 import { FreeformPenIcon } from './icons/FreeformPenIcon';
 import { FreehandLassoIcon } from './icons/FreehandLassoIcon';
 import { LevelsIcon } from './icons/LevelsIcon';
 import { LineShapeIcon } from './icons/LineShapeIcon';
+import { MagicEraserIcon } from './icons/MagicEraserIcon';
 import { MagicWandIcon } from './icons/MagicWandIcon';
 import { MoveIcon } from './icons/MoveIcon';
+import { PaintBucketIcon } from './icons/PaintBucketIcon';
 import { PenToolIcon } from './icons/PenToolIcon';
 import { PolygonalLassoIcon } from './icons/PolygonalLassoIcon';
 import { RectangularSelectionIcon } from './icons/RectangularSelectionIcon';
@@ -45,6 +49,12 @@ export const toolIcons: Record<ToolIconName, SvgIconFactory> = {
   brush: BrushToolIcon,
   pencil: BrushToolIcon,
   'color-replacement': ColorReplacementIcon,
+  // Four distinct icons, not a shared BrushToolIcon as `brush`/`pencil` do: those two are the same
+  // physical tool at two hardnesses, while an eraser drawn as a brush would be a lie.
+  eraser: EraserIcon,
+  'magic-eraser': MagicEraserIcon,
+  'paint-bucket': PaintBucketIcon,
+  eyedropper: EyedropperIcon,
   pen: PenToolIcon,
   'freeform-pen': FreeformPenIcon,
   'curvature-pen': PenToolIcon,

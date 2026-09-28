@@ -2,7 +2,7 @@ import { useStore } from './StoreContext.tsx';
 import type { LayersRecord } from './layer-types.ts';
 import type { HistoryItem, NewHistoryItem } from './history-types.ts';
 import type { ToolArgs } from './tool-types.ts';
-import { toolProcessors } from '../tools/toolProcessors.ts';
+import { findToolProcessor } from '../tools/toolProcessors.ts';
 import { createLayerSource, getSortedLayersArray } from './layer-utils.ts';
 import { drawLayersToCanvas } from './layer-renderer.ts';
 import { replayHistory } from './history-replay.ts';
@@ -98,7 +98,11 @@ export const useHistory = () => {
           applyRasterTool: (layer, args) => {
             const bitmap = layer.tmpCanvas ?? layer.bitmap;
             if (!bitmap) return layer;
-            const [canvas, patch] = toolProcessors[args.toolName].imageProcessor({ bitmap, size: layer.pos })(args);
+            // A tool with no processor (see `PIXEL_FREE_TOOLS`) rasterizes nothing, so the layer is
+            // left exactly as it was rather than replaced with an empty canvas.
+            const processor = findToolProcessor(args.toolName);
+            if (!processor) return layer;
+            const [canvas, patch] = processor.imageProcessor({ bitmap, size: layer.pos })(args);
             return {
               ...layer,
               pos: patch ? { ...layer.pos, ...patch } : layer.pos,

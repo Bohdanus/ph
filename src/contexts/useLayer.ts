@@ -21,9 +21,9 @@ import { drawLayersToCanvas } from './layer-renderer.ts';
 import type { BlankImageParams, FileImageParams, FullArgs, ToolArgs } from './tool-types.ts';
 import {
   type CreatorToolParams,
+  findToolProcessor,
   type ProcessorToolParams,
   type ToolResult,
-  toolProcessors,
 } from '../tools/toolProcessors.ts';
 import { reduceRect, sortRect, sortedRectToPos, trimRect } from '../util/rect.ts';
 import type { Optional } from '../util/type-utils.ts';
@@ -263,7 +263,10 @@ export const useLayers = () => {
 
   const updateLayerByTool = async ({ id = activeLayerId, toolArgs }: LayerEditParams) => {
     const toolArgsToolName = (toolArgs as ToolArgs).toolName;
-    const processor = toolProcessors[toolArgsToolName];
+    const processor = findToolProcessor(toolArgsToolName);
+    // Statically enforced, not by convention: a tool with no processor (`PIXEL_FREE_TOOLS`) has no
+    // pixel operation, so it is not reachable through this path at all.
+    if (!processor) return;
     if (!id || !layers[id]) return;
     if (processor.commit === 'document-operation') return;
 
@@ -477,7 +480,8 @@ export const useLayers = () => {
     if (!layer) return;
 
     const { toolName: toolArgsToolName } = toolArgs;
-    const processor = toolProcessors[toolArgsToolName];
+    const processor = findToolProcessor(toolArgsToolName);
+    if (!processor) return;
 
     if (isTransformArgs(toolArgs) && toolArgs.trapezoid !== 0) {
       try {

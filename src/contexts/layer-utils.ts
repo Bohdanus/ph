@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 
 import type { Layer, LayerId, LayerOperation, LayerOperationArgs, LayerSource, LayersRecord } from './layer-types.ts';
-import { type CreatorToolParams, toolProcessors } from '../tools/toolProcessors.ts';
+import { type CreatorToolParams, findToolProcessor } from '../tools/toolProcessors.ts';
 import type { BitmapSource, Point, Pos } from './general-types.ts';
 import { ellipsify } from '../util/string.ts';
 import { materializePresentationBitmap } from './layer-presentation.ts';
@@ -203,9 +203,12 @@ export function createLayerSource({ layerId: idFromHistory, layers, source }: La
     layer.tmpCanvas = canvas;
   } else if (kind === 'tool') {
     // and this is a creator tool
-    const [canvas, patch] = toolProcessors[source.args.toolName].imageProcessor({ size: pos } as CreatorToolParams)(
-      source.args
-    );
+    const processor = findToolProcessor(source.args.toolName);
+    // Unreachable: only a creator tool produces a `tool` source, and a tool with no processor
+    // (`PIXEL_FREE_TOOLS`) is never a creator. Named rather than left as a `TypeError` on
+    // `undefined.imageProcessor`, so the violation says what it is.
+    if (!processor) throw new Error(`Tool ${source.args.toolName} has no processor to create a layer from`);
+    const [canvas, patch] = processor.imageProcessor({ size: pos } as CreatorToolParams)(source.args);
     if (patch) {
       layer.pos = { ...layer.pos, ...patch };
     }

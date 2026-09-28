@@ -14,6 +14,9 @@ import type { LassoToolArgs, PolygonSelectionToolSettings } from './polygonSelec
 import type { RectangularSelectionToolArgs } from './rectangularSelection.ts';
 import type { FeatherMagneticLassoToolArgs, FeatherMagneticLassoToolSettings } from './featherMagneticLasso.ts';
 import type { MagicWandToolArgs, MagicWandToolSettings } from './magicWand.ts';
+import type { EraserToolArgs } from './eraser.ts';
+import type { FillToolArgs } from './fill.ts';
+import type { EyedropperToolArgs } from './eyedropper.ts';
 
 type PenSettings = Omit<DrawToolArgs, 'color' | 'points' | 'penType' | 'toolName'>;
 type FigureSettings = Omit<ShapeToolArgs, 'color' | 'backgroundColor' | 'start' | 'end' | 'figure' | 'toolName'>;
@@ -135,6 +138,37 @@ export const defaultSettings = {
     points: [],
     toolName: 'color-replacement',
   } satisfies PaintToolArgs,
+  eraser: {
+    mode: 'pencil',
+    lineWidth: 40,
+    alpha: 1,
+    color: '#000000',
+    points: [],
+    toolName: 'eraser',
+  } satisfies EraserToolArgs,
+  'magic-eraser': {
+    tolerance: 32,
+    contiguous: true,
+    alpha: 1,
+    color: '#000000',
+    pos: { x: 0, y: 0 },
+    size: { width: 1, height: 1 },
+    toolName: 'magic-eraser',
+  } satisfies FillToolArgs,
+  'paint-bucket': {
+    tolerance: 32,
+    contiguous: true,
+    alpha: 1,
+    color: '#000000',
+    pos: { x: 0, y: 0 },
+    size: { width: 1, height: 1 },
+    toolName: 'paint-bucket',
+  } satisfies FillToolArgs,
+  eyedropper: {
+    sampleSize: 1,
+    sampleAllLayers: false,
+    toolName: 'eyedropper',
+  } satisfies EyedropperToolArgs,
   pen: { toolName: 'pen' },
   'freeform-pen': { toolName: 'freeform-pen' },
   'curvature-pen': { toolName: 'curvature-pen' },

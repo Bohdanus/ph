@@ -11,6 +11,22 @@ export type DrawToolArgs = {
   lineWidth: number;
   lineDash?: null | number[];
   points?: Point[];
+  /**
+   * Erase instead of paint: the stroke subtracts alpha from whatever is already there.
+   *
+   * `setupDrawCtx` is the only function that configures both the live preview overlay
+   * (`src/components/Main/DrawToolArea.tsx:51`) and the committed raster (`draw`, below), so this
+   * is the only place both paths can read. Absent on every args object that predates the eraser,
+   * and the absent case writes `source-over` — the canvas default — so a legacy stroke renders
+   * exactly as it did before, which is what keeps the `e2e/export/visual-regression.spec.ts`
+   * baselines recorded through the legacy `draw` tool valid.
+   */
+  composite?: 'destination-out';
+  /**
+   * Block mode: stamp a hard square along the path instead of stroking it. Read by `drawPen`,
+   * the single renderer every stroke reaches. Absent means the stroked path, unchanged.
+   */
+  blockStamp?: boolean;
 
   toolName: 'draw';
 };
@@ -25,6 +41,12 @@ export type DrawToolSettings = Omit<DrawToolArgs, 'color' | 'points'>;
 
 export const setupDrawCtx = (ctx: Ctx2D, args: DrawToolArgs) => {
   const { alpha, color, penType, lineDash, lineWidth } = args;
+
+  // Assigned unconditionally rather than only when erasing: the overlay context is shared between
+  // strokes and between tools, so an eraser that left `destination-out` behind would silently turn
+  // the next tool's stroke into an eraser. `source-over` is the canvas default, so for every tool
+  // that does not erase this writes back the value the context already held.
+  ctx.globalCompositeOperation = args.composite === 'destination-out' ? 'destination-out' : 'source-over';
 
   if (penType === 'spray') return;
 

@@ -2,7 +2,13 @@ import { render, screen } from '@testing-library/react';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { toolProcessors, type ToolProcessorDefinition } from '../toolProcessors.ts';
+import {
+  findToolProcessor,
+  PIXEL_FREE_TOOLS,
+  toolProcessors,
+  type PixelToolName,
+  type ToolProcessorDefinition,
+} from '../toolProcessors.ts';
 import { toolsMap } from '../toolsMap.ts';
 import { defaultSettings } from '../settings.ts';
 import { blur } from '../blur.ts';
@@ -19,11 +25,20 @@ import { shape } from '../shape.ts';
 import { text } from '../text.ts';
 import { transform } from '../transform.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
+import { createPixelCanvasContext } from '../../test/setup.ts';
 import type { ToolName } from '../../contexts/tool-types.ts';
 import type { PaintToolArgs, PaintToolName } from '../draw.ts';
 import type { Point } from '../../contexts/general-types.ts';
 
 const toolNames = Object.keys(defaultSettings) as ToolName[];
+
+/**
+ * The registry's own key set, which is every `ToolName` EXCEPT the pixel-free ones. The two sets
+ * are related by the coverage test below, so neither can drift: a tool added to `ToolArgsByName`
+ * without a processor fails it, and a processor for a name that is not a tool fails
+ * `Record<PixelToolName, ...>` at compile time.
+ */
+const processorNames = Object.keys(toolProcessors) as PixelToolName[];
 
 type MockCtx = ReturnType<typeof createMockCanvasContext>;
 
@@ -37,7 +52,9 @@ class RecordingOffscreenCanvas {
   constructor(width: number, height: number) {
     this.width = Math.max(1, Math.ceil(width));
     this.height = Math.max(1, Math.ceil(height));
-    this.ctx = createMockCanvasContext({ canvas: this });
+    // Pixel-capable: the global stub in src/test/setup.ts deliberately has no `getImageData`, so
+    // the two fill tools would take their "reduced canvas" branch here and never reach a mask.
+    this.ctx = createPixelCanvasContext(this) as unknown as MockCtx;
     RecordingOffscreenCanvas.instances.push(this);
   }
 
@@ -49,13 +66,33 @@ class RecordingOffscreenCanvas {
 const asRecord = toolProcessors as unknown as Record<string, ToolProcessorDefinition | undefined>;
 
 describe('toolProcessors registry', () => {
-  it('registers exactly one processor for every ToolName', () => {
-    expect(Object.keys(toolProcessors).sort()).toEqual([...toolNames].sort());
+  it('covers every ToolName with either exactly one processor or a pixel-free declaration', () => {
+    // The eyedropper samples a colour and writes it to the store's foreground, so it rasterizes
+    // nothing and records no history state. It therefore has NO processor — which the previous
+    // form of this test ("one processor for every ToolName") asserted against, because the registry
+    // used to conflate "is a tool" with "rasterizes pixels". The invariant is now coverage by one
+    // of the two, disjointly, derived from `ToolArgsByName` rather than hand-listed.
+    const pixelFree = [...PIXEL_FREE_TOOLS];
+    const overlap = pixelFree.filter((toolName) => processorNames.includes(toolName as PixelToolName));
+
+    expect(overlap).toEqual([]);
+    expect([...processorNames, ...pixelFree].sort()).toEqual([...toolNames].sort());
+    expect(new Set([...processorNames, ...pixelFree]).size).toBe(toolNames.length);
+  });
+
+  it('resolves no processor for a pixel-free tool and one for every other tool', () => {
+    for (const toolName of toolNames) {
+      const pixelFree = (PIXEL_FREE_TOOLS as readonly ToolName[]).includes(toolName);
+      const definition = findToolProcessor(toolName);
+
+      if (pixelFree) expect(definition, toolName).toBeUndefined();
+      else expect(typeof definition?.imageProcessor, toolName).toBe('function');
+    }
   });
 
   it('gives every tool a frozen, versioned replay descriptor', () => {
-    for (const toolName of toolNames) {
-      const entry = toolProcessors[toolName];
+    for (const toolName of processorNames) {
+      const entry = findToolProcessor(toolName)!;
 
       expect(Object.isFrozen(entry.replay), `${toolName}.replay must be frozen`).toBe(true);
       expect(entry.replay.version, `${toolName}.replay.version`).toBe(1);
@@ -74,15 +111,24 @@ describe('toolProcessors registry', () => {
   });
 
   it('marks only raster-producing tools as requiring raster', () => {
-    const requiresRaster = toolNames.filter((toolName) => toolProcessors[toolName].replay.requiresRaster);
+    const requiresRaster = processorNames.filter((toolName) => findToolProcessor(toolName)!.replay.requiresRaster);
 
     expect(requiresRaster.sort()).toEqual(
-      ['brush', 'color-replacement', 'feather-magnetic-lasso', 'magic-wand', 'pencil'].sort()
+      [
+        'brush',
+        'color-replacement',
+        'eraser',
+        'feather-magnetic-lasso',
+        'magic-eraser',
+        'magic-wand',
+        'paint-bucket',
+        'pencil',
+      ].sort()
     );
   });
 
   it('marks only unimplemented tools as non-deterministic', () => {
-    const nonDeterministic = toolNames.filter((toolName) => !toolProcessors[toolName].replay.deterministic);
+    const nonDeterministic = processorNames.filter((toolName) => !findToolProcessor(toolName)!.replay.deterministic);
 
     expect(nonDeterministic.sort()).toEqual(
       [
@@ -98,30 +144,33 @@ describe('toolProcessors registry', () => {
   });
 
   it('keeps the unimplemented set identical across commit, replay, and determinism', () => {
-    const unimplemented = toolNames.filter(
+    const unimplemented = processorNames.filter(
       (toolName) =>
-        toolProcessors[toolName].commit === 'unimplemented' || toolProcessors[toolName].replay.kind === 'unimplemented'
+        findToolProcessor(toolName)!.commit === 'unimplemented' ||
+        findToolProcessor(toolName)!.replay.kind === 'unimplemented'
     );
-    const nonDeterministic = toolNames.filter((toolName) => !toolProcessors[toolName].replay.deterministic);
+    const nonDeterministic = processorNames.filter((toolName) => !findToolProcessor(toolName)!.replay.deterministic);
 
     expect([...unimplemented].sort()).toEqual([...nonDeterministic].sort());
     for (const toolName of unimplemented) {
-      expect(toolProcessors[toolName].replay.deterministic, toolName).toBe(false);
-      expect(toolProcessors[toolName].replay.requiresRaster, toolName).toBe(false);
+      expect(findToolProcessor(toolName)!.replay.deterministic, toolName).toBe(false);
+      expect(findToolProcessor(toolName)!.replay.requiresRaster, toolName).toBe(false);
     }
   });
 
   it('commits every raster processor as a raster-processor replay', () => {
-    const rasterCommitted = toolNames.filter((toolName) => toolProcessors[toolName].commit === 'raster');
+    const rasterCommitted = processorNames.filter((toolName) => findToolProcessor(toolName)!.commit === 'raster');
 
-    expect(rasterCommitted.sort()).toEqual(['brush', 'color-replacement', 'pencil']);
+    expect(rasterCommitted.sort()).toEqual(
+      ['brush', 'color-replacement', 'eraser', 'magic-eraser', 'paint-bucket', 'pencil'].sort()
+    );
     for (const toolName of rasterCommitted) {
-      expect(toolProcessors[toolName].replay.kind).toBe('raster-processor');
+      expect(findToolProcessor(toolName)!.replay.kind).toBe('raster-processor');
     }
   });
 
   it('only labels source-creating tools as creators, and each creator commits as a source', () => {
-    const creators = toolNames.filter((toolName) => toolProcessors[toolName].creator);
+    const creators = processorNames.filter((toolName) => findToolProcessor(toolName)!.creator);
 
     expect(creators.sort()).toEqual(
       [
@@ -139,7 +188,7 @@ describe('toolProcessors registry', () => {
       ].sort()
     );
     for (const toolName of creators) {
-      expect(['source', 'selection'], `${toolName} creator commit`).toContain(toolProcessors[toolName].commit);
+      expect(['source', 'selection'], `${toolName} creator commit`).toContain(findToolProcessor(toolName)!.commit);
     }
   });
 
@@ -147,17 +196,21 @@ describe('toolProcessors registry', () => {
     // The figure family is derived from the processor identity rather than a
     // hand-written name list, so a new shape variant cannot be registered
     // without the `creator` flag `materialization.ts:161` reads.
-    const shapeFamily = toolNames.filter((toolName) => toolProcessors[toolName].imageProcessor === shape);
+    const shapeFamily = processorNames.filter((toolName) => findToolProcessor(toolName)!.imageProcessor === shape);
 
     expect(shapeFamily.sort()).toEqual(['ellipse', 'line', 'polygon', 'rectangle', 'shape', 'triangle']);
     for (const toolName of shapeFamily) {
-      expect(toolProcessors[toolName].creator, toolName).toBe(true);
-      expect(toolProcessors[toolName].commit, toolName).toBe('source');
+      expect(findToolProcessor(toolName)!.creator, toolName).toBe(true);
+      expect(findToolProcessor(toolName)!.commit, toolName).toBe('source');
     }
   });
 
   it('maps the full tool roster onto the declared commit kinds', () => {
-    const commits = Object.fromEntries(toolNames.map((toolName) => [toolName, toolProcessors[toolName].commit]));
+    // The eyedropper is absent by design and carries no commit kind at all, which is what the
+    // coverage test above pins; see `PIXEL_FREE_TOOLS` in src/tools/toolProcessors.ts.
+    const commits = Object.fromEntries(
+      processorNames.map((toolName) => [toolName, findToolProcessor(toolName)!.commit])
+    );
 
     expect(commits).toEqual({
       reposition: 'geometry',
@@ -177,6 +230,9 @@ describe('toolProcessors registry', () => {
       brush: 'raster',
       pencil: 'raster',
       'color-replacement': 'raster',
+      eraser: 'raster',
+      'magic-eraser': 'raster',
+      'paint-bucket': 'raster',
       pen: 'unimplemented',
       'freeform-pen': 'unimplemented',
       'curvature-pen': 'unimplemented',
@@ -201,7 +257,7 @@ describe('toolProcessors registry', () => {
 
     expect(toolProcessors['freehand-lasso'].imageProcessor).toBe(lassoSource);
     for (const toolName of ['rectangle', 'ellipse', 'triangle', 'polygon', 'line'] as const) {
-      expect(toolProcessors[toolName].imageProcessor).toBe(shapeSource);
+      expect(findToolProcessor(toolName)!.imageProcessor).toBe(shapeSource);
     }
     expect(featherSource).not.toBe(lassoSource);
     expect(magicWandSource).not.toBe(lassoSource);
@@ -209,10 +265,10 @@ describe('toolProcessors registry', () => {
   });
 
   it('returns a null bitmap from every unimplemented processor instead of throwing', () => {
-    for (const toolName of toolNames) {
-      if (toolProcessors[toolName].commit !== 'unimplemented') continue;
+    for (const toolName of processorNames) {
+      if (findToolProcessor(toolName)!.commit !== 'unimplemented') continue;
 
-      const result = toolProcessors[toolName].imageProcessor({
+      const result = findToolProcessor(toolName)!.imageProcessor({
         size: { width: 8, height: 8 },
         bitmap: createMockImageBitmap(8, 8),
       })({ toolName } as never);
@@ -239,7 +295,7 @@ describe('paint tool raster processors', () => {
   });
 
   const run = (toolName: PaintToolName, args: Partial<PaintToolArgs>): MockCtx => {
-    const result = toolProcessors[toolName].imageProcessor({ size: { width: 16, height: 16 } })({
+    const result = findToolProcessor(toolName)!.imageProcessor({ size: { width: 16, height: 16 } })({
       ...defaultSettings[toolName],
       toolName,
       ...args,
@@ -341,15 +397,30 @@ describe('paint tool raster processors', () => {
 
 describe('toolsMap wiring', () => {
   it('mirrors every processor entry and adds an icon plus a toolbox component', () => {
-    for (const toolName of toolNames) {
+    for (const toolName of processorNames) {
       const mapped = toolsMap[toolName];
-      const definition = toolProcessors[toolName];
+      const definition = findToolProcessor(toolName)!;
 
       expect(mapped.commit, toolName).toBe(definition.commit);
       expect(mapped.replay, toolName).toBe(definition.replay);
       expect(mapped.imageProcessor, toolName).toBe(definition.imageProcessor);
       expect(typeof mapped.icon, toolName).toBe('string');
       expect(typeof mapped.toolboxComponent, toolName).toBe('function');
+    }
+  });
+
+  it('spreads no processor into a pixel-free toolsMap entry', () => {
+    // The registry's shape is `Partial<ToolProcessorDefinition>`, so a spread that found nothing
+    // would silently typecheck. This is the pin that says the eyedropper's entry is icon + bar
+    // only: a fabricated no-op processor would be indistinguishable from a real one by type.
+    for (const toolName of PIXEL_FREE_TOOLS) {
+      const mapped = toolsMap[toolName];
+
+      expect(Object.hasOwn(mapped, 'commit'), toolName).toBe(false);
+      expect(Object.hasOwn(mapped, 'replay'), toolName).toBe(false);
+      expect(Object.hasOwn(mapped, 'imageProcessor'), toolName).toBe(false);
+      expect(Object.hasOwn(mapped, 'creator'), toolName).toBe(false);
+      expect(Object.keys(mapped).sort(), toolName).toEqual(['icon', 'toolboxComponent']);
     }
   });
 
@@ -439,15 +510,15 @@ const paintWrapperTools: readonly PaintToolName[] = ['brush', 'pencil', 'color-r
 
 describe('toolProcessors processor identity', () => {
   it.each(directProcessorSources)('routes %s to its own module-level processor', (toolName, source) => {
-    expect(toolProcessors[toolName].imageProcessor).toBe(source);
+    expect(findToolProcessor(toolName)!.imageProcessor).toBe(source);
   });
 
   it.each(unimplementedTools)('gives %s the shared unimplemented processor instance', (toolName) => {
-    expect(toolProcessors[toolName].imageProcessor).toBe(toolProcessors.pen.imageProcessor);
+    expect(findToolProcessor(toolName)!.imageProcessor).toBe(toolProcessors.pen.imageProcessor);
   });
 
   it.each(paintWrapperTools)('wraps %s in its own inline adapter instead of reusing draw', (toolName) => {
-    const { imageProcessor } = toolProcessors[toolName];
+    const { imageProcessor } = findToolProcessor(toolName)!;
 
     expect(imageProcessor).not.toBe(draw);
     for (const other of paintWrapperTools) {
@@ -461,9 +532,9 @@ describe('toolProcessors processor identity', () => {
   it('never lets two different tools share the same non-unimplemented processor by accident', () => {
     const seen = new Map<unknown, ToolName[]>();
 
-    for (const toolName of toolNames) {
+    for (const toolName of processorNames) {
       if (unimplementedTools.includes(toolName)) continue;
-      const { imageProcessor } = toolProcessors[toolName];
+      const { imageProcessor } = findToolProcessor(toolName)!;
       seen.set(imageProcessor, [...(seen.get(imageProcessor) ?? []), toolName]);
     }
 
@@ -498,14 +569,16 @@ describe('toolProcessors declared inner-processor arity', () => {
     // `unimplemented` is declared `() => () => [null]`, which is still assignable to the
     // registry signature because a function with fewer parameters is assignable to a
     // wider one — so unlike the three type lies it needs no cast.
-    for (const toolName of toolNames) {
+    for (const toolName of processorNames) {
       const expected = unimplementedTools.includes(toolName) ? 0 : 1;
-      expect(toolProcessors[toolName].imageProcessor.length, toolName).toBe(expected);
+      expect(findToolProcessor(toolName)!.imageProcessor.length, toolName).toBe(expected);
     }
   });
 
   it('declares zero inner parameters only for the three type lies and the unimplemented set', () => {
-    const zeroArity = toolNames.filter((toolName) => toolProcessors[toolName].imageProcessor(params).length === 0);
+    const zeroArity = processorNames.filter(
+      (toolName) => findToolProcessor(toolName)!.imageProcessor(params).length === 0
+    );
 
     expect(zeroArity.sort()).toEqual(
       [...unimplementedTools, 'feather-magnetic-lasso', 'magic-wand', 'rectangular-selection'].sort()
@@ -516,10 +589,10 @@ describe('toolProcessors declared inner-processor arity', () => {
     // These three are the entries the registry has to silence with @ts-expect-error
     // (src/tools/toolProcessors.ts:146, :152, :159) because their published args type
     // is not reachable from the generic `(args: ToolArgs) => ToolResult` signature.
-    const casted = toolNames.filter(
+    const casted = processorNames.filter(
       (toolName) =>
-        toolProcessors[toolName].commit !== 'unimplemented' &&
-        toolProcessors[toolName].imageProcessor(params).length === 0
+        findToolProcessor(toolName)!.commit !== 'unimplemented' &&
+        findToolProcessor(toolName)!.imageProcessor(params).length === 0
     );
 
     expect(casted.sort()).toEqual(['feather-magnetic-lasso', 'magic-wand', 'rectangular-selection']);
@@ -543,7 +616,7 @@ describe('toolProcessors dispatch for every tool name', () => {
     'freehand-lasso': { points: lassoTriangle },
   };
 
-  type Outcome = 'canvas' | 'canvas-with-pos-patch' | 'source-bitmap' | 'bitmap-and-move' | 'null';
+  type Outcome = 'canvas' | 'canvas-with-pos-patch' | 'source-bitmap' | 'bitmap-and-move' | 'null' | 'no-processor';
 
   const dispatchTable: readonly [ToolName, Outcome, number, number][] = [
     ['reposition', 'bitmap-and-move', 0, 0],
@@ -563,6 +636,10 @@ describe('toolProcessors dispatch for every tool name', () => {
     ['brush', 'canvas', 40, 24],
     ['pencil', 'canvas', 40, 24],
     ['color-replacement', 'canvas', 40, 24],
+    ['eraser', 'canvas', 40, 24],
+    ['magic-eraser', 'canvas', 40, 24],
+    ['paint-bucket', 'canvas', 40, 24],
+    ['eyedropper', 'no-processor', 0, 0],
     ['pen', 'null', 0, 0],
     ['freeform-pen', 'null', 0, 0],
     ['curvature-pen', 'null', 0, 0],
@@ -593,8 +670,16 @@ describe('toolProcessors dispatch for every tool name', () => {
   it.each(dispatchTable)(
     'runs %s on its own default settings and returns the declared outcome',
     (toolName, outcome, expectedWidth, expectedHeight) => {
+      if (outcome === 'no-processor') {
+        // The eyedropper rasterizes nothing, so it is not dispatchable at all. Reaching for its
+        // processor must fail, not resolve to a stub that returns a blank canvas.
+        expect(findToolProcessor(toolName), toolName).toBeUndefined();
+        expect(RecordingOffscreenCanvas.instances, toolName).toHaveLength(0);
+        return;
+      }
+
       const args = { ...defaultSettings[toolName], ...argOverrides[toolName] } as never;
-      const result = toolProcessors[toolName].imageProcessor({ size, bitmap })(args);
+      const result = findToolProcessor(toolName)!.imageProcessor({ size, bitmap })(args);
 
       if (outcome === 'null') {
         expect(result, toolName).toEqual([null]);
@@ -633,10 +718,10 @@ describe('toolProcessors dispatch for every tool name', () => {
   );
 
   it('consumes the unmodified seeded defaults for every tool except crop', () => {
-    for (const toolName of toolNames) {
+    for (const toolName of processorNames) {
       if (toolName === 'crop') continue;
 
-      const result = toolProcessors[toolName].imageProcessor({ size, bitmap })({
+      const result = findToolProcessor(toolName)!.imageProcessor({ size, bitmap })({
         ...defaultSettings[toolName],
       } as never);
 
@@ -656,7 +741,7 @@ describe('toolProcessors dispatch for every tool name', () => {
 
   it('collapses both lasso tools to a 1x1 canvas for the default empty point list', () => {
     for (const toolName of ['polygonal-lasso', 'freehand-lasso'] as const) {
-      const result = toolProcessors[toolName].imageProcessor({ size, bitmap })({
+      const result = findToolProcessor(toolName)!.imageProcessor({ size, bitmap })({
         ...defaultSettings[toolName],
       } as never);
       const canvas = RecordingOffscreenCanvas.instances.at(-1)!;
@@ -684,7 +769,7 @@ describe('toolProcessors dispatch for every tool name', () => {
 });
 
 describe('toolProcessors classification invariants', () => {
-  const commitKinds = new Set(toolNames.map((toolName) => toolProcessors[toolName].commit));
+  const commitKinds = new Set(processorNames.map((toolName) => findToolProcessor(toolName)!.commit));
 
   it('uses every declared commit kind, so no classification is dead', () => {
     expect([...commitKinds].sort()).toEqual([
@@ -699,8 +784,8 @@ describe('toolProcessors classification invariants', () => {
     ]);
   });
 
-  it.each(toolNames)('keeps the %s replay kind aligned with its commit kind', (toolName) => {
-    const { commit, replay } = toolProcessors[toolName];
+  it.each(processorNames)('keeps the %s replay kind aligned with its commit kind', (toolName) => {
+    const { commit, replay } = findToolProcessor(toolName)!;
 
     if (commit === 'raster') {
       expect(replay.kind).toBe('raster-processor');
@@ -711,8 +796,8 @@ describe('toolProcessors classification invariants', () => {
     }
   });
 
-  it.each(toolNames)('derives the %s requiresRaster flag from its commit kind and creator status', (toolName) => {
-    const { commit, creator, replay } = toolProcessors[toolName];
+  it.each(processorNames)('derives the %s requiresRaster flag from its commit kind and creator status', (toolName) => {
+    const { commit, creator, replay } = findToolProcessor(toolName)!;
 
     expect(replay.requiresRaster).toBe(commit === 'raster' || (commit === 'selection' && !creator));
   });
@@ -720,8 +805,8 @@ describe('toolProcessors classification invariants', () => {
   it('gives each tool a distinct replay descriptor that toolsMap reuses by reference', () => {
     const descriptors = new Set<unknown>();
 
-    for (const toolName of toolNames) {
-      const { replay } = toolProcessors[toolName];
+    for (const toolName of processorNames) {
+      const { replay } = findToolProcessor(toolName)!;
 
       expect(toolsMap[toolName].replay, toolName).toBe(replay);
       expect(Object.isFrozen(replay), toolName).toBe(true);
@@ -729,7 +814,7 @@ describe('toolProcessors classification invariants', () => {
       descriptors.add(replay);
     }
 
-    expect(descriptors.size).toBe(toolNames.length);
+    expect(descriptors.size).toBe(processorNames.length);
   });
 
   it('freezes only the replay descriptor, leaving the definition itself mutable metadata', () => {
@@ -757,6 +842,10 @@ describe('toolsMap exhaustiveness', () => {
     ['brush', 'brush'],
     ['pencil', 'pencil'],
     ['color-replacement', 'color-replacement'],
+    ['eraser', 'eraser'],
+    ['magic-eraser', 'magic-eraser'],
+    ['paint-bucket', 'paint-bucket'],
+    ['eyedropper', 'eyedropper'],
     ['pen', 'pen'],
     ['freeform-pen', 'freeform-pen'],
     ['curvature-pen', 'curvature-pen'],

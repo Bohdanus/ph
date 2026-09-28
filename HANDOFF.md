@@ -502,13 +502,14 @@ converts the registry flag into a contract the durable path checks instead of a 
 
 ---
 
+---
+
 ## Known defects that are PINNED — do not "fix" them casually
 
 An `it.fails(...)` is a tripwire: it passes today and **fails the moment the defect is fixed**, so a
-fix must remove the pin in the same change. There are 36, counted as `it.fails(...)` blocks:
-`grep -rn 'it.fails(' src e2e` returns 36 and every one is in `src/`, and `npm run test` independently
-reports the same 36 as `36 expected fail` out of 3,951 tests in 176 files. The migration-relevant
-ones:
+fix must remove the pin in the same change. There are 34, counted as `it.fails(...)` blocks:
+`grep -rn 'it.fails(' src e2e` returns 34 and every one is in `src/`, and `npm run test` independently
+reports the same 34 as `34 expected fail`. The migration-relevant ones:
 
 | Location                                          | What it pins                                                                                                                                                                                                                                                                                                                                                                                           |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -1507,3 +1508,253 @@ tight for the product — that is the operator's call, and it must be made here 
 branch: the derivation above is what makes a different number defensible, not the number itself.
 
 **Files.** `src/contexts/avif-utils.ts:4-5,15,24-26`, `src/contexts/tiff-utils.ts:11-27`
+---
+
+## Tool surface - the eraser, fill and eyedropper tranche
+
+This file's stated scope is the durable-replay migration and the presentation/append
+boundary, and tool features sit outside it. These six items are inside it anyway, and
+the reason is the same one that put the earlier paint-tool-surface items here: the
+branch's real plan directory is `.kilo/plans/`, which `.gitignore` excludes, so a
+finding recorded there dies with the machine. This file ships with the code. Every
+item below is a control that is rendered and cannot work, or a Photoshop slot that is
+selectable and inert - the two shapes a silent no-op takes here - and each one names
+the fix rather than the wish.
+
+## 46. The `SidebarLeft` suites each carry their own copy of the icon mock
+
+`src/components/SidebarLeft/__tests__/harness.tsx:79-115` is a shared render harness, and its
+docstring says a suite must import it before `../SidebarLeft.tsx` so its hoisted `vi.mock` calls
+apply. **No suite does.** All nine files — `SidebarLeft.cleanup`, `SidebarLeft.color-pickers`,
+`SidebarLeft.context-menu`, `SidebarLeft.flyout`, `SidebarLeft.icon-state`, `SidebarLeft.keyboard`,
+`SidebarLeft.layout`, `SidebarLeft.primary-selection`, `SidebarLeft.rendering` — re-declare the
+whole `storeState` / `toolArgs` / `useApp` / `useCurrentTool` / `toolIcons` fixture inline, so the
+harness has no callers and the mock it holds is dead weight that still has to be kept compiling.
+
+The cost is a defect that only appears on the next tool. `toolIcons` is a hand-written object
+literal listing every icon name, and `SidebarLeft` renders
+`getToolIcon(tool.name)`. Add a tool and the literal is out of date, so `Icon` is `undefined` and
+React throws `Element type is invalid` from `createFiberFromTypeAndProps` — in **every** file in the
+directory, with a message that names neither the missing icon nor the stale literal. Adding the
+four eraser-family icons meant editing the same list ten times.
+
+**Fix.** Delete the inline `vi.mock`/`vi.hoisted` blocks from the nine suites, import
+`storeState` / `toolArgs` / `goToTool` / `patchToolArgs` / `toolbarButtonByName` from
+`./harness` in each (the import must precede `../SidebarLeft.tsx`, which the harness docstring
+already states), and then delete the harness's now-unused duplicates. While in there, replace the
+`toolIcons` literal with `import { toolIcons } from '../toolIcons.tsx'` so the list cannot go stale
+again — `SidebarLeft.icon-state` needs per-name `data-icon` attributes, so it needs a
+`vi.mock` that maps over the real keys rather than a hard-coded array.
+
+**Files.** `src/components/SidebarLeft/__tests__/harness.tsx:79-115` and the nine
+`SidebarLeft.*.test.tsx` files listed above.
+
+---
+
+## 47. `FillToolArgs.size` is written by the tool area and read by nothing
+
+`src/tools/fill.ts:38-46` declares `size: { width: number; height: number }` on `FillToolArgs`,
+with the comment that a fill needs its layer geometry in the committed args. The seeded default is
+`{ width: 1, height: 1 }` (`src/tools/settings.ts`), and the two fill processors take the real size
+from the curried `ProcessorToolParams` — `fillLayer` destructures `params.size` and never reads
+`args.size`. `pos` is genuinely required, because a durable `apply-raster-processor` op replays from
+the stored args alone (`src/contexts/materialization.ts:282`); `size` is not, because the same call
+site passes `{ bitmap, size }` separately.
+
+So the field is a write-only trap: a tool area that forgets to write it produces a layer-sized fill
+with no error, and a reader that trusts `args.size` gets `1x1`. It is also the only tool args in
+the repository that carries a size — every other tool learns it from `params`.
+
+**Fix.** Either drop `size` from `FillToolArgs` and keep only `pos`, or make the processors read
+`args.size` and assert in `src/tools/__tests__/fill.test.ts` that a `pos`/`size` pair in the args
+governs the raster, so the field cannot be write-only. Do not leave it as it is.
+
+**Files.** `src/tools/fill.ts:38-46`, `src/tools/settings.ts` (the two `size: { width: 1, height: 1 }`
+defaults)
+
+---
+
+## 48. The eraser is hard-edged by construction, and three of Photoshop's controls are therefore dead
+
+**Problem.** Photoshop's Eraser options bar has seven live controls: `Mode` (Brush /
+Pencil / Block), `Size`, `Opacity`, `Flow`, `Airbrush`, and the panel's Pressure controls,
+plus `Erase to History`. Three of them cannot work here and are rendered `disabled`:
+`Brush` mode (`src/components/ToolbarsRight/Eraser/Eraser.tsx:56`), `Flow`
+(`:96-104`) and `Airbrush`.
+
+**Why it is not a wiring bug.** The painter issues exactly one `beginPath`, one
+`moveTo` and one `stroke()` per stroke (`src/util/draw.ts:136` dispatches; the
+call-count pins are `src/tools/__tests__/paint-tools.test.ts:227,229`). A canvas
+`stroke()` has no falloff, so the result is always hard-edged, and it has no dab
+loop, so there is nothing for a per-dab alpha ramp (Flow) or a build-up
+accumulator (Airbrush) to vary. `Flow` therefore renders disabled rather than
+changing a readout, and the seeded `EraserMode` is `'pencil'`
+(`src/tools/eraser.ts:16`) rather than Photoshop's `Brush`, because offering
+`Brush` as a selected value would ship a mode that silently renders as Pencil.
+
+**Fix.** Replace the single-path stroke with a stamp loop: build a tip bitmap
+(falloff from Hardness, affine from Angle/Roundness), walk the path by `Spacing`,
+and composite each dab with Flow accumulating into a per-stroke buffer. Do it in a
+new module beside `src/util/draw.ts` rather than inside `drawPen`, and leave the
+legacy `draw` path calling `drawPen` unchanged.
+
+**Tripwires that must be removed in the same change, not weakened.**
+`src/tools/__tests__/paint-tools.test.ts:227,229` pin `beginPath` called exactly
+once and `stroke()` called exactly once for a brush or pencil stroke, and `:222`
+pins `createRadialGradient` once per sample on the spray path. A stamp loop for
+the eraser family fails the first two only if the pins are extended to the eraser
+rather than rewritten; scope them by tool name so the legacy `draw` pins survive.
+`e2e/export/visual-regression.spec.ts` baselines were recorded through `draw` and
+are unaffected as long as `draw` is left alone.
+
+**Files.** `src/components/ToolbarsRight/Eraser/Eraser.tsx:56,96-104`,
+`src/tools/eraser.ts:16`, `src/util/draw.ts:136`,
+`src/tools/__tests__/paint-tools.test.ts:222,227,229`
+
+---
+
+## 49. The bucket and the magic eraser leave a hard edge, because the mask is a threshold
+
+**Problem.** Both `Anti-aliased` (bucket) and `Anti-aliased` (magic eraser) are
+rendered `disabled` (`src/components/ToolbarsRight/MagicEraser/MagicEraser.tsx:19,79`).
+A fill or an erase that ends on a one-pixel stair-step is visibly wrong on a
+photograph, and Photoshop feathers it.
+
+**Why it is not a wiring bug.** `createFloodFillMask` returns a `Uint8Array` of
+`0`/`1` (`src/util/floodFill.ts`), and a boolean mask cannot carry a coverage
+fraction. The boundary test in that module is a single `distance <= tolerance`
+comparison, so the pixel is either in or out.
+
+**Fix.** Return partial coverage instead of a byte: for each masked-boundary
+pixel, compute a coverage value in `[0,1]` from how far its neighbour exceeded the
+threshold, and store it in a `Uint8ClampedArray` alongside the mask. The canonical
+treatment is a ramp of `1.5 - (distance / tolerance)` clamped to `[0,1]`. Then
+`fillLayer` (`src/tools/fill.ts:94`) multiplies its write alpha by that coverage,
+and the existing `alpha` (Opacity) term composes with it. The magic eraser needs
+the same, on the subtraction side.
+
+**Note.** The module is new, so this is additive and no test pins the current
+behaviour — the disabled control is the only place it is recorded, which is the
+point of the entry.
+
+**Files.** `src/util/floodFill.ts`, `src/tools/fill.ts:94`,
+`src/components/ToolbarsRight/MagicEraser/MagicEraser.tsx:19,79`
+
+---
+
+## 50. The bucket has no blend mode, and the per-layer blend seam is not in `main`
+
+**Problem.** Photoshop's Paint Bucket `Mode` is a full blend-mode list. It is not
+rendered here at all, so a bucket fill always composites `source-over`. The
+`Fill` control that does exist (`src/components/ToolbarsRight/MagicEraser/PaintBucket.tsx:38-75`)
+offers `Foreground` enabled and `Pattern` disabled, which is correct and complete
+for what the app supports — the gap is the blend mode, not the fill source.
+
+**Why it is not a wiring bug.** Per-layer blend resolution has no home in `main`.
+The seam that makes an options-bar `Mode` reach a committed layer — resolving the
+blend when the layer is created rather than while drawing, because the layer
+exists before the stroke is rasterized — was written for the brush bar on the
+unmerged `brush-toolbar` branch (`git show brush-toolbar:src/contexts/layer-utils.ts`,
+the `toolLayerBlendMode` function) and has never landed. Re-implementing it here
+would duplicate an in-flight change and produce two seams that will disagree.
+
+**Fix — needs a call, not a patch.** Land `brush-toolbar` first, then extend its
+gate from the paint tool names to include `paint-bucket`, and add the blend
+control to the shared fill bar. The gate is load-bearing: it exists so a stray
+`blendMode` key on a text or shape args object cannot decide how that layer
+composites. Doing it the other way round produces two gates and one of them will
+be wrong.
+
+**Files.** `src/components/ToolbarsRight/MagicEraser/MagicEraser.tsx`,
+`src/contexts/layer-utils.ts` (after the merge)
+
+---
+
+## 51. The eyedropper reads the composite for itself: no per-layer sampling, no ring, no Color Sampler
+
+**Problem.** The eyedropper's `Sample All Layers` renders `disabled`
+(`src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:38`) and
+`sampleAllLayers: true` in the args is refused with a named error rather than
+silently ignored (`src/components/Main/EyedropperToolArea.tsx:66`). Photoshop's
+`Sample` dropdown has five values (Current Layer, Current & Below, All Layers, and
+the two No-Adjustments variants) and its `Show Sampling Ring` is a cursor. The
+Color Sampler Tool — numbered annotations in the Info panel — is absent entirely,
+as are Ruler, Note and Count.
+
+**Why it is not a wiring bug.** `sampleAllLayers` needs a composite read that
+excludes adjustment-layer corrections, which means reading layers individually and
+applying their blend modes and adjustments — a render pipeline the tool does not
+have. The ring is a cursor, and `SidebarLeft` has no cursor registry.
+
+**Fix.** For the dropdown, add the layer-iteration read in the same place the
+composited read already happens (`EyedropperToolArea.tsx`), iterating
+`store.layers` in order and honouring each layer's `blendMode` — which is the same
+walk `drawLayersToCanvas` performs, so extract rather than duplicate it. The
+ring and the Color Sampler are overlay work and belong with the navigation cluster
+(item 52), not here.
+
+**Files.** `src/components/ToolbarsRight/Eyedropper/Eyedropper.tsx:38`,
+`src/components/Main/EyedropperToolArea.tsx:66`,
+`src/components/SidebarLeft/SidebarLeft.tsx`
+
+---
+
+## 52. Hand, Zoom and Rotate View are absent because the view transform is commented out
+
+**Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and
+the placeholder is a commented-out JSX line: `src/components/SidebarLeft/SidebarLeft.tsx:412`
+is `{/*<Zoom />*/}`.
+
+**Why it is not a wiring bug.** There is no view transform to wire. The store's
+zoom data is entirely commented out — `src/contexts/StoreContext.tsx:953-957` is
+`// const zoomDataRef = useRef<ZoomData>({ dx: 0, dy: 0, zoom: 1 });` and the rest
+of that block — and `usePointerPosition` maps client coordinates to image pixels
+through a `scale` supplied by the host rather than owning a view transform itself.
+`Main.tsx:53` initialises `interactionMode = 'zoom'` and nothing ever sets it to
+that string, so the name is currently a dead default rather than a feature.
+
+**Fix.** Decide whether the canvas has a view transform at all, because three
+different features want one and it should be one: pan/zoom, the space-drag
+temporary-pan behaviour every tool inherits, and the tool cursors that must track
+the view (a brush tip circle is a screen-space circle). A `DocumentViewScope`
+owning `{ dx, dy, zoom }`, with `usePointerPosition` and every pointer-to-image
+conversion reading from it, is the shape the commented-out code was reaching for.
+Do not start with a Hand tool; start with the scope, and the three tools fall out.
+
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:412`,
+`src/contexts/StoreContext.tsx:953-957`, `src/hooks/usePointerPosition.ts`,
+`src/components/Main/Main.tsx:53`
+
+---
+
+## 53. Six selectable tools do nothing at all, and the honest fix is five lines
+
+**Problem.** `pen`, `freeform-pen`, `curvature-pen`, `add-anchor-point`,
+`delete-anchor-point`, `convert-point` and `custom-shape` are all in
+`toolbar-mapping.ts`'s `availableTools` and all render a button. Each is
+`commit: 'unimplemented'` with `imageProcessor: unimplemented`
+(`src/tools/toolProcessors.ts:237` for `pen`, `:268` for `custom-shape`), and the
+processor returns `[null]`. Each has no `interactionMode` arm in
+`src/components/Main/Main.tsx`, so each falls through to `else EventHandler =
+DummyToolArea` (`:177`) — a `display: none` div with no handlers. **They do not
+consume a history entry**, which is the thing an earlier inventory of this repo
+got wrong and which is worth stating because it changes the severity: the defect
+is a dead button, not a corrupted document.
+
+**Why it is not a wiring bug.** These are the pen family and custom shapes, and
+they need a bezier path model with subpaths and holes, a fill rule, and a CPU
+scanline rasterizer because boolean path operations cannot go through `Path2D`.
+That is a phase of work, not a wiring fix.
+
+**Fix — needs a call, not a patch.** Two honest options, and the choice is the
+operator's. Either hide the six from `toolbarMap` until they work, or make
+`unimplemented` throw a named error at `toolProcessors.ts:103` so selecting one
+fails loudly instead of silently doing nothing. Throwing is the smaller diff and
+converts a silent no-op into a visible one, but it changes seven existing tools'
+behaviour, which is a product decision rather than a cleanup. Whatever is chosen,
+do it before the next tool tranche: every new tool inherits the same silent
+failure, and the four added here would have shipped the same way had the spine
+agent not checked `Main.tsx:53`.
+
+**Files.** `src/tools/toolProcessors.ts:103,237,268`,
+`src/components/Main/Main.tsx:53,177`, `toolbar-mapping.ts:47-71`

@@ -8,6 +8,7 @@ import type { CropToolArgs } from '../tools/crop.ts';
 import type { BlurToolArgs } from '../tools/blur.ts';
 import type { ColorsToolArgs } from '../tools/colors.ts';
 import type { LevelsToolArgs } from '../tools/levels.ts';
+import type { FillToolArgs } from '../tools/fill.ts';
 
 /**
  * Tool args may arrive from an older build that still had dedicated Circle and
@@ -44,6 +45,21 @@ export function saveLastSettings(args: ToolArgs) {
     lastSavedSettings['feather-magnetic-lasso'] = cloneDeep({ ...args, points: [] });
   } else if (toolName === 'magic-wand') {
     lastSavedSettings['magic-wand'] = cloneDeep(args);
+  } else if (toolName === 'eraser') {
+    // A typed arm, not the bare-`{ toolName }` group below: Mode, Size, Opacity and the foreground
+    // are all settings the user chose, and a bare arm would discard every one of them on the same
+    // tick the tool is switched away from. The point list goes the way `draw`'s does.
+    lastSavedSettings.eraser = cloneDeep({ ...args, points: [] });
+  } else if (toolName === 'magic-eraser' || toolName === 'paint-bucket') {
+    // Same reasoning, and `pos`/`size` are the per-gesture geometry the `draw` and `crop` arms
+    // also drop: persisting them would restore the last click's position into the next fill.
+    (lastSavedSettings as Record<string, ToolArgs>)[toolName] = cloneDeep(
+      omit(args as unknown as FillToolArgs, 'pos', 'size')
+    ) as ToolArgs;
+  } else if (toolName === 'eyedropper') {
+    // Typed rather than bare even though nothing here is geometric: Sample Size is a real user
+    // choice, and the bare group exists for tools whose only setting is that they exist.
+    lastSavedSettings.eyedropper = cloneDeep({ ...args });
   } else if (toolName === 'rectangular-selection') {
     lastSavedSettings['rectangular-selection'] = cloneDeep({ toolName: 'rectangular-selection' });
   } else if (toolName === 'triangle' || toolName === 'polygon') {

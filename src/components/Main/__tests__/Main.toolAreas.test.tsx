@@ -67,6 +67,9 @@ vi.mock('../MagicWandToolArea.tsx', () => ({ MagicWandToolArea: marker('magic-wa
 vi.mock('../RectangularSelectionToolArea.tsx', () => ({
   RectangularSelectionToolArea: marker('rectangular-selection'),
 }));
+vi.mock('../EraserToolArea.tsx', () => ({ EraserToolArea: marker('eraser') }));
+vi.mock('../FillToolArea.tsx', () => ({ FillToolArea: marker('fill') }));
+vi.mock('../EyedropperToolArea.tsx', () => ({ EyedropperToolArea: marker('eyedropper') }));
 
 const toolAreaTestId = () => {
   const ids = [
@@ -79,6 +82,9 @@ const toolAreaTestId = () => {
     'feather-magnetic-lasso',
     'magic-wand',
     'rectangular-selection',
+    'eraser',
+    'fill',
+    'eyedropper',
   ];
   return ids.map((id) => screen.queryByTestId(`tool-area-${id}`)).findIndex((el) => el !== null);
 };
@@ -123,6 +129,13 @@ describe('Main tool-area routing', () => {
     ['feather-magnetic-lasso', 'feather-magnetic-lasso'],
     ['magic-wand', 'magic-wand'],
     ['rectangular-selection', 'rectangular-selection'],
+    // The eraser is a drag area that is NOT `DrawToolArea`, so it gets its own mode and its own
+    // area rather than riding on the 'draw' arm. The two fill tools share one area because they
+    // differ only in what their processor writes into the fill mask.
+    ['eraser', 'eraser'],
+    ['magic-eraser', 'fill'],
+    ['paint-bucket', 'fill'],
+    ['eyedropper', 'eyedropper'],
   ])('routes the %s tool to the %s tool area', (toolName, expected) => {
     storeState.toolName = toolName;
 
@@ -181,6 +194,28 @@ describe('Main tool-area routing', () => {
 
     expect(canvases(container)[1].style.display).toBe('block');
     expect(canvases(container)[2].style.display).toBe('none');
+  });
+
+  it('shows the tool overlay for the eraser stroke preview', () => {
+    // The eraser is the only one of the four that needs a preview overlay. Omitting it from the
+    // hardcoded display list would leave the stroke invisible until the mouse came up, which reads
+    // as a dead tool rather than as a missing list entry.
+    storeState.toolName = 'eraser';
+    const { container } = render(<Main />);
+
+    expect(canvases(container)[1].style.display).toBe('block');
+  });
+
+  it('keeps the tool overlay hidden for the fill and eyedropper tools', () => {
+    // Both commit on the click itself and never draw a preview, so the overlay has nothing to
+    // show — and showing it would leave a stale overlay from an earlier tool on the document.
+    for (const toolName of ['paint-bucket', 'magic-eraser', 'eyedropper'] as const) {
+      storeState.toolName = toolName;
+      const { container, unmount } = render(<Main />);
+
+      expect(canvases(container)[1].style.display).toBe('none');
+      unmount();
+    }
   });
 
   it('sizes both overlays to the document and enables smoothing on the main canvas', () => {

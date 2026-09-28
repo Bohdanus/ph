@@ -4,11 +4,15 @@ import Blur from '../components/ToolbarsRight/Blur/Blur.tsx';
 import Color from '../components/ToolbarsRight/Colors/Color.tsx';
 import Crop from '../components/ToolbarsRight/Crop/Crop.tsx';
 import Draw from '../components/ToolbarsRight/Draw/Draw.tsx';
+import Eraser from '../components/ToolbarsRight/Eraser/Eraser.tsx';
+import Eyedropper from '../components/ToolbarsRight/Eyedropper/Eyedropper.tsx';
 import Shape from '../components/ToolbarsRight/Figures/Shape.tsx';
 import FeatherMagneticLasso from '../components/ToolbarsRight/Lasso/FeatherMagneticLasso.tsx';
 import FreehandLasso from '../components/ToolbarsRight/Lasso/FreehandLasso.tsx';
 import PolygonalLasso from '../components/ToolbarsRight/Lasso/PolygonalLasso.tsx';
 import Levels from '../components/ToolbarsRight/Levels/Levels.tsx';
+import MagicEraser from '../components/ToolbarsRight/MagicEraser/MagicEraser.tsx';
+import PaintBucket from '../components/ToolbarsRight/MagicEraser/PaintBucket.tsx';
 import MagicWand from '../components/ToolbarsRight/MagicWand/MagicWand.tsx';
 import Reposition from '../components/ToolbarsRight/Move/Reposition.tsx';
 import RectangularSelection from '../components/ToolbarsRight/RectangularSelection/RectangularSelection.tsx';
@@ -32,7 +36,7 @@ const placeholderTool = (
 
 type ToolsMap = Record<
   ToolName,
-  ToolProcessorDefinition & {
+  Partial<ToolProcessorDefinition> & {
     icon: string;
     toolboxComponent: ToolbarRightComponent;
   }
@@ -84,6 +88,12 @@ export const toolsMap: ToolsMap = {
     icon: 'color-replacement',
     toolboxComponent: placeholderTool('Color Replacement Tool', 'color-replacement'),
   },
+  eraser: { ...toolProcessors.eraser, icon: 'eraser', toolboxComponent: Eraser },
+  'magic-eraser': { ...toolProcessors['magic-eraser'], icon: 'magic-eraser', toolboxComponent: MagicEraser },
+  'paint-bucket': { ...toolProcessors['paint-bucket'], icon: 'paint-bucket', toolboxComponent: PaintBucket },
+  // No processor: the eyedropper rasterizes nothing (see `PIXEL_FREE_TOOLS` in toolProcessors.ts),
+  // so this entry carries only the icon and the options bar.
+  eyedropper: { icon: 'eyedropper', toolboxComponent: Eyedropper },
   pen: { ...toolProcessors.pen, icon: 'pen', toolboxComponent: placeholderTool('Pen Tool', 'pen') },
   'freeform-pen': {
     ...toolProcessors['freeform-pen'],

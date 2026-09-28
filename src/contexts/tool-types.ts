@@ -11,6 +11,9 @@ import type { LassoToolArgs } from '../tools/polygonSelection.ts';
 import type { RectangularSelectionToolArgs } from '../tools/rectangularSelection.ts';
 import type { FeatherMagneticLassoToolArgs } from '../tools/featherMagneticLasso.ts';
 import type { MagicWandToolArgs } from '../tools/magicWand.ts';
+import type { EraserToolArgs } from '../tools/eraser.ts';
+import type { FillToolArgs } from '../tools/fill.ts';
+import type { EyedropperToolArgs } from '../tools/eyedropper.ts';
 
 import type { BitmapSource, Pos, Size } from './general-types.ts';
 
@@ -32,6 +35,10 @@ export type ToolArgsByName = {
   brush: PaintToolArgs;
   pencil: PaintToolArgs;
   'color-replacement': PaintToolArgs;
+  eraser: EraserToolArgs;
+  'magic-eraser': FillToolArgs;
+  'paint-bucket': FillToolArgs;
+  eyedropper: EyedropperToolArgs;
   pen: { toolName: 'pen' };
   'freeform-pen': { toolName: 'freeform-pen' };
   'curvature-pen': { toolName: 'curvature-pen' };
