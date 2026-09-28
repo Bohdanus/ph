@@ -270,7 +270,7 @@ export function deriveSetDocumentFrameEntry(
  * Structural guard for a durable selection snapshot.
  *
  * A key-absent `activeSelectionId` is ACCEPTED, because `replayHistory` reads it
- * as `next?.activeSelectionId ?? null` (`history-replay.ts:107`): a snapshot that
+ * as `next?.activeSelectionId ?? null` (`history-replay.ts:102`): a snapshot that
  * omits the id still retains its selections and only loses the active id.
  * Rejecting that shape here would make the shadow clear selections that legacy
  * replay keeps. The guard only asks whether the value can be read as a snapshot
@@ -330,16 +330,24 @@ export function deriveSetSelectionEntry(
 
 /**
  * The layer-property actions the append boundary translates, and the single
- * property each one owns. This map is the only place membership is stated:
- * a per-action if/else beside it would let the two disagree, and an action
- * added here without a property arm would make conversion record no operation
- * while the boundary reported an invalid value.
+ * property each one owns. This map is the only place membership is stated: a
+ * per-action if/else beside it would let the two disagree, and an action added
+ * here without a property arm would make conversion record no operation while
+ * the boundary reported an invalid value.
+ *
+ * The value is the closed set of properties an action may own, not every key
+ * `DurableLayerPropertyPatch` admits. Narrowing it here is what lets both the
+ * derivation and the append validator exhaustively switch on the owned key —
+ * widening it to `keyof DurableLayerPropertyPatch` would let a new action own
+ * `opacity` and fall into the visibility arm as a silent default.
  */
+type LayerPropertyKey = 'visible' | 'name';
+
 const LAYER_PROPERTY_BY_ACTION = {
   [SHOW_LAYER_ACTION]: 'visible',
   [HIDE_LAYER_ACTION]: 'visible',
   [RENAME_LAYER_ACTION]: 'name',
-} as const satisfies Partial<Record<ActionType, keyof DurableLayerPropertyPatch>>;
+} as const satisfies Partial<Record<ActionType, LayerPropertyKey>>;
 
 type LayerPropertyAction = keyof typeof LAYER_PROPERTY_BY_ACTION;
 type LayerPropertyOperation = Extract<DurableOperation, { kind: 'set-layer-properties' }>;
@@ -354,7 +362,7 @@ export function isSetLayerPropertiesAction(actionName: ActionType): actionName i
  * use this rather than re-deriving, so the check reads the action and not the
  * derivation that produced the thing being checked.
  */
-export function layerPropertyKeyFor(actionName: ActionType): keyof DurableLayerPropertyPatch | null {
+export function layerPropertyKeyFor(actionName: ActionType): LayerPropertyKey | null {
   return isSetLayerPropertiesAction(actionName) ? LAYER_PROPERTY_BY_ACTION[actionName] : null;
 }
 
@@ -590,7 +598,7 @@ export function legacyHistoryToDurable(
         // records nothing and leaves `currentLayers` alone. A named but missing
         // anchor is not a placement at the bottom: `remaining.indexOf` would be
         // -1, and `+ 1` would record a move to index 0 that the document never
-        // performs. The cursor map above already treats a null operation as
+        // performs. The cursor map below already treats a null operation as
         // "map to the preceding durable cursor", the same as a dropped rename.
         const anchorPresent = !afterWhichLayerId || currentLayers.has(afterWhichLayerId);
         if (layerToMoveId && currentLayers.has(layerToMoveId) && anchorPresent) {

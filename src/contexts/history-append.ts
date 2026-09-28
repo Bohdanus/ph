@@ -304,7 +304,7 @@ function sameSelection(left: unknown, right: unknown): boolean {
  * the two deep-copied it is.
  *
  * `activeSelectionId` is compared through `?? null` because both the derivation
- * and `replayHistory` (`history-replay.ts:107`) read a key-absent id as `null`.
+ * and `replayHistory` (`history-replay.ts:102`) read a key-absent id as `null`.
  * A strict `!==` would report a mismatch between a legacy arg that omits the key
  * and the normalized planned entry, degrading a correct append to reconversion.
  */
@@ -380,14 +380,23 @@ export function validatePlannedDurableEntry(entry: HistoryItem, planned: Durable
     if (Object.keys(patch).length !== 1) {
       return 'the durable layer-property operation does not match the legacy entry';
     }
-    if (layerPropertyKeyFor(entry.actionName) === 'name') {
-      const name = (entry.args as { name?: unknown } | undefined)?.name;
-      if (typeof name !== 'string') return 'the layer-property value is invalid';
-      if (patch.name !== name) return 'the durable layer name does not match the legacy entry';
-    } else if (patch.visible !== (entry.actionName === SHOW_LAYER_ACTION)) {
-      return 'the durable layer visibility does not match the legacy entry';
+    // Exhaustive on the owned key rather than `name` versus "everything else":
+    // an action that owned some other property would otherwise be graded
+    // against `visible` and reported as a mismatch for a correct entry.
+    switch (layerPropertyKeyFor(entry.actionName)) {
+      case 'name': {
+        const name = (entry.args as { name?: unknown } | undefined)?.name;
+        if (typeof name !== 'string') return 'the layer-property value is invalid';
+        if (patch.name !== name) return 'the durable layer name does not match the legacy entry';
+        return null;
+      }
+      case 'visible':
+        return patch.visible === (entry.actionName === SHOW_LAYER_ACTION)
+          ? null
+          : 'the durable layer visibility does not match the legacy entry';
+      default:
+        return 'the action does not own a durable layer property';
     }
-    return null;
   }
 
   return `no durable translation is published for "${entry.actionName}" yet`;
