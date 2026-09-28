@@ -296,31 +296,6 @@ where to read them.
 | Helper unit tests | `npm run test:e2e:unit` |
 | E2E tests         | `npm run test:e2e`      |
 
-Three groups used to; all three are fixed, and each was fixed by changing
-an assertion or a wait rather than by loosening a threshold:
-
-| formerly failing tests            | was                                     | now                                                               |
-| --------------------------------- | --------------------------------------- | ----------------------------------------------------------------- |
-| `cdp-helpers.spec.ts`             | 2 headless, 5 headed, disjoint per mode | capture scale is no longer asserted; mode-independent             |
-| `sidebar-keyboard.spec.ts:76, 88` | 0–2, 5 of 12 measured headless runs     | root-caused to a `requestAnimationFrame` focus race, then awaited |
-| `levels.spec.ts:64, 109`          | 2, both modes                           | canvas located by test id, not document order                     |
-
-- The CDP group derived its expected capture size from `window.devicePixelRatio`, but
-  the capture scale is neither a function of that value nor of the emulated ratio.
-  The contract was removed rather than re-derived — the scale belongs to Chrome, not
-  to this code — and replaced with assertions that hold everywhere: exact rect, one
-  integral scale on both axes, correct pixels, and no rescaling of the helper's own.
-  Each was mutation-tested. See `OPEN_PROBLEMS.md` for the measurements.
-- `sidebar-keyboard.spec.ts` was a real race, and not the one it looked like: the app
-  focuses the flyout's first item in a `requestAnimationFrame`, so a keypress landing
-  in that one-frame gap is handled by the tool button again and re-opens the flyout
-  instead of activating an item. The opener now waits for the focus to land.
-- The visual-regression baselines are genuinely compared. They were not before:
-  `if (testInfo.config.updateSnapshots)` was always truthy, because Playwright's
-  default for that option is the string `'missing'`, so every run re-recorded the
-  baseline and returned before `compareScreenshots`. A green run now means the pixels
-  matched.
-
 The workspace canvas is located by `data-testid="workspace-canvas"`, published on the
 primary `<canvas>` in `src/components/Main/Main.tsx`. There is no positional fallback:
 a document index put the locator on the Draw preview canvas, or on a hidden overlay
@@ -367,14 +342,12 @@ becomes a hard error), enable `retries: 2`, switch the reporter to `github`, and
 default `workers` to full parallelism. Locally you get `workers: 1` and a
 `list`/`html` reporter, which keeps a debug run readable.
 
-**Both local and CI runs are headless.** The old `headless: !!process.env.CI` meant a
-local run was _headed_ — the trap this file opens on. It is now
+**Both local and CI runs are headless.** `playwright.config.ts` resolves
 `headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1'`, so the only way to get a
 window is to ask for one explicitly. `PLAYWRIGHT_ALLOW_HEADED=1` is that switch, and
-`test:e2e:headed` is the script wrapping it. The previous `PLAYWRIGHT_HEADLESS`
-variable is gone and setting it now does nothing, and so is `PLAYWRIGHT_HEADED` —
-renamed, because it is the name a model reaches for first when it wants a window, and
-that must not be sufficient on its own.
+`test:e2e:headed` is the script wrapping it. `PLAYWRIGHT_HEADLESS` is not read, and
+neither is `PLAYWRIGHT_HEADED` — the latter is the name a model reaches for first
+when it wants a window, and that must not be sufficient on its own.
 
 To use a browser other than Chrome, set `PLAYWRIGHT_CHANNEL` yourself:
 

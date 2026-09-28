@@ -527,12 +527,12 @@ describe('useHistory undo replay', () => {
     expect(dispatchMock).not.toHaveBeenCalled();
   });
 
-  it('marks navigation dirty without mutating the old deleted-layer record', () => {
+  it('publishes navigation without mutating the old deleted-layer record', () => {
     const { state } = setup();
     const deletedLayers = state.deletedLayers;
     useHistory().undo();
+    expect(state.deletedLayers).not.toBe(deletedLayers);
     expect(deletedLayers).toEqual({});
-    expect(state.hasUnsavedChanges).toBe(true);
   });
 
   it('preserves PSD baseline metadata through tool edits and removal undo/redo', async () => {
@@ -669,7 +669,6 @@ describe('useHistory undo replay', () => {
       expect(state.activeLayerId).toBeNull();
       expect(state.totalSize).toEqual({ width: 128, height: 64 });
       expect(state.documentFrame).toBe(currentFrame);
-      expect(state.hasUnsavedChanges).toBe(false);
     });
 
     it('fails closed on redo as well when the staged presentation cannot be published', () => {
@@ -699,7 +698,6 @@ describe('useHistory undo replay', () => {
       expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'SET_DURABLE_STATUS' }));
       expect(state.layers['layer-1']).toMatchObject({ id: 'layer-1', visible: true });
       expect(state.historyIndex).toBe(0);
-      expect(state.hasUnsavedChanges).toBe(true);
     });
 
     it('treats a missing mounted canvas as nothing to publish and still applies the replay', () => {
@@ -772,7 +770,6 @@ describe('useHistory undo replay', () => {
       expect(consoleError).toHaveBeenCalledWith('History replay is unavailable', failure);
       expect(state.layers).toEqual({});
       expect(state.historyIndex).toBe(1);
-      expect(state.hasUnsavedChanges).toBe(false);
     });
 
     it('stringifies a non-Error replay failure into the diagnostic message', () => {

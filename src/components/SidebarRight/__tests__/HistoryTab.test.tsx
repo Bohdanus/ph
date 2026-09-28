@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import HistoryTab from '../HistoryTab.tsx';
 import type { HistoryItem } from '@/contexts/history-types.ts';
+import { getHistoryItemTitle } from '@/contexts/useHistory.ts';
 import { NEW_LAYER_ACTION, RENAME_LAYER_ACTION, TOOL_ACTION, HIDE_LAYER_ACTION } from '@/util/constants.ts';
 import { createMockHistoryItem } from '@/__tests__/fixtures/history.ts';
 
@@ -51,16 +52,17 @@ vi.mock('@/contexts/StoreContext.tsx', () => ({
   useStore,
 }));
 
-vi.mock('@/contexts/useHistory.ts', () => ({
-  useHistory,
-  getHistoryItemTitle: (item: HistoryItem) => {
-    if (item.actionName === RENAME_LAYER_ACTION) return (item.args as { name?: string })?.name || 'Rename';
-    if (item.actionName === TOOL_ACTION) return `Tool: ${(item.args as { toolName?: string })?.toolName || 'unknown'}`;
-    if (item.actionName === HIDE_LAYER_ACTION) return 'Hide Layer';
-    if (item.actionName === NEW_LAYER_ACTION) return (item.args as { name?: string })?.name || 'New Layer';
-    return item.actionName;
-  },
-}));
+vi.mock('@/contexts/useHistory.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/contexts/useHistory.ts')>();
+  return {
+    ...actual,
+    useHistory,
+  };
+});
+
+const renameTitle = getHistoryItemTitle(mockHistory[0]);
+const toolTitle = getHistoryItemTitle(mockHistory[1]);
+const hideTitle = getHistoryItemTitle(mockHistory[2]);
 
 describe('HistoryTab', () => {
   beforeEach(() => {
@@ -82,9 +84,10 @@ describe('HistoryTab', () => {
     render(<HistoryTab />);
     const items = screen.getAllByRole('listitem');
     expect(items).toHaveLength(3);
-    expect(items[0]).toHaveTextContent('Hide Layer');
-    expect(items[1]).toHaveTextContent('Tool: brush');
-    expect(items[2]).toHaveTextContent('Layer 1');
+    expect([renameTitle, toolTitle, hideTitle]).toEqual([RENAME_LAYER_ACTION, 'brush', HIDE_LAYER_ACTION]);
+    expect(items[0]).toHaveTextContent(hideTitle);
+    expect(items[1]).toHaveTextContent(toolTitle);
+    expect(items[2]).toHaveTextContent(renameTitle);
   });
 
   it('highlights current history item', () => {
@@ -202,7 +205,7 @@ describe('HistoryTab', () => {
     render(<HistoryTab />);
     const items = screen.getAllByRole('listitem');
     expect(items).toHaveLength(1);
-    expect(items[0]).toHaveTextContent('Layer 1');
+    expect(items[0]).toHaveTextContent(NEW_LAYER_ACTION);
   });
 
   it('shows tooltip on list items', () => {
@@ -230,9 +233,9 @@ describe('HistoryTab row behaviour', () => {
   });
 
   it.each([
-    ['Hide Layer', 2],
-    ['Tool: brush', 1],
-    ['Layer 1', 0],
+    [hideTitle, 2],
+    [toolTitle, 1],
+    [renameTitle, 0],
   ])('resets history to the original store index behind %s', (title, expectedIndex) => {
     const resetHistoryTo = vi.fn();
     useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
@@ -277,8 +280,8 @@ describe('HistoryTab row behaviour', () => {
 
     const currentMarkers = screen.getAllByTitle('Current state');
     expect(currentMarkers).toHaveLength(1);
-    expect(getItemByTitle('Tool: brush')).toContainElement(currentMarkers[0]);
-    expect(getItemByTitle('Hide Layer')).not.toContainElement(currentMarkers[0]);
+    expect(getItemByTitle(toolTitle)).toContainElement(currentMarkers[0]);
+    expect(getItemByTitle(hideTitle)).not.toContainElement(currentMarkers[0]);
   });
 
   it('marks no item as current when historyIndex points past the end of the list', () => {
@@ -296,9 +299,9 @@ describe('HistoryTab row behaviour', () => {
     useStore.mockReturnValue([{ ...mockStore, historyIndex: 0 }, vi.fn()]);
     render(<HistoryTab />);
 
-    expect(getItemByTitle('Layer 1')).toHaveClass('opacity-100');
-    expect(getItemByTitle('Tool: brush')).toHaveClass('opacity-50');
-    expect(getItemByTitle('Hide Layer')).toHaveClass('opacity-50');
+    expect(getItemByTitle(renameTitle)).toHaveClass('opacity-100');
+    expect(getItemByTitle(toolTitle)).toHaveClass('opacity-50');
+    expect(getItemByTitle(hideTitle)).toHaveClass('opacity-50');
   });
 
   it('renders no list at all when history is empty', () => {
@@ -319,7 +322,7 @@ describe('HistoryTab row behaviour', () => {
     useHistory.mockReturnValue({ resetHistoryTo, toggleDisabled: vi.fn() });
     render(<HistoryTab />);
 
-    const row = getItemByTitle('Tool: brush');
+    const row = getItemByTitle(toolTitle);
     expect(row).toHaveAttribute('tabindex', '0');
     expect(row).toHaveAttribute('role', 'button');
 

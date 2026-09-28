@@ -84,7 +84,8 @@ then get recorded as "flaky" and neither gets fixed.
 operator-input-caused failure has been reproduced in this suite: the one
 intermittent failure on record before headless became the default
 (`sidebar-keyboard.spec.ts:88`) turned out to be a real race that fires in headless
-runs with no operator input at all — see the Enter entry below. The hazard is
+runs with no operator input at all; the mechanism is recorded at
+`sidebar-keyboard.spec.ts:5-10`. The hazard is
 reported as recurring across this project's test work generally, which is why the
 default is structural rather than procedural: it removes the failure class instead
 of relying on everyone to remember.
@@ -465,57 +466,6 @@ once per tool after the options bar for that tool has rendered. `e2e/erase-fill-
 threads a `canvasBox(page)` call through `stroke`, `clickAt`, `readPixel`,
 `measureErasedWidth` and `slabClip` for this reason. A helper that returns the box
 alongside the capture it took would make the mistake harder to make.
-
-## Fixed — Enter did not reliably close the flyout (was P2, a real race)
-
-`e2e/sidebar-keyboard.spec.ts:76` and `:88`
-
-`expect(locator).toBeHidden() failed — waiting for getByRole('menu')`, at the
-assertion that follows `page.keyboard.press('Enter')`.
-
-Observed in **4 of 5 headless runs** (individual test failures: 1, 2, 1, 1, 0),
-with no operator input of any kind. That is what establishes this as a genuine race
-rather than the headed-input hazard above, and it means **headless does not fix
-it**. It was previously recorded only as "flaky at roughly 1 run in 5" from a single
-headed observation; headless is what showed the real rate.
-
-Headed rate is not established: 0 failures in 2 observed headed runs, which is not
-enough to claim it is mode-independent. It is only established that the race fires
-headless.
-
-**The mechanism was never "the flyout closes asynchronously".** That was the reading
-this entry used to stop at. It is diagnosed, and the diagnosis is elsewhere:
-`SidebarLeft.tsx` focuses the flyout's first item from a `requestAnimationFrame`
-callback in the tool button's keydown handler, _not_ in the React commit that mounts
-the menu. "The menu is visible" and "an item holds focus" are therefore two different
-moments, one animation frame apart.
-
-`openToolFlyoutViaKeyboard` waited only on visibility, so it could return inside that
-gap. The test's next `ArrowDown`/`Enter` then landed on the **tool button** handler
-again, which re-opens the flyout rather than navigating or activating it - so Enter
-left the flyout open, and the following `toBeHidden()` timed out after 5 s.
-
-**Fixed** by waiting for the app to actually take focus before returning. Measured
-on the same host, same command, 12 consecutive runs of the two Enter tests:
-
-| variant                            | failures |
-| ---------------------------------- | -------- |
-| wait on visibility only (previous) | 5 of 12  |
-| wait on the promised item's focus  | 0 of 12  |
-
-Two details the fix had to get right, both found by the first version failing:
-
-- The readiness wait belongs to the keyboard opener, not to `waitForFlyout`. The
-  right-click path never focuses an item, so a shared assertion would break it.
-- `ArrowUp` focuses the **last** item, not the first (`SidebarLeft.tsx`:
-  `event.key === 'ArrowUp' ? items.length - 1 : ...`). A single `.first()` assertion
-  is simply wrong for that key and was caught by running the file.
-
-Since the race was the suite's last intermittent failure, `openToolFlyoutViaKeyboard`'s
-unit pins were extended to cover the new contract: a two-item flyout so "first" and
-"last" are distinguishable, the correct end asserted per key, single-valued focus in
-the double, and a case that rejects when the flyout opens but nothing takes focus.
-Removing the readiness wait fails that last one.
 
 ## Known-skip tests
 
