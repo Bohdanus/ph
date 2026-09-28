@@ -202,7 +202,7 @@ describe('DocumentPresentationScope ownership', () => {
     const borrowed = createMockImageBitmap(10, 10);
     const stranger = createMockImageBitmap(30, 30);
 
-    scope.retireUnreferenced('doc-1', new Set([alsoNamed, stranger, borrowed]));
+    scope.retireUnreferenced('doc-1', () => new Set([alsoNamed, stranger, borrowed]));
     expect(stranger.close).not.toHaveBeenCalled();
     expect(borrowed.close).not.toHaveBeenCalled();
     // `alsoNamed` is published AND named, so liveness has to veto it — that is the
@@ -210,8 +210,33 @@ describe('DocumentPresentationScope ownership', () => {
     expect(alsoNamed.close).not.toHaveBeenCalled();
     expect(owned.close).toHaveBeenCalledTimes(1);
     // A second call must not close the same raster twice.
-    scope.retireUnreferenced('doc-1', new Set());
+    scope.retireUnreferenced('doc-1', () => new Set());
     expect(owned.close).toHaveBeenCalledTimes(1);
+
+    scope.dispose();
+  });
+
+  it('never asks for the liveness set when it owns nothing for the document', () => {
+    // The liveness question is the store's, and answering it is O(history) over an
+    // array that grows for the life of a session. It is passed as a thunk precisely
+    // so the ownership check above can refuse it: a document this scope has
+    // published nothing for has nothing to retire, whatever the answer says.
+    const scope = new DocumentPresentationScope();
+    const walk = vi.fn<() => ReadonlySet<BitmapSource>>(() => new Set());
+    const ownedElsewhere = createMockImageBitmap();
+    scope.trackPublished('doc-2', ownedElsewhere);
+
+    scope.retireUnreferenced('doc-1', walk);
+
+    expect(walk).not.toHaveBeenCalled();
+    expect(ownedElsewhere.close).not.toHaveBeenCalled();
+
+    // The control, so the assertion above cannot pass for the wrong reason: a
+    // document it DOES own asks exactly once, and the empty answer is honoured.
+    scope.retireUnreferenced('doc-2', walk);
+
+    expect(walk).toHaveBeenCalledTimes(1);
+    expect(ownedElsewhere.close).toHaveBeenCalledTimes(1);
 
     scope.dispose();
   });

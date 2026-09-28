@@ -179,7 +179,8 @@ and destroys the only signal that the defect existed.
 
 ## 7. A second, NAMED observation — `useFile.test.tsx` JPEG-quality save
 
-**Status: OPEN. Named, not reproduced. Two failures in roughly fifteen full runs.**
+**Status: OPEN. Named, not reproduced. THREE full-run failures, and the last one landed
+immediately after the only change to this test's import graph.**
 
 This one is worth separating from section 1, because unlike it the failing test
 was captured:
@@ -193,12 +194,21 @@ FAIL  src/contexts/__tests__/useFile.test.tsx > FileProvider PSD integration
 
 Observed 2026-09-28, in a full `npm run test` on branch
 `fix/handoff-2026-09-28`. It has **not** reproduced on demand: the same file
-passes in isolation, and six further consecutive full runs were green (198/198
-files, 4513 passed, 34 expected fail). It then **recurred** during the rebase
-onto the responsive tranche, so the honest tally is **two** failures in roughly
-fifteen full runs, not one in seven. The assertion text was not captured on
-either occasion — only the test name — so the difference from section 1 is the
-name and a second data point, not a diagnosis.
+passes in isolation every time, and consecutive full runs are usually green. It has
+now failed **three** times in a full run and never in isolation. The assertion text
+was never captured — only the test name — so the difference from section 1 is the
+name and three data points, not a diagnosis.
+
+**The third occurrence is the one that matters, and it lands on the lead below.** It
+recurred on `docs/review-findings-2026-09-28` in the run immediately after that branch
+extracted the dialog focus-ownership block out of `SaveDialog.tsx` into
+`src/hooks/useDialogFocusContainment.ts` — the one file in this test's import graph
+that either branch has changed. Before that extraction the tally was two; after it,
+three. **That is a correlation across two branches, not a cause**, and it is the
+cheapest thing to test next: revert the extraction's mount effect alone, run the full
+suite in a loop, and see whether the third occurrence goes away. Do not run a scoped
+loop and conclude anything from it — section 6 forbids inferring from a scoped green
+for a failure observed in a full run.
 
 **Do not close it as "the pool".** Two things make this one worth keeping
 open, and neither is the pool:

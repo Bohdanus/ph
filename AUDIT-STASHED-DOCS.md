@@ -173,5 +173,5 @@ Recorded so the next session does not re-audit them. Each was verified against m
   nothing fails.
 - `docs/next-target-useLayer.md` Priority A "THE RACE" — not real, and never was.
   `Text.tsx:86` clears the shared draft before committing and
-  `useCurrentTool.tsx:71` writes the ref synchronously, so the next `commitDirtyTool`
+  `useCurrentTool.tsx:62` writes the ref synchronously, so the next `commitDirtyTool`
   short-circuits. All three guards predate the plan.

@@ -4,6 +4,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
 import { getHistoryItemTitle, useHistory } from '../../contexts/useHistory.ts';
+import { isDocumentGestureOpen } from '../../hooks/document-gesture.ts';
 import type { LayerId } from '../../contexts/layer-types.ts';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
@@ -70,6 +71,42 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
     const targetLayer = sortedLayers[index + 2];
     if (!targetLayer) return;
     moveLayerAfter(sortedLayers[index].id, targetLayer.id);
+  };
+
+  // The history tab's three dispatch paths — the row click, the row's Enter/Space,
+  // and the row's eye control — all reach `APPLY_HISTORY_REPLAY` through
+  // `useHistory`, which is the dispatch the keyboard refuses while a pointer
+  // gesture owns the document (`useKeyboardEvents.tsx:134`) and the Undo/Redo
+  // buttons now refuse for the same reason (`HistoryControls.tsx`,
+  // `MobileHeader.tsx`). The drawer's own tab had no gate on any of them.
+  //
+  // Inside a gesture's window the replay is destructive. `resetHistoryTo`
+  // replays `selections` from the SAME `history` array, so `history.length` never
+  // moves and the pending commit's `entries.slice(0, cursor + 1)` truncates the
+  // redo tail with no other symptom. `toggleDisabled` is worse in the same window
+  // rather than equal: it writes the disabled flag onto entries the pending commit
+  // is about to append past.
+  //
+  // On a touch screen this drawer is the most exposed place in the app: a second
+  // finger tapping a history row, or the eye, mid-drag is a two-line repro, and the
+  // drawer is reachable with a second finger because it is not pointer-captured.
+  //
+  // The refusal is at the input layer, not in the writer: no dispatch, so nothing
+  // appends, so nothing truncates. `disabled` is not a substitute here either — it
+  // is read at render time and the gesture slot raises no re-render, so it cannot
+  // see a claim made after the last render, and a row disabled by a mid-gesture
+  // render would stay disabled after the release.
+  const handleRewind = (index: number) => {
+    if (isDocumentGestureOpen()) return;
+    resetHistoryTo(index);
+  };
+
+  // `stopPropagation` runs first and unconditionally, so a refused eye click still
+  // does not travel to the row and rewind behind it.
+  const handleToggleDisabled = (event: React.MouseEvent, itemId: string) => {
+    event.stopPropagation();
+    if (isDocumentGestureOpen()) return;
+    toggleDisabled(itemId);
   };
 
   return (
@@ -307,11 +344,14 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                   <div
                     role="button"
                     tabIndex={0}
-                    onClick={() => resetHistoryTo(originalIndex)}
+                    onClick={() => handleRewind(originalIndex)}
                     onKeyDown={(event) => {
                       if (event.key !== 'Enter' && event.key !== ' ') return;
+                      // `preventDefault` stays unconditional once the key matches: it is
+                      // what stops Space from scrolling the page, which is a property of
+                      // the key and not of the gesture. The gate is inside the dispatch.
                       event.preventDefault();
-                      resetHistoryTo(originalIndex);
+                      handleRewind(originalIndex);
                     }}
                     className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
                       isCurrent
@@ -324,10 +364,7 @@ export const MobileLayersDrawer: React.FC<MobileLayersDrawerProps> = ({ isOpen, 
                     <div className="flex min-w-0 items-center gap-3">
                       <button
                         type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          toggleDisabled(item.id);
-                        }}
+                        onClick={(event) => handleToggleDisabled(event, item.id)}
                         className="flex min-h-11 min-w-11 shrink-0 items-center justify-center text-gray-500"
                         aria-label={item.disabled ? 'Enable history step' : 'Disable history step'}
                       >
