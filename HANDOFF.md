@@ -998,7 +998,7 @@ replay authority.
 
 ---
 
-## 37. The transient luma plane is a full-frame `Float32Array` where three rows would do
+## 42. The transient luma plane is a full-frame `Float32Array` where three rows would do
 
 **Problem.** `createEdgeMapFromImageData` (`magneticLasso.ts:144`) still allocates
 `luma = new Float32Array(width * height)` at `:146`, a full-frame buffer, and the Sobel pass at
