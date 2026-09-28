@@ -1079,7 +1079,7 @@ tests derive a `minWidth` and then assert the option row is at least that wide:
 ```
 expect(metrics.overflowX, 'the tablet band must scroll the option row').toBe('auto');
 expect(metrics.scrollWidth, 'the option row must be wider than the window')
-  .toBeGreaterThanOrEqual(minWidth);   // 1052: expected >= 1036, received 1032
+  .toBeGreaterThanOrEqual(minWidth);   // :244 — expected >= 1036, received 1032
 ```
 
 Both the Shape and Horizontal Type panels land 4 px short, and both fail
