@@ -6,6 +6,7 @@ import ToolTooltip from './ToolTooltip.tsx';
 import { toolIcons } from './toolIcons.tsx';
 import { slugifyToolLabel, toolbarMap, type ToolbarTool, type ToolbarToolGroup } from '../../../toolbar-mapping.ts';
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+import { descriptionKeyFor } from '../../tools/descriptions/tooltips.ts';
 import { useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
 
 const TOOL_BUTTON_BASE_CLASS =
@@ -203,7 +204,11 @@ const SidebarLeft = () => {
           );
         }}
       >
-        <ToolTooltip label={primaryTool.label} shortcut={primaryTool.shortcut}>
+        <ToolTooltip
+          label={primaryTool.label}
+          shortcut={primaryTool.shortcut}
+          toolName={descriptionKeyFor(primaryTool.name, primaryTool.figure)}
+        >
           <button
             aria-expanded={hasFlyout ? isOpen : undefined}
             aria-haspopup={hasFlyout ? 'menu' : undefined}
