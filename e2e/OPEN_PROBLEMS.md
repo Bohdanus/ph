@@ -38,11 +38,13 @@ breakage or unmaintainable. **P3** = cosmetic / robustness.
 **Run the suite headless** — `npm run test:e2e`. That is the default, and the
 reason is the first entry below.
 
-On the default (headless) configuration the only failures are the export
-baselines and one `pen-types` case, and they share the single layout cause
-recorded in the first entry below — not a defect in the app, and not a defect in
-the specs. Everything else is green, and that has been stable across repeated
-full runs.
+Nothing fails on the default (headless) configuration. The export-baseline and
+`pen-types` failures that used to be recorded here are gone because the cause was
+fixed, not because an assertion was relaxed: `ab5f53c` corrected the export line's
+document constant, which had been derived from the canvas box rather than from the
+document, so the stroke landed 23 rows off the committed baseline. The recorded
+pixels were correct all along. The remaining entries below are latent defects that
+no run trips.
 
 Three defect groups used to fail here and have been fixed in this repository. Their
 evidence is kept below rather than deleted, because each explains a shape the suite

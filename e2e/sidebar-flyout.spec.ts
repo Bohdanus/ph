@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { getWorkspaceCanvas, hasDarkPixels, loadImageData, waitForCanvasPixels } from './helpers/canvas-helpers';
 import {
   clickToolButton,
@@ -22,6 +22,101 @@ const SHAPE_DRAG_HEIGHT = 120;
 
 /** Half-width of a square patch sampled at a point, in CSS pixels. */
 const SAMPLE_HALF_SIZE = 4;
+
+/** `SidebarLeft.tsx`'s long-press threshold; the press below waits comfortably past it. */
+const LONG_PRESS_SETTLE_MS = 400;
+
+/** `ToolTooltip.tsx`'s hover threshold, plus slack. */
+const TOOLTIP_SETTLE_MS = 400;
+
+/**
+ * Long-presses a tile with REAL mouse input.
+ *
+ * `openToolFlyout` dispatches `pointerdown`/`pointerup` straight at the element, which
+ * never goes through hit testing, so it cannot observe whether the thing that opened is
+ * actually on screen. The regression these tests cover was invisible to every test that
+ * used it: the flyout was laid out and in the DOM, and the canvas was painted over the
+ * place it would have appeared.
+ */
+const longPressWithMouse = async (page: Page, toolName: string): Promise<void> => {
+  const button = page.getByTestId(`tool-button-${toolName}`);
+  await expect(button).toBeVisible();
+  const box = await button.boundingBox();
+  if (!box) throw new Error(`longPressWithMouse: no box for tool-button-${toolName}`);
+
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(LONG_PRESS_SETTLE_MS);
+  await page.mouse.up();
+};
+
+/**
+ * Reads the geometry of every flyout item in one round trip, because the two failures
+ * worth distinguishing are different: an item can be inside the viewport and still not be
+ * painted (clipped by an ancestor), or it can be laid out off the bottom of the screen
+ * (anchored to a tile near the end of a long rail).
+ */
+const readFlyoutGeometry = async (
+  page: Page
+): Promise<{ itemCount: number; offscreen: string[]; unpainted: string[] }> =>
+  page.evaluate(() => {
+    const menu = document.querySelector('[role="menu"]');
+    if (!menu) return { itemCount: 0, offscreen: [], unpainted: [] };
+
+    const items = Array.from(menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]'));
+    const offscreen: string[] = [];
+    const unpainted: string[] = [];
+
+    for (const item of items) {
+      const rect = item.getBoundingClientRect();
+      const label = item.getAttribute('aria-label') ?? item.textContent ?? 'unknown';
+
+      if (rect.left < 0 || rect.top < 0 || rect.right > window.innerWidth || rect.bottom > window.innerHeight) {
+        offscreen.push(
+          `${label} (${Math.round(rect.left)},${Math.round(rect.top)} ${Math.round(rect.width)}x${Math.round(rect.height)})`
+        );
+      }
+
+      // `elementFromPoint` resolves through clipping: it returns whatever is actually
+      // painted at that coordinate. A flyout clipped by the rail's scroll container
+      // resolves to the canvas underneath it, not to the item.
+      const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+      if (!hit || (hit !== item && !item.contains(hit))) {
+        unpainted.push(`${label} (hit ${hit?.tagName ?? 'nothing'})`);
+      }
+    }
+
+    return { itemCount: items.length, offscreen, unpainted };
+  });
+
+const readTooltipGeometry = async (page: Page): Promise<{ offscreen: boolean; unpainted: boolean; text: string }> =>
+  page.evaluate(() => {
+    const tooltip = document.querySelector<HTMLElement>('[role="tooltip"]');
+    if (!tooltip) return { offscreen: true, unpainted: true, text: 'no tooltip' };
+
+    const rect = tooltip.getBoundingClientRect();
+
+    // The tooltip is `pointer-events-none`, so it is skipped by hit testing even when it
+    // is painted, and `elementFromPoint` would always report whatever is beneath it. The
+    // element has to be made hit-testable for the probe to mean anything.
+    const previous = tooltip.style.pointerEvents;
+    tooltip.style.pointerEvents = 'auto';
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    tooltip.style.pointerEvents = previous;
+
+    return {
+      offscreen: rect.left < 0 || rect.top < 0 || rect.right > window.innerWidth || rect.bottom > window.innerHeight,
+      unpainted: !hit || (hit !== tooltip && !tooltip.contains(hit)),
+      text: tooltip.textContent ?? '',
+    };
+  });
+
+/** Fails with the names of the offending items rather than a bare `offscreen: [...]`. */
+const expectEveryItemPainted = (geometry: Awaited<ReturnType<typeof readFlyoutGeometry>>): void => {
+  expect(geometry.itemCount).toBeGreaterThan(0);
+  expect(geometry.offscreen, 'flyout items laid out outside the viewport').toEqual([]);
+  expect(geometry.unpainted, 'flyout items whose centre is not painted (clipped by an ancestor)').toEqual([]);
+};
 
 test.describe('SidebarLeft - Flyout Interactions', () => {
   test.beforeEach(async ({ page }) => {
@@ -248,5 +343,52 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     // than passing as "the flyout stayed closed".
     await openToolFlyout(page, 'brush');
     await expect(page.getByRole('menu')).toBeVisible();
+  });
+
+  // The rail is `overflow-y-auto`, which makes it clip horizontally as well, so the flyout
+  // and the tooltip used to be laid out outside it and painted nowhere. `toBeVisible()`
+  // cannot see that — it only checks for a non-empty box — which is why every assertion
+  // below goes through `elementFromPoint`.
+  test('a long-pressed flyout is painted, not clipped by the rail', async ({ page }) => {
+    await longPressWithMouse(page, 'brush');
+
+    const flyout = page.getByRole('menu');
+    await expect(flyout).toBeVisible();
+    expectEveryItemPainted(await readFlyoutGeometry(page));
+  });
+
+  test('a long-pressed flyout is anchored so the whole menu fits on screen', async ({ page }) => {
+    // The brush group sits low in a rail that scrolls, so anchoring its flyout to the
+    // tile's top edge ran the last item off the bottom of a 720px window.
+    await longPressWithMouse(page, 'brush');
+
+    await expect(page.getByRole('menu')).toBeVisible();
+    const geometry = await readFlyoutGeometry(page);
+    expect(geometry.itemCount).toBeGreaterThan(1);
+    expect(geometry.offscreen, 'flyout items laid out outside the viewport').toEqual([]);
+  });
+
+  test('a right-clicked flyout is painted too', async ({ page }) => {
+    await openToolFlyoutViaRightClick(page, 'brush');
+
+    await expect(page.getByRole('menu')).toBeVisible();
+    expectEveryItemPainted(await readFlyoutGeometry(page));
+  });
+
+  test('a hovered tool tooltip is painted, not clipped by the rail', async ({ page }) => {
+    const button = page.getByTestId('tool-button-brush');
+    await expect(button).toBeVisible();
+    const box =
+      (await button.boundingBox()) ??
+      (() => {
+        throw new Error('no box for tool-button-brush');
+      })();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.waitForTimeout(TOOLTIP_SETTLE_MS);
+
+    const geometry = await readTooltipGeometry(page);
+    expect(geometry.text).toContain('Brush Tool');
+    expect(geometry.offscreen, 'tooltip laid out outside the viewport').toBe(false);
+    expect(geometry.unpainted, 'tooltip is laid out but not painted (clipped by an ancestor)').toBe(false);
   });
 });

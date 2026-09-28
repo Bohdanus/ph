@@ -68,7 +68,62 @@ npm run test:e2e        # playwright, HEADLESS - starts the dev server itself
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
+npm run board -- help   # the swarm board: who has what, and which files are taken
 ```
+
+## The swarm board
+
+`npm run board -- <command>` is the LIVE coordination layer: who has claimed
+what, which file two agents are about to edit, what one agent found that another
+needs, and what nobody claimed because the worktree is gone. `npm run board --
+help` is the full command list; `--json` works on every command except `watch`.
+
+**It is NOT the handoff documents.** `HANDOFF.md`, `TEST-FLAKES.md` and
+`e2e/OPEN-PROBLEMS.md` stay the durable, reviewable record of what is known
+about this codebase, written by hand and merged through a pull request. The
+board answers the questions prose cannot: what is true _right now_, between
+concurrent agents. `board import` copies the documents' items onto the board
+once, keyed on their own numbering (`HANDOFF.md#12`), so re-running files only
+what is new.
+
+- **Where it lives:** `$(git rev-parse --git-common-dir)/agent-board/board.db`
+  — the one path all 137 worktrees resolve to, so there is one board and no
+  daemon, no server, and no per-worktree copy. `AGENT_BOARD_DIR` or `--dir`
+  moves it; the tests use both. **It is machine-local and gitignored, exactly
+  like `.kilo/`.** Nothing durable belongs only there.
+- **You are your branch.** The default identity is the git branch, because one
+  task is one worktree on one branch, and a branch is the same string across
+  every command in that task. `--agent <id>` overrides it. The Kilo run id is
+  recorded as metadata, not as identity: a subagent inherits it, so it cannot
+  tell two agents apart.
+- **A claim is a lease, not a mutex.** `board claim ph-12` holds it for 45
+  minutes; `board heartbeat ph-12` extends it. Past the lease the issue is
+  offered again and the takeover is in the event log with both agents named.
+  **`board status` reports; `board doctor` is the only command that releases an
+  abandoned claim**, and it releases a claim whose worktree no longer exists even
+  when the lease has not run out.
+- **`board hold <path>` makes "never two agents on the same file" a refused
+  write**, and the refusal names the holder. `board check <path>` exits 1 when
+  somebody else holds it, so a shell can gate on it. `board claim --files a.ts
+b.ts` takes both, and gives back **only the ones it took** if the claim is
+  then refused — never a file that agent already held, and never with `--force`.
+- **The fixer's claim is not its verification.** `board resolve` needs the live
+  claim; `board close` refuses the agent that resolved the issue, exactly as
+  this document's own handoff lifecycle requires. Exit code 5 is that refusal.
+  **There is no `--verified-by`**, and that is the point: a flag naming somebody
+  else is a name the caller supplies about an agent that is not in the room, and
+  it made the whole rule one flag wide. A reviewer closes an issue by being the
+  reviewer.
+- **`board note` is how one agent addresses the swarm**; `board watch --follow`
+  tails the same log. Every command appends to it, which is the replacement for
+  N agents each writing their own account of the same work into a document
+  nobody else can see until it is merged.
+- **Exit codes are the interface:** 0 ok · 1 usage or error · 2 not found ·
+  3 claimed or not claimable · 4 file held by another agent · 5 self-verification
+  refused. An agent can branch on them; a human reading them learns why.
+
+It is a command, not a gate. Nothing in `.husky/` calls it, and no commit may be
+blocked on it.
 
 - **RUN FROM THE REPO ROOT** (`ph`), via the shell tool's `workdir`. A parent directory silently resolves the wrong package and the wrong tsconfig.
 - **`npm run tsc` IS THE ONLY TRUSTWORTHY TYPECHECK. NEVER GATE ON `npx tsc --noEmit`.** `tsc -b` covers `tsconfig.app/node/e2e.json`, so it also checks the Playwright specs and the test files. `npx tsc --noEmit` resolves the app tsconfig alone, which excludes tests: it exits 0 while the tests do not compile.
@@ -99,6 +154,26 @@ Five traps that cost real debugging time:
 - `useHistory` tests mock `useStore` directly, not via `renderHook` + `StoreProvider`: the provider pulls in the durable replay/materialization path, which does not survive the test environment.
 - `ToolbarsRight` tests use hoisted `vi.hoisted()` mocks, so module hoisting keeps working. Match the shape.
 - `e2e/**` is excluded from `npm run test`, and `**/__tests__/**` / `*.unit.test.ts` are excluded from Playwright. A Playwright spec in jsdom, or an e2e helper test in a browser, fails in a way that looks like a product bug.
+- **`toBeVisible()` does not test clipping, and jsdom cannot test layout at all.** The
+  left rail is `overflow-y-auto`, which makes CSS compute `overflow-x: auto` too, so the
+  rail clips on BOTH axes and paints nothing of what a child positions outside its own
+  56px. A flyout or tooltip laid out there stayed in the DOM, with a non-empty box, at the
+  right coordinates, and was invisible — and every assertion available at the time passed:
+  `toBeVisible()` only checks for a box and a `visibility` value, and
+  `openToolFlyout` dispatches `pointerdown` straight at the element, which never goes
+  through hit testing. Pin placement with `elementFromPoint` at the element's centre, from
+  REAL `page.mouse` input, and pin the arithmetic separately in jsdom by stubbing
+  `getBoundingClientRect` and `offsetWidth`/`offsetHeight`:
+  `e2e/sidebar-flyout.spec.ts` and `AnchoredOverlay.test.tsx`. A popover that must escape
+  a scroll container goes through `SidebarLeft/AnchoredOverlay.tsx`, which portals to
+  `document.body` — `overflow: clip` still clips, so no value on the rail can fix it.
+- **`scripts/__tests__/*.test.mjs` runs under the root jsdom project and must stay
+  environment-agnostic.** The swarm board is a Node script whose only dependency
+  is the built-in `node:sqlite`, and it is tested there deliberately: a test file
+  for a Node script in a second Vitest project would be a second project to keep
+  in step. `node:sqlite` does work under `pool: 'vmThreads'`, and
+  `scripts/__tests__/agent-board.test.mjs` asserts exactly that, so a pool change
+  fails as a named test rather than as an unrelated import error.
 
 ## Gates
 
@@ -170,6 +245,8 @@ It is worth knowing for what it is good: cost tracks blast radius, and so does r
 - **Route by scope.** `HANDOFF.md` is for history/replay and document-state defects. `TEST-FLAKES.md` is for test-infrastructure defects — flakiness, the pool, the runner, the gates themselves. `e2e/OPEN_PROBLEMS.md` is for Playwright. Do not file a gate or pool defect in `HANDOFF.md`; it is scoped, and a cross-scope entry is the one nobody reads.
 - **Nothing durable goes in `.kilo/`.** It is gitignored (`.gitignore:34`), so a finding recorded there dies with the machine and with the worktree. `HANDOFF.md` used to name `.kilo/plans/` as a handoff location; that was wrong, and it is why `TEST-FLAKES.md` exists.
 - **Growing a file silently invalidates every `file.ts:NNN` in the handoffs that points into it.** The citations are load-bearing: an agent follows one, lands in a similar-looking function, and patches the wrong thing — §54's asset-transaction pointer once landed in the middle of `operationForTool`. A `grep` sweep does not catch it, because the text at the stale line still looks plausible. On a diff that inserts lines into a cited file, re-derive each citation from the prose's claim, not from the old number: **if your diff adds or removes lines above a cited line, every citation below it moved.** Measured on one branch: adding ~112 lines to `StoreContext.tsx` left 38 of 39 line-numbered citations into it and `history-adapter.ts` wrong, with exactly one still resolving. A correction applied from an audit is as load-bearing as the original and needs the same check.
+- **The board is not a handoff location either.** Its database is machine-local
+  for the same reason. Close an issue there, and delete the entry here.
 
 **WRITE OR UPDATE THE HANDOFF WITHOUT ASKING** for every validated issue, strong recommendation, or durable finding. Ship it with the work.
 

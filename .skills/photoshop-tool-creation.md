@@ -1178,21 +1178,21 @@ Photoshop's display label, the control type, Photoshop's default and range, and 
 verdict for **this** app. This table is the one to read before promising a control to
 anyone.
 
-| Control             | Type                    | PS default  | PS range                          | Status here                                                                     | Evidence                                                                                                                                                                                                                                    |
-| ------------------- | ----------------------- | ----------- | --------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Brush Preset picker | thumbnail popup         | last used   | n/a                               | `absent-in-ph`                                                                  | named as a placeholder string only, `toolbarPlaceholderConfig.ts:2`; no preset registry in `src/tools/`                                                                                                                                     |
-| Size                | slider, integer px      | 30 px       | 1-5000                            | `plumbed` (ceiling 500)                                                         | `src/tools/draw.ts:54` `ctx.lineWidth = lineWidth`; spray radius `src/util/draw.ts:155`; bar `Draw.tsx:134-152` uses 0.5-500                                                                                                                |
-| Mode                | dropdown of blend modes | Normal      | 27 modes                          | `needs-engine`                                                                  | `Layer.blendMode` exists and is honoured at `src/contexts/layer-renderer.ts:101`, but `createLayerSource` hardcodes `'source-over'` (`src/contexts/layer-utils.ts:173`) and no tool arg carries a blend field                               |
-| Opacity             | slider, percent         | 100%        | 0-100                             | `plumbed`                                                                       | `src/tools/draw.ts:57` `ctx.globalAlpha = alpha`; spray stop `src/util/draw.ts:153`; bars `Draw.tsx:196-214`, `Levels.tsx:100-117`                                                                                                          |
-| Flow                | slider, percent         | 100%        | 1-100                             | `needs-engine`                                                                  | `setupDrawCtx` sets `globalAlpha` once per stroke (`src/tools/draw.ts:42-63`, called at `:71`); per-dab accumulation needs a stamp loop                                                                                                     |
-| Feather             | slider, px              | 0 px        | 0-250                             | `plumbed` for `feather-magnetic-lasso`                                          | `featherRadius` default 12 (`src/tools/settings.ts:100`) → `src/util/selection.ts:633-635` `featheredBoundsPadding(antiAlias, featherRadius)`                                                                                               |
-| Tolerance           | slider, integer         | 32          | 0-255                             | `plumbed` for `magic-wand`                                                      | `src/components/Main/MagicWandToolArea.tsx:57,75` → `src/util/magicWand.ts:332` `getToleranceDistance(options.tolerance ?? 0)`                                                                                                              |
-| Anti-alias          | checkbox                | on          | on/off                            | `plumbed` for `feather-magnetic-lasso`                                          | `antiAlias: true` (`src/tools/settings.ts:106`) → `src/util/selection.ts:581,612`                                                                                                                                                           |
-| Smoothing           | slider, percent         | 10% (brush) | 0-100                             | `plumbed` for `magic-wand` / `feather-magnetic-lasso`; `absent-in-ph` for brush | magic-wand as `Smooth` px (`MagicWand.tsx:71-86` → `src/util/magicWand.ts:350` `simplifyClosedPath`); lasso as px (`src/components/Main/FeatherMagneticLassoToolArea.tsx:380`); `DrawToolArgs` has no such field (`src/tools/draw.ts:7-32`) |
-| Style / Ratio       | dropdown + W/H fields   | Normal      | Normal / Fixed Ratio / Fixed Size | `plumbed` for `crop` only                                                       | `CropToolArgs.aspectRatio` default `null` (`src/tools/settings.ts:54`); `RectangularSelectionToolArgs` is `{ rect?, toolName }` only (`src/tools/rectangularSelection.ts:4-7`) and its bar has no style control                             |
-| Dodge / Exposure    | slider, stops           | 0.00        | ±20.00                            | `absent-in-ph`                                                                  | no dodge tool is registered; `toolbar-mapping.ts:37-95` has no slot for Photoshop's 14 (Dodge/Burn/Sponge)                                                                                                                                  |
-| Spacing             | slider, percent         | 25%         | 1-200                             | `needs-engine`                                                                  | `drawPen` issues one `beginPath` + one `stroke()` per stroke (`src/util/draw.ts:132-145`); point density along a single path is not a spacing interval                                                                                      |
-| Hardness            | slider, percent         | 100%        | 0-100                             | `needs-engine`                                                                  | the edge is whatever `ctx.stroke()` produces; `setupDrawCtx` sets no gradient or shadow (`src/tools/draw.ts:42-63`)                                                                                                                         |
+| Control             | Type                    | PS default  | PS range                          | Status here                                                                     | Evidence                                                                                                                                                                                                                                                                                                    |
+| ------------------- | ----------------------- | ----------- | --------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Brush Preset picker | thumbnail popup         | last used   | n/a                               | `absent-in-ph`                                                                  | named as a placeholder string only, `toolbarPlaceholderConfig.ts:2`; no preset registry in `src/tools/`                                                                                                                                                                                                     |
+| Size                | slider, integer px      | 30 px       | 1-5000                            | `plumbed` (ceiling 500)                                                         | `src/tools/draw.ts:54` `ctx.lineWidth = lineWidth`; spray radius `src/util/draw.ts:155`; bar `Draw.tsx:134-152` uses 0.5-500                                                                                                                                                                                |
+| Mode                | dropdown of blend modes | Normal      | 27 modes                          | `needs-engine`                                                                  | `Layer.blendMode` exists and is honoured at `src/contexts/layer-renderer.ts:101`, but `createLayerSource` hardcodes `'source-over'` (`src/contexts/layer-utils.ts:173`) and no tool arg carries a blend field                                                                                               |
+| Opacity             | slider, percent         | 100%        | 0-100                             | `plumbed`                                                                       | `src/tools/draw.ts:57` `ctx.globalAlpha = alpha`; spray stop `src/util/draw.ts:153`; bars `Draw.tsx:196-214`, `Levels.tsx:100-117`                                                                                                                                                                          |
+| Flow                | slider, percent         | 100%        | 1-100                             | `needs-engine`                                                                  | `setupDrawCtx` sets `globalAlpha` once per stroke (`src/tools/draw.ts:42-63`, called at `:71`); per-dab accumulation needs a stamp loop                                                                                                                                                                     |
+| Feather             | slider, px              | 0 px        | 0-250                             | `plumbed` for `feather-magnetic-lasso`                                          | `featherRadius` default 12 (`src/tools/settings.ts:100`) → `src/util/selection.ts:633-635` `featheredBoundsPadding(antiAlias, featherRadius)`                                                                                                                                                               |
+| Tolerance           | slider, integer         | 32          | 0-255                             | `plumbed` for `magic-wand`                                                      | `src/components/Main/MagicWandToolArea.tsx:57,75` → `src/util/magicWand.ts:332` `getToleranceDistance(options.tolerance ?? 0)`                                                                                                                                                                              |
+| Anti-alias          | checkbox                | on          | on/off                            | `plumbed` for `feather-magnetic-lasso`                                          | `antiAlias: true` (`src/tools/settings.ts:106`) → `src/util/selection.ts:581,612`                                                                                                                                                                                                                           |
+| Smoothing           | slider, percent         | 10% (brush) | 0-100                             | `plumbed` for `magic-wand` / `feather-magnetic-lasso`; `absent-in-ph` for brush | magic-wand as `Smooth` px (`MagicWand.tsx:71-86` → `src/util/magicWand.ts:350` `simplifyClosedPath`); lasso as px (`src/components/Main/FeatherMagneticLassoToolArea.tsx:380`); `DrawToolArgs` has no such field (`src/tools/draw.ts:7-32`)                                                                 |
+| Style / Ratio       | dropdown + W/H fields   | Normal      | Normal / Fixed Ratio / Fixed Size | `plumbed` for `crop` only                                                       | `CropToolArgs.aspectRatio` default `null` (`src/tools/settings.ts:54`); `RectangularSelectionToolArgs` is `{ rect?, toolName }` only (`src/tools/rectangularSelection.ts:4-7`) and its bar has no style control                                                                                             |
+| Dodge / Exposure    | slider, stops           | 0.00        | ±20.00                            | `plumbed`                                                                       | `dodge` and `burn` are registered (`src/contexts/tool-types.ts:47-48`) and share one `Tonal` options panel (`src/tools/toolsMap.ts:104-105`); the `exposure` bounds come from the tool module (`src/tools/dodgeBurn.ts`) and the tip bounds from the brush engine, per `Tonal/__tests__/Tonal.test.tsx:174` |
+| Spacing             | slider, percent         | 25%         | 1-200                             | `needs-engine`                                                                  | `drawPen` issues one `beginPath` + one `stroke()` per stroke (`src/util/draw.ts:132-145`); point density along a single path is not a spacing interval                                                                                                                                                      |
+| Hardness            | slider, percent         | 100%        | 0-100                             | `needs-engine`                                                                  | the edge is whatever `ctx.stroke()` produces; `setupDrawCtx` sets no gradient or shadow (`src/tools/draw.ts:42-63`)                                                                                                                                                                                         |
 
 Read the `needs-engine` rows as work, not as blockers. `Mode` is the cheapest of the
 three: the field, the renderer and the guard all exist, and only the plumbing from a
@@ -3822,32 +3822,52 @@ must compute rather than feel:
 
 ### Where the app stands
 
+**Two tranches landed after this section was first written: the four-tool tranche
+(`eraser` / `magic-eraser` / `paint-bucket` / `eyedropper`) and then the eight-tool tranche
+(`elliptical-selection` / `quick-selection` / `gradient` / `sharpen` / `smudge` / `dodge` /
+`burn` / `clone-stamp`). The counts below were re-derived on `main` at `f7c242c`; the
+tables **below** this one were not, and the gap rows that name an absent tool are now wrong.
+Re-derive a row before you build it, exactly as [the rule above](#the-tool-backlog--what-to-build-next) says.
+
 On that tree:
 
-| Measure                                      | Count                                   | Where                                                                                                                                                      |
-| -------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Registered tools                             | **33**                                  | `src/tools/toolsMap.ts:45-133`; `ToolName` is `keyof ToolArgsByName` at `src/contexts/tool-types.ts:65`, and that type has the same 33 members at `:20-63` |
-| Entries in `availableTools`                  | **29**                                  | `toolbar-mapping.ts:97-127`                                                                                                                                |
-| Registrations with a `PlaceholderTool`       | **10**                                  | `toolsMap.ts:79,84,89,97,101,106,111,116,121,131`                                                                                                          |
-| Registrations with a real options bar        | **23**, over **18 distinct components** | the other 23 rows; five of them (`rectangle`, `ellipse`, `triangle`, `polygon`, `line`) all point at the same `Shape` component at `toolsMap.ts:123-127`   |
-| Registrations with `commit: 'unimplemented'` | **7**                                   | `toolProcessors.ts:237-262,268-272`; the shared no-op is `toolProcessors.ts:103`                                                                           |
-| Photoshop toolbar slots with no tool at all  | **10 of 20**                            | FROM-MEMORY on the 20-slot Photoshop column; the app side is `toolbar-mapping.ts:37-95`, which renders 5 sections / 12 tiles                               |
+| Measure                                      | Count                                   | Where                                                                                                                                                         |
+| -------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Registered tools                             | **41**                                  | `src/tools/toolsMap.ts:54-163`; `ToolName` is `keyof ToolArgsByName` at `src/contexts/tool-types.ts:80`, and that type has the same 41 members at `:27-78`    |
+| Entries in `availableTools`                  | **41**                                  | `toolbar-mapping.ts:119-161`                                                                                                                                  |
+| Registrations with a `PlaceholderTool`       | **8**                                   | `toolsMap.ts:119,127,131,136,141,146,151,161`                                                                                                                 |
+| Registrations with a real options bar        | **33**, over **27 distinct components** | the other 33 rows; six of them (`shape`, `rectangle`, `ellipse`, `triangle`, `polygon`, `line`) all point at one `Shape` component — `toolsMap.ts:62,153-157` |
+| Registrations with `commit: 'unimplemented'` | **7**                                   | `toolProcessors.ts:299-331`; the shared no-op is `toolProcessors.ts:109`                                                                                      |
+| Toolbar tiles the app renders                | **40**                                  | `toolbar-mapping.ts:37-118`; Photoshop's 20-slot column is still FROM-MEMORY, so the slot-for-slot gap count is **not** re-derived here                       |
 
-So: three of the ten placeholders (`brush`, `pencil`, `color-replacement`) are `commit: 'raster'`
-and genuinely paint. Seven are `unimplemented` and are the defect described in Tier 2.
+`availableTools` and `toolsMap` now agree at 41. The old 33-vs-29 divergence — the reason
+the inventory scoped itself to "registered tools (all of them in `availableTools`)" — is
+**closed**; a missing-tool audit can no longer be explained away by the list lagging the
+registry, so go back to diffing Photoshop's roster against `toolsMap` directly.
 
-**The structural finding — why the original inventory could not see a missing tool.**
+Of the eight remaining placeholders, `color-replacement` is `commit: 'raster'` and genuinely
+paints. `brush` and `pencil` **left this set** — they now have real options bars
+(`Brush` / `Pencil` in `toolsMap`) — and the six pen-family rows plus `custom-shape` are the
+`unimplemented` defect described in Tier 2.
+
+**The structural finding — why an audit walking the registry cannot see a missing tool.**
 `toolsMap` is typed `Record<ToolName, Partial<ToolProcessorDefinition> & { icon; toolboxComponent }>`
-(`src/tools/toolsMap.ts:37-43,45`). The registry is still _total_ over `ToolName` and still requires
-`icon` and `toolboxComponent` on every row, so it has no way to say "this Photoshop slot is empty", and no way to say "this row is a stub" — `PlaceholderTool` and
-`Pen` are the same `ToolbarRightComponent` to the type. Absence is invisible _from inside the
-registry_: an audit that walks `Object.keys(toolsMap)` gets one row per registration, all of which look equally
-real, and **none of which is named Gradient**. The corpus's own
-`.kilo/plans/ps-research/00-tool-inventory.md:15` scopes itself to "Registered tools (all of them in
-`availableTools`)" — so a missing tool was outside its universe by construction, not by oversight.
+(`src/tools/toolsMap.ts:46-52`, declared at `:54`). The registry is still _total_ over `ToolName`
+and still requires `icon` and `toolboxComponent` on every row, so it has no way to say "this
+Photoshop slot is empty", and no way to say "this row is a stub" — `PlaceholderTool` and `Pen`
+are the same `ToolbarRightComponent` to the type. Absence is invisible _from inside the
+registry_: an audit that walks `Object.keys(toolsMap)` gets one row per registration, all of
+which look equally real. The two failure modes it cannot distinguish are both still live —
+**`Gradient` is named in the registry now** (the gap this section was written to expose has
+been filled), while `freeform-pen`, `curvature-pen`, `add-anchor-point`,
+`delete-anchor-point` and `convert-point` are rows that select, accept options, and produce
+nothing. The corpus's own `.kilo/plans/ps-research/00-tool-inventory.md:15` scopes itself to
+"Registered tools (all 29 in `availableTools`)" — a count that is now itself stale — so a
+missing tool was outside its universe by construction, not by oversight.
+
 A gap list can only come from an external roster (Photoshop's toolbar) diffed against the
-registry. That is what this section is, and it is why the original inventory's counts were right
-and its gap list empty.
+registry. That is what this section is, and it is why the original inventory's counts were
+right and its gap list empty.
 
 ### Ranked gaps
 

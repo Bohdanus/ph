@@ -1,6 +1,7 @@
 import { type ChangeEvent, type RefObject, useEffect, useRef, useState } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useApp } from '../../hooks/useApp.ts';
+import AnchoredOverlay from './AnchoredOverlay.tsx';
 import ToolTooltip from './ToolTooltip.tsx';
 import { toolIcons } from './toolIcons.tsx';
 import { slugifyToolLabel, toolbarMap, type ToolbarTool, type ToolbarToolGroup } from '../../../toolbar-mapping.ts';
@@ -48,6 +49,12 @@ const SidebarLeft = () => {
   const colorSquareRef = useRef<HTMLDivElement>(null);
   const bgColorSquareRef = useRef<HTMLDivElement>(null);
   const toolGroupRefs = useRef<Record<string, HTMLLIElement | null>>({});
+  // The tile a flyout is anchored to. Only the OPEN tile publishes one, and only for
+  // itself, so a flyout that switches groups can never be measured against the tile it
+  // replaced. Keyed by group because the anchor is published by a ref callback, which
+  // React re-invokes on every commit — the updater returns the same object when nothing
+  // changed, which is what stops that from re-rendering forever.
+  const [flyoutAnchor, setFlyoutAnchor] = useState<{ groupIndex: string; element: HTMLLIElement } | null>(null);
 
   const handleColorClick = (e: React.MouseEvent<HTMLDivElement>, inputRef: RefObject<HTMLInputElement | null>) => {
     if (!inputRef.current) return;
@@ -120,8 +127,18 @@ const SidebarLeft = () => {
     if (openGroup === null) return;
 
     const handleOutsideClick = (event: MouseEvent) => {
-      const group = toolGroupRefs.current[openGroup];
-      if (group && event.target instanceof Node && !group.contains(event.target)) setOpenGroup(null);
+      if (!(event.target instanceof Node)) return;
+      // The flyout is portalled into `document.body` to escape the rail's scroll
+      // container, so it is no longer inside the `<li>` that holds the tile. Without this
+      // second test every click on a flyout item reads as a click outside the group, and
+      // the menu closes under the item that was just chosen. The attribute is matched
+      // rather than a ref to the `<ul>` held here, because the element the click landed on
+      // is a descendant of it — the overlay's own wrapper, or a `<kbd>` — and only the DOM
+      // knows which group it belongs to.
+      const clickedFlyout = event.target instanceof Element ? event.target.closest('[data-toolbar-flyout]') : null;
+      if (toolGroupRefs.current[openGroup]?.contains(event.target)) return;
+      if (clickedFlyout?.getAttribute('data-toolbar-flyout') === openGroup) return;
+      setOpenGroup(null);
     };
 
     document.addEventListener('click', handleOutsideClick);
@@ -168,6 +185,10 @@ const SidebarLeft = () => {
         key={`${groupIndex}-${group.map(({ label }) => slugifyToolLabel(label)).join('-')}`}
         ref={(element) => {
           toolGroupRefs.current[groupIndex] = element;
+          if (element === null || !isOpen) return;
+          setFlyoutAnchor((current) =>
+            current?.groupIndex === groupIndex && current.element === element ? current : { groupIndex, element }
+          );
         }}
       >
         <ToolTooltip label={primaryTool.label} shortcut={primaryTool.shortcut}>
@@ -255,65 +276,68 @@ const SidebarLeft = () => {
           </button>
         </ToolTooltip>
 
-        {hasFlyout && isOpen && (
-          <ul
-            aria-label={group.some((tool) => tool.figure) ? 'Shape tools' : `${primaryTool.label} tools`}
-            className="absolute left-full top-0 z-50 ml-2 min-w-48 list-none rounded-lg border border-gray-300 bg-gray-100 p-1.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
-            onKeyDown={(event) => {
-              const items = Array.from(
-                event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
-              );
-              if (items.length === 0) return;
+        {hasFlyout && isOpen && flyoutAnchor?.groupIndex === groupIndex && (
+          <AnchoredOverlay align="start" anchor={flyoutAnchor.element} measureKey={groupIndex}>
+            <ul
+              aria-label={group.some((tool) => tool.figure) ? 'Shape tools' : `${primaryTool.label} tools`}
+              className="z-50 min-w-48 list-none rounded-lg border border-gray-300 bg-gray-100 p-1.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
+              data-toolbar-flyout={groupIndex}
+              onKeyDown={(event) => {
+                const items = Array.from(
+                  event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+                );
+                if (items.length === 0) return;
 
-              const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
-              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                event.preventDefault();
-                const nextIndex =
-                  currentIndex === -1
-                    ? 0
-                    : (currentIndex + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
-                items[nextIndex]?.focus();
-              }
+                const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  const nextIndex =
+                    currentIndex === -1
+                      ? 0
+                      : (currentIndex + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+                  items[nextIndex]?.focus();
+                }
 
-              if (event.key === 'Enter' && document.activeElement instanceof HTMLButtonElement) {
-                event.preventDefault();
-                document.activeElement.click();
-              }
-            }}
-            role="menu"
-            data-testid={`tool-flyout-${groupIndex}`}
-          >
-            {group.map((tool: ToolbarTool) => {
-              const FlyoutIcon = getToolIcon(tool);
-              const isSelected = isToolSelected(tool);
+                if (event.key === 'Enter' && document.activeElement instanceof HTMLButtonElement) {
+                  event.preventDefault();
+                  document.activeElement.click();
+                }
+              }}
+              role="menu"
+              data-testid={`tool-flyout-${groupIndex}`}
+            >
+              {group.map((tool: ToolbarTool) => {
+                const FlyoutIcon = getToolIcon(tool);
+                const isSelected = isToolSelected(tool);
 
-              return (
-                <li key={`${tool.name}-${slugifyToolLabel(tool.label)}`} role="none">
-                  <button
-                    aria-checked={isSelected}
-                    aria-label={tool.label}
-                    className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
-                      isSelected
-                        ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-100'
-                        : 'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700'
-                    }`}
-                    onClick={() => {
-                      setPrimaryTools((current) => ({ ...current, [groupIndex]: tool }));
-                      selectTool(tool);
-                      setOpenGroup(null);
-                    }}
-                    role="menuitemradio"
-                    type="button"
-                    data-testid={`tool-flyout-item-${tool.name}-${slugifyToolLabel(tool.label)}`}
-                  >
-                    <FlyoutIcon title={tool.label} />
-                    <span className="flex-1 whitespace-nowrap">{tool.label}</span>
-                    {tool.shortcut && <kbd className="text-[10px] opacity-65">{tool.shortcut}</kbd>}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+                return (
+                  <li key={`${tool.name}-${slugifyToolLabel(tool.label)}`} role="none">
+                    <button
+                      aria-checked={isSelected}
+                      aria-label={tool.label}
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+                        isSelected
+                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-100'
+                          : 'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700'
+                      }`}
+                      onClick={() => {
+                        setPrimaryTools((current) => ({ ...current, [groupIndex]: tool }));
+                        selectTool(tool);
+                        setOpenGroup(null);
+                      }}
+                      role="menuitemradio"
+                      type="button"
+                      data-testid={`tool-flyout-item-${tool.name}-${slugifyToolLabel(tool.label)}`}
+                    >
+                      <FlyoutIcon title={tool.label} />
+                      <span className="flex-1 whitespace-nowrap">{tool.label}</span>
+                      {tool.shortcut && <kbd className="text-[10px] opacity-65">{tool.shortcut}</kbd>}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </AnchoredOverlay>
         )}
       </li>
     );
