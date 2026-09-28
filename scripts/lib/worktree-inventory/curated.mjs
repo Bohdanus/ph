@@ -626,6 +626,10 @@ export const CURATED = {
     mustNotPrune: true,
     note: 'Holds an uncommitted change and is branched from a main that is already moving; the lease semantics it is about are still the open board item.',
   },
+  'swarm-units': {
+    summary:
+      'The board worktree on health units: a hold is one event per command while a release is one per file, so the previous health summed incompatible units and reported the encoding as if it were behaviour.',
+  },
   'test-review-harness': {
     summary: 'A review of the test harness itself, branched from main while the inventory work was in flight.',
   },
