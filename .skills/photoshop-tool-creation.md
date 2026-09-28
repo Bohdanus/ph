@@ -8,14 +8,16 @@ description: Build a new Photoshop-faithful tool in the `ph` photo editor end to
 How to add a tool to `ph` that behaves like the Photoshop one, in a git worktree, with
 research, tests, e2e, delegation and a handoff behind it.
 
-**`AGENTS.md` is the authority.** This document adds the procedures `AGENTS.md` states but
-does not spell out. Where the two disagree, `AGENTS.md` wins and this document is wrong.
-Read it first.
+**`AGENTS.md` is the authority, and it is already in context.** This document deliberately does
+not repeat it. If a rule is stated in `AGENTS.md` — the commands, the gates, the worktree traps,
+the headed-browser refusal, the subagent model policy, the handoff lifecycle — it is not restated
+here, not paraphrased, and not restated with a citation attached. Where the two disagree,
+`AGENTS.md` wins and this document is wrong. What follows is only what `AGENTS.md` does not say:
+the Photoshop tool contract, the code surfaces, and the process for getting there.
 
-Every `file:line` here was re-verified against `main` at `1c9c8de` on 2026-09-28. **Re-verify
-before you rely on one**: `AGENTS.md:143` says to verify against the tree, and a stale line number sends the next session
-after a bug that does not exist, and that is not hypothetical — writing this skill corrected
-more than sixty citations inherited from the playbook it was built on.
+Every `file:line` here was last re-verified on 2026-09-28. **Re-verify before you rely on one**,
+and name a symbol as well as a line wherever you can: a stale citation sends the next session
+after a bug that does not exist, and writing this skill corrected more than sixty of them.
 
 ## When to use this
 
@@ -64,18 +66,11 @@ These are the ones that actually change outcomes. Each is expanded where it is u
    is already generic.** Then undoability arrives with the tool. → [Phase 3](#the-decision-table)
 3. **A test that passes either way is worse than no test**, because it consumes a maintainer's
    trust. Mutation-check every new test. → [Phase 5](#prove-each-test-fails-without-its-fix)
-4. **Never weaken a gate to get green.** No skips, no raised thresholds, no deleted assertions,
-   no re-recorded visual baselines, no `expect.soft` in place of a hard assert. When a test
-   genuinely cannot pass, leave it failing and report the failing assertion. → [Phase 8](#the-one-rule)
-5. **Never open a browser window.** Headless only. A headed run fails a disjoint set of tests
-   for reasons that are not in the code. → [Phase 0](#never-open-a-browser-window)
-6. **A fix removes its own pin.** A test that asserts current broken behaviour is a tripwire;
-   the same change inverts it. A handoff entry that has been fixed and verified is deleted,
-   never reworded into a closed one. → [Phase 9](#the-lifecycle)
-7. **Verify every citation before you commit the handoff.** Adding one import shifts every
-   line below it. → [Phase 9](#verify-every-citation-before-you-commit)
-8. **Never two subagents on the same file.** Split by concern. The spine of a tool is a small
-   set of single-owner files and it stays with you. → [Phase 7](#the-rule-that-actually-matters)
+4. **A fix removes its own pin.** A test that asserts current broken behaviour is a tripwire; the
+   same change inverts it, and a verified handoff entry is deleted rather than reworded into a
+   closed one. → [Phase 9](#the-entry-shape)
+5. **Verify every citation before you commit the handoff.** Adding one import shifts every
+   line below it. → [Phase 9](#verify-every-citation-before-you-commit-the-handoff)
 
 ## How to read this document
 
@@ -88,8 +83,8 @@ filled. They are prompts, not prose: the recovered originals are reproduced in t
 blocks because the parts that matter (the evidence rules, the locator traps with their
 reasons, the report-back contract) are exactly the parts a paraphrase loses.
 
-Provenance — which claims were corrected while assembling this, and what could not be
-verified — is in [the provenance appendix](#appendix-c--provenance).
+How this document was assembled, and the four rules the re-verification passes produced, are in
+[the provenance appendix](#appendix-c--provenance).
 
 ## The three shapes of work
 
@@ -104,8 +99,6 @@ Not every tool is a from-scratch build. Pick the shape first, because it changes
 The third shape is where a task goes to die. Decide it in Phase 1, write it down, and do not
 discover it in Phase 4.
 
-`AGENTS.md` is the authority on every rule restated here (`:78-86` worktrees, `:95-132` gates, `:45-60` the browser rule). This section adds the procedures it states but does not spell out. Every `file:line` was re-verified against `main` at `1c9c8de`; a citation you cannot re-verify sends the next session after a bug that does not exist (`AGENTS.md:143`).
-
 ---
 
 ## Phase 0 — the worktree
@@ -115,14 +108,14 @@ One worktree per task, under `.kilo/worktrees/`, forked from `main`.
 ### 0.1 Create it
 
 ```bash
-cd /Users/bkalynovskyi/ph                # AGENTS.md:73 — a parent dir resolves the wrong package
+cd /Users/bkalynovskyi/ph                # a parent dir resolves the wrong package
 git status -sb                          # main is a shared surface; expect it dirty
 git worktree add -b <branch> .kilo/worktrees/<name> main
 ```
 
-For a **visible session**, do not use `git worktree add`: call `agent_manager` with `mode: "worktree"` and one task carrying `branchName` and `prompt`. That is the only difference and it is the operator's call — `task` creates no visible session (`AGENTS.md:34`).
+For a **visible session**, do not use `git worktree add`: call `agent_manager` with `mode: "worktree"` and one task carrying `branchName` and `prompt` — `task` creates no visible session.
 
-**Branch name is convention, not policy.** `.kilo/agent-manager.json:2` registers 39 worktrees and only 2 use a `ps/` prefix, so the taxonomy is what sessions happened to type. Use `ps/<tool>-<slug>`, free-checked with `git branch --list 'ps/*'`. **Every registered worktree forks from `main`** (`.kilo/agent-manager.json:6` plus 38 further `parentBranch` entries, all `"main"`) — never from an integration line, which is how a leaf inherits a conflict it did not cause. **The directory name is chosen, not derived**: of 14 registered slash-branch worktrees 4 carry a 16-hex disambiguator (`ps/brush-tip-core` → `ps-brush-tip-core-72c775ad4e905a94`) and 10 do not (`wip/photoshop-fidelity` → `photoshop-fidelity`). A collision makes `git worktree add` fail, not overwrite.
+**Branch name is convention, not policy.** The registered worktrees are what sessions happened to type, not a taxonomy. Use `ps/<tool>-<slug>`, free-checked with `git branch --list 'ps/*'`. **Every registered worktree forks from `main`** — never from an integration line, which is how a leaf inherits a conflict it did not cause. **The directory name is chosen, not derived**: a collision makes `git worktree add` fail, not overwrite.
 
 ### 0.2 The stale-worktree trap
 
@@ -137,7 +130,7 @@ git status --short                         # MUST be empty, untracked included
 git merge --ff-only main
 ```
 
-`git merge-base --is-ancestor <base> main` answers what the other two cannot: is the recorded branch point still an ancestor of `main`? Non-zero means `main` was rewritten under the branch — stop and report, do not force it. `git log --oneline main..HEAD` is the load-bearing one: any output means the worktree holds commits, so a fast-forward is the wrong operation. `git status --short` must be empty **including untracked**, because an untracked file exists in no commit and no ref (`HANDOFF.md:533-534`). **Never `git reset --hard`, `git checkout -- .`, or `git clean -fd` to "fix" a dirty worktree** — that is data loss with a plausible excuse attached. Report the dirty state.
+`git merge-base --is-ancestor <base> main` answers what the other two cannot: is the recorded branch point still an ancestor of `main`? Non-zero means `main` was rewritten under the branch — stop and report, do not force it. `git log --oneline main..HEAD` is the load-bearing one: any output means the worktree holds commits, so a fast-forward is the wrong operation. `git status --short` must be empty **including untracked**, because an untracked file exists in no commit and no ref. **Never `git reset --hard`, `git checkout -- .`, or `git clean -fd` to "fix" a dirty worktree** — that is data loss with a plausible excuse attached. Report the dirty state.
 
 ### 0.3 `.kilo` is gitignored — a new worktree has no plan documents
 
@@ -146,7 +139,7 @@ git check-ignore -v .kilo   # .gitignore:34:.kilo	.kilo
 git ls-files .kilo | wc -l  # 0
 ```
 
-`.gitignore:34` ignores `.kilo` and `:35` ignores `.serena`, so `git worktree add` checks out **nothing** under `.kilo`: no `plans/`, no skills, no `agent-manager.json`. A fresh worktree has no `ps-research/08-merge-plan.md`, no `RESEARCH-BRIEF.md`, no `04-blend-modes-and-brush-spec.md`. The file that owns the merge gate simply is not there, and this has bitten real sessions. Two workarounds:
+`.gitignore` ignores `.kilo` and `.serena`, so `git worktree add` checks out **nothing** under `.kilo`: no `plans/`, no skills, no `agent-manager.json`. A fresh worktree has no `ps-research/08-merge-plan.md`, no `RESEARCH-BRIEF.md`, no `04-blend-modes-and-brush-spec.md`. The file that owns the merge gate simply is not there, and this has bitten real sessions. Two workarounds:
 
 ```bash
 less /Users/bkalynovskyi/ph/.kilo/plans/ps-research/08-merge-plan.md
@@ -155,17 +148,17 @@ mkdir -p .kilo/plans/ps-research
 cp /Users/bkalynovskyi/ph/.kilo/plans/ps-research/{08-merge-plan,RESEARCH-BRIEF}.md .kilo/plans/ps-research/
 ```
 
-Never copy the whole tree: `agent-manager.json` is UI/recovery state the extension writes, and a second copy in a worktree is one it will overwrite. A handoff doc is **not** gitignored — `docs/handoffs/` is tracked (existing example: `docs/handoffs/ps-transform-geometry-review-and-merge.md`), so write that one in the worktree, on the branch, in the same commit as the finding (`AGENTS.md:148`). `AGENTS.md:146` is explicit that nothing durable belongs under `.kilo/`.
+Never copy the whole tree: `agent-manager.json` is UI/recovery state the extension writes, and a second copy in a worktree is one it will overwrite. A handoff doc is **not** gitignored — `docs/handoffs/` is tracked (existing example: `docs/handoffs/ps-transform-geometry-review-and-merge.md`), so write that one in the worktree, on the branch, in the same commit as the finding. Nothing durable goes under `.kilo/`, so a finding that must survive the session goes in the handoff, not in the plan directory.
 
 ### 0.4 `node_modules` is usually missing or empty
 
-`AGENTS.md:84` says "empty or missing in most worktrees". Measured across the 106 directories under `.kilo/worktrees/`: **22 have no `node_modules` at all, 64 have an empty one, 20 are populated** — 86 of 106 cannot resolve a package. The trap is that this _mostly works_: Node walks up to the ancestor checkout, so `tsc` and `vitest` resolve from `/Users/bkalynovskyi/ph/node_modules` and report success. That is what makes it misleading — the tool runs against the parent's dependency tree, so lockfile skew between the two checkouts stays invisible until it is not.
+The trap is that this _mostly works_: Node walks up to the ancestor checkout, so `tsc` and `vitest` resolve from `/Users/bkalynovskyi/ph/node_modules` and report success. That is what makes it misleading — the tool runs against the parent's dependency tree, so lockfile skew between the two checkouts stays invisible until it is not.
 
-**Vite does not walk up.** It serves only what `server.fs.allow` permits, so fonts, images and AVIF assets that resolve in the root checkout **404 in a worktree**. If an asset will not load, run `npm ci` in the worktree before investigating anything else — it removes the most common false "the code is broken" conclusion. It does not license a dependency change: `package.json` and `package-lock.json` must be unchanged (`08-merge-plan.md:84`).
+**Vite does not walk up.** It serves only what `server.fs.allow` permits, so fonts, images and AVIF assets that resolve in the root checkout **404 in a worktree**. If an asset will not load, run `npm ci` in the worktree before investigating anything else — it removes the most common false "the code is broken" conclusion. It does not license a dependency change: `package.json` and `package-lock.json` must be unchanged.
 
 ### 0.5 The Playwright port
 
-Every worktree's dev server wants `:5173` and `reuseExistingServer` is on locally, so `npm run test:e2e` can attach to a server **another worktree started** and test that checkout. "My change did nothing" is this, not a cache (`AGENTS.md:85`).
+Every worktree's dev server wants `:5173`, so `npm run test:e2e` can attach to a server **another worktree started** and test that checkout — "my change did nothing" is this, not a cache.
 
 ```ts
 // playwright.config.ts:21-22
@@ -177,7 +170,7 @@ reuseExistingServer:
   process.env.CI || process.env.PLAYWRIGHT_PORT ? false : process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER !== 'false',
 ```
 
-Read the condition left to right. `PLAYWRIGHT_PORT` does **two** things: it moves the port, and because it is set it also forces `reuseExistingServer: false`. `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` does only the second, leaving the port at 5173, where a stale server turns the `--strictPort` at `playwright.config.ts:111` into a startup failure. **Prefer `PLAYWRIGHT_PORT`** — one variable, both effects. `AGENTS.md:85` documents only the weaker one; `playwright.config.ts:118-119` is what the code does. Local runs are also sequential — `workers: 1` outside CI (`playwright.config.ts:42`) — so two local runs cannot fight over one app instance.
+Read the condition left to right. `PLAYWRIGHT_PORT` does **two** things: it moves the port, and because it is set it also forces `reuseExistingServer: false`. `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` does only the second, leaving the port at 5173, where a stale server turns the `--strictPort` at `playwright.config.ts:111` into a startup failure. **Prefer `PLAYWRIGHT_PORT`** — one variable, both effects. Local runs are also sequential — `workers: 1` outside CI (`playwright.config.ts:42`) — so two local runs cannot fight over one app instance.
 
 ```bash
 cd /Users/bkalynovskyi/ph/.kilo/worktrees/<name>
@@ -188,7 +181,7 @@ Pick a port nobody has claimed.
 
 ### 0.6 Main is not stable while you work
 
-Other sessions commit into `main` concurrently (`AGENTS.md:86`). Re-read the state immediately before staging, and stage only your own paths.
+Other sessions commit into `main` concurrently. Re-read the state immediately before staging, and stage only your own paths.
 
 ```bash
 cd /Users/bkalynovskyi/ph
@@ -198,13 +191,7 @@ git add <explicit/path/one> <explicit/path/two>   # never `git add -A`
 git diff --cached --stat                          # read this: it is what you are about to commit
 ```
 
-`git add -A` in a shared checkout stages another session's in-flight work under your commit message, with no clean undo once pushed. At the time of writing `main` carries an untracked `.output.txt` that is nobody's yours — a `git status` line, not a problem. **One investigation to skip:** `.eslintcache` and `.serena/` appear in and disappear from `git status` across sessions because a fast-forward brought a new `.gitignore` line (`.gitignore:32,34,35`, added by `98594e8` and `f0b939f`); run `git check-ignore -v` before treating either as another session's work.
-
-### 0.7 Never open a browser window
-
-`AGENTS.md:45-60`: a headed browser puts a live, clickable window on the operator's screen for the whole run, and their input reaches the page indistinguishably from the suite's own `page.mouse` calls. Blocked outright — `playwright test --headed` · `--ui` · `--debug` · `playwright show-report` · `show-trace` · `codegen` / `open` · `PLAYWRIGHT_ALLOW_HEADED=1` · `test.use({ headless: false })`. Two layers enforce it and you should name both: `kilo.jsonc` denies most at the permission layer, including the npm script spellings, with `--debug` / `test:e2e:debug` set to `ask` rather than `deny` (`e2e/README.md:70-77`); and `e2e/global-setup.ts:44-45` returns only for `PLAYWRIGHT_ALLOW_HEADED === '1'`, with `:53-55` rejecting the three flags by name, `:59-61` any project resolved to `headless: false`, and `:67` throwing before a window exists.
-
-`npm run test:e2e:headed` (`package.json:22`) sets that variable and prints a warning. **That is the operator's command, not yours**; if something only reproduces visually, ask them to run it. To unblock a run without a window, add `--retries=1` so `trace: 'on-first-retry'` yields a trace file, and read the failure PNG from the test's own `outputDir` under `test-results/` (`screenshot: 'only-on-failure'`, `playwright.config.ts:87`).
+`git add -A` in a shared checkout stages another session's in-flight work under your commit message, with no clean undo once pushed. **One investigation to skip:** `.eslintcache` and `.serena/` appear in and disappear from `git status` across sessions because a fast-forward brought a new `.gitignore` line; run `git check-ignore -v` before treating either as another session's work.
 
 ---
 
@@ -229,19 +216,6 @@ to a decision, never the decision.
 
 Run both waves in one `task` batch. Do not serialize them: Wave A has no dependency on
 Wave B, and the wall-clock saving is the whole point of fanning out.
-
-Model fields on every research dispatch — omitting them inherits the parent turn's model,
-which is usually a paid one:
-
-```ts
-task({
-  subagent_type: 'general', // 'general' for Wave A, 'explore' for Wave B
-  model: 'Space Bunny Alpha (new)',
-  provider: 'kilo',
-  variant: 'max',
-  prompt: `...`,
-});
-```
 
 ### The web-research brief
 
@@ -502,9 +476,9 @@ must read the conventions, and three of its items are non-negotiable:
   `e2e/README.md:30`: _"`npm run test:e2e` is **headless by default. Keep it that way.**"_).
   A summary of the rules is not the rules. The verbatim quote is what stops the new spec from
   reintroducing `--headed`, a wrong `testDir`, or an unquarantined flake.
-- **`e2e/OPEN_PROBLEMS.md` entries enumerated** (363 lines; sections `## Observed failures`
-  at `e2e/OPEN_PROBLEMS.md:36`, `## Known-skip tests` at `:376`, `## Verified and still
-unverified` at `:318`). A new spec that trips a latent known defect is a new defect, not a
+- **`e2e/OPEN_PROBLEMS.md` entries enumerated**, section by section: `## Observed failures`,
+  `## Known-skip tests`, `## Verified and still unverified`. A new spec that trips a latent known
+  defect is a new defect, not a
   flaky test — and the operator reads the entry list before investigating any e2e failure.
 - **Item 14 is the existence check.** "Is there already a spec for this surface?" must be
   answered explicitly, including "no". A recon agent that finds nothing tends to stay silent,
@@ -780,7 +754,7 @@ interface — it is what lets a later session find the right file without readin
 ```markdown
 | File                                                                       | What it is                                                                                                 | Read it when                       |
 | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| **[00-tool-inventory.md](./00-tool-inventory.md)**                         | All 29 registered tools vs. Photoshop, with honest status and the five highest-impact findings             | First, for orientation             |
+| **[00-tool-inventory.md](./00-tool-inventory.md)**                         | Every registered tool vs. Photoshop, with honest status and the five highest-impact findings               | First, for orientation             |
 | **[01-photoshop-reference.md](./01-photoshop-reference.md)**               | Behavior spec across 7 tool families, every claim cited; §10 lists disproved premises and unverified items | Implementing or reviewing any tool |
 | **[02-implementation-plan.md](./02-implementation-plan.md)**               | 10 phases, sequenced, with `file:line` anchors and constraint compliance                                   | Deciding what to build next        |
 | **[07-test-harness-and-migration.md](./07-test-harness-and-migration.md)** | Canvas mock capability report, which tests assert bugs, the rewrite order                                  | Before writing any code            |
@@ -873,8 +847,8 @@ failure mode constraints 3 and 8 exist to prevent.
 ## Phase 2 — make the tool look like Photoshop
 
 This is the phase a reader is most likely to copy line for line, so every template
-below is written against the working tree at `1c9c8de` and every `file:line` in it
-was re-verified now. Where a claim comes from the unmerged `brush-toolbar` branch it
+below is written against the working tree and every `file:line` in it
+was re-verified on 2026-09-28. Where a claim comes from the unmerged `brush-toolbar` branch it
 is cited `brush-toolbar:<path>` and marked as a reference implementation, not as
 current code. `src/components/ToolbarsRight/**` does not render on the right — the
 directory name is legacy; those components are the **Photoshop options bar body**,
@@ -976,7 +950,7 @@ Four consequences you have to design around:
 
 #### A complete, compiling example
 
-`Color Replacement` is the right worked example at `1c9c8de`: it has a real renderer
+`Color Replacement` is the right worked example: it has a real renderer
 (`src/tools/toolProcessors.ts:214-221` → `draw(..., 'spray')` →
 `src/util/draw.ts:147-167`), real args (`PaintToolArgs`, `src/tools/draw.ts:36-38`),
 real defaults (`src/tools/settings.ts:133-140`), and it is still a placeholder card
@@ -1444,7 +1418,7 @@ own `onChange`, the defect below is possible.
 every paint tool's args to a bare name:
 
 ```ts
-// src/util/settings.ts:69-81, as of 1c9c8de — still open
+// src/util/settings.ts — the save arm, and the defect that bit a real build
 } else if (
   toolName === 'brush' || toolName === 'pencil' || toolName === 'color-replacement' ||
   // … the six pen-family tools
@@ -1547,12 +1521,8 @@ which is the same defect with a different trigger.
 
 ## Phase 3 — strip the undoable requirement
 
-Verified against `main` at `1c9c8de` in the worktree `.kilo/worktrees/skill-ps-tool` on
-2026-09-28. Every `file:line` below was read in that tree. Re-read them before you edit:
-`AGENTS.md:143` says of handoff docs "Verify against the tree."
-
-Read `AGENTS.md` first. It is the authority on commands, gates, the headed-browser
-refusal, and the handoff lifecycle. This section assumes it.
+Every `file:line` below was read in `main` on 2026-09-28. Re-read them before you edit:
+`AGENTS.md` says of handoff docs "Verify against the tree."
 
 ---
 
@@ -1589,7 +1559,7 @@ plain JSON**, because the durable conversion runs them through `plainObject`
 non-finite number, or a non-`Object.prototype` object. There is no canvas snapshot, no
 `ImageData`, no diffing, no migration. That is the cost.
 
-**The durable path is a shadow, and you must not over-claim.** `AGENTS.md:155-157`: the
+**The durable path is a shadow, and you must not over-claim.** `AGENTS.md`'s Architecture status section: the
 legacy `HistoryItem[]` path is the production replay authority; the durable document is a
 shadow projection, not the authority for rendering. Choosing `commit: 'raster'` buys a
 durable document that _agrees_ with legacy replay. It does not promote the durable
@@ -1597,16 +1567,16 @@ document. Say so in the PR.
 
 #### Vocabulary
 
-| Symbol                    | Meaning                                                                                                                                                          |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ToolCommitKind`          | the eight-value union at `src/tools/toolProcessors.ts:40-48`; a tool's declared answer to "how does my result become state?"                                     |
-| `ToolProcessorDefinition` | the registry entry type at `src/tools/toolProcessors.ts:50-61`: `creator?`, `flattenRequired?`, `commit`, `replay`, `imageProcessor`                             |
-| `replay`                  | the frozen descriptor at `src/tools/toolProcessors.ts:54-59` — `{ kind, deterministic, version, requiresRaster }`, built by the `replay()` factory at `:69-70`   |
-| `DurableOperation`        | the durable operation union at `src/contexts/history-model.ts:87-110` — the twelve shapes a durable history entry can hold                                       |
-| `DurableHistoryEntry`     | `{ id, schemaVersion, enabled, operation }`, `src/contexts/history-model.ts:115-120`                                                                             |
-| `operationForTool`        | `src/contexts/history-adapter.ts:349-427` — **the whole decision point.** Maps one legacy `TOOL_ACTION` entry to one `DurableOperation`, or `null`, or throws    |
-| `imageProcessor`          | `(params) => (args) => [BitmapSource, Partial<Pos>?]`; called with `{ bitmap, size }` on replay, `{ size }` for a creator, `{ bitmap, size }` in materialization |
-| `ToolArgs`                | the closed per-tool args union, `src/contexts/tool-types.ts:20-69`; every settings field you add is an optional member of your tool's entry                      |
+| Symbol                    | Meaning                                                                                                                                                                                                                           |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ToolCommitKind`          | the eight-value union at `src/tools/toolProcessors.ts:40-48`; a tool's declared answer to "how does my result become state?"                                                                                                      |
+| `ToolProcessorDefinition` | the registry entry type in `src/tools/toolProcessors.ts`: `creator?`, `commit`, `replay`, `imageProcessor`. The registry is keyed by `PixelToolName`, **not** `ToolName`, so a pixel-free tool goes in `PIXEL_FREE_TOOLS` instead |
+| `replay`                  | the frozen descriptor at `src/tools/toolProcessors.ts:54-59` — `{ kind, deterministic, version, requiresRaster }`, built by the `replay()` factory at `:69-70`                                                                    |
+| `DurableOperation`        | the durable operation union at `src/contexts/history-model.ts:87-110` — the twelve shapes a durable history entry can hold                                                                                                        |
+| `DurableHistoryEntry`     | `{ id, schemaVersion, enabled, operation }`, `src/contexts/history-model.ts:115-120`                                                                                                                                              |
+| `operationForTool`        | `src/contexts/history-adapter.ts:349-427` — **the whole decision point.** Maps one legacy `TOOL_ACTION` entry to one `DurableOperation`, or `null`, or throws                                                                     |
+| `imageProcessor`          | `(params) => (args) => [BitmapSource, Partial<Pos>?]`; called with `{ bitmap, size }` on replay, `{ size }` for a creator, `{ bitmap, size }` in materialization                                                                  |
+| `ToolArgs`                | the closed per-tool args union, `src/contexts/tool-types.ts:20-69`; every settings field you add is an optional member of your tool's entry                                                                                       |
 
 ---
 
@@ -1758,7 +1728,7 @@ one unsupported entry throws inside the per-item loop, the loop catches it into 
 `convertLegacyHistorySafely` rolls the asset transaction back and returns
 `{ status: 'unavailable', document: null }` (`:657-665`) — **the shadow is absent, not
 degraded.** A tool durable conversion cannot translate therefore costs the _whole_ durable
-document, not just its own entry. That is designed behaviour, and `AGENTS.md:155-157` says
+document, not just its own entry. That is designed behaviour, and `AGENTS.md`'s Architecture status section says
 the durable document is a shadow, so nothing user-visible breaks — but it is a consequence
 an agent should be able to explain rather than discover.
 
@@ -1874,7 +1844,7 @@ the same change; do not treat the durable op as covering the representation.
    existing op has" is a reason: tier 3, and a `HANDOFF.md` entry.
 5. **If the answer is 3 and you are nervous about non-destructiveness:** ship on `raster`,
    write the handoff entry, and say so in the PR. The durable document is a shadow
-   (`AGENTS.md:155-157`); a missing non-destructive shadow is a tracked problem, not a
+   (`AGENTS.md`'s Architecture status section); a missing non-destructive shadow is a tracked problem, not a
    shipped defect.
 
 Then verify, before you write a line of UI: `npm run test -- src/tools/__tests__/tool-processors.test.ts`
@@ -1963,7 +1933,7 @@ And constraint 1, which the durable path makes concrete: runtime layer state is 
 only by dispatching a typed action through the store reducer. If your tool needs to publish
 derived presentation state, it needs document-scoped presentation ownership or a new typed
 presentation action — not a mutation from a callback or an async continuation.
-`AGENTS.md:155-157` adds the standing warning: do not start a single-writer cutover while
+`AGENTS.md`'s Architecture status section adds the standing warning: do not start a single-writer cutover while
 `saveLayerCanvas()` can still promote cached canvases outside reducer publication.
 
 ---
@@ -2056,7 +2026,7 @@ oracle.
 
 **Caveat 1 — the identity branch it relies on is not on this base.** The branch's own
 justification is that "`drawLine` compares by identity to decide whether to reuse the
-caller's args or allocate a copy (`src/util/draw.ts:132-133`)". At `1c9c8de` there is no such
+caller's args or allocate a copy". There is no such
 comparison: `src/util/draw.ts:84-94` is `drawLine`, a three-branch `penType` dispatch with
 no identity test, and `drawPen` at `:96-104` calls `bezierSmoothedLine` unconditionally.
 `git grep sampled -- src/util/draw.ts` returns nothing. The same is true of the branch's
@@ -2111,7 +2081,7 @@ deferred its entire engine-dependent remainder to **six numbered `HANDOFF.md` en
 preset). `git grep TODO brush-toolbar -- src/` finds only the pre-existing
 `ToolbarPlaceholder` UI strings and the test asserting the Paint panel no longer renders
 one — **no new `// TODO` comment was added anywhere in the change.** I could not verify a
-repo-level ban on source comments: `AGENTS.md` (157 lines) contains no occurrence of the
+repo-level ban on source comments: `AGENTS.md` contains no occurrence of the
 word, and `eslint.config.js` sets no comment rule. What _is_ verifiable, and what the
 reference build did, is six handoff entries with zero new inline TODOs. Follow the build,
 not an unverifiable rule.
@@ -2160,69 +2130,25 @@ test pin (`AGENTS.md`: "a pin is a tripwire that fails the moment the defect is 
 fix must remove the pin in the same change"); or the fix would change a committed
 visual-regression baseline (**recording belongs to the operator**); or the fix would widen a
 closed union or a hardcoded allowlist in the history files (tiers 2 and 3), or start a
-single-writer cutover (`AGENTS.md:155-157`).
+single-writer cutover (`AGENTS.md`'s Architecture status section).
 
 #### Lifecycle and numbering
 
-From `AGENTS.md:150-153`: **fixed and verified deletes the entry** — never rewrite an open
-problem into a closed one; "unverified is not closed", so a fix that landed without a check
-leaves the entry alive, tightened to say what still needs verifying; and the handoff edit
-**belongs in the same commit as the work that produced the finding**
-(`AGENTS.md:148`). **Numbers are stable identifiers other items cite, so they are never
-renumbered** — the gaps are entries that were fixed and deleted. New entries append at EOF
-after a `---`, taking the next unused number.
+The lifecycle itself is in `AGENTS.md`: fixed and verified **deletes** the entry, an unverified
+fix leaves it alive and tightened, and the handoff edit belongs in the same commit as the work that
+produced the finding. What that file does not carry is the numbering discipline: **numbers are
+stable identifiers other items cite, so they are never renumbered** — the gaps are entries that
+were fixed and deleted. New entries append at EOF after a `---`, taking the next unused number, and
+the next number is whatever the tree says it is: read the file, do not trust a number written here.
+It also does not carry the collision hazard: a branch's `HANDOFF.md` was written against its own
+base, and its items 37-41 are already taken on this base, so porting entries verbatim collides with
+live problems. **Re-number against the tree you are on.**
 
-**At `1c9c8de`, `HANDOFF.md` is 1509 lines with 43 `##` headings numbered up to 45.** The
-gaps are **30, 36 and 43**; the next unused number is **46**. That matters: the
-`brush-toolbar` branch's six new entries are numbered 36-41 against its own base
-(`446d7eb`, a 1270-line `HANDOFF.md`), and on **this** base **37-41 are already taken** by
-different problems — 37 is `isToolDirty` has no production writer, 41 is Original / Free no
-longer restores the rect drawn before a ratio change. Porting those entries verbatim collides
-with five live entries. Re-number against the tree you are on, and take 46+.
-
----
-
-#### Corrections to the reference implementation's own citations
-
-Not playbook errors — the branch's internal `file:line` values, which are against its own
-base (`446d7eb`) and do not resolve at `1c9c8de`. Do not cite them as current-tree facts.
-
-| Branch claim                                                                                  | Status at `1c9c8de`                                                                                                                                                                                                                                                                              |
-| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `src/util/draw.ts:132-133` — "`drawLine` compares by identity (`points === sampled`)"         | **Does not exist.** `git grep sampled -- src/util/draw.ts` returns nothing. `src/util/draw.ts:84-94` is `drawLine` (a `penType` dispatch) and `:96-104` is `drawPen`, which calls `bezierSmoothedLine` unconditionally. The identity branch must be re-established on whatever base you port to. |
-| `src/contexts/history-adapter.ts:199` — the `create-layer` emission                           | **Does not exist at that line.** `src/contexts/history-adapter.ts:199` is inside `convertLayer`'s layer literal; `create-layer` is emitted at **`src/contexts/history-adapter.ts:504`**.                                                                                                         |
-| `src/tools/settings.ts:21-25` — the legacy `draw` per-pen presets                             | **Correct.** `src/tools/settings.ts:21-25` is `savedDrawPerPen`.                                                                                                                                                                                                                                 |
-| `src/util/draw.ts:5-26` — `pointsBoundingPos` padding                                         | **Correct for the symbol's start** (`src/util/draw.ts:5`); the end line has shifted. Cite the symbol.                                                                                                                                                                                            |
-| `src/tools/toolProcessors.ts:89-95,165-193` — `buildDrawArgs` and the three raster processors | **Correct.** Both ranges resolve exactly.                                                                                                                                                                                                                                                        |
-| `HANDOFF.md` items 36-41 on the branch                                                        | **Numbers collide on this base.** The branch's `HANDOFF.md` is 1270 lines off `446d7eb`; this tree's is 1509 lines with 37-41 taken. See the numbering paragraph above.                                                                                                                          |
-
-#### What I could not verify
-
-- **No suite was run.** No `npm run test`, `npm run tsc`, `npm run build`,
-  `npm run test:e2e:unit` or `npm run test:e2e` — the task forbade it. Every claim here is
-  a read of the tree, not an execution.
-- **`RESEARCH-BRIEF.md` is gitignored and local-only.** It exists at
-  `/Users/bkalynovskyi/ph/.kilo/plans/ps-research/RESEARCH-BRIEF.md` and is **not** in this
-  worktree. The constraint quotes are from that file (189 lines, constraints at `:51-81`),
-  read on this machine. A worktree-only agent cannot open it.
-- **The `setupDrawCtx` dash-guard removal** (caveat 2) is a candidate defect read from the
-  branch's diff, not a confirmed one. I did not run the suite and did not trace the overlay
-  context's lifetime.
-- **The brush-toolbar branch's test outcomes.** Its commit message claims gates passed; I did
-  not run them and cannot confirm the branch is green against `1c9c8de`.
-- **`saveLayerCanvas` promotion.** `src/contexts/layer-utils.ts:116-117` still exists at
-  `1c9c8de`, consistent with the standing warning in `AGENTS.md:155-157`, so that warning is
-  current for this tree. What I did not trace is every caller.
-
-Every `file:line` about the working tree was re-verified at **`1c9c8de`** (branch `skill/photoshop-tool-creation`). Citations of the form
-`brush-toolbar:<path>` are the
-**not-yet-merged reference implementation** (tip `bf96b72`; `git merge-base --is-ancestor
-brush-toolbar main` fails) and describe code that is not in `main`.
-
-Read `AGENTS.md` first. Its "Test traps" section is authoritative and nothing below contradicts it: TS strict, React 19, no `any`,
-`satisfies` for registries, no enums, no parameter properties (`erasableSyntaxOnly`, `tsconfig.app.json:32`), `vi.hoisted()` factories
-rather than global mutation, `it.fails('...')` plus a `// BUG:` marker for a pinned defect, one setup file (`src/test/setup.ts`). The
-worked example throughout is a new raster tool named `eraser`.
+The TS conventions this document relies on, none of which `AGENTS.md` carries: strict, React 19,
+no `any`, `satisfies` for registries, no enums, no parameter properties (`erasableSyntaxOnly` in
+`tsconfig.app.json`). The
+worked example throughout is a raster tool — and it is the shipped `eraser`, so read the snippets as the shape of a
+tool, not as a spec of a tool you are about to write.
 
 ---
 
@@ -2233,10 +2159,9 @@ worked example throughout is a new raster tool named `eraser`.
 One entry per tool, in a total registry:
 
 ```ts
-// src/tools/toolProcessors.ts:50-61
+// src/tools/toolProcessors.ts
 export type ToolProcessorDefinition = {
   creator?: boolean;
-  flattenRequired?: boolean;
   commit: ToolCommitKind;
   replay: Readonly<{
     kind: ToolReplayKind;
@@ -2272,9 +2197,9 @@ to its own registered name.`, as `reposition` does at `:81-82`; an inline adapte
   `src/contexts/layer-utils.ts:206-216` calls `imageProcessor({ size: pos } as
 CreatorToolParams)(source.args)` and assigns the result to `layer.tmpCanvas`. Without the flag
   the tool cannot create its own layer.
-- `flattenRequired` — **do not set it.** It is in the type (`:50`) and the branch runs
-  (`src/contexts/useLayer.ts:274-304`), but no shipped processor sets it; only two tests that
-  inject the flag reach it.
+- There is a fifth field the old playbook warned about, `flattenRequired`, and **it no longer
+  exists**: it is not in `ToolProcessorDefinition` and nothing in `src/` or `e2e/` mentions it. If
+  you are porting a branch that sets it, that is the first thing to delete.
 
 **`requiresRaster` is derived, not declared, and a test enforces it** — the tripwire
 against a dishonest declaration:
@@ -2362,9 +2287,9 @@ this correctly — preview at `:304`, publish once at `:309-319` — so the rule
 _which function the tool area calls_, not by anything inside it. Call it on every pointer
 move and undo becomes useless.
 
-**Batching.** `DrawToolArea` repaints synchronously per move (`:34-44`) and that is a known defect,
-not a template. If you batch in a `requestAnimationFrame`, cancel **and null** the ref on pointer-up; a cancelled-but-live ref repaints a
-stale frame after the layer commits.
+**Batching.** `DrawToolArea` batches its repaint through a `requestAnimationFrame` and cancels
+**and nulls** the ref on pointer-up; a cancelled-but-live ref repaints a
+stale frame after the layer commits. Copy that shape.
 
 **Do not neutralise a shared-context defect.** `Main.tsx:100` hands every tool area the same 2D
 context, so a painter must call `resetOverlayAlpha` and bracket in `save()` / `restore()`. Do
@@ -2505,9 +2430,9 @@ One step at a time, verifying each before the next; the full suite comes at step
 
 ## Phase 5 — unit tests
 
-`npm run test` is `vitest --run` on `pool: 'vmThreads'`, `maxWorkers: 4` (`vitest.config.ts:6-9`); a test that only fails in a full run is
-usually the pool. All three templates below are complete and runnable; `<myTool>` is the only substitution and the bodies use the
-illustrative name `eraser`.
+`npm run test` is `vitest --run` on `pool: 'vmThreads'`, `maxWorkers: 4` (`vitest.config.ts`); a test that only fails in a full run is
+usually the pool. All three templates below are complete and runnable; `<myTool>` is the only substitution, and the bodies are
+written against the shipped `eraser` — keep the shape, change the name.
 
 ### The three templates
 
@@ -2933,59 +2858,33 @@ npm run test         # the full suite
 npm run lint:check
 ```
 
-`npx tsc --noEmit` resolves the app project alone and exits 0 while the tests do not compile. Read the `Test Files` count, not just the
-pass line: a merge that silently drops test files is a failed merge. There is one setup file, `src/test/setup.ts` — a second one, or
-global mocks on a path that expects them to load, silently changes what the suite exercises. `e2e/**` is excluded from `npm run test`;
-those specs run under `npm run test:e2e`, and their helpers under `npm run test:e2e:unit`.
-
 ---
 
 ## Phase 6 — e2e
 
 `npm run test:e2e` is headless and starts Vite itself. `e2e/**` is excluded from `npm run test`,
-and `**/__tests__/**` plus `*.unit.test.ts` are excluded from Playwright (`AGENTS.md:93`). A
+and `**/__tests__/**` plus `*.unit.test.ts` are excluded from Playwright (`AGENTS.md`, "Test traps"). A
 Playwright spec run in jsdom, or an e2e helper test run in a browser, fails in a way that looks like
 a product bug.
 
 ### The browser rule
 
-Read this before writing any e2e code, and reproduce it in every brief you dispatch. The substance
-of `AGENTS.md:45-60`, which is binding:
+`AGENTS.md` carries the rule, the blocked-command table and the reason, and they are binding: the
+suite is headless, and a headed browser puts a live window on the operator's screen for the whole
+run, where their own input reaches the page as real input. Reproduce the rule in every brief you
+dispatch; do not restate the table.
 
-> The e2e suite is headless by default and must stay that way. A headed browser puts a live,
-> clickable window on the operator's screen for the whole run; their clicks, keystrokes, mouse
-> movement and focus changes reach the page as real input, indistinguishable from the suite's own
-> `page.mouse` / `page.keyboard` calls, so the run fails for reasons that are not in the code and
-> look exactly like real races.
-
-| Blocked                         | Why                                                        |
-| ------------------------------- | ---------------------------------------------------------- |
-| `playwright test --headed`      | a visible window                                           |
-| `playwright test --ui`          | opens the Playwright UI in the default browser, and blocks |
-| `playwright test --debug`       | forces headed and opens the inspector                      |
-| `playwright show-report`        | opens a window, and blocks until it is closed              |
-| `playwright show-trace`         | opens a window, and blocks until it is closed              |
-| `playwright codegen` / `open`   | opens a window                                             |
-| `PLAYWRIGHT_ALLOW_HEADED=1`     | the human's opt-in, not yours                              |
-| `test.use({ headless: false })` | a live window                                              |
-
-A headed run is **not merely inconvenient — it fails a disjoint set of tests.** The measured
-disjoint sets (`e2e/OPEN_PROBLEMS.md:90-93`, `e2e/README.md:45-49`):
-
-| specs                                                                                         | headed | headless |
-| --------------------------------------------------------------------------------------------- | ------ | -------- |
-| CDP, deriving expected size from `getDevicePixelRatio()` (`:113` `:129` `:146` `:163` `:195`) | 5 fail | pass     |
-| CDP, explicit `deviceScaleFactor: 2` block (`:220` `:239`)                                    | pass   | 2 fail   |
-
-The two groups are disjoint and each reproduced identically across repeats. Both are fixed, and the
-fix was to remove the scale assertion rather than re-derive it, so the sets are now empty **by
-construction, not by observation** (`e2e/OPEN_PROBLEMS.md:406-409`). "Do not fix a failure by
-flipping the mode" (`AGENTS.md:60`) rests on that measurement, not a preference. If something
-only reproduces visually, that is the operator's call — name the command and stop there.
+What the rule costs, and why it is not a preference: a headed run fails a **disjoint** set of
+specs from a headless one. The measured disjoint sets were the CDP specs deriving an expected size
+from `getDevicePixelRatio()` (which pass headless) against the CDP specs with an explicit
+`deviceScaleFactor: 2` (which pass headed). Both are fixed, and the fix was to remove the scale
+assertion rather than re-derive it, so the sets are now empty **by construction, not by
+observation**. If something only reproduces visually, that is the operator's call — name the
+command and stop there.
 
 Read a failure from disk, never a viewer: `screenshot: 'only-on-failure'` puts a PNG in the failing
 test's `outputDir` under `test-results/`, and the `list` reporter on stdout is the pass/fail record
-(`playwright.config.ts:87`, `AGENTS.md:139`).
+(`playwright.config.ts`).
 
 ### The brief template
 
@@ -3179,7 +3078,7 @@ the decoded image dimensions instead, via `screenshotBoundsToCss` (`canvas-helpe
 
 `e2e/OPEN_PROBLEMS.md` holds latent e2e defects — ones no current run trips but that a new spec can
 walk into. **Read it before investigating any e2e failure, and do not re-introduce a known defect**
-(`AGENTS.md:136`). On the default headless run nothing fails (`e2e/OPEN_PROBLEMS.md:41-42`), so a new
+(`AGENTS.md`, "E2E failures"). On the default headless run nothing fails (`e2e/OPEN_PROBLEMS.md:41-42`), so a new
 failure is a new defect, never a known one. Characterised, not listed:
 
 1. **Empty input flowing into arithmetic.** `screenshotBoundsToCss` (`canvas-helpers.ts:30`) and
@@ -3239,7 +3138,7 @@ Two more latent entries: a nearly transparent pixel counts at full weight in `do
 colour assertion worthless (`e2e/OPEN_PROBLEMS.md:183-195`); and a bare `name` passed to
 `captureCanvasScreenshot` is interpolated into a path unsanitised (`:216-237`). **Do not weaken a
 gate to get green:** no skips, no raised thresholds, no deleted assertions, no re-recorded visual
-baselines (`AGENTS.md:132`).
+baselines (`AGENTS.md`, "Gates" and "E2E failures").
 
 ### Visual regression
 
@@ -3263,7 +3162,7 @@ files (`visual-regression.spec.ts:67-72`, `e2e/MIGRATION-TODO.md:52-60`). Budget
 (`e2e/helpers/image-comparison.ts:27-29`); read the call site rather than assuming a budget.
 
 **Re-recording requires an explicit `--update-snapshots` (`npm run test:e2e:update-baselines`) and
-is a recording decision that belongs to the operator** (`AGENTS.md:132`). A missing baseline
+is a recording decision that belongs to the operator.** A missing baseline
 attaches the export and then throws on purpose: the comparison was never made
 (`visual-regression.spec.ts:80-84`).
 
@@ -3273,53 +3172,12 @@ item 36: "baselines were recorded through the `draw` tool and are unaffected as 
 left alone"). When a new paint engine changes stroke rendering, check that tripwire list before
 touching a baseline.
 
----
-
-## Phase 7 — delegation
-
-Delegate **first**, not after you get stuck (`AGENTS.md:9`). A task that takes one context 40
-sequential tool calls should be 8 subagents in parallel plus a synthesis; the sequential calls are
-the defect, not the token count (`AGENTS.md:7`).
-
-### The model policy
-
-Space Bunny Alpha is **free and nearly as good as GPT Luna**, so it is the default on every
-subagent where it makes sense, which is nearly all of them (`AGENTS.md:18`). Four rules, none
-negotiable (`AGENTS.md:11-20`):
-
-```ts
-task({
-  subagent_type: 'explore', // or 'general'
-  model: 'Space Bunny Alpha (new)',
-  provider: 'kilo',
-  variant: 'max',
-  prompt: '...',
-});
-```
-
-- **Pass all three fields.** Omitting `model`, `provider` and `variant` inherits the current turn;
-  passing them explicitly is what keeps a subagent free when the main turn is not
-  (`AGENTS.md:32`). This repo's own history shows both shapes: the research wave passed
-  `model: 'kilo/stealth/space-bunny-alpha'`, the review wave passed
-  `model: 'Space Bunny Alpha (new)', variant: 'max'`. The `variant: 'max'` pairing is the one to
-  copy for anything adversarial or architecture-shaped.
-- **Never put a GPT model in a subagent unless there is genuinely no alternative.** They cost real
-  money by the token on every call, and "this one is hard" is not an alternative — that is the
-  judgement you were delegating away (`AGENTS.md:15`).
-- **Double billing starts earlier on GPT Luna than on the other paid GPT models: past ~200k of context
-  on Luna, past ~270k on GPT Sol and GPT Terra** (`AGENTS.md:19`). Keep the main turn lean and
-  push fan-out into subagents that each start at zero.
-- **Do not escalate to a paid model on your own** for "hard" or "risky" work. Override only when the
-  operator named a model, and say so when you do (`AGENTS.md:33`).
-- `agent_manager` is a different tool: only when the operator wants visible sessions or worktrees.
-  `task` for everything else — it creates no sessions (`AGENTS.md:34`).
-
-Background long work (`background: true`) and wait for every result you depended on. Never answer
-while one is still running (`AGENTS.md:43`).
+**Pass all three fields.** This repo's own history shows both accepted shapes: the research wave
+passed `model: 'kilo/stealth/space-bunny-alpha'`, the review wave passed
+`model: 'Space Bunny Alpha (new)', variant: 'max'`. The `variant: 'max'` pairing is the one to
+copy for anything adversarial or architecture-shaped.
 
 ### The rule that actually matters
-
-**Never two subagents on the same file. Split by concern, not by convenience** (`AGENTS.md:39`).
 
 A tool's spine is a small set of **single-owner** files, and it is not a set you can fan out. The
 registries and hand-written lists a new tool edits are the same files every layer touches _and_ are
@@ -3569,44 +3427,32 @@ re-emit costs one turn.
 
 ## Phase 8 — gates
 
-`AGENTS.md:95-132` is authoritative. This section gives the commands, the order, and the failure signals.
+The command list, the local-versus-CI split, and the lifecycle of each hook are in `AGENTS.md`.
+This section carries only the parts a tool author cannot read off that file.
 
-### 8.1 The command list
+### 8.1 What the commands do not tell you
 
-```bash
-npm run tsc             # tsc -b                                package.json:13
-npm run build           # vite build                            package.json:9
-npm run test:e2e:unit   # vitest, node env                      package.json:23
-npm run lint:check      # eslint . --cache && prettier --check .  package.json:12
-npm run test            # vitest --run, jsdom                   package.json:17
-npm run test:e2e        # playwright, headless                  package.json:19
-```
-
-**Do not reason from timings.** `AGENTS.md:108` states the rule: the commit gate and these docs carry no wall-clock numbers, because every cost figure written down has gone stale. Decide what belongs on the push hook from what each gate answers, not from a stopwatch: `gate:verify` asks "does the tree still build and typecheck", `gate:push` asks "do the app's own tests pass". **There is no `npm run audit` script** — do not invent one; CI runs the binary directly at `.github/workflows/ci.yml:52`.
+**There is no `npm run audit` script** — do not invent one; CI runs the binary directly. **Do not
+reason from timings** to decide what belongs on a hook: every wall-clock figure written into a
+doc or a hook comment in this repo has gone stale. Decide from what each gate answers.
 
 ### 8.2 The typecheck trap
 
-**`npm run tsc` is the only trustworthy typecheck** (`AGENTS.md:74`), and the reason is in the tree: `tsconfig.json:1-14` is a `files: []` solution stub whose own comment says a bare `npx tsc` / `npx tsc --noEmit` "resolves zero input files and always exits 0 — that is the design, not a defect". `tsc -b` builds its three references, and only `tsconfig.e2e.json:44` includes `e2e/**/*.ts` — so nothing but `tsc -b` type-checks a Playwright spec or an e2e helper unit file.
+**`npm run tsc` is the only trustworthy typecheck**, and the reason is in the tree: `tsconfig.json:1-14` is a `files: []` solution stub whose own comment says a bare `npx tsc` / `npx tsc --noEmit` "resolves zero input files and always exits 0 — that is the design, not a defect". `tsc -b` builds its three references, and only `tsconfig.e2e.json:44` includes `e2e/**/*.ts` — so nothing but `tsc -b` type-checks a Playwright spec or an e2e helper unit file.
 
-`--force` is **not** required: `tsconfig.app.json:3-8` states that with `noEmit: true` and no `composite`, `tsc -b` re-checks the project on every run, and `tsconfig.node.json:3-5` says the same for the node project. The old `npx tsc -b --force` merge-gate extra (`08-merge-plan.md:77-78`) predates that configuration. Run `npm run tsc`. Note also `tsconfig.app.json:43` is `"include": ["src", "toolbar-mapping.ts"]` — the root-level file is listed explicitly because `src` does not match it and it would otherwise enter the program only through its importers. A new root-level `.ts` needs the same treatment, or CI's coverage assertion fails.
+`--force` is **not** required: `tsconfig.app.json:3-8` states that with `noEmit: true` and no `composite`, `tsc -b` re-checks the project on every run, and `tsconfig.node.json:3-5` says the same for the node project. Note also `tsconfig.app.json:43` is `"include": ["src", "toolbar-mapping.ts"]` — the root-level file is listed explicitly because `src` does not match it and it would otherwise enter the program only through its importers. A new root-level `.ts` needs the same treatment, or CI's coverage assertion fails.
 
-### 8.3 What the hooks actually run
+### 8.3 What the hooks leave out
 
-`.husky/pre-commit` and `.husky/pre-push` are `sh` files whose only executable statement is `npm run gate:commit` / `npm run gate:push`. Both delegate to `package.json` so the sequence a developer is gated by is a command anyone can run by hand:
+The commit gate runs **no app unit test and no e2e helper test**, and the absence of the second is
+new: `test:e2e:unit` was moved to CI, where the separate blocking `e2e-unit` job already ran it.
+The pre-push hook does not repeat `gate:commit` either: a push can follow a
+`git commit --no-verify`, a rebase, or a cherry-pick, and re-running deterministic checks at
+push is how a gate gets `--no-verify`'d along with everything else.
 
-| Command       | Contents                                                   |
-| ------------- | ---------------------------------------------------------- |
-| `gate:verify` | `tsc` → `build`                                            |
-| `gate:commit` | `lint-staged --fail-on-changes --no-stash` → `gate:verify` |
-| `gate:push`   | `test` — the full app suite, and nothing else              |
-
-Neither file is reached by husky any more. `core.hooksPath` points at `<common git dir>/hooks-gate`, a generated dispatcher that runs the worktree's own tracked `.husky/<name>`; `scripts/install-git-hooks.js` installs it from the `prepare` script. The old `core.hooksPath = .husky/_` resolved against each worktree's own root, and `.husky/_` is generated and untracked, so **every** `git worktree add` checkout silently ran no hook at all. If a hook is not firing, check `git config core.hooksPath` before assuming the gate passed. See AGENTS.md, "Worktrees and dev servers".
-
-`build` is in the commit hook because it is **not** redundant with `tsc`: `vite build` runs Babel and esbuild, which strip types without checking them, so it alone catches Sass, wasm resolution, PostCSS and import resolution. `--fail-on-changes` is what makes the hook trustworthy: without it lint-staged re-adds whatever `eslint --fix` and `prettier --write` changed and the commit lands code that was never staged and never read; with it the fix stays in the working tree, the index is untouched, and the commit is blocked so you can read the change and stage it deliberately. `--no-stash` is not optional — without it lint-staged keeps its backup stash every time it declines to revert, leaving a `WIP on <branch>` entry per blocked commit; `npm run format` removes the extra round trip. See AGENTS.md, "Gates", for both.
-
-The commit gate runs **no app unit test at all** — and no e2e helper test either: `test:e2e:unit` is CI-only, in the separate blocking `e2e-unit` job — and that is deliberate: a `vitest related` fan-out over the staged files was tried and removed because its cost is not bounded by the change — it selects anywhere from 10 to 115 of the repository's 180 test files depending on the file touched, so its worst case is the full run it was meant to replace. `npm run test` is the whole-tree check; `gate:push` runs it once per push. The pre-push hook does not repeat `gate:commit` either: a push can follow a `git commit --no-verify`, a rebase, or a cherry-pick, but the `ci` job catches a broken build in about a minute, and re-running deterministic checks at push is how a gate gets `--no-verify`'d along with everything else.
-
-`lint-staged` covers `*.{ts,tsx}` (ESLint fix + Prettier) and `*.{js,jsx,mjs,cjs,scss,css,jsonc,yml,yaml,md,json}` (Prettier only, because no ESLint config covers them). The two lists are the same rule as `scripts/lint-tracked.js`, which is what `lint:check` runs: it lints `git ls-files`, not `.`, so the 121 worktrees under `.kilo/`, `dist/` and generated e2e output are not inputs, and `.prettierignore` no longer exists to keep them out. **No `lint:check` in any local gate** — `ci` runs the full tracked set on every push, and locally only the staged subset is formatted, so a file already committed unformatted, a rule-changing branch switch, or a bad rebase surface in `ci`. Run `npm run format` before you commit, not after the hook blocks you.
+`core.hooksPath` points at a generated dispatcher in the common git dir;
+`scripts/install-git-hooks.js` installs it from the `prepare` script. If a hook is not firing,
+check `git config core.hooksPath` before assuming the gate passed.
 
 ### 8.4 Order, and what counts as a red flag
 
@@ -3619,72 +3465,53 @@ npm run build                                 # bundler-only failures (sass, was
 PLAYWRIGHT_PORT=5199 npm run test:e2e          # headless, last: slowest, most environmental
 ```
 
-- **The `Test Files` count DECREASED** versus the branch point. `08-merge-plan.md:79-80`: "A merge that silently drops test files is a failed merge." A decreased count with 0 failures means files were deleted or renamed out of the glob.
-- **`prettier --check` failing on the two files you just wrote.** This happened for real. It is not a preference — the commit hook blocks on it. Run `npm run format`, read the diff, re-stage.
-- **`npm run test` fails only in a full run.** `pool: 'vmThreads'`, `maxWorkers: 4` (`vitest.config.ts:7-8`, `AGENTS.md:75`). A timing-sensitive test that only fails in a full run is usually the pool — reproduce with one file and say so, rather than reporting a product bug.
-- **A new test that passes with its fix reverted.** Revert one file, re-run, record the failure count, restore (`08-merge-plan.md:81-82`). A test that passes either way consumes a maintainer's trust and is worse than no test.
-- **An e2e failure you cannot find in `e2e/OPEN_PROBLEMS.md`.** `AGENTS.md` carries no pass/skip count any more — it stopped being a place that records one. The count lives in `e2e/OPEN_PROBLEMS.md:41-42`; the skips are `e2e/export/photopea.spec.ts:6` and `e2e/sidebar-flyout.spec.ts:48`, listed at `e2e/OPEN_PROBLEMS.md:376-385`. **A new failure is a new defect, never a known one** (`AGENTS.md:136`).
-- **A `trace.zip` you cannot open.** The trace viewer is a window; ask the operator (`AGENTS.md:139`).
+- **The `Test Files` count DECREASED** versus the branch point. A decreased count with 0 failures
+  means files were deleted or renamed out of the glob: "a merge that silently drops test files is
+  a failed merge."
+- **`prettier --check` failing on the two files you just wrote.** This happened for real. It is not
+  a preference — the commit hook blocks on it. Run `npm run format`, read the diff, re-stage.
+- **A new test that passes with its fix reverted.** Revert one file, re-run, record the failure
+  count, restore. A test that passes either way consumes a maintainer's trust and is worse than no
+  test.
+- **An e2e failure you cannot find in `e2e/OPEN_PROBLEMS.md`.** No pass/skip count is recorded in
+  `AGENTS.md` any more; the count lives in `e2e/OPEN_PROBLEMS.md:41-42`, and the skips are listed
+  in the same file.
 
 ### 8.5 CI jobs
 
-`.github/workflows/ci.yml` is the only workflow file: three jobs on push and pull request to `main`, plus `workflow_dispatch` (`ci.yml:3-10`), Node 24 from `.nvmrc`, `npm ci`, `permissions: contents: read` (`:20-21`). A fourth job, `dependency-review`, was removed; the licence policy it read is now written down in `DEPENDENCIES.md` and is not a gate. `npm audit` still covers the vulnerability half on every push.
-
-| Job        | Line         | Runs                                                                                                                                                                                        |
-| ---------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci`       | `ci.yml:24`  | `lint:check` → `npm audit --audit-level=high` → `tsc` → assert every tracked `.ts`/`.tsx` is inside some project's `include` (`:59-90`) → `test --coverage` → `build`. Uploads `coverage/`. |
-| `e2e-unit` | `ci.yml:157` | `test:e2e:unit` → `test:e2e:unit:coverage` → upload. A **separate blocking job** so a break in the app pipeline cannot remove the only gate on `e2e/` (`:149-156`).                         |
-| `e2e`      | `ci.yml:205` | `npm ci` → cache Chrome → `npx playwright install --with-deps chrome` → `npx playwright test`. A **gate**, not `continue-on-error` (`:208-232`).                                            |
-
-The "tracked file in a project" step is a real constraint: a new `.ts`/`.tsx` no project includes is type-checked by nothing, with no error anywhere. Scope it correctly, though — `tsc -b --listFiles` catches a file no project reaches but **not** one reachable only through its importers (`ci.yml:60-69`). There are no coverage thresholds anywhere (`vitest.config.ts:19-32`, `vitest.e2e.config.ts:38-43`); `--coverage` is for the report, not a percentage gate (`ci.yml:100-102`).
+Two things in `ci.yml` are not visible from the job list. The "every tracked `.ts`/`.tsx` is inside
+some project's `include`" step is a real constraint — a new file no project includes is
+type-checked by nothing, with no error anywhere. Scope it correctly, though: `tsc -b --listFiles`
+catches a file no project reaches but **not** one reachable only through its importers. And there
+are no coverage thresholds anywhere (`vitest.config.ts:19-32`, `vitest.e2e.config.ts:38-43`);
+`--coverage` is for the report, not a percentage gate. The `dependency-review` job is gone, and the
+licence policy it read is written down in `DEPENDENCIES.md` and is not a gate — `npm audit` is the
+vulnerability half.
 
 ### 8.6 The one rule
 
-**Never weaken a gate to get green** (`AGENTS.md:132`): no skips, no raised thresholds, no deleted assertions, no re-recorded visual baselines. The baselines are genuinely compared now: `e2e/export/visual-regression.spec.ts:73` gates re-recording on `testInfo.config.updateSnapshots === 'all'` — the exact string, because Playwright's default is the truthy string `'missing'` and the earlier truthiness check always re-recorded and returned before the comparison (`e2e/OPEN_PROBLEMS.md:396-405`). Re-record only with `npm run test:e2e:update-baselines` (`package.json:25`), an operator decision. Likewise a unit test that pins broken behaviour on purpose must have that pin removed in the same change as the fix (`AGENTS.md:137`).
+**Never weaken a gate to get green**: no skips, no raised thresholds, no deleted assertions, no
+re-recorded visual baselines. The export baselines are genuinely compared now:
+`e2e/export/visual-regression.spec.ts:73` gates re-recording on
+`testInfo.config.updateSnapshots === 'all'` — the exact string, because Playwright's default is the
+truthy string `'missing'` and the earlier truthiness check always re-recorded and returned before
+the comparison (`e2e/OPEN_PROBLEMS.md:396-405`). Re-record only with
+`npm run test:e2e:update-baselines`, an operator decision.
 
 ---
 
 ## Phase 9 — the handoff doc
 
-`HANDOFF.md`, `.kilo/plans/` and `e2e/OPEN_PROBLEMS.md` are strictly problem-focused and
-todo-oriented: **no changelog, no "work completed", no status summaries.** Each entry is a validated
-issue with a problem statement, the affected files and an actionable fix. Verify every claim against
-the working tree first — stale line numbers send the next session after a bug that does not exist
-(`AGENTS.md:143`).
-
-### The lifecycle
-
-Stated as a lifecycle, from `AGENTS.md:150-153` — the rule most often broken:
-
-| State                        | What you do                                                                                                  |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Validated issue, unfixed** | write the entry. This is the default.                                                                        |
-| **Fixed and verified**       | **DELETE the entry.** The same change that fixes it removes it.                                              |
-| **Fixed but unverified**     | the entry stays **alive**. Tighten it to say exactly what still needs verifying.                             |
-| **Being reworded "fixed"**   | **forbidden.** A new entry wearing the old one's name. Delete it.                                            |
-| **A trail of fixed issues**  | **pollution.** Prose the next session reads instead of a problem it can act on, burying the ones still open. |
-
-The residue a fix may leave is **a tripwire in the test code, not a paragraph in the doc**. Several
-`e2e/OPEN_PROBLEMS.md` entries are pinned by a unit test that asserts the current broken behaviour
-on purpose: it passes today and fails the moment the defect is fixed, so **a fix must remove the pin
-in the same change** (`AGENTS.md:137`, `e2e/OPEN_PROBLEMS.md:26-29`).
-
-**Writing is the default, not a favour** (`AGENTS.md:148`). Leave a handoff doc, or edit the
-existing one, whenever you find a validated issue, a strong recommendation, or a finding worth
-preserving. The strongest case is a confirmed defect: you investigated, it is real, nobody else
-knows. **Not finding anything is the only reason to leave the doc alone** — a session that found a
-real problem and wrote nothing down still lost it. Do not ask permission to write one. Handoff docs
-**ship with the code**, so the edit belongs in the same commit as the work that produced the finding
-(`AGENTS.md:148`).
+Routing by scope, the delete-never-reword lifecycle and "validate, do not summarise" are in
+`AGENTS.md`. This section is the part that file does not carry: the shape each of the three
+documents takes, and the scope error that puts a tool defect in the wrong one.
 
 ### Where the handoff goes
 
 **`.kilo/plans/` is gitignored, so a plan there does not ship with the code, and a handoff doc that
-does not ship is lost.** `.gitignore:34` is the single line `.kilo`, and it matches `.kilo/plans`:
+does not ship is lost.** `.gitignore` matches `.kilo`, and therefore `.kilo/plans`:
 
 ```bash
-$ git check-ignore -v .kilo
-.gitignore:34:.kilo	.kilo
 $ git check-ignore -v .kilo/plans
 .gitignore:34:.kilo	.kilo/plans
 ```
@@ -3692,26 +3519,25 @@ $ git check-ignore -v .kilo/plans
 Run that before writing. A plan in `.kilo/plans/` is a working document on one machine; a finding
 worth keeping goes somewhere tracked. Three tracked homes, and they are **not interchangeable**:
 
-| File                                        | Holds                                                            | Shape                                                                                                                                                                                                                                        |
-| ------------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `HANDOFF.md` (1509 lines, 43 `##` headings) | the cross-session problem list for the history/presentation work | `## <N>. [P0] — <claim stated as the defect>`, then `**Problem.**` / `**Fix.**` / `**Files.**`                                                                                                                                               |
-| `e2e/OPEN_PROBLEMS.md` (363 lines)          | unfixed defects **in the test code**                             | `## P<N> — <defect as a claim>` → a bare `file:line` line with no label → prose proving it → `Fix: <imperative, and say what not to do>` → `Pinned by \`<test name>\` (\`:line\`) in \`<file>\`. A fix removes that pin in the same change.` |
-| `docs/handoffs/<branch>-<topic>.md`         | the per-task record: decisions not derivable from the code       | unnumbered sections; the one example is `ps-transform-geometry-review-and-merge.md`, 254 lines                                                                                                                                               |
+| File                                | Holds                                                            | Shape                                                                                                                                                                                                                                        |
+| ----------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HANDOFF.md`                        | the cross-session problem list for the history/presentation work | `## <N>. [P0] — <claim stated as the defect>`, then `**Problem.**` / `**Fix.**` / `**Files.**`                                                                                                                                               |
+| `e2e/OPEN_PROBLEMS.md`              | unfixed defects **in the test code**                             | `## P<N> — <defect as a claim>` → a bare `file:line` line with no label → prose proving it → `Fix: <imperative, and say what not to do>` → `Pinned by \`<test name>\` (\`:line\`) in \`<file>\`. A fix removes that pin in the same change.` |
+| `docs/handoffs/<branch>-<topic>.md` | the per-task record: decisions not derivable from the code       | unnumbered sections; the one example is `ps-transform-geometry-review-and-merge.md`                                                                                                                                                          |
 
 Severity in `e2e/OPEN_PROBLEMS.md`: **P1** = a wrong or misleading pass/fail, **P2** = latent
-breakage or unmaintainable, **P3** = cosmetic/robustness (`:31-32`).
+breakage or unmaintainable, **P3** = cosmetic/robustness.
 
 Putting a tool plan in `HANDOFF.md` is a category error; putting an unfixed e2e defect in
-`docs/handoffs/` is a category error. `HANDOFF.md:9-10` scopes that file to the durable-replay
-migration and the presentation/append boundary — "Tool features and visual fidelity are out of scope
-unless a defect is caused by this work" — so **a new tool-feature defect is not a `HANDOFF.md`
-entry**; it belongs in `docs/handoffs/<branch>-<topic>.md`.
+`docs/handoffs/` is a category error. `HANDOFF.md` scopes itself to the durable-replay migration
+and the presentation/append boundary — "tool features and visual fidelity are out of scope unless
+a defect is caused by this work" — so **a new tool-feature defect is not a `HANDOFF.md` entry**; it
+belongs in `docs/handoffs/<branch>-<topic>.md`.
 
 **Numbering.** `HANDOFF.md` item numbers are stable identifiers other items cite, so they are
-**never renumbered** — the gaps are entries that were fixed and deleted (`HANDOFF.md:5-7`). New
-entries append at EOF after a `---`, taking the next unused number. The heading set runs `## 0.`
-through `## 45.` with gaps at 3, 8, 30, 36 and 43, plus two non-item sections
-(`## Known defects that are PINNED` at `:505`, `## Worktree hygiene` at `:530`).
+**never renumbered** — the gaps are entries that were fixed and deleted. New entries append at EOF
+after a `---`, taking the next unused number, and the next number is whatever the tree says it is:
+read the file, do not trust a number written here.
 
 **`docs/handoffs/<branch>-<topic>.md` conventions**, from the one existing example: provenance front
 matter (the sessions that owned it, which directed it, which plans governed it, and a warning that
@@ -3746,7 +3572,7 @@ baseline pins the current behaviour. Name the test and the assertion.>
 
 Two conditional headers, both in real use. **`**Fix — needs a call, not a patch.**`** when the fix is
 a product decision rather than an implementation: state the options and their consequences, do not
-prescribe the answer — that is the operator's decision, not a subagent's (`AGENTS.md:42`).
+prescribe the answer — that is the operator's decision, not a subagent's.
 **`**Why it is not a wiring bug.**`** the field that makes a tool-parity finding survive a review
 that starts by trying to wire it.
 
@@ -3839,7 +3665,7 @@ Procedure, in order:
    the places you edited last. Do this as the final step before committing.
 
 A stale line number is not neutral: the next session spends a full investigation on a bug that is
-already gone, or worse "fixes" a line that has nothing to do with it (`AGENTS.md:143`,
+already gone, or worse "fixes" a line that has nothing to do with it (`AGENTS.md`,
 `:139`). The discipline the working `HANDOFF.md` states about itself, and that your entry
 inherits:
 
@@ -3882,20 +3708,22 @@ Branches merge **leaf → integration line → `main`**, with `--no-ff`, and the
 
 ### 10.1 Before you stage
 
+Beyond reading `git status` / `git diff` and staging explicit paths, two commands earn their place
+here because they answer questions the status line does not:
+
 ```bash
-cd /Users/bkalynovskyi/ph
-git status --short                    # what is actually modified
-git diff                             # another session may be in here
-git log --oneline main..HEAD          # exactly what you are proposing
-git add <explicit/path> <explicit/path>   # never -A
-git diff --cached --stat
+git log --oneline main..HEAD   # exactly what you are proposing, and nothing you inherited
+git diff --cached --stat       # what you are about to commit, under this message
 ```
 
-`08-merge-plan.md:112-115` records the lesson: four worktrees branched from one base, `main` moved substantially underneath them, and each branch was validated **in isolation** — so a green suite in a leaf says nothing about whether it still applies to today's `main`. Fast-forward onto current `main` first, one branch at a time.
+The lesson from the last integration campaign: four worktrees branched from one base, `main` moved
+substantially underneath them, and each branch was validated **in isolation** — so a green suite in
+a leaf says nothing about whether it still applies to today's `main`. Fast-forward onto current
+`main` first, one branch at a time.
 
 ### 10.2 Commit shape
 
-Conventional Commits with a scope and a body that explains the _why_ (`git log --oneline -30`): `gates: …`, `docs(e2e): …`, `merge: 15 review branches from the untouched-code campaign`, `test(e2e): accept the File > New unsaved-changes confirm in setupIcoTest`, `fix(colors): re-anchor the CSS filter curve …`. Merge commits use the default `Merge branch '<x>' into '<y>'` form. The handoff edit belongs in the **same commit** as the work that produced the finding (`AGENTS.md:148`); a handoff that trails by one commit is a finding that survives one fast-forward without context.
+Conventional Commits with a scope and a body that explains the _why_ (`git log --oneline -30`): `gates: …`, `docs(e2e): …`, `merge: 15 review branches from the untouched-code campaign`, `test(e2e): accept the File > New unsaved-changes confirm in setupIcoTest`, `fix(colors): re-anchor the CSS filter curve …`. Merge commits use the default `Merge branch '<x>' into '<y>'` form. The handoff edit belongs in the **same commit** as the work that produced the finding; a handoff that trails by one commit is a finding that survives one fast-forward without context.
 
 ### 10.3 The pre-commit hook rewrites your files — re-verify after
 
@@ -3938,18 +3766,17 @@ On an unpredicted conflict, do not resolve it by taking one side wholesale. Read
 
 ### 10.6 Worktree removal is not a safety check
 
-Removable only when **all four** hold (`HANDOFF.md:531-552`; the three tests at `:538-548`):
+Removable only when all three of these hold:
 
 ```bash
 git rev-list --count main..HEAD        # 0
 git merge-base --is-ancestor HEAD main # exit 0
 git status --porcelain                 # empty, untracked included
-git stash list                         # nothing to apply
 ```
 
-"0 commits ahead of `main`" is **not** a safety test: a worktree whose work was never committed is 0 ahead _because_ nothing was committed, which is exactly the state that loses it (`HANDOFF.md:531-534`). All worktrees share one `refs/stash`, so that check is repo-level, and `git stash clear` is the one destructive command that touches it (`HANDOFF.md:545-549`). `git worktree remove` refuses a dirty or untracked worktree unless `--force`, so the exposure is exactly `--force` or `rm -rf`. Never either without all four.
+"0 commits ahead of `main`" is **not** a safety test: a worktree whose work was never committed is 0 ahead _because_ nothing was committed, which is exactly the state that loses it. `git stash list` is repo-level — all worktrees share one `refs/stash` — so it is a check, never a cleanup: `git stash clear` is the one destructive command that touches shared state. `git worktree remove` refuses a dirty or untracked worktree unless `--force`, so the exposure is exactly `--force` or `rm -rf`. Never either without the three.
 
-Do not use the worktree count as a test. `HANDOFF.md:554-556` measured 59 on 2026-09-27; on 2026-09-28 `git worktree list` returns 107, `.git/worktrees/*/HEAD` returns 106, and there are 106 directories under `.kilo/worktrees/`. Three numbers, one checkout, no relationship to commits. `git worktree list` is also unreliable under this repo's permission config — fall back to `.git/worktrees/*/HEAD`.
+Do not use the worktree count as a test. `git worktree list` disagrees with `.git/worktrees/*/HEAD` and with the directory count under `.kilo/worktrees/`: three numbers, one checkout, no relationship to commits.
 
 ### 10.7 Pre-merge checklist
 
@@ -3959,7 +3786,7 @@ Do not use the worktree count as a test. `HANDOFF.md:554-556` measured 59 on 202
 - [ ] `npm run test:e2e:unit` clean. `npm run build` clean.
 - [ ] `PLAYWRIGHT_PORT=<free port> npm run test:e2e` clean; any failure located in `e2e/OPEN_PROBLEMS.md` or declared a new defect.
 - [ ] Every new test fails without its fix, with the failure count recorded.
-- [ ] Handoff entry in the same commit as the finding; fixed entries deleted, not reworded (`AGENTS.md:150-153`).
+- [ ] Handoff entry in the same commit as the finding; fixed entries deleted, not reworded.
 - [ ] `package.json` and `package-lock.json` unchanged; no new runtime dependency.
 - [ ] No new comments in source except `// BUG:` and `// @ts-expect-error`.
 - [ ] Staged by explicit path; `git diff --cached` read.
@@ -3971,9 +3798,9 @@ Do not use the worktree count as a test. `HANDOFF.md:554-556` measured 59 on 202
 
 ### How to read this
 
-**Snapshot: `main` at `1c9c8de` (2026-09-28), branch `skill/photoshop-tool-creation`, re-verified
-on 2026-09-28 against `ps/missing-tools` after four tools landed.** Every `file:line` below was
-re-read against that tree. `AGENTS.md:143` is the rule this section
+**Snapshot: `main` on 2026-09-28, after the eraser / magic-eraser / paint-bucket / eyedropper tranche
+landed.** Every `file:line` below was
+re-read against that tree. The "verify against the tree" rule in `AGENTS.md` is what this section
 obeys: a citation you cannot re-verify sends the next session after a bug that does not exist.
 
 **The ranking rubric, as a rule.** Order gaps by the product of two things, both of which you
@@ -3995,7 +3822,7 @@ must compute rather than feel:
 
 ### Where the app stands
 
-At `1c9c8de`:
+On that tree:
 
 | Measure                                      | Count                                   | Where                                                                                                                                                      |
 | -------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -4014,9 +3841,9 @@ and genuinely paint. Seven are `unimplemented` and are the defect described in T
 (`src/tools/toolsMap.ts:37-43,45`). The registry is still _total_ over `ToolName` and still requires
 `icon` and `toolboxComponent` on every row, so it has no way to say "this Photoshop slot is empty", and no way to say "this row is a stub" — `PlaceholderTool` and
 `Pen` are the same `ToolbarRightComponent` to the type. Absence is invisible _from inside the
-registry_: an audit that walks `Object.keys(toolsMap)` gets 33 rows, all of which look equally
+registry_: an audit that walks `Object.keys(toolsMap)` gets one row per registration, all of which look equally
 real, and **none of which is named Gradient**. The corpus's own
-`.kilo/plans/ps-research/00-tool-inventory.md:15` scopes itself to "Registered tools (all 29 in
+`.kilo/plans/ps-research/00-tool-inventory.md:15` scopes itself to "Registered tools (all of them in
 `availableTools`)" — so a missing tool was outside its universe by construction, not by oversight.
 A gap list can only come from an external roster (Photoshop's toolbar) diffed against the
 registry. That is what this section is, and it is why the original inventory's counts were right
@@ -4031,7 +3858,7 @@ and its gap list empty.
 > `src/contexts/materialization.ts`. **EXPENSIVE** iff it needs a new `commit` kind that lands on
 > a closed union, a new engine, or a new document-model type.
 
-The deciding lines, all verified at `1c9c8de`:
+The deciding lines, all verified on that tree:
 
 - **Why `raster` is free.** `operationForTool`'s raster arm is fully generic:
   `processorId: args.toolName` with **no allowlist** (`src/contexts/history-adapter.ts:416-424`).
@@ -4110,59 +3937,61 @@ always verified.
 
 Pick these three because each is CHEAP under the criterion above, each closes a _lie_ or a
 high-frequency gap rather than adding a feature, and together they cover the whole playbook's
-surface — options bar, processor, gesture, history, e2e — at the smallest honest size.
+surface — options bar, processor, gesture, history, e2e — at the smallest honest size. **Two of the
+three are already filed** in `HANDOFF.md`; read them before starting, because a fix that ignores the
+filing is a second copy of the same finding.
 
 1. **Hide or throw the six pen-family tools + Custom Shape.** XS. Remove them from
-   `toolbarMap` (`toolbar-mapping.ts:77-84` for the six pen tools, `:92` for Custom Shape) and `availableTools` (`:101-106,112`), or give them an
-   `interactionMode` arm that refuses. Either way the user stops spending a click to discover that
-   a tool does nothing. This is the _defect_ half of the pen row, and it does not wait for a path
-   model.
-2. ~~**The Eraser.**~~ **DONE** on `ps/missing-tools` (`80eb207`), with the Magic Eraser, the Paint
-   Bucket and the Eyedropper alongside it — the smallest honest `commit: 'raster'` tool, and it
-   exercised exactly the surface described here: options bar, `PaintToolArgs` extension,
-   `commit: 'raster'`, per-tool test tables, e2e spec.
-3. **Zoom / Hand / Rotate View, as one view-only tranche.** S, and now the cheapest of the three:
-   none of them needs a processor, a history entry, or a `DurableOperation` variant. They are pure
-   view state. **One loose end from item 2:** the four shipped tools are in `toolbarMap` and
-   `toolsMap` but **not** in `availableTools` (`toolbar-mapping.ts:97-127`, still 29 entries), so a
-   grep of `availableTools` will not find them and the roster above will read 33 against 29.
+   `toolbarMap` and `availableTools`, or give them an `interactionMode` arm that refuses. Either way
+   the user stops spending a click to discover that a tool does nothing. This is the _defect_ half
+   of the pen row, and it does not wait for a path model. **Filed: `HANDOFF.md` item 53**, and the
+   honest fix there is five lines.
+2. ~~**The Eraser.**~~ **DONE**, with the Magic Eraser, the Paint Bucket and the Eyedropper
+   alongside it — the smallest honest `commit: 'raster'` tool, and it exercised exactly the surface
+   described here: options bar, `PaintToolArgs` extension, `commit: 'raster'`, per-tool test tables,
+   e2e spec.
+3. **Zoom / Hand / Rotate View, as one view-only tranche.** S, and the cheapest of the three: none
+   of them needs a processor, a history entry, or a `DurableOperation` variant. They are pure view
+   state. **Filed: `HANDOFF.md` item 52** — the view transform is commented out, so the absence is
+   one line, not three tools.
 
 **They fan out to parallel worktrees because their engine files are independent.** Item 1 owns
 `toolbar-mapping.ts` and the pen rows of `toolsMap.ts`; item 3 owns new files plus
 `Main.tsx`. **The shared surface is small and additive, and it is the one thing to sequence
-last:** the `ToolName` union (`src/contexts/tool-types.ts:20-63`), the `toolProcessors` row, the
-`toolsMap` row, the `availableTools` entry, a `saveToolArgs` arm in `src/util/settings.ts`, and
-four per-tool tables in `src/tools/__tests__/tool-processors.test.ts`. Those are line insertions
-in a single-owner file set, not refactors — plan for one merge to reconcile them rather than
-pretending they are free.
+last:** the `ToolName` union, the `toolProcessors` row, the `toolsMap` row, the `availableTools`
+entry, a `saveToolArgs` arm in `src/util/settings.ts`, and four per-tool tables in
+`src/tools/__tests__/tool-processors.test.ts`. Those are line insertions in a single-owner file set,
+not refactors — plan for one merge to reconcile them rather than pretending they are free.
 
-**Do not start item 3's `Main.tsx` work without reading `wip/ps-ux-chrome` first** (see below): it
-rewrites the options bar and the theme tokens wholesale.
+**Do not start item 3's `Main.tsx` work without reading `wip/ps-ux-chrome` first**: it rewrites the
+options bar and the theme tokens wholesale.
 
 ### Already in flight
 
-`git branch --list 'ps/*' 'wip/ps-*' 'docs/ps-*'` at `1c9c8de`, with
-`git merge-base --is-ancestor <branch> main` as the merged test. `ahead`/`behind` are against
-`main` at `1c9c8de`. **A "0 commits ahead" branch is not a safety test** — a worktree whose work
-was never committed is also 0 ahead.
+**Re-derive this; never trust a table.** Run `git branch --list 'ps/*' 'merge/ps*' 'wip/ps-*'` and
+test each with `git merge-base --is-ancestor <branch> main`. A "0 commits ahead" branch is not a
+safety test — a worktree whose work was never committed is also 0 ahead. What matters:
 
-| Branch                  | Merged? | ahead/behind | Tip                                                                                      | What it is doing — sequence behind it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ----------------------- | ------- | ------------ | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ps/brush-engine`       | **NO**  | +1 / 59      | `bf96b72` "feat(tools): give the brush and pencil a Photoshop options bar"               | Replaces the `brush`/`pencil` placeholders with a real options bar (`src/components/ToolbarsRight/Paint/Paint.tsx`, +227) and a real brush (`src/tools/brush.ts`, +168), and **deletes** two keys from `toolbarPlaceholderConfig.ts`. 23 files. A strict subset of `ps/tool-expansion` (same tip commit).                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `ps/tool-expansion`     | **NO**  | +3 / 3       | `de88730` "feat(util): shared pixel, flood-fill, brush-tip and paint-stroke foundations" | **The big one.** 31 files, +5941/-188. Contains `bf96b72` as an ancestor, so it supersedes `ps/brush-engine` entirely. Adds `src/util/pixels.ts` (383), **`src/util/flood-fill.ts` (281)**, `src/util/brush-engine.ts` (333, with a 609-line test), `src/hooks/usePaintStroke.ts` (304, 461-line test), a 29-line blend-mode slice in `src/contexts/layer-utils.ts`, and `e2e/paint-options.spec.ts` (316). **This already contains the Paint Bucket's flood-fill foundation and most of the brush engine.** Two Tier 1 rows are therefore half-built — check here before writing either. It also rewrites `src/util/settings.ts` (+11/-1) and `src/util/magicWand.ts` (-176), so both of the persistence and magic-wand rows land with it. |
-| `wip/ps-ux-chrome`      | **NO**  | +1 / 148     | `57aced8` "wip(preservation): snapshot of uncommitted ps-ux-chrome working tree"         | 42 files, +3492. Adds a **schema-driven options bar**: `src/components/ToolbarHorizontal/optionsBarSchema.ts` (352, + 301-line test), `ScrubbableField.tsx` (180), `OptionsBar.tsx` (130), `ToolbarHorizontal.tsx` (25, which is the `key={toolName}` remount line), plus `src/contexts/theme-tokens.ts` (33), a 725-line `src/index.scss` addition, and `railPanelIcons.tsx` (58). **Any options bar you build collides with this.** Read it before designing one; consider building on it.                                                                                                                                                                                                                                                |
-| `wip/ps-shape-geometry` | **NO**  | +1 / 148     | `c43df1a` "wip(preservation): snapshot of uncommitted ps-shape-geometry working tree"    | 2 files: `src/tools/shape.ts` (+45/-11) and its test (+66). **This is exactly the Tier 2 "Shape-tool fidelity" row.** Do not duplicate it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `wip/ps-integration`    | **NO**  | +3 / 138     | `eb832f3` "wip(preservation): snapshot of uncommitted ps-integration working tree"       | 41 files. Merges `ps-transform-geometry` in, rewrites `src/tools/transform.ts` (+243/-…), and adds `src/util/homography.ts` (200) + `homography-resample.ts` (140) with 433 lines of tests. On the e2e side it adds `e2e/helpers/served-app.ts` (316) and a 35-line `vite.config.ts` change — **it is rewriting the served-app and Vite plumbing, so an e2e failure you see in a worktree may be this branch's churn, not yours.**                                                                                                                                                                                                                                                                                                          |
-| `docs/ps-tool-playbook` | **NO**  | +1 / 4       | `025470e` "docs: add the tool-creation playbook, and file the cutover-gate defect"       | Adds `docs/tool-creation-playbook.md` (1368 lines) + 53 lines to `HANDOFF.md`. **This section supersedes its §12 and Appendices A/B**; see `### Corrections to the playbook`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `ps/brush-stabilizer`   | **YES** | 0 / 59       | `446d7eb` "merge: record a polygon's selection drag once, per gesture"                   | Merged. Nothing to sequence behind.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `ps/brush-tip-core`     | **YES** | 0 / 59       | `446d7eb` (same commit)                                                                  | Merged. Nothing to sequence behind.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+- **`ps/tool-expansion` is consolidated onto `merge/ps-tool-expansion`** (tip `ab5f53c`, 2026-09-28)
+  and is **not in `main`** — the ancestor test fails. Eight tools landed there that `main` lacks:
+  `elliptical-selection`, `quick-selection`, `clone-stamp`, `sharpen`, `smudge`, `dodge`, `burn`,
+  `gradient`. It is parked behind an operator decision on seven export baselines. **Check that
+  branch before writing any of the eight.**
+- **`dodge` and `burn` share one options-bar component**, `ToolbarsRight/Tonal/Tonal.tsx`. That is
+  the precedent for one file per tool _family_ rather than per tool, and the collision to expect if
+  two agents take one each.
+- **The clone-stamp read/write constraint is not an edge case.** With a constant offset, dab
+  _k+1_'s read set sits inside dab _k_'s write set, so a row-buffer implementation is impossible
+  and self-reference is the common case. Any tool that samples from a region it also writes has to
+  be designed around this, not discovered by it.
+- `ps/brush-engine` is a strict subset of `ps/tool-expansion`; do not sequence behind both.
+- `wip/ps-ux-chrome` (schema-driven options bar) and `wip/ps-integration` (rewrites the served-app
+  and Vite plumbing, so an e2e failure in a worktree may be its churn and not yours) are parked
+  preservation snapshots. Read before designing an options bar; do not land either.
 
 ## Appendix A — the trap list
 
-Every entry was checked against the tree at `1c9c8de`. Grouped by where it bites. Entries that
-are about tooling _behaviour_ rather than tree state are marked **[unverified by me]** — I had no
-`task` tool in this session's toolset, so I could not reproduce them, and I say so rather than
-repeating them as fact.
+Every entry was checked against the tree on 2026-09-28. Grouped by where it bites. Entries about tooling _behaviour_ rather than tree state are marked **[unverified]** — unverified means unverified, and it is not a claim that they are false.
 
 ### Worktree
 
@@ -4183,55 +4012,31 @@ merge --ff-only main`.
 3. **`node_modules` is empty in a worktree, and `tsc`/`vitest` still work anyway.** Symptom:
    typecheck and unit tests pass (Node walks up to the parent checkout), but Vite serves nothing
    and fonts/images/AVIF assets 404 — so the app looks broken in e2e and fine in vitest. Defence:
-   `npm ci` in the worktree before debugging any asset that will not load. Per `AGENTS.md:84`.
+   `npm ci` in the worktree before debugging any asset that will not load.
 4. **Every worktree's dev server wants :5173, and `reuseExistingServer` is on locally.**
    Symptom: "my change did nothing" in e2e — the run attached to a **different checkout**.
    Defence: `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` in a worktree. The two escapes are already
    wired: `CI` and an explicit `PLAYWRIGHT_PORT` both force `reuseExistingServer: false`, and
    `--strictPort` makes a clash a hard failure instead of a silent hop to 5174
    (`playwright.config.ts:106-120`).
-5. **The main worktree is not stable while you work.** Symptom: your `git status` shows files you
-   never touched, or a staging attempt picks up another session's work. Defence: re-read `git
-status` / `git diff` before staging, every time, and stage only your own paths. Per
-   `AGENTS.md:86`.
-
-### Tooling
-
-6. **`npm run tsc` is the only trustworthy typecheck.** Symptom: `npx tsc --noEmit` exits 0 while
-   the test files and the Playwright specs do not compile. Cause: the root `tsconfig.json:9` is
-   `"files": []` — a solution stub that references `tsconfig.app/node/e2e.json`, and
-   `--noEmit` resolves the app config alone, which **excludes tests**. Defence: `npm run tsc`
-   (`tsc -b`). Per `AGENTS.md:74`.
-7. **Exactly one vitest setup file.** Symptom: a new mock's globals do not exist, or a second
-   setup file silently never loads. Verified: `vitest.config.ts:17` lists exactly one path,
-   `./src/test/setup.ts`, and `src/test/` contains only `setup.ts`. `src/__tests__/` holds
-   `canvas-mock.ts` and `fixtures/`. Per `AGENTS.md:90`.
-8. **The `agent_manager` tool in this build needs every optional key sent explicitly**
+5. **The `agent_manager` tool in this build needs every optional key sent explicitly**
    **[unverified by me]** — arrays reportedly get mangled into `{ item: [...] }`. And
    `agent_manager` reportedly accepted 19 session requests and created none, which is why `task`
    is the default instrument. Consequence for this section: **I had no `task` tool in this
    session's toolset**, and `agent_manager` would have created worktrees — which the one-file
    constraint forbids — so every verification here is inline.
-9. **A `task` call missing `subagent_type` fails with a schema error, not silently**
+6. **A `task` call missing `subagent_type` fails with a schema error, not silently**
    **[unverified by me]**. Symptom if you omit it: a hard validation failure, which is the good
    outcome; the trap is the agent who retries with a paid model.
-10. **A large subagent result comes back TRUNCATED.** Symptom: a summary that stops mid-table and
-    a conclusion you were about to act on. Defence: the full text is written to
-    `~/.local/share/kilo/tool-output/tool_<id>` — verified that the directory exists on this
-    machine. Read the file, do not re-run the task. **[unverified by me]** as to the truncation
-    itself.
-11. **Research briefs that assert a premise get it DISPROVED.** Symptom: you implement the brief
-    and produce wrong work. Verified instance: the corpus's own
-    `01-photoshop-reference.md:888-911` records **17** briefing premises the research disproved —
-    including "Blur Tool is Illustrator-only" (Photoshop has had a Blur tool since ~2023),
-    "`triangle` lacks `creator: true`" (inverted — `rectangle`, `ellipse`, `line` lack it), and
-    "Line Tool snaps to 15°" (45°; 15° is the Free Transform rotate snap). Defence: **verify the
-    load-bearing claim yourself before implementing it, and never forward a subagent's finding
-    uncritically** — the whole point of a research subagent is that it can be wrong.
-12. **The legacy `draw` path's export baselines are committed.** Symptom: a correct-looking change
-    to the draw/brush path fails visual regression. Verified: `e2e/export/visual-regression.spec.ts-snapshots/export-baselines`
-    holds **17** tracked files. Defence: re-recording is `npm run test:e2e:update-baselines`,
-    which is **an operator decision, not an agent decision** (`AGENTS.md:132`).
+7. **A large subagent result comes back TRUNCATED.** Symptom: a summary that stops mid-table and
+   a conclusion you were about to act on. Defence: the full text is written to
+   `~/.local/share/kilo/tool-output/tool_<id>` — verified that the directory exists on this
+   machine. Read the file, do not re-run the task. **[unverified by me]** as to the truncation
+   itself.
+8. **The legacy `draw` path's export baselines are committed.** Symptom: a correct-looking change
+   to the draw/brush path fails visual regression. Verified: `e2e/export/visual-regression.spec.ts-snapshots/export-baselines`
+   holds **17** tracked files. Defence: re-recording is `npm run test:e2e:update-baselines`,
+   which is **an operator decision, not an agent decision** (`AGENTS.md`, "Gates" and "E2E failures").
 
 ### Canvas and testing
 
@@ -4309,7 +4114,7 @@ status` / `git diff` before staging, every time, and stage only your own paths. 
     draft. Verified: the flyout one is a raw `window` listener at
     `src/components/SidebarLeft/SidebarLeft.tsx:98-109` that calls `setOpenGroup(null)` and cannot
     be suppressed by `preventDefault` on the other. (The second path, in
-    `PolygonClickToolArea`, I did **not** re-verify at `1c9c8de` — find it before relying on it.)
+    `PolygonClickToolArea`, is **[unverified]** — find it before relying on it.)
 
 ### Persistence
 
@@ -4392,19 +4197,14 @@ status` / `git diff` before staging, every time, and stage only your own paths. 
     is that **no production dispatch ever sets it `true`**; three options-bar components say so
     in their own comments (`ToolbarsRight/Colors/Color.tsx:94`, `Blur/Blur.tsx:66`,
     `Levels/Levels.tsx:69`). Never build a reset/undo affordance on it.
-35. **`flattenRequired` is set by no shipped processor — and the tree says so.** Verified: the
-    field is declared at `src/tools/toolProcessors.ts:52` and the consuming branch at
-    `src/contexts/useLayer.ts:274-278` carries the comment "No shipped processor sets
-    `flattenRequired`, but the flag is part of the processor contract and this branch runs it".
-    A branch only tests can reach. A new processor must not set it.
-36. **Every tool area shares one 2D overlay context.** Symptom: a new painter's `globalAlpha`,
+35. **Every tool area shares one 2D overlay context.** Symptom: a new painter's `globalAlpha`,
     `setLineDash`, or `lineCap` leaks into the next stroke or the next tool. Verified:
     `src/components/Main/Main.tsx:100` takes the single `toolOverlayRef` context, and
     `src/tools/draw.ts:43-67` (`setupDrawCtx`) has to set every property unconditionally —
     including the `else ctx.setLineDash([])` else-branch — precisely because the context is
     shared. Defence: bracket `save()`/`restore()`, and do **not** "fix" it by writing
     `globalAlpha = 1` at the top of setup, which flattens the committed layer.
-37. **Two separate `canvas` elements and a third for rects; the `display` allowlist is a separate
+36. **Two separate `canvas` elements and a third for rects; the `display` allowlist is a separate
     list from the handler list.** Verified: the workspace canvas is
     `data-testid="workspace-canvas"` (`Main.tsx:193-197`), the tool overlay's `display` is a
     hard-coded array at `src/components/Main/Main.tsx:203-219`, and the rect overlay's is `[...].includes(...)` at
@@ -4414,53 +4214,33 @@ status` / `git diff` before staging, every time, and stage only your own paths. 
 
 38. **`HANDOFF.md` citations go stale the moment you add an import.** Symptom: a future session
     reads a `file:line` that has moved and either wastes an investigation or "fixes" a bug that
-    does not exist. Verified: `HANDOFF.md` is **1509 lines** at `1c9c8de`, and the drift is not
+    does not exist, and the drift is not
     hypothetical — a branch's own citation to `src/contexts/history-adapter.ts:199` for the
     `create-layer` emission is wrong here; it is at **`:504`**. Defence: re-verify every citation
     in the handoff you are about to commit, in the same commit, by grepping the tree for each
-    line and opening it. (No citation-checking script is checked into the repo at `1c9c8de` — the
+    line and opening it. (No citation-checking script is checked into the repo — the
     sweep is manual, so budget for it.)
 39. **A passing-test count written into a doc goes stale and must be fixed in the same commit.**
     Verified: `e2e/OPEN_PROBLEMS.md:41-42` asserts "no e2e test fails: 97 pass, 2 are
-    skipped by declaration", and `e2e/OPEN_PROBLEMS.md` carries 14 `##` entries. `AGENTS.md` used
+    skipped by declaration", and `e2e/OPEN_PROBLEMS.md` is the only place the pass/skip counts live. `AGENTS.md` used
     to assert the same count and no longer does, which is this trap biting a real citation. Any
     change to the suite invalidates the number. Defence: the same commit that changes the count
     edits the sentence.
-40. **A handoff entry's lifecycle is delete-or-nothing.** Symptom: a session "updating" a fixed
-    problem into a closed one, which buries the open problems. Defence: `AGENTS.md:152-153` —
-    fixed and verified **deletes** the entry; never rewrite it as "fixed in abc123"; unverified
-    is not closed, so tighten it to say what still needs checking and let verification delete it.
 
 ### Process
 
-41. **Never open a browser window.** Symptom: a headed run puts a live window on the operator's
-    screen and their input arrives as real test input, producing failures that look like races.
-    Defence: `AGENTS.md:45-60`, enforced twice — `kilo.jsonc` denies the flags and
-    `e2e/global-setup.ts` refuses the rest, checking the **resolved per-project** `use.headless`
-    rather than the config file (`e2e/global-setup.ts:19-35`, allow-list env at `:42`). A
-    `test.use({ headless: false })` inside a single spec file is the one case it cannot see
-    (`:25`). If something only reproduces visually, ask the operator to run
-    `npm run test:e2e:headed` themselves. Never flip the mode to "fix" a failure.
-42. **Do not weaken a gate to get green.** No skips, no raised thresholds, no deleted assertions,
-    no re-recorded visual baselines. `visual-regression.spec.ts` re-records only under an explicit
-    `--update-snapshots` (`npm run test:e2e:update-baselines`), and that is an operator decision
-    (`AGENTS.md:132`).
 43. **A test that pins a defect is a tripwire, not a test.** Symptom: you fix the defect, the
-    "failing" test goes green, and you never notice the pin. Defence: `AGENTS.md:137` — a fix
+    "failing" test goes green, and you never notice the pin. Defence: `AGENTS.md` — a fix
     must **invert** the pin in the same change. And the sharper form: **a test whose only half
     disappears when you remove the last example must be re-aimed, not deleted** — if a test exists
     only to assert the behaviour of one instance, removing the instance silently removes the
     assertion, and the correct move is to repoint it at a surviving case.
-44. **Do not start a single-writer durable cutover yet.** `saveLayerCanvas()` can still promote
-    cached canvases outside reducer publication. `AGENTS.md:157` and the `durable_cutover_gate`
-    constraint both hold. Treat the legacy `HistoryItem[]` path as the production replay
-    authority.
-45. **Two subagents on the same file is a merge conflict you scheduled yourself.** Split by
-    concern, not by convenience (`AGENTS.md:39`). In this backlog the natural shared surface is
+44. **Two subagents on the same file is a merge conflict you scheduled yourself.** Split by
+    concern, not by convenience. In this backlog the natural shared surface is
     the registry (§ `### Suggested first three`): if two tranches both add a tool, they both want
     `toolsMap.ts`, `tool-types.ts`, `toolbar-mapping.ts`, and four test tables. Assign that
     surface to one owner explicitly.
-46. **A subagent claim without `file:line` is not verified.** `AGENTS.md:41`. Ask for
+45. **A subagent claim without `file:line` is not verified.** Ask for
     candidate results _and_ how they got them, then check the load-bearing ones yourself. The
     same rule governs a subagent's _negative_ claim ("X does not exist") — make it grep something.
 
@@ -4479,9 +4259,9 @@ since merged.
 | File                                   | What it is FOR                                                                                                                                                                                                                                                                                                                                                     | When to read it                                                                                                                                                                                                                                                                     |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `README.md`                            | The entry point. 8-row file table, the three resolved decisions (D1 `color` = Black & White + Tint, D2 `levels` = real Levels, D3 destructive), a "land these first" list, the phase overview, and a candid list of what to be sceptical about. **Read this one first and completely** — it is the map                                                             | Before anything else. Re-read `:30-61` before planning a tranche: five items there are still unlanded                                                                                                                                                                               |
-| `00-tool-inventory.md`                 | All 29 registered tools vs Photoshop, the five highest-impact findings, plus Notes A/B/C on `color`, `levels`, and Free Transform. **Scope caveat: its universe is the registry, so it structurally could not surface a missing tool** — that is exactly the finding in `### Where the app stands`                                                                 | For orientation and for the "is this tool partly built?" question. **Not** for "what is missing" — this section is the replacement                                                                                                                                                  |
+| `00-tool-inventory.md`                 | Every registered tool vs Photoshop, the five highest-impact findings, plus Notes A/B/C on `color`, `levels`, and Free Transform. **Scope caveat: its universe is the registry, so it structurally could not surface a missing tool** — that is exactly the finding in `### Where the app stands`                                                                   | For orientation and for the "is this tool partly built?" question. **Not** for "what is missing" — this section is the replacement                                                                                                                                                  |
 | `01-photoshop-reference.md`            | The behaviour spec across 7 tool families with every claim cited, plus **§10 (`:888-955`), the corrections log**. The largest and most valuable file here                                                                                                                                                                                                          | Implementing or reviewing any tool. **§10 before you trust any Photoshop claim** — it lists 17 disproved premises and 18 genuinely unresolved items                                                                                                                                 |
-| `02-implementation-plan.md`            | 10 phases, sequenced, with `file:line` anchors, per-test verdicts, and a suggested landing order at `:1077`                                                                                                                                                                                                                                                        | Deciding what to build next. Cross-check its phase table against this section's ranking — the two disagree in places, and where they do, this section is at `1c9c8de` and the plan is not                                                                                           |
+| `02-implementation-plan.md`            | 10 phases, sequenced, with `file:line` anchors, per-test verdicts, and a suggested landing order at `:1077`                                                                                                                                                                                                                                                        | Deciding what to build next. Cross-check its phase table against this section's ranking — the two disagree in places, and where they do, prefer the tree over both                                                                                                                  |
 | `03-ui-chrome-spec.md`                 | Theme palette, typography, the control vocabulary, **options-bar contents per tool (`:175`)**, cursors, specific widgets, and an explicit "Unverified — do not present as fact" section at `:333`                                                                                                                                                                  | Any visual work. Read `:333` before putting a hex value in code. Check `wip/ps-ux-chrome` first — it may already have built this                                                                                                                                                    |
 | `04-blend-modes-and-brush-spec.md`     | All 27 blend modes with formulas and separability flags, the compositing equation, Opacity-vs-Flow math, brush tip and dab rendering, airbrush, smoothing, auto-erase, color replacement, performance, symmetry. §2 and §8 are what make the blend-mode and `color-replacement` rows implementation-grade                                                          | Before touching blend modes or the brush engine. **Much of it is already written on `ps/tool-expansion`** — port, do not rewrite                                                                                                                                                    |
 | `05-selection-mask-migration.md`       | The selection keystone: an exhaustive call-site inventory, the exact proposed types, combination-mode design, a marching-squares spec, a per-test impact table, a migration order, and risks/non-goals. This is the document that makes the Tier 3 keystone row actionable                                                                                         | **Start here** for any selection or region-scoped work. It is the single highest-leverage file in the corpus                                                                                                                                                                        |
@@ -4539,7 +4319,7 @@ depend on it.
   `/Users/bkalynovskyi/ph/.kilo/plans/ps-research/` and are **not** in this worktree. Everything
   in Appendix B was read from the main checkout.
 - **The 20-slot Photoshop toolbar is FROM-MEMORY.** I did not launch a browser to check it
-  against Adobe's current toolbar, and `AGENTS.md:45-60` forbids a headed one. The app-side
+  against Adobe's current toolbar, and the browser rule in `AGENTS.md` forbids a headed one. The app-side
   column of every gap row is verified; the Photoshop column is not.
 - **`08-merge-plan.md` and `02-implementation-plan.md` were read for headings and scope only**
   (11 files, ~265 KB). Their `file:line` anchors are against an older revision and I did not
@@ -4550,330 +4330,22 @@ depend on it.
   length and its `:102` re-stroke. Each is marked in the correction table. A dropped citation is
   a claim the next session must re-derive, which is cheaper than a wrong one.
 
-## Appendix C — provenance
+## Appendix C — how this document was built, and what to distrust
 
-This skill was assembled from seven independently written sections, each built from the unmerged `docs/ps-tool-playbook` (tip `025470e`) and re-verified against `main` at `1c9c8de`. The playbook's `file:line` citations were written at `50bb2b8` and were stale in dozens of places. Every correction is listed below, section by section, so the next reader can see which claims were re-derived and which were inherited.
+It was assembled from a playbook that lived on an **unmerged** branch (`docs/ps-tool-playbook`, tip `025470e`), section by section, and every citation was re-derived against the tree as each section landed. That playbook is not on `main`, and the tables that recorded its wrong line numbers one by one are gone: the tree is the authority now, and a list of corrections to a document nobody reads is a list that will itself go stale.
 
-A citation that is still wrong here is a defect, not a gap: fix it in the same commit that touched the code, and never reword a correction into a success story.
+What survives is the four things those passes taught, and they are the reason to distrust any citation in this file.
 
-### 01-worktree-gates-integration.md — Phase 10 — integration
+**A re-verification pass is required after _any_ change to a cited document**, not only to the code the citation points into. A `file:line` is a claim about a _file_, and a file can move its own content around without changing one line of the thing it points at. `AGENTS.md` was restructured and every citation into it became wrong while the code it described stayed byte-identical. Treat a stale `file:line` as a defect **in the same change that made it stale**, and re-derive the claim rather than re-deriving only the number.
 
-### Corrections to the playbook
+**Name a section beside every line.** A heading survives an insertion above it; a line number does not. This document had its `AGENTS.md:NNN` citations invalidated twice in one day by edits that were entirely correct.
 
-Source: `docs/ps-tool-playbook.md` at `docs/ps-tool-playbook`, authored against `50bb2b8`; tree is now `1c9c8de`. Citations that survived unchanged are omitted.
+**Counts are the same defect wearing a different hat.** A claim about the number of orphans, of pins, of files, of registered tools moves the same way, and it is worse because it reads as precise. If a count is load-bearing, derive it in the same sentence that uses it.
 
-**§0 — the one-page shape**
+Facts the correction passes established, kept because nothing else records them:
 
-- `7. gates  lint:check → tsc → test → test:e2e:unit → build → test:e2e` — not the order any gate runs. `gate:verify` is `tsc` → `build` (`package.json:31`), with `test:e2e:unit` CI-only; `lint:check` and `test` are pre-push/CI only (`package.json:32-33`); `test:e2e` is its own CI job (`ci.yml:205`), not a step in that chain.
-- `ps/<tool>-<slug>` as the observed taxonomy — `.kilo/agent-manager.json:2` registers 38 worktrees and only 3 use `ps/`. Convention, not policy.
-
-**§1 — Phase 0**
-
-- `AGENTS.md:111-127` → `AGENTS.md:110-127` (heading moved to 110).
-- `.kilo/agent-manager.json:6,15,…,362` and "All 30 registered worktrees" → the anchors still resolve (`:6`, `:15`, …) but the file is 636 lines with **38** `parentBranch` entries, all `"main"`. Schema is a top-level `worktrees` map at `:2`; no `sections` key.
-- "A branch containing `/` flattens to `-` plus a 16-hex disambiguator" — true for 3 of 13 registered slash-branch worktrees, not all (`wip/photoshop-fidelity` → `photoshop-fidelity`).
-- `git worktree add .kilo/worktrees/<dir> -b <branch> main` → `git worktree add -b <branch> .kilo/worktrees/<name> main` (option-first form).
-- "`node_modules`: 26 of 105 worktrees have none" → 2026-09-28: **22 missing, 64 empty, 20 populated, of 106** under `.kilo/worktrees/`. "Empty" is the more misleading state, because that is where the walk-up silently takes over.
-- `e2e/global-setup.ts:44` → `:44-45` guard, `:53-55` and `:59-61` the two rejection checks, `:67` the throw.
-- "main carries another session's uncommitted 179-line deletion in `e2e/OPEN_PROBLEMS.md`" → committed as `bf8101e`; main is clean except an untracked `.output.txt`.
-- Verified unchanged: `playwright.config.ts:21-22`, `:118-119` (the `PLAYWRIGHT_PORT`-is-stronger reading is correct); `AGENTS.md:99-100`, `:115-120`, `:121-124`, `:125-127`, `:62-86`.
-
-**§9 — Phase 8**
-
-- `npm run test:e2e  # playwright, headless, informational` → a **gate** (`ci.yml:205-208`, `AGENTS.md:190-194`).
-- `e2e` (informational, `continue-on-error`) → promoted to a gate; the comment that justified the old setting is `ci.yml:208-232`, and `AGENTS.md:190-194` explains what the promotion does and does not rest on.
-- CI described as three jobs → **four**: **wrong, and now wrong the other way.** `dependency-review` was briefly added as a fourth (PR-only) job and has since been removed again; it is `ci` (`ci.yml:24`), `e2e-unit` (`ci.yml:157`), `e2e` (`ci.yml:205`). The licence policy survives as prose in `DEPENDENCIES.md`, enforced by nothing.
-- `.github/workflows/ci.yml:48-79` for the "tracked file in a project" step → that step is `ci.yml:59-90` (`:70-89` shell body, `:84` the `comm` that yields the uncovered list).
-- `AGENTS.md:101-104` for the typecheck — verified unchanged, but `tsconfig.json:1-14` says a bare `npx tsc` resolves **zero** files, where `AGENTS.md:102-103` says it "resolves the app tsconfig alone". Same conclusion; `tsconfig.e2e.json:44` is what makes it safe.
-- `08-merge-plan.md:75-86` extras — range still correct, but `npx tsc -b --force` is obsolete (`tsconfig.app.json:3-8`, `tsconfig.node.json:3-5`: `tsc -b` re-checks every run), and `npx eslint . && npx prettier --check .` → `npm run lint:check` (`package.json:12`).
-- Missing entirely: `gate:commit` / `gate:verify` / `gate:push` (`package.json:31-33`), `.husky/pre-commit`, `.husky/pre-push`, and the fact that **no `npm run audit` script exists** — CI runs `npm audit --audit-level=high` directly (`ci.yml:52`). All added after the playbook was written, in `1c9c8de`.
-
-**§11 — Phase 10**
-
-- "Current integration lines: `rev2/integration`, `history/integration`, `cleanup/final`" → `cleanup/final` does not exist; the branch is **`cleanup/integration`**.
-- "The model is `f534335`" → still the model, but it is no longer `main`'s tip (`1c9c8de`).
-- "git worktree list returns 105 worktrees today" → **107** from `git worktree list`, **106** from `.git/worktrees/*/HEAD`, **106** directories under `.kilo/worktrees/`.
-- Verified unchanged: `08-merge-plan.md:9-16`, `:51-73`, `:75-86`, `:79-80`, `:81-82`; `HANDOFF.md:530-551`, `:579`, `:604-608` (the three removal tests are `:538-548`).
-
-### 02-research.md — Phase 1 — research
-
-### Corrections to the playbook
-
-Every citation in this section was re-verified against worktree
-`.kilo/worktrees/skill-ps-tool` at commit `1c9c8de`. The playbook was authored at `50bb2b8`
-and several of its citations are stale. Corrections, old → new:
-
-| Source                                                             | Old                                                                                     | New                                                                                                                                                                                     | Note                                                                                                                 |
-| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `docs/tool-creation-playbook.md` §2, citing `00-tool-inventory.md` | `toolProcessors.ts:214,215,218` — `rectangle`, `ellipse`, `line` omit `creator: true`   | **Fixed.** All five figure tools carry `creator: true` at `src/tools/toolProcessors.ts:220-224`                                                                                         | Defect resolved and pinned by `src/tools/__tests__/tool-processors.test.ts:195-206`                                  |
-| `07-test-harness-and-migration.md:10,46,47`                        | `src/test/setup.ts:207-210` — `set filter(_v: string) {}` silently discards every write | `src/test/setup.ts:178` — `filter: ''` is now a real data property, with the rationale at `:175-177`                                                                                    | Harness repaired; the "land it first" item in `00-tool-inventory.md:34` is done                                      |
-| `07-test-harness-and-migration.md:34-38`                           | `getImageData` / `putImageData` / `createImageData` entirely absent                     | Opt-in via `createPixelCanvasContext` at `src/test/setup.ts:191-209`; deliberately **not** on the global context                                                                        | Pixel-level assertions are now writable                                                                              |
-| `07-test-harness-and-migration.md:39-40`                           | `Path2D` partial — `moveTo` / `lineTo` / `closePath` only, no `bezierCurveTo`           | `src/test/setup.ts:35-50`, with `bezierCurveTo` at `:41`                                                                                                                                | The Phase 9 blocker is gone                                                                                          |
-| `07-test-harness-and-migration.md:62`                              | `vitest.config.ts:11` (`setupFiles`)                                                    | `vitest.config.ts:17`                                                                                                                                                                   |                                                                                                                      |
-| `01-photoshop-reference.md` §10                                    | `src/tools/toolProcessors.ts:214-218` for the inverted-`creator` correction             | `src/tools/toolProcessors.ts:220-224`                                                                                                                                                   | Superseded by the fix                                                                                                |
-| `00-tool-inventory.md:39-42`                                       | `materialization.ts:161` throws for the three figure tools                              | `src/contexts/materialization.ts:168` — `if (!processor?.creator) throw`                                                                                                                | The throw moved; the defect it expressed is fixed                                                                    |
-| `00-tool-inventory.md:39-42`                                       | `history-adapter.ts:180` classifies the six figure tools `kind: 'vector'`               | `src/contexts/history-adapter.ts:169`                                                                                                                                                   |                                                                                                                      |
-| `01-photoshop-reference.md` §10 / `00-tool-inventory.md`           | `toolbar-mapping.ts:88-95` for the six pen-family names in `availableTools`             | `toolbar-mapping.ts:86` starts `availableTools`; the pen names run from `:90`                                                                                                           |                                                                                                                      |
-| `12-paint-tools digest` ALREADY-VERIFIED facts                     | `src/tools/toolProcessors.ts:162-187` for the brush/pencil/color-replacement block      | `src/tools/toolProcessors.ts:165` (`brush`), `:173` (`pencil`), `:186` (`color-replacement`)                                                                                            | Range is right; the per-tool entry lines are what to cite                                                            |
-| `12-paint-tools digest` / `03-ui-chrome-spec.md`                   | `src/tools/toolsMap.ts:72-86` for the placeholder entries                               | Exact — `src/tools/toolsMap.ts:72-76` (`brush`), `:77-81` (`pencil`), `:82-86` (`color-replacement`)                                                                                    | Confirmed unchanged                                                                                                  |
-| `07-test-harness-and-migration.md:73`                              | `ShapeToolArea.test.tsx:648-679` "asserts the opposite" (a pin of the bug)              | `src/components/Main/__tests__/ShapeToolArea.test.tsx:648` is now _"computes the committed bounds from the same geometry the preview draws"_ and asserts a square — the fixed behaviour | That half of the pin is gone; the pin at `:715` (`expect(fullArgs.pos.width).not.toBe(fullArgs.pos.height)`) remains |
-| `07-test-harness-and-migration.md:7-9` rewrite order               | list `src/test/setup.ts` as rewrite step 1                                              | Already done, as above                                                                                                                                                                  | Rewrite order steps 2-9 are unaffected                                                                               |
-| `docs/tool-creation-playbook.md` §10.1                             | `HANDOFF.md` "1509 lines, 43 `##` headings"                                             | **Dropped** — not re-verified in this section's scope; the file is a live target and the count was true only at `50bb2b8`                                                               | Verify before citing                                                                                                 |
-
-Verified unchanged and safe to cite as-is: `.gitignore:34` (`.kilo`); `toolbar-mapping.ts:86`
-(`availableTools`); `src/tools/toolProcessors.ts:75` (`unimplemented` returns `[null]`);
-`src/components/ToolbarHorizontal/ToolbarHorizontal.tsx:5,13,24-26` (the registry-lookup
-dispatch — `toolsMap[toolName]?.toolboxComponent`, not a switch);
-`src/components/ToolbarsRight/types.ts:3-5` (`ToolbarRightComponent`, `ResizeCb`);
-`src/components/ToolbarsRight/toolbarPlaceholderConfig.ts` (20 lines);
-`src/contexts/asset-registry.ts:6` (`AssetOwnership`); `e2e/README.md:29` (headless
-default); `e2e/OPEN_PROBLEMS.md:36,308,318` (its three section headings);
-`src/components/Main/DrawToolArea.tsx` (101 lines);
-`src/components/ToolbarsRight/Draw/Draw.tsx` (227 lines).
-
-**What could not be verified, and was therefore dropped rather than cited:** the
-`HANDOFF.md` line and heading counts, the `docs/handoffs/` per-task record's line-level
-citations, and the exact `file:line` anchors inside the ps-research corpus itself. Those
-documents are gitignored, local to the main checkout, and were written against a tree that
-has since moved; their own method notes warn that their citations are
-re-verification-dependent. Cite them by absolute path, and re-verify before relying on any
-`file:line` inside them.
-
-### 03-look-like-photoshop.md — Phase 2 — make the tool look like Photoshop
-
-### Corrections to the playbook
-
-The playbook was authored at `50bb2b8`. Every citation in this section was re-verified
-against the working tree at `1c9c8de`. Changed or dropped citations, old form first:
-
-| Old                                                               | New                                                                                                                                                     |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ToolbarHorizontal.tsx:5,13,24-26`                                | `:5,13,15,25` — the `?.` is on `:13`, the `!ToolComponent` guard on `:15-21`, the `key` on `:25`                                                        |
-| `ToolbarHorizontal.test.tsx:62-81` for both fallbacks             | `:62-68` unregistered-tool strip, `:83-89` empty bar when `hasImage` is false                                                                           |
-| `Draw.tsx:135-151` for the slider pattern                         | `Draw.tsx:134-152` (the `flex flex-col` wrapper opens on `:134`)                                                                                        |
-| `buttonStyles.ts:10,25`                                           | `buttonStyles.ts:10-11,25-26` (`PRIMARY_BUTTON` spans two lines)                                                                                        |
-| `Shape.tsx:204-213` for the checkbox                              | `Shape.tsx:204-210` (the input); `:211-214` is its label                                                                                                |
-| `MagicWand.tsx:104` for the hint box                              | `:104` the box, `:107-109` the live readout                                                                                                             |
-| `Transform.test.tsx:121-126` for the rotate `title`               | `Transform.test.tsx:116-126` (the `describe` opens on `:116`)                                                                                           |
-| `Draw.test.tsx:548` for the unlabelled preview canvas             | `Draw.test.tsx:548-549` (both `not.toHaveAttribute` assertions)                                                                                         |
-| `IconShell.tsx:11` and a 32×32 shell                              | `IconShell.tsx:11-23` for the shell, `:17` for `viewBox`, `:4` for `STROKE`                                                                             |
-| `SidebarLeft/types.ts:3-37`, `toolIcons.tsx:25-60`                | unchanged; the hand-copied **test** union is `src/components/SidebarLeft/__tests__/toolIcons.test.tsx:25-64`, which the old section did not distinguish |
-| `index.scss:57-58`                                                | `index.scss:57-59` (the `cursor-grabbing *` block runs three lines)                                                                                     |
-| `useCurrentTool.tsx:71` write, `:33-35` read                      | unchanged, but the old section never named `:51`, the switch-away that is what actually loses the values                                                |
-| `Transform.tsx:191`, `Transform.tsx:281-299`, `FontSelect.tsx:26` | not re-verified; **dropped** rather than restated as a stale line — `buttonStyles.ts:41-44` is the durable reference for toggles                        |
-
-Re-verified unchanged: `Draw.tsx:140,202,216-222` · `MagicWand.tsx:10,16-17,53` ·
-`Crop.test.tsx:268` · `toolbar-mapping.ts:37-84,84,28` ·
-`SidebarLeft.tsx:153,165,276,299,303,353,358,131` · `Main.scss:12-38` ·
-`constants.ts:5-15` · `src/tools/settings.ts:38-214,199` ·
-`src/util/settings.ts:21-99,77-83` · every tool-settings test contract the old
-section listed. Added, each load-bearing here:
-`src/util/__tests__/settings.test.ts:42-46,301-354` (the harness that asserts **values**
-across a switch — the defect above is invisible without it) · `toolsMap.ts:72-86`
-(brush, pencil and color-replacement are still `placeholderTool(...)` at `1c9c8de`;
-`toolbarPlaceholderConfig.ts:2-4` is the card they render) · `src/util/draw.ts:132-145`
-and `src/contexts/layer-utils.ts:173`, the evidence for the `needs-engine` verdicts.
-
-### 04-strip-undoable.md — Phase 3 — strip the undoable requirement
-
-### Corrections to the playbook
-
-The source playbook is the unmerged `docs/ps-tool-playbook:docs/tool-creation-playbook.md`
-(1368 lines; its own header says "verified against `main` at `f534335`", which does not
-match the `50bb2b8` it was authored at). Its §4 is `## 4. Phase 3` with `### 4.1`–`### 4.5`.
-Every §4 `file:line` was re-verified at `1c9c8de`. Most are correct; these changed or were
-wrong.
-
-| #   | Playbook claim                                                                                                                                                            | Status at `1c9c8de`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | §4.3: "Map the tool onto `apply-raster-processor`, `reposition-layer`, `apply-affine-transform`, or `create-layer`" — `apply-affine-transform` reads as freely choosable. | **WRONG.** It is reachable only behind `if (args.toolName === 'transform')` at `src/contexts/history-adapter.ts:357`, which returns or throws from inside its own block, so a tool declaring `commit: 'affine-operation'` falls past every `processor.commit === …` test and hits the throw at `src/contexts/history-adapter.ts:426`. **The op is generic; the commit kind is not.** Tier 2, not tier 1.                                                                                                                                                             |
-| 2   | §4.3: `create-layer` listed as freely choosable.                                                                                                                          | **WRONG without the creator qualifier.** `operationForTool` has no `commit === 'source'` arm, so a `source` tool dispatched as a `TOOL_ACTION` against an existing layer throws at `src/contexts/history-adapter.ts:426` while legacy replay rasterizes it via its default arm (`src/contexts/history-replay.ts:193`). `create-layer` is reachable only from the `NEW_LAYER_ACTION \|\| (TOOL_ACTION && source)` arm at `src/contexts/history-adapter.ts:500-504`.                                                                                                   |
-| 3   | §4.2: tier L is "the append boundary declines to plan", a `warning` diagnostic and a performance cliff.                                                                   | **INCOMPLETE — it conflates two postures.** The append boundary is per-entry and warns (`src/contexts/history-append.ts:78-92`, severity at `:86`, terminal arm `:153-158`; short-circuit at `:358-366`; fallback to `buildDurableDocument` at `src/contexts/StoreContext.tsx:744-758`). The **shadow conversion** is fail-closed for the **whole document** (`src/contexts/history-adapter.ts:621-623` catches into an `error` diagnostic; `:657-665` rolls back and returns `document: null`). An untranslatable tool costs the entire shadow, not just its entry. |
-| 4   | §4 header: "a shadow projection with no production caller (`AGENTS.md:235-236` …)"                                                                                        | **Citation moved.** `AGENTS.md` is 287 lines; Architecture status is at **`AGENTS.md:146-148`**. Lines 235-236 are inside "Handoff documents". Substance unchanged.                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 5   | §4 header: "`HANDOFF.md:55-95`" for that item.                                                                                                                            | **Citation moved.** That heading is now at **`HANDOFF.md:55`**; item 2 starts at `HANDOFF.md:98`. Cite `HANDOFF.md:55-96`.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 6   | §4.4: "`unimplemented()` returns `[null as never]` … gives the layer `tmpCanvas = null` with no throw (`layer-utils.ts:206-213`)"                                         | **Range off, trigger missing.** The `kind === 'tool'` branch is **`src/contexts/layer-utils.ts:204-216`**. The trigger matters more: it only happens if you mark an `unimplemented` processor `creator: true` **and** dispatch it as a tool-layer source — the current entries are not (`creator` unset on all of `src/tools/toolProcessors.ts:194-229`).                                                                                                                                                                                                            |
-| 7   | §4.5: two tests pin the `replay` contract at `src/tools/__tests__/tool-processors.test.ts:702-718`                                                                        | **Correct as written.** `:702-712` is the `replay.kind`-tracks-`commit` test, `:714-718` the `requiresRaster` derivation. Also verified: `:720-729` asserts the descriptor is frozen, has exactly the four keys, and is reused **by reference** by `toolsMap`.                                                                                                                                                                                                                                                                                                       |
-| 8   | §4.2 tier-N row 4: `durable-replay.ts:68-143` is "no — a missing case is a silent no-op"                                                                                  | **Correct, and the reason is worth keeping.** That switch has no `default`, and `tsconfig.app.json:30-36` sets `noFallthroughCasesInSwitch` but **not** `noImplicitReturns`. The same defect in `cloneOperation` (`src/contexts/history-model.ts:247-303`, also no `default`) **is** a compile error, because there the union member type is the parameter type. One defect, two enforcement outcomes, depending on the function.                                                                                                                                    |
-| 9   | §4.2: `history-adapter.ts:416-424` for the `raster` arm                                                                                                                   | **Correct, exactly.** The addition it omits is the load-bearing part: the materializer resolves `processorId` by **lookup**, `toolProcessors[operation.processorId as keyof typeof toolProcessors]` at `src/contexts/materialization.ts:277` — which is what makes `raster` name-agnostic end to end, not just in conversion.                                                                                                                                                                                                                                        |
-| 10  | §4.5: "`materialization.ts:279-281` rejects an unknown `processorId`/`version` pair"                                                                                      | **Correct** (`src/contexts/materialization.ts:278-281`). Add the sibling it misses: `filterForOperation` (`src/contexts/materialization.ts:73-89`) is a `switch` over three names with **no `default` arm** — the name-closure that makes `layer-operation` tier 2.                                                                                                                                                                                                                                                                                                  |
-| 11  | §4.1: `useHistory.ts:98-108` for `applyRasterTool`; `history-adapter.ts:100-125` for `plainObject`                                                                        | **Both correct, exactly** at `1c9c8de`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| 12  | §4.4: "`commit: 'document-operation'` is a no-op in legacy replay too — `history-replay.ts:192`"                                                                          | **Correct, exactly** — that line is `if (processor.commit === 'document-operation') continue;`. Add the durable half it omits: `src/contexts/history-adapter.ts:425` returns `null` for both `document-operation` and `selection`.                                                                                                                                                                                                                                                                                                                                   |
-| 13  | §4.2's three-tier table (`raster`, "any, no durable arm", "new `DurableOperation` variant")                                                                               | **Incomplete, and the gap is the most expensive one here.** The playbook never says `operationForTool` **throws** for an unhandled commit kind (`src/contexts/history-adapter.ts:426`) and that `convertLegacyHistorySafely` is therefore fail-closed for the whole document (`:657-665`). "Declines to plan" is per-append and warning-severity; the conversion is whole-document and error-severity. See correction 3.                                                                                                                                             |
-
-### 05-implementation-unit-tests.md — Phase 5 — unit tests
-
-### Corrections to the playbook
-
-The playbook was authored at `50bb2b8`; every working-tree citation above was re-verified at `1c9c8de`. Unverifiable claims are dropped
-rather than carried forward.
-
-| Playbook citation                                                                                         | Corrected to                                                                                                                                                                                                                                                      |
-| --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tool-processors.test.ts:702-718` (both derived-flag tests)                                               | `:702-712` for `replay.kind`, `:714-718` for `requiresRaster`                                                                                                                                                                                                     |
-| `tool-processors.test.ts:161-193`, `:363-375`, `:406-438`, `:438-459`, `:548-578`, `:742-772`, `:686-739` | `:159-193`; `:363-384`; `:406-426`/`:428-436`/`:438`; `:449-459`; `:548-587` + coverage `:589`; `:742-772` + coverage `:782`; unchanged                                                                                                                           |
-| `SidebarLeft/types.ts:3-37`, `toolIcons.tsx:25-60`, `toolbar-mapping.test.ts:14,146-159`                  | all unchanged — but `toolIcons.test.tsx` is `:21-55`, the `toolIcons[tool.name]` use site at `SidebarLeft.tsx:131` is unchecked, and `toolbar-mapping.test.ts` does **not** assert `availableTools` is exhaustive (only two tools are spot-checked, `:85-92`)     |
-| `Main.tsx:50-76`; `Main.tsx:158`                                                                          | `:50-76` unchanged; routing `:149-158`; `ToolAreaComponent` `:135-145`; overlay `display` `:184-197`; `DummyToolArea` default `:147`, its `else` `:158`                                                                                                           |
-| `useLayer.ts` entry-point table (`:219`, `:264`, `:323`, `:473`, `:651-671`)                              | all four keep their lines; the returned surface is `:656-658`, not `:651-671`                                                                                                                                                                                     |
-| `useHistory.ts:98-108`; `draw.ts:96-104`; `paint-tools.test.ts:97-104`, `:237-248`, `:227,229`            | `useHistory.ts:98-109`; the three calls are `draw.ts:100-103`, padding `:20-25`; `:99-104`; `:241-243`; `:227-229` unchanged                                                                                                                                      |
-| `src/util/draw.ts:96-97` identity branch, cited by the reference test                                     | Does not exist at `1c9c8de`; it is a `brush-toolbar` change. Cite `brush-toolbar:src/util/draw.ts:88-99` for the reference, `src/util/draw.ts:84-94` for the current `drawLine`                                                                                   |
-| `src/test/setup.ts:42-48` / `:117-180` / `:182-190` / `:191-209` / `:211-215`                             | `:117-180` context factory; `:182-209` opt-in pixel context; `:211-215` `installCanvasContextStub`; `:219-221` per-test reinstall (there is no `:42-48`)                                                                                                          |
-| `src/util/__tests__/settings.test.ts` (template source)                                                   | `:42-46` is `switchToTool`; the tool-switch describe is `:301-354`. The value-level coverage is on the reference branch, not here                                                                                                                                 |
-| `tool-settings.test.ts:57`, `:320-328`, `:330-340`, `:342-351`, `:362-368`                                | all still correct; the key-survives test is `:255-268`                                                                                                                                                                                                            |
-| §5.2 "13 files" ordering; step 8 "the icon, three files"                                                  | Reordered: type spine 1–6, presentation registries 7–9, new files 10–13. `Main.tsx` is **four** edits, not one. `ToolIconName` is hand-written and **not** derived from `ToolName`, so the typecheck will not catch a name you forget there                       |
-| §4.2/§4.5 recommending flipping `requiresRaster`; §5.4 `flattenRequired` "test-only"                      | **Forbidden** — `tool-processors.test.ts:714-718` derives it, so changing it means rewriting the test. Confirmed: `flattenRequired` is declared `toolProcessors.ts:50`, runs `useLayer.ts:271-301`, and no shipped processor sets it                              |
-| §5.3 "a test that pins a defect must be inverted"                                                         | Kept; the case-(c) rule added — a test whose only half loses its last example needs the assertion **relocated**, not weakened                                                                                                                                     |
-| §6.1 template B (`useHistory.test.tsx` via `renderHook` + `StoreProvider`)                                | Corrected: the provider is forbidden. The context-seam template drives the real pure function (`createLayerSource`, `layer-utils.ts:152-217`) and, when a store is unavoidable, mocks `useStore` directly with `vi.hoisted` + `vi.mock('../StoreContext.tsx', …)` |
-| §5.3 "seven per-tool test tables"                                                                         | Now ten hard-coded rosters in `tool-processors.test.ts` alone, plus the `Main.toolAreas` routing table, the `ToolbarPlaceholder` mirror, the `SidebarLeft` harness icon mock, the hand-copied `ToolIconName`, and `tool-settings.test.ts:255-268`                 |
-| §6.4 mutation check ("record the failure count")                                                          | Kept and made mandatory, with a command sequence, a `git status --short` byte-exact restore proof and a report format. Recorded: 7 red for the persistence arm, 5 red for the smoothing call, on the unmerged reference build                                     |
-| §7.5 baseline directory                                                                                   | `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`; `BASELINE_DIR` at `e2e/export/visual-regression.spec.ts:18`; re-record gate `:73`                                                                                                             |
-
-### 06-e2e-delegation-handoff.md — Phase 9 — the handoff doc
-
-### Corrections to the playbook
-
-Each row is a citation in the unmerged `docs/ps-tool-playbook` that is **wrong against the working
-tree at `1c9c8de`**, or correct-but-incomplete. The playbook was authored at `50bb2b8` and is not
-merged, so these are corrections to a draft, not to shipped documentation.
-
-| Playbook citation (stale)                                                                      | Verified at `1c9c8de`                                                                                                                                                                                                                                                                                          |
-| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| §7 opening: "`e2e/**` is excluded from `npm run test`", cited to `AGENTS.md:156`               | `AGENTS.md:140-142` carries the exclusion; `:156` is lint-staged prose inside the local-gate section                                                                                                                                                                                                           |
-| §7.3 presents the helper inventory as complete                                                 | It omits `e2e/helpers/screenshot-scale.ts` entirely, which owns `imagePointToCss` (`:36`), `cssPointToImage` (`:49`) and `imageBoundsToCss` (`:56`) — the single implementation the §7.4 pixel rules depend on                                                                                                 |
-| §7.3 omits `canvasRedrawClip` and the `canvas-redraw.ts` re-export                             | `e2e/helpers/canvas-redraw.ts:10-15` re-exports `canvasRedrawClip`, `waitForCanvasPixels`, `CanvasPixelPredicate` and `WaitForCanvasPixelsOptions` from `./canvas-helpers`; `canvasRedrawClip` is `canvas-helpers.ts:339` and `loadImageData` is `:165` — the shipped spec imports all three                   |
-| §7.3 "Never divide by `devicePixelRatio` (`:39-51`)"                                           | `e2e/helpers/cdp-helpers.ts:39-51` is a **comment block**, not a guard. There is no runtime check, so a future change can delete the reasoning without deleting anything that fails. Say so in the skill                                                                                                       |
-| §7.4 "The flyout keyboard race (`:257-306`)" listed among the open latents                     | `e2e/OPEN_PROBLEMS.md:257-306` is correct, but the entry is filed under `## Fixed — Enter did not reliably close the flyout` (`:257`), not among the open defects                                                                                                                                              |
-| §7.4 "reject a null bounds result first — every spec does" cites `:174-181`                    | Correct. The other four latents (`:110-130`, `:153-172`, `:132-151`, `:183-195`) and the unsanitised-name entry (`:216-237`) all still resolve to those exact ranges                                                                                                                                           |
-| §7.1 "For a tool with options, `e2e/pen-types.spec.ts:85-110`"; §7.2 "`e2e/levels.spec.ts:88`" | Both correct. §7.1 omits `e2e/levels.spec.ts:55-57` — the comment that states _why_ the label part alone is matched — and `e2e/sidebar-flyout.spec.ts` as the naming model                                                                                                                                     |
-| §7.5 "Re-record is gated on `updateSnapshots === 'all'` … (`visual-regression.spec.ts:67-78`)" | Correct. §7.5 never states the budget: the call site passes `threshold: 0.01` / `maxDiffPixels: 100` at `visual-regression.spec.ts:86-89`, against defaults `0.2 / 100 / 0.01` at `e2e/helpers/image-comparison.ts:27-29`. It also omits the orphan-baseline entry (`:197-215`) and the `draw`-tool provenance |
-| §1 "`AGENTS.md:121-124`" for the weaker `PLAYWRIGHT_REUSE_EXISTING_SERVER` variable            | `AGENTS.md:110-127` never mentions `PLAYWRIGHT_PORT`, which `playwright.config.ts:21-22` and `:118-119` make the correct isolation primitive. The playbook's "`AGENTS.md` should say so" is still an open gap, not a stale citation                                                                            |
-| §8.1 "the e2e flyout testids" (`toolbar-helpers.ts:207-210`)                                   | `e2e/helpers/toolbar-helpers.ts:207-209` is `verifyPrimaryTool`, asserting the tile's own `toContainText`. The `group[0]`-is-the-primary-tile rule it attributes here lives in app source (`SidebarLeft.tsx`), a different section's scope                                                                     |
-| §10.2 "`See`:216-237` for the model entry"                                                     | `e2e/OPEN_PROBLEMS.md:216-237` is the unsanitised-artifact-name entry, not a model entry. The shape is stated at `e2e/OPEN_PROBLEMS.md:3-7` and demonstrated in full by `:110-130`                                                                                                                             |
-| §10 opening treats `.kilo/plans/` as a handoff home alongside `HANDOFF.md`                     | `.gitignore:34` is `.kilo` and matches `.kilo/plans`, so a plan there does not ship. `AGENTS.md:256-260` requires handoff docs to ship with the code                                                                                                                                                           |
-| §9 "`e2e` (informational, `continue-on-error`)"                                                | `.github/workflows/ci.yml:205-232` promotes the job; the three `continue-on-error` strings left in that file are all inside historical comments, not keys. `e2e/README.md:397-407` is the stale one                                                                                                            |
-| §9 gate list does not separate local hooks from CI jobs                                        | AGENTS.md, "Gates", is the current split: `gate:commit` (`lint-staged --fail-on-changes --no-stash` → `gate:verify`) and `gate:push` (`npm run test` only), versus four CI jobs. A `vitest related` staged-file fan-out was added and then removed                                                             |
-
-**Not verifiable against this working tree, and therefore not corrected above:**
-
-- The **port-race** entry the playbook characterises as "Playwright's own `webServer` teardown
-  raced its probe" does not exist in `e2e/OPEN_PROBLEMS.md` at `1c9c8de`, in any branch's copy of
-  that file, or in any commit reachable in this clone. What is documented — and what the traps
-  section above uses instead — is the **P1 port-isolation entry** on the unmerged `ps-integration`
-  branch: a run attaching to a sibling worktree's server, fixed with three layers. If the teardown
-  race is a real observation, it belongs in `e2e/OPEN_PROBLEMS.md` as its own entry before it
-  belongs in a skill.
-- The **zero-file idle worker** is a recorded outcome, not a citable file. The re-dispatch brief
-  quoted above is the shape that fixed it, recovered from a comparable four-test re-dispatch in this
-  repo's session history, not from the failed dispatch itself.
-- `brush-toolbar:e2e/paint-options.spec.ts` and `brush-toolbar:HANDOFF.md` (items 36–41) are cited
-  as **not-yet-merged references**; re-verify their line numbers against that branch before relying
-  on them, and against `main` once they merge.
-
-### 07-backlog-and-traps.md — Appendix B — the research corpus that already exists
-
-### Corrections to the playbook
-
-`docs/tool-creation-playbook.md` was written at `50bb2b8` and is unmerged (branch
-`docs/ps-tool-playbook`, `025470e`, +1/-4). Every claim below was re-verified at `1c9c8de`.
-Citations I could not re-verify are marked **[unverified]** and are not to be carried forward.
-
-| #   | Playbook claim                                                                                                                                                                                                            | Truth at `1c9c8de`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | §12: "**Nothing is in flight.** Every `ps/*` branch … is **0 commits ahead of `main`**, and `git diff --stat main...<branch>` is empty for all of them."                                                                  | **Wrong, and load-bearing.** `ps/brush-engine` +1/59, `ps/tool-expansion` +3/3, `wip/ps-integration` +3/138, `wip/ps-shape-geometry` +1/148, `wip/ps-ux-chrome` +1/148, `docs/ps-tool-playbook` +1/4 are all **not merged**. Only `ps/brush-stabilizer` and `ps/brush-tip-core` are. The "0 ahead is not a safety test" caveat in the same paragraph is right and load-bearing; the conclusion drawn from it is wrong                                                                                                                                                                                                                             |
-| 2   | §12: "**29 registered tools.**"                                                                                                                                                                                           | **Correct.** 29 rows at `src/tools/toolsMap.ts:45-133`, 29 union members at `src/contexts/tool-types.ts:20-63`, 29 in `availableTools` at `toolbar-mapping.ts:86-116`                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| 3   | §12: "**7 stubs** (the six pen-family tools plus `custom-shape`, all `commit: 'unimplemented'` returning `[null]`)"                                                                                                       | **Correct** as a count of `unimplemented` registrations (`toolProcessors.ts:194-219,225-229`, no-op at `:75`). But **10** registrations render a `PlaceholderTool` (`toolsMap.ts:75,80,85,87,91,97,102,107,112,121`); three of them (`brush`, `pencil`, `color-replacement`) are real `commit: 'raster'` tools that paint. The playbook conflates "placeholder" with "stub"                                                                                                                                                                                                                                                                       |
-| 4   | §12: the pen family "**consume a history entry while doing nothing**", violating the constraint that unsupported operations must reject the durable branch                                                                | **Wrong about the mechanism, and the corrected mechanism is a different defect.** The 7 have no `interactionMode` arm (`Main.tsx:50-76`), so `EventHandler` is `DummyToolArea` (`Main.tsx:158`) and the overlay is `display: none` (`Main.tsx:194-196`). No tool area is mounted, so no pointer event, so no `TOOL_ACTION`, so **no history entry is created**. The defect is _selectable + options bar renders + canvas does nothing + no warning_. The durable-rejection concern is still real for a **hand-crafted or imported** legacy entry naming one of them: that hits `history-adapter.ts:426` and voids the whole shadow via `:657-665` |
-| 5   | §12 trap 1: "No `interactionMode` arm in `Main.tsx:50-76`" (read as covering the paint tools)                                                                                                                             | **Wrong for `brush`/`pencil`/`color-replacement`.** `Main.tsx:55` routes all three to `interactionMode = 'draw'`, and they paint. Only the 7 `unimplemented` tools fall through to the `'zoom'` sentinel at `Main.tsx:50`                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 6   | §12: `layer-renderer.ts:72` is one of the five `ctx.filter` sites                                                                                                                                                         | **Path wrong.** It is `src/contexts/layer-renderer.ts:72`, not `src/util/`. The other four are correct: `src/tools/blur.ts:11`, `src/tools/colors.ts:12`, `src/tools/levels.ts:12`, `src/contexts/materialization.ts:247`                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 7   | §12: "`SelectionMode` does not exist anywhere in `src/`, so **Add/Subtract/Intersect are unrepresentable**"                                                                                                               | **First half wrong.** `src/tools/selection.ts:5` is `export type SelectionMode = 'fill'                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | 'outline'`. The consequence is unchanged: `'fill' \| 'outline'` has no combination members, so Add/Subtract/Intersect remain unrepresentable |
-| 8   | §12: "`general-types.ts:61-70` — `Selection` is `points: Point[]` + `isActive` + `pos`"                                                                                                                                   | **Understated.** The type starts at `general-types.ts:61` and also carries `lifecycle?`, `geometry?`, `sourceTool?`, and `metadata?` (`:66-69`). Still one boundary loop, so the conclusion stands                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| 9   | §12: `src/util/selection.ts:515` binarizes; `drawPolygonPath` (`:392-400`) non-zero vs `isPointInPolygon` (`:186-203`) even-odd; `copySelectionToCanvas` (`:708-729`) feathers only `feather-magnetic-lasso` (`:720-726`) | **All four exact.** `:515`, `:392`, `:186`, `:708`, `:720` all resolve as claimed. Corroborated in-tree at `selection.ts:465` ("non-zero winding rule")                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 10  | §12: `toolbar-mapping.ts:37-95` "has six toolbar groups covering slots 1/2/3/4/5/8/13/15/16/18"                                                                                                                           | **Group count wrong; slot map right.** `toolbarMap` is 5 top-level sections rendering **12** tiles. The covered Photoshop slots (1,2,3,4,5,8,13,15,16,18) and the 10 empty ones are unchanged. Note `brush`/`pencil`/`color-replacement` at `:58-60` are the _slot-8 Brush group_, and `color`/`levels`/`transform` at `:51-53` occupy the slot-6 position that Photoshop gives Frame/Eyedropper                                                                                                                                                                                                                                                  |
-| 11  | §12: "**`levels` is Brightness/Contrast; `color` is neither of its two candidate identities**" and "`settings.ts:37,:38` are unchanged"                                                                                   | **Correct**, with the path spelled out: `src/tools/settings.ts:37` is the `color` default (`{ grayscale: 0, sepia: 0, saturation: 0 }`) and `:38` is `levels` (`{ brightness: 0, contrast: 0 }`); the arg types are `src/tools/colors.ts:4` and `src/tools/levels.ts:4`. D1/D2 remain unimplemented                                                                                                                                                                                                                                                                                                                                               |
-| 12  | §12: "`levels.ts:4` `{brightness, contrast}`; `colors.ts:4` `{grayscale, sepia, saturation}` with `sepia()` a fixed `#d9c09a` matrix"                                                                                     | **Correct** on both arg types. The `#d9c09a` value is in `src/tools/functions.ts` via `buildColorsFilter` — **[unverified]**, I did not open that file                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| 13  | §12: "`oval` still carries a dead `cornerRadius` (`settings.ts:30`); Polygon has no `sides` field (`settings.ts:32`); shape does not fill by default (`settings.ts:59-65` `backgroundColor: null`)"                       | **First two exact** (`src/tools/settings.ts:30,32`). The third is at **`src/tools/settings.ts:63`**, not `:59-65`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 14  | §12: "`text.ts:47` `split('\n')` then one `fillText` per line; `getTextWidth` (`:53-64`) returning only the widest line makes `rect` decoration; `settings.ts:69` `lineHeight: 1.1`"                                      | **All exact.** `src/tools/text.ts:47` and `:48-50`, `:53-64`, `src/tools/settings.ts:69`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 15  | §12: "Tolerance is 0–100 default 28 (`settings.ts:109`); Photoshop is 0–255 default 32 on RGB"                                                                                                                            | **Default 28 exact** (`src/tools/settings.ts:109`). The 0–100 app range and the 0–255/32 Photoshop figures are not in the tree — FROM-MEMORY on the Photoshop side and unstated in the app                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| 16  | §12: "`src/tools/magicWand.ts:11-15` is `({bitmap}) => () => [bitmap]`, yet registered `commit: 'selection'`"                                                                                                             | **Correct, off by one line.** The processor body is `src/tools/magicWand.ts:10-14`; the registration is `toolProcessors.ts:152-157`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 17  | §12: "`toolProcessors.ts:165-193` … `draw.ts:46` allocates a full-size `OffscreenCanvas` per pointer move; `:102` re-strokes the whole accumulated path. … All three get a `PlaceholderTool` (`toolsMap.ts:75,80,85`)"    | **`:165-193` and the three `toolsMap` rows are correct. `draw.ts:46` is exact** (`new OffscreenCanvas(size.width, size.height)`). The "57 lines" file length and the **`:102` re-stroke claim are [unverified]** — drop them. Note the `draw` path is legacy: `ps/tool-expansion` rewrites `src/tools/draw.ts` (+27/-…) and adds `src/hooks/usePaintStroke.ts`                                                                                                                                                                                                                                                                                    |
-| 18  | §12: "`color-replacement` … `util/draw.ts:106-125` `drawSpray`"                                                                                                                                                           | **The symbol is not exported.** `src/util/draw.ts:84-93` is `drawLine`, a three-branch `penType` dispatch; `:91` is `else if (penType === 'spray')`, and the spray body ends at `:126`. Cite the symbol or the branch, not `:106-125` as an export                                                                                                                                                                                                                                                                                                                                                                                                |
-| 19  | §12: "**No blend-mode surface.** The app has `layer-types.ts:60` `blendMode: GlobalCompositeOperation` … and no blend-mode module"                                                                                        | **Correct** for the type (`src/contexts/layer-types.ts:60`). "No module" is true on `main` and **false against `ps/tool-expansion`**, which adds a 29-line blend-mode slice in `src/contexts/layer-utils.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 20  | §12: "The **Select menu does not exist** (`src/components/Menu/Menu.tsx` renders a header and the toolbar)"                                                                                                               | **Correct and stronger than stated**: `src/components/Menu/Menu.tsx` is **13 lines** rendering only `DesktopHeader` and `ToolbarHorizontal`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| 21  | §12: "Zoom and Hand are the most-missed: zoom exists only as a CSS `zoom-container` class (`Main.tsx:167`, transform commented out at `:170`), and `'zoom'` at `Main.tsx:50` is a dead sentinel meaning 'no tool area'"   | **All three exact**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 22  | §12: "**26 absent tools**"                                                                                                                                                                                                | **Undercount, and the framing is the problem.** The 26-list mixes absent _tools_ with absent _menu commands_ and absent _crops_. The decidable framing is slot coverage: **10 of 20 Photoshop toolbar slots are empty**, which the playbook also states. Use the slot framing; the 20-slot Photoshop column is FROM-MEMORY                                                                                                                                                                                                                                                                                                                        |
-| 23  | §12: "**~18 partial, 0 at Photoshop parity**"                                                                                                                                                                             | **Not a checkable taxonomy** — "partial" and "parity" have no test. Replaced here by PRESENT/PARTIAL/ABSENT with a `file:line` for each                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| 24  | §4.2 cost criterion: `raster` is fully generic, `processorId` is the tool's own name, **no allowlist**                                                                                                                    | **Correct, exactly, and it is the criterion this whole ranking rests on.** Re-derived independently: `history-adapter.ts:416-424`, `history-model.ts:100-106` (`processorId: string`), `materialization.ts:277-281` (resolved by lookup). §4.2 also **omits** that `operationForTool` _throws_ for an unhandled commit kind (`:426`) and that `convertLegacyHistorySafely` is therefore **fail-closed for the whole document** (`:657-665`) — "declines to plan" is per-append and warning-severity; the conversion is whole-document and error-severity                                                                                          |
-| 25  | §4.2 / §4.4: "`commit: 'document-operation'` is a no-op in legacy replay too (`history-replay.ts:192`)"                                                                                                                   | **Correct, exactly** — that line is `if (processor.commit === 'document-operation') continue;`. The durable half returns `null` for `document-operation` alongside `selection` (`history-adapter.ts:425`)                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| 26  | Appendix A trap 10: "`applyRasterTool` (`useHistory.ts:101`) has no try/catch, while the live path does (`useLayer.ts:536-550`)"                                                                                          | **Still true, with paths corrected**: `useHistory.ts:98-108` (unguarded) and `useLayer.ts:543-550` (guarded). The 04 section of this skill also verifies this pair as exact                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| 27  | Appendix A trap 28: "The live raster preview calls `imageProcessor` with **no try/catch** (`useLayer.ts:532-533`) on every pointer move"                                                                                  | **Now false — delete it.** The live path **is** guarded at `useLayer.ts:543-550`, with a comment naming `transform` and its throwing argument shapes as the reason. The _undo_ path is the unguarded one (correction 26)                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| 28  | Appendix A trap 26: "`isToolDirty` is permanently `false` — it has **no production writer**"                                                                                                                              | **Imprecise.** The reducer arm exists (`src/contexts/StoreContext.tsx:358-362`) and `SET_TOOL_NAME` clears it (`:357`). What is true: **no production dispatch sets it `true`**, which three options-bar components state in their own comments (`Color.tsx:94`, `Blur.tsx:66`, `Levels.tsx:69`)                                                                                                                                                                                                                                                                                                                                                  |
-| 29  | Appendix A trap 27: "`flattenRequired` is set by no production processor (`HANDOFF.md:783`)"                                                                                                                              | **Correct**, and the tree now says so itself at `src/contexts/useLayer.ts:275`. The `HANDOFF.md:783` citation is **[unverified]** — cite the code comment, not the handoff line                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| 30  | Appendix A trap 25: "`useRect`'s aspect ratio is reciprocally defined between the drag (`useRect.ts:206-221`, `w = h·ratio`) and the ratio effect (`:229-237`, `w = h/ratio`)"                                            | **Stale and wrong.** Both helpers are in `useRect.ts`: `adjustHeightRatio` at `:189` computes `wantedHeight = width / _aspectRatio` (`:193`), `adjustWidthRatio` at `:206` computes `wantedWidth = height / _aspectRatio` (`:210`). Both are live (`:263,267` and `:271,275`). The relation is _consistent_ — `w/h = 1/ratio` either way — so "ratio 2" yields `w = h/2`. That is an **inverted-ratio question to settle with the operator**, not a reciprocity defect. `useRect.ts:206-221` and `:229-237` are not the right ranges                                                                                                              |
-| 31  | Appendix A trap 23: "**Seven** hard-coded per-tool tables in `tool-processors.test.ts` (`:161-193, :363-375, :406-438, :438-459, :548-578, :742-772, :686-739`)"                                                          | **Line ranges are stale.** Verified live sites, cited by symbol: `unimplementedTools` `:428`, `paintWrapperTools` `:438`, `argOverrides` `:540`, `placeholderTools` `:806`, plus the `requiresRaster` derivation `:714-718` and the expected lists `:77-79`, `:110`, `:728`. The count is right in substance; the ranges are not                                                                                                                                                                                                                                                                                                                  |
-| 32  | Appendix A trap 12: "`ToolIconName` is hand-copied into the test (`toolIcons.test.tsx:21-60`)"                                                                                                                            | The file is at `src/components/SidebarLeft/__tests__/toolIcons.test.tsx`. The `:21-60` range is **[unverified]** — cite the file                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 33  | Appendix A traps 6, 7, 13: flyout test ids at `SidebarLeft.tsx:276,353,358`; primary tile at `:153`; `toolbar-helpers.ts:207-210`                                                                                         | **All exact.** Testid minted at `SidebarLeft.tsx:276`; `${sectionIndex}-${groupIndex}` at `:353`; `two-column-${groupIndex}` at `:358`; `primaryTools[groupIndex] ?? group[0]` at `:153`; the helper's expectation derives from the same place at `e2e/helpers/toolbar-helpers.ts:205`                                                                                                                                                                                                                                                                                                                                                            |
-| 34  | Appendix A trap 15: "A shortcut must be registered twice (plain + `shift: true`) because matching walks the registry backwards and breaks on the first hit (`useKeyboardEvents.tsx:100-126`)"                             | **Mechanism exact, necessity overstated.** `:100-101` is the backwards loop and `:126` is the `break`. But `matchesShortcut` tests `shift` only when the declaration sets it (`:70`), so doubling is required _when both registrations would match_, not unconditionally. Restate as a mechanism                                                                                                                                                                                                                                                                                                                                                  |
-| 35  | Appendix A trap 3: "`toolsMap[toolName]?.toolboxComponent` (`ToolbarHorizontal.tsx:13`) — the `?.` turns a missing registration into a TODO strip (`:18`)"                                                                | `:13` is **exact**; the `:18` TODO-strip claim is **[unverified]** (the file yielded only `:13` and `:25` to a grep for `toolboxComponent` and `key=`). Cite `:13`. Trap 18 (`ToolbarHorizontal.tsx:25`, the `key={toolName}` remount) is **exact**                                                                                                                                                                                                                                                                                                                                                                                               |
-| 36  | Appendix A trap 14: two independent `Escape` paths — the registry one at `PolygonClickToolArea.tsx:733-738` and a raw `window` listener at `SidebarLeft.tsx:98-109`                                                       | `SidebarLeft.tsx:98-109` is **exact**. The `PolygonClickToolArea` range is **[unverified]** at `1c9c8de` — find it before citing it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| 37  | Appendix A trap 22: "`replay.requiresRaster` is derived, not declared (`tool-processors.test.ts:714-718`)"                                                                                                                | **Correct, exactly**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| 38  | Appendix A trap 21 / 20: the global context has no `getImageData` (`src/test/setup.ts:182-190`); `getContext` stub is dropped by `vi.restoreAllMocks()` (`useHistory.test.tsx:87-96`)                                     | The setup claims are **exact** (doc comment `:182-190`, opt-in factory `:191-209`, stub `:211-215`, re-install `:217,:219-221`); the range moved to `:185-190`. The `useHistory.test.tsx:87-96` citation is **[unverified]** — the durable re-install is visible in `setup.ts` itself, so cite that instead                                                                                                                                                                                                                                                                                                                                       |
-| 39  | Appendix A trap 19: "Tool settings are in-memory only … `normalizeToolArgs` validates nothing but `figure` (`useCurrentTool.tsx:26-31`)"                                                                                  | The persistence claim is **correct**. The `useCurrentTool.tsx:26-31` citation is **[unverified]**                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| 40  | Appendix B: the corpus table, plus "Treat every claim in those files as unverified until re-checked"                                                                                                                      | **Correct and still the rule.** Two updates: `RESEARCH-BRIEF.md` is gitignored and exists only in the main checkout, and the table omits that **`01-photoshop-reference.md` §10 (`:888-955`) is the highest-value section in the corpus** — 17 disproved premises and 18 unresolved items. The playbook's own §12 relies on the un-disproven originals in places                                                                                                                                                                                                                                                                                  |
-| 41  | §12: "The immediate fix is to hide or throw, before the path model exists — it is a one-line change that removes a lie from the UI"                                                                                       | **Keep the recommendation, fix the reason** (correction 4). The lie is a selectable tool that does nothing, not a manufactured no-op history entry                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| 42  | §12: "Ranked by Photoshop impact × confidence the gap is real"                                                                                                                                                            | **Correct as an instinct, and this section replaces it with a computable rule** (see `### Ranked gaps`): frequency × fidelity loss, then a COST column derived from three named `file:line`s. The playbook also omits Tier 1 rows the `## 10`-style absence of which it never noticed, because its universe was the registry                                                                                                                                                                                                                                                                                                                      |
-
-### Post-2026-09-28 re-verification pass, after the `AGENTS.md` restructure
-
-The first pass above verified every citation against `main` at `1c9c8de`. Six commits landed on
-`main` after that and invalidated them again. This subsection records what moved and the rule it
-produced; the corrections themselves are folded into the sections above, not listed here.
-
-**The six commits that invalidated the citations** (`aea55d3..HEAD` on `ps/missing-tools`):
-`35cfaba` and `2597e6a` (test-only, history retirement); `cd40b53` (subagent model policy
-rewritten); `c1eeac0` (local hooks and CI gates split into their own subsections); `b619691`
-(gates: every worktree gets a commit gate, and the staged-file test fan-out is dropped);
-`5b772d9` (gates: name the stale-worktree failure); `80eb207` (feat: eraser, magic eraser, paint
-bucket, eyedropper). The first two touched no cited file. The last four restructured `AGENTS.md`,
-and the last one added four tools and moved the registry spine under almost every `src/` citation
-in this document.
-
-**`AGENTS.md` went from 287 lines to 148, and to 157 since.** Every one of its 58 distinct
-`AGENTS.md:NNN` citations had to be re-derived. The structural damage:
-
-- `## Known failures and how to read one` was **deleted outright**. Its content was redistributed
-  into a new `## E2E failures` and into `### Gates`. Citations that pointed into it (`AGENTS.md:207`
-  "97 pass, 2 are skipped", `:216-218`, `:226-230`, `:232-236`) now point at
-  `## E2E failures` (`:136`, `:137`, `:139`) or at `AGENTS.md:132` — **except** the pass/skip
-  count, which `AGENTS.md` no longer carries at all. That count now lives only in
-  `e2e/OPEN_PROBLEMS.md:41-42`, and the citations were moved there rather than left pointing at a
-  sentence that no longer exists.
-- `## Gates` was rewritten into `### Local` and `### CI`. The old local-gate prose carried a
-  `test:staged` / `vitest related` table row and a measured-cost paragraph; both are gone.
-  `AGENTS.md:108` now states the rule that killed the cost paragraph: the commit gate and these
-  docs carry **no wall-clock numbers**. Phase 8 was rewritten to describe the hooks that exist.
-- Section names changed with the restructure. `### Local gates` is now `### Local`, `### CI gates`
-  is now `### CI`, `### Model policy — the one rule that is not negotiable` is now `### Model
-policy`, `### Writing is the default, not a favour` was folded into the `## Handoff documents`
-  intro, and four `##`/`###` headings were re-cased. A citation that names a section has to
-  check the name, not just the line.
-
-**The rule this pass produced.** A re-verification pass is required after **any** change to a cited
-document — not only to the code the citation points into. A `file:line` is a claim about a _file_,
-and a file can move its own content around without changing one line of the thing it points at.
-`AGENTS.md` shrank by 139 lines and every citation into it became wrong while the code it described
-stayed byte-identical. Treat a stale `file:line` as a defect in the same change that made it
-stale, and re-derive the claim rather than re-deriving only the number.
-
-**Counts are the same defect wearing a different hat.** Three claims in this document were
-factually wrong with a _correct_ line number, and all three were fixed here rather than folded
-into the citation pass: the `.kilo/agent-manager.json` worktree census (38→39 registered, 3→2
-`ps/`, 13→14 slash branches, 3→4 disambiguated), the "Where the app stands" tool census (29→33
-registered, 19→23 with a real options bar), and the `ToolsMap` type, which upstream changed from
-`Record<ToolName, ToolProcessorDefinition & …>` to `Record<ToolName, Partial<ToolProcessorDefinition>
-& …>` — a deliberate reversal, and one that weakens the totality argument in `### The structural
-finding`. A line number can be right and the sentence around it still wrong.
-
-**2026-09-28, the second invalidation.** `2d036fe` landed minutes after the pass above, added 9
-lines to `AGENTS.md` (148 → 157) and invalidated 36 of this document's `AGENTS.md:NNN` citations
-again. A skill whose value is checkable citations is structurally fragile while its cited documents
-are edited in parallel: a repair pass is durable only as long as the documents it repaired. Name a
-**section** beside every line — a heading survives an insertion above it, a line number does not.
+- `tsconfig` sets `noFallthroughCasesInSwitch` without `noImplicitReturns`, so one missing `return` in a `switch` over a tool name is two different enforcement failures depending on which function it lands in.
+- `materialization.ts` resolves `processorId` **by lookup**, which is what makes the `raster` commit kind name-agnostic and why a new raster tool needs no history-adapter arm.
+- In `useHistory` tests, `renderHook` + `StoreProvider` is a forbidden template — the provider pulls in the durable replay path and does not survive the test environment. Drive the pure function, or mock `useStore` with `vi.hoisted` + `vi.mock`.
+- `tool-processors.test.ts` hard-codes **ten** per-tool rosters, not seven. Joining all ten is the largest practical cost of adding a tool.
+- In the e2e helpers, `screenshot-scale.ts` is the single owner of the coordinate converters and `canvas-redraw.ts` re-exports them; the guard at `cdp-helpers.ts:39-51` is a **comment block, not a runtime check**; and the call-site budgets (`threshold: 0.01`, `maxDiffPixels: 100`) differ from the `image-comparison.ts` defaults (`0.2` / `100` / `0.01`), so read the call site.
