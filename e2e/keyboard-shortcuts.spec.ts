@@ -163,9 +163,11 @@ test.describe('Keyboard shortcuts', () => {
     test('B selects the brush, and Shift+B cycles the whole brush family and wraps', async ({ page }) => {
       // The cycle is `brush -> pencil -> color-replacement -> eraser -> brush`
       // (`brushGroup` in AppKeyboardShortcuts). The paint bar mints its control ids from
-      // the tool name (`${toolName}-size`), and the placeholder and the eraser each render
-      // a different bar again, so every step of the cycle has its own observable and the
-      // wrap is proved rather than assumed.
+      // the tool name (`${toolName}-size`), and color replacement and the eraser each
+      // render their own options bar, so every step of the cycle has its own observable
+      // and the wrap is proved rather than assumed. Color Replacement used to be a
+      // `placeholderTool`, and the assertion named the placeholder's own label; it now
+      // renders Photoshop's real options bar, so the observable is a control id from it.
       await page.keyboard.press('b');
       await expect(page.locator('#brush-size')).toBeVisible();
 
@@ -174,10 +176,7 @@ test.describe('Keyboard shortcuts', () => {
       await expect(page.locator('#brush-size')).toHaveCount(0);
 
       await page.keyboard.press('Shift+b');
-      await expect(
-        page.getByText('Color Replacement Tool', { exact: true }),
-        'pencil -> color replacement'
-      ).toBeVisible();
+      await expect(page.locator('#color-replacement-sampling'), 'pencil -> color replacement').toBeVisible();
       await expect(page.locator('#pencil-size')).toHaveCount(0);
 
       await page.keyboard.press('Shift+b');

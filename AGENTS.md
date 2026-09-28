@@ -72,6 +72,7 @@ npm run swarm             # the swarm board, live state: who holds what right no
 npm run swarm -- help     # the full command list
 npm run swarm -- ready    # the work queue an agent picks from
 npm run swarm -- watch    # the event log; --follow to tail it
+npm run swarm -- health   # is this board being USED, or only carried?
 
 node scripts/worktree-inventory.mjs   # WORKTREES.json: what every worktree holds
 ```
@@ -150,12 +151,47 @@ what is new.
   you are working outside a dedicated worktree — on `main`, or detached — pass
   `--agent` or set `AGENT_BOARD_AGENT`, or you and the next agent are the same
   agent as far as the board is concerned.
-- **A claim is a lease, not a mutex.** `swarm claim ph-12` holds it for 45
-  minutes; `swarm heartbeat ph-12` extends it. Past the lease the issue is
-  offered again and the takeover is in the event log with both agents named.
-  **`swarm status` reports; `swarm doctor` is the only command that releases an
-  abandoned claim**, and it releases a claim whose worktree no longer exists even
-  when the lease has not run out.
+- **A claim lives while your worktree does — there is no heartbeat to forget.**
+  `swarm claim ph-12` holds it for 45 minutes, and every later command you run
+  **renews it automatically, because your worktree is still on disk**. That is the
+  whole mechanism, and it is deliberately not `swarm heartbeat`: over 308 events
+  `claim.renew` fired **once**, and four of five unreleased claims ended up
+  expired while their holders were almost certainly still working. A heartbeat
+  nobody sends is not a liveness signal, it is a countdown that always runs out.
+  `swarm heartbeat` still exists and is still correct — it is the only thing that
+  can renew for an agent with **no worktree** (working on `main`, or detached),
+  which is the one case that has no evidence of life and so keeps the old manual
+  contract.
+- **A claim whose worktree is gone is released by the next command from anybody.**
+  The board renews your own claim **first** and sweeps **second**, and that order
+  is the entire safety argument: renewing first means a working agent's lease is
+  never what gets swept, so the sweep can only reclaim a claim whose worktree has
+  vanished — which is exactly when reclaiming it is right. Running `doctor`
+  itself on every open would hand a 45-minute timer the power to strip a lock off
+  an agent mid-edit.
+- **`swarm doctor` is EXEMPT from that sweep, and has to be.** It is the explicit,
+  authoritative one, and the exemption is what keeps `swarm doctor --dry-run`
+  meaningful: it is the command that answers _what is stale right now_, and a loop
+  reads it. If the sweep ran first, the real one would already have happened and
+  `--dry-run` would report nothing, truthfully and uselessly.
+- **A sweep writes a `doctor.run` event only when it actually released
+  something.** The sweep runs on every command, so an event per invocation turned
+  a six-event board into one that was two-thirds sweep noise, and `health`
+  inflated the very number it was reporting. `health`'s `sweeps` is therefore
+  _reclaims made_, and reads 0 on a healthy board.
+- **Past the lease the issue is offered again**, and the takeover is in the event
+  log with both agents named. `swarm status` reports; `swarm doctor` is still the
+  command that releases an abandoned claim, and it releases a claim whose
+  worktree no longer exists even when the lease has not run out.
+- **`swarm health` answers "is this thing being used, or only carried?"** It is
+  the traffic mix — events by kind, the share of them that are file locks, live
+  vs expired claims, reclaims so far, live vs imported issues, and live findings
+  idle for over six hours. It exists because this question was previously
+  answered by hand-writing SQL against the schema, which means the next agent
+  answers it differently or not at all. The two numbers that have changed a
+  decision: **locking is 66% of all traffic**, and **66% of that is `lock.release`**
+  — the board is a file-lock manager, and the issue tracker is the part nobody
+  uses. Read that before building more of the issue tracker.
 - **`swarm hold <path>` makes "never two agents on the same file" a refused
   write**, and the refusal names the holder. `swarm check <path>` exits 1 when
   somebody else holds it, so a shell can gate on it. `swarm claim --files a.ts
@@ -168,6 +204,15 @@ b.ts` takes both, and gives back **only the ones it took** if the claim is
   else is a name the caller supplies about an agent that is not in the room, and
   it made the whole rule one flag wide. A reviewer closes an issue by being the
   reviewer.
+- **`--agent <id>` is unauthenticated, and it DEFEATS the self-close check.**
+  The guard compares the string you pass, not who you are, so `swarm close <id>
+--agent somebody-else` closes an issue you resolved yourself. This is the same
+  defect `--verified-by` was removed for — a caller-supplied name about an agent
+  that is not in the room — and it is the one remaining hole in the rule above.
+  **Use `--agent` only to speak for a branch you actually are**, and never to
+  close anything. Verified: `close` as the resolving agent exits 5; the same
+  `close` with a different `--agent` exits 0. The operator owns the decision on
+  whether to close this, so it is filed, not fixed.
 - **`swarm note` is how one agent addresses the swarm**; `swarm watch --follow`
   tails the same log. Every command appends to it, which is the replacement for
   N agents each writing their own account of the same work into a document
@@ -199,8 +244,21 @@ touch>`, or `swarm hold <path>` for a path with no issue. `swarm check <paths>` 
   wake and no activity notice: `note` is broadcast, and `comment <id>` needs an issue
   somebody filed. Put the fact where a running agent will meet it anyway — a claimed
   path it must `check`, and a `swarm note` naming its own files.
+- **`board_post` is a different channel and it is not a substitute.** It reaches the
+  sessions a fan-out spawned, so a post about work in a worktree usually has **no
+  recipient in the room** and returns `total: 0, active: 0` with an explicit warning
+  that nothing was delivered. Treat that response as the answer, not as a queued
+  message. Anything durable goes in a `swarm note`, a claimed path, or a handoff; a
+  `board_post` is for the children of your own run.
 - **An empty board is not evidence that nobody is working.** A file nobody claimed
   reads as free, so claiming is what makes a second reader of the path find out.
+- **A held file is a queue, not a deadlock.** When `swarm check` refuses a path you
+  need, the file belongs to somebody. Do not edit it, and do not wait on the lease
+  either — a 45-minute lease is not a work plan. Ask in a `swarm note` **naming the
+  file and the change**, hand it over for the duration, or do the work somewhere
+  else and merge `main` in first. What you must not do is edit a held file: the
+  refusal names the holder precisely so a second reader finds out, and editing
+  anyway makes the hold a lie.
 
 - **RUN FROM THE REPO ROOT** (`ph`), via the shell tool's `workdir`. A parent directory silently resolves the wrong package and the wrong tsconfig.
 - **`npm run tsc` IS THE ONLY TRUSTWORTHY TYPECHECK. NEVER GATE ON `npx tsc --noEmit`.** `tsc -b` covers `tsconfig.app/node/e2e.json`, so it also checks the Playwright specs and the test files. `npx tsc --noEmit` resolves the app tsconfig alone, which excludes tests: it exits 0 while the tests do not compile.
@@ -232,10 +290,20 @@ touch>`, or `swarm hold <path>` for a path with no issue. `swarm check <paths>` 
   clobbered file. If a merge conflicts in `main`, `git merge --abort` and redo it in the
   worktree — that is a one-command recovery while the merge is uncommitted, and an
   archaeology project afterwards.
-- **`git stash` is global, not per-worktree.** It lives in the common git dir, so
-  `git stash pop` in one worktree can pop another agent's stash. Prefer a worktree over
-  a stash; if you must stash, `git stash push -m "<branch>: <what>"` and read the pop
-  output before you rely on it.
+- **`git stash` is a shared, unordered stack, and it is not to be used here.** It lives in the
+  common git dir, so `git stash pop` in one worktree can pop another agent's stash — and the
+  failure is **silent in a way that is worse than a lost entry**: `git stash push` on a CLEAN tree
+  prints nothing, exits 0, and creates **no entry at all**. The `pop` that follows is therefore
+  not paired with the `push` that would have made it safe; it takes `stash@{0}`, which is
+  whoever pushed last. Measured here: a `stash push -u -m "<label>"` on a clean main worktree was
+  a no-op, and the next `stash pop` pulled `fix/flyout-longpress-race`'s entry into the **shared
+  main checkout** and left it merge-conflicted. The work was not lost — the file was already
+  committed, and a conflicted `pop` does not drop the entry — but the recovery is one `reset
+--hard` **only** because `git status --porcelain` showed exactly one conflicted path. That
+  check is the entire margin; a dirty shared worktree makes this unrecoverable, which is why
+  `AGENTS.md` also forbids repairing a conflict in `main`. **Use a worktree or a branch.** If a
+  worktree genuinely must be set aside, `git stash push` is the wrong tool: `HUSKY=0 git commit`
+  on a throwaway branch is one command and holds nothing but your own files. HANDOFF §69.
 
 Five traps that cost real debugging time:
 
