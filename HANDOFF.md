@@ -103,15 +103,24 @@ genuine segment boundaries (`materialization.ts:264-291`), so this is **half-fix
 _inter-intra-segment_ interleaving is still grouped.
 
 `materialization.ordering.test.ts:415` is `it.fails('applies interleaved affine and filter
-operations in original order, not grouped by type')`. The pin is a tripwire — it fails the moment
-the defect is fixed.
+operations in original order, not grouped by type')`. **The pin is inert — it cannot be removed in
+the same change as the fix, because it never observes the defect.** It spies on
+`HTMLCanvasElement.prototype.getContext` (`:428-429`), but `materialization.ts:55` short-circuits to
+`OffscreenCanvas`, `src/test/setup.ts:53-54` installs a global one unconditionally, and that test
+file never stubs it. A probe replicating the pin's instrument recorded **zero** calls on both
+`transform` and `drawImage`, so its assertions fail on `0` rather than on the grouping — and
+`0 !== 2` before and after a fix alike. A correct fix is forced to leave the pin, or to rewrite
+assertions that still measure nothing. `AGENTS.md` counts 34 `it.fails` blocks and treats each as a
+live tripwire; this one is not. See `FOCUSED-REVIEW-2026-09-28.md` §1.
 
 Both the durable-replay handoff and the consolidated handoff gate Phase 3 on this. It is also a
 correctness bug in the shared pipeline, so it blocks item 1 as well as the phase gate.
 
 **Fix.** Make `renderRetainedSegment` a fold over the operation list in order, keeping the
-raster-processor boundary but not reordering within a segment. Remove the `it.fails` in the same
-change.
+raster-processor boundary but not reordering within a segment. **Re-instrument the pin first**, with
+`vi.stubGlobal('OffscreenCanvas', …)` as `materialization.assets.test.ts:134` does, and add
+`expect(recordedContexts.length).toBeGreaterThan(0)` as a positive control — it fails today and is
+what makes the pin a tripwire. Only then can the `it.fails` be removed in the same change.
 
 **Files.** `src/contexts/materialization.ts`,
 `src/contexts/__tests__/materialization.ordering.test.ts`
@@ -1436,7 +1445,7 @@ capability loss rather than a latent trap:
 | ceiling                             | value       | where                        |
 | ----------------------------------- | ----------- | ---------------------------- |
 | largest document the app can create | 100,000,000 | `NewImageDialog.tsx:208-209` |
-| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:12`           |
+| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:13`           |
 | TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:23`           |
 
 So a document between 80 MP and 100 MP **cannot be saved as AVIF at all** — `saveImageToDisk` throws
@@ -1459,11 +1468,78 @@ rejected file loses nothing. The TIFF byte ceiling also has a recorded provenanc
 pixel, so the two agree by construction rather than by coincidence. That derivation is what makes a
 different number defensible if the ceiling is ever revisited.
 
-**Also unfixed, and the same drift.** `image-load-save-utils.ts:150-172` exports BMP, GIF, ICO and
-SVG with no budget on either side, so a 100 MP document is refused for AVIF (80 MP), refused for
-nothing else, and refused for TIFF only above 200 MP. Save-time refusals now differ per format. One
-exported `MAX_RASTER_PIXELS` both codecs import would close this, but `image-load-save-utils.ts` is
-owned by an in-flight branch — see item 55.
+**Also unfixed, and the same drift, larger than item 45 first claimed.** Four ceilings exist and two
+are below what the dialog can create:
+
+| ceiling                             | value       | where                        |
+| ----------------------------------- | ----------- | ---------------------------- |
+| largest document the app can create | 100,000,000 | `NewImageDialog.tsx:208-209` |
+| affine transform                    | 67,108,864  | `affine-transform.ts:34`     |
+| PSD                                 | 67,108,864  | `psd-utils.ts:36`            |
+| AVIF, open and save                 | 80,000,000  | `avif-utils.ts:13`           |
+| TIFF, open and save                 | 200,000,000 | `tiff-utils.ts:12-23`        |
+
+The two 64 MP constants are the same number written twice, independently, in files that do not
+import each other. A 100 MP document can be saved as BMP, GIF, SVG and TIFF, but not as AVIF and not
+as PSD — and the PSD cap is recorded nowhere. "One exported `MAX_RASTER_PIXELS`" would have to
+reconcile **four** constants, not one.
+
+**And four of the six codecs have no budget at all, or check theirs too late.**
+
+| codec | loader budget                   | encoder budget            | check before the allocation?                 |
+| ----- | ------------------------------- | ------------------------- | -------------------------------------------- |
+| avif  | yes                             | yes                       | yes                                          |
+| tiff  | yes (pixels + bytes)            | yes (+ a dead byte check) | yes — the only genuine pre-decode load check |
+| bmp   | **none** — bounded by file size | **none**                  | n/a                                          |
+| gif   | **none**                        | 65535/axis                | **no**                                       |
+| ico   | **none**                        | 1..256/axis               | **no**                                       |
+| svg   | **none**                        | **none**                  | n/a                                          |
+| psd   | yes                             | yes                       | yes — the reference implementation           |
+
+The three that are actionable without an architecture decision, all in files no campaign owns:
+
+- **TIFF's byte predictor ignores the tiled-allocation branch.** `tiff-utils.ts:102` is the whole
+  predictor and never reads `t322` (TileWidth) or `t323` (TileLength), but `UTIF.js:132` allocates a
+  **separate** per-tile buffer for a tiled page. The page
+  `{t256:[1000], t257:[1000], t258:[8,8,8,8], t322:[23170], t323:[23170]}` predicts 4,000,000 bytes
+  — comfortably inside the 1.6 GB ceiling — while UTIF allocates **2,147,395,600 (2.15 GB)**. A
+  ~200-byte file forces a 2.15 GB allocation, through the exact mechanism `tiff-utils.ts:74-88`
+  documents as the module's reason for existing. Fix: also predict
+  `Math.ceil(t322[0] * t323[0] * bitsPerPixel / 8)` and return the larger; a present `t322` with a
+  missing `t323` should return `null`, which `assertByteBudget:34` already refuses like over-ceiling.
+- **GIF checks the ceiling after allocating the whole raster.** `gif-utils.ts:10` runs
+  `getCanvasImageData(canvas)` before the `65535` check at `:14`, so a 70000×100000 canvas allocates
+  28 GB before the line that would refuse it — the same ordering defect this item's AVIF half had.
+  `gif-utils.test.ts:472-480` cannot catch it: it mocks `getContext` to report a width no real canvas
+  has and never asserts `getImageData` was not called. Fix: hoist both checks above `:10`.
+- **ICO checks the ceiling after PNG-encoding the entire canvas.** `ico-utils.ts:114` runs
+  `canvasToPngBlob` before the 256 check at `:116`, so `Save as ICO` on a 10000×10000 document pays
+  a full PNG encode of a 400 MP raster and then throws. The test double stubs `toBlob` with a 3-byte
+  blob, so nothing detects it. Fix: move `:115-118` above `:114`.
+
+**And one round-trip asymmetry.** ICO's loader (`ico-utils.ts:23`) validates only
+`dibSize < 40 || width <= 0 || rawHeight <= 0 || rawHeight % 2 !== 0`; the 256 ceiling at `:84-85` is
+used for **entry selection** only, and the geometry actually decoded is read from the DIB at `:18-19`
+and never compared to 256. **A file that opens cannot be saved back.**
+
+**BMP is the worst amplification.** `bmp-utils.ts:46-47` bounds the input by its on-disk byte length
+and then allocates `width * height * 4` regardless of depth, so the ratio is exactly
+`32 / bitsPerPixel` — a 20000×40000 1-bpp BMP needs 100 MB on disk and allocates **3.2 GB**, with no
+absolute pixel ceiling anywhere in the file. `bmp-utils.test.ts`'s largest geometry is 8×8, so no
+test can reach an interesting ratio.
+
+**Owned, so recorded not fixed:** `image-load-save-utils.ts:113-136` is the load path for GIF and SVG
+and bounds nothing — the whole file is base64-encoded into a data URL and handed to `new Image()`.
+That is where a shared load-side ceiling would have to live for those two formats. Separately,
+TIFF's save-side byte check at `:175` is provably dead (`MAX_TIFF_PIXELS * 4` is always below
+`MAX_TIFF_BYTES`) and its message says "Decoding it" on a save; AVIF's `assertPixelBudget` has no
+finite/integer guard, so a decoded `width: -5, height: -3` passes the budget and reaches
+`createImageData(-5, -3)`, throwing a DOM `IndexSizeError` instead of an actionable message.
+
+**Files.** `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts:8-9,74-102,175`,
+`src/contexts/bmp-utils.ts:45-47`, `src/contexts/gif-utils.ts:10-16`, `src/contexts/ico-utils.ts:18-23,84-85,113-118`,
+`src/contexts/__tests__/avif-utils.test.ts`, `src/contexts/image-load-save-utils.ts:150-172`,
+`src/contexts/affine-transform.ts:34`, `src/contexts/psd-utils.ts:36`
 
 **Files.** `src/contexts/avif-utils.ts`, `src/contexts/tiff-utils.ts:8-9`,
 `src/contexts/__tests__/avif-utils.test.ts`, `src/contexts/image-load-save-utils.ts:150-172`
@@ -1890,3 +1966,76 @@ for mobile rather than copied across.
 
 **Files.** `src/components/SidebarLeft/SidebarLeft.tsx:380-425`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
+
+---
+
+## 58. A single brush stroke makes the durable document un-materializable, and it voids the whole document
+
+**Problem.** `convertSource` (`history-adapter.ts:166-171`) routes a layer source's `args.toolName`
+to `text` or `vector` for exactly two cases — `'text'`, and the six shape names — and to
+`legacy-tool` for everything else. `materialization.ts:156` throws on `legacy-tool`
+**unconditionally**, and `materializeDocument` releases every taken lease and rethrows (`:347-350`),
+so a single unconvertible layer voids the entire document rather than itself.
+
+`useLayer.ts:244-249` writes `args: { ...args }` from the concrete tool, so `args.toolName` is
+`'brush' | 'pencil' | 'color-replacement'`, never `'draw'`. **All three painting tools take the
+`legacy-tool` route.** The second thing a user does in a session is draw a stroke, so this is not a
+latent shape of the cutover — it is what the cutover would do.
+
+The irony worth recording: `toolProcessors.draw:145-151` is a genuine `creator: true`, so a
+deterministic creator for exactly this exists and is simply unreachable, because the adapter never
+routes to it.
+
+**Latent today** — `materializeLayer`/`materializeDocument` have no production caller (item 1). That is
+the only reason this is P1 rather than P0, and it is the same reason item 1 should not be treated as
+one wiring step.
+
+**Fix.** Either route those three tools to a typed source via the existing `draw` creator, or make
+`materializeDocument` isolate per-layer failure — materialize the rest, record the failed layer — so
+one unconvertible layer cannot void a document. The second is worth doing regardless: the
+whole-document rethrow at `:347-350` is what turns any per-layer defect into a total one.
+
+**Test that fails without the fix.** A brush history item through `legacyHistoryToDurable` must not
+yield `source.kind === 'legacy-tool'`. And `materializeDocument` over a replay containing a brush
+layer plus two good layers must resolve with the good layers present.
+
+**Files.** `src/contexts/history-adapter.ts:164-183`, `src/contexts/materialization.ts:156,347-350`,
+`src/contexts/useLayer.ts:244-249`, `src/tools/toolProcessors.ts:145-151`
+
+---
+
+## 59. Three selection tools claim `creator: true` and cannot create anything
+
+**Problem.** `materializeLayer` trusts the `creator` flag as its only gate
+(`materialization.ts:167-168`). All three `commit: 'selection'` entries claim it —
+`polygonal-lasso` (`toolProcessors.ts:160-166`), `freehand-lasso` (`:167-173`) and
+`rectangular-selection` (`:186-192`) — and all three processors are pass-throughs over a `bitmap`
+that is `undefined` on a creator call:
+
+```ts
+export const rectangularSelection =
+  ({ bitmap }: ProcessorToolParams) =>
+  () => [bitmap];
+```
+
+- `rectangular-selection` → `[undefined]`, caught by `if (!created) throw` (`:172`), message blames
+  the tool.
+- `polygonal-lasso` / `freehand-lasso` with empty `points` → `copyPolygonToCanvas` returns a **1×1
+  canvas**, which is truthy, so the guard **accepts it** and the layer silently materializes blank.
+  With non-empty points it throws an unrelated `SelectionCanvasContextError`.
+
+**Why this is a landmine rather than a typo.** The flag is currently unreachable from production
+precisely _because_ item 58's throw fires first. So the lie is invisible today and becomes live the
+moment item 58 or item 1 is fixed — which makes it a trap laid for whoever does that work.
+
+**Fix.** Drop `creator: true` from all three. They are `commit: 'selection'` mutators, not creators.
+Every genuine creator was checked and honours its curried `params.size`; a repo-wide grep for
+`Math.random|Date.now|new Date(|performance.now|crypto.` across `src/tools/` returns **zero**, so the
+flag is a sound determinism signal wherever it is honestly set.
+
+**Test that fails without the fix.** For every entry claiming `creator: true`, call
+`imageProcessor({ size: { width: 8, height: 8 } })(args)` and assert a returned bitmap with finite
+`width`/`height` ≥ 1. Fails today for the two lasso tools.
+
+**Files.** `src/tools/toolProcessors.ts:160-192`, `src/tools/selection.ts:15-21`,
+`src/tools/rectangularSelection.ts:9-13`, `src/contexts/materialization.ts:167-172`
