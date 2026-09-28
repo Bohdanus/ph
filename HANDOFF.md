@@ -1393,9 +1393,28 @@ of that decision: `raster-budget.ts` and its test were deleted, and `avif-utils.
 raise it to "fix" item 45** — item 45's remaining work is BMP, GIF, ICO and SVG, which have no
 budget on either side.
 
+## 66. A duplicated `/**` makes `DrawToolArgs.composite`'s doc comment a comment about itself
+
+`src/tools/draw.ts:15-16` opens two block comments back to back. JavaScript block comments do not
+nest, so the second `/**` is swallowed as comment text and the `composite` field's documentation is
+malformed from its first line. It parses, no line number moves, and every test in the tree passes —
+which is why nothing reports it.
+
+It matters because the field's real comment is load-bearing prose rather than decoration: it names
+`setupDrawCtx` as the single place both the live preview and the committed raster read, names the
+`e2e/export/visual-regression.spec.ts` baselines that depend on the absent case writing
+`source-over`, and explains why a legacy stroke still renders as it did. Anyone re-deriving a
+citation from that comment reads a comment that starts `/**` and has to work out what it was
+supposed to say. Found while researching `draw` for `docs/TOOLS.md`, where the resulting
+misreading is recorded as a caveat rather than acted on: deleting line 16 shifts every line below
+it, and three `file:line` citations into this file in the description record were written against
+the current numbering.
+
+Fix is deleting line 16, then re-deriving any citation into `src/tools/draw.ts` below it.
+
 ---
 
-## 66. Two Colors sliders moved in one frame: the first change is silently dropped
+## 67. Two Colors sliders moved in one frame: the first change is silently dropped
 
 **Problem.** `Color.tsx`'s `throttledOnChange` (`src/components/ToolbarsRight/Colors/Color.tsx:28-41`)
 stashes the whole args object in `pendingUpdateRef` and writes it from a

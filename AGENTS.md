@@ -235,13 +235,20 @@ Five traps that cost real debugging time:
 
 Two hooks, each a one-line wrapper over a `package.json` script, so the hook and the command a developer or CI can run by hand cannot drift:
 
-On the default headless run **no e2e test fails**: 97 pass, 2 are skipped by
-declaration. That is stable across repeated full runs. Three defect groups used to
-fail here and have since been fixed in this repository — the CDP capture-size
-assertions, the keyboard flyout race, and the `levels.spec.ts` canvas lookup. Each
-explains a shape the suite must not drift back into, and that shape is now held by a
-tripwire in the test code rather than by a paragraph in a doc: the fix removed the
-entry and pinned the replacement contract in the same change.
+On the default headless run **no e2e test fails**: 194 pass, 2 are skipped by
+declaration (196 total). Measured on `feat/tool-descriptions` merged with `main` at
+`f7757cf`, 2026-09-28. **The absolute count is not the point and it will go stale again —
+the contract is that the number of failures is zero**, and a run that reports any is a
+defect or an infrastructure failure, never a known-failing test. Note what a failure of
+the second kind looks like: the Vite dev server dying mid-run turns every subsequent
+spec into `ERR_CONNECTION_REFUSED` and reports a wall of red that is not one failure but
+zero. Re-run on a fresh `PLAYWRIGHT_PORT` before believing a large red count.
+
+Three defect groups used to fail here and have since been fixed in this repository —
+the CDP capture-size assertions, the keyboard flyout race, and the `levels.spec.ts`
+canvas lookup. Each explains a shape the suite must not drift back into, and that
+shape is now held by a tripwire in the test code rather than by a paragraph in a doc:
+the fix removed the entry and pinned the replacement contract in the same change.
 
 | hook                | script        | runs                                                                              |
 | ------------------- | ------------- | --------------------------------------------------------------------------------- |
