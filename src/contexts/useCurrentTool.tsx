@@ -13,7 +13,6 @@ export interface CurrentToolContextState {
   setToolArgs: (args: ToolArgs) => void;
   getToolArgs: <TName extends ToolName>(toolName: TName) => ToolArgsFor<TName> | null;
   patchToolArgs: <TName extends ToolName>(toolName: TName, patch: ToolPatch<TName>) => void;
-  resetToLastSavedArgs: (toolName?: ToolName) => void;
 }
 
 const CurrentToolContext = createContext<CurrentToolContextState | undefined>(undefined);
@@ -49,14 +48,6 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
 
   const savedArgsForTool = useMemo(() => cloneSavedToolArgs(toolName), [toolName]);
   const toolArgs = toolState.toolName === toolName ? toolState.args : savedArgsForTool;
-
-  const resetToLastSavedArgs = useCallback(
-    (nextToolName: ToolName = toolName) => {
-      const args = cloneSavedToolArgs(nextToolName);
-      setToolState({ toolName: nextToolName, args });
-    },
-    [toolName]
-  );
 
   useEffect(() => {
     setRefValue(currentArgsRef, toolArgs);
@@ -95,10 +86,8 @@ export const CurrentToolProvider = ({ children }: { children: React.ReactNode })
       setToolArgs: _setToolArgs,
       getToolArgs,
       patchToolArgs,
-
-      resetToLastSavedArgs,
     }),
-    [_setToolArgs, getToolArgs, patchToolArgs, resetToLastSavedArgs, toolArgs]
+    [_setToolArgs, getToolArgs, patchToolArgs, toolArgs]
   );
 
   return (

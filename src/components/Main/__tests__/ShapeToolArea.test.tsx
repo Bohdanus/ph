@@ -1465,6 +1465,75 @@ describe('ShapeToolArea', () => {
     });
   });
 
+  describe('a frame pending across an unmount', () => {
+    // The overlay is ONE 2D context for the whole session, handed to whichever tool is active, and
+    // it stays mounted while only its `display` is toggled. So a repaint that survives this
+    // component's unmount does not draw into a dead canvas — it draws into the one the NEXT tool is
+    // about to paint into, with a shape this component never released.
+    it('cancels the pending frame on unmount, so no shape is painted afterwards', () => {
+      vi.useFakeTimers();
+      const { container, unmount } = render(<ShapeToolArea overlayCtxRef={{ current: storeMocks.ctx }} />);
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      act(() => {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame');
+
+      unmount();
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      expect(cancelSpy).toHaveBeenCalled();
+      expect(drawShapeMock).not.toHaveBeenCalled();
+    });
+
+    it('leaves the frame slot released, so a later mount previews on the shared overlay again', () => {
+      // The same shape as the "frozen for the component's lifetime" bug this file already pins for
+      // pointer up: a slot left non-null makes every later move short-circuit. Here the consequence
+      // is visible on the OTHER side of the unmount, because the queue is shared.
+      vi.useFakeTimers();
+      const first = renderToolArea();
+      act(() => {
+        fireEvent.pointerDown(first.toolArea, { button: 0, clientX: 10, clientY: 20 });
+      });
+      act(() => {
+        fireEvent.pointerMove(first.toolArea, { button: 0, clientX: 50, clientY: 60 });
+      });
+      first.view.unmount();
+      // The pointer double is module-level and only a release the validator accepts clears it,
+      // which an unmount is not: switching tools mid-drag aborts the gesture, and the next press has
+      // to be a first press or the second area's anchor is never set.
+      pointerState.activePointer = null;
+      pointerState.isMouseDown.current = false;
+
+      // A fresh area over the same context: what switching tools mid-drag actually is.
+      const second = renderToolArea();
+      act(() => {
+        fireEvent.pointerDown(second.toolArea, { button: 0, clientX: 200, clientY: 200 });
+      });
+      act(() => {
+        fireEvent.pointerMove(second.toolArea, { button: 0, clientX: 260, clientY: 240 });
+      });
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      // One paint, and it is the new drag's. A repaint carried over from the unmounted area lands
+      // on the same context and reads here as a second, wrong paint.
+      expect(drawShapeMock).toHaveBeenCalledTimes(1);
+      expect(drawShapeMock).toHaveBeenCalledWith(
+        storeMocks.ctx,
+        expect.objectContaining({ start: { x: 200, y: 200 }, end: { x: 260, y: 240 } })
+      );
+      second.view.unmount();
+    });
+  });
+
   describe('document gesture gate', () => {
     beforeEach(() => {
       // The slot is module-level, so a leaked claim would refuse every later claim in this file and

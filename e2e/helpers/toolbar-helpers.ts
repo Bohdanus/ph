@@ -243,13 +243,22 @@ export async function openToolFlyout(page: Page, toolName: string): Promise<void
 
   // Lift. The flyout stays open; see the note on `onPointerUp` above.
   await button.dispatchEvent('pointerup', { button: 0 });
+
+  // `aria-expanded` and the portal are not set in the same commit: the overlay is gated on the
+  // ref callback having published the anchor, so the attribute is true one commit before the
+  // menu exists. Asserting the menu is still what makes "returned" mean "usable", and it costs
+  // nothing on the path that just opened it.
+  await expect(page.getByRole('menu')).toBeVisible({ timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
 }
 
 /**
  * Waits for a flyout menu to become visible after long-press, right-click, or keyboard.
- * All flyouts have role="menu" - the `<ul>` in `renderToolGroup`, `SidebarLeft.tsx:335`.
- * Named as well as numbered, because the flyout portal work moves this file often and a
- * bare line number would rot into pointing at the wrong element.
+ * All flyouts have role="menu" — the `<ul>` inside `renderToolGroup` in
+ * `src/components/SidebarLeft/SidebarLeft.tsx`. The function name is the anchor rather than a
+ * line number, because every bare number in this comment has already rotted: the base said 285,
+ * the campaign branch said 335, and in the merged tree the attribute is at `SidebarLeft.tsx:400`
+ * with `renderToolGroup` at `:229`. Re-derive with
+ * `grep -n 'role="menu"' src/components/SidebarLeft/SidebarLeft.tsx`.
  *
  * Unlike `openToolFlyout` this accepts ANY open flyout, which is correct for its callers:
  * they open exactly one flyout by right-click or keyboard, so there is never an earlier

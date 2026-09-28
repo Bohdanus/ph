@@ -179,7 +179,7 @@ and destroys the only signal that the defect existed.
 
 ## 7. A second, NAMED observation — `useFile.test.tsx` JPEG-quality save
 
-**Status: OPEN. Named, not reproduced. Three failures in roughly twenty full runs.**
+**Status: OPEN. Named, not reproduced. Four recorded full-run failures across three checkouts, and never once in isolation.**
 
 This one is worth separating from section 1, because unlike it the failing test
 was captured:
@@ -212,6 +212,26 @@ real mechanism, and so is a genuinely unresolved save pipeline, and three
 occurrences do not separate them. What would: capturing the assertion text.
 Capture it next time and this becomes diagnosable in one run.
 
+**The two accounts of the third report may be one event reported twice.** The campaign branch and
+`docs/review-findings-2026-09-28` are not ancestors of one another (merge base `3e52b4e`), which is
+why the tally cannot be pinned from the branches alone: nothing in either branch's history
+distinguishes the runs, and neither run's log was kept. Until one of them produces a captured
+assertion, **four and three are both consistent with what is recorded**, and the difference does not
+change the hunt. What does change the hunt is the fourth report, because it is the one that lands on
+the lead below.
+
+**The report that matters, because it lands on the lead below.** It
+**The third occurrence is the one that matters, and it lands on the lead below.** It
+recurred on `docs/review-findings-2026-09-28` in the run immediately after that branch
+extracted the dialog focus-ownership block out of `SaveDialog.tsx` into
+`src/hooks/useDialogFocusContainment.ts` — the one file in this test's import graph
+that either branch has changed. Before that extraction the tally was two; after it,
+three. **That is a correlation across two branches, not a cause**, and it is the
+cheapest thing to test next: revert the extraction's mount effect alone, run the full
+suite in a loop, and see whether the third occurrence goes away. Do not run a scoped
+loop and conclude anything from it — section 6 forbids inferring from a scoped green
+for a failure observed in a full run.
+
 **Do not close it as "the pool".** Two things make this one worth keeping
 open, and neither is the pool:
 
@@ -232,8 +252,9 @@ open, and neither is the pool:
 3. **What the branch actually changed under this test is `SaveDialog.tsx`, and
    it changed focus.** `git diff 80eb207 --stat` on `useFile.test.tsx`,
    `useFile.tsx` and `image-load-save-utils.ts` is **empty** — the test and the
-   whole save path beneath it are untouched. The only file inside this test's
-   import graph that changed is the component itself. Its new mount effect calls
+   whole save path beneath it are untouched. The only files inside this test's
+   import graph that either branch has changed are the component itself and, since
+   `a30c318`, the hook its focus block moved into. That hook's mount effect calls
    `.focus()` synchronously and its cleanup calls `previouslyFocused?.focus?.()`,
    and both dispatch `focusin`/`focusout` — the events React 19 backs
    `onFocus`/`onBlur` with — from inside a promise continuation. **That is a lead,
@@ -375,7 +396,69 @@ already sets for section 1, and it applies here unchanged. A second observation,
 with the assertion text and whether it was a timeout or a value mismatch, is
 worth more than twenty green runs.
 
-## 9. An e2e mutation campaign run without `PLAYWRIGHT_PORT` reports every mutation as green
+## 9. A third, NAMED observation — the first Playwright page loads in a cold checkout time out
+
+This one is not a flake at all. It is deterministic, it reproduces on the first
+run in a fresh checkout, and it is regularly misdiagnosed as a product defect in
+whichever spec happened to run first.
+
+`npm run test:e2e` starts Vite, and Vite transforms `src/` on first request. A
+spec's `beforeEach` that does `await page.goto('/')` and then
+`expect(canvas).toBeVisible()` is racing that transform against Playwright's
+default 5s assertion budget. On a cold server the first several page loads lose.
+
+Measured on clean main, `npx playwright test e2e/sidebar-flyout.spec.ts`:
+
+| run               | result                                                       |
+| ----------------- | ------------------------------------------------------------ |
+| first, cold Vite  | 5 failed, 13 passed — every failure in the same `beforeEach` |
+| second, warm Vite | 0 failed, 18 passed                                          |
+
+Every one of the five failures was the identical assertion, on the identical
+line, and none of them was a flyout assertion:
+
+```
+Error: expect(locator).toBeVisible() failed
+Locator: getByTestId('workspace-canvas')
+Error: element(s) not found          # 5s budget, e2e/sidebar-flyout.spec.ts:125
+```
+
+The diagnostic detail is the shape of it: the failures were **tests 1-6** — the
+first page loads — while tests 7-19 ran the _same_ `beforeEach` and all passed.
+On the warm re-run the same tests dropped from 8.9s to 2.0-3.2s. A defect in the
+spec under test cannot select the first five tests and spare the next fourteen.
+
+**This is why the flyout looked broken to several agents at once.** The clipping
+fix had already landed in `dd92374`/`5c7cb73`, and the suite was green, but a cold
+run put five red lines on the screen inside `sidebar-flyout.spec.ts`, and the
+natural reading is that the flyout regressed. Two other worktrees
+(`fix-flyout-hit`, `fix-flyout-longpress`) were started against that reading, and
+both turned out to be re-deriving work main had already merged. The cost was
+four branches and two unmerged patches for a defect that was never there.
+
+Two things follow, and they are different:
+
+1. **Warm the dev server before the first test.** A single request to the base URL
+   in `e2e/global-setup.ts`, retried until it answers, pays Vite's transform cost
+   once instead of once per early test. This belongs in the global setup rather
+   than in any spec, because the failure is a property of the server, not of the
+   spec that noticed it.
+2. **Do not diagnose a Playwright failure from the spec it appeared in.** Read the
+   failing line. A `beforeEach` failure is the harness, not the subject; and if the
+   red tests are the first N in file order, suspect the server before the
+   application.
+
+Not yet done. The warm-up in (1) is a one-request change to a file nothing else
+touches, and it is left alone here so it does not ride in on a toolbar fix that
+does not need it.
+
+**How this composes with sections 10 and 11.** Pinning `PLAYWRIGHT_PORT` is what makes section 10's
+reuse trap go away, and it does so by starting a fresh server every run — which is exactly the cold
+server this section is about. Sections 9, 10 and 11 are one family and three defects, not one defect
+three times: 9 is a server that is right and slow, 10 is the wrong server, 11 is the right server
+serving code you did not write.
+
+## 10. An e2e mutation campaign run without `PLAYWRIGHT_PORT` reports every mutation as green
 
 **The trap.** `playwright.config.ts:118-120` sets `reuseExistingServer: false` only when `CI` or
 `PLAYWRIGHT_PORT` is set. A bare `npx playwright test` from a worktree under `.kilo/worktrees/`
@@ -395,9 +478,9 @@ green result MUST confirm the served module actually contains the mutation — `
 module off the dev server and look for the change, rather than assuming the local worktree is what
 is being tested. A mutation campaign that reports "all green" has most likely measured nothing.
 
-## 10. A mutation campaign that does not verify the SERVED module reports false verdicts
+## 11. A mutation campaign that does not verify the SERVED module reports false verdicts
 
-Section 9 is the coarse failure: with no `PLAYWRIGHT_PORT` the run attaches to another
+Section 10 is the coarse failure: with no `PLAYWRIGHT_PORT` the run attaches to another
 checkout and every mutation looks green. This is the fine one, and it survives that fix.
 
 A dev server serves a TRANSFORMED module, not the file on disk. So a mutation that is
@@ -417,11 +500,11 @@ written in a form the transform removes, which is exactly what a hand-written mu
   on the served text can miss its own marker.
 
 A green mutation result is therefore evidence about the TEST only once it is evidence about
-the CODE THAT RAN. That is the same discipline as section 9, one level down, and the two
+the CODE THAT RAN. That is the same discipline as section 10, one level down, and the two
 compose: pinning the port stops the run testing the wrong tree, and verifying the served
 module stops it testing the wrong code in the right tree.
 
-## 11. Files
+## 12. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -431,8 +514,15 @@ module stops it testing the wrong code in the right tree.
 - `.husky/pre-push` — where `npm run test` now runs
 - `AGENTS.md`, "`test:staged` is a command, not a gate" — where it lives now, and what it costs
 - `e2e/erase-fill-eyedropper.spec.ts` — the spec behind section 8, and the commit that hardened it
-- `e2e/helpers/canvas-helpers.ts:411-429,515-540,656-699` — the predicate, the poll loop and the sampler
-- `src/hooks/usePointerPosition.ts:122-156` — the validators whose refusal is silent
-- `playwright.config.ts:118-120` — the `reuseExistingServer` condition behind section 9
-- `e2e/document-dialogs.spec.ts` — the spec whose mutation method section 10 validates
-- `e2e/undo-redo.spec.ts` — the spec whose mutation campaign section 9 invalidated
+- `e2e/helpers/canvas-helpers.ts:473,577,718` — the predicate, the poll loop and the sampler
+- `src/hooks/usePointerPosition.ts:194-198,214-223` — the validators whose refusal is silent
+- `playwright.config.ts:106-121`, the condition itself at `:118-119` — the `webServer` block, the
+  `reuseExistingServer` condition behind section 10, and why an explicit `PLAYWRIGHT_PORT` disables
+  server reuse
+- `e2e/document-dialogs.spec.ts` — the spec whose mutation method section 11 validates
+- `e2e/undo-redo.spec.ts` — the spec whose mutation campaign section 10 invalidated
+- `e2e/global-setup.ts` — where the warm-up in section 9 belongs
+- `e2e/sidebar-flyout.spec.ts:136-139` — the `beforeEach` that loses the race
+- `e2e/helpers/screenshot-scale.ts:53`, `e2e/helpers/cdp-helpers.ts:60` — the stale 1177px/440px
+  figures section 8 records as stale
+- `src/hooks/useDialogFocusContainment.ts` — where the focus block section 7's lead 3 names now lives

@@ -1,5 +1,7 @@
+import type { MouseEvent } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { getHistoryItemTitle, useHistory } from '../../contexts/useHistory.ts';
+import { isDocumentGestureOpen } from '../../hooks/document-gesture.ts';
 import { ICON_TOGGLE_BUTTON_VISIBLE, ICON_TOGGLE_BUTTON_HIDDEN } from '../ToolbarsRight/buttonStyles.ts';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 
@@ -8,6 +10,51 @@ export default function HistoryTab() {
   const { resetHistoryTo, toggleDisabled } = useHistory();
 
   const sortedHistory = [...history].reverse();
+
+  // Both controls below reach `APPLY_HISTORY_REPLAY` through `useHistory`, the
+  // same dispatch the keyboard refuses while a pointer gesture owns the document
+  // (`useKeyboardEvents.tsx:134`) and the Undo/Redo buttons now refuse for the
+  // same reason (`HistoryControls.tsx`, `MobileHeader.tsx`). This tab is the
+  // third way in and had no gate at all.
+  //
+  // Inside a gesture's window the replay is destructive. `resetHistoryTo`
+  // replays `selections` from the SAME `history` array, so `history.length` never
+  // moves and the pending commit's `entries.slice(0, cursor + 1)` truncates the
+  // redo tail with no other symptom. `toggleDisabled` is not equal to it in that
+  // window, it is worse: it writes the disabled flag onto entries the pending
+  // commit is about to append past, so what is lost is not only a redo tail but
+  // the visibility flag of committed steps.
+  //
+  // A single pointer cannot reach it — the pointer is captured by the tool area —
+  // so the window is reachable only by a second pointer, which is why this is a
+  // coverage gap rather than an easy hit.
+  //
+  // The refusal is here, at the input layer, and deliberately NOT in the
+  // `APPLY_HISTORY_REPLAY` dispatcher arm: no dispatch means nothing appends, so
+  // nothing truncates. A writer-side guard is the wrong layer for the same reason
+  // it was wrong in `HistoryControls.tsx` — the repository has already rejected
+  // that shape once.
+  //
+  // There is deliberately no `isDocumentGestureOpen()` in a `disabled` expression
+  // either. The claim is a module-level slot with no re-render, so a render-time
+  // read is stale in both directions: it cannot see a claim made after the last
+  // render, and a control disabled by a mid-gesture render would stay disabled
+  // after the release. These handlers are the guarantee, and they read the slot at
+  // click time.
+  const handleRewind = (index: number) => {
+    if (isDocumentGestureOpen()) return;
+    resetHistoryTo(index);
+  };
+
+  // `stopPropagation` runs first and unconditionally: acting on the eye control
+  // must never also rewind the timeline, and that is a fact about the DOM shape,
+  // not about the gesture. The gesture is refused after it, so a refused eye
+  // click still does not travel to the row.
+  const handleToggleDisabled = (event: MouseEvent, itemId: string) => {
+    event.stopPropagation();
+    if (isDocumentGestureOpen()) return;
+    toggleDisabled(itemId);
+  };
 
   return (
     <div className="flex flex-col gap-2 h-full">
@@ -24,7 +71,7 @@ export default function HistoryTab() {
             return (
               <li
                 key={item.id}
-                onClick={() => resetHistoryTo(originalIndex)}
+                onClick={() => handleRewind(originalIndex)}
                 className={[
                   'flex items-center gap-2 rounded px-2 py-0 select-none cursor-pointer',
                   'border border-transparent cursor-pointer',
@@ -40,10 +87,7 @@ export default function HistoryTab() {
               >
                 <button
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleDisabled(item.id);
-                  }}
+                  onClick={(e) => handleToggleDisabled(e, item.id)}
                   className={[
                     'h-6 w-6 grid place-items-center rounded border',
                     !item.disabled ? ICON_TOGGLE_BUTTON_VISIBLE : ICON_TOGGLE_BUTTON_HIDDEN,

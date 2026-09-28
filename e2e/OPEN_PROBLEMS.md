@@ -406,7 +406,7 @@ Two specs are `test.skip` by declaration:
 - `e2e/export/photopea.spec.ts:6` — `exports to PSD and verifies in Photopea`.
   Round-trips through the external photopea.com, so it cannot run offline or in
   a sandboxed CI.
-- `e2e/sidebar-flyout.spec.ts:48` — `right-click does not open flyout for
+- `e2e/sidebar-flyout.spec.ts:157` — `right-click does not open flyout for
 single-tool groups`.
 
 ## Verified and still unverified

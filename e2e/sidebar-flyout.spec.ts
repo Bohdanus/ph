@@ -3,6 +3,7 @@ import { getWorkspaceCanvas, hasDarkPixels, loadImageData, waitForCanvasPixels }
 import {
   clickToolButton,
   openToolFlyout,
+  openToolFlyoutViaKeyboard,
   selectFromFlyout,
   verifyPrimaryTool,
   openToolFlyoutViaRightClick,
@@ -447,6 +448,66 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
     await expect(page.getByRole('menuitemradio').first()).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(page.getByRole('menu')).toBeHidden();
+  });
+
+  test('crossing the tablet boundary closes the flyout instead of reopening it', async ({ page }) => {
+    // The two layouts number the same groups differently, so a stale `openGroup` matches
+    // nothing at the boundary and matches again on the way back — the menu reappearing with
+    // nothing the user did to open it. This is the one way the anchor can be left detached:
+    // the open tile is not closed, it is unmounted.
+    await openToolFlyout(page, 'brush');
+    await expect(page.getByRole('menu')).toBeVisible();
+
+    await page.setViewportSize({ width: 900, height: 720 });
+    await expect(page.getByRole('menu')).toBeHidden();
+
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await expect(page.getByTestId('left-sidebar')).toBeVisible();
+    await expect(page.getByRole('menu')).toBeHidden();
+  });
+
+  test('crossing into mobile closes the flyout, which the rail hiding cannot do on its own', async ({ page }) => {
+    // Below `md` the rail is `display: none` rather than restyled, and the portal escapes
+    // that — so nothing about the menu's own placement stops it. Its anchor's box is zeroed
+    // by the hiding, which the clamp turns into the viewport's top-left corner, leaving a
+    // menu painted and clickable over a mobile shell with no tile under it.
+    await openToolFlyout(page, 'brush');
+    await expect(page.getByRole('menu')).toBeVisible();
+
+    await page.setViewportSize({ width: 600, height: 720 });
+
+    await expect(page.getByRole('menu')).toBeHidden();
+  });
+
+  test('Escape hands focus back to the tile that opened the menu', async ({ page }) => {
+    // Opened from the KEYBOARD and with focus moved into the menu, deliberately. A long press
+    // with a real mouse leaves focus on the tile already, so a test set up that way would
+    // pass with or without the restore and would be measuring nothing. The menu is portalled
+    // into `document.body`, so unmounting it takes the focused item with it: measured without
+    // the restore, focus landed on `document.body` and the next Tab restarted at the
+    // document's first tabbable — 16 tab stops before the rail.
+    const brushButton = page.getByTestId('tool-button-brush');
+    await expect(brushButton).toBeVisible();
+    await openToolFlyoutViaKeyboard(page, 'brush');
+    await expect(page.getByRole('menuitemradio').first()).toBeFocused();
+
+    await page.keyboard.press('Escape');
+
+    await expect(page.getByRole('menu')).toBeHidden();
+    await expect(brushButton).toBeFocused();
+  });
+
+  test('picking an item with the mouse does not move focus back to the tile', async ({ page }) => {
+    // The restore is for the KEYBOARD's close. A mouse pick has already focused the item the
+    // user clicked, and taking focus back to the tile would arm ToolTooltip's 250ms focus
+    // timer — so a tooltip would paint over a selection the mouse user never asked to see.
+    await openToolFlyoutViaRightClick(page, 'shape');
+    const item = page.getByTestId('tool-flyout-item-shape-ellipse-tool');
+    await item.click();
+
+    await expect(page.getByRole('menu')).toBeHidden();
+    await expect(page.getByRole('tooltip')).toBeHidden();
+    await expect(page.getByTestId('tool-button-shape')).not.toBeFocused();
   });
 
   test('a hovered tool tooltip is painted, not clipped by the rail', async ({ page }) => {

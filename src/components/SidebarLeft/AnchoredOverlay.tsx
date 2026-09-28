@@ -98,6 +98,15 @@ const AnchoredOverlay = ({
     const overlay = overlayRef.current;
     if (!anchor || !overlay) return;
 
+    // A detached anchor measures as an all-zero box, and the clamp would then place the
+    // overlay in the top-left corner at the viewport padding — a real, painted, clickable
+    // menu attached to nothing. Nothing is rendered for a detached anchor (see the guard
+    // below), so there is no position to place; measuring it would only write a value that
+    // is never used. Skipping it is also the cheaper half: invalidating the position from
+    // here would be a `setState` inside a layout effect, which is a cascading render to say
+    // something the render can already derive.
+    if (!anchor.isConnected) return;
+
     const anchorRect = anchor.getBoundingClientRect();
     const width = overlay.offsetWidth;
     const height = overlay.offsetHeight;
@@ -146,7 +155,13 @@ const AnchoredOverlay = ({
     };
   }, [reposition]);
 
-  if (anchor === null) return null;
+  // A detached anchor is the same case as a missing one: there is nowhere to place an
+  // overlay, so render nothing rather than a box on screen that belongs to nothing. The
+  // check is derived from the anchor on every render rather than stored, so an anchor that
+  // leaves and rejoins the document is picked up again with nothing to invalidate. The
+  // `anchor === null` case is the unresolved one — the caller resolves the anchor through a
+  // callback ref, so there is a commit in which it is not known yet.
+  if (anchor === null || !anchor.isConnected) return null;
 
   const style: CSSProperties = {
     position: 'fixed',

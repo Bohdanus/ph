@@ -549,9 +549,25 @@ export function parseHandoffDoc({ file = '', text = '' } = {}) {
  */
 export function planImport(results, known) {
   const documents = Array.isArray(results) ? results : results ? [results] : [];
-  const already = new Set(known instanceof Set ? known : Array.isArray(known) ? known : []);
+  /**
+   * `known` may be a Set/array of origins, or a Map/Record of origin → title.
+   * The title is what separates "this document's item 2 is the item I already
+   * have" from "this document's item 2 is a DIFFERENT item and mine is stale" —
+   * and `origin` is a number, so an upstream renumbering or replacement leaves
+   * the board holding the right-looking key beside the wrong defect, in `ready`,
+   * claimable. Classifying on the origin alone made that indistinguishable from
+   * an ordinary re-run, and the drift check downstream never ran.
+   */
+  const titles =
+    known instanceof Map
+      ? known
+      : known && typeof known === 'object' && !Array.isArray(known) && !(known instanceof Set)
+        ? new Map(Object.entries(known))
+        : null;
+  const already = new Set(known instanceof Set ? known : Array.isArray(known) ? known : titles ? titles.keys() : []);
   const create = [];
   const skip = [];
+  const drift = [];
   const planned = new Set();
 
   for (const document of documents) {
@@ -560,8 +576,14 @@ export function planImport(results, known) {
     for (const item of document?.items ?? []) {
       const number = /#(\d+)$/.exec(String(item.origin));
       if (number && dead.has(Number(number[1]))) continue;
-      if (already.has(item.origin) || planned.has(item.origin)) {
+      if (planned.has(item.origin)) {
         skip.push(item.origin);
+        continue;
+      }
+      if (already.has(item.origin)) {
+        const knownTitle = titles?.get(item.origin);
+        if (knownTitle !== undefined && knownTitle !== item.title) drift.push(item.origin);
+        else skip.push(item.origin);
         continue;
       }
       planned.add(item.origin);
@@ -569,5 +591,5 @@ export function planImport(results, known) {
     }
   }
 
-  return { create, skip };
+  return { create, skip, drift };
 }

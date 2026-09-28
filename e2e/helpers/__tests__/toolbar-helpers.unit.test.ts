@@ -5,6 +5,9 @@ import { createScrollModel } from './canvas-helpers.fixtures';
 import { slugifyToolLabel, toolbarMap } from '../../../toolbar-mapping.ts';
 import {
   FLYOUT_VISIBLE_TIMEOUT_MS,
+  // The helper's mirror of the app's own threshold. Imported so the fake below can be
+  // pinned against the value it is modeling, and so a third literal never appears here.
+  LONG_PRESS_DELAY_MS,
   TOOL_NAME_MAP,
   TOOL_DISPLAY_LABEL_MAP,
   normalizeToolName,
@@ -1204,6 +1207,12 @@ describe('Toolbar Helpers', () => {
         value: 'true',
         options: { timeout: FLYOUT_VISIBLE_TIMEOUT_MS },
       });
+      // The post-lift menu assertion is the OTHER half of the contract, and the attribute
+      // check above cannot see it: `aria-expanded` is set one commit before the portal
+      // exists, so a helper that only waited for the attribute would return with no menu
+      // on screen. Recorded on the menu, with the shared budget, which is the file's own
+      // idiom — `openToolFlyoutViaRightClick`'s test asserts exactly this shape.
+      expect(visibilityCheckFor(menu)?.options).toEqual({ timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
     });
 
     it('never sleeps for a fixed delay, because a fixed delay is the race itself', async () => {
@@ -1299,6 +1308,28 @@ describe('Toolbar Helpers', () => {
       expect(dom.ignoreNextClick()).toBe(false);
     });
 
+    it('keeps the shared flyout budget above the long-press threshold it has to absorb', () => {
+      // The contract is not the value 2000, it is that the budget is bigger than the
+      // 300ms the app's timer needs on a busy main thread. This wait is the whole margin
+      // the gesture has — `onPointerUp` cancels the pending open outright — so a budget
+      // below the threshold fails a gesture that would otherwise have worked. Measured as
+      // a bound, which is what catches 2000 -> 200 without restating 2000.
+      expect(FLYOUT_VISIBLE_TIMEOUT_MS).toBeGreaterThanOrEqual(1000);
+    });
+
+    it('leaves the flyout open after the lift, because onPointerUp never closes it', async () => {
+      const groupedTile = tileGroup();
+      const dom = createFakeDom();
+      const { menu } = groupedTile(dom, { testId: 'tool-button-reposition' });
+      await openToolFlyout(dom.page, 'Select & Move');
+
+      // `pressState` records what was true AT each pointer event, so this reads the claim
+      // directly: the flyout was already open when the pointer went up, and it is still
+      // open now that the helper has returned.
+      expect(dom.pressState.at(-1)).toEqual({ type: 'pointerup', flyoutAlreadyOpen: true });
+      expect(menu.visible).toBe(true);
+    });
+
     it('fails when the tool button is not visible', async () => {
       const dom = createFakeDom();
       dom.add({ testId: 'tool-button-reposition', visible: false });
@@ -1323,6 +1354,7 @@ describe('Toolbar Helpers', () => {
 
       expect(error.message).toContain(`Timed out ${FLYOUT_VISIBLE_TIMEOUT_MS}ms`);
       expect(error.message).toContain('[testid="tool-button-reposition"]');
+      expect(error.message).toContain('aria-expanded');
     });
   });
 
@@ -1493,6 +1525,13 @@ describe('Toolbar Helpers', () => {
       await verifyHoverDoesNotOpenFlyout(dom.page, 'Select & Move');
 
       expect(dom.hovers).toEqual([button]);
+      // `LONG_PRESS_DELAY_MS` is the helper's mirror of the app's `setTimeout(..., 300)`
+      // (`SidebarLeft.scheduleFlyoutOpen`), and `HOVER_SETTLE_MS` is what
+      // `verifyHoverDoesNotOpenFlyout` ends up waiting for. Both are exported so this file
+      // cannot hold a third copy of either number; these two assertions are what stop the
+      // export from drifting away from the fake that models the app.
+      expect(LONG_PRESS_DELAY_MS).toBe(LONG_PRESS_THRESHOLD_MS);
+      expect(HOVER_SETTLE_MS).toBe(LONG_PRESS_DELAY_MS + 100);
       expect(dom.mocks.waitForTimeout).toHaveBeenCalledWith(HOVER_SETTLE_MS);
       expect(dom.dispatched).toEqual([]);
       expect(menu.visible).toBe(false);
