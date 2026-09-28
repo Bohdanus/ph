@@ -277,10 +277,12 @@ describe('AnchoredOverlay', () => {
   });
 
   it('clamps against the layout viewport, not the window box a scrollbar widens', () => {
-    // `setViewport` keeps the two measures equal, so on its own this test cannot tell them
-    // apart — and the difference is the whole point. A classic scrollbar occupies layout
-    // space, so `window.innerHeight` reports 720 while the containing block of a
-    // `position: fixed` box is the 640px left after its gutter.
+    // `setViewport` writes only `documentElement.client*`; it never touches
+    // `window.inner*`, so those keep jsdom's own default of 1024x768 and the two measures
+    // differ from the very first test. This one makes the difference deliberate and small,
+    // the shape a classic scrollbar actually takes: it occupies layout space, so the
+    // containing block of a `position: fixed` box is the 640px left after its 80px gutter
+    // while `window.innerHeight` keeps reporting the full window.
     setViewport(1280, 720);
     Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, value: 640 });
 
@@ -292,8 +294,10 @@ describe('AnchoredOverlay', () => {
       overlaySize: { width: 200, height: 200 },
     });
 
-    // 640 - 200 - 8 = 432 against the layout viewport. Against `innerHeight` it would be
-    // 720 - 200 - 8 = 512, and the overlay's bottom 72px would sit under the scrollbar.
+    // 640 - 200 - 8 = 432 against the layout viewport. Measured, the other branch gives
+    // 560 — which is jsdom's untouched `innerHeight` of 768 less the same 200 and 8, not
+    // the 720 `setViewport` was passed. That number is why the assertion cannot be satisfied
+    // by any viewport argument in this file, which is the point of it.
     expect(position().top).toBe(432);
   });
 
