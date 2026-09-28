@@ -3306,7 +3306,8 @@ task({
 - **Never put a GPT model in a subagent unless there is genuinely no alternative.** They cost real
   money by the token on every call, and "this one is hard" is not an alternative — that is the
   judgement you were delegating away (`AGENTS.md:15`).
-- **Cost roughly doubles past ~260k of context** (`AGENTS.md:19`). Keep the main turn lean and
+- **Double billing starts earlier on GPT Luna than on the other paid GPT models: past ~200k of context
+  on Luna, past ~270k on GPT Sol and GPT Terra** (`AGENTS.md:19`). Keep the main turn lean and
   push fan-out into subagents that each start at zero.
 - **Do not escalate to a paid model on your own** for "hard" or "risky" work. Override only when the
   operator named a model, and say so when you do (`AGENTS.md:33`).
