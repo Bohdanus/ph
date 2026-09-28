@@ -105,26 +105,15 @@ describe('MobileHeader', () => {
     expect(resetToLastSavedArgsMock).not.toHaveBeenCalled();
   });
 
-  it('reverts the uncommitted tool instead of undoing when isToolDirty is true', () => {
-    currentToolMock.isToolDirty = true;
-    renderHeader();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-
-    expect(resetToLastSavedArgsMock).toHaveBeenCalledTimes(1);
-    expect(undoMock).not.toHaveBeenCalled();
-  });
-
-  it('keeps undo available for a dirty tool with an empty timeline', () => {
-    currentToolMock.isToolDirty = true;
-    canUndoMock.mockReturnValue(false);
-    renderHeader();
-
-    const undo = screen.getByRole('button', { name: 'Undo' });
-    expect(undo).toBeEnabled();
-    fireEvent.click(undo);
-    expect(resetToLastSavedArgsMock).toHaveBeenCalled();
-  });
+  // Two tests deleted, not rewritten. They set `isToolDirty` true and asserted that
+  // the mobile Undo reverted the tool's args instead of stepping the timeline, and
+  // that the button stayed enabled on an empty timeline for a "dirty" tool. The flag
+  // has no writer — nothing ever dispatched it true — so both cases describe a
+  // state the product could never reach, and they drove a mock flag rather than any
+  // production path. The capability they were after (a way out of an uncommitted tool
+  // edit) is not implemented anywhere, on mobile or desktop, and pretending otherwise
+  // here is what let the flag survive this long. It is a real gap, recorded as such
+  // rather than pinned by a test that cannot fail in the app.
 
   it('redoes the timeline', () => {
     renderHeader();

@@ -103,12 +103,9 @@ describe('MobileToolSheet', () => {
     expect(panel.className).toContain('touch-pan-y');
   });
 
-  it('marks an uncommitted tool as modified', () => {
-    currentToolMock.isToolDirty = true;
-    render(<MobileToolSheet isOpen={true} onToggle={vi.fn()} />);
-
-    expect(screen.getByText('Modified')).toBeInTheDocument();
-  });
+  // Deleted for the reason recorded in `MobileHeader.test.tsx`: `isToolDirty` has no
+  // writer, so the "Modified" badge this asserted could never appear in the app. The
+  // badge is gone with the flag rather than left as a permanently hidden element.
 
   it('offers every tool of the active rail group, so the tile primary is not the only reachable member', async () => {
     const user = userEvent.setup();

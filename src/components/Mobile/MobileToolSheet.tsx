@@ -14,7 +14,7 @@ export interface MobileToolSheetProps {
 
 export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onToggle }) => {
   const [{ hasImage, toolName }] = useStore();
-  const { isToolDirty, toolArgs, patchToolArgs } = useCurrentTool();
+  const { toolArgs, patchToolArgs } = useCurrentTool();
   const { goToTool } = useApp();
 
   if (!toolName || !hasImage) return null;
@@ -65,11 +65,6 @@ export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onTogg
             <span className="truncate text-xs font-semibold text-gray-800 dark:text-gray-200 capitalize">
               {toolName.replace(/-/g, ' ')} Options
             </span>
-            {isToolDirty && (
-              <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 font-medium">
-                Modified
-              </span>
-            )}
           </span>
           <span aria-hidden="true" className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
             {isOpen ? '▼ Hide' : '▲ Options'}

@@ -20,7 +20,6 @@ const previewLayers = vi.hoisted(() => ({ current: {} as Record<string, unknown>
 const mockTempUpdateLayer = vi.hoisted(() => vi.fn());
 const mockCancelLayerPreview = vi.hoisted(() => vi.fn());
 const mockSetToolArgs = vi.hoisted(() => vi.fn());
-const mockIsToolDirty = vi.hoisted(() => ({ current: false }));
 const mockResetToLastSavedArgs = vi.hoisted(() => vi.fn());
 const mockUndo = vi.hoisted(() => vi.fn());
 
@@ -35,7 +34,6 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', () => ({
   useCurrentTool: () => ({
     toolArgs,
     setToolArgs: mockSetToolArgs,
-    isToolDirty: mockIsToolDirty.current,
     resetToLastSavedArgs: mockResetToLastSavedArgs,
   }),
 }));
@@ -87,9 +85,6 @@ describe('Levels toolbar', () => {
     mockSetToolArgs.mockClear();
     mockResetToLastSavedArgs.mockClear();
     mockUndo.mockClear();
-    // The only value `isToolDirty` can hold in production: nothing dispatches
-    // `SET_TOOL_DIRTY` with `true`.
-    mockIsToolDirty.current = false;
     setActiveLayerId('layer-1');
     previewLayers.current = {};
   });
@@ -102,36 +97,36 @@ describe('Levels toolbar', () => {
   });
 
   it('offers the panel-local discard only while a live preview exists, because that preview is the only thing it can remove', () => {
-    // History state is fixed here: `canUndo()` is `true` and `isToolDirty` is the
-    // value production can hold, so neither of them can be what the button reads.
+    // The panel reads exactly one thing to arm the button: the store's preview map
+    // for the active layer. History state is fixed here (`canUndo()` is `true`),
+    // so nothing else this render can see is what the gate turns on.
     seedLivePreview();
     render(<Levels />);
 
     expect(getResetButton()).toBeEnabled();
   });
 
-  it.each([false, true])(
-    'clears the preview and writes the default levels args without touching history (isToolDirty=%s)',
-    (isToolDirty) => {
-      mockIsToolDirty.current = isToolDirty;
-      resetToolArgs({ brightness: 70, contrast: -20 });
-      seedLivePreview();
-      render(<Levels />);
+  it('clears the preview and writes the default levels args without touching history', () => {
+    resetToolArgs({ brightness: 70, contrast: -20 });
+    seedLivePreview();
+    render(<Levels />);
 
-      fireEvent.click(getResetButton());
+    fireEvent.click(getResetButton());
 
-      expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
-      // The baseline is `defaultSettings.levels`, not the value the user just dragged to.
-      // A `resetToLastSavedArgs` reset would publish 70/-20 here.
-      expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
-        toolName: 'levels',
-        brightness: 0,
-        contrast: 0,
-      });
-      expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
-      expect(mockUndo).not.toHaveBeenCalled();
-    }
-  );
+    expect(mockCancelLayerPreview).toHaveBeenCalledTimes(1);
+    // The baseline is `defaultSettings.levels`, not the value the user just dragged to.
+    // A `resetToLastSavedArgs` reset would publish 70/-20 here.
+    expect(mockSetToolArgs).toHaveBeenCalledExactlyOnceWith({
+      toolName: 'levels',
+      brightness: 0,
+      contrast: 0,
+    });
+    expect(mockResetToLastSavedArgs).not.toHaveBeenCalled();
+    // The click removes an uncommitted preview. A committed adjustment is a
+    // document operation, and `undo()` — which the panel does not call — is the
+    // route out of one, so a fall-through to document-level undo stays pinned here.
+    expect(mockUndo).not.toHaveBeenCalled();
+  });
 
   it('leaves the discard disabled once the adjustment is committed, rather than claiming a reset it cannot perform', () => {
     // `commitDirtyTool` runs on tool switch, on export and in `mergeAllLayers`: it

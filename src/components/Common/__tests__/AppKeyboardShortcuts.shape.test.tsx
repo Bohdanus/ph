@@ -14,9 +14,8 @@ const storeState = vi.hoisted(
   () =>
     ({
       hasImage: true,
-      isToolDirty: false,
       toolName: 'brush',
-    }) as { hasImage: boolean; isToolDirty: boolean; toolName: ToolName }
+    }) as { hasImage: boolean; toolName: ToolName }
 );
 
 const toolState = vi.hoisted(

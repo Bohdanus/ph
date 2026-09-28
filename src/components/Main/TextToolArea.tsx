@@ -8,7 +8,6 @@ import type { RectXY, RectXYSorted } from '../../contexts/general-types.ts';
 
 type TextToolAreaProps = {
   className?: string;
-  canvasCtxRef: RefObject<CanvasRenderingContext2D | null>;
   overlayCtxRef: RefObject<CanvasRenderingContext2D | null>;
 };
 

@@ -3,7 +3,7 @@ import { flushSync } from 'react-dom';
 
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useHistory } from '../../contexts/useHistory.ts';
-import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
+
 import { useFile } from '../../contexts/useFile.tsx';
 import { useApp } from '../../hooks/useApp.ts';
 import { useLayers } from '../../contexts/useLayer.ts';
@@ -24,22 +24,21 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
 }) => {
   const [{ canvasRef, fileName, hasImage, layers, totalSize, documentFrame }] = useStore();
   const { canUndo, undo, canRedo, redo } = useHistory();
-  const { isToolDirty, resetToLastSavedArgs } = useCurrentTool();
   const { commitDirtyTool } = useLayers();
   const { openSaveImageDialog } = useFile();
   const { handleImageSave } = useApp();
 
   const activeLayersCount = Object.keys(layers || {}).length;
 
-  // An uncommitted tool edit is not on the timeline yet, so `undo` would step past
-  // it and discard the layer edit the user is looking at. Reverting the tool args
-  // is the mobile equivalent of the desktop rule in `useHistory.undo`.
+  // Undo is the timeline and nothing else. The mobile shell originally branched on
+  // `isToolDirty` to revert uncommitted tool args first — "an uncommitted tool edit
+  // is not on the timeline yet, so `undo` would step past it". That flag had no
+  // writer: nothing ever dispatched it true, so the branch was unreachable and the
+  // desktop rule it mirrored (`useHistory.undo`) is gone for the same reason. The
+  // dead arm is not carried forward, and a real "revert the current tool's args"
+  // affordance, if one is ever wanted, needs a real writer first.
   const handleUndo = () => {
-    if (isToolDirty) {
-      resetToLastSavedArgs();
-    } else {
-      undo();
-    }
+    undo();
   };
 
   const handleExport = async () => {
@@ -93,7 +92,7 @@ export const MobileHeader: React.FC<MobileHeaderProps> = ({
         <button
           type="button"
           onClick={handleUndo}
-          disabled={!canUndo() && !isToolDirty}
+          disabled={!canUndo()}
           aria-label="Undo"
           data-testid="mobile-undo-button"
           className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-base text-gray-300 hover:text-white hover:bg-gray-800 disabled:opacity-30 disabled:pointer-events-none transition-colors"

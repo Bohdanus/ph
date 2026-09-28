@@ -12,6 +12,7 @@ import { CurrentToolProvider } from './contexts/useCurrentTool.tsx';
 import { FileProvider } from './contexts/useFile.tsx';
 import { KeyboardEventsProvider } from './hooks/useKeyboardEvents.tsx';
 import { AppKeyboardShortcuts } from './components/Common/AppKeyboardShortcuts.tsx';
+import { ErrorBoundary } from './components/Common/ErrorBoundary.tsx';
 import { useApp } from './hooks/useApp.ts';
 import { RightPanelVisibilityProvider } from './contexts/RightPanelVisibility.tsx';
 
@@ -48,9 +49,16 @@ function AppContainer() {
       <Menu />
       <SidebarLeft />
 
-      <Main />
+      {/* The canvas and the tool sidebar are the two regions that own user work.
+          Each is contained on its own so a throw in one still leaves the other,
+          the menu and the footer usable. */}
+      <ErrorBoundary label="Canvas">
+        <Main />
+      </ErrorBoundary>
 
-      <SidebarRight />
+      <ErrorBoundary label="Right sidebar">
+        <SidebarRight />
+      </ErrorBoundary>
       <Footer />
 
       {/* Mounted unconditionally and hidden with `md:hidden`, rather than swapped in by a

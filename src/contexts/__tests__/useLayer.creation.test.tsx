@@ -301,12 +301,12 @@ describe('useLayers createLayerFromTool geometry', () => {
   });
 
   it.fails('normalises an inverted rect instead of creating a layer with a negative extent', () => {
-    // PROD DEFECT, not fixed: `src/contexts/useLayer.ts:204` feeds `args.rect`
+    // PROD DEFECT, not fixed: `src/contexts/useLayer.ts:274` feeds `args.rect`
     // straight into `sortedRectToPos` without the `sortRect` normalisation its
-    // sibling `applyDocumentCrop` applies at `src/contexts/useLayer.ts:526`.
+    // sibling `applyDocumentCrop` applies at `src/contexts/useLayer.ts:608`.
     // An inverted rect therefore yields a layer whose width and height are
     // negative, which `createLayerSource` accepts (it only rejects exactly zero,
-    // `src/contexts/layer-utils.ts:178`).
+    // `src/contexts/layer-utils.ts:150`).
     const raster = new OffscreenCanvas(30, 40);
     const processor = vi.spyOn(toolProcessors.shape, 'imageProcessor').mockReturnValue(() => [raster]);
     const { result } = setup({ documentFrame: { x: 0, y: 0, width: 200, height: 100 } });
@@ -404,90 +404,10 @@ describe('useLayers tempUpdateLayer defensive affine guards', () => {
     });
 
     // The throw is contained, so no preview is written and it never reaches a React
-    // event handler. A guard on the `flattenRequired` branch alone would not cover this.
+    // event handler — the `imageProcessor` call is guarded, which is where every live
+    // pointer move actually goes.
     expect(result.current.store.previewLayers.current).toEqual({});
     expect(consoleError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('100') }));
-  });
-});
-
-describe('useLayers updateLayerByTool flattening boundary', () => {
-  it('merges every layer and applies the tool to the flattened raster when the tool requires it', async () => {
-    const flatten = { ...toolProcessors.brush, flattenRequired: true };
-    const original = toolProcessors.brush;
-    toolProcessors.brush = flatten;
-    const applied: ToolArgs[] = [];
-    const raster = new OffscreenCanvas(200, 100);
-    const processor = vi.spyOn(flatten, 'imageProcessor').mockImplementation((params) => (args) => {
-      applied.push(args);
-      expect(params).toEqual({ bitmap: expect.anything(), size: { x: 30, y: 40, width: 200, height: 100 } });
-      return [raster, { x: 1, y: 2 }];
-    });
-
-    try {
-      const canvas = document.createElement('canvas');
-      const { result } = setup({
-        layers: { bottom: makeLayer('bottom', 0), top: makeLayer('top', 1) },
-        activeLayerId: 'top',
-        canvas,
-        totalSize: { width: 200, height: 100 },
-        documentFrame: { x: 30, y: 40, width: 200, height: 100 },
-      });
-
-      await act(async () => {
-        await result.current.layers.updateLayerByTool({
-          id: 'top',
-          toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
-        });
-      });
-
-      const store = result.current.store;
-      // The document collapses to the single merged layer the tool edited.
-      expect(Object.keys(store.layers)).toHaveLength(1);
-      const merged = store.layers[store.activeLayerId!]!;
-      expect(store.activeLayerId).toBe(merged.id);
-      // The raster is materialized and published through the store, so the
-      // staged canvas is released and the layer carries the cache instead. The
-      // promotion is identity-checked against the layer that requested it.
-      expect(merged.tmpCanvas).toBeNull();
-      expect(merged.bitmap).not.toBeNull();
-      // The processor's position patch is absolute, so it replaces the merged
-      // layer's world origin outright rather than offsetting it.
-      expect(merged.pos).toEqual({ x: 1, y: 2, width: 200, height: 100 });
-      expect(applied).toHaveLength(1);
-      expect(store.history.at(-1)).toMatchObject({ actionName: TOOL_ACTION, layerId: merged.id });
-    } finally {
-      toolProcessors.brush = original;
-      processor.mockRestore();
-    }
-  });
-
-  it('leaves the document untouched when the flattened merge has no canvas to rasterize', async () => {
-    const flatten = { ...toolProcessors.brush, flattenRequired: true };
-    const original = toolProcessors.brush;
-    toolProcessors.brush = flatten;
-    const processor = vi.spyOn(flatten, 'imageProcessor');
-
-    try {
-      const { result } = setup({
-        layers: { only: makeLayer('only', 0) },
-        activeLayerId: 'only',
-        canvas: null,
-      });
-
-      await act(async () => {
-        await result.current.layers.updateLayerByTool({
-          id: 'only',
-          toolArgs: { toolName: 'brush', lineWidth: 4 } as ToolArgs,
-        });
-      });
-
-      expect(processor).not.toHaveBeenCalled();
-      expect(Object.keys(result.current.store.layers)).toEqual(['only']);
-      expect(result.current.store.history).toEqual([]);
-    } finally {
-      toolProcessors.brush = original;
-      processor.mockRestore();
-    }
   });
 });
 

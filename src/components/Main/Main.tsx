@@ -47,7 +47,6 @@ const Main = () => {
 
   const [isDragging, setIsDragging] = useState(false);
 
-  const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const toolCtxRef = useRef<CanvasRenderingContext2D | null>(null);
 
   let interactionMode = 'zoom';
@@ -106,11 +105,6 @@ const Main = () => {
       resizeCanvas(rectOverlayRef.current, width, height);
       const rectCtx = rectOverlayRef.current.getContext('2d')!;
       rectCtx.imageSmoothingEnabled = false;
-    }
-
-    if (canvasCtxRef.current) {
-      canvasCtxRef.current.imageSmoothingEnabled = true;
-      canvasCtxRef.current.imageSmoothingQuality = 'low';
     }
   }, [rectOverlayRef, toolOverlayRef, totalSize]);
 
@@ -226,11 +220,7 @@ const Main = () => {
             display: ['reposition'].includes(interactionMode) ? 'block' : 'none',
           }}
         />
-        <EventHandler
-          className="absolute inset-0 h-full w-full"
-          canvasCtxRef={canvasCtxRef}
-          overlayCtxRef={toolCtxRef}
-        />
+        <EventHandler className="absolute inset-0 h-full w-full" overlayCtxRef={toolCtxRef} />
       </div>
     );
   };

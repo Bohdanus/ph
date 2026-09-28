@@ -31,7 +31,11 @@ export function saveLastSettings(args: ToolArgs) {
   } else if (toolName === 'shape') {
     lastSavedSettings.shape = cloneDeep(withNormalizedFigure(omit(args as ShapeToolArgs, 'start', 'end')));
   } else if (toolName === 'crop') {
-    lastSavedSettings.crop = cloneDeep(omit(args as CropToolArgs, 'rect'));
+    // `preRatioRect` goes the way `rect` does. `aspectRatio` is persisted while the rect is not, so a
+    // restored session arrives with a ratio and no rect; a persisted pre-ratio rect would fill that
+    // gap from a different document, and the next `Free`/`Original` would restore a framing the user
+    // never drew on this one. Both are presentation state.
+    lastSavedSettings.crop = cloneDeep(omit(args as CropToolArgs, 'rect', 'preRatioRect'));
     // deliberately not storing for those three because they have a different philosophy, unfortunately
   } else if (toolName === 'transform') {
     lastSavedSettings.transform = cloneDeep(args);

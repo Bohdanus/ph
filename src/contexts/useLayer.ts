@@ -1,6 +1,7 @@
-import { useCallback } from 'react';
+import { useCallback, type Dispatch } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useStore } from './StoreContext.tsx';
+import type { BitmapSource } from './general-types.ts';
 import type {
   BlankLayerSource,
   ImageLayerSource,
@@ -85,6 +86,27 @@ async function immutableRaster(bitmap: ImageLayerSource['bitmap']): Promise<Imag
   return globalThis.createImageBitmap(bitmap as CanvasImageSource);
 }
 
+/**
+ * The action that hands a raster the store has adopted to the presentation scope.
+ *
+ * `DocumentPresentationScope` is "the owner of every presentation bitmap the store
+ * materializes", and its completeness guarantee only holds if every published
+ * bitmap is registered with `trackPublished`. Three sites produce one with a bare
+ * `createImageBitmap` — `immutableRaster` below, `useApp`'s PSD-import
+ * `immutableRaster`, and `mergeAllLayers` — and each publishes it as `layer.bitmap`
+ * without the scope ever learning about it, so nothing closes it deterministically.
+ *
+ * The action is a pure no-op on state; the registration happens in the store's
+ * dispatcher, which is the only place the owning `documentId` exists.
+ */
+export const ADOPT_LAYER_BITMAPS = 'ADOPT_LAYER_BITMAPS';
+
+/** The typed payload. `bitmaps` is deduplicated by the caller: the scope keys on a `Set`. */
+export type AdoptLayerBitmapsAction = Readonly<{
+  type: typeof ADOPT_LAYER_BITMAPS;
+  payload: Readonly<{ bitmaps: readonly BitmapSource[] }>;
+}>;
+
 export const useLayers = () => {
   const [
     {
@@ -103,9 +125,25 @@ export const useLayers = () => {
       previewLayers: previewLayersRef,
       promoteLayerPresentation,
     },
-    dispatch,
+    baseDispatch,
   ] = useStore();
+  // `ADOPT_LAYER_BITMAPS` is declared here and wired into the store's action union
+  // in the same change; the intersection types the registration at its call site
+  // rather than hiding it behind a cast.
+  const dispatch = baseDispatch as typeof baseDispatch & Dispatch<AdoptLayerBitmapsAction>;
   const documentFrame = currentDocumentFrame ?? documentFrameFromSize(totalSize);
+
+  /**
+   * Hands adopted rasters to the presentation scope. It has to run *after* the
+   * action that published them: the scope is keyed by the document that owns the
+   * bitmap, so an import registered before its `REPLACE_DOCUMENT` would be filed
+   * under the outgoing document id and closed by that document's release.
+   */
+  const adoptLayerBitmaps = (bitmaps: readonly BitmapSource[]) => {
+    const distinct = [...new Set(bitmaps)];
+    if (!distinct.length) return;
+    dispatch({ type: ADOPT_LAYER_BITMAPS, payload: { bitmaps: distinct } });
+  };
 
   /**
    * Presentation caches are materialized after the layer is published. The store
@@ -150,7 +188,6 @@ export const useLayers = () => {
             documentFrame: documentFrameFromSize(newDocument.size),
             hasImage: true,
             hasUnsavedChanges: newDocument.hasUnsavedChanges,
-            isToolDirty: false,
             selections: [],
             activeSelectionId: null,
             selectionDraft: { status: 'idle' },
@@ -216,6 +253,11 @@ export const useLayers = () => {
         : undefined,
       currentLayers
     );
+    // One registration covers all three aliases the raster now has: `layer.bitmap`,
+    // `layer.source.bitmap` (the `source` object is stored verbatim on the layer) and
+    // the live history entry's `layerSource.bitmap`. They are the same object, and
+    // `trackPublished` keys on a `Set`.
+    adoptLayerBitmaps([source.bitmap]);
   };
   const createLayerFromTool = (sourceArgs: Optional<FullArgs, 'pos'>) => {
     // commented out because causes infinite recursion
@@ -271,38 +313,13 @@ export const useLayers = () => {
     if (!id || !layers[id]) return;
     if (processor.commit === 'document-operation') return;
 
-    // Check if tool requires flattening layers
-    if (processor.flattenRequired) {
-      const mergedLayer = await mergeAllLayers();
-      if (!mergedLayer?.bitmap) return;
-
-      // No shipped processor sets `flattenRequired`, but the flag is part of the
-      // processor contract and this branch runs it, so it gets the same guard as the
-      // `imageProcessor` call in `tempUpdateLayer` rather than trusting the current
-      // registry to stay exception-free.
-      let result: ToolResult;
-      try {
-        result = processor.imageProcessor({ bitmap: mergedLayer.bitmap, size: mergedLayer.pos })(toolArgs);
-      } catch (error) {
-        console.error(error);
-        return;
-      }
-      const [canvas, positionPatch] = result;
-      const updatedLayer = {
-        ...mergedLayer,
-        pos: positionPatch ? { ...mergedLayer.pos, ...positionPatch } : mergedLayer.pos,
-        tmpCanvas: canvas,
-      };
-      dispatch({
-        type: 'COMMIT_DOCUMENT_EDIT',
-        payload: {
-          updates: { layers: { [mergedLayer.id]: updatedLayer }, activeLayerId: mergedLayer.id },
-          historyItem: createHistoryItem({ layerId: mergedLayer.id, actionName: TOOL_ACTION, args: toolArgs }),
-        },
-      });
-      requestPresentation(updatedLayer);
-      return;
-    }
+    // Whole-document merging is not a transparent step inside a tool, and there is
+    // no processor flag that asks for one: `mergeAllLayers` below is reached by the
+    // user pressing `Merge all` in `ToolbarsRight/Move/Reposition.tsx` or
+    // `ToolbarsRight/Colors/Color.tsx`, and a tool that genuinely needs the
+    // flattened raster calls it explicitly. What was removed here was a branch that
+    // only two tests could reach, by mutating the `toolProcessors` record at
+    // runtime — a branch nothing verified.
 
     // should mark layer dirty
     tempUpdateLayer({ id, toolArgs });
@@ -658,6 +675,10 @@ export const useLayers = () => {
         }),
       },
     });
+    // The merged raster is created by a bare `createImageBitmap`, so this is the only
+    // registration it will ever get. It is aliased by `layer.bitmap`,
+    // `layer.source.bitmap` and the merge entry's `args` at once.
+    adoptLayerBitmaps([source.bitmap]);
     return layer;
   }
 

@@ -223,8 +223,11 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned durable entry', () => {
 
   it('falls back when the store has no exact durable document to extend', () => {
     const { store, dispatch } = openDocument();
+    // `SET_SIZE` writes `totalSize`, one of the six durable inputs, so it marks
+    // the sidecar stale: the stored document no longer describes this store, and
+    // the append gate is handed no base to extend.
     act(() => {
-      dispatch()({ type: 'UPDATE_LAYERS', payload: {} });
+      dispatch()({ type: 'SET_SIZE', payload: { width: 640, height: 480 } });
     });
     expect(store().durableStatus).toBe('stale');
 
@@ -464,8 +467,16 @@ describe('COMMIT_DOCUMENT_EDIT publishes a planned layer-property entry', () => 
 
   it('falls back when the store has no exact durable document to extend', () => {
     const { store, dispatch } = openDocument();
+    // `totalSize` is the conversion's `initialSize`, so a genuinely different size
+    // is the one transition outside the document writers that invalidates the
+    // sidecar. `UPDATE_LAYERS` was the previous way to arrange this state and was
+    // deleted: a public action with a hand-written reducer branch, zero
+    // production callers and no guard against moving durable layer state.
     act(() => {
-      dispatch()({ type: 'UPDATE_LAYERS', payload: {} });
+      dispatch()({
+        type: 'SET_SIZE',
+        payload: { width: store().totalSize.width + 1, height: store().totalSize.height },
+      });
     });
     expect(store().durableStatus).toBe('stale');
 

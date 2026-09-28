@@ -123,8 +123,12 @@ describe('eraser processor', () => {
     // low `alpha` left over from Pencil mode must not fade the block.
     const ctx = renderCommit(eraserArgs({ mode: 'block', alpha: 0.1 }));
 
-    expect(ctx.save).toHaveBeenCalledTimes(1);
-    expect(ctx.restore).toHaveBeenCalledTimes(1);
+    // Two brackets, both balanced: `drawBlockStamps` brackets its own stamps
+    // (`src/util/draw.ts`), and the eraser brackets `setupDrawCtx` plus the paint
+    // so its `destination-out` and its alpha cannot outlive the commit on the
+    // caller's context.
+    expect(ctx.save).toHaveBeenCalledTimes(2);
+    expect(ctx.restore).toHaveBeenCalledTimes(2);
     expect(ctx.globalAlpha).toBe(1);
   });
 
