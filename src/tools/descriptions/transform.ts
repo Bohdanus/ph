@@ -298,8 +298,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
         control: 'Input Levels: black point',
         detail:
           'Leftmost input slider, on the 0 to 255 level domain Adobe states for the adjustment. It sits at level 0, which Adobe does not state as a default; what Adobe does state is that with the Output sliders in their default positions "moving the black input slider maps the pixel value to level 0". Dragging it right sets clipping: a black point at level 5, this description’s symmetric case to Adobe’s own 243 example on the white point, maps every pixel at level 5 and lower to level 0.',
-        status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Levels/Levels.tsx:109',
+        status: 'missing',
       },
       {
         control: 'Input Levels: midtone gamma',
@@ -311,8 +310,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
         control: 'Input Levels: white point',
         detail:
           'Rightmost input slider, sitting at level 255 by default, which Adobe does not state as a default. Adobe does print the worked case on this slider: "if you move the white point slider to the left at level 243, Photoshop maps all pixels at level 243 and higher to level 255."',
-        status: 'partial',
-        appRef: 'src/components/ToolbarsRight/Levels/Levels.tsx:127',
+        status: 'missing',
       },
       {
         control: 'Output Levels: black',
