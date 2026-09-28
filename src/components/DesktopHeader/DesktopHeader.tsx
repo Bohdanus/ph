@@ -176,6 +176,14 @@ const DesktopHeader = () => {
                   type="button"
                   onClick={async () => {
                     try {
+                      // Dismissing the menu is what activating an item means, so it happens
+                      // FIRST and unconditionally. It used to sit after the action, which
+                      // made the decline path — the one branch that returns early — leave the
+                      // dropdown hanging over the top-left of the canvas, and left it hanging
+                      // on the `catch` path too. `handleClickOutside` cannot rescue either:
+                      // the mousedown that opened this state already fired inside
+                      // `fileMenuRef`, so `!contains(target)` is false and it does not close.
+                      setOpenMenu(null);
                       if (
                         (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
                         !confirm('Discard unsaved changes and start a new image?')
@@ -183,7 +191,6 @@ const DesktopHeader = () => {
                         return;
                       const data = await openNewImageDialog();
                       if (data) setBlankImage(data);
-                      setOpenMenu(null);
                     } catch (error) {
                       console.error('Unable to create document', error);
                       window.alert(
@@ -202,6 +209,9 @@ const DesktopHeader = () => {
                   type="button"
                   onClick={async () => {
                     try {
+                      // Same ordering rule as New above, and for the same reason: the decline
+                      // path returns before the close used to run.
+                      setOpenMenu(null);
                       if (
                         (hasUnsavedChanges || hasPendingText(currentArgs.current)) &&
                         !confirm('Discard unsaved changes and open another file?')
@@ -209,7 +219,6 @@ const DesktopHeader = () => {
                         return;
                       const data = await openLoadImageDialog();
                       if (data) await setImageFromUpload(data);
-                      setOpenMenu(null);
                     } catch (error) {
                       console.error('Unable to open document', error);
                       window.alert(
