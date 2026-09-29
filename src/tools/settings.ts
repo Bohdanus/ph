@@ -124,6 +124,7 @@ export const defaultSettings = {
   'magic-wand': {
     tolerance: 28,
     smoothing: 1.5,
+    contiguous: true,
     toolName: 'magic-wand',
   } satisfies MagicWandToolArgs,
   'rectangular-selection': { toolName: 'rectangular-selection' } satisfies RectangularSelectionToolArgs,

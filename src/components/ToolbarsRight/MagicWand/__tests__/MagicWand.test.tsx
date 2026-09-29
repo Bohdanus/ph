@@ -9,7 +9,7 @@ const dispatchMock = vi.hoisted(() => vi.fn());
 const copyActiveSelectionMock = vi.hoisted(() => vi.fn());
 const pasteSelectionClipboardMock = vi.hoisted(() => vi.fn());
 
-const toolArgs = vi.hoisted(() => ({ smoothing: 1.5, tolerance: 28, toolName: 'magic-wand' }));
+const toolArgs = vi.hoisted(() => ({ contiguous: true, smoothing: 1.5, tolerance: 28, toolName: 'magic-wand' }));
 
 /** `getToolArgs` returns `null` when the tool is not the active one (MagicWand.tsx:16-17). */
 const toolArgsAvailable = vi.hoisted(() => ({ current: true }));
@@ -100,6 +100,7 @@ function resetStoreState(overrides: Partial<typeof storeState> = {}) {
 }
 
 function resetToolArgs() {
+  toolArgs.contiguous = true;
   toolArgs.smoothing = 1.5;
   toolArgs.tolerance = 28;
   toolArgs.toolName = 'magic-wand';
@@ -175,6 +176,37 @@ describe('MagicWand toolbar', () => {
 
     expect(patchToolArgsMock).toHaveBeenCalledWith('magic-wand', { tolerance: 44 });
     expect(patchToolArgsMock).toHaveBeenCalledWith('magic-wand', { smoothing: 3 });
+  });
+
+  /**
+   * Adobe: "Uncheck Contiguous if you want to select nonadjacent areas of similar color."
+   *
+   * The control was absent while the branch behind it already existed, so `Contiguous` was
+   * permanently on and unreachable. `MagicWandToolArea.test.tsx` pins what the flag reaches.
+   */
+  describe('contiguous', () => {
+    it('is on by default, as Adobe ships it', () => {
+      render(<MagicWand />);
+
+      expect(screen.getByRole('checkbox', { name: 'Contiguous' })).toBeChecked();
+    });
+
+    it('unchecking it patches the setting the tool area reads', () => {
+      render(<MagicWand />);
+
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Contiguous' }));
+
+      expect(patchToolArgsMock).toHaveBeenCalledWith('magic-wand', { contiguous: false });
+    });
+
+    it('re-checking it patches the setting back', () => {
+      toolArgs.contiguous = false;
+      render(<MagicWand />);
+
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Contiguous' }));
+
+      expect(patchToolArgsMock).toHaveBeenCalledWith('magic-wand', { contiguous: true });
+    });
   });
 
   it('renders when activeSelectionId is set', () => {
@@ -373,6 +405,7 @@ describe('MagicWand toolbar', () => {
       render(<MagicWand />);
 
       const toleranceSlider = screen.getByLabelText(/Tolerance/);
+      const contiguousCheckbox = screen.getByRole('checkbox', { name: 'Contiguous' });
       const smoothingSlider = screen.getByLabelText(/Smooth/);
       const copyButton = screen.getByRole('button', { name: 'Copy' });
       const pasteButton = screen.getByRole('button', { name: 'Paste' });
@@ -384,6 +417,9 @@ describe('MagicWand toolbar', () => {
 
       toleranceSlider.focus();
       expect(toleranceSlider).toHaveFocus();
+
+      await user.tab();
+      expect(contiguousCheckbox).toHaveFocus();
 
       await user.tab();
       expect(smoothingSlider).toHaveFocus();
@@ -430,6 +466,9 @@ describe('MagicWand toolbar', () => {
 
       toleranceSlider.focus();
       expect(toleranceSlider).toHaveFocus();
+
+      await user.tab();
+      expect(screen.getByRole('checkbox', { name: 'Contiguous' })).toHaveFocus();
 
       await user.tab();
       expect(smoothingSlider).toHaveFocus();
