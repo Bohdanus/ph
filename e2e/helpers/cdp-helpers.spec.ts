@@ -171,12 +171,20 @@ test.describe('CDP Helpers', () => {
       expect(countPixelsDifferingFrom(imageData, EXPECTED_CANVAS_RED)).toBe(0);
       expectFaithfulCaptureOf(imageData, box);
       // A partial box must not silently degrade to the full canvas or the viewport, and
-      // `expectFaithfulCaptureOf` cannot see that on its own: it divides the DECODED size by
-      // the requested rect, so a capture of the whole 240x160 canvas answers a perfectly
-      // self-consistent 2s x 2s for a half-size request. The reference is Playwright's own
-      // `page.screenshot({ clip, scale: 'device' })` of the SAME rect at the same native
-      // device scale, which turns "smaller than the canvas" into a comparison of two decoded
-      // sizes rather than of a number with itself.
+      // the guard this replaces compared a number with itself: `imageData.width < 240 *
+      // (imageData.width / 100)` is `w < 2.4w`, which is true for every `w` a capture can
+      // have, so it could not fail. What replaced it is a comparison of two DECODED sizes.
+      //
+      // The claim is worth stating precisely, because at THIS call site it is not the one
+      // that needs saying. This box is 100x60 and the canvas is 240x160, so a
+      // full-canvas capture answers 2.4s x 2.667s and `expectFaithfulCaptureOf` already
+      // rejects it on both the integral and the equal-axes check. What no call site gets
+      // from that helper is the EXTENT: it divides the decoded size by the requested rect
+      // and is satisfied by any rect standing to the request in a uniform integral ratio,
+      // which is why the 120x80 clip in `expectFaithfulCaptureOf`'s own docblock needs a
+      // separate argument. Playwright's `page.screenshot({ clip, scale: 'device' })` of the
+      // SAME rect at the same native device scale is the reference that closes that gap for
+      // the proportional case as well as this one.
       const reference = await decodeScreenshot(await page.screenshot({ clip: box, scale: 'device', type: 'png' }));
       expect(imageData.width, 'a capture that took the whole canvas instead of the box').toBe(reference.width);
       expect(imageData.height, 'a capture that took the whole canvas instead of the box').toBe(reference.height);

@@ -16,6 +16,7 @@ import {
   LINE_END_Y,
   LINE_START_X,
   LINE_START_Y,
+  measureInk,
   takeLineScreenshot,
 } from './helpers/canvas-helpers';
 import { canvasRedrawClip, type CanvasPixelPredicate, waitForCanvasPixels } from './helpers/canvas-redraw';
@@ -55,6 +56,53 @@ const STROKE_MIDDLE = STROKE_SAMPLES[1];
  * spread and reads as a spray where it is solid.
  */
 const LINE_CAPTURE_REGION = { width: DEFAULT_LINE_CLIP.width, height: DEFAULT_LINE_CLIP.height };
+
+/**
+ * How far the stroke's ink BOUNDS may move across an adjustment, in capture pixels.
+ *
+ * One, and the natural value is zero: both captures are `takeLineScreenshot` over the same
+ * `DEFAULT_LINE_CLIP` of the same document, so the stroke lands on the same image pixels
+ * before and after. Measured on `grayscale(100%)` over a `#cc0000` stroke: left/top/right/
+ * bottom all drift by 0, while the ink MASS rises 9.7% — the CSS `grayscale()` matrix is not
+ * the 0.299/0.587/0.114 one `measureInk` weights by, so the same mark carries more measured
+ * ink after. That is why the invariant is the bounds and not `ink`.
+ */
+const INK_BOUNDS_TOLERANCE_PX = 1;
+
+/**
+ * The four inclusive edges of a capture's ink, or a thrown error when it carries none.
+ *
+ * `measureInk` is the instrument here rather than `getStrokeAnalysis`, and the reason is
+ * measured. A `#cc0000` stroke composites to RGB (210,26,26) over the white document, and
+ * `getStrokeAnalysis` classifies a pixel as dark only when all three channels are under 50
+ * and as spray only when luminance is over 200 AND saturation under 30. The core satisfies
+ * neither, so on this fixture the analyser reports `darkCount: 0` and `pixelCount: 225`
+ * against a core of 1643 — it is classifying the pale anti-aliased FRINGE and nothing else,
+ * and its `verticalSpread` of 12 is the fringe's row span. That is fine for the Blur tests,
+ * which stroke in `#000000` and want a dark core; it is the wrong instrument for a test whose
+ * subject is a red stroke's geometry.
+ *
+ * `measureInk` weights by luma alone against a white page, so it sees the core. All three of
+ * the geometry mutations that a surviving layer is supposed to exclude move its bounds:
+ * scaling about the middle pushes the far edges out, a translation moves all four, and
+ * thinning pulls the top and bottom in.
+ */
+async function inkBounds(screenshot: Buffer | ImageDataResult) {
+  const profile = await measureInk(screenshot);
+  expect(profile, 'The capture carries no ink at all, so there is no geometry to compare').not.toBeNull();
+  const { left, top, right, bottom } = profile!;
+  return { left, top, right, bottom };
+}
+
+/** How far each of the four edges moved, per edge, so a failure names the one that moved. */
+function inkDrift(before: { left: number; top: number; right: number; bottom: number }, after: typeof before) {
+  return {
+    left: after.left - before.left,
+    top: after.top - before.top,
+    right: after.right - before.right,
+    bottom: after.bottom - before.bottom,
+  };
+}
 
 /**
  * Samples a point given in CSS pixels within the line capture.
@@ -159,9 +207,7 @@ test.describe('Colors adjustment', () => {
     const box = await drawStroke(page, RED_STROKE);
     const before = await takeLineScreenshot(page, box, 'colors-before', testInfo);
     expect(await hasRedPixels(before), 'The stroke should be red before the adjustment').toBe(true);
-    const beforeAnalysis = await getStrokeAnalysis(before, LINE_CAPTURE_REGION);
-    expect(beforeAnalysis, 'The stroke should be visible to stroke analysis').not.toBeNull();
-    expect(beforeAnalysis!.type, 'The unadjusted stroke should read as solid').toBe('solid');
+    const beforeBounds = await inkBounds(before);
 
     await openToolFlyout(page, 'color');
     await selectFromFlyout(page, { toolName: 'color', label: 'Colors' });
@@ -193,12 +239,12 @@ test.describe('Colors adjustment', () => {
     // compositing two neutrals over each other stays neutral. Red, green and blue must
     // come out equal, not merely close.
     //
-    // The same three reads are the survival check, and they are the only ones in this file
-    // that can be: each one is a non-null answer from the middle of the stroke BODY, so an
-    // adjustment that emptied the layer samples the white document and returns null. The
-    // `getStrokeAnalysis` shape comparisons cannot say that for a red stroke — its core is
-    // neither dark nor bright enough to satisfy either branch, so the analyser only ever sees
-    // the renderer's anti-aliased fringe and reports on that instead.
+    // The same three reads are the survival check, and they are the only colour check in
+    // this file that can be: each one is a non-null answer from the middle of the stroke
+    // BODY, so an adjustment that emptied the layer samples the white document and returns
+    // null. What they cannot see is GEOMETRY — three points on one row still read the same
+    // colour if the layer was scaled about its middle, shifted, or thinned — so the four ink
+    // edges are compared below.
     const samples = await Promise.all(
       STROKE_SAMPLES.map(async ({ name, x, y }) => {
         const sampled = await sampleCssPoint(after, x, y, 5, { ignoreNearWhite: true });
@@ -215,19 +261,18 @@ test.describe('Colors adjustment', () => {
       });
     }
 
-
-    // The colour check alone passes if the tool emptied the layer, so the stroke's own
-    // shape is asserted too: same classification, same segment count, same extent.
-    const afterAnalysis = await getStrokeAnalysis(after, LINE_CAPTURE_REGION);
-    expect(afterAnalysis, 'grayscale(100%) erased the stroke entirely').not.toBeNull();
-    expect(afterAnalysis!.type, 'The greyed stroke should still read as solid').toBe('solid');
-    expect(afterAnalysis!.segments, 'The greyed stroke should still be one unbroken run').toBe(
-      beforeAnalysis!.segments
-    );
-    expect(afterAnalysis!.verticalSpread, 'The greyed stroke should occupy the same rows').toBe(
-      beforeAnalysis!.verticalSpread
-    );
-    expect(afterAnalysis!.pixelCount, 'The greyed stroke should still cover pixels').toBeGreaterThan(0);
+    // THE SHAPE, and it is the only assertion here that the adjustment is not allowed to
+    // move. The three samples above pass for a layer that was scaled about its middle,
+    // translated, or thinned, because a red stroke neutralised in place still reads grey
+    // at all three of them; the ink's four edges do not survive any of the three.
+    const afterBounds = await inkBounds(after);
+    const drift = inkDrift(beforeBounds, afterBounds);
+    expect
+      .soft(
+        Math.max(...Object.values(drift).map(Math.abs)) <= INK_BOUNDS_TOLERANCE_PX,
+        `grayscale(100%) must leave the stroke where it was, and the four edges moved by ${JSON.stringify(drift)}`
+      )
+      .toBe(true);
 
     // Reset discards the uncommitted preview: the stroke comes back red and the button
     // goes back to disabled, because there is no preview left for it to remove.
@@ -242,8 +287,7 @@ test.describe('Colors adjustment', () => {
     const box = await drawStroke(page, RED_STROKE);
     const before = await takeLineScreenshot(page, box, 'colors-before-saturation', testInfo);
     expect(await hasRedPixels(before), 'The stroke should be red before the adjustment').toBe(true);
-    const beforeAnalysis = await getStrokeAnalysis(before, LINE_CAPTURE_REGION);
-    expect(beforeAnalysis, 'The stroke should be visible to stroke analysis').not.toBeNull();
+    const beforeBounds = await inkBounds(before);
 
     await openToolFlyout(page, 'color');
     await selectFromFlyout(page, { toolName: 'color', label: 'Colors' });
@@ -272,15 +316,17 @@ test.describe('Colors adjustment', () => {
       expect(sampled!.blue, `saturate(0%) must neutralise the ${name} of the stroke`).toBe(sampled!.red);
     }
 
-    const afterAnalysis = await getStrokeAnalysis(after, LINE_CAPTURE_REGION);
-    expect(afterAnalysis, 'saturate(0%) erased the stroke entirely').not.toBeNull();
-    expect(afterAnalysis!.type, 'The desaturated stroke should still read as solid').toBe('solid');
-    expect(afterAnalysis!.segments, 'The desaturated stroke should still be one unbroken run').toBe(
-      beforeAnalysis!.segments
-    );
-    expect(afterAnalysis!.verticalSpread, 'The desaturated stroke should occupy the same rows').toBe(
-      beforeAnalysis!.verticalSpread
-    );
+    // The same one shape assertion the grayscale test makes, over the same four ink edges
+    // and for the same reason: three samples on a single row still read the same colour if
+    // the layer was scaled about its middle, translated, or thinned.
+    const afterBounds = await inkBounds(after);
+    const drift = inkDrift(beforeBounds, afterBounds);
+    expect
+      .soft(
+        Math.max(...Object.values(drift).map(Math.abs)) <= INK_BOUNDS_TOLERANCE_PX,
+        `saturate(0%) must leave the stroke where it was, and the four edges moved by ${JSON.stringify(drift)}`
+      )
+      .toBe(true);
   });
 });
 

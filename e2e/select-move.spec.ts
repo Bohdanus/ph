@@ -26,10 +26,21 @@ const HANDLE_OFFSET = 4;
  * quantisation: `getDarkPixelBounds` and `getSelectionBounds` report inclusive capture
  * indices, and the 2px outline stroke straddles the path it is drawn on, so a trailing edge
  * reads about one pixel past the geometry. The capture scale itself divides out through
- * `screenshotBoundsToCss`, so it contributes nothing here. Measured at a 1x capture: 0 on
- * every leading edge, 1 on the trailing ones.
+ * `screenshotBoundsToCss`, so it contributes nothing here.
+ *
+ * Two, and the number is measured rather than chosen: with this bound set to zero and both
+ * tests run, every leading edge and both anchors read their requested amount EXACTLY, and
+ * the only nonzero errors were 1.0 — the move's width extent, and the resize frame's right
+ * and bottom edges reading 141.0 and 81.0. So the observed range is 0..1 and this leaves
+ * one capture pixel of headroom over it, which is the whole of what the dashed outline
+ * needs: a 2px dash on the frame's path can drop one column off an extreme and never two.
+ *
+ * One would be exactly at the measured maximum with no margin, and three is three times it
+ * for no gain in discrimination — the smallest real defect these reads can distinguish is a
+ * wrong direction or a wrong amount, which is tens of pixels, so nothing between one and
+ * three catches an error the other does not.
  */
-const GESTURE_TOLERANCE_PX = 3;
+const GESTURE_TOLERANCE_PX = 2;
 
 test.describe('Select & Move', () => {
   test.beforeEach(async ({ page }) => {

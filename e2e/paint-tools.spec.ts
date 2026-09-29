@@ -250,8 +250,14 @@ async function readLevel(page: Page, geometry: Geometry, point: DocPoint, halfDo
  * The computed cursor of whatever element a page point actually hits, read through
  * `elementFromPoint` so the answer comes from hit testing rather than from a selector that
  * could be describing some other element. The options bars carry no `data-testid` by house
- * rule, and the tool area is the only thing mounted over the workspace, so a class selector
- * would be asserting the layout rather than the gate.
+ * rule, so a class selector would be asserting the layout rather than the gate.
+ *
+ * The tool area is the only thing over the workspace that HIT-TESTS, which is the property
+ * the read depends on, and it is not the same as being the only thing mounted there:
+ * `Main.tsx` mounts two overlay canvases over the workspace as well, and all three are
+ * `pointer-events-none`, so `elementFromPoint` skips the overlays and lands on the tool
+ * area. A selector would have to pick that element out of three siblings that share its
+ * box; hit testing resolves it without naming any of them.
  */
 async function cursorAt(page: Page, point: { x: number; y: number }): Promise<string | null> {
   return page.evaluate(({ x, y }) => {

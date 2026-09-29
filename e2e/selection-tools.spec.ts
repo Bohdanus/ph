@@ -659,11 +659,31 @@ test.describe('Elliptical marquee', () => {
     expect
       .soft(dragAspect, 'the drag itself is deliberately not the locked ratio')
       .not.toBeCloseTo(Number(FIXED_RATIO_VALUE), 1);
-    // The locked ratio grows the SHORT side and leaves the long one alone, so the width is the
-    // only part of the committed geometry that still matches the drag. Both ways of hitting
-    // the ratio — growing the height, or shrinking the width — produce the same aspect, so
-    // this is the assertion that tells them apart.
-    expect.soft(Math.abs(outlineWidth(outline!) - rect.width) <= OUTLINE_BOUNDS_TOLERANCE_PX).toBe(true);
+    // The WIDTH, and it is the assertion that says which side the ratio grew. Both
+    // readings produce the same aspect, so the aspect alone cannot tell them apart, and
+    // `applyRatio` preserves the width only on the branch a drag WIDER than the ratio
+    // takes: `width / height > ratio ? { width, height: width / ratio }`. So the premise
+    // this test leans on is `dragAspect > FIXED_RATIO_VALUE`, and it is asserted rather
+    // than assumed — `not.toBeCloseTo(1.5, 1)` only rules out 1.5 to within 0.05, so a
+    // 1.4 drag would satisfy it, take the OTHER branch, grow the width, and be rejected
+    // by the width check below as a false failure rather than as a real one.
+    expect
+      .soft(
+        dragAspect,
+        `this test reads the width as the preserved side, which needs a drag wider than ${FIXED_RATIO_VALUE}`
+      )
+      .toBeGreaterThan(Number(FIXED_RATIO_VALUE));
+    // Under that premise the committed width is the drag's own width: the ratio grew the
+    // height from `width / 1.5` up to it. The height check below already rules out a
+    // commit that shrank the long side, because that leaves the height AT the drag's; what
+    // the width adds is exact preservation rather than a direction, so a commit that grew
+    // BOTH sides — which the height check reads as a pass — is rejected here.
+    expect
+      .soft(
+        Math.abs(outlineWidth(outline!) - rect.width) <= OUTLINE_BOUNDS_TOLERANCE_PX,
+        `the ratio must leave the drag's width alone, and the committed width is ${outlineWidth(outline!).toFixed(1)} against a drag of ${rect.width}`
+      )
+      .toBe(true);
     expect
       .soft(outlineAspect(outline!), `committed aspect should be ${FIXED_RATIO_VALUE}, not the drag's`)
       .toBeCloseTo(Number(FIXED_RATIO_VALUE), 1);
