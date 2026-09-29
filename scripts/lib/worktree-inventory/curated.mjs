@@ -889,6 +889,12 @@ export const CURATED = {
     summary:
       'An audit of what the agent transcripts say about damaged work, reading the chats rather than inferring it from their shape.',
   },
+  'tsc-guard': {
+    summary:
+      'Makes a typecheck that checked nothing impossible to mistake for a pass: node_modules/.bin/tsc becomes scripts/tsc-guard.mjs, which refuses any invocation that is not build mode and names the two commands that do work. A tripwire test fails when npm has restored its plain symlink, and kilo.jsonc denies the command at the permission layer.',
+    mustNotPrune: true,
+    note: 'The guard itself is a symlink inside node_modules, which is gitignored and cannot be committed: the work that matters is the tracked guard, its installer, its tests and the prepare wiring, and npm regenerates the link from those. Losing this branch loses the refusal, and the trap it closes is a zero-file exit 0 that reads as a clean typecheck.',
+  },
 };
 
 /** Curated entry for a worktree name, or `undefined` when none is written. */

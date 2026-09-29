@@ -30,7 +30,7 @@
     "test:e2e:report": "playwright show-report",
     "test:e2e:clean": "rm -rf test-results/*/ test-results/.last-run.json playwright-report",
     "test:e2e:install": "playwright install chrome",
-    "prepare": "node scripts/install-git-hooks.js",
+    "prepare": "node scripts/install-git-hooks.js && node scripts/install-tsc-guard.mjs",
     "gate:verify": "npm run tsc && npm run build",
     "gate:commit": "lint-staged --fail-on-changes --no-stash && npm run gate:verify",
     "gate:push": "npm run test"
