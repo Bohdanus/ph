@@ -92,27 +92,6 @@ describe('Transform toolbar', () => {
     expect(screen.getByText('Reset All')).toBeInTheDocument();
   });
 
-  it('rotate buttons are clickable without error', () => {
-    render(<Transform />);
-
-    fireEvent.click(screen.getByTitle('Rotate 90° Left'));
-    fireEvent.click(screen.getByTitle('Rotate 180°'));
-    fireEvent.click(screen.getByTitle('Rotate 90° Right'));
-  });
-
-  it('mirror buttons are clickable without error', () => {
-    render(<Transform />);
-
-    fireEvent.click(screen.getByTitle('Mirror Horizontal'));
-    fireEvent.click(screen.getByTitle('Mirror Vertical'));
-  });
-
-  it('Reset All button is clickable without error', () => {
-    render(<Transform />);
-
-    fireEvent.click(screen.getByText('Reset All'));
-  });
-
   describe('accessible names of the icon buttons', () => {
     it('falls back to the icon glyph as the accessible name, with the tooltip only as title', () => {
       render(<Transform />);

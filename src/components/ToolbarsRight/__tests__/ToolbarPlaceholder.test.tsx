@@ -1,9 +1,24 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import React from 'react';
 import { PlaceholderTool } from '../ToolbarPlaceholder.tsx';
 import { placeholderToolGroups } from '../toolbarPlaceholderConfig.ts';
 import { toolsMap } from '../../../tools/toolsMap.ts';
+import ToolbarHorizontal from '../../ToolbarHorizontal/ToolbarHorizontal.tsx';
+
+// `ToolbarHorizontal` reads the store, and the real provider does not survive jsdom, so the store
+// is stubbed here — the same shape the component's own tests use. The toolsMap is NOT stubbed: the
+// point of the fallback test below is the real lookup.
+const storeState = vi.hoisted(() => ({ hasImage: true, toolName: 'pen' as string }));
+
+vi.mock('../../../contexts/StoreContext.tsx', () => ({
+  useStore: () => [storeState, vi.fn()],
+}));
+
+beforeEach(() => {
+  storeState.hasImage = true;
+  storeState.toolName = 'pen';
+});
 
 const CONFIG_KEYS = Object.keys(placeholderToolGroups) as Array<keyof typeof placeholderToolGroups>;
 
@@ -210,10 +225,21 @@ describe('placeholder tool wiring in toolsMap', () => {
     }
   });
 
-  it('leaves toolboxComponent undefined for an unknown tool, which is the ToolbarHorizontal fallback trigger', () => {
-    const unknownToolMap = toolsMap as unknown as Record<string, { toolboxComponent?: unknown }>;
+  it('renders the unregistered-tool placeholder for a tool the real toolsMap does not have', () => {
+    // The `?.` in ToolbarHorizontal.tsx:14 is only reachable when the registry lookup misses, so
+    // the fallback has to be driven through the real map rather than a locally invented key.
+    storeState.toolName = 'not-a-real-tool';
+    render(<ToolbarHorizontal />);
 
-    expect(unknownToolMap['not-a-real-tool']).toBeUndefined();
-    expect(unknownToolMap['not-a-real-tool']?.toolboxComponent).toBeUndefined();
+    expect(screen.getByText('TODO: unregistered tool placeholder')).toBeInTheDocument();
+    expect(screen.queryByText('TODO')).toBeNull();
+  });
+
+  it('renders the registered placeholder bar, not the fallback, for a tool in the real toolsMap', () => {
+    storeState.toolName = 'pen';
+    render(<ToolbarHorizontal />);
+
+    expect(screen.getByText('Pen Tool')).toBeInTheDocument();
+    expect(screen.queryByText('TODO: unregistered tool placeholder')).toBeNull();
   });
 });
