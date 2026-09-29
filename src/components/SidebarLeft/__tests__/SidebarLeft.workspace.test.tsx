@@ -130,12 +130,33 @@ describe('SidebarLeft workspace placement', () => {
     // "Unlike most panels in Photoshop, however, you cannot... resize" the Tools panel. The
     // 108px/56px pair is the one/two-column layout the toggle switches between, and a drag
     // must not be a third thing that changes it.
-    expect(screen.getByTestId('left-sidebar')).toHaveStyle({ width: '108px' });
+    // WHICH of the pair the rail starts on is READ rather than pinned, and this test used to
+    // assert 108px. That was not a claim about re-docking: it was a second, weaker copy of
+    // the layout default, in a file about the panel workspace, that fails every time someone
+    // changes the default. What this test is for is that the toggle reaches the OTHER width
+    // and comes back, so that is what it says.
+    //
+    // In REM, the units the rail actually declares, and read off `style` rather than through
+    // `toHaveStyle`: that matcher normalises 3.5rem to 56px against a 16px root, so comparing
+    // a declared rem string against a pixel string is a comparison between two units.
+    const rail = () => screen.getByTestId('left-sidebar');
+    const ONE_COLUMN = '3.5rem';
+    const TWO_COLUMNS = '6.75rem';
+    const startingWidth = rail().style.width;
+    expect([ONE_COLUMN, TWO_COLUMNS], "the rail is one of Photoshop's two widths").toContain(startingWidth);
+    const otherWidth = startingWidth === ONE_COLUMN ? TWO_COLUMNS : ONE_COLUMN;
 
     act(() => {
       fireEvent.click(screen.getByTestId('toolbar-layout-toggle'));
     });
-    expect(screen.getByTestId('left-sidebar')).toHaveStyle({ width: '56px' });
+    expect(rail().style.width, 'the toggle reaches the other of the two widths').toBe(otherWidth);
+
+    act(() => {
+      fireEvent.click(screen.getByTestId('toolbar-layout-toggle'));
+    });
+    expect(rail().style.width, 'and back again, so the pair is a toggle rather than a one-way change').toBe(
+      startingWidth
+    );
   });
 
   it('drags to the opposite edge, and lands there', () => {

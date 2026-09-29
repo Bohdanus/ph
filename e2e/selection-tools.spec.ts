@@ -506,6 +506,13 @@ test.describe('Eyedropper', () => {
   });
 
   test('the eyedropper is reachable from its own sidebar tile', async ({ page }) => {
+    // The window is grown, because the test's NAME is its claim: it is about the eyedropper's OWN
+    // tile, and at the suite's 1280x720 the eyedropper is the fifth of sixteen rows, so the
+    // collapse — which is a suffix — has already taken it. Measured by `e2e/toolbar-fit.spec.ts`:
+    // 720 shows four tool tiles, and 900 shows seven. So this test would otherwise be asserting
+    // its own premise rather than the app, and `toBeVisible` against a tile that is correctly
+    // absent fails as "element not found" against a test id that is right.
+    await page.setViewportSize({ width: 1280, height: 900 });
     await expect(page.getByTestId('tool-button-eyedropper')).toBeVisible();
     await clickToolButton(page, 'eyedropper');
     // The eyedropper's bar is a real panel, not the `PlaceholderTool` the other unimplemented

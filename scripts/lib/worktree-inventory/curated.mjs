@@ -858,9 +858,8 @@ export const CURATED = {
   },
   'toolbar-overflow': {
     summary:
-      'A left rail that collapses its tool tiles into the three-dots tile rather than demanding vertical room: the pure fit arithmetic split from the DOM measuring so the boundary can be pinned in jsdom.',
-    mustNotPrune: true,
-    note: 'The collapse itself is committed and this branch is not on main, so git does see that much. The rail and the flyout specs that have to move with it are uncommitted, and an earlier version of this note claimed the fit module was an untracked file — there is no untracked file in this worktree, so read the record rather than that claim.',
+      'The left rail fits its tiles to the space it has and moves the ones that do not fit into a Photoshop-style three-dots tile, with one column as the default. A pure planner, a DOM-measuring fit store reached by ref callbacks, the tile itself, and the e2e specs it de-fragilised off hard-coded rail widths.',
+    note: "Do NOT record a width or a viewport height here \u2014 that is the thing this branch removed. The three-dots menu needs a `max-h` and scrolls: `AnchoredOverlay` clamps a flyout's position and never its size, so a menu as tall as its contents in a `position: fixed` wrapper is unreachable below the fold.",
   },
   'swarm-watch-tail': {
     summary:

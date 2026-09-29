@@ -414,6 +414,47 @@ threads a `canvasBox(page)` call through `stroke`, `clickAt`, `readPixel`,
 `measureErasedWidth` and `slabClip` for this reason. A helper that returns the box
 alongside the capture it took would make the mistake harder to make.
 
+## P2 — a CDP capture intermittently returns a screenshot of a page 87px shorter than the one measured
+
+`e2e/helpers/cdp-helpers.ts`
+
+**Signature.** `captureCanvasScreenshot` returns a plausible image of a page that is not the one
+the caller measured. In a 700px window, `window.innerHeight` reported 700 before the call and 613
+after; in a 900px window, 900 before and 813 after. **The same 87px both times**, with the capture
+the only thing between the two readings. The box before was 844x563 and after 844x476 — width and
+origin unchanged, height alone. The image looks correct, so nothing downstream can tell; the
+caller maps a stroke it measured under the old layout through the new one and the mismatch reads
+as a geometry bug in the app.
+
+**How it was found, and what it is not.** `e2e/viewport-drawing.spec.ts` reported a 32.5px /
+31.05px line-vs-cursor error at the `wide` viewport, which predicted the 763→676 box change
+exactly. The obvious suspect was the rail's new width, and that was wrong: measured per viewport,
+all three windows are **height-limited** (the fit never crosses modes, and width-limited at `wide`
+would need a 970px-tall window), the app's pointer→document mapping
+(`src/hooks/usePointerPosition.ts:247-262`) and its `object-contain` paint agree exactly in CSS
+space, and painting the app's own document point back through its own fit returns the cursor to
+the decimal. The residual 3–5.5px is the brush's half-width. So the mapping is self-consistent
+and the geometry is fine; the capture is the liar.
+
+**Not fixed.** `captureBeyondViewport: false` is now passed explicitly, which is the documented
+scope and the obvious suspect, and it did **not** eliminate the drift: 1 failure in 15 repeats
+with it set. Across **50 controlled captures at a fixed viewport the drift did not reproduce at
+all** — not once through the full sequence (load, select draw, `drawLine`, `waitForCanvasRedraw`,
+marker injection, capture), which is what makes it a race rather than a scope problem, and why
+the CDP mechanism is still open. Settling it needs native tracing (`--trace` on a run that
+reproduces, or CDP tracing around the call), not more attempts to reproduce it in a loop.
+
+**What is done about the reporting.** `e2e/viewport-drawing.spec.ts` now re-measures the box
+across the capture and fails with _"the capture is of a DIFFERENT page than the one that was
+measured, so every offset below is meaningless"_ plus both boxes. That guard fired on the real
+drift during a 10x repeat run, so it is not theoretical. Before it, the same drift surfaced as a
+32.5px app geometry error, which would have sent the next agent to the drawing engine.
+
+**Do not "fix" this by widening a tolerance.** The same spec's tolerance is now DERIVED from the
+stroke's own geometry — `(lineWidth / 2) x containFit(box).scale + 2`, which is 6.7–8.4px and
+roughly a third of the fixed 25px it replaced — and there is a control asserting the widest
+derived tolerance stays below 25 so a later edit cannot silently re-widen it.
+
 ## Known-skip tests
 
 Two specs are `test.skip` by declaration:
@@ -557,11 +598,22 @@ mapping has to be inverted before such a literal is meaningful, and it is not. S
 asserts against whatever geometry the current layout happens to produce, and a layout change
 silently changes what is being tested rather than failing.
 
-**Five assertions that fail outright on a 1px rail change**, all in `e2e/responsive-shell.spec.ts`:
-`:186` expects the collapsed rail at 56, `:207` and `:281` expect the right panel at 250, `:221`
-expects the panel's own width delta at 250, and `:296` expects the two-column rail at 108. Those are
-`toBeCloseTo(x, 0)`, so a single pixel fails them. They are the sharp end of the same defect: a
-number written into a test is a pin on the layout, and the layout is not the subject.
+**Three assertions still fail outright on a 1px change**, all in `e2e/responsive-shell.spec.ts`:
+`:336` expects the expanded right panel at 250, `:350` expects the panel's own width delta at 250,
+and `:417` expects the collapsed panel at 250. Those are `toBeCloseTo(x, 0)`, so a single pixel
+fails them. They are the sharp end of the same defect: a number written into a test is a pin on
+the layout, and the layout is not the subject.
+
+**Two more were in this list and are gone.** The entry used to name five. The other two were the
+rail's own width — the collapsed rail at 56 and the two-column rail at 108 — and they are
+resolved, by `feat/toolbar-overflow-collapse`. That change made one column the default and had the
+rail fit its tiles to the space it has, which is exactly the kind of change this entry warns about,
+and both assertions had to go rather than be re-pointed at the new numbers. What replaced them is
+the pattern the rest of this entry asks for: the tablet band's rail is now asserted by the
+`<ul>` count the layout renders (`e2e/responsive-shell.spec.ts:302-319`), and the two-column rail
+by a width RELATION the test measures against itself — one column against two, both measured in the
+same test (`e2e/responsive-shell.spec.ts:420-441`) — so neither pins a pixel. The panel's 250 is the
+same defect and still needs the same treatment.
 
 **The pattern to copy is already in the tree.** `e2e/viewport-drawing.spec.ts:26-27` gestures at
 `box.x + box.width * 0.25` and `box.y + box.height * 0.35` — a fraction of the box, so it tracks the

@@ -11,7 +11,7 @@ import {
   waitForCanvasRedraw,
 } from './helpers/canvas-helpers';
 import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
-import { clickToolButton } from './helpers/toolbar-helpers';
+import { clickToolButton, resolveToolTile } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
@@ -132,22 +132,48 @@ test.describe('Keyboard shortcuts', () => {
 
   test.describe('tool shortcuts', () => {
     /**
-     * Every row names a tile that holds exactly one tool, so `aria-pressed` on it states
-     * exactly which tool is active. A grouped tile cannot be used this way: `SidebarLeft`
+     * Every row names a GROUP that holds exactly one tool, so the tile representing it is
+     * the only one that can light. A multi-tool group cannot be used this way: `SidebarLeft`
      * computes `group.some((tool) => tool.name === toolName)`, so the tile reads pressed
      * for every member of the group.
+     *
+     * The tile is RESOLVED rather than addressed, which is the whole difference between this
+     * test and the version from before the rail learned to fold itself away. Three of these
+     * four tools are rows of the three-dots tile's flyout at the suite's viewport and have
+     * no tile of their own to address. Resolution keeps the question identical at every
+     * window because the app answers it identically at every window: the three-dots tile
+     * computes `aria-pressed` with the same `group.some(...)`, over the collapsed set. The
+     * addressed version did not fail HERE — `getByTestId` reports zero elements rather than
+     * failing — so the absence surfaced one line later as "element(s) not found" against a
+     * test id that was correct and simply not rendered.
+     *
+     * WHICH IS NOT ENOUGH ON ITS OWN, and the `bar` column is why. The three-dots tile
+     * answers "is SOME tool of the collapsed set selected", so at a window where the rail
+     * has folded anything it is lit for a large fraction of the tool list — and measured at
+     * 1280x720 it is ALREADY lit on load, because the app starts on a tool that has been
+     * folded away. Asserting only the resolved tile would have made `C`, `T` and `S` pass
+     * with the shortcut deleted, which is why the tile alone is not what is asserted here.
+     * `bar` is a control of that tool's own options bar, and the bar is the one thing in the
+     * document that is driven by `toolName` itself: each row's control is absent before the
+     * keystroke and present after, so the row says WHICH tool is up. The tile assertion is
+     * kept anyway, because it pins the reachability contract this branch is about — a tool
+     * the rail could not show is still represented, and the tile standing for it lights.
      */
     const SINGLE_TOOL_SHORTCUTS = [
-      { key: 'v', testId: 'tool-button-reposition' },
-      { key: 'c', testId: 'tool-button-crop' },
-      { key: 't', testId: 'tool-button-text' },
-      { key: 's', testId: 'tool-button-clone-stamp' },
+      { key: 'v', tool: 'reposition', bar: '[data-testid="reposition-hint-text"]' },
+      { key: 'c', tool: 'crop', bar: '#aspect-ratio' },
+      { key: 't', tool: 'text', bar: '#text-input' },
+      { key: 's', tool: 'clone-stamp', bar: '#clone-stamp-size' },
     ] as const;
 
-    for (const { key, testId } of SINGLE_TOOL_SHORTCUTS) {
-      test(`${key.toUpperCase()} selects ${testId.replace('tool-button-', '')}`, async ({ page }) => {
+    for (const { key, tool, bar } of SINGLE_TOOL_SHORTCUTS) {
+      test(`${key.toUpperCase()} selects ${tool}`, async ({ page }) => {
         await page.keyboard.press(key);
-        await expect(page.getByTestId(testId)).toHaveAttribute('aria-pressed', 'true');
+        await expect(await resolveToolTile(page, tool), 'the tile standing for the tool is lit').toHaveAttribute(
+          'aria-pressed',
+          'true'
+        );
+        await expect(page.locator(bar), 'the tile is lit for a tool of its own, not a neighbour of one').toBeVisible();
       });
     }
 
@@ -155,8 +181,27 @@ test.describe('Keyboard shortcuts', () => {
       // The eraser is a secondary member of the brush group, so the tile it lights is the
       // brush's. Asserting the tile alone would pass for the brush too, which is why the
       // eraser bar's own control is the assertion that carries the meaning here.
+      //
+      // WHICH tile that is depends on the window, and the rule is the same either way: the
+      // brush group keeps a tile of its own while the rail can show it, and becomes a row of
+      // the three-dots tile's flyout once it cannot. At the suite's viewport it is already
+      // the latter, so this resolves the tile rather than assuming the brush's own.
+      //
+      // `V` first, and that keystroke is part of the test rather than setup. The rail starts
+      // on a tool that has been folded away, so the tile that represents the brush group is
+      // ALREADY lit when the test begins and pressing `E` cannot make it change state — the
+      // light would prove nothing. Selecting the Move tool first puts the rail in a state
+      // where that tile is dark, which is what turns "this tile lit" back into the
+      // observation it was before the collapse: a tile that was not lit lights for a member
+      // of the brush group that is not the group's own identity.
+      await page.keyboard.press('v');
+      await expect(await resolveToolTile(page, 'brush'), 'the baseline leaves the brush group unlit').toHaveAttribute(
+        'aria-pressed',
+        'false'
+      );
+
       await page.keyboard.press('e');
-      await expect(page.getByTestId('tool-button-brush')).toHaveAttribute('aria-pressed', 'true');
+      await expect(await resolveToolTile(page, 'brush')).toHaveAttribute('aria-pressed', 'true');
       await expect(page.locator('#eraser-mode')).toBeVisible();
       await expect(page.locator('#brush-size'), 'the paint bar is not the one on screen').toHaveCount(0);
     });
@@ -281,7 +326,25 @@ test.describe('Keyboard shortcuts', () => {
       // phase. A regression in either layer shows up here: the digits must reach the
       // field AND neither `V` nor `T` may have selected a tool.
       await clickToolButton(page, 'draw');
-      await expect(page.getByTestId('tool-button-draw')).toHaveAttribute('aria-pressed', 'true');
+      // The Draw group is a row of the three-dots flyout at this window, so the tile that
+      // represents it is resolved, not addressed. The Move assertion is resolved for the
+      // same reason and NOT merely for symmetry: it names the tool `V` would have selected,
+      // which is a question about a tool, and that is the question the guard is about.
+      //
+      // The two resolved tiles can never be the same element, so the pair is not one tile
+      // asserting both halves of a single fact. The collapse is a SUFFIX of the rail's rows
+      // (`fittedThrough` in `toolbar-overflow.ts`), so a tile below a collapsed row is
+      // collapsed too — and Move is the first row, which is the last thing a suffix reaches.
+      const drawTile = await resolveToolTile(page, 'draw');
+      await expect(drawTile, 'the tile standing for the tool is lit').toHaveAttribute('aria-pressed', 'true');
+      // …and the Draw bar, because that tile was ALREADY lit before the click: the rail
+      // starts on a tool the window folded away, so `aria-pressed` on the three-dots tile
+      // cannot tell this precondition from the app's opening state. The bar is driven by
+      // `toolName` itself and is absent until the click lands.
+      await expect(
+        page.locator('#pen-type'),
+        'the Draw tool is the one selected, not merely some collapsed tool'
+      ).toBeVisible();
 
       // A `confirm()` before the dialog only exists while the document has unsaved
       // changes; accepting it makes the test say nothing about whether it appeared.
@@ -296,16 +359,24 @@ test.describe('Keyboard shortcuts', () => {
 
       await page.keyboard.press('v');
       await expect(width, 'V typed into the field changes nothing about it').toHaveValue('123');
-      await expect(page.getByTestId('tool-button-draw'), 'no tool switched while the field had focus').toHaveAttribute(
-        'aria-pressed',
-        'true'
-      );
-      await expect(page.getByTestId('tool-button-reposition')).toHaveAttribute('aria-pressed', 'false');
+      await expect(drawTile, 'no tool switched while the field had focus').toHaveAttribute('aria-pressed', 'true');
+      await expect(await resolveToolTile(page, 'reposition')).toHaveAttribute('aria-pressed', 'false');
     });
 
     test('a tool shortcut is ignored while a layer name is being edited', async ({ page }) => {
       await page.keyboard.press('t');
-      await expect(page.getByTestId('tool-button-text')).toHaveAttribute('aria-pressed', 'true');
+      // Resolved, for the reason the first guard above states: the Type tool has no tile of
+      // its own at this window, and `V` is what this test proves did not reach the shortcut.
+      // The Move assertion is the other half of the same fact and cannot be the same
+      // element, for the same suffix reason.
+      const textTile = await resolveToolTile(page, 'text');
+      await expect(textTile, 'the tile standing for the tool is lit').toHaveAttribute('aria-pressed', 'true');
+      // The bar, for the same reason the Draw guard above states it: the three-dots tile
+      // was already lit when this test began, so the tile cannot establish that `T` did
+      // anything. What makes the rest of the test meaningful is the PAIR below — the tile
+      // still lit and the Move tile still dark after `V` was typed — and `V` reaching the
+      // shortcut would flip both, so neither assertion is satisfied by the opening state.
+      await expect(page.locator('#text-input'), 'the Type tool is the one selected').toBeVisible();
 
       // `LayersTab` mints the name span without `contenteditable` until a mousedown
       // flips it, and that flip does not focus: the first click enters edit mode and the
@@ -317,11 +388,8 @@ test.describe('Keyboard shortcuts', () => {
       await page.keyboard.type('v');
 
       await expect(name, 'the letter belongs to the name').toContainText('v');
-      await expect(page.getByTestId('tool-button-text'), 'V did not reach the reposition shortcut').toHaveAttribute(
-        'aria-pressed',
-        'true'
-      );
-      await expect(page.getByTestId('tool-button-reposition')).toHaveAttribute('aria-pressed', 'false');
+      await expect(textTile, 'V did not reach the reposition shortcut').toHaveAttribute('aria-pressed', 'true');
+      await expect(await resolveToolTile(page, 'reposition')).toHaveAttribute('aria-pressed', 'false');
     });
   });
 });

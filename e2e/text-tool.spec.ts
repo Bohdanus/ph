@@ -12,7 +12,6 @@ import {
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { captureCanvasScreenshot } from './helpers/cdp-helpers';
-import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 import { imageBoundsToCss } from './helpers/screenshot-scale';
 
@@ -32,25 +31,66 @@ import { imageBoundsToCss } from './helpers/screenshot-scale';
 const TEXT_TOOL_TIMEOUT_MS = 60_000;
 
 /**
+ * The rail's measured width, in CSS px.
+ *
+ * This is the one term in the canvas box's width that is not a constant of the app's design,
+ * because it is the `auto` track of `grid-cols-[auto_1fr_250px]` and the rail chooses its own
+ * width: 56px in one column, 108px in two, and one column is the default. Reading it is what
+ * makes the width below a DERIVATION rather than a second place to update when that default
+ * moves — this file's previous comment hard-coded the two-column 108 and was wrong by 52px the
+ * day the default changed, with nothing in the suite able to notice, because every drag here is
+ * box-relative and simply drew somewhere else in the document.
+ */
+const railWidth = async (page: Page): Promise<number> => {
+  const box = await page.getByTestId('left-sidebar').boundingBox();
+  if (!box) throw new Error('text-tool: left rail has no visible width');
+  return box.width;
+};
+
+/**
+ * The right panel's fixed grid track, in CSS px. See {@link expectedCanvasWidth}.
+ */
+const RIGHT_PANEL_WIDTH = 250;
+
+/**
+ * The canvas box width the shell's grid must produce, from the rail actually on screen.
+ *
+ * `250` is typed because it is a design constant of the shell rather than a per-viewport
+ * measurement, and `railWidth` is the part that varies. Asserted against the measured box in
+ * `canvasBox` so the two cannot drift apart.
+ */
+const expectedCanvasWidth = async (page: Page): Promise<number> => {
+  const viewport = page.viewportSize();
+  if (!viewport) throw new Error('text-tool: page has no viewport');
+  return viewport.width - (await railWidth(page)) - RIGHT_PANEL_WIDTH;
+};
+
+/**
  * The rectangle the draft is dragged out in, in canvas-box coordinates — `drawLine`
  * offsets its arguments by the canvas box, so these are CSS px from the box's top-left
  * (`canvas-helpers.ts:471-478`).
  *
- * Measured at the suite's 1280x720 desktop viewport: the workspace canvas box is
- * 922x583 at page (108, 100); the page does NOT overflow, because
- * `documentElement.scrollHeight` is 720, the same as `clientHeight` — the left rail's
- * `min-h-0 overflow-y-auto` (`src/components/SidebarLeft/SidebarLeft.tsx:459`) owns its
- * own scrolling, so the shell is exactly viewport-tall. The 800x600 starting document
- * (`src/App.tsx:20-25`) therefore letterboxes into that element HEIGHT-limited, at
- * scale 0.97167, rendering 777x583 at box x 72.5..849.5 and all 583 rows. So the
- * rectangle below — box x 200..600, y 200..320, i.e. document x 131..543, y 206..329 —
- * is inside the document, and there are 263 rows of element below it and no fold to
- * clear. (`e2e/OPEN_PROBLEMS.md` holds the layout table.)
+ * The rectangle is in CANVAS-BOX coordinates, so it does not care how wide the box is, and
+ * that is why it is written the way it is. What does care is whether the box is wide enough to
+ * hold the document at a usable size, and the answer is a property of the RAIL — the one number
+ * in that chain that is not a constant of this file. The rail is the leftmost grid track
+ * (`grid-cols-[auto_1fr_250px]`, `src/App.tsx:75`), so the canvas box is
+ * `viewport - railWidth - 250`, and `railWidth` is 56px in one column and 108px in two. One
+ * column is the DEFAULT now, so the box is `1280 - 56 - 250 = 974` wide. The old derivation here
+ * read the rail as 108px and got 922, and it was wrong in a way no test would have caught: the
+ * drag is box-relative, so it moved to a different part of the document and still drew inside
+ * the rectangle the assertions were written about.
  *
- * The 922 is the TWO-COLUMN width, which is the default: `grid-cols-[auto_1fr_250px]`
- * (`src/App.tsx:75`) with a 108px rail gives 1280 - 108 - 250 = 922. The 974 quoted in
- * some of this file's earlier comments is the ONE-COLUMN width (rail 3.5rem = 56px),
- * which nothing here selects.
+ * `railWidth` below therefore measures the rail rather than assuming either value, and
+ * `expectedCanvasWidth` is the arithmetic that must hold for `DRAFT_RECT` to be addressing the
+ * document. At the suite's 1280x720 that is 974x583 at page (56, 100); the page does NOT
+ * overflow, because `documentElement.scrollHeight` is 720, the same as `clientHeight` — the left
+ * rail's `min-h-0 overflow-y-auto` owns its own scrolling, so the shell is exactly
+ * viewport-tall. The 800x600 starting document (`src/App.tsx:20-25`) letterboxes into that
+ * element HEIGHT-limited, at scale 0.97167, rendering 777x583 at box x 98.5..875.5 and all 583
+ * rows. So the rectangle below — box x 200..600, y 200..320, i.e. document x 105..516,
+ * y 206..329 — is inside the document, with 263 rows of element below it and no fold to clear.
+ * (`e2e/OPEN_PROBLEMS.md` holds the layout table.)
  */
 const DRAFT_RECT = { x1: 200, y1: 200, x2: 600, y2: 320 };
 
@@ -97,7 +137,7 @@ const INK_MARGIN = 6;
  * (`canvas-helpers.ts:531`) with the clip re-derived on every poll by `onScreenClip`
  * (`canvas-helpers.ts:529`), which is a no-op while the region is in view, so with zero
  * page overflow it is a no-op on every poll. Measured, the clip this margin produces is
- * page x 284..732, y 276..444: inside the 1280x720 page and inside the 922x583 canvas
+ * page x 232..680, y 276..444: inside the 1280x720 page and inside the 974x583 canvas
  * box, with room over. The CDP capture below does not go through either, which is why
  * the two clips differ.
  */
@@ -159,13 +199,37 @@ function toClip(rect: Rect): { x: number; y: number; width: number; height: numb
 
 /**
  * The Type tool is a one-tool group in `toolbar-mapping.ts:107` (its group is the single
- * entry `[{ label: 'Horizontal Type Tool', name: 'text', shortcut: 'T' }]`), so
- * `SidebarLeft` gives it a plain `tool-button-text`: a group only publishes a flyout when
- * `group.length > 1` (`SidebarLeft.tsx:168`), and this one holds exactly one. `clickToolButton`
- * therefore resolves on its first attempt and no flyout long-press is needed.
+ * entry `[{ label: 'Horizontal Type Tool', name: 'text', shortcut: 'T' }]`), so it never
+ * publishes a flyout of its own: a group only does when `group.length > 1`
+ * (`SidebarLeft.tsx:446`). Whether it has a TILE is a different question, and at this viewport
+ * the answer is no — the rail collapses trailing groups into the three-dots tile when they
+ * would not fit (`SidebarLeft.tsx:80-111`), and Type is in the last section, so at 1280x720 it
+ * is reached through the three-dots flyout. `clickToolButton` has a route for that, but it ends
+ * in a click, and the click is the part that cannot work here.
+ *
+ * The three-dots menu is as tall as its contents — 31 items is 1254px against a 720px window —
+ * and `AnchoredOverlay` clamps the overlay's POSITION, never its height
+ * (`src/components/SidebarLeft/AnchoredOverlay.tsx:88-92`), so the Type entry renders at
+ * y 975..1015, off-screen with no scrollbar to reach it. Playwright refuses to click it, and
+ * correctly: nothing at that coordinate is there to click. The menu's own `onKeyDown` activates
+ * the focused entry with Enter (`SidebarLeft.tsx:578-581`), which is the app's supported way to
+ * pick an entry the pointer cannot reach, so that is the route below — and it holds at any
+ * viewport, because focus does not require the entry to be on screen.
  */
 async function selectTextTool(page: Page): Promise<void> {
-  await clickToolButton(page, 'text');
+  const tile = page.getByTestId('tool-button-text');
+  if (await tile.count()) {
+    await tile.click();
+  } else {
+    await page.getByTestId('tool-overflow-tile').click({ button: 'right' });
+    const menu = page.getByTestId('tool-flyout-overflow');
+    await expect(menu).toBeVisible();
+    const item = page.getByTestId('tool-flyout-item-text-horizontal-type-tool');
+    await expect(item).toBeAttached();
+    await item.focus();
+    await page.keyboard.press('Enter');
+    await expect(menu).toBeHidden();
+  }
   await expect(page.locator('#text-input'), 'the Text toolbar should be mounted').toBeVisible();
 }
 
@@ -181,21 +245,30 @@ async function dragDraftRect(page: Page, box: BoundingBox): Promise<void> {
 }
 
 /**
- * Re-reads the canvas box, after the tool is selected.
+ * Re-reads the canvas box, after the tool is selected, and checks its width against the shell.
  *
  * Every test in this file calls this AFTER `selectTextTool` has run, which is the only
  * order that makes a stale box possible: the draft drag is expressed in canvas-box
  * coordinates, so a box read before the tool click would address different pixels if the
- * click reflowed the workspace. Measured, it does not — the box is 922x583 at page
- * (108, 100) both before and after selecting the Text tool, because the tool's options
- * mount in the RIGHT sidebar and the left rail scrolls inside its own box. So this re-read
- * is not load-bearing today; it is here so that a reflow that did change the box could not
- * make the drag quietly address a different pixel, and it is the reason nothing here
- * caches a box across the tool click.
+ * click reflowed the workspace. Measured, it does not — the box is the same size before and
+ * after selecting the Text tool, because the tool's options mount in the RIGHT sidebar and the
+ * left rail scrolls inside its own box. So this re-read is not load-bearing for the tool click;
+ * it is here so that a reflow which did change the box could not make the drag quietly address
+ * a different pixel, and it is the reason nothing here caches a box across the tool click.
+ *
+ * The width assertion is the other half. `DRAFT_RECT` is box-relative and so never pins an
+ * absolute width, which means a rail that changed width would move the drag to a different part
+ * of the document and every test here would still pass — that is exactly what happened when the
+ * default column count changed and this file's comments kept claiming 922. Deriving the expected
+ * width from the rail actually on screen is what turns the assumption into something a change
+ * has to answer for.
  */
 async function canvasBox(page: Page): Promise<BoundingBox> {
   const box = await getWorkspaceCanvas(page).boundingBox();
   if (!box) throw new Error('text-tool: workspace canvas has no visible coordinates');
+  expect(Math.round(box.width), 'the canvas box is the 1fr track between the measured rail and the right panel').toBe(
+    await expectedCanvasWidth(page)
+  );
   return box;
 }
 
