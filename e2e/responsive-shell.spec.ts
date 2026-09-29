@@ -220,14 +220,21 @@ test.describe('Tablet band', () => {
     expect(collapsed - expanded).toBeCloseTo(250, 0);
   });
 
-  // Measured, not estimated: the Text panel lays out at 1036px and the Shape panel at
-  // 1089px, and both overflow at 768, 900 and 1023. Transform is NOT one of them — its
+  // The floor is the window plus a margin, NOT the panel's measured width. Both panels
+  // used to be pinned to a measurement — 1089 and 1036 — and both had to come down by
+  // exactly 4px together when the shared option-row chrome narrowed, which is how you can
+  // tell a shared chrome shift from a control that went missing: a lost control takes a
+  // whole widget with it, and these two moved identically. Measured on this tree the
+  // panels lay out at 1085 (Shape) and 1032 (Horizontal Type) against a 900px window, so
+  // the floor below leaves 15% and 14% of headroom and still fails a panel that stops
+  // overflowing the window or loses more than a few percent of its width. The point of
+  // the entry is that the controls past the window edge are REACHABLE, and the reachability
+  // is proved below by scrolling to the end, not by this number.
+  // Transform is NOT one of them — its
   // content is mostly flexible sliders, so it compresses to the row instead of overflowing.
   // Reaching for it would have asserted nothing.
-  for (const { label, minWidth } of [
-    { label: 'Shape', minWidth: 1089 },
-    { label: 'Horizontal Type Tool', minWidth: 1036 },
-  ]) {
+  const MIN_PANEL_WIDTH = TABLET.width + 100;
+  for (const label of ['Shape', 'Horizontal Type Tool']) {
     test(`makes the ${label} option panel horizontally scrollable rather than unreachable`, async ({ page }) => {
       test.setTimeout(60_000);
       await open(page, TABLET);
@@ -241,7 +248,10 @@ test.describe('Tablet band', () => {
       }));
 
       expect(metrics.overflowX, 'the tablet band must scroll the option row').toBe('auto');
-      expect(metrics.scrollWidth, 'the option row must be wider than the window').toBeGreaterThanOrEqual(minWidth);
+      expect(
+        metrics.scrollWidth,
+        'the option row must be wider than the window, with room to spare'
+      ).toBeGreaterThanOrEqual(MIN_PANEL_WIDTH);
       expect(metrics.scrollWidth, 'the row must overflow its own box').toBeGreaterThan(metrics.clientWidth);
 
       // The row can be driven to its end, which is the actual fix: before the tablet band

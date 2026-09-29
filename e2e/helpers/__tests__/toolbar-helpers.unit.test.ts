@@ -4,6 +4,10 @@ import type { Page } from '@playwright/test';
 import { createScrollModel } from './canvas-helpers.fixtures';
 import { slugifyToolLabel, toolbarMap } from '../../../toolbar-mapping.ts';
 import {
+  FLYOUT_VISIBLE_TIMEOUT_MS,
+  // The helper's mirror of the app's own threshold. Imported so the fake below can be
+  // pinned against the value it is modeling, and so a third literal never appears here.
+  LONG_PRESS_DELAY_MS,
   TOOL_NAME_MAP,
   TOOL_DISPLAY_LABEL_MAP,
   normalizeToolName,
@@ -12,10 +16,6 @@ import {
   clickToolButton,
   openToolFlyout,
   waitForFlyout,
-  // Imported, not restated. Two literals for one timeout is how the delay came to be 300 in
-  // one place and 350 in another while only `300 + 50 === 350` kept them compatible, so
-  // declaring this again here would reintroduce the exact hazard the export exists to stop.
-  FLYOUT_VISIBLE_TIMEOUT_MS,
   selectFromFlyout,
   getToolButton,
   toggleToolbarLayout,
@@ -27,15 +27,14 @@ import {
   type FlyoutItem,
 } from '../toolbar-helpers';
 
-const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks, attributeChecks } = vi.hoisted(() => {
+const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks, attributeChecks, pollClock } = vi.hoisted(() => {
   type Target = {
     __elements: Array<{
       visible: boolean;
       focused: boolean;
       testId: string | null;
       text: string;
-      attributes?: Record<string, string>;
-      settle?: (() => void) | null;
+      attributes: Record<string, string>;
     }>;
   };
   type Check = { target: Target; options?: { timeout?: number } };
@@ -49,9 +48,17 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks, attributeC
   const recordedAttributeChecks: Array<{
     target: Target;
     name: string;
-    expected: string;
+    value: string;
     options?: { timeout?: number };
   }> = [];
+
+  // Playwright's `expect(...).toHaveAttribute()` polls until the attribute matches or the
+  // timeout is spent. A fake cannot sleep, so it advances the modeled clock instead. That
+  // is load-bearing rather than decorative: advancing the clock is what lets a long-press
+  // TIMER come due while the assertion is polling, which is precisely the condition a
+  // helper that sleeps instead of polling cannot survive.
+  const pollStepMs = 25;
+  const poller = { advance: (_ms: number) => {} };
 
   const locatorLabel = (target: Target): string => {
     const testId = target.__elements[0]?.testId;
@@ -87,18 +94,18 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks, attributeC
         throw timedOut('toBeFocused', target, options?.timeout);
       }
     }),
-    toHaveAttribute: vi.fn(async (name: string, expected: string, options?: { timeout?: number }) => {
-      recordedAttributeChecks.push({ target, name, expected, options });
-      // An attribute assertion is a CONDITION wait, so the app's pending work gets the
-      // chance to run before the answer is read. That is what makes it a usable stand-in
-      // for `openToolFlyout`'s wait on `aria-expanded`: the long-press timer is armed by
-      // pointerdown and fires on its own, and a real `toHaveAttribute` polls until the
-      // attribute appears rather than reading it once.
-      if (!target.__elements.some((element) => element.attributes?.[name] === expected)) {
-        target.__elements.forEach((element) => element.settle?.());
+    toHaveAttribute: vi.fn(async (name: string, value: string, options?: { timeout?: number }) => {
+      recordedAttributeChecks.push({ target, name, value, options });
+      const matches = (): boolean => target.__elements.some((element) => element.attributes[name] === value);
+      const budget = options?.timeout ?? 0;
+      let spent = 0;
+      while (!matches() && spent < budget) {
+        const slice = Math.min(pollStepMs, budget - spent);
+        poller.advance(slice);
+        spent += slice;
       }
-      if (!target.__elements.some((element) => element.attributes?.[name] === expected)) {
-        throw timedOut(`toHaveAttribute(${name}="${expected}")`, target, options?.timeout);
+      if (!matches()) {
+        throw timedOut(`toHaveAttribute(${name}, ${value})`, target, options?.timeout);
       }
     }),
   }));
@@ -109,6 +116,7 @@ const { playwrightExpect, visibilityChecks, hiddenChecks, textChecks, attributeC
     hiddenChecks: recordedHiddenChecks,
     textChecks: recordedTextChecks,
     attributeChecks: recordedAttributeChecks,
+    pollClock: poller,
   };
 });
 
@@ -116,7 +124,12 @@ vi.mock('@playwright/test', () => ({
   expect: playwrightExpect,
 }));
 
+// The app arms this timer on pointerdown and opens the flyout when it fires
+// (`SidebarLeft.scheduleFlyoutOpen`). `LATE_TIMER_DELAY_MS` is not an app constant: it is the
+// same 300ms timer arriving late, which is what a busy renderer main thread does to it. The
+// old helper had to win a race against it with a 350ms sleep, so it lost on exactly this.
 const LONG_PRESS_THRESHOLD_MS = 300;
+const LATE_TIMER_DELAY_MS = 900;
 const FLYOUT_CLOSE_TIMEOUT_MS = 1000;
 const HOVER_SETTLE_MS = 400;
 
@@ -133,20 +146,15 @@ interface FakeElement {
   text: string;
   visible: boolean;
   focused: boolean;
-  attributes: Record<string, string>;
   children: FakeElement[];
   parent: FakeElement | null;
   onActivate: (() => void) | null;
   onContextMenu: (() => void) | null;
   onKey: ((key: string) => void) | null;
   onLongPress: (() => void) | null;
-  /**
-   * The long-press timer `SidebarLeft` arms on pointerdown, or `null` when none is pending.
-   * The real timer fires on its own 300ms later and `onPointerUp` cancels it, so the fake
-   * exposes it as a one-shot callback the trigger can fire or discard rather than deriving
-   * the outcome from the order of `pointerup`.
-   */
-  settle: (() => void) | null;
+  /** How long this element's own long-press timer takes to fire. Only read when `onLongPress` is set. */
+  longPressDelayMs: number;
+  attributes: Record<string, string>;
   throwOnDispatch: string | null;
 }
 
@@ -157,11 +165,13 @@ interface FakeElementSpec {
   text?: string;
   visible?: boolean;
   focused?: boolean;
-  attributes?: Record<string, string>;
   onActivate?: () => void;
   onContextMenu?: () => void;
   onKey?: (key: string) => void;
   onLongPress?: () => void;
+  /** Model a timer that arrives late. Defaults to `LONG_PRESS_THRESHOLD_MS`. */
+  longPressDelayMs?: number;
+  attributes?: Record<string, string>;
   throwOnDispatch?: string;
 }
 
@@ -195,9 +205,21 @@ interface FakeDom {
   page: MockPage & Page;
   mocks: MockPage;
   add: (spec: FakeElementSpec, parent?: FakeElement) => FakeElement;
+  /** Every element added to this fake, in insertion order. */
+  elements: FakeElement[];
   clicked: FakeElement[];
   activated: FakeElement[];
   dispatched: Array<{ element: FakeElement; type: string; options?: Record<string, unknown> }>;
+  /**
+   * One entry per dispatched pointer event, recording whether that tile's flyout was ALREADY
+   * open at the instant the event was delivered. This is how a test proves the helper waits
+   * for the menu before lifting, rather than lifting on a timer and hoping.
+   */
+  pressState: Array<{ type: string; flyoutAlreadyOpen: boolean }>;
+  /** Is a long-press timer armed right now? The app's `longPressFlyoutTimeoutRef !== null`. */
+  timerPending: () => boolean;
+  /** The app's `ignoreNextClickRef` — the swallow that a following real click consumes. */
+  ignoreNextClick: () => boolean;
   focused: FakeElement[];
   focusElement: (element: FakeElement) => void;
   hovers: FakeElement[];
@@ -219,9 +241,59 @@ function createFakeDom(domOptions: { scrollOnClick?: boolean } = {}): FakeDom {
   const dispatched: Array<{ element: FakeElement; type: string; options?: Record<string, unknown> }> = [];
   const focused: FakeElement[] = [];
   const hovers: FakeElement[] = [];
+  const elements: FakeElement[] = [];
 
   let active: FakeElement | null = null;
   let elapsedMs = 0;
+  // Time since the last pointerdown. The app measures its long press with a timer rather
+  // than a hold duration, so this exists only to keep `hover` honest: a hover cannot open a
+  // flyout that was never pressed, and a hover after a completed long press still can.
+  let holdMs = 0;
+  /**
+   * The app's single pending long-press timer (`longPressFlyoutTimeoutRef`), which is why
+   * this is one slot and not one per element: `scheduleFlyoutOpen` clears any previous
+   * timer before arming its own.
+   *
+   * Modeling it as a real pending timer — armed by pointerdown, fired by the clock reaching
+   * it, CANCELLED by pointerup — is what makes this fake able to express the production
+   * defect. Resolving the long press synchronously inside pointerup, as this fake used to,
+   * cannot fail: there is no instant at which a pointerup can destroy a pending open, and
+   * a helper that sleeps 350ms then lifts looks identical to one that waits for the menu.
+   */
+  let pendingTimer: { firesAtMs: number; element: FakeElement } | null = null;
+  /** The app's `longPressOpenedRef`: did the timer fire, or is the press still pending? */
+  let longPressOpened = false;
+  /** The app's `ignoreNextClickRef`: set by pointerup after a completed long press. */
+  let ignoreNextClick = false;
+  /** What each dispatched pointer saw, so a test can assert what was true AT dispatch time. */
+  const pressState: Array<{ type: string; flyoutAlreadyOpen: boolean }> = [];
+
+  /** Whether this tile's flyout is currently open, as the app reports it on the button. */
+  const isFlyoutOpen = (element: FakeElement): boolean => element.attributes['aria-expanded'] === 'true';
+
+  const firePendingTimer = (): void => {
+    if (pendingTimer === null) return;
+    const { element } = pendingTimer;
+    pendingTimer = null;
+    longPressOpened = true;
+    element.onLongPress?.();
+  };
+
+  /** Move the modeled clock forward, letting any timer that comes due fire on the way. */
+  const advanceClock = (ms: number): void => {
+    const target = elapsedMs + ms;
+    while (pendingTimer !== null && pendingTimer.firesAtMs <= target) {
+      elapsedMs = pendingTimer.firesAtMs;
+      firePendingTimer();
+    }
+    elapsedMs = target;
+    holdMs += ms;
+  };
+
+  // The hoisted `expect` polls by advancing this clock. It is reassigned per fake so that
+  // concurrent fakes cannot disturb each other; a test drives exactly one at a time.
+  pollClock.advance = advanceClock;
+
   // One model for the whole fake, so the window a click moved is the window the next
   // `evaluate` reads and the one a restore writes.
   const scrollModel = createScrollModel();
@@ -239,8 +311,8 @@ function createFakeDom(domOptions: { scrollOnClick?: boolean } = {}): FakeDom {
     onContextMenu: spec.onContextMenu ?? null,
     onKey: spec.onKey ?? null,
     onLongPress: spec.onLongPress ?? null,
-    attributes: spec.attributes ?? {},
-    settle: null,
+    longPressDelayMs: spec.longPressDelayMs ?? LONG_PRESS_THRESHOLD_MS,
+    attributes: { ...(spec.attributes ?? {}) },
     throwOnDispatch: spec.throwOnDispatch ?? null,
   });
 
@@ -250,6 +322,7 @@ function createFakeDom(domOptions: { scrollOnClick?: boolean } = {}): FakeDom {
     const element = createElement(spec);
     element.parent = parent;
     parent.children.push(element);
+    elements.push(element);
     return element;
   }
 
@@ -282,6 +355,10 @@ function createFakeDom(domOptions: { scrollOnClick?: boolean } = {}): FakeDom {
 
   function clickElement(element: FakeElement, options?: { button?: string }): void {
     clicked.push(element);
+    // A real `.click()` is a pointerdown followed by pointerup and click. The app's
+    // `onPointerDown` clears `ignoreNextClickRef` on every press, which is what stops the
+    // ignore left behind by a long press from swallowing the next real click on that tile.
+    ignoreNextClick = false;
     if (options?.button === 'right') {
       element.onContextMenu?.();
       return;
@@ -315,38 +392,37 @@ function createFakeDom(domOptions: { scrollOnClick?: boolean } = {}): FakeDom {
   }
 
   /**
-   * Arms the 300ms long-press timer, one-shot. Consuming it in the same call keeps the two
-   * triggers — a condition wait on `aria-expanded`, and a real hover that outlives the
-   * threshold — from both firing the flyout open.
+   * Mirrors the app's `onPointerDown` / `onPointerUp` pair.
+   *
+   * pointerdown arms the timer and clears both refs; pointerup clears the timer
+   * UNCONDITIONALLY and, only when the timer had already fired, sets `ignoreNextClickRef`.
+   * That unconditional clear is the defect's whole mechanism: a pointerup arriving before the
+   * timer fires cancels the open, so the flyout never appears and nothing that waits
+   * afterwards can bring it back.
    */
-  function armLongPress(element: FakeElement): void {
-    element.settle = () => {
-      element.settle = null;
-      elapsedMs = 0;
-      element.onLongPress?.();
-    };
-  }
-
-  function firePendingLongPress(element: FakeElement): void {
-    if (element.settle && elapsedMs >= LONG_PRESS_THRESHOLD_MS) element.settle();
-  }
-
   function dispatchEvent(element: FakeElement, type: string, options?: Record<string, unknown>): void {
     dispatched.push({ element, type, options });
     if (element.throwOnDispatch === type) {
       throw new Error(`dispatchEvent('${type}') failed on ${element.testId ?? element.role}`);
     }
     if (type === 'pointerdown') {
-      elapsedMs = 0;
-      armLongPress(element);
+      holdMs = 0;
+      ignoreNextClick = false;
+      longPressOpened = false;
+      // A real click still clears the flag: this is why a later `clickToolButton` on the
+      // same tile is not swallowed by the ignore left behind from a long press.
+      pendingTimer = element.onLongPress ? { firesAtMs: elapsedMs + element.longPressDelayMs, element } : null;
+      pressState.push({ type, flyoutAlreadyOpen: isFlyoutOpen(element) });
       return;
     }
-    if (type === 'pointerup' || type === 'pointercancel') {
-      // The app's `onPointerUp` calls `clearLongPressFlyout()` unconditionally, so a lift
-      // before the timer fires cancels the open for good: the flyout is not merely late, it
-      // never appears. Discarding the pending timer is that cancellation.
-      element.settle = null;
-      elapsedMs = 0;
+    if (type === 'pointerup') {
+      pressState.push({ type, flyoutAlreadyOpen: isFlyoutOpen(element) });
+      if (element.onLongPress) {
+        // `clearLongPressFlyout()` — unconditional, which is the point.
+        pendingTimer = null;
+        if (longPressOpened) ignoreNextClick = true;
+        longPressOpened = false;
+      }
     }
   }
 
@@ -389,7 +465,12 @@ function createFakeDom(domOptions: { scrollOnClick?: boolean } = {}): FakeDom {
         const element = primary();
         if (!element) return;
         hovers.push(element);
-        firePendingLongPress(element);
+        // A hover is not a press: the app opens a flyout from a timer armed by pointerdown,
+        // so this only reaches one when a press already ran long enough to complete.
+        if (element.onLongPress && holdMs >= LONG_PRESS_THRESHOLD_MS) {
+          holdMs = 0;
+          element.onLongPress();
+        }
       }),
       nth: vi.fn((index: number) => locatorFor(matches[index] ? [matches[index]] : [])),
       press: vi.fn(async (key: string) => {
@@ -412,7 +493,7 @@ function createFakeDom(domOptions: { scrollOnClick?: boolean } = {}): FakeDom {
       locatorFor(elementsMatching((element) => element.role === role && matchesAccessibleName(element, options?.name)))
     ),
     waitForTimeout: vi.fn(async (timeout: number) => {
-      elapsedMs += timeout;
+      advanceClock(timeout);
     }),
     keyboard: {
       press: vi.fn(async (key: string) => {
@@ -434,9 +515,13 @@ function createFakeDom(domOptions: { scrollOnClick?: boolean } = {}): FakeDom {
     page,
     mocks,
     add,
+    elements,
     clicked,
     activated,
     dispatched,
+    pressState,
+    timerPending: () => pendingTimer !== null,
+    ignoreNextClick: () => ignoreNextClick,
     focused,
     focusElement,
     hovers,
@@ -473,6 +558,14 @@ function addFlyout(
 
 function visibilityCheckFor(element: FakeElement): { options?: { timeout?: number } } | undefined {
   return visibilityChecks.find((check) => check.target.__elements[0] === element);
+}
+
+function attributeCheckFor(
+  element: FakeElement
+): { name: string; value: string; options?: { timeout?: number } } | undefined {
+  const check = attributeChecks.find((entry) => entry.target.__elements[0] === element);
+  // The locator is dropped on purpose: a test asserting on it would be asserting on the fake.
+  return check && { name: check.name, value: check.value, options: check.options };
 }
 
 async function captureError(promise: Promise<unknown>): Promise<Error> {
@@ -1067,17 +1160,41 @@ describe('Toolbar Helpers', () => {
   });
 
   describe('openToolFlyout', () => {
-    it('opens the flyout with a long press', async () => {
-      const dom = createFakeDom();
-      const { menu } = addFlyout(dom, [{ testId: flyoutItemTestId('levels', 'Levels') }], { visible: false });
-      const button = dom.add({ testId: 'tool-button-reposition' });
-      // `aria-expanded` is set from `openGroup === groupIndex` on the pressed tile, so the
-      // tile turns it on as its flyout opens. It is the only thing that distinguishes
-      // "this group is open" from "some group is open".
-      button.onLongPress = () => {
-        menu.visible = true;
-        button.attributes['aria-expanded'] = 'true';
+    /**
+     * Builds grouped tiles whose long-press timers open THEIR OWN flyout, the way the app
+     * does: the timer sets `openGroup`, so exactly one group is open — the pressed tile
+     * reports `aria-expanded="true"` and its own `role="menu"` is the one that is visible.
+     *
+     * `tileGroup()` returns a builder with its own registry, because "exactly one flyout at
+     * a time" is the property these tests turn on and it must not leak between tests.
+     */
+    const tileGroup = () => {
+      const tiles: Array<{ button: FakeElement; menu: FakeElement }> = [];
+      return (
+        dom: FakeDom,
+        options: { testId: string; delayMs?: number }
+      ): { button: FakeElement; menu: FakeElement } => {
+        const { menu } = addFlyout(dom, [{ testId: flyoutItemTestId('levels', 'Levels') }], { visible: false });
+        const button = dom.add({
+          testId: options.testId,
+          longPressDelayMs: options.delayMs,
+          onLongPress: () => {
+            for (const tile of tiles) {
+              const isOpen = tile.button === button;
+              tile.button.attributes['aria-expanded'] = isOpen ? 'true' : 'false';
+              tile.menu.visible = isOpen;
+            }
+          },
+        });
+        tiles.push({ button, menu });
+        return { button, menu };
       };
+    };
+
+    it('opens the flyout with a long press', async () => {
+      const groupedTile = tileGroup();
+      const dom = createFakeDom();
+      const { button, menu } = groupedTile(dom, { testId: 'tool-button-reposition' });
 
       await openToolFlyout(dom.page, 'Select & Move');
 
@@ -1085,85 +1202,132 @@ describe('Toolbar Helpers', () => {
       expect(dom.dispatched.map((event) => event.element)).toEqual([button, button]);
       expect(dom.dispatched.map((event) => event.type)).toEqual(['pointerdown', 'pointerup']);
       expect(dom.dispatched.map((event) => event.options)).toEqual([{ button: 0 }, { button: 0 }]);
+      expect(attributeCheckFor(button)).toEqual({
+        name: 'aria-expanded',
+        value: 'true',
+        options: { timeout: FLYOUT_VISIBLE_TIMEOUT_MS },
+      });
+      // The post-lift menu assertion is the OTHER half of the contract, and the attribute
+      // check above cannot see it: `aria-expanded` is set one commit before the portal
+      // exists, so a helper that only waited for the attribute would return with no menu
+      // on screen. Recorded on the menu, with the shared budget, which is the file's own
+      // idiom — `openToolFlyoutViaRightClick`'s test asserts exactly this shape.
+      expect(visibilityCheckFor(menu)?.options).toEqual({ timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
+    });
+
+    it('never sleeps for a fixed delay, because a fixed delay is the race itself', async () => {
+      const groupedTile = tileGroup();
+      const dom = createFakeDom();
+      groupedTile(dom, { testId: 'tool-button-reposition' });
+
+      await openToolFlyout(dom.page, 'Select & Move');
+
       expect(dom.mocks.waitForTimeout).not.toHaveBeenCalled();
     });
 
-    it('spends the shared timeout on the expanded wait, and the shared timeout has a floor', async () => {
-      // Two separate claims, and the second is the one that catches a change.
-      //
-      // Consistency: the wait is handed the EXPORTED constant rather than a literal of its
-      // own, so the helper, `paint-tools.spec.ts` and this file cannot drift apart — which
-      // is the whole reason the constant is exported.
-      //
-      // Floor: importing the constant means it cannot pin its own value, because the
-      // assertion would move with it. A restated literal would pin the value but reintroduce
-      // the two-literal hazard, and the value is not the contract. The contract is that the
-      // budget is big enough for a busy main thread: this wait is the entire margin the
-      // gesture has, since `onPointerUp` cancels the open outright, so too small a budget
-      // fails a gesture that would have worked. Measured here as a bound, which is what
-      // catches 2000 -> 200 without restating 2000.
+    it('lifts only after the flyout is open, never before', async () => {
+      const groupedTile = tileGroup();
       const dom = createFakeDom();
-      const { menu } = addFlyout(dom, [{ testId: flyoutItemTestId('levels', 'Levels') }], { visible: false });
-      const button = dom.add({ testId: 'tool-button-reposition' });
-      button.onLongPress = () => {
-        menu.visible = true;
-        button.attributes['aria-expanded'] = 'true';
-      };
+      // A late timer is what makes this an ORDERING pin rather than a restatement of the
+      // happy path: at the app's own 300ms a helper that sleeps 350ms also happens to lift
+      // after the menu opened, so only a timer that is still pending at lift time can tell
+      // "waited for the menu" apart from "slept long enough and got lucky".
+      groupedTile(dom, { testId: 'tool-button-reposition', delayMs: LATE_TIMER_DELAY_MS });
 
       await openToolFlyout(dom.page, 'Select & Move');
 
-      const wait = attributeChecks.find((check) => check.name === 'aria-expanded');
-      expect(wait?.expected).toBe('true');
-      expect(wait?.options).toEqual({ timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
+      // This records the flyout's state at each pointer event, so the difference is visible
+      // rather than inferred: a helper that sleeps and lifts dispatches pointerup while the
+      // timer is still pending, and that is exactly the event that cancels the open.
+      expect(dom.pressState).toEqual([
+        { type: 'pointerdown', flyoutAlreadyOpen: false },
+        { type: 'pointerup', flyoutAlreadyOpen: true },
+      ]);
+    });
+
+    it('opens the flyout even when the long-press timer arrives late', async () => {
+      const groupedTile = tileGroup();
+      const dom = createFakeDom();
+      // The same 300ms timer, delivered late — what a busy renderer main thread does to it.
+      // The old helper slept a fixed 350ms and lifted, so this timer was still pending at the
+      // pointerup and the open was cancelled: the flyout never appeared at all.
+      const { button, menu } = groupedTile(dom, {
+        testId: 'tool-button-reposition',
+        delayMs: LATE_TIMER_DELAY_MS,
+      });
+
+      await openToolFlyout(dom.page, 'Select & Move');
+
+      expect(menu.visible).toBe(true);
+      expect(button.attributes['aria-expanded']).toBe('true');
+      expect(dom.timerPending()).toBe(false);
+    });
+
+    it('opens the SECOND tile when a different flyout is already open', async () => {
+      const groupedTile = tileGroup();
+      const dom = createFakeDom();
+      const first = groupedTile(dom, { testId: 'tool-button-reposition' });
+      const second = groupedTile(dom, { testId: 'tool-button-shape' });
+      await openToolFlyout(dom.page, 'Select & Move');
+      expect(first.menu.visible).toBe(true);
+
+      await openToolFlyout(dom.page, 'shape');
+
+      // The hazard this guards: asserting "some `role=menu` is visible" is satisfied at once
+      // by the still-open first flyout, so a helper could lift while the second tile's timer
+      // was pending, cancelling it, and return with the wrong menu open.
+      expect(second.menu.visible).toBe(true);
+      expect(first.menu.visible).toBe(false);
+      expect(second.button.attributes['aria-expanded']).toBe('true');
+      expect(first.button.attributes['aria-expanded']).toBe('false');
+    });
+
+    it('leaves no timer armed once it returns', async () => {
+      const groupedTile = tileGroup();
+      const dom = createFakeDom();
+      groupedTile(dom, { testId: 'tool-button-reposition', delayMs: LATE_TIMER_DELAY_MS });
+
+      await openToolFlyout(dom.page, 'Select & Move');
+
+      expect(dom.timerPending()).toBe(false);
+    });
+
+    it('does not swallow the click that follows a long press on the same tile', async () => {
+      const groupedTile = tileGroup();
+      const dom = createFakeDom();
+      const { button } = groupedTile(dom, { testId: 'tool-button-reposition' });
+      await openToolFlyout(dom.page, 'Select & Move');
+      // The app sets `ignoreNextClickRef` after a completed long press; the pointerdown of the
+      // next real click clears it. Without that, a later `clickToolButton` on this tile would
+      // be swallowed and the spec would silently assert nothing.
+      expect(dom.ignoreNextClick()).toBe(true);
+
+      await clickToolButton(dom.page, 'Select & Move');
+
+      expect(dom.clicked).toEqual([button]);
+      expect(dom.ignoreNextClick()).toBe(false);
+    });
+
+    it('keeps the shared flyout budget above the long-press threshold it has to absorb', () => {
+      // The contract is not the value 2000, it is that the budget is bigger than the
+      // 300ms the app's timer needs on a busy main thread. This wait is the whole margin
+      // the gesture has — `onPointerUp` cancels the pending open outright — so a budget
+      // below the threshold fails a gesture that would otherwise have worked. Measured as
+      // a bound, which is what catches 2000 -> 200 without restating 2000.
       expect(FLYOUT_VISIBLE_TIMEOUT_MS).toBeGreaterThanOrEqual(1000);
     });
 
-    it('lifts only after the flyout is open, so a late timer cannot cancel the open', async () => {
-      // The regression this pins: the old helper slept a hard 350ms and then lifted,
-      // against a 300ms timer with 50ms of margin. A pointerup that arrives first calls
-      // `clearLongPressFlyout()`, so on a busy main thread the lift cancelled the open and
-      // the flyout never appeared — surfacing as a `toBeVisible()` timeout on a menu that
-      // had not been opened yet, which reads as a product defect rather than a bad helper.
-      const dom = createFakeDom();
-      const { menu } = addFlyout(dom, [{ testId: flyoutItemTestId('levels', 'Levels') }], { visible: false });
-      const button = dom.add({ testId: 'tool-button-reposition' });
-      button.onLongPress = () => {
-        menu.visible = true;
-        button.attributes['aria-expanded'] = 'true';
-      };
-
-      await openToolFlyout(dom.page, 'Select & Move');
-
-      // The lift is the second dispatch, and the open is recorded before it: the timer had
-      // already fired by the time the pointer went up.
-      const openIndex = dom.dispatched.findIndex((event) => event.type === 'pointerup');
-      expect(openIndex).toBe(1);
-      expect(menu.visible).toBe(true);
-      expect(button.settle).toBeNull();
-    });
-
     it('leaves the flyout open after the lift, because onPointerUp never closes it', async () => {
+      const groupedTile = tileGroup();
       const dom = createFakeDom();
-      const { menu } = addFlyout(dom, [{ testId: flyoutItemTestId('levels', 'Levels') }], { visible: false });
-      const button = dom.add({ testId: 'tool-button-reposition' });
-      button.onLongPress = () => {
-        menu.visible = true;
-        button.attributes['aria-expanded'] = 'true';
-      };
-
+      const { menu } = groupedTile(dom, { testId: 'tool-button-reposition' });
       await openToolFlyout(dom.page, 'Select & Move');
 
+      // `pressState` records what was true AT each pointer event, so this reads the claim
+      // directly: the flyout was already open when the pointer went up, and it is still
+      // open now that the helper has returned.
+      expect(dom.pressState.at(-1)).toEqual({ type: 'pointerup', flyoutAlreadyOpen: true });
       expect(menu.visible).toBe(true);
-    });
-
-    it('gives up when the tile never reports its flyout as expanded', async () => {
-      const dom = createFakeDom();
-      addFlyout(dom, [{ testId: flyoutItemTestId('levels', 'Levels') }], { visible: false });
-      // No `onLongPress`, so nothing ever sets `aria-expanded` and the wait must reject
-      // rather than sleep through and return as if the flyout were open.
-      dom.add({ testId: 'tool-button-reposition' });
-
-      await expect(openToolFlyout(dom.page, 'Select & Move')).rejects.toThrow(/aria-expanded/);
     });
 
     it('fails when the tool button is not visible', async () => {
@@ -1180,6 +1344,17 @@ describe('Toolbar Helpers', () => {
 
       await expect(openToolFlyout(dom.page, 'Select & Move')).rejects.toThrow(/dispatchEvent\('pointerdown'\) failed/);
       expect(dom.dispatched.map((event) => event.type)).toEqual(['pointerdown']);
+    });
+
+    it('reports a timeout naming the tile when the flyout never opens', async () => {
+      const dom = createFakeDom();
+      dom.add({ testId: 'tool-button-reposition' }); // no onLongPress: this tile never opens one
+
+      const error = await captureError(openToolFlyout(dom.page, 'Select & Move'));
+
+      expect(error.message).toContain(`Timed out ${FLYOUT_VISIBLE_TIMEOUT_MS}ms`);
+      expect(error.message).toContain('[testid="tool-button-reposition"]');
+      expect(error.message).toContain('aria-expanded');
     });
   });
 
@@ -1350,6 +1525,13 @@ describe('Toolbar Helpers', () => {
       await verifyHoverDoesNotOpenFlyout(dom.page, 'Select & Move');
 
       expect(dom.hovers).toEqual([button]);
+      // `LONG_PRESS_DELAY_MS` is the helper's mirror of the app's `setTimeout(..., 300)`
+      // (`SidebarLeft.scheduleFlyoutOpen`), and `HOVER_SETTLE_MS` is what
+      // `verifyHoverDoesNotOpenFlyout` ends up waiting for. Both are exported so this file
+      // cannot hold a third copy of either number; these two assertions are what stop the
+      // export from drifting away from the fake that models the app.
+      expect(LONG_PRESS_DELAY_MS).toBe(LONG_PRESS_THRESHOLD_MS);
+      expect(HOVER_SETTLE_MS).toBe(LONG_PRESS_DELAY_MS + 100);
       expect(dom.mocks.waitForTimeout).toHaveBeenCalledWith(HOVER_SETTLE_MS);
       expect(dom.dispatched).toEqual([]);
       expect(menu.visible).toBe(false);

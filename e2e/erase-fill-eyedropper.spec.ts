@@ -118,18 +118,18 @@ const SEEDED_LAYER = 'Blank 1';
  *
  * **The pixel poll alone is not readiness either, and this is the defect it hid.** The store
  * starts with `documentId: 'uninitialized'`, `activeLayerId: null` and an empty history
- * (`StoreContext.tsx:296,304-306`); the document only exists once the seed's `REPLACE_DOCUMENT`
- * lands (`useApp.ts:77-80` -> `useLayer.ts:211-227` -> `useLayer.ts:174-199`). `readPixel` cannot
+ * (`StoreContext.tsx:307,315,317`); the document only exists once the seed's `REPLACE_DOCUMENT`
+ * lands (`useApp.ts:77-80` -> `useLayer.ts:214-230` -> `useLayer.ts:174-199`). `readPixel` cannot
  * tell that state from a ready one: it calls `getColorAtPoint(image, x, y, 0)` with no
  * `ignoreNearWhite`, and that function returns `null` only for a point outside the capture or for
- * a fully transparent one (`canvas-helpers.ts:666,693`). A WHITE pixel therefore satisfies it, so
+ * a fully transparent one (`canvas-helpers.ts:718`). A WHITE pixel therefore satisfies it, so
  * the poll is a test that a screenshot is non-empty. Measured on this spec, it was satisfied on its
  * FIRST attempt on 20 of 20 runs, 42-154 ms after `goto` resolved.
  *
  * So the wait named the seeded base layer and never looked at it. The seeded layer is read by name
  * out of the Layers panel instead, which is a fact about the document rather than about a capture:
  * a layer row that is in the panel is a layer the store published. The locator is the one
- * `e2e/layers.spec.ts:31-32` already uses, because this panel publishes no `data-testid`.
+ * `e2e/layers.spec.ts:27-28` already uses, because this panel publishes no `data-testid`.
  *
  * The pixel poll is KEPT, not replaced. The row proves the document exists; the capture proves it
  * is painted. Two waits for two facts, and the second still cannot be satisfied by a page that has

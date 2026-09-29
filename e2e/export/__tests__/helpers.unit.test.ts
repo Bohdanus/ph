@@ -23,11 +23,16 @@ import {
   verifyPsdInPhotopea,
   type ExportFormat,
   type PixelComparisonResult,
+  GEOMETRY_TOLERANCE_HORIZONTAL,
+  GEOMETRY_TOLERANCE_SPAN,
+  GEOMETRY_TOLERANCE_VERTICAL,
 } from '../helpers';
 import {
   CANVAS_REDRAW_CLIP,
   CANVAS_REDRAW_POLL_INTERVAL_MS,
   canvasRedrawClip,
+  DEFAULT_DOCUMENT_HEIGHT,
+  DEFAULT_DOCUMENT_WIDTH,
   documentToCanvasOffset,
 } from '../../helpers/canvas-helpers';
 
@@ -265,7 +270,7 @@ interface LocatorSurface {
   isVisible: Mock<() => Promise<boolean>>;
   textContent: Mock<() => Promise<string | null>>;
   boundingBox: Mock<() => Promise<Box | null>>;
-  evaluate: Mock<(readPixels: (element: unknown) => string) => Promise<string>>;
+  evaluate: Mock<(read: (element: unknown) => unknown) => Promise<unknown>>;
   setInputFiles: Mock<(file: string) => Promise<void>>;
   or: Mock<(locator: LocatorSurface) => LocatorSurface>;
   nth: Mock<(index: number) => LocatorSurface>;
@@ -314,6 +319,23 @@ function asPlaywright<T extends object>(surface: object): T {
   return new Proxy({} as T, { get: (_target, property) => Reflect.get(surface, property) });
 }
 
+/**
+ * The canvas the default `evaluate` mock hands to a page function.
+ *
+ * `setupExportTest` reads the element twice, and the two reads want different shapes: the
+ * document size comes off the backing store (`width`/`height`) and the source image off
+ * `toDataURL()`. A single canned return cannot answer both — the mock used to answer
+ * `SOURCE_DATA_URL` for every call, so the backing-store read destructured a string,
+ * `documentSize` became `{ width: undefined, height: undefined }`, and every offset derived
+ * from it was `NaN`. Running the page function against a duck-typed element answers whichever
+ * shape it asks for, and fails loudly if a helper starts reading a property this does not have.
+ */
+const FAKE_CANVAS_ELEMENT = {
+  width: DEFAULT_DOCUMENT_WIDTH,
+  height: DEFAULT_DOCUMENT_HEIGHT,
+  toDataURL: () => SOURCE_DATA_URL,
+};
+
 function createLocatorMock(overrides: Partial<LocatorSurface> = {}): LocatorSurface {
   const surface: LocatorSurface = {
     click: vi.fn().mockResolvedValue(undefined),
@@ -324,7 +346,7 @@ function createLocatorMock(overrides: Partial<LocatorSurface> = {}): LocatorSurf
     isVisible: vi.fn().mockResolvedValue(true),
     textContent: vi.fn().mockResolvedValue(''),
     boundingBox: vi.fn().mockResolvedValue(null),
-    evaluate: vi.fn().mockResolvedValue(SOURCE_DATA_URL),
+    evaluate: vi.fn(async (read: (element: unknown) => unknown) => read(FAKE_CANVAS_ELEMENT)),
     setInputFiles: vi.fn().mockResolvedValue(undefined),
     or: vi.fn(),
     nth: vi.fn(),
@@ -617,6 +639,36 @@ describe('Export Helpers', () => {
     });
   });
 
+  describe('the export fixture geometry budgets', () => {
+    /**
+     * A RATCHET, not a transcription. These three numbers are the fixture's whole notion of
+     * "close enough", and a review found that raising the horizontal one from 0.25 to 1.4 and
+     * the vertical from 0.05 to 5 left all 888 e2e unit tests GREEN — only a browser run,
+     * comparing decoded pixels, could tell, and nothing in CI compared them. A budget that
+     * nothing can object to is not a budget.
+     *
+     * Asserting the exact values would be a transcription, and the wrong instinct: an agent
+     * who widens a tolerance on purpose would widen it in the test too and never see the
+     * moment. Asserting an UPPER bound makes the loosening the thing that fails. These may
+     * be tightened freely — that is the direction that makes the fixture stricter — and a
+     * widening has to come through this file as a conscious edit with a reason.
+     */
+    it('are no looser than the measured error, and cannot be widened silently', () => {
+      // 0.271 document px is the measured error on the span (see the constants' JSDoc), so a
+      // span budget of 1 is already under 4x it. Horizontal 0.25 and vertical 0.05 are the
+      // per-edge budgets and have no headroom to give.
+      expect(GEOMETRY_TOLERANCE_HORIZONTAL).toBeLessThanOrEqual(0.25);
+      expect(GEOMETRY_TOLERANCE_VERTICAL).toBeLessThanOrEqual(0.05);
+      expect(GEOMETRY_TOLERANCE_SPAN).toBeLessThanOrEqual(1);
+
+      // And the three are ordered the way the geometry is: the span is the whole mark, so
+      // its budget is the largest of the three by construction, not by accident. A swap here
+      // would let a mark twice as wrong through on the axis meant to be tightest.
+      expect(GEOMETRY_TOLERANCE_SPAN).toBeGreaterThan(GEOMETRY_TOLERANCE_HORIZONTAL);
+      expect(GEOMETRY_TOLERANCE_HORIZONTAL).toBeGreaterThan(GEOMETRY_TOLERANCE_VERTICAL);
+    });
+  });
+
   describe('setupExportTest', () => {
     it('prepares the download directory, strokes the canvas and returns the source data url', async () => {
       const box: Box = { x: 64, y: 48, width: 512, height: 384 };
@@ -651,8 +703,19 @@ describe('Export Helpers', () => {
       expect(surface.mouse.up).toHaveBeenCalled();
       expect(surface.screenshot).toHaveBeenCalledWith({ clip: redrawClip(box) });
       expect(canvas.evaluate).toHaveBeenCalled();
+      // The document size is READ off the backing store, not assumed to be the seeded 800x600:
+      // `documentToCanvasOffset` used to divide by a hardcoded size, so a document opened at
+      // any other resolution was drawn somewhere the app never looks and the export stopped
+      // being the line the constants describe. One of the two `evaluate` calls on the canvas
+      // is that read, and its result is handed back so a spec can assert on it.
+      const backingStoreRead = canvas.evaluate.mock.calls.map(([read]) => read(FAKE_CANVAS_ELEMENT));
+      expect(backingStoreRead).toContainEqual({
+        width: DEFAULT_DOCUMENT_WIDTH,
+        height: DEFAULT_DOCUMENT_HEIGHT,
+      });
       expect(result).toEqual({
         box,
+        documentSize: { width: DEFAULT_DOCUMENT_WIDTH, height: DEFAULT_DOCUMENT_HEIGHT },
         sourceDataUrl: SOURCE_DATA_URL,
         downloadDirectory: DOWNLOAD_DIRECTORY,
       });
