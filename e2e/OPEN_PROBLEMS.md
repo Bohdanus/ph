@@ -161,30 +161,39 @@ breaks all of them at once.
 
 `e2e/helpers/screenshot-scale.ts:103-125`, `e2e/helpers/cdp-helpers.ts:45-64`
 
-The hazard, for whoever refactors this next. The app is taller than Playwright's
-720px window, so the window scrolls. `Locator.boundingBox()` measures against the
-VIEWPORT and goes negative as soon as it does — a canvas scrolled 440px down
-reports `y: -340` where it reported `y: 100` before. `page.mouse` shares that
-space. But `page.screenshot({ clip })` and CDP `Page.captureScreenshot`, which
-this suite calls directly, take their clip against the DOCUMENT origin. The two
-take **opposite** conventions from each other for the same numbers: Playwright
-takes a viewport clip and adds the scroll offset itself, so converting there moves
-the clip the wrong way; raw CDP takes a page clip, so converting nothing moves the
-capture 440px away from the region the caller measured. Neither direction throws.
-A clip derived from a scrolled `boundingBox()` and handed to CDP untranslated
-either returns the wrong region or lands off-canvas, where the failure surfaces as
-`Clipped area is either empty or outside the resulting image` and reads as a
-capture bug rather than a coordinate bug.
+The hazard, for whoever refactors this next. `Locator.boundingBox()` measures against
+the VIEWPORT and goes negative the moment the page scrolls, and `page.mouse` shares
+that space. But `page.screenshot({ clip })` and CDP `Page.captureScreenshot`, which
+this suite calls directly, take their clip against the DOCUMENT origin. The two take
+**opposite** conventions from each other for the same numbers: Playwright takes a
+viewport clip and adds the scroll offset itself, so converting there moves the clip
+the wrong way; raw CDP takes a page clip, so converting nothing moves the capture away
+from the region the caller measured. Neither direction throws. A clip derived from a
+scrolled `boundingBox()` and handed to CDP untranslated either returns the wrong region
+or lands off-canvas, where the failure surfaces as `Clipped area is either empty or
+outside the resulting image` and reads as a capture bug rather than a coordinate bug.
+
+**This app no longer scrolls, so the numbers in the original version of this entry no
+longer describe it.** An earlier version opened "The app is taller than Playwright's
+720px window, so the window scrolls… a canvas scrolled 440px down reports `y: -340`
+where it reported `y: 100` before" — measured, that was true of a layout that no longer
+exists. The shell is now exactly viewport-tall at every size in
+`e2e/no-document-overflow.spec.ts`'s matrix, so `getPageScroll` returns `{0, 0}`,
+`boundingBox()` is not negative, and `preservingScroll` has nothing to undo. The
+hazard above is kept because it is about the two conventions disagreeing, which is a
+property of Playwright and CDP rather than of this app, and the same class of bug
+returns the moment anything is allowed to scroll the document again.
 
 **The helper-level fix is done, and it is recorded here so a refactor does not
 undo it.** The conversion is the pure function `viewportRectToPageRect`
 (`screenshot-scale.ts:126-133`), it is applied **at the CDP site only**
 (`cdp-helpers.ts:56-64`) and not in the callers, the scroll offset is read per
-capture rather than cached (`getPageScroll`, `canvas-helpers.ts:356`, because
-the window scrolls between captures — `clickToolButton` alone scrolls 440px, which
-is what `preservingScroll` exists to undo, `toolbar-helpers.ts:117-121,128,161`),
-and the rule is unit-tested for a non-zero offset at
-`e2e/helpers/__tests__/screenshot-scale.unit.test.ts:404-427`.
+capture rather than cached (`getPageScroll`, `canvas-helpers.ts:356` — the offset is
+a live read because a page that scrolls can scroll again between captures, whatever
+currently makes it scroll), and the rule is unit-tested for a non-zero offset at
+`e2e/helpers/__tests__/screenshot-scale.unit.test.ts:404-427`. That unit test is the
+load-bearing part now: it is the only coverage of the non-zero-offset case, since the
+app cannot produce one.
 
 What is left is a rule for new code: a spec that mixes `boundingBox()` with a CDP
 capture must not assume the two agree, and must not introduce a second conversion
@@ -725,6 +734,45 @@ between "widen the row" and "the floor was derived correctly all along" needs so
 can say which, so this entry stays open rather than being deleted on a green run.
 
 ---
+
+## P2 — the mobile bottom bar scrolls 615px with no affordance, and nothing tests it
+
+`src/components/Mobile/MobileBottomBar.tsx`, `e2e/no-document-overflow.spec.ts`
+
+`nav[data-testid="mobile-bottom-bar"]` is `overflow-x-auto` and carries every
+`mobileToolGroups` entry in one row — 18 focusable tiles, 16 groups plus Options and
+Layers, separated by 5 dividers. Measured, it overflows its own width by **615px** at a
+744×1133 viewport and by **969px** at 390×844, which is the reference phone size the rest
+of the mobile suite already uses. It now carries `scrollbar-none`, so the only cue that
+most of those tiles are off-screen is gone. A user with a mouse and no trackpad has
+nothing left to drag: the bar is `position: fixed`, so the document behind it does not
+scroll either.
+
+This is the same trade the left tool rail makes, and the rail's version is deliberate and
+pinned — the rail scrolls and stays reachable by wheel, arrows and touch. The difference
+is magnitude. The rail overflows by 71px at iPad 10.2" portrait (810×1080) and 5px at iPad
+mini landscape (1133×744); this bar overflows by 615px at the same width and by 969px on
+a phone. A 5px overflow hides a cue for something already within reach of a scroll; a
+969px one hides most of the tool list.
+
+**The CSS is pinned; the overflow is not.** `no-document-overflow.spec.ts` asserts this
+bar is a scroll container with `scrollbar-width: none`, which is a statement about the
+stylesheet and would still pass if the group list grew or shrank by a factor of ten. No
+test reads the bar's `scrollWidth` against its `clientWidth`.
+
+The open question is a product one, not a defect report: a tool bar with 969px of hidden
+overflow needs either a visible scroll affordance or a different layout — the tool sheet
+already exists as `MobileToolSheet`, and wrapping is the other obvious answer. What keeps
+it undecided is coverage, recorded in the `P3 — no mobile or HiDPI project, and no touch
+anywhere` entry below: `e2e/` has zero `hasTouch`, zero `isMobile` and zero `touchscreen`.
+`mobile-shell.spec.ts` does run at a device width (it sets `test.use({ viewport: { width:
+390, height: 844 } })`) and it drives the bar with `page.mouse`, so what is missing is
+touch emulation and a reachability assertion — not a device width, which it already has.
+
+**Exact remaining verification:** decide the affordance, implement it, and add a
+reachability test that scrolls the bar to its last tile and asserts that tile is inside
+the viewport — the same shape as the rail's swatch test in
+`e2e/no-document-overflow.spec.ts`.
 
 ## Checked here and rejected
 

@@ -78,7 +78,7 @@ const BRANCH_SPAN = { start: 0.45, end: 0.85 };
  * stopped being true. The bump existed to lift the workspace canvas above the fold,
  * because the app used to lay the canvas out TALLER than a 720px window — measured
  * at 840px of canvas in a 720px window. It no longer does: `min-h-0 overflow-y-auto`
- * on the left sidebar's `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx:335`)
+ * on the left sidebar's `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx:459`)
  * is what bounds the grid row, `e2e/sidebar-layout.spec.ts:21` pins that the
  * default page does not scroll, and P1 of `e2e/OPEN_PROBLEMS.md` records the
  * measured canvas box and page height for both toolbar layouts. Those numbers are

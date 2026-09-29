@@ -588,7 +588,43 @@ the CODE THAT RAN. That is the same discipline as section 10, one level down, an
 compose: pinning the port stops the run testing the wrong tree, and verifying the served
 module stops it testing the wrong code in the right tree.
 
-## 12. Files
+## 12. `viewport-drawing.spec.ts` fails roughly one run in four, and not because of anything it asserts
+
+**Status: OPEN. Reproduced — 1 failure in 4 runs, and the failing case moves between `wide`
+and `narrow`. Not fixed. Not a known-failing test; it is intermittent.**
+
+`e2e/viewport-drawing.spec.ts:17` generates three cases from a
+`{ name, width, height }` list (`normal` 1280×720, `wide` 1600×900, `narrow` 900×700). Each
+draws a line at box-relative coordinates, resizes the window, captures the canvas through
+CDP, and asserts with `expect.soft(...).toBeLessThan(25)` that the ink still sits under the
+cursor. Observed on 2026-09-29 while running the full suite after an unrelated change: the
+full run reported `2 skipped, 310 passed, 2 failed`, both failures in this file. Re-running
+the file alone three more times gave **1 failure in 4 runs**, and the failing case was
+`narrow` twice and `wide` once. A deterministic defect does not move between cases.
+
+**It is not caused by the scrollbar change that was in the tree at the time, and that is
+measured rather than argued.** Removing `scrollbar-none` from the rail's `<aside>` and
+re-reading its geometry at 900×700 produced byte-identical values — `offsetWidth` 56,
+`clientWidth` 55, `offsetHeight` 563, `clientHeight` 563, the same `getBoundingClientRect()`
+for both the rail and `[data-testid="workspace-canvas"]` — with the computed `scrollbarWidth`
+the only field that changed, `auto` against `none`. On a browser with zero-width overlay
+scrollbars `scrollbar-width` has no layout effect, so nothing downstream of the rail can
+move. `mobile-bottom-bar` and `mobile-tool-options` are `md:hidden` at all three of this
+file's viewports.
+
+So the mechanism is inside the test's own measurement chain, and the chain has three
+places a run can lose: `waitForCanvasRedraw` polling `captureCanvasScreenshot` for ink,
+`getDarkPixelBounds` thresholding that screenshot, and the 25px tolerance being applied to
+a soft assertion. Nothing in it records which one gave. That is the same defect sections 1
+and 8 describe for the unit suite — an uncaptured intermittent failure is a hunting ground,
+not something to close by re-running until green.
+
+**Exact remaining verification:** capture the failing run. `--retries=1` yields a trace
+(`trace: 'on-first-retry'`, inert at the local `retries: 0`), and the trace plus
+`test-results/` is the only artefact that can say whether the ink was absent, mis-thresholded
+or mislocated. Until a failing run is captured, a fix here would be a guess.
+
+## 13. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -619,3 +655,7 @@ module stops it testing the wrong code in the right tree.
 - `e2e/helpers/screenshot-scale.ts:53`, `e2e/helpers/cdp-helpers.ts:60` — the stale 1177px/440px
   figures section 8 records as stale
 - `src/hooks/useDialogFocusContainment.ts` — where the focus block section 7's lead 3 names now lives
+- `e2e/viewport-drawing.spec.ts:17,72-78` — the three generated cases, the CDP capture, and the
+  `toBeLessThan(25)` soft assertions section 12 measures
+- `e2e/viewport-drawing.spec.ts:1-15` — the `{ name, width, height }` list whose cases
+  section 12 observed moving between runs

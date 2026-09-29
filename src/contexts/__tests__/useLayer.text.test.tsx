@@ -120,8 +120,10 @@ function setupSharedDraft() {
 describe('useLayers text commit idempotency boundary', () => {
   beforeEach(() => {
     vi.mocked(createLayerSource).mockClear();
-    // Rewind the id factory so the first layer of every test is `mock-layer-1`; without
-    // this the exact-id assertion below would only hold for whichever test runs first.
+    // Rewind the id factory so the first layer of every test is `mock-layer-1`. A `let` inside the
+    // factory lives in a closure no mock API can reach, so without this the ids grow monotonically
+    // for the whole file and a test's ids are named after how many tests ran before it. The
+    // exact-id assertion in the fourth test of this describe is what makes the rewind load-bearing.
     mockLayerId.counter = 0;
   });
 
@@ -151,9 +153,6 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
     expect(Object.keys(result.current.store.layers)).toHaveLength(1);
     expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
-    // The exact id, not just the count: it is derived from the hoisted counter, so this
-    // fails the moment the per-test rewind goes away and the counter goes monotonic again.
-    expect(Object.values(result.current.store.layers)[0].id).toBe('mock-layer-1');
   });
 
   it('leaves the shared draft in the one cleared state the Apply button produces', () => {
@@ -226,6 +225,14 @@ describe('useLayers text commit idempotency boundary', () => {
 
     expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(2);
     expect(Object.keys(result.current.store.layers)).toHaveLength(2);
+    // The exact ids, not just the count, and deliberately NOT in the first test of this file: the
+    // counter is 0 there whether or not the per-test rewind runs, so an id pin there is satisfied
+    // identically with and without it. By the fourth test several layers have already been created
+    // above, so without the rewind these ids carry that history and this fails.
+    expect(Object.values(result.current.store.layers).map((layer) => layer.id)).toEqual([
+      'mock-layer-1',
+      'mock-layer-2',
+    ]);
   });
 
   it('repeats the same text verbatim as a new layer, because only the cleared draft suppresses a commit', () => {

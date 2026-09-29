@@ -194,6 +194,11 @@ export const CURATED = {
     ],
     note: 'The eraser family is the live target for #48/#49/#50. A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
+  'no-scrollbars': {
+    summary:
+      'The app must paint no scrollbar on its outer chrome or the left tool rail, across a mac-desktop and iPad viewport matrix. Adds e2e/no-document-overflow.spec.ts, a `scrollbar-none` utility, and corrections to the measured rail geometry written into comments and handoff prose.',
+    note: 'The load-bearing finding is that a scrollbar cannot be asserted in this headless Chrome at all: scrollbars are zero-width overlays there, so a gutter or edge-screenshot assertion would pass forever. The spec asserts content overflow instead, and pins the detector with a deliberate 4000px overflow first.',
+  },
   'ps-brush-engine': {
     summary:
       'Typed-array brush tip, stroke buffer, stabilizer and airbrush, plus a blend-mode seam keyed on the value rather than the tool name.',

@@ -243,7 +243,11 @@ describe('FreehandLasso toolbar', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const alertSpy = vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
 
-    // Same reason as the test above: the restore has to run whatever the assertions do.
+    // Same reason as the test above: the restore has to run whatever the assertions do. The
+    // `mockReset` is the part the two spies alone do not cover — `beforeEach` and the global
+    // `clearMocks` both use `mockClear`, which clears call history but leaves the `once` queue
+    // intact, so a `render` or `fireEvent` that threw before the click below would leave a
+    // throwing implementation armed for the next test that copies.
     try {
       setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
       clipboardMocks.copyActiveSelection.mockImplementationOnce(() => {
@@ -259,6 +263,7 @@ describe('FreehandLasso toolbar', () => {
       expect(getCopyButton()).toBeEnabled();
       expect(getCopyButton()).toHaveTextContent('Copy');
     } finally {
+      clipboardMocks.copyActiveSelection.mockReset();
       alertSpy.mockRestore();
       errorSpy.mockRestore();
     }

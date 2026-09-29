@@ -239,16 +239,25 @@ describe('useSelectionClipboard layerViaCopy', () => {
   });
 
   it('reports failure and logs when the layer creation rejects', async () => {
+    // The restore has to run whatever the assertions do: this file has no `afterEach` and the
+    // global `clearMocks` does not restore a spy, so a red assertion above would leave
+    // `console.error` swallowed for every test below. Same shape as `FreehandLasso.test.tsx:226-239`.
     const failure = new Error('layer creation failed');
     createLayerFromBitmapMock.mockRejectedValueOnce(failure);
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const api = renderProbe();
+    try {
+      const api = renderProbe();
 
-    await expect(api.layerViaCopy()).resolves.toBe(false);
+      await expect(api.layerViaCopy()).resolves.toBe(false);
 
-    expect(createLayerFromBitmapMock).toHaveBeenCalledOnce();
-    expect(consoleError).toHaveBeenCalledExactlyOnceWith('Unable to create a layer from the active selection', failure);
-    consoleError.mockRestore();
+      expect(createLayerFromBitmapMock).toHaveBeenCalledOnce();
+      expect(consoleError).toHaveBeenCalledExactlyOnceWith(
+        'Unable to create a layer from the active selection',
+        failure
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it('prefers the explicitly active id over an earlier selection flagged active', async () => {

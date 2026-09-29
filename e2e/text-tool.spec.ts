@@ -39,7 +39,7 @@ const TEXT_TOOL_TIMEOUT_MS = 60_000;
  * Measured at the suite's 1280x720 desktop viewport: the workspace canvas box is
  * 922x583 at page (108, 100); the page does NOT overflow, because
  * `documentElement.scrollHeight` is 720, the same as `clientHeight` — the left rail's
- * `min-h-0 overflow-y-auto` (`src/components/SidebarLeft/SidebarLeft.tsx:359`) owns its
+ * `min-h-0 overflow-y-auto` (`src/components/SidebarLeft/SidebarLeft.tsx:459`) owns its
  * own scrolling, so the shell is exactly viewport-tall. The 800x600 starting document
  * (`src/App.tsx:20-25`) therefore letterboxes into that element HEIGHT-limited, at
  * scale 0.97167, rendering 777x583 at box x 72.5..849.5 and all 583 rows. So the

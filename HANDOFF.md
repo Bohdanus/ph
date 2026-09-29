@@ -1832,10 +1832,13 @@ there is no word boundary between `5` and `a`, so `NUMBERED.exec('15a. A self-an
 is `null`. `assemble` then falls through to the `SEVERITY` test (also false) and reaches
 `if (open && record.level <= open.level) close(...)`. `HANDOFF.md:424` is a **level-2**
 `## 15a. A self-anchored reorder is refused, and the refusal is load-bearing`, a sibling of
-`## 15.` — so it **closes item 15's body there** and opens nothing itself. **870 raw characters**
-of prose from `HANDOFF.md:425-438` are unreachable from any item title or body. Item 15's stored
-body is 3994 chars and ends mid-sentence; the 15a prose is not in it. The entry is a load-bearing
-tripwire, so this is live work loss, not latent.
+`## 15.` — so it **closes item 15's body there** and opens nothing itself. The span
+`HANDOFF.md:425-438` is **872 raw characters**, or **870** once the span's leading and
+trailing blank lines are trimmed — 870 is the trimmed count, and the raw count is the one
+that includes them. Line 437 is a `---` rule, which `bodyOf` drops as layout, so the prose the
+parser actually strands is lines 425-436. All of it is unreachable from any item title or body.
+Item 15's stored body is 3994 chars and ends mid-sentence; the 15a prose is not in it. The
+entry is a load-bearing tripwire, so this is live work loss, not latent.
 
 **The same root cause, opposite direction, and worse: a suffixed retirement retires the parent.**
 `deadNumbers('## 15a. An old thing — deleted')` returns `[15]` — `NUMBER_OR_RANGE` harvests the
@@ -1843,21 +1846,33 @@ tripwire, so this is live work loss, not latent.
 `## 15a, 16. Old things — deleted` returns `[15,16]`. This is silent corruption, not silent loss,
 and a fix that only widens `NUMBERED` does not address it.
 
-**Why the test suite cannot see either.** `handoff-import.test.mjs:196`'s own heading-count regex
-carries the **identical** `\d+\b` blind spot, so `items === headings` holds for `## 15a.`, `## 15b.`
-and `## 16a.` simultaneously. Both sides miss it; the equality stays green. Proven: with `NUMBERED`
-fixed and the count regex left alone, the count test fails `HANDOFF.md: expected 38 to be 37`.
+**Why the test suite cannot see either.** `handoff-import.test.mjs:205`'s own heading-count regex
+carries the **identical** `\d+\b` blind spot, so `items === headings` holds for `## 15a.`,
+`## 15b.` and `## 16a.` simultaneously. Both sides miss it; the equality stays green. The corpus
+has exactly one such heading today, `## 15a`. Proven: with `NUMBERED` fixed and the count regex
+left alone, the count test fails. **The quoted output `expected 38 to be 37` was measured at
+`a3f1dcc`**, the campaign branch tip, against that branch's `HANDOFF.md` — 37 headings under the
+count regex, 38 items once the suffix is accepted. On `main` the same projection reads
+**`expected 49 to be 48`** — 48 headings under the count regex, 49 once the suffix is accepted —
+re-measured at **`0d64d75`**, the tip of `main` this branch merges. Neither number reproduces
+unless the tree is named, and the assertion itself is `handoff-import.test.mjs:207`. Note that a
+_naive_ `NUMBERED` patch does not produce 49: it maps
+`15a` to `Number('15a') === NaN`, and folding it to `15` instead collides with the live
+`HANDOFF.md#15` and loses it to first-occurrence-wins — the same collision the `makeItem` row
+below describes. The projection only holds for a fix that gives the suffix its own origin, which
+is the open design question under this table.
 
 **A real fix must change all of these together:**
 
-| Where                              | What                                                                                                                                                                            |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `handoff-import.mjs` `NUMBERED`    | the suffix, and its case rule                                                                                                                                                   |
-| `handoff-import.test.mjs:196`      | the count regex, same blind spot. Hoist both to module constants so they cannot drift apart again                                                                               |
-| `handoff-import.mjs` `makeItem`    | `` `${base}#${number}` `` — `Number('15a')` is `NaN`, so every suffixed entry gets a literal `#NaN` origin                                                                      |
-| `handoff-import.mjs` `planImport`  | the `/#(\d+)$/` dead-set filter cannot match `#15a`, so a suffixed item can never be suppressed by the document's own dead list                                                 |
-| `handoff-import.test.mjs:126`      | `Number(/#(\d+)$/.exec(item.origin)[1])` is **unguarded** and throws `TypeError` on any suffixed origin. `:93` in `liveItems` already uses the guarded `?.[1]` form — copy that |
-| `handoff-import.mjs` `deadNumbers` | the dead set is `number[]` end to end — typedef, both `Set`s, and `planImport`'s `.map(Number).filter(Number.isInteger)`. It cannot represent a non-integer at all              |
+| Where                              | What                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `handoff-import.mjs` `NUMBERED`    | the suffix, and its case rule                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `handoff-import.test.mjs:205`      | the count regex, same blind spot. `:137`'s `HEADING_NUMBER` has it too, so there are **three** grammars to keep in step, not two. **"Hoist all three to module constants" is wrong as it stands**, and wrong on all three rows: `:205` is an inline regex literal handed straight to `countHeadings`, and `:137` is a `const` declared **inside an `it()` body** — already named, but test-local, so it agrees with nothing and hoisting it changes only where it sits. The one grammar that _is_ a module constant is `NUMBERED`, in the other file. The fix is therefore one shared constant for the two test-side grammars, declared once at module scope |
+| `handoff-import.mjs` `makeItem`    | `` `${base}#${number}` `` — `Number('15a')` is `NaN`, so every suffixed entry gets a literal `#NaN` origin                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `handoff-import.mjs` `planImport`  | the `/#(\d+)$/` dead-set filter cannot match `#15a`, so a suffixed item can never be suppressed by the document's own dead list                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `handoff-import.test.mjs:256`      | and `:265`. The **unguarded** `Number(/#(\d+)$/.exec(item.origin)[1])` this entry used to cite is **gone from `main`** — `a14d728` ("close the eight findings from the board's review") replaced it with the guarded `?.[1]` at those two lines. There is no unguarded form left to fix here; the obligation moves to whoever writes the `## 15a.` assertion                                                                                                                                                                                                                                                                                                 |
+| `handoff-import.test.mjs:67`       | `liveItems`, which the same row used to point at as the place to copy. It is at **67**, and it does **not** use `?.[1]`: it is `!number \|\| !parsed.dead.includes(Number(number[1]))` at `:70`, guarding on a separate statement. The guarded form to copy is at `:256`/`:265`                                                                                                                                                                                                                                                                                                                                                                              |
+| `handoff-import.mjs` `deadNumbers` | the dead set is `number[]` end to end — typedef, both `Set`s, and `planImport`'s `.map(Number).filter(Number.isInteger)`. It cannot represent a non-integer at all                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 **Open design question, for a human.** What origin shape should a suffixed entry get? `#15a` is
 the label the document actually wrote and is the natural key, but it is grammatically
@@ -2030,3 +2045,93 @@ only and may not edit production.
 right thing in a browser, and the two `it.fails` were correctly removed. The finding is that the
 justification for that removal is still in production prose in the opposite form, and a reader who
 trusts it would re-add the tripwires.
+
+## 82. The parser retires a LIVE numbered heading that ends in a status word, silently
+
+`scripts/lib/agent-board/handoff-import.mjs` — `DEAD_HEADING`, consumed by `assemble`
+
+**The defect.** `DEAD_HEADING` requires the status word to be last, which is right, and
+`assemble` consumes a matching heading with `continue` without ever opening it as an item. Those
+two facts compose into a silent loss: a **live** numbered heading that happens to end in a status
+word is retired, and its prose leaves the import with nothing anywhere in the parse result saying
+so. Measured through the real parser, both directions, side by side (indented deliberately: the
+heading-count assertion at `scripts/__tests__/handoff-import.test.mjs:205` matches
+`^#{1,6}[ \t]+\d+` **without skipping fenced code**, so an example of this shape written at column
+zero inside any fenced block fails that test against the parser being _right_ — a blind spot in the
+assertion, pre-existing, and the reason for the indentation):
+
+```
+  ## 31. The dialog-closed assertion is fixed   ->  dead=[31]  items=[]
+  ## 9.  — deleted .                           ->  dead=[]   items=[#9]
+```
+
+The first is a live entry retired. The second is the **visible** false row — a title printed on
+`swarm ready` that a reader can clear. A numbered heading that genuinely ends in a status word
+(`## 5. Whatever — resolved`) is not _structurally_ distinguishable from one that merely does, so
+anchoring the word does not separate the two cases; it only decides which one the corpus has not
+produced yet. Latent, not live: over the 97 real headings on `main` at `0d64d75` the narrow rule
+and the loose one give the same verdict for every heading except the five the loose one gets
+wrong, and the one genuine retirement is still read as a retirement. The narrowness is a
+judgement about the corpus, not a proof, which is why the paragraph on the obvious fix below
+measures what the alternative actually does rather than assuming it does nothing.
+
+**Why this is a filed defect and not a documentation nit.** The `DEAD_HEADING` docstring carried
+an argument that this risk was one-sided and loud — under-matching a retirement gives a visible
+row, over-matching is always a silent loss. That argument was **false for numbered headings**, for
+the reason `DEAD_HEADING`'s own separator class gives, measured in the table at the end of this
+entry. It is now corrected in place to state that the residual risk is two-sided, with both
+measured rows quoted.
+
+**Provenance, because the false claim is not on `main` and the question was lost with it.** The
+claim was written in `a3f1dcc` (the campaign branch) under a heading reading "THE TWO FAILURE
+MODES ARE NOT SYMMETRIC, AND THAT IS THE ARGUMENT FOR THE RULE". `bd137d0` merged that branch
+after pointing its parser change at `eba42f8`'s implementation and keeping the tests; the
++146/-0 merge dropped the whole argument block. Dropping a false claim was right. Dropping the
+question it was an answer to was not, and `eba42f8`'s shorter docstring argues the rule
+empirically without ever addressing the over-match direction.
+
+**Why the obvious fix is worse than the defect — and the first version of that paragraph was
+itself wrong.** Requiring a separator before the marker (`— resolved`, `(done)`, `…: fixed`) was
+written off here as "does not distinguish the two cases either", on the grounds that a title may
+legitimately end in a separator character. **That reason is false, and it was the reason the
+paragraph below it was already making correctly.** Dropping `\s` from `DEAD_HEADING`'s separator
+class `(?:^|[\s\-–—(\[])` to `(?:^|[\-–—(\[])` does separate the cases: it keys on _no space before
+the marker_, and the ordinary English shape of a retirement — `… — deleted`, `… — resolved` — has
+one. `## 5. Whatever — resolved` goes from `DEAD` to `live`, and so does `## 31. The
+dialog-closed assertion is fixed`.
+
+What it buys that is real; what it costs is larger, and the cost is measurable. Re-derived by
+patching the separator class and re-running the real parser over the merged corpus:
+
+| Heading                                                                                    | Now                | Separator required |
+| ------------------------------------------------------------------------------------------ | ------------------ | ------------------ |
+| `## 13. Landed, superseded and deleted` (pinned fixture, `handoff-import.test.mjs:654`)    | `dead=[13]`        | `dead=[]`          |
+| `### Items 5, 7, 9, … — deleted` (`HANDOFF.md:114`, the corpus's **only** real retirement) | `dead=` 26 numbers | `dead=[]`          |
+| Whole `HANDOFF.md` — `planImport(...).create`                                              | 49                 | **51**             |
+
+The second row is the one that decides it. `HANDOFF.md:114` is the heading the `DEAD_HEADING`
+docstring names as "the only retirement marker any of the three documents actually uses", and the
+separator requirement re-reads it as live prose: `dead` goes from 26 numbers to **none**, and two
+already-retired items — `HANDOFF.md#7` and `HANDOFF.md#18` — come back to the board as open work.
+So the fix does not trade a silent loss for one false row; it trades it for **26** un-retirements
+and two live ones, on a heading the corpus really contains, and it breaks the pinned fixture while
+doing it. Adopting it is a corpus change, not a parser change, and it is the operator's to make.
+
+**What a fix needs, and why it is not one line.** Either a marker position that cannot be
+incidental, or a **loud** failure when a `NUMBERED` heading is retired without the document having
+listed retired items. The loud option is the only one that preserves both directions, and it is
+not local: it needs a field on `ParseResult` (whose exact shape
+`handoff-import.test.mjs` asserts on an empty document), and a caller in `agent-board.mjs` that
+actually reports it. Both are outside what a comment-level correction can reach, and the operator
+should choose which of the two behaviours a mistyped heading should have.
+
+**Pinned while unfixed, as an `it.fails` tripwire.** `scripts/__tests__/handoff-import.test.mjs`
+holds the shape in `it.fails('keeps a LIVE numbered heading that ends in a status word as an open,
+filed item')`: the body asserts what a **fixed** parser returns, so it is red today and the `fails`
+is what makes the suite green. It is the marker the repo already uses in ~20 places
+(`image-processors.test.ts:151`, `StoreContext.durable-boundary.test.tsx:441`) and the one
+`AGENTS.md` describes. **Delete the `it.fails` in the same change that fixes `DEAD_HEADING`** — the
+moment the body goes green, the `fails` goes red, which is the intended signal and not a
+regression to chase. The live side of the same rule, and the visible false row it contrasts with,
+are held in an ordinary green test beside it, so a pin that starts failing for an unrelated reason
+cannot hide behind `it.fails` passing.

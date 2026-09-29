@@ -313,12 +313,40 @@ touch>`, or `swarm hold <path>` for a path with no issue. `swarm check <paths>` 
 
 ## Worktrees and dev servers
 
-**HARD RULE: 99% OF WORK IS DONE IN ITS OWN WORKTREE UNDER `.kilo/worktrees/`, ON ITS OWN BRANCH. THE MAIN WORKTREE IS FOR READING AND MERGING ONLY.**
+**HARD RULE: 100% OF WORK THAT CHANGES A TRACKED FILE IS DONE IN ITS OWN WORKTREE UNDER
+`.kilo/worktrees/`, ON ITS OWN BRANCH. THE MAIN WORKTREE IS FOR READING AND MERGING ONLY.**
+There is no percentage carve-out and no "it's only a comment" exception. The 1% that
+remains is not a judgement call: a read-only investigation that changes nothing, a
+single-line doc fix **the operator explicitly asked for on `main`**, and a hotfix the
+operator asked for on `main` by name. Anything else belongs in a worktree, and a
+worktree costs one `git worktree add` and zero thinking.
 
-- One task is one worktree and one branch, lowercase prefix (`fix/…`, `feat/…`, `e2e/…`, `cleanup/…`, `audit/…`). A second worktree for the same task is a fork you reconcile by hand.
-- **Already compliant if the session you are running in IS a worktree** — an Agent Manager worktree session, or any checkout under `.kilo/worktrees/`. `git rev-parse --show-toplevel` before you assume you are on main; never nest a second worktree inside one.
-- The 1%: a read-only investigation, an operator-requested one-line doc fix, a hotfix the operator asked for on main. None of those is a feature.
-- **Never commit feature work in the main worktree**, and stage only your own paths everywhere. Do not edit in main and move the change to a worktree afterwards: that leaves an unreviewed diff in a shared checkout and a worktree that does not build.
+- **THE TEST IS ONE COMMAND, AND IT IS NOT A formality: `git rev-parse --show-toplevel`.**
+  Run it **before the first edit**, not after. It is the only thing that distinguishes
+  "I am in my worktree" from "I believe I am in my worktree", and the belief is wrong
+  often enough that the check is not optional. `main`'s checkout path is not proof —
+  an Agent Manager worktree session, a `cd` in a previous tool call, or a session
+  started in the root checkout and driven into a task worktree all leave you somewhere
+  other than where you think. If the output is not under `.kilo/worktrees/`, you are
+  editing the shared checkout: stop, create the worktree, and move the work.
+- **Create the worktree FIRST, not when you are ready to commit.** The failure this rule
+  exists to prevent is an unreviewed diff left in a checkout other sessions are
+  committing into, and that is only recoverable if it never happened. Creating the
+  worktree after the edits means the edits already happened somewhere else.
+- **One task is one worktree and one branch**, lowercase prefix (`fix/…`, `feat/…`,
+  `e2e/…`, `cleanup/…`, `audit/…`). A second worktree for the same task is a fork you
+  reconcile by hand.
+- **Already compliant if the session you are running in IS a worktree** — an Agent Manager
+  worktree session, or any checkout under `.kilo/worktrees/`. Never nest a second
+  worktree inside one.
+- **Never commit feature work in the main worktree**, and stage only your own paths
+  everywhere. Do not edit in main and move the change to a worktree afterwards: that
+  leaves an unreviewed diff in a shared checkout and a worktree that does not build.
+- **A doc-only change is not an exemption.** A comment correction, a stale citation, a
+  new `AGENTS.md` paragraph, a regenerated `WORKTREES.json` — every one of these is a
+  tracked-file change and takes a worktree, because it is exactly the kind of edit that
+  feels too small to bother and is the kind that lands in `main` unreviewed.
+
 - **THE MAIN WORKTREE IS A LANDING, NOT A NEGOTIATION.** A branch is merged into
   `main` only after `main` has already been merged or rebased **into the branch, in
   the branch's own worktree**, and the gates re-run there. The merge into `main` is
@@ -656,6 +684,52 @@ than only reporting that something changed.
   `e2e/sidebar-flyout.spec.ts` and `AnchoredOverlay.test.tsx`. A popover that must escape
   a scroll container goes through `SidebarLeft/AnchoredOverlay.tsx`, which portals to
   `document.body` — `overflow: clip` still clips, so no value on the rail can fix it.
+- **A scrollbar test here CANNOT assert a scrollbar, and the reason is measured, not
+  assumed.** In the headless Chrome Playwright launches on this machine, a div forced to
+  `overflow: scroll` with content larger than itself reports `offsetWidth - clientWidth`
+  of **0** and `offsetHeight - clientHeight` of **0**, `window.innerWidth -
+documentElement.clientWidth` is **0**, injecting `::-webkit-scrollbar { width: 15px;
+height: 15px; background: #00ff00 }` changes nothing, and a screenshot of that div's
+  right and bottom edges contains no green and no thumb. The browser is using zero-width
+  **overlay** scrollbars. The macOS "Always show scroll bars" system setting is **not**
+  reflected — it is an AppKit/window-server preference and headless Chrome does not take
+  it — and the UA is spoofed to a `Windows NT 10.0` string, so Chrome's platform-derived
+  scrollbar styling is not the host's either. `--disable-features=OverlayScrollbar` as a
+  `launchOptions` arg does not change it either.
+  So **a gutter assertion, or a "screenshot the edge and look for a thumb" assertion,
+  passes forever no matter what the app does.** The operator's instinct that this needs
+  to be cross-OS and might need a clipped screenshot is right about the problem and wrong
+  about both answers.
+  What is sound is the **sufficient** condition: `scrollWidth <= clientWidth` and
+  `scrollHeight <= clientHeight` on the outer wrappers. A box with no overflowing content
+  cannot paint a scrollbar in any mode, on any OS, and the scrollbar rendering mode is a
+  preference that cannot change that implication — so this is _strictly stronger_ than
+  asserting "no painted scrollbar", and it is the only one of the two this environment
+  can see. `e2e/no-document-overflow.spec.ts` asserts that, and its first test is the
+  non-vacuity control a gutter assertion would have needed: it deliberately overflows the
+  document by 4000px and proves the same two numbers notice, because with zero-width
+  scrollbars "found nothing" and "measured nothing" are the same result. **Write the
+  control first.** See also `e2e/no-document-overflow.spec.ts`'s header and the `P2` entry
+  in `e2e/OPEN_PROBLEMS.md` for the one container where hiding the scrollbar is not yet
+  paid for.
+- **The left rail's geometry is a measured constant, and it is recorded in exactly one
+  place: the header of `e2e/no-document-overflow.spec.ts`.** 16 tool groups in 5 sections,
+  40 tool entries; content **612px** in the two-column layout and **1014px** in one column,
+  against an available height of `viewportHeight - 137` (the shell's three `auto` grid
+  rows). So it overflows below a **749px** window in two columns and below **1151px** in
+  one — and **two columns overflows at more viewport heights than one column does**, which
+  is the opposite of the intuition that halving the width makes the rail taller. Two of the
+  overflowing sizes are ordinary iPads (810×1080 portrait by 71px, 1133×744 landscape by
+  5px), so "it only happens in a very short window" is false. All of it is **font-metric
+  dependent** and **asserted by no test** — CI runs `ubuntu-latest`, whose fonts will not
+  produce these numbers — so do not restate them in a second file. A number written in four
+  places is a number that is wrong in four places, and the previous generation of these
+  comments was wrong in exactly that way (`"12 tool groups"`, `"~840px"`,
+  `"177–377px"`, all three of which describe a layout that no longer exists). The rail is a
+  scroll container with `scrollbar-none`, pinned on both halves. **`min-h-0` on the rail is
+  redundant** with `overflow-y-auto` — a scroll container's automatic minimum size is zero,
+  and deleting the class leaves every viewport case green (measured, not argued) — and it is
+  kept as the explicit form of an otherwise implicit contract.
 - **`scripts/__tests__/*.test.mjs` runs under the root jsdom project and must stay
   environment-agnostic.** The swarm board is a Node script whose only dependency
   is the built-in `node:sqlite`, and it is tested there deliberately: a test file
