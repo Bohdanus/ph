@@ -497,6 +497,15 @@ export const CURATED = {
     summary: 'A re-creation of the layer-property append-boundary slice against main.',
     note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
+  'durable-diag': {
+    summary:
+      'The two durable-conversion losses main dropped silently — a repeated durable entry id, and a document-frame action carrying no usable next frame — made observable, with tests for each and a handoff section for the work around them.',
+    note: 'The branch is ahead of main and not on it, so it is classified as work to land rather than work to prune, and no flag is owed on top of that. The history-adapter work and the handoff section are uncommitted in its own working tree, which is what a flag would speak to, and the branch is what the inventory will not offer to dispose of.',
+    issues: [
+      { ref: 'ph-9', title: 'Duplicate durable entry id has no second line of defence' },
+      { ref: 'ph-8', title: 'An invalid document frame converts with no diagnostic' },
+    ],
+  },
   'history-append-readiness': {
     summary:
       'Makes non-history selection actions stop invalidating the durable shadow — a readiness precondition for the single-writer append boundary.',
@@ -664,11 +673,6 @@ export const CURATED = {
       'Serializes Playwright runs across agents: scripts/e2e-run.mjs takes the swarm lock e2e/.swarm-e2e-runner, allocates a free port per run and gives each run its own output directory, and the scripts that run a suite route through it. Makes playwright.config.ts server reuse opt-in and rewrites the e2e docs, AGENTS.md, TEST-FLAKES 10/11 and .skills/photoshop-tool-creation.md to match.',
     note: 'Adds a wrapper the commit gate and CI do not run. The e2e job still calls npx playwright test directly, because a CI job owns its checkout and collects artifacts from the shared test-results/.',
   },
-  'e2e-own-server': {
-    summary:
-      'An e2e run starts its OWN dev server, and that is the guarantee: playwright.config.ts sets reuseExistingServer: false as a literal with --strictPort, and scripts/e2e-run.mjs allocates a port, verifies it is bindable, records it, and refuses PLAYWRIGHT_REUSE_EXISTING_SERVER and PLAYWRIGHT_BASE_URL. The swarm lock on e2e/.swarm-e2e-runner is demoted to an ADVISORY queue: it serializes when it can, and a run that cannot have it logs and starts anyway. Also skips e2e/viewport-drawing.spec.ts by operator decision (TEST-FLAKES 12, still open).',
-    note: 'Rewrites the e2e contract in docs/TESTING.md, docs/ORCHESTRATION.md, e2e/README.md, TEST-FLAKES 10, and .skills/photoshop-tool-creation.md. Deliberately does not touch AGENTS.md: the operator is replacing it with a short root plus links, and edits there would be killed.',
-  },
   'fix-e2e-findings': {
     // The SECOND worktree to land on this directory name, and the second time a
     // curated entry outlived the worktree it described. The first entry here said
@@ -724,8 +728,7 @@ export const CURATED = {
   'text-tool-requirements': {
     summary:
       'A documentation branch holding the text tool’s requirements, sitting on the merged reorder slice. No commits of its own.',
-    mustNotPrune: true,
-    note: 'Its own content is on no ref, so the branch looking already-merged is a fact about the base commit, not about this work.',
+    note: 'Its content is on main, not on no ref: the requirements were committed at 54f2b212 and that commit is an ancestor of main, so the worktree’s clean tree is a landed branch rather than a loss. An earlier version of this entry said the content was on no ref; the flag that claim carried is retracted.',
   },
   'tool-descriptions': {
     summary:
@@ -803,11 +806,6 @@ export const CURATED = {
     summary:
       'Four small Photoshop gaps across the eyedropper, the text tool and crop, each pinned by a test that fails without it. It does not close its handoff entry, which needs a render pipeline it does not attempt.',
   },
-  'paint-easy': {
-    summary:
-      'Three paint defects with three tests: the eraser opening on a hard edge instead of a soft tip, Photoshop’s paint keyboard shortcuts, and the locked-layer guard.',
-    issues: [{ ref: 'HANDOFF.md#48', title: 'eraser is hard-edged; Flow and Airbrush are dead controls' }],
-  },
   'selection-easy': {
     summary:
       'Four Photoshop-fidelity defects across the selection tools: the marquee’s modifiers doing nothing on a fresh drag, the wand’s Contiguous option, and the lasso’s Frequency option.',
@@ -852,30 +850,92 @@ export const CURATED = {
   'rail-drop-draw': {
     summary:
       'The invented Draw tool removed from the rail and the registry, together with the description and settings work that removal forces across the tool areas, the e2e specs that switched away from it, and the pen spec it deletes.',
-    mustNotPrune: true,
-    note: 'The whole deletion and everything it touches is uncommitted, the Draw tool’s own files among them staged for removal, while the branch tip is a main commit — so git reports this as merged and clean and the only copy of the removal is the working tree.',
+    note: 'A `wip(salvage)` commit (603356ac) captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the deletion was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'shape-truth': {
     summary:
       'The shape tools against Adobe’s own behaviour: the Polygon tool’s Sides field normalized for the draw loop and the figures’ options bars, with tests for each.',
+    note: 'A `wip(salvage)` commit (a83e630d) captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the shape settings, the draw loop and their tests were uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
+  },
+  'agents-audit': {
+    summary:
+      'The agent-guidance audit against the tree: AGENTS.md cut to a thin root plus the linked documents, a committed conflict in it repaired, and the load-bearing clauses the split had dropped restored.',
     mustNotPrune: true,
-    note: 'The shape settings, the draw loop and their tests are uncommitted and on no ref, while the branch tip is a main commit, so git reports this as merged and clean.',
+    note: 'A further pass is uncommitted and on no ref — AGENTS.md plus the documents it links, correcting the delegation and testing sections against the tree — while the branch tip is a main commit, so the branch looks disposable while the only copy is the working tree. The branch is at main and the working tree is what the audit is actually in.',
   },
-  'toolbar-overflow': {
+  'handoff-remove-layer-assets': {
     summary:
-      'The left rail fits its tiles to the space it has and moves the ones that do not fit into a Photoshop-style three-dots tile, with one column as the default. A pure planner, a DOM-measuring fit store reached by ref callbacks, the tile itself, and the e2e specs it de-fragilised off hard-coded rail widths.',
-    note: "Do NOT record a width or a viewport height here \u2014 that is the thing this branch removed. The three-dots menu needs a `max-h` and scrolls: `AnchoredOverlay` clamps a flyout's position and never its size, so a menu as tall as its contents in a `position: fixed` wrapper is unreachable below the fold.",
+      'The handoff correction that takes the layer-asset claim off the writers that do not carry one: a removal carries only a `layerId`, and a tool operation derived by `operationForTool` returns no raster snapshot, so neither is blocked on the registry transaction. The table’s `useLayer.ts` citations are re-derived with it.',
+    mustNotPrune: true,
+    note: 'The correction is uncommitted and on no ref, the whole diff being the one HANDOFF.md, while the branch tip is a main commit — so the branch looks disposable and the only copy of the retraction is the working tree.',
   },
-  'hard-merge-skill': {
+  'history-append-assets': {
     summary:
-      'A hard-merge skill: the procedure for merging two branches that independently implemented overlapping features, recovered from the toolbar/panel-docks conflict it was written for. Requirements recovered from the chat transcripts, conflicts arbitrated against Adobe and the web platform, a documented questions-file protocol, and the four post-merge sweeps that catch a silently wrong merge.',
-    note: 'Documents only — .skills/hard-merge.md, its loader, and the skill registry rows in AGENTS.md. The research it encodes is not in this worktree: the transcripts it was derived from live in the machine-local Kilo database, and the merge commits it quotes are already on main.',
+      'The AGENTS.md architecture note about layer-bitmap promotion, corrected against the code: the promotion happens through one dispatch, the async materialization callback never mutates a published layer, and a tool commit publishes its canvas through the reducer transition that also carries the undoable history entry. It stops short of calling cutover ready.',
+    mustNotPrune: true,
+    note: 'The correction is uncommitted and on no ref, the whole diff being the one AGENTS.md paragraph, while the branch tip is a main commit — so the branch looks disposable and the only copy of the corrected claim is the working tree.',
+  },
+  'history-remove-append': {
+    summary:
+      'Layer removal published through the append boundary: a `REMOVE_ACTION` translation to `remove-layer`, a validation arm pinning the canonical operation shape, and a `removeLayer` that plans its history entry and durable entry instead of building the history item by hand.',
+    mustNotPrune: true,
+    note: 'The whole slice is uncommitted and on no ref — the append translation, the store-side adapter and the `removeLayer` caller together — while the branch tip is a main commit, so the branch looks disposable and none of the slice is on any ref.',
+  },
+  'rail-flatten': {
+    summary:
+      'The tools rail as one flat panel: the dead horizontal padding, the inner framed surface and the rule across the rail’s bottom that divided nothing, with the e2e assertion that hardcoded a window height as proof the degenerate band exists replaced by one that finds the band.',
+    mustNotPrune: true,
+    note: 'The flatten is uncommitted and on no ref — the rail component, its layout and workspace tests, two e2e specs and the documentation beside them — while the branch tip is a main commit, so the branch looks disposable while the only copy is the working tree. The rule across the rail’s bottom moves whenever the rail’s chrome changes height, so no window height can be its address.',
+  },
+  'skill-citation-sweep': {
+    summary:
+      'A line-numbered citation sweep through the tool-creation skill: every `src/…:NNN` re-derived against the current tree, the settings, selection and shape ranges having all moved under the citation rotation.',
+    mustNotPrune: true,
+    note: 'The sweep is uncommitted and on no ref, the whole diff being the one skill document, while the branch tip is a main commit — so the branch looks disposable and the only copy of the re-derived citations is the working tree. The skill’s claims about tool behaviour are untouched; only their addresses move.',
   },
   'swarm-watch-tail': {
     summary:
       'Makes `swarm watch` mean what a reader expects from a log: an unnamed call tails the last page and says which page it printed, and an explicit --since reads forward to the end of the log instead of stopping after one page.',
     mustNotPrune: true,
     note: 'The board script and its database module are also edited in the working tree, uncommitted, and this branch is ahead of main rather than sitting on a main commit. An earlier version of this note said the opposite of both, which is why every claim in this section is now re-derived before it is written.',
+  },
+
+  /* ----------------------- landed and removed: the entry is the record --- */
+  // These name worktrees that no longer exist, kept for the reason
+  // `board-entrypoint` and `tool-desc-integration` are kept: a landed-and-removed
+  // worktree says what the work was for, and the next agent who wonders where the
+  // content came from gets an answer. Each of these was clean and fully merged
+  // when its worktree was removed, and its branch is still registered and an
+  // ancestor of main, so `landed` is `true` here because it re-derives — not
+  // because nothing re-derives it, which is the trap `fix-e2e-findings` records.
+  //
+  // They are NOT deleted. `cleanup-stale-curated` deleted four entries because
+  // each said in its own note that it should be deleted with the worktree it
+  // described; these carry no such instruction, so deleting them would be
+  // inventing a rule rather than applying one.
+  'e2e-own-server': {
+    summary:
+      'An e2e run starts its OWN dev server, and that is the guarantee: playwright.config.ts sets reuseExistingServer: false as a literal with --strictPort, and scripts/e2e-run.mjs allocates a port, verifies it is bindable, records it, and refuses PLAYWRIGHT_REUSE_EXISTING_SERVER and PLAYWRIGHT_BASE_URL. The swarm lock on e2e/.swarm-e2e-runner is demoted to an ADVISORY queue: it serializes when it can, and a run that cannot have it logs and starts anyway. Also skips e2e/viewport-drawing.spec.ts by operator decision (TEST-FLAKES 12, still open).',
+    note: 'Rewrites the e2e contract in docs/TESTING.md, docs/ORCHESTRATION.md, e2e/README.md, TEST-FLAKES 10, and .skills/photoshop-tool-creation.md. Deliberately does not touch AGENTS.md: the operator is replacing it with a short root plus links, and edits there would be killed. The worktree has been removed; the branch is still registered and is an ancestor of main.',
+    landed: true,
+  },
+  'hard-merge-skill': {
+    summary:
+      'A hard-merge skill: the procedure for merging two branches that independently implemented overlapping features, recovered from the toolbar/panel-docks conflict it was written for. Requirements recovered from the chat transcripts, conflicts arbitrated against Adobe and the web platform, a documented questions-file protocol, and the four post-merge sweeps that catch a silently wrong merge.',
+    note: 'Documents only — .skills/hard-merge.md, its loader, and the skill registry rows in AGENTS.md. The research it encodes is not in this worktree: the transcripts it was derived from live in the machine-local Kilo database, and the merge commits it quotes are already on main. The worktree has been removed; the branch is still registered and is an ancestor of main, and .skills/hard-merge.md is tracked there.',
+    landed: true,
+  },
+  'paint-easy': {
+    summary:
+      'Three paint defects with three tests: the eraser opening on a hard edge instead of a soft tip, Photoshop’s paint keyboard shortcuts, and the locked-layer guard.',
+    note: 'The worktree has been removed; the branch is still registered and is an ancestor of main.',
+    issues: [{ ref: 'HANDOFF.md#48', title: 'eraser is hard-edged; Flow and Airbrush are dead controls' }],
+    landed: true,
+  },
+  'toolbar-overflow': {
+    summary:
+      'The left rail fits its tiles to the space it has and moves the ones that do not fit into a Photoshop-style three-dots tile, with one column as the default. A pure planner, a DOM-measuring fit store reached by ref callbacks, the tile itself, and the e2e specs it de-fragilised off hard-coded rail widths.',
+    note: "Do NOT record a width or a viewport height here — that is the thing this branch removed. The three-dots menu needs a `max-h` and scrolls: `AnchoredOverlay` clamps a flyout's position and never its size, so a menu as tall as its contents in a `position: fixed` wrapper is unreachable below the fold. The worktree has been removed and no branch is registered for it, so unlike its neighbours here there is nothing left for the `landed` test to re-derive and no flag is claimed.",
   },
 
   /* ------- worktrees whose danger git already sees: entry, but no flag ----- */
@@ -885,6 +945,20 @@ export const CURATED = {
   // refuses to prune, and a flag on top of that protects nothing while
   // asserting something untrue. The entry stays: it still says what the
   // worktree is for.
+  //
+  // The same rule governs the new entries under this heading: a branch git can
+  // see is protected by being a branch, and a flag on top of that is a claim
+  // about nothing.
+  'stale-reclaim-skill': {
+    summary:
+      'The stale-worktree-reclaim skill: the reclaim family’s walk made actually transitive, the claim it made corrected, and the hole closed where the guard could pass while asserting nothing — with a tracked copy of the skill, since `.kilo/` is gitignored and the durable copy is the document it points at.',
+    note: 'The branch is ahead of main and not on it and the working tree is clean, so the work is on a ref and git already refuses to prune it; no flag is owed on top of that.',
+  },
+  'curated-inventory': {
+    summary:
+      'This table’s own curation pass: an entry for every live in-repo worktree that had none, and the `mustNotPrune` flags retracted from the three branches whose owners committed or landed their own work.',
+    note: 'The branch is ahead of main and not on it and the working tree is clean, so no flag is owed. Every claim in the entries it adds was re-derived with the commands the mustNotPrune test names in its own comment, not inferred from a worktree’s name.',
+  },
   'retina-dpr': {
     summary:
       'A canvas-resolution investigation, carried in a plan document rather than in code: what the report called a paint-algorithm bug is answered as already correct, with the geometry pipeline shown to have no step that could introduce a device-pixel count.',
