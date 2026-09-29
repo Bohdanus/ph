@@ -29,9 +29,13 @@ const waitForDarkPixels: PenWait = (page, clip) =>
 /**
  * Spray lays down light-gray pixels, so a dark-pixel wait can never observe it. Poll the
  * clip until stroke analysis finds any non-background pixels instead.
+ *
+ * The clip is handed to the classifier as the region it captured, which is what makes the
+ * thresholds scale-correct: a 2x host decodes this clip at twice its CSS size, and the
+ * analysis is over the stroke, not over the capture's resolution.
  */
 const waitForSprayPixels: PenWait = (page, clip) =>
-  waitForCanvasPixels(page, clip, async (screenshot) => (await getStrokeAnalysis(screenshot)) !== null, {
+  waitForCanvasPixels(page, clip, async (screenshot) => (await getStrokeAnalysis(screenshot, clip)) !== null, {
     description: 'analysable pixels from the spray stroke',
   });
 
@@ -100,12 +104,17 @@ for (const { label, test: testTitle, value, name, y, expect: exp, wait } of PEN_
       await wait(page, clip);
 
       const screenshot = await captureCanvasScreenshot(page, box, testInfo, name, clip);
-      const analysis = await getStrokeAnalysis(screenshot);
+      const analysis = await getStrokeAnalysis(screenshot, clip);
 
       expect(analysis, 'Stroke analysis should not be null').not.toBeNull();
       if ('segments' in exp) expect.soft(analysis!.segments).toBe(exp.segments);
       if ('segmentsMin' in exp) expect.soft(analysis!.segments).toBeGreaterThanOrEqual(exp.segmentsMin);
       if ('verticalSpreadMin' in exp)
+        // `verticalSpread` is the one field `getStrokeAnalysis` returns RAW rather than
+        // scale-corrected, so this is a floor on a capture-pixel count and a 2x capture
+        // can only raise it. It cannot false-pass; it can only be looser than intended
+        // on a HiDPI host. `segments` and `type` beside it ARE corrected, which is why
+        // they are the load-bearing assertions here and this is a floor.
         expect.soft(analysis!.verticalSpread).toBeGreaterThanOrEqual(exp.verticalSpreadMin);
       expect.soft(analysis!.type).toBe(exp.type);
     });

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { captureCanvasScreenshot, getDevicePixelRatio } from './cdp-helpers';
+import { captureCanvasScreenshot } from './cdp-helpers';
 import { loadImageData, screenshotBoundsToCss, type ImageDataResult } from './canvas-helpers';
 
 /** CSS geometry of the red canvas inside the synthetic page. */
@@ -111,23 +111,6 @@ function expectFaithfulCaptureOf(imageData: ImageDataResult, rect: { width: numb
 }
 
 test.describe('CDP Helpers', () => {
-  test.describe('getDevicePixelRatio', () => {
-    test('returns devicePixelRatio from window', async ({ page }) => {
-      await page.setContent('<div>test</div>');
-      const dpr = await getDevicePixelRatio(page);
-      expect(dpr).toBeGreaterThanOrEqual(1);
-    });
-
-    test('returns 1 when devicePixelRatio is not available', async ({ page }) => {
-      await page.addInitScript(() => {
-        Object.defineProperty(window, 'devicePixelRatio', { value: undefined, configurable: true });
-      });
-      await page.setContent('<div>test</div>');
-      const dpr = await getDevicePixelRatio(page);
-      expect(dpr).toBe(1);
-    });
-  });
-
   /**
    * Output contract of `captureCanvasScreenshot`: the CDP clip is expressed in CSS
    * pixels and the result is a faithful image of exactly that rect, at whatever device
@@ -283,7 +266,7 @@ test.describe('CDP Helpers', () => {
 
     test('reports the emulated ratio, so the override provably applied', async ({ page }) => {
       await page.setContent(RED_CANVAS_PAGE);
-      expect(await getDevicePixelRatio(page)).toBe(2);
+      expect(await page.evaluate(() => window.devicePixelRatio)).toBe(2);
     });
 
     test('returns the clip region at one integral scale', async ({ page }, testInfo) => {
@@ -317,15 +300,22 @@ test.describe('CDP Helpers', () => {
       const box = FULL_CANVAS_BOX;
       const clip = { x: CANVAS_LEFT, y: CANVAS_TOP, width: 120, height: 80 };
 
-      expect(await getDevicePixelRatio(page)).toBe(2);
+      expect(await page.evaluate(() => window.devicePixelRatio)).toBe(2);
 
       const screenshot = await captureCanvasScreenshot(page, box, testInfo, 'test-capture-2x-css', clip);
       const imageData = await decodeScreenshot(screenshot);
 
-      // select-move.spec.ts and viewport-drawing.spec.ts feed these pixel bounds
-      // straight into screenshotBoundsToCss. Whatever scale the capture comes back
-      // at, that conversion has to reconstruct the CSS rect of the clip; this pins
-      // both ends of the contract against a real 2x capture.
+      // viewport-drawing.spec.ts and text-tool.spec.ts feed these pixel bounds straight
+      // into screenshotBoundsToCss, so whatever scale the capture comes back at, that
+      // conversion has to reconstruct the CSS rect of the clip.
+      //
+      // The property asserted is the ROUND TRIP, against literals rather than against
+      // the function's own formula. An expectation written as
+      // `clip.x + (imageData.width - 1) * (clip.width / imageData.width)` is the
+      // implementation restated, and it holds for every image whatsoever — a capture of
+      // the wrong region, at the wrong scale, or anisotropically all satisfy it, which
+      // is why this block was four assertions that could not fail. These are computed
+      // from the clip's constants instead, so a wrong answer is a wrong number.
       const cssRect = screenshotBoundsToCss(
         {
           left: 0,
@@ -337,10 +327,28 @@ test.describe('CDP Helpers', () => {
         },
         clip
       );
-      expect(cssRect.left).toBeCloseTo(clip.x, 5);
-      expect(cssRect.top).toBeCloseTo(clip.y, 5);
-      expect(cssRect.right).toBeCloseTo(clip.x + (imageData.width - 1) * (clip.width / imageData.width), 5);
-      expect(cssRect.bottom).toBeCloseTo(clip.y + (imageData.height - 1) * (clip.height / imageData.height), 5);
+      // The first covered pixel is the clip's own origin, and the last covered pixel's
+      // CENTRE is one image pixel short of the clip's far edge. `imageBoundsToCss`
+      // documents that convention (and the one-pixel under-report it implies) rather
+      // than rounding it away, so the far edge is asserted with a scale-sized tolerance
+      // instead of being faked.
+      const scale = imageData.width / clip.width;
+      expect(cssRect.left, 'the first covered pixel must map to the clip origin').toBeCloseTo(clip.x, 5);
+      expect(cssRect.top, 'the first covered row must map to the clip origin').toBeCloseTo(clip.y, 5);
+      expect(cssRect.right, 'the far edge must be within one image pixel of the clip edge').toBeCloseTo(
+        clip.x + clip.width,
+        -1
+      );
+      expect(cssRect.bottom, 'the far edge must be within one image pixel of the clip edge').toBeCloseTo(
+        clip.y + clip.height,
+        -1
+      );
+      // And the scale is a real one: integral, shared by both axes, and at least 1. This
+      // is the part `expectFaithfulCaptureOf` already pins, restated here only because
+      // the round trip above is only meaningful if the capture had a single scale.
+      expect(scale, 'the capture scale must be integral').toBe(Math.trunc(scale));
+      expect(imageData.height / clip.height, 'both axes must share one scale').toBeCloseTo(scale, 5);
+      expect(scale, 'the capture must cover at least one CSS pixel per image pixel').toBeGreaterThanOrEqual(1);
     });
   });
 });
