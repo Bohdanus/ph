@@ -130,6 +130,34 @@ while the bar icon is separately "**Path Operations icon**: Show or hide path op
 Collapsing the two would lose one of them, so the Path-mode `Operation` row is now a row of its
 own, placed with the path rows, and it says in its `detail` which of the two it is.
 
+**Two rows in this family are named `Mode`, and that is Adobe's word rather than a slip.** The
+bar prints `Mode` twice: the three-button drawing-mode group at its left end, and — in Pixel
+mode only — a blend-mode control at the right-hand end, in the group with Opacity and
+Anti-alias. `types.ts:39-42` requires `control` to be the name Photoshop's own bar prints,
+verbatim, so **neither row can be renamed to separate them**: inventing a second name would
+break the one rule that field exists to enforce, and Adobe uses the same word for the two
+different controls. The blend row takes its name from the mode-by-mode page this family
+already cites for the Pixel-mode contents
+(`helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html`),
+the same page that documents the three drawing modes.
+
+The resolution is that **each `detail` opens by saying which `Mode` it is**, in its first
+sentence: the group as "the first of the two controls Adobe names Mode, and the one at the
+left of the bar", the blend mode as "the second of the two controls Adobe names Mode, and a
+different control from the three-button drawing-mode group at the left of the bar". The
+second row also says where it sits, so a reader who lands on either row in the generated
+table learns which control it is without leaving the row. This is the same treatment the
+Path-mode `Operation` row above already gets against `Path Operations`, and the generator
+prints the whole `detail` (`scripts/generate-tool-docs.mjs:84`), so nothing depends on a
+reader having seen the other row.
+
+**Both rows ship in all seven records, so the collision is the family's shape and not one
+entry's accident.** Six records take them through `sharedFigureOptions` and `custom-shape`
+builds its own list out of the same consts, so every one of the seven tables in
+`docs/TOOLS.md` shows two rows whose first column reads `Mode`. Renaming either row to make
+the table prettier would contradict the contract's own worked example — `types.ts:39-42` lists
+`Mode` in the very line that requires the verbatim name.
+
 **The gear does hold Arrowheads, and the row used to say the opposite.** The same page's additional
 settings end "**Set additional shape and path options icon**: Set additional Path options, Live
 Shapes Controls, **Arrowheads**, and more." An earlier version of the data file closed that row with
@@ -609,6 +637,29 @@ and no `appRef` is carried. A `missing` row must not carry the key at all, so th
 with a rest-destructuring helper (`withoutAppRef` in `shape.ts`) rather than with
 `{ ...shared, appRef: undefined }`, which leaves a present, value-less key on the row and
 contradicts the contract.
+
+**The row ORDER here now matches the shared list, because the old order was defended by
+nothing.** This entry builds its own list instead of taking `sharedFigureOptions`, and it used
+to run the shared rows out in a different sequence: `Weight` and the three Pixel-mode rows
+came before the Shape Picker, `Shape W&H` and the path rows, where the shared list puts
+`Shape W&H` sixth from the left and the Pixel-mode rows last, after the gear. **No page opened
+in this pass sources a different order for this bar** — `draw-custom-shapes.html` documents
+the tool, the picker and the Define Custom Shape round trip, not the sequence of the bar — so
+the earlier sequence was the list the way it happened to be written, which is precisely what
+the shared-surface section above rules out. The list is now `sharedFigureOptions` in its
+declared order with `Shape Picker` at its head, and **only the `status` and the `appRef` differ
+from the shared consts**: those are the chip list's doing, as the table above sets out, and not
+a claim about Adobe's order. The one row that is not in the shared list is the picker, and its
+position is a **judgment, stated as one**: it leads the bar on the same reasoning the rest of
+the list is ordered by — it is the only control that chooses which shape is drawn, and every
+row after it modifies that choice. A position in a bar order is a claim like any other, so it
+is recorded here rather than left looking sourced.
+
+**The `Fill` row was a hand-copied duplicate of `fillControl.detail` and is now a spread.** The
+string was byte-identical to the shared const's, which is the only thing that made it safe, and
+a 182-character detail that has to be kept in step by hand is a drift waiting to happen. The row
+now reads `{ ...fillControl, status: 'inert', appRef: CUSTOM_SHAPE_CHIPS }` like its `Mode`,
+`Stroke` and `Shape W&H` neighbours, which produces the same four keys and the same values.
 
 **The chip list is not the only reason the shape bar does not render.** The canvas dispatch
 `src/components/Main/Main.tsx:74-82` names `shape`, `rectangle`, `ellipse`, `triangle`, `polygon` and
