@@ -883,7 +883,8 @@ export const CURATED = {
   },
   'panel-docks': {
     summary:
-      'Photoshop-style draggable panel docks: the right dock resizable by dragging, a History/Layers splitter with drag-reorder between them, the tools rail relocatable, and the layout persisted. Board issue ph-72.',
+      'Photoshop-style draggable panel workspace: a new PanelLayout context owning the dock width, the History/Layers split, panel order, roll-up and which edge the dock is on; a shared useDockDrag pointer primitive; a resizable, reorderable, roll-up-able right dock; a tools rail that re-docks to the opposite edge by drag; and a Window > Reset Workspace. Board issue ph-72.',
+    note: 'Two sessions curated this key independently and the merge kept both, where the second silently discarded the first. Defaults are chosen so the first render is pixel-identical to the fixed layout it replaces (250px dock, 20/80 split, History above Layers, dock on the right), which is what keeps the e2e shell arithmetic valid.',
   },
   'chat-damage-audit': {
     summary:
