@@ -11,6 +11,23 @@ linked files; this file is the rules that apply to every task.
 | [`docs/PHOTOSHOP-UX.md`](docs/PHOTOSHOP-UX.md)         | the Tools rail, tool names, Photoshop fidelity                      |
 | `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN_PROBLEMS.md` | filing or checking a known defect                                   |
 
+## How to work
+
+- **Correctness first.** Prefer code quality and verified behaviour over speed.
+- **Keep changes small and surgical.** Precise edits; no unrelated refactors
+  riding along in the same diff.
+- Ask before a task needs deep, token-expensive repeated analysis when a narrower
+  investigation would do.
+- When requirements are materially ambiguous, ask rather than inventing
+  behaviour. Scope and architecture calls are yours, not a subagent's.
+- Every sub-feature gets a brief, focused `[feature-dir]/SPEC.md` covering its
+  main functional and business requirements.
+- **A documented rule that only a document enforces is advice.** The rules this
+  repository actually depends on — no browser window, the swarm locks, and the
+  tsc guard — are enforced in code or at the permission layer as well, because a
+  weaker model that skipped this file would otherwise skip the rule with it. When
+  you add a rule a model can get wrong by accident, give it the same treatment.
+
 ## Subagents: THE DEFAULT, NOT THE FALLBACK
 
 **LAUNCH AS MANY SUBAGENTS AS THE TASK WARRANTS. COMPUTE COSTS ZERO; QUALITY IS
