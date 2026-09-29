@@ -377,6 +377,59 @@ describe('drawClosedSelectionPath', () => {
   });
 });
 
+/** The drawing state a real `save()` pushes and a real `restore()` puts back. */
+type OverlayState = {
+  alpha: number;
+  strokeStyle: CanvasRenderingContext2D['strokeStyle'];
+  fillStyle: CanvasRenderingContext2D['fillStyle'];
+  lineWidth: number;
+  lineDash: number[];
+};
+
+/**
+ * Installs a REAL state stack on a `makeMockCtx()` context.
+ *
+ * `makeMockCtx`'s `save` and `restore` are bare `vi.fn()` spies that neither push nor pop
+ * anything (`src/__tests__/canvas-mock.ts:22-23`), so a context built from it cannot state
+ * what `CanvasRenderingContext2D` states: that the `restore()` closing
+ * `drawSelectionOutline` gives the caller back the `globalAlpha` it had. Every method stays a
+ * `vi.fn()`, so call counts and `invocationCallOrder` still read off it. The stack covers all
+ * five members the outline writes, not just the one the assertions below read: a stack that
+ * restored only the member under test would be the same mock-shaped lie, one field narrower.
+ * The line dash rides along by pairing `setLineDash` with a `getLineDash` reading the same
+ * list, because the shared mock's answers `[]` every time.
+ */
+function withStateStack(ctx: CanvasRenderingContext2D) {
+  let lineDash: number[] = [];
+  const stack: OverlayState[] = [];
+
+  ctx.setLineDash = vi.fn((segments: number[]) => {
+    lineDash = segments.slice();
+  });
+  ctx.getLineDash = vi.fn(() => lineDash.slice());
+  ctx.save = vi.fn(() => {
+    stack.push({
+      alpha: ctx.globalAlpha,
+      strokeStyle: ctx.strokeStyle,
+      fillStyle: ctx.fillStyle,
+      lineWidth: ctx.lineWidth,
+      lineDash,
+    });
+  });
+  ctx.restore = vi.fn(() => {
+    const state = stack.pop();
+    if (!state) return;
+
+    ctx.globalAlpha = state.alpha;
+    ctx.strokeStyle = state.strokeStyle;
+    ctx.fillStyle = state.fillStyle;
+    ctx.lineWidth = state.lineWidth;
+    lineDash = state.lineDash;
+  });
+
+  return ctx;
+}
+
 describe('drawSelectionOutline', () => {
   it('draws the dashed path and one anchor per vertex for interactive tools', () => {
     const ctx = makeMockCtx();
@@ -398,16 +451,15 @@ describe('drawSelectionOutline', () => {
     expect(ctx.setLineDash).toHaveBeenCalledTimes(1);
   });
 
-  it('resets globalAlpha to 1, and does so before it strokes, whatever the last tool left behind', () => {
+  it('resets globalAlpha to 1 before it strokes, inside a bracket that hands the caller its own back', () => {
     // The reset is `resetOverlayAlpha` at `src/util/selection.ts:156` — `ctx.globalAlpha = 1` and
     // nothing else (`src/util/canvas.ts:8-10`). The PRECONDITION is the load-bearing half of this
     // test: `makeMockCtx` initialises `globalAlpha` to 1 (`src/__tests__/canvas-mock.ts:52`), so
     // asserting 1 on a fresh context would pass whether or not the reset existed.
     //
-    // The mock's `save` and `restore` are bare `vi.fn()` spies (`canvas-mock.ts:22-23`) that
-    // neither push nor pop a state stack, so nothing restores the alpha afterwards and the value
-    // read back is the one the function left behind. That is what lets the assertion survive.
-    const ctx = makeMockCtx();
+    // The context carries a real state stack, so both halves of the contract are read off the one
+    // call: the alpha DURING the draw, and the alpha the caller is left holding.
+    const ctx = withStateStack(makeMockCtx());
     ctx.globalAlpha = 0.25;
     let alphaAtStroke: number | undefined;
     ctx.stroke = vi.fn(() => {
@@ -416,10 +468,31 @@ describe('drawSelectionOutline', () => {
 
     drawSelectionOutline(ctx, selection());
 
-    expect(ctx.globalAlpha).toBe(1);
     // A reset placed after the path was stroked would leave the outline painted at 0.25 while
     // still reading back as 1, so the value has to be sampled during the draw.
     expect(alphaAtStroke).toBe(1);
+    // …and what the context is left holding is the CALLER's 0.25, not 1. The reset is inside
+    // the bracket, so the `restore()` at `selection.ts:175` undoes it on the way out; a 1 here
+    // would be a reset that outlived the bracket that was supposed to contain it.
+    expect(ctx.globalAlpha).toBe(0.25);
+
+    // The `save()` is the half `expect(ctx.restore).toHaveBeenCalledTimes(1)` cannot see, and the
+    // half the contamination it exists to contain is made of: the tool overlay is ONE 2D context
+    // for the whole session and every tool area is handed the same object
+    // (`selection.ts:151-155`), so without the `save()` at `:150` the `restore()` at `:175` pops
+    // an empty stack and `strokeStyle`, `fillStyle`, `lineWidth`, the dash and the alpha all
+    // stay written for the next tool to draw on.
+    expect(ctx.save).toHaveBeenCalledTimes(1);
+    // The ORDER carries the other half. A `resetOverlayAlpha(ctx)` hoisted ABOVE the `save()`
+    // makes all three calls in exactly this order and leaks the alpha just the same, so the call
+    // sequence alone cannot separate "reset inside the bracket" from "reset in front of it" —
+    // only the state read back above can.
+    expect(vi.mocked(ctx.save).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(ctx.stroke).mock.invocationCallOrder[0]
+    );
+    expect(vi.mocked(ctx.stroke).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(ctx.restore).mock.invocationCallOrder[0]
+    );
   });
 
   it.each(['freehand-lasso', 'magic-wand'] as const)(
@@ -428,12 +501,19 @@ describe('drawSelectionOutline', () => {
       // These two skip the anchor loop, which is where an early return could have skipped the
       // reset: the per-caller resets this retired were added one tool at a time and were
       // missing the magic wand's, which is the whole reason the reset moved inside the function.
-      const ctx = makeMockCtx();
+      const ctx = withStateStack(makeMockCtx());
       ctx.globalAlpha = 0.25;
+      let alphaAtStroke: number | undefined;
+      ctx.stroke = vi.fn(() => {
+        alphaAtStroke = ctx.globalAlpha;
+      });
 
       drawSelectionOutline(ctx, selection({ sourceTool }));
 
-      expect(ctx.globalAlpha).toBe(1);
+      expect(alphaAtStroke).toBe(1);
+      // The anchored path and this one share the bracket, so they share the post-condition: the
+      // caller gets its own 0.25 back, and the reset leaves with the bracket.
+      expect(ctx.globalAlpha).toBe(0.25);
       expect(ctx.stroke).toHaveBeenCalledTimes(1);
     }
   );
