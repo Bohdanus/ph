@@ -192,8 +192,8 @@ Hooks use a shared common-git entry rather than a per-worktree husky directory;
   `index.html` are **not** linted, deliberately. **"The dotfiles are not linted" is
   not quite true and should not be repeated:** it means dotfiles with no linted
   extension — `.gitattributes`, `.gitignore`, `.nvmrc`, `.prettierrc` — while
-  `.copilot-instructions.md` is a dotfile that _is_ linted, because it matches
-  `*.md`. The globs in the script are where that decision is written down.
+  tracked Markdown dotfiles are linted because they match `*.md`. The globs in
+  the script are where that decision is written down.
   **Legacy files being outside the linted set is not a problem to solve.**
 - `--fail-on-changes --no-stash` leaves formatter fixes unstaged and blocks the
   commit; never allow hooks to rewrite the index. `--no-stash` is not optional:
