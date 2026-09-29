@@ -1910,12 +1910,22 @@ is `null`. `assemble` then falls through to the `SEVERITY` test (also false) and
 `if (open && record.level <= open.level) close(...)`. `HANDOFF.md:442` is a **level-2**
 `## 15a. A self-anchored reorder is refused, and the refusal is load-bearing`, a sibling of
 `## 15.` — so it **closes item 15's body there** and opens nothing itself. The span
-`HANDOFF.md:443-456` is **872 raw characters**, or **870** once the span's leading and
-trailing blank lines are trimmed — 870 is the trimmed count, and the raw count is the one
+`HANDOFF.md:443-456` is **876 raw characters**, or **874** once the span's leading and
+trailing blank lines are trimmed — 874 is the trimmed count, and the raw count is the one
 that includes them. Line 455 is a `---` rule, which `bodyOf` drops as layout, so the prose the
 parser actually strands is lines 443-454. All of it is unreachable from any item title or body.
 Item 15's stored body is 3994 chars and ends mid-sentence; the 15a prose is not in it. The
 entry is a load-bearing tripwire, so this is live work loss, not latent.
+
+**Both counts were wrong on the way in, and the correction is self-stable.** The span's text is
+byte-identical across every base this entry has been re-derived against, so **its length cannot
+change when the line numbers move** — and two earlier revisions "corrected" `872 → 873` and
+`870 → 871` for a span that measured the same both times. `comm` over the region's bytes, not a
+re-read of the number in the prose, is the only check that catches this: the raw count includes
+the digits of the count itself, so replacing three digits with three digits leaves it unchanged
+and needs no second pass. **Item 15's stored body is left alone** at 3994: it sits upstream of
+every hunk in this entry, and it is the one number here that cannot be measured without the
+parser, which is exactly why an unmeasured number must not be edited.
 
 **The same root cause, opposite direction, and worse: a suffixed retirement retires the parent.**
 `deadNumbers('## 15a. An old thing — deleted')` returns `[15]` — `NUMBER_OR_RANGE` harvests the
