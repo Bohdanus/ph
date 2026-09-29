@@ -3,6 +3,7 @@ import { fireEvent, render } from '@testing-library/react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { Selection } from '../../../contexts/general-types.ts';
 import { SELECTION_ACTION } from '../../../util/constants.ts';
+import { SELECTION_ANCHOR_RADIUS } from '../../../util/selection.ts';
 import { isDocumentGestureOpen, readDocumentGesture, resetDocumentGestures } from '../../../hooks/document-gesture.ts';
 import { PolygonClickToolArea } from '../PolygonClickToolArea.tsx';
 
@@ -567,9 +568,12 @@ describe('PolygonClickToolArea', () => {
       const toolArea = renderArea({ current: ctx }).ctx;
 
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 40 });
+      vi.mocked(ctx.arc).mockClear();
       fireEvent.pointerMove(toolArea, { clientX: 95, clientY: 60 });
-      // The preview tracked the drag...
-      expect(ctx.moveTo).toHaveBeenCalledWith(25, 30);
+      // The preview tracked the drag — the dragged selection's first anchor sits at
+      // (1,1) + pos (24,29) after the +15/+20 move, and its anchors are the whole of
+      // what the overlay paints for a committed selection.
+      expect(ctx.arc).toHaveBeenNthCalledWith(1, 25, 30, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
       // ...and the drag came back to the origin, so the geometry is the state the
       // store never left. An entry here would describe a change that did not
       // happen, and `COMMIT_DOCUMENT_EDIT` always flags unsaved changes.
@@ -603,7 +607,7 @@ describe('PolygonClickToolArea', () => {
 
       // Everything drawn so far is the preview, so the repaint that follows the
       // abort can only be read against a cleared mock.
-      vi.mocked(ctx.moveTo).mockClear();
+      vi.mocked(ctx.arc).mockClear();
       vi.mocked(ctx.clearRect).mockClear();
 
       endDrag(toolArea);
@@ -616,18 +620,21 @@ describe('PolygonClickToolArea', () => {
       // alone. Comparing the mocked store object to itself proved nothing — the
       // component only ever reads it.
       expect(dispatchedActionTypes().filter((type) => type !== 'CANCEL_SELECTION_DRAFT')).toEqual([]);
-      // A clear alone would leave the committed outline wiped with nothing to put
-      // it back, because an abort changes no store state. The repaint is what
-      // makes the dropped drag snap back instead of taking the outline with it.
+      // A clear alone would leave the committed handles wiped with nothing to put
+      // them back, because an abort changes no store state. The repaint is what
+      // makes the dropped drag snap back instead of taking the committed geometry
+      // with it, and the anchors it repaints are the un-moved ones.
       expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, 800, 600);
-      expect(ctx.moveTo).toHaveBeenCalledWith(10, 10);
-      expect(ctx.lineTo).toHaveBeenCalledWith(100, 10);
-      expect(ctx.lineTo).toHaveBeenCalledWith(100, 100);
+      expect(ctx.arc).toHaveBeenNthCalledWith(1, 10, 10, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+      expect(ctx.arc).toHaveBeenNthCalledWith(2, 100, 10, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+      expect(ctx.arc).toHaveBeenNthCalledWith(3, 100, 100, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
 
-      // The drag is over: a later move and release belong to no gesture.
-      vi.mocked(ctx.moveTo).mockClear();
+      // The drag is over: a later move and release belong to no gesture, so they
+      // repaint nothing either.
+      vi.mocked(ctx.arc).mockClear();
       fireEvent.pointerMove(toolArea, { clientX: 60, clientY: 60 });
       fireEvent.pointerUp(toolArea, { clientX: 60, clientY: 60 });
+      expect(ctx.arc).not.toHaveBeenCalled();
       expect(selectionEdits()).toHaveLength(0);
     });
 
@@ -684,7 +691,7 @@ describe('PolygonClickToolArea', () => {
       // hit-tests against the geometry the store is still showing — which the
       // first drag never touched — so this drag's origin is (90,55).
       fireEvent.pointerDown(toolArea, { button: 0, pointerId: 2, clientX: 90, clientY: 55 });
-      vi.mocked(ctx.moveTo).mockClear();
+      vi.mocked(ctx.arc).mockClear();
       fireEvent.pointerMove(toolArea, { pointerId: 1, clientX: 130, clientY: 95 });
 
       // Pointer 1's release belongs to a drag that no longer exists, so it must
@@ -693,9 +700,10 @@ describe('PolygonClickToolArea', () => {
       expect(selectionEdits()).toHaveLength(0);
 
       // The displaced geometry is gone: the preview followed pointer 2's own
-      // origin, +10/+15, and never the foreign move to (130,95).
+      // origin, +10/+15, and never the foreign move to (130,95) — and pointer 1's
+      // move painted nothing at all, so this is the first anchor the mock has seen.
       fireEvent.pointerMove(toolArea, { pointerId: 2, clientX: 100, clientY: 70 });
-      expect(ctx.moveTo).toHaveBeenCalledWith(20, 25);
+      expect(ctx.arc).toHaveBeenNthCalledWith(1, 20, 25, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
 
       fireEvent.pointerUp(toolArea, { pointerId: 2, clientX: 100, clientY: 70 });
 
@@ -713,18 +721,18 @@ describe('PolygonClickToolArea', () => {
 
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 80, clientY: 40 });
 
-      vi.mocked(ctx.moveTo).mockClear();
+      vi.mocked(ctx.arc).mockClear();
       fireEvent.pointerMove(toolArea, { clientX: 90, clientY: 55 });
       // The dragged selection, not the stored one: its first anchor is at
       // (1,1) + pos (19,24) after a +10/+15 move.
-      expect(ctx.moveTo).toHaveBeenCalledWith(20, 25);
+      expect(ctx.arc).toHaveBeenNthCalledWith(1, 20, 25, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
       expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, 800, 600);
 
-      vi.mocked(ctx.moveTo).mockClear();
+      vi.mocked(ctx.arc).mockClear();
       fireEvent.pointerMove(toolArea, { clientX: 95, clientY: 60 });
       // A further +5/+5, so the repaint tracked the second move too. A single
       // repaint at gesture start would leave this at (10,10).
-      expect(ctx.moveTo).toHaveBeenCalledWith(25, 30);
+      expect(ctx.arc).toHaveBeenNthCalledWith(1, 25, 30, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
     });
 
     it('commits the drag as a move when the pointer is released', () => {
@@ -1120,18 +1128,24 @@ describe('PolygonClickToolArea', () => {
       storeState.selections = [committedTriangle()];
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 400, clientY: 400 });
 
-      vi.mocked(ctx.moveTo).mockClear();
+      vi.mocked(ctx.arc).mockClear();
       vi.mocked(ctx.clearRect).mockClear();
 
       shortcutHandlers.get('Escape')?.();
 
       // The clear is still there...
       expect(ctx.clearRect).toHaveBeenCalledWith(0, 0, 800, 600);
-      // ...and the committed outline is drawn again, which is the whole point: the
-      // reset is unconditional, so the wipe cannot be the last word about it.
-      expect(ctx.moveTo).toHaveBeenCalledWith(10, 10);
-      expect(ctx.lineTo).toHaveBeenCalledWith(100, 10);
-      expect(ctx.lineTo).toHaveBeenCalledWith(100, 100);
+      // ...and the committed selection's anchors are drawn again, which is the whole point: the
+      // reset is unconditional, so the wipe cannot be the last word about them.
+      //
+      // This reads `arc` rather than `moveTo`/`lineTo`. The border moved to the
+      // marching-ants canvas, so there is no path on this context any more; what a `clearOverlay`
+      // can still erase is the anchors, and they are what this repaint has to restore. Reading
+      // the path instead would assert against a stroke this function no longer makes, and would
+      // pass for a component that repainted nothing.
+      expect(ctx.arc).toHaveBeenNthCalledWith(1, 10, 10, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+      expect(ctx.arc).toHaveBeenNthCalledWith(2, 100, 10, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
+      expect(ctx.arc).toHaveBeenNthCalledWith(3, 100, 100, SELECTION_ANCHOR_RADIUS, 0, Math.PI * 2);
     });
 
     it('clears the overlay on unmount', () => {

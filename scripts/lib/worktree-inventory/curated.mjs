@@ -674,6 +674,11 @@ export const CURATED = {
       'Serializes Playwright runs across agents: scripts/e2e-run.mjs takes the swarm lock e2e/.swarm-e2e-runner, allocates a free port per run and gives each run its own output directory, and the scripts that run a suite route through it. Makes playwright.config.ts server reuse opt-in and rewrites the e2e docs, AGENTS.md, TEST-FLAKES 10/11 and .skills/photoshop-tool-creation.md to match.',
     note: 'Adds a wrapper the commit gate and CI do not run. The e2e job still calls npx playwright test directly, because a CI job owns its checkout and collects artifacts from the shared test-results/.',
   },
+  'e2e-own-server': {
+    summary:
+      'An e2e run starts its OWN dev server, and that is the guarantee: playwright.config.ts sets reuseExistingServer: false as a literal with --strictPort, and scripts/e2e-run.mjs allocates a port, verifies it is bindable, records it, and refuses PLAYWRIGHT_REUSE_EXISTING_SERVER and PLAYWRIGHT_BASE_URL. The swarm lock on e2e/.swarm-e2e-runner is demoted to an ADVISORY queue: it serializes when it can, and a run that cannot have it logs and starts anyway. Also skips e2e/viewport-drawing.spec.ts by operator decision (TEST-FLAKES 12, still open).',
+    note: 'Rewrites the e2e contract in docs/TESTING.md, docs/ORCHESTRATION.md, e2e/README.md, TEST-FLAKES 10, and .skills/photoshop-tool-creation.md. Deliberately does not touch AGENTS.md: the operator is replacing it with a short root plus links, and edits there would be killed.',
+  },
   'fix-e2e-findings': {
     // The SECOND worktree to land on this directory name, and the second time a
     // curated entry outlived the worktree it described. The first entry here said

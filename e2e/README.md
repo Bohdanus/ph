@@ -87,8 +87,8 @@ changed which tests fail, independently of any human:
 
 | formerly failing tests                        | headed | headless |
 | --------------------------------------------- | ------ | -------- |
-| `cdp-helpers.spec.ts:113 :129 :146 :163 :195` | 5 fail | pass     |
-| `cdp-helpers.spec.ts:220, 239`                | pass   | 2 fail   |
+| `cdp-helpers.spec.ts:132 :146 :161 :193 :210` | 5 fail | pass     |
+| `cdp-helpers.spec.ts:281, 301`                | pass   | 2 fail   |
 
 The two groups were disjoint and each mode's set reproduced identically across
 repeats. Both are now fixed — the assertions no longer name a capture scale, so they
@@ -126,75 +126,73 @@ npm run test:e2e
 ```
 
 **That command is a wrapper, not `playwright test`.** It runs
-`scripts/e2e-run.mjs`, which does three things before Playwright starts, and every
-one of them exists because of a way concurrent runs get silently wrong:
+`scripts/e2e-run.mjs`, which does two independent things before Playwright starts.
 
-1. **It takes a swarm lock**, so only one suite runs at a time across every
-   worktree on this machine. See [One suite at a time](#one-suite-at-a-time).
-2. **It allocates a port of its own**, so two agents in two worktrees are never
-   asking for :5173.
-3. **It gives the run its own output directory**, because Playwright _deletes_
-   `outputDir` at the start of every run, so a second run otherwise erases the
-   first run's failure screenshots before anybody has read them.
+### The guarantee: this run tests this checkout
 
-Every argument is forwarded verbatim:
+**A run starts its own dev server, on a port it picks, and records that port.** Attaching to
+a server somebody else started is the worst failure mode this suite has, because it is
+invisible: every worktree serves its own checkout, so a run on the wrong one tests code it
+never touched, reports green, and reads exactly like "my change did nothing".
+`TEST-FLAKES.md` §10 is a mutation campaign that reported seven mutations green that way.
 
-```bash
-npm run test:e2e -- e2e/sidebar-flyout.spec.ts
-npm run test:e2e -- --retries=1 e2e/undo-redo.spec.ts
-```
+Three things make it impossible rather than discouraged:
 
-### One suite at a time
+- `playwright.config.ts` sets `reuseExistingServer: false` as a **literal** — no environment
+  variable, no argument, no field that turns it on.
+- The dev server is started with `--strictPort`, so a port taken in the moment between the
+  run picking one and Vite binding it is a **startup failure** rather than Vite's silent hop
+  to the next free port.
+- `PLAYWRIGHT_REUSE_EXISTING_SERVER` is **refused** by the wrapper, and `PLAYWRIGHT_BASE_URL`
+  is refused unless the run explicitly says `E2E_ALLOW_REMOTE=1` — which it logs, so a report
+  can never claim a branch was verified against its own checkout when it was not.
 
-`npm run test:e2e` asks the swarm board for a file lock on
-`e2e/.swarm-e2e-runner` before it starts, and gives it back when the run ends —
-including when the run fails or the wrapper is interrupted. That path is
-**virtual**: it is never created on disk, and `npm run swarm status` shows it as a
-live lock while a suite is in flight, so an agent can see who has it without
-asking.
+The outcome is binary: **you get a server this run started, or you get a red run.** There is no
+third state. Each run also writes its port to `.kilo/e2e-last-run.json` and prints it, so a run
+that fails an hour later is diagnosable from the port that actually served it.
 
-If another run has it, the run **queues** rather than starting on top of it. It
-prints the holder's name and waits; if the wait runs out, nothing runs and the
-command exits **4**. The two exit codes answer different questions and neither is a
-mistake: `swarm check <path>` exits **1** when the path is busy, which is what a
-shell gates on, while the board's own `hold` — and therefore this wrapper — exits
-**4** for "somebody else holds this file". Do the other work and run the same
-command again.
+### The queue: advisory, and never a gate
 
-| Variable           | Default | What it does                                            |
-| ------------------ | ------- | ------------------------------------------------------- |
-| `E2E_LOCK_TIMEOUT` | 10 min  | How long to queue. `0` fails immediately.               |
-| `E2E_LOCK_POLL`    | 3 s     | How often to re-check while queued.                     |
-| `E2E_LOCK_LEASE`   | `30m`   | How long a **dead** holder blocks the queue.            |
-| `E2E_SKIP_LOCK`    | unset   | `1` runs unsynchronized, loudly. Operator escape hatch. |
+The run also takes a swarm lock on `e2e/.swarm-e2e-runner` so two agents rarely run e2e at
+once — less port pressure, less CPU contention, one readable log at a time. **It is only a
+queue:**
 
-`--no-lock` is the same as `E2E_SKIP_LOCK=1`. The lock is skipped automatically
-under `CI`, where one job owns one checkout outright — the board would be a fresh
-one-run-per-job database that no other job could see. If the board cannot be
-reached at all — outside a git checkout, or a Node without `node:sqlite` — the
-wrapper prints a **warning and runs anyway**: failing every suite on that machine
-would be worse than the collision the lock prevents. A malformed `E2E_LOCK_LEASE`
-is the opposite case and **stops the run**, because the board rejects it with the
-same exit code as a missing board and a typo in one variable must not silently turn
-the lock off.
+- Two runs may proceed at the same time. That is survivable and needs no coordination — each
+  has its own port and its own output directory.
+- If the board cannot be reached, the run says so and starts.
+- If the wait times out, the run says so and starts.
 
-**The holder is a run, not a branch.** `swarm status` shows one `e2e-run/<branch>/<pid>`
-agent while a suite is in flight, and that is the useful reading: the branch says
-which checkout, the pid says which process. The board's identity is the branch and a
-branch never conflicts with itself, so two runs on one branch — a session and its own
-subagent — would otherwise both "acquire", and the second one's release would free
-the first.
+**No run ever refuses to start because of the lock.** A queue that can block a merge gate is a
+gate, and a gate that is not 100% enforceable is worse than no gate: it looks like a guarantee
+and is not one. An earlier version exited 4 when it could not have the lock, and that is exactly
+the trap this section exists to prevent.
 
-The lease is deliberately shorter than a full suite and renewed while the run
-lives. A file lock is never renewed by the board itself (`renewOwnClaims` only
-touches issue _claims_), so a long run would otherwise watch its own lock expire,
-have it reclaimed by the next `swarm` command from anybody, and start racing a
-second suite. A renewal that fails stops the run rather than risking that.
+`npm run swarm status` shows the holder as `e2e-run/<branch>/<pid>` while a suite is in flight:
+the branch says which checkout, the pid says which process. The holder is a **run** rather than a
+branch because board identity is the branch and a branch never conflicts with itself.
 
-**A lock is a queue, not a gate.** It never decides that a change does not need
-e2e: the Definition of Done still requires a run for a user-visible change, and
-this is what makes that requirement survivable when several agents are merging at
-once. Run the full suite before merging; use a targeted spec to iterate.
+| Variable           | Default  | What it does                                          |
+| ------------------ | -------- | ----------------------------------------------------- |
+| `E2E_LOCK_TIMEOUT` | `600000` | Milliseconds to queue before going ahead anyway.      |
+| `E2E_LOCK_POLL`    | `3000`   | Milliseconds between queue re-checks.                 |
+| `E2E_LOCK_LEASE`   | `30m`    | A DURATION, not milliseconds. See below.              |
+| `E2E_SKIP_LOCK`    | unset    | `1` skips the queue, loudly. Only scheduling is lost. |
+| `E2E_ALLOW_REMOTE` | unset    | `1` permits `PLAYWRIGHT_BASE_URL`, and is logged.     |
+
+The units are mixed and that is a trap worth naming: **`E2E_LOCK_TIMEOUT` and
+`E2E_LOCK_POLL` are plain millisecond counts** (`E2E_LOCK_TIMEOUT=5000`), while
+**`E2E_LOCK_LEASE` is a duration** (`30m`, `90s`, `2h`, or a bare number of
+minutes). They are not interchangeable, and they fail in opposite ways —
+`E2E_LOCK_TIMEOUT=5m` is `NaN`, so it is silently ignored and you get the
+10-minute default, while a malformed lease is reported and replaced. A typo in
+either costs scheduling and nothing else.
+
+`--no-lock` is the same as `E2E_SKIP_LOCK=1`. The queue is skipped automatically under `CI`,
+where one job owns one checkout outright. The lease is renewed while the suite runs, because the
+board never renews a file lock itself, and a renewal that fails is a message rather than a
+failure: both runs have their own ports. A holder whose process is gone is reclaimed rather than
+waited out, which is why a killed run does not cost the next one its full timeout — the holder
+identity carries the pid, and only identities this wrapper created are probed.
 
 ### Ports and servers
 
@@ -211,25 +209,33 @@ It leaves the port alone when you have already chosen one:
 PLAYWRIGHT_PORT=5391 npm run test:e2e
 ```
 
-**Server reuse is opt-in now, and the flag was renamed to say so.** A run used to
-attach to any server already on :5173, which in a worktree is _another
-checkout's_ code — a mutation campaign in `TEST-FLAKES.md` §10 reported every
-mutation green that way. To attach to a dev server you started yourself:
+### There is no way to reuse a server, and that is deliberate
+
+A run used to attach to any server already on :5173, which in a worktree is
+_another checkout's_ code — a mutation campaign in `TEST-FLAKES.md` §10 reported
+every mutation green that way. `playwright.config.ts` now sets
+`reuseExistingServer: false` as a bare **literal**, with no environment variable
+and no field that can turn it on, and the server is started with `--strictPort` so
+a port that got taken in the moment between picking it and binding it is a startup
+failure rather than Vite's silent hop to the next free port.
+
+The opt-in that briefly existed (`PLAYWRIGHT_REUSE_EXISTING_SERVER=1`) was
+withdrawn rather than kept as a convenience: an escape hatch that attaches to
+whatever holds the port is the same defect with a documented name, and the only
+thing it reliably does is let an agent under time pressure choose it. Setting the
+variable now is an **error**, not a no-op.
+
+To test a deployed build, say so explicitly, and note that the run logs which
+origin it loaded:
 
 ```bash
-PLAYWRIGHT_REUSE_EXISTING_SERVER=1 npm run test:e2e
+E2E_ALLOW_REMOTE=1 PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e
 ```
 
-That is the only way to reuse, `PLAYWRIGHT_PORT` disables it, and with the port
-occupied the dev server is started with `--strictPort` so it fails loudly instead
-of silently hopping to the next free port.
-
-Point the suite at a server you did not start with `PLAYWRIGHT_BASE_URL`. It wins
-navigation, so keep it and `PLAYWRIGHT_PORT` consistent:
-
-```bash
-PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e
-```
+Both refusals are enforced twice, in the only two places that can see every
+invocation: `scripts/e2e-run.mjs` (the friendly error, before anything starts)
+and `e2e/global-setup.ts` (the load-bearing one, because `npm run test:e2e:raw`
+and the CI job's bare `npx playwright test` never load the wrapper at all).
 
 ### Output
 
@@ -238,7 +244,20 @@ directory before the suite starts. `test-results/` is gitignored wholesale, and
 `npm run test:e2e:clean` removes it. A bare `npx playwright test` (or
 `npm run test:e2e:raw`) skips the wrapper and writes to the shared `test-results/`
 — that is the same as CI, where the JSON reporter's output is collected as an
-artifact, and it is why CI calls Playwright directly.
+artifact, and it is why CI calls Playwright directly. A bare run still starts its
+OWN server, on :5173; only the port choice and the output directory come from the
+wrapper.
+
+`--last-failed` works across runs: the wrapper pins Playwright's failure list to
+the shared `test-results/.last-run.json`, because that flag silently runs the whole
+suite when it cannot find the file and a per-run directory would move it every run.
+
+The wrapper also writes one record of the last run to `.kilo/e2e-last-run.json` —
+the port, the base URL actually under test, the output directory, and the exit
+code. It is **gitignored and machine-local by design** (`.kilo/` holds nothing
+durable), it is a single overwritten slot rather than an archive, and
+`npm run test:e2e:clean` deliberately leaves it, because it must outlive the
+`test-results/` it points at. The same numbers are on stdout.
 
 The HTML report is **not** isolated, deliberately: `npm run test:e2e:report` is a
 bare `playwright show-report`, which resolves `playwright-report`, and a per-run
@@ -377,8 +396,8 @@ Paths come from `testInfo.snapshotDir`, not `snapshotPath()` — the latter appe
 the project name and the OS, which would make a baseline committed on one machine
 read as missing on another.
 
-The directory holds 17 files. These 7 are the ones `visual-regression.spec.ts`
-actually reads, one per format with `comparePixels: true`:
+Of the files in the directory, the ones `visual-regression.spec.ts` actually reads are
+one per format with `comparePixels: true`:
 
 ```
 e2e/export/visual-regression.spec.ts-snapshots/
@@ -392,7 +411,7 @@ e2e/export/visual-regression.spec.ts-snapshots/
     └── drawing.avif.png           # AVIF export baseline
 ```
 
-The other 10 committed files are orphans — the 8 raw `drawing.<ext>` exports
+The remaining committed files are orphans — the raw `drawing.<ext>` exports
 (including `drawing.bmp`, the bulk of the 2.1 MB), plus `drawing-icon.ico.png` and
 `source-baseline.png`. Nothing reads them; the ICO spec compares in-browser against
 the source canvas instead. They are still tracked, pending authorisation to delete
@@ -453,8 +472,13 @@ Two more consequences of the same geometry, both of which have bitten a spec her
   cheap way to get a full-document layer (`GradientToolArea` also refuses to run
   on the bedrock layer at all).
 
-2 tests are declared `test.skip`: the Photopea PSD round-trip (needs the external
-photopea.com) and one right-click flyout case.
+3 tests are declared `test.skip`: the Photopea PSD round-trip (needs the external
+photopea.com), one right-click flyout case, and `viewport-drawing.spec.ts` — the last
+is skipped by the operator's decision of 2026-09-29 because it is intermittently red (1
+run in 4, failing case moving between cases). That is a **gate decision, not a fix and
+not a waiver**: the defect is open in `TEST-FLAKES.md` §12 with its exact remaining
+verification, and the skip is not permission to loosen the assertion, raise the bound
+or add retries.
 
 A local run uses `retries: 0`; only `CI` sets `retries: 2`, so a local failure is
 never retried away.
@@ -549,7 +573,7 @@ concern configurations this job does not run in:
 - whether the visual-regression baselines should be regenerated from a production
   build rather than a dev server, since the job runs against `npm run dev`.
 
-The job reports the true state including the 2 declared skips. It runs the full
+The job reports the true state including the 3 declared skips. It runs the full
 suite with no `--grep-invert`, so the report is unfiltered — but note that
 `playwright.config.ts` sets `retries: 2` when `CI` is set, so a green run here is a
 green run _after_ retries. A flake that only shows on the first attempt is

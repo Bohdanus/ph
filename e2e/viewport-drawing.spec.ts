@@ -214,6 +214,63 @@ async function measureAtViewport(
 
 test.describe('Viewport Drawing', () => {
   /**
+   * SKIPPED BY DECISION, not because the assertion is wrong.
+   *
+   * This test is intermittently red (TEST-FLAKES.md §12), and the failing window
+   * MOVES between `wide` and `narrow` across the runs that have been captured. A
+   * deterministic defect does not move between cases, so whatever is wrong is in the
+   * test's own measurement chain rather than in the app's viewport mapping.
+   *
+   * ## What is already known, and what is not
+   *
+   * KNOWN, and measured in this file 40 lines above: `captureCanvasScreenshot`
+   * intermittently returns a page that is 87 CSS px SHORTER than the one measured, and
+   * that drift is a filed defect (`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2). The
+   * `expect` before the stroke assertion exists to catch it and it is a HARD
+   * assertion, so a drift failure names itself and prints both bounding boxes.
+   *
+   * NOT known: whether the remaining red runs are all that same drift, or a second
+   * cause. The chain from screenshot to verdict is `waitForCanvasRedraw` (polls a
+   * CDP screenshot for ink) then `getDarkPixelBounds` (thresholds that screenshot)
+   * then this file's derived `toleranceFor(box)` — 6.7-8.4px across the three
+   * windows, NOT the 25px `LEGACY_FIXED_SLACK_CSS_PX`, which is a ceiling the
+   * derived bound is asserted *against* and is never applied to anything. Nothing in
+   * the chain records which step gave, so a red run does not yet say.
+   *
+   * Why skipping beats shipping it:
+   *
+   * - The suite's contract is that a default headless run has ZERO failures. A test
+   *   that is red in some runs makes unrelated merges look broken, and the response
+   *   it trains is to ignore the gate — which costs far more than the coverage this
+   *   single test buys.
+   * - A flaky assertion is worse than no assertion, not better: it cannot justify a
+   *   change either, because a green result from it carries no information.
+   *
+   * This is NOT a "known failure" in the sense of a defect that is accepted. Nothing
+   * here is waived; the work is un-done and filed. It is also NOT the fix — do not
+   * widen `ANTIALIASED_FLANGE_CSS_PX`, loosen the bound, raise the drift guard, or
+   * add retries to make it green. Every one of those treats a symptom whose second
+   * cause is still unknown, and raising the drift guard would remove the only check
+   * that names the known one.
+   *
+   * Exact remaining verification, and the one-line un-skip (delete the statement
+   * below): capture a failing run with
+   * `npm run test:e2e -- e2e/viewport-drawing.spec.ts --retries=1`, which yields a
+   * `trace: 'on-first-retry'` trace plus the failure PNG under
+   * `test-results/runs/<run-id>/`. The drift guard's own message distinguishes the two
+   * causes: it fires with "the page moved across captureCanvasScreenshot" for the
+   * known one, and a red run WITHOUT that message is evidence of a second cause. Do
+   * not close this by re-running until green.
+   *
+   * Operator decision, 2026-09-29, after the skip was requested and the suite
+   * reported this test green locally.
+   */
+  test.skip(
+    true,
+    'Intermittent: the failing window moves between cases, known CDP capture drift is one cause — TEST-FLAKES.md §12'
+  );
+
+  /**
    * ONE test over all three windows, where this was three tests in a `for` loop. The reason
    * is a property the loop cannot express: "these are three different windows" is a claim
    * about the SET. In a per-viewport loop each test is blind to the other two, so a

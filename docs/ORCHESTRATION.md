@@ -69,6 +69,28 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
 - **Stage only your own paths, everywhere.** The main worktree is not stable
   while you work — other sessions commit into it concurrently. Re-read `git
 status` and `git diff` before staging.
+- **`git add -A` in a worktree is not a neutral staging step when the root
+  checkout is dirty.** The root is a _different checkout_ of a _different HEAD_,
+  so a file the branch never touched can be sitting in the worktree's working
+  tree with the root's older content, and `-A` commits it as a deliberate
+  reverting of whatever main has since done to that file. A merge of
+  `feature/polygon-marching-ants` shipped 17 such reverts — `AGENTS.md`,
+  `docs/CODE-REVIEW.md`, and every file main had gained in the e2e-own-server
+  work, 1,835 lines — and **not one of them was a conflict**, so the merge was
+  clean and the revert was invisible in the diff. The tell is a file that gained
+  or lost lines for no reason the branch explains.
+  **The check, by computation rather than by reading the merge diff:**
+  ```sh
+  comm -13 \
+    <(git diff --name-only "$(git merge-base main HEAD)"..<branch-tip> | sort) \
+    <(git diff --name-only main..HEAD | sort)
+  ```
+  Anything that set difference is main content the merge had no business
+  touching. The legitimate exceptions are the files the merge deliberately edits
+  and a regenerated `WORKTREES.json`; anything else gets restored from main with
+  `git checkout main -- <path>` before the merge lands. Run it _before_ the
+  review, because a reviewer only catches the files its brief happened to
+  mention.
 - **After any interrupted or abandoned merge**, run `git rev-parse -q --verify
 MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
   interrupted merge can leave `AUTO_MERGE` and `MERGE_MSG` with no `MERGE_HEAD`,
@@ -95,28 +117,48 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
   what makes it misleading. Vite does **not** walk up, so fonts, images and AVIF
   assets from the ancestor checkout 404 in a worktree. Run `npm ci` there before
   debugging an asset that will not load.
-- **Every worktree's dev server wants :5173, and that used to be the reason e2e
-  lied.** A bare `npx playwright test` in a worktree attached to whichever server
-  got to :5173 first — another checkout — and passed for the wrong reason;
-  `TEST-FLAKES.md` §10 is a mutation campaign that reported seven mutations green
-  that way. **That is over: `npm run test:e2e` now runs `scripts/e2e-run.mjs`,
-  which takes a swarm lock so one suite runs at a time across every worktree,
-  allocates a free port per run, and writes the run's output to its own
-  directory.** Server reuse is opt-in (`PLAYWRIGHT_REUSE_EXISTING_SERVER=1`)
-  instead of on-by-default. A bare `npx playwright test` still bypasses all of it —
-  that is `npm run test:e2e:raw`, and it is what CI runs, where one job owns one
-  checkout.
-- **The e2e sentinel is a virtual path held as a RUN, not a branch.**
-  `e2e/.swarm-e2e-runner` never exists on disk, and every board call passes
-  `--agent e2e-run/<branch>/<pid>`. Board identity is the branch by default and a
-  branch never conflicts with itself, so with branch identity two runs in one
-  worktree both "acquire" and the second one's release frees the first. `npm run
-swarm status` shows the holder as `e2e-run/<branch>/<pid>` while a suite is in
-  flight, which is the useful reading: the branch says which checkout, the pid
-  says which process. A run that gives up waiting exits 4; `swarm check` exits 1
-  for a busy path, and the two answer different questions. The lease is renewed
-  while the suite runs and a failed renewal stops the run, because a file lock is
-  never renewed by the board itself.
+- **Every worktree's dev server wants :5173, and that used to be the reason e2e lied.** A bare
+  `npx playwright test` in a worktree attached to whichever server got to :5173 first — another
+  checkout — and passed for the wrong reason; `TEST-FLAKES.md` §10 is a mutation campaign that
+  reported seven mutations green that way. **That is closed structurally now, and not by a lock:**
+  `npm run test:e2e` runs `scripts/e2e-run.mjs`, which starts the run's **own** server on a port
+  it picks, and `playwright.config.ts` sets `reuseExistingServer: false` as a literal with no
+  environment variable and no field that can turn it on. A run either gets a server it started or
+  it is red. `PLAYWRIGHT_REUSE_EXISTING_SERVER` is refused outright; `PLAYWRIGHT_BASE_URL` is
+  refused unless the run says `E2E_ALLOW_REMOTE=1`, which it logs.
+- **The e2e queue is `e2e/.swarm-e2e-runner`, and it is advisory — never a gate.** The run takes it
+  so two agents rarely run e2e at once, and gives it back when it ends, including when the suite
+  fails. It is a **virtual** path: it never exists on disk, so an agent editing `e2e/*.spec.ts`
+  holds those files separately and does not collide with it.
+  - **The holder is a RUN, not a branch.** Board identity is the branch and the conflict test is
+    `lock.agent_id !== who` (`db.mjs:1130`), so a branch never conflicts with itself: with branch
+    identity, two runs in one worktree both "acquire" and the second one's `unlock` releases the
+    row the first still believes it holds. Every board call therefore passes
+    `--agent e2e-run/<branch>/<pid>`, and `swarm status` shows that while a suite runs — the
+    branch says which checkout, the pid says which process.
+  - **A file lock is never renewed by the board** (`renewOwnClaims` touches only `claims`), so the
+    wrapper renews on a timer, at a third of the lease and never more than every few minutes, and
+    a renewal that fails is a _message_. A lost queue costs a concurrent run, not correctness: both
+    runs have their own ports.
+  - **Nothing here can fail a run.** Queue full, board unreachable, malformed lease: each logs and
+    the run proceeds. Two earlier versions broke that: one exited 4 when it could not have the
+    lock, which made an unenforceable mechanism into a hard block on a merge gate, and one threw
+    from the lock's constructor for a bad lease — before the run had decided it wanted a lock at
+    all, so `CI=true` with a typo in `E2E_LOCK_LEASE` died with no suite. The lock is now built
+    only on the path that uses it, and a bad lease is reported and replaced.
+  - **A holder this wrapper did not create is never reclaimed.** The reclaim unlocks AS the holder
+    it is reclaiming, so a wrong liveness answer releases a real agent's slot. Board identity is
+    the sanitized branch and `sanitize` preserves `/` (`scripts/lib/agent-board/identity.mjs:28`),
+    so a holder on `fix/1234` — or anyone who passed `--agent 2026` — has an identity whose last
+    segment parses as a pid. Only `e2e-run/<…>/<digits>` is probed. `E2E_SKIP_LOCK=1` (or `--no-lock`)
+    skips the queue, and `E2E_LOCK_TIMEOUT`, `E2E_LOCK_POLL` and `E2E_LOCK_LEASE` tune the wait.
+    **If a change ever makes an e2e run refuse to start because of this lock, the guarantee has
+    been moved somewhere it cannot be kept.**
+  - Each run also writes to `test-results/runs/<run-id>/` — Playwright deletes `outputDir` at the
+    start of every run — and records the port it used to `.kilo/e2e-last-run.json`, so a run that
+    fails an hour later is diagnosable from the port that served it. The HTML report is
+    deliberately NOT isolated: the report-viewer npm script resolves `playwright-report`, and a
+    per-run folder would leave it with nothing to open.
 
 ## The list of worktrees: `WORKTREES.json`
 

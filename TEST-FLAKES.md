@@ -538,27 +538,40 @@ it never fails a run is not the place a malformed HTML file gets to fail one.
 
 **How this composes with sections 10 and 11.** Every run starts a fresh server, which is
 exactly the cold server this section is about: `npm run test:e2e` allocates a free port per run
-and reuse is opt-in, so a warm server is now something you have to ask for. Sections 9, 10 and 11
-are one family and three defects, not one defect three times: 9 is a server that is right and slow,
-10 is the wrong server, 11 is the right server serving code you did not write.
+and reuse is **unreachable**, so a warm server is now something you have to write yourself. Sections
+9, 10 and 11 are one family and three defects, not one defect three times: 9 is a server that is
+right and slow, 10 is the wrong server, 11 is the right server serving code you did not write.
 
-## 10. An e2e mutation campaign run without a pinned port reported every mutation as green
+## 10. An e2e mutation campaign run against someone else's dev server reported every mutation as green
 
-**The trap, and the fix for it.** `playwright.config.ts` used to set
+**The trap, and it is now closed structurally.** `playwright.config.ts` used to set
 `reuseExistingServer: false` only when `CI` or `PLAYWRIGHT_PORT` was set, so a bare
 `npx playwright test` from a worktree under `.kilo/worktrees/` fell back to :5173 with reuse ON
 and attached to whichever dev server got there first — which is another checkout. For an ordinary
-green/red run that is the trap `AGENTS.md` records under "Worktrees and dev servers": "my change
-did nothing" is this, not a cache.
+green/red run that is the trap `docs/ORCHESTRATION.md` records under "Worktrees and dev servers":
+"my change did nothing" is this, not a cache.
 
-**Reuse is now opt-in and `npm run test:e2e` no longer relies on the port being pinned.**
-`playwright.config.ts` reads `PLAYWRIGHT_REUSE_EXISTING_SERVER=1` (and nothing else) as the
-permission to attach to a server this run did not start, and the scripts that RUN a suite
-(`test:e2e`, `:headed`, `:ui`, `:debug`, `:update-baselines`) go through `scripts/e2e-run.mjs`,
-which allocates a free port, sets `PLAYWRIGHT_PORT`, and serializes suites with a swarm lock. The
-residual exposure is narrower than it was, and it fails loudly rather than green: a bare
-`npx playwright test` — `npm run test:e2e:raw`, and what CI runs — now starts its own server or
-dies on `--strictPort`. It can no longer report another checkout's code as a pass.
+**Attaching to a server this run did not start is now impossible, not merely discouraged.**
+`reuseExistingServer` in `playwright.config.ts` is a literal `false` with no environment variable,
+no argument and no field that can turn it on; the dev server is started with `--strictPort`, so a
+port taken after the run picked one is a startup FAILURE rather than Vite's silent hop; and
+`scripts/e2e-run.mjs` — which every script that RUNS a suite goes through — allocates a port,
+verifies it is still bindable immediately before starting, and records it to
+`.kilo/e2e-last-run.json` so a run that fails later is diagnosable. It also **refuses**
+`PLAYWRIGHT_REUSE_EXISTING_SERVER` outright and refuses `PLAYWRIGHT_BASE_URL` unless the run says
+`E2E_ALLOW_REMOTE=1`, which it logs. The outcome is binary: a run gets a server it started, or it
+is red. There is no third state in which the suite quietly tests a neighbour.
+
+**The lock is not what fixed it, and that is the part worth remembering.** The wrapper also takes
+a swarm lock (`e2e/.swarm-e2e-runner`) so two agents rarely run e2e at once, and that lock is
+**advisory**: it is held as `e2e-run/<branch>/<pid>` because board identity is the branch and its
+conflict test is `lock.agent_id !== who`, it is renewed by hand because the board never renews a
+file lock, and a run that cannot get it — queue full, board unreachable, lease malformed — says so
+and starts anyway. It costs scheduling and nothing else, because the guarantee is the port. An
+earlier version made the lock load-bearing and exited 4 when it could not be had, which turned an
+unenforceable mechanism into a hard block on a merge gate: it looked like a guarantee and was not
+one. **Do not reintroduce that**: if a future change makes an e2e run refuse to start because of
+the lock, the guarantee has been moved somewhere it cannot be kept.
 
 **Why it is much worse for a mutation campaign.** A mutation campaign exists to answer "does this
 assertion actually assert anything?", and the answer it produces is a green run. A run that never
@@ -567,11 +580,12 @@ executed the mutated code is indistinguishable from a test that cannot fail. Mea
 the driver ran without a port and had attached to a different worktree's dev server. Re-running with
 `PLAYWRIGHT_PORT` set and the port pinned turned the same seven into seven real reds.
 
-**The rule.** Run mutation campaigns through `npm run test:e2e` (the wrapper pins the port for
-you), and before trusting a green result MUST confirm the served module actually contains the
-mutation — `curl` the mutated module off the dev server and look for the change, rather than
-assuming the local worktree is what is being tested. A mutation campaign that reports "all green"
-has most likely measured nothing. Section 11 is the half of that check the port cannot buy you.
+**The rule.** Run mutation campaigns through `npm run test:e2e`, and before trusting a green result
+MUST confirm the served module actually contains the mutation — `curl` the mutated module off the
+dev server and look for the change, rather than assuming the local worktree is what is being tested.
+The port now guarantees you were served _this_ checkout; only this step guarantees it was served
+_your edit_. A mutation campaign that reports "all green" has most likely measured nothing. Section
+11 is the half of that check the port cannot buy you.
 
 ## 11. A mutation campaign that does not verify the SERVED module reports false verdicts
 
@@ -601,17 +615,55 @@ module stops it testing the wrong code in the right tree.
 
 ## 12. `viewport-drawing.spec.ts` fails roughly one run in four, and not because of anything it asserts
 
-**Status: OPEN. Reproduced — 1 failure in 4 runs, and the failing case moves between `wide`
-and `narrow`. Not fixed. Not a known-failing test; it is intermittent.**
+**Status: OPEN, and now SKIPPED by declaration (2026-09-29, operator decision). Reproduced more than once, and the failing window moves between `wide` and `narrow` between runs. Not fixed. Not a known-failing test; it is intermittent.**
 
-`e2e/viewport-drawing.spec.ts:17` generates three cases from a
-`{ name, width, height }` list (`normal` 1280×720, `wide` 1600×900, `narrow` 900×700). Each
-draws a line at box-relative coordinates, resizes the window, captures the canvas through
-CDP, and asserts with `expect.soft(...).toBeLessThan(25)` that the ink still sits under the
-cursor. Observed on 2026-09-29 while running the full suite after an unrelated change: the
-full run reported `2 skipped, 310 passed, 2 failed`, both failures in this file. Re-running
-the file alone three more times gave **1 failure in 4 runs**, and the failing case was
-`narrow` twice and `wide` once. A deterministic defect does not move between cases.
+**No rate is stated here, on purpose.** The captured runs have not been reconciled into a
+per-case distribution — one test over three windows reports a single failure carrying three
+messages, so "the failing window moves" is read off a message rather than off separate results.
+A rate that cannot be reproduced is worse than an admission that the raw observations are
+unreconciled, and a wrong one here would be quoted as fact by whoever next picks this up. **What
+is established:** the test fails intermittently, and the window that fails moves between cases.
+**What is not:** how often.
+
+**The skip is a gate decision, not a fix, and it is not a waiver.** `e2e/viewport-drawing.spec.ts`
+carries a `test.skip(true, …)` with the reason in it. It was skipped because the suite's contract is
+that a default headless run has **zero** failures, and a test that is red one run in four makes
+roughly a quarter of all unrelated merges look broken — which trains the response of ignoring the
+gate, and costs more than this one test buys. A flaky assertion is also worse than no assertion: a
+green result from it carries no information, so it cannot justify a change either. **Nothing about
+the defect is waived; the work below is un-done and filed, and the skip is one line to remove.**
+
+**Do not "fix" this by loosening anything.** Widening `ANTIALIASED_FLANGE_CSS_PX`, raising the
+derived bound, raising the drift guard, or adding retries all treat a symptom whose second cause
+is still unknown, and each of them removes the only thing this test is currently good for — saying
+something true about the viewport mapping when it passes. Raising the drift guard is the worst of
+them: it deletes the one assertion that names the known cause, so the next red run becomes
+unreadable instead of self-describing.
+
+`e2e/viewport-drawing.spec.ts:18-22` holds a `{ name, width, height }` list (`normal`
+1280×720, `wide` 1600×900, `narrow` 900×700) and runs **one** test over all three windows,
+asserting per window with `expect.soft(...).toBeLessThanOrEqual(toleranceFor(box))` at
+`e2e/viewport-drawing.spec.ts:342-346`. **Per-case attribution is a weaker signal than it
+looks**: one test over three windows reports at most one failure carrying three soft-assert
+messages, so "the failing window moves" is read off the message, not off separate test results.
+Before `ffb51607` this file ran three tests in a `for` loop and attribution was direct; anything
+recorded against the pre-`ffb51607` shape describes a file that no longer exists.
+
+What is established, and is the useful part: one cause is **measured**, not hypothesised, and
+lives 40 lines above the assertions in that file. `captureCanvasScreenshot` intermittently
+returns a page 87 CSS px SHORTER than the one that was measured, which re-projects the contain
+fit and makes a correctly committed stroke look like it missed the cursor by ~31px. The
+`expect` before the stroke assertion is a hard guard for exactly that, it is a filed defect
+(`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2), and it prints both bounding boxes when it fires.
+A red run _without_ that message is therefore evidence of a **second** cause, and the three
+remaining candidates are `waitForCanvasRedraw` (polls a CDP screenshot for ink),
+`getDarkPixelBounds` (thresholds that screenshot), and the derived `toleranceFor(box)` — 6.7-8.4px
+across the three windows, **not** the 25px `LEGACY_FIXED_SLACK_CSS_PX`, which is a ceiling the
+derived bound is asserted against and never applied.
+
+**Do not instrument the 25px bound.** An earlier version of this entry and of the skip's comment
+named it as a candidate failure point, which sent a reader to a constant that is not on the
+assertion path at all.
 
 **It is not caused by the scrollbar change that was in the tree at the time, and that is
 measured rather than argued.** Removing `scrollbar-none` from the rail's `<aside>` and
@@ -648,9 +700,17 @@ or mislocated. Until a failing run is captured, a fix here would be a guess.
 - `e2e/helpers/canvas-helpers.ts:473,577,718` — the predicate, the poll loop and the sampler
 - `src/hooks/usePointerPosition.ts:194-198,214-223` — the validators whose refusal is silent
 - `scripts/e2e-run.mjs` — the wrapper the scripts that RUN a suite route through
-  (`test:e2e`, `:headed`, `:ui`, `:debug`, `:update-baselines`): the
-  `e2e/.swarm-e2e-runner` lock that serializes suites, the per-run port allocation and
-  output directory, and the three outcomes of `SwarmLock.acquire`
+  (`test:e2e`, `:headed`, `:ui`, `:debug`, `:update-baselines`). Two independent things,
+  and the distinction is the design: the **own-server guarantee** (pick a port, verify
+  it bindable, refuse `PLAYWRIGHT_BASE_URL` and `PLAYWRIGHT_REUSE_EXISTING_SERVER`) and
+  the **advisory queue** (`e2e/.swarm-e2e-runner`, held as `e2e-run/<branch>/<pid>`,
+  waited on but never fatal — a run that cannot have the queue runs anyway). Sections 10
+  and 11 depend on the first and not at all on the second.
+- `playwright.config.ts` — the `webServer` block, where `reuseExistingServer: false` is
+  now unconditional and why, and the `--strictPort` that turns a lost port race into a
+  startup failure instead of Vite's silent hop
+- `e2e/viewport-drawing.spec.ts` — the spec behind section 12, and the `test.skip` that
+  records the operator decision with its reason inline
 - `scripts/__tests__/e2e-run.test.mjs` — the only coverage of the lock, including a
   test that reads the board as another agent while a suite is "running"
 - `playwright.config.ts` — the `webServer` block, the now opt-in

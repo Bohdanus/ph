@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import {
+  CANVAS_REDRAW_POLL_INTERVAL_MS,
+  CANVAS_REDRAW_TIMEOUT_MS,
   getDarkPixelBounds,
   getSelectionBounds,
   getWorkspaceCanvas,
@@ -95,7 +97,7 @@ const SELECTION_COLOR_THRESHOLDS = { redMax: 80, greenMin: 80, blueMin: 180 };
  *   (`src/hooks/useRect.ts:172-178`) and strokes a 2px line, so its blue reaches ~7px past the
  *   rect;
  * - `drawSelectionOutline` paints a 5px-radius anchor circle with a 2px stroke at each vertex
- *   (`src/util/selection.ts:157-165`), so its blue reaches ~6px past the geometry;
+ *   (`src/util/selection.ts:176-184`), so its blue reaches ~6px past the geometry;
  * - the magic wand's `simplifyClosedPath` can move a vertex by the smoothing tolerance
  *   (1.5 by default) either way, and its flood fill drops the outermost anti-aliased ring.
  *
@@ -186,6 +188,111 @@ const waitForNoSelectionBlue = (page: Page, clip: Required<ClipOptions>, descrip
   });
 
 /**
+ * Where a committed selection's border is on the page, read off the marching-ants canvas.
+ *
+ * A committed polygon's border no longer lives on the tool overlay: it is the animated
+ * black/white ants on their own canvas, which the polygon selection tools never clear. So the
+ * blue detection above cannot see it — it still sees the DRAFT, which `drawPolygonOverlay`
+ * strokes in the same blue, and asserting on it after a commit would prove the draft rather than
+ * the selection.
+ *
+ * The read is `getImageData` on the canvas's own context rather than a screenshot, for the same
+ * reason `e2e/selection-marching-ants.spec.ts` does it that way: this canvas's backing store is
+ * already in document pixels, so a screenshot would need a page-coordinate clip and a
+ * device-pixel-ratio correction to describe the same pixels, and it would composite whatever the
+ * document painted underneath.
+ *
+ * The element's own bounding rect is what maps the two spaces, and it is read here rather than
+ * derived from `workspaceBox()`: the element is the thing being measured, so the mapping cannot
+ * drift from it. The canvas is `object-contain`, so that mapping is a scale plus a centring
+ * offset in both axes, not a scale alone.
+ */
+const committedAntsOutline = async (
+  page: Page
+): Promise<{ left: number; top: number; right: number; bottom: number } | null> =>
+  page.getByTestId('selection-ants-canvas').evaluate((element) => {
+    if (!(element instanceof window.HTMLCanvasElement)) {
+      throw new Error('committedAntsOutline: no [data-testid="selection-ants-canvas"] on the page');
+    }
+    const ctx = element.getContext('2d');
+    if (!ctx) throw new Error('the selection ants canvas has no 2d context');
+
+    const { data } = ctx.getImageData(0, 0, element.width, element.height);
+    let left = Number.POSITIVE_INFINITY;
+    let top = Number.POSITIVE_INFINITY;
+    let right = Number.NEGATIVE_INFINITY;
+    let bottom = Number.NEGATIVE_INFINITY;
+    let antPixels = 0;
+
+    for (let y = 0; y < element.height; y += 1) {
+      for (let x = 0; x < element.width; x += 1) {
+        const index = (y * element.width + x) * 4;
+        if (data[index + 3] === 0) continue;
+        // Both ant colours are opaque, so alpha alone would accept any future overlay. Requiring
+        // one of the two the loop actually paints keeps this a test of the ants.
+        const isAnt =
+          (data[index] < 64 && data[index + 1] < 64 && data[index + 2] < 64) ||
+          (data[index] > 192 && data[index + 1] > 192 && data[index + 2] > 192);
+        if (!isAnt) continue;
+        antPixels += 1;
+        if (x < left) left = x;
+        if (x > right) right = x;
+        if (y < top) top = y;
+        if (y > bottom) bottom = y;
+      }
+    }
+
+    if (antPixels === 0) return null;
+
+    const rect = element.getBoundingClientRect();
+    // The canvas is `object-contain` inside a box that is not its aspect ratio, so the backing
+    // store is letterboxed in both axes and document pixels map to page pixels through a scale AND
+    // a centring offset. The scale-plus-offset arithmetic is `containFit`'s rule
+    // (`e2e/helpers/canvas-helpers.ts:91`), written out here so the whole read stays one round trip.
+    // It is applied to this element's own rect rather than to `workspaceBox()` because the element
+    // being measured is the one being mapped, so the two cannot drift apart.
+    const scale = Math.min(rect.width / element.width, rect.height / element.height);
+    const offsetX = (rect.width - element.width * scale) / 2;
+    const offsetY = (rect.height - element.height * scale) / 2;
+
+    return {
+      left: rect.left + offsetX + left * scale,
+      top: rect.top + offsetY + top * scale,
+      right: rect.left + offsetX + right * scale,
+      bottom: rect.top + offsetY + bottom * scale,
+    };
+  });
+
+/**
+ * Resolves once the ants canvas holds a border.
+ *
+ * This polls `committedAntsOutline` directly rather than going through `waitForCanvasPixels`,
+ * because that loop takes its reading from a screenshot and the point of this read is that a
+ * screenshot is the wrong instrument here.
+ */
+const waitForCommittedAnts = async (page: Page, description: string): Promise<void> => {
+  const deadline = Date.now() + CANVAS_REDRAW_TIMEOUT_MS;
+  let last: unknown = null;
+  let lastError: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      last = await committedAntsOutline(page);
+      lastError = null;
+      if (last !== null) return;
+    } catch (error) {
+      // Kept, and reported at the end, because a read that throws every tick and a read that
+      // returns null forever are different failures and the timeout message must say which.
+      lastError = error;
+    }
+    await page.waitForTimeout(CANVAS_REDRAW_POLL_INTERVAL_MS);
+  }
+  throw new Error(
+    `Timed out waiting for ${description} (last read: ${JSON.stringify(last)}, ` +
+      `last error: ${lastError instanceof Error ? lastError.message : String(lastError)})`
+  );
+};
+
+/**
  * The tool overlay, intersected with the viewport.
  *
  * `page.screenshot({ clip })` cannot capture below the fold, and it truncates there SILENTLY —
@@ -262,18 +369,34 @@ const toPage = (box: BoundingBox, rect: Rect): Required<ClipOptions> => ({
 });
 
 /**
- * Asserts that the selection blue found in `clip` outlines `expected`, both in page coordinates.
+ * `expectOutlineAround` adds a clip origin to the bounds it is given. A screenshot read is
+ * clip-relative, so it passes the clip it captured; the ants read is already in page coordinates,
+ * so it passes a zero origin. Saying that explicitly keeps the two coordinate spaces from being
+ * mixed in a reader's head, which is the mistake the clip argument exists to prevent.
+ */
+const ORIGIN_CLIP: Required<ClipOptions> = { x: 0, y: 0, width: 0, height: 0 };
+
+/**
+ * Asserts that the selection border found in `clip` outlines `expected`, both in page coordinates.
+ *
+ * "Selection border" rather than "selection blue": a committed polygon's border is the ants on
+ * their own canvas, and those two readings arrive by different routes, so the name says what is
+ * being compared rather than which colour happened to be on the surface that carried it.
  */
 const expectOutlineAround = (
-  found: SelectionBounds | null,
+  // Only the four edges are read here, so this asks for only the four edges: the ants read has no
+  // `imageWidth`/`centerX` to offer, and a parameter that required fields it never uses would be
+  // padding the read with values computed for a different purpose.
+  found: Pick<SelectionBounds, 'left' | 'top' | 'right' | 'bottom'> | null,
   clip: Required<ClipOptions>,
-  expected: Required<ClipOptions>
+  expected: Required<ClipOptions>,
+  slackPx = OUTLINE_SLACK_PX
 ) => {
   const report = {
     expected,
     found: found && { ...found, left: found.left + clip.x, top: found.top + clip.y },
   };
-  expect(found, `no selection-blue pixels found (${JSON.stringify(report)})`).not.toBeNull();
+  expect(found, `no selection border pixels found (${JSON.stringify(report)})`).not.toBeNull();
   const outline = found!;
   const edges = {
     left: outline.left + clip.x,
@@ -284,19 +407,19 @@ const expectOutlineAround = (
   expect(
     edges.left,
     `selection outline left of the dragged region (${JSON.stringify({ ...report, edges })})`
-  ).toBeGreaterThanOrEqual(expected.x - OUTLINE_SLACK_PX);
+  ).toBeGreaterThanOrEqual(expected.x - slackPx);
   expect(
     edges.top,
     `selection outline top of the dragged region (${JSON.stringify({ ...report, edges })})`
-  ).toBeGreaterThanOrEqual(expected.y - OUTLINE_SLACK_PX);
+  ).toBeGreaterThanOrEqual(expected.y - slackPx);
   expect(
     edges.right,
     `selection outline right of the dragged region (${JSON.stringify({ ...report, edges })})`
-  ).toBeLessThanOrEqual(expected.x + expected.width + OUTLINE_SLACK_PX);
+  ).toBeLessThanOrEqual(expected.x + expected.width + slackPx);
   expect(
     edges.bottom,
     `selection outline bottom of the dragged region (${JSON.stringify({ ...report, edges })})`
-  ).toBeLessThanOrEqual(expected.y + expected.height + OUTLINE_SLACK_PX);
+  ).toBeLessThanOrEqual(expected.y + expected.height + slackPx);
 };
 
 /**
@@ -524,8 +647,14 @@ test.describe('Selection tools', () => {
 
     await page.mouse.click(box.x + barMidpoint.x, box.y + barMidpoint.y);
 
-    await waitForSelectionBlue(page, clip, 'a selection outline after the wand click');
-    expectOutlineAround(await selectionBlue(page, clip), clip, {
+    // The committed border is the ants, not the blue: `drawSelectionOutline` keeps the dashed
+    // blue stroke for the selection tools that stay on the tool overlay (the elliptical and quick
+    // selections), while the polygon's border moved to the marching-ants canvas. So the geometry
+    // below is read off that canvas in DOCUMENT pixels and mapped back through the contain fit,
+    // which is the same mapping the click itself went through — predicting it from the CSS box
+    // instead would bake this file's viewport into the assertion.
+    await waitForCommittedAnts(page, 'a committed selection border after the wand click');
+    expectOutlineAround(await committedAntsOutline(page), ORIGIN_CLIP, {
       x: barRegion.x + painted.left,
       y: barRegion.y + painted.top,
       width: painted.right - painted.left,
@@ -564,8 +693,12 @@ test.describe('Selection tools', () => {
 
     await page.keyboard.press('Enter');
 
-    await waitForSelectionBlue(page, closingEdgeClip, 'the closed outline closing the polygon');
-    expectOutlineAround(await selectionBlue(page, clip), clip, {
+    // The closing edge appears as the COMMITTED border, which is the ants on their own canvas and
+    // not the tool overlay's blue — so this is the only reading that can tell a committed
+    // polygon from the draft the wait above was watching. The draft itself is gone by now, so a
+    // blue reading here would fail rather than pass for the wrong reason.
+    await waitForCommittedAnts(page, 'the committed border closing the polygon');
+    expectOutlineAround(await committedAntsOutline(page), ORIGIN_CLIP, {
       x: box.x + Math.min(p0.x, p1.x, p2.x),
       y: box.y + Math.min(p0.y, p1.y, p2.y),
       width: Math.max(p0.x, p1.x, p2.x) - Math.min(p0.x, p1.x, p2.x),

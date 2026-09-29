@@ -30,6 +30,7 @@ const storeState = vi.hoisted(
       hasUnsavedChanges: false,
       currentArgs: { current: { toolName: 'brush' } as ToolArgs },
       layers: {},
+      selections: [],
       toolName: 'reposition' as ToolName,
       totalSize: { width: 640, height: 480 },
       documentFrame: { x: 0, y: 0, width: 640, height: 480 },
@@ -388,18 +389,8 @@ describe('Main tool-area routing', () => {
     }
   });
 
-  it('sizes both overlays to the document', () => {
-    render(<Main />);
-
-    const [, toolOverlay, rectOverlay] = canvases(document.body);
-    expect([toolOverlay, rectOverlay].map((el) => [el.width, el.height])).toEqual([
-      [640, 480],
-      [640, 480],
-    ]);
-  });
-
   it('leaves the workspace canvas to the CSS box and to useApp, never sizing it from the document', () => {
-    // `Main`'s `useLayoutEffect` sizes the two overlays from `totalSize`. The workspace canvas is
+    // `Main`'s `useLayoutEffect` sizes the overlays from `totalSize`. The workspace canvas is
     // deliberately absent from it: the drawing surface is CSS-sized to its container
     // (`h-full w-full object-contain`) and `useApp` owns its backing store, so a `resizeCanvas`
     // call here would fight that and resize a buffer nothing reads.
@@ -411,7 +402,10 @@ describe('Main tool-area routing', () => {
     // must not follow the document size, and the overlays are asserted to have followed it, which
     // is what stops "unchanged" from passing merely because the sizing effect never ran.
     const { rerender } = render(<Main />);
+    // The selection-ants canvas is appended LAST, so these three indices are unchanged by it —
+    // which is the reason it is appended last, and this destructuring is where that is load-bearing.
     const [workspace, toolOverlay, rectOverlay] = canvases(document.body);
+    const ants = document.body.querySelector('[data-testid="selection-ants-canvas"]') as HTMLCanvasElement;
     const untouched = [workspace.width, workspace.height];
 
     storeState.totalSize = { width: 800, height: 600 };
@@ -420,6 +414,43 @@ describe('Main tool-area routing', () => {
     expect([workspace.width, workspace.height]).toEqual(untouched);
     expect([toolOverlay.width, toolOverlay.height]).toEqual([800, 600]);
     expect([rectOverlay.width, rectOverlay.height]).toEqual([800, 600]);
+    // A canvas that is never sized paints a selection border at the document's own resolution
+    // into a buffer of the previous one, which is the "cached canvas box addresses a different
+    // pixel after a tool switch" class this suite already files for the other overlays.
+    expect([ants.width, ants.height]).toEqual([800, 600]);
+  });
+
+  it('shows the selection ants overlay for every polygon selection tool and hides it otherwise', () => {
+    storeState.toolName = 'polygonal-lasso';
+    const { container, rerender } = render(<Main />);
+    const ants = () => container.querySelector('[data-testid="selection-ants-canvas"]') as HTMLCanvasElement;
+
+    expect(ants().style.display).toBe('block');
+
+    for (const toolName of ['freehand-lasso', 'feather-magnetic-lasso', 'magic-wand'] as const) {
+      storeState.toolName = toolName;
+      rerender(<Main />);
+
+      expect(ants().style.display).toBe('block');
+    }
+
+    // `rectangular-selection` is the one selection tool excluded: `useRect` already
+    // strokes that border, with handles, on the tool overlay. The elliptical and quick
+    // selection tools are excluded for the same reason in reverse — they are not in
+    // `POLYGON_SELECTION_MODES`, so they keep the static `drawSelectionOutline` border.
+    for (const toolName of [
+      'rectangular-selection',
+      'elliptical-selection',
+      'quick-selection',
+      'reposition',
+      'brush',
+      'zoom',
+    ] as const) {
+      storeState.toolName = toolName;
+      rerender(<Main />);
+
+      expect(ants().style.display).toBe('none');
+    }
   });
 
   it('repaints every layer when the document frame changes', () => {
