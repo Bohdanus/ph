@@ -167,6 +167,11 @@ export const CURATED = {
     mustNotPrune: true,
     note: 'Reported as merged for the same reason as polygon-marching-ants: the tip is an old main commit. The eraser family is the live target for #48/#49/#50.',
   },
+  'no-scrollbars': {
+    summary:
+      'The app must paint no scrollbar on its outer chrome or the left tool rail, across a mac-desktop and iPad viewport matrix. Adds e2e/no-document-overflow.spec.ts, a `scrollbar-none` utility, and corrections to the measured rail geometry written into comments and handoff prose.',
+    note: 'The load-bearing finding is that a scrollbar cannot be asserted in this headless Chrome at all: scrollbars are zero-width overlays there, so a gutter or edge-screenshot assertion would pass forever. The spec asserts content overflow instead, and pins the detector with a deliberate 4000px overflow first.',
+  },
   'ps-brush-engine': {
     summary:
       'Typed-array brush tip, stroke buffer, stabilizer and airbrush, plus a blend-mode seam keyed on the value rather than the tool name.',

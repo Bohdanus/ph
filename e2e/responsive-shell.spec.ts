@@ -10,7 +10,7 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  * all of them are about layout: clipping, scroll ownership, and what survives a resize.
  * The two that motivated the change were both invisible to the whole suite — a one-class
  * `overflow` edit rendered the text tool's font list as an 8px sliver, and a global
- * `overflow: hidden` made 177–377px of the left tool rail unreachable with no scrollbar.
+ * `overflow: hidden` made the bottom of the left tool rail unreachable with no scrollbar.
  * Neither showed up in `npm run test`, and no spec opened the dropdown.
  */
 
@@ -44,11 +44,16 @@ async function selectToolFromMenu(page: Page, label: string) {
 const railWidth = async (page: Page) => await leftRail(page).evaluate((el) => el.getBoundingClientRect().width);
 
 test.describe('Left tool rail reachability', () => {
-  // The rail holds 12 tool groups plus the colour swatches: ~840px of min-content inside a
-  // `1fr` grid row in a `height: 100%` container. A `1fr` track is `minmax(auto, 1fr)`, so
-  // the rail floors that row and the grid outgrows the viewport. The page used to scroll, so
-  // the overflow was reachable; a global `overflow: hidden` removed the scroll and turned it
-  // into content nobody could get to. The rail now owns its scrolling via `min-h-0`.
+  // The rail's content is a fixed height per layout and the available height is
+  // `viewportHeight - 137` — the shell's three `auto` grid rows — so it overflows below a
+  // threshold rather than never, and two of the overflowing sizes are ordinary iPads rather
+  // than only very short desktop windows. The numbers, and the font metrics they depend on,
+  // are recorded once in the header of `e2e/no-document-overflow.spec.ts`.
+  //
+  // `overflow-y-auto` is what bounds the grid row: a `1fr` track is `minmax(auto, 1fr)`,
+  // and a scroll container's automatic minimum size is already zero, so the rail no longer
+  // dictates the row's height. The page itself is pinned to be exactly viewport-sized at
+  // every size in that spec's matrix.
   for (const size of [DESKTOP, SHORT_DESKTOP, WIDE_DESKTOP]) {
     test(`every control in the rail is reachable at ${size.width}x${size.height}`, async ({ page }) => {
       test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
