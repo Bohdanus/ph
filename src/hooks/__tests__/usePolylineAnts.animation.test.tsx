@@ -21,11 +21,14 @@ const POINTS = [
 
 function createRafMocks() {
   const frames = new Map<number, FrameRequestCallback>();
-  // Starts at 1, not 0, and the whole file depends on that. The HTML spec defines a
-  // frame handle as a new POSITIVE long, so a user agent can never hand back 0 — which
-  // makes the truthiness guards in `usePolylineAnts` correct in every browser. Counting
-  // from 0 manufactured the one input they mishandle, and every test written against
-  // that mock was pinned to an artefact of the mock rather than to a defect.
+  // Starts at 1, not 0, and the whole file depends on that. HTML Standard §8.12 defines the
+  // handle as a pre-increment of a counter: the target object has "an animation frame callback
+  // identifier, which is a number that must initially be zero", and `requestAnimationFrame`
+  // steps "increment target's animation frame callback identifier by one, and let handle be the
+  // result". So the handles a user agent hands back are 1, 2, 3, … and 0 is unreachable — which
+  // makes the truthiness guards in `usePolylineAnts` correct in every browser. Counting from 0
+  // manufactured the one input they mishandle, and every test written against that mock was
+  // pinned to an artefact of the mock rather than to a defect.
   let nextId = 1;
 
   return {
@@ -141,9 +144,11 @@ describe('useMarchingPath animation lifecycle', () => {
 
   it('stops the loop when paused before the first frame has run (src/hooks/usePolylineAnts.ts:148)', () => {
     // The effect cleanup cancels the pending handle, and a handle a user agent returns is
-    // a positive long, so the first one is truthy and the guard is never wrong in a
-    // browser. This used to be an `it.fails` claiming the guard skipped handle 0 — an
-    // input this mock manufactured and the HTML spec excludes.
+    // `++identifier` off a counter that "must initially be zero" (HTML Standard §8.12), so
+    // the first is 1 and the guard is never wrong in a browser. This used to be an
+    // `it.fails` claiming the guard skipped handle 0 — an input this mock manufactured and
+    // the spec excludes. The production comment at `usePolylineAnts.ts:134-136` still
+    // asserts the opposite; see HANDOFF.md.
     const { rerender } = setup();
     expect([...rafMocks.frames.keys()]).toEqual([1]);
 
@@ -236,10 +241,11 @@ describe('useMarchingPath animation lifecycle', () => {
 
   it('cancels the very first pending frame when draw is called again (src/hooks/usePolylineAnts.ts:124)', () => {
     // The draw guard is `if (animationIdRef.current)`, and the first handle a hook ever
-    // receives is 1: the spec's frame handle is a positive long, so a falsy 0 is not an
-    // input this guard can meet. This used to be an `it.fails` reporting that a second
-    // loop ran in parallel at double speed — caused entirely by the mock handing back 0,
-    // and it would have inverted to red the moment anyone corrected the counter.
+    // receives is 1: the spec's handle is `++identifier` off a counter that "must initially
+    // be zero" (HTML Standard §8.12), so a falsy 0 is not an input this guard can meet.
+    // This used to be an `it.fails` reporting that a second loop ran in parallel at double
+    // speed — caused entirely by the mock handing back 0, and it would have inverted to red
+    // the moment anyone corrected the counter.
     const { result, frame } = setup();
     const firstId = [...rafMocks.frames.keys()][0];
     expect(firstId).toBe(1);

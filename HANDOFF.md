@@ -1817,3 +1817,61 @@ verdicts are unattributable and must be reported as unknown rather than as a win
 This is the same shape as §0's standing note about stale citations, one layer up: there, a citation
 moved and still read plausibly; here, a _verdict_ moved and was credited to the wrong commit. A
 plausible reading is not evidence of when it became true.
+
+## 79. The two `it.fails` on the polyline animation loop were mock artefacts, and the production comment that justified them is stale
+
+`src/hooks/usePolylineAnts.ts:134-136` — pending animation-frame handle
+
+Two `it.fails` tests in `src/hooks/__tests__/usePolylineAnts.animation.test.tsx` were **deleted
+and the behaviour pinned as working**, because both were pinned to a defect that a rAF mock
+manufactured rather than to a real one. That conclusion is right. What is left behind is not:
+**the production comment those two tripwires were written against still asserts the opposite, and
+the test suite now contradicts it.**
+
+**(a) The handles were an artefact of the mock, not a defect.** The mock counted frame handles
+from `0`. HTML Standard §8.12 (Animation frames) defines the handle as a pre-increment: the target
+object has "an animation frame callback identifier, which is a number that **must initially be
+zero**", and the `requestAnimationFrame(callback)` steps say to "**increment target's animation
+frame callback identifier by one, and let handle be the result**". Handles are therefore `1, 2, 3,
+…` and `0` is unreachable. The first `it.fails` reported that pausing with frame 0 pending did not
+stop the loop, and the second that a second loop ran in parallel at double speed — both inputs a
+browser cannot produce. **The mock now starts at `1` and both are ordinary passing tests.** An
+earlier version of the comment justified this with the spec defining a frame handle as a "new
+POSITIVE long"; that phrase is in no version of the spec and the IDL return type is
+`unsigned long`, so the claim was unciteable even though the conclusion held. The mechanism is
+the pre-increment above.
+
+**(b) The production guard is a truthiness guard where its sibling uses `!== null`.**
+`usePolylineAnts.ts` guards a pending frame three times — `:80` (the `clear` cancel), `:124` (the
+`draw` cancel before rescheduling) and `:148` (the `isPaused` effect cleanup) — and all three are
+`if (animationIdRef.current)`. `useAnts.ts:40` and `:82` do the identical job for the identical
+"pending animation handle" and use `if (animationIdRef.current !== null)` and
+`=== null`. `useAnts` nulls the ref immediately after cancelling, so `0` and `null` are genuinely
+distinguishable there; `usePolylineAnts` never produces `0` either way, which is why the
+truthiness form is currently correct. **It is correct by the spec argument in (a), not by
+construction**, and the sibling in the same directory is the standing counterexample to "0 cannot
+happen" — which is a local property of one file's mocks, not of the platform.
+
+**(c) The comment at `:134-136` is stale and asserts the branch removed.** It reads:
+
+> A pending handle of 0 is the one case the cleanup's own truthy guard skips, but 0 is falsy here
+> too, so cancelling here never had anything to do. That falsy-0 path is why pausing with frame 0
+> pending does not stop the loop.
+
+The last sentence is the claim `usePolylineAnts.animation.test.tsx:145` now **falsifies**: the
+test at that line asserts that pausing before the first frame has run _does_ stop the loop, and
+cites `:148` — the very line this comment describes. The repo currently holds a production comment
+saying the loop does not stop and a test saying it does, and only one of them can be right.
+
+**When production is next touched, `usePolylineAnts.ts:134-136` must be corrected or deleted**, and
+the two sibling counters that still start at `0` — `usePolylineAnts.test.tsx:9`,
+`useAnts.test.tsx:9`, `useAnts.transform.test.tsx:20` — should move to `1` in the same change, so
+the four rAF mocks in `src/hooks/__tests__/` stop disagreeing about a value the platform fixes.
+Switching the three guards to `!== null` to match `useAnts` is the durable fix and makes the whole
+question disappear; it is deliberately **not** done here, because this branch is tests and handoff
+only and may not edit production.
+
+**No defect is claimed here.** Nothing user-visible is broken today, the truthiness guards do the
+right thing in a browser, and the two `it.fails` were correctly removed. The finding is that the
+justification for that removal is still in production prose in the opposite form, and a reader who
+trusts it would re-add the tripwires.

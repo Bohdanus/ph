@@ -26,23 +26,28 @@ vi.mock('../usePointerPosition.ts', () => usePointerPositionMock);
 
 const rectUtilsMock = vi.hoisted(() => ({
   getCanvasSize: vi.fn(() => ({ width: 800, height: 600 })),
-  posToSortedRect: vi.fn((pos) => ({ x1: pos.x, y1: pos.y, x2: pos.x + pos.width, y2: pos.y + pos.height })),
 }));
 
 // The path resolves: `useRect.ts` imports `'../util/rect.ts'` from `src/hooks/`, which is
-// the same `src/util/rect.ts` this resolves to, so the mock IS live. Only the two
-// geometry helpers are stubbed, and only because the canvas size they are trimmed
-// against is otherwise read off a real canvas. `sortRect` and `trimRect` delegate to the
-// real implementations: stubbing them as identity made the whole aspect-ratio block
-// invariant to whether sorting ran at all, which is the one thing that block exists to
-// pin. `trimRect` internally calls `sortRect` as well, so an identity stub there
-// neutralised both the commit path and the paint path.
+// the same `src/util/rect.ts` this resolves to, so the mock IS live. `getCanvasSize` is a
+// MEASUREMENT, not geometry — it is the one thing here that would otherwise be read off a
+// real canvas — and it is the only export left stubbed.
+//
+// Every other export delegates to the real implementation, and each one that did not was
+// the same hazard the aspect-ratio stubs were: a stub that agrees with production today
+// makes every assertion about the result invariant to whether the real code ran, so a
+// regression in the real code ships green. `sortRect` and `trimRect` were identity stubs
+// and made the whole aspect-ratio block blind to whether sorting ran at all, which is the
+// one thing that block exists to pin; `trimRect` internally calls `sortRect`, so an
+// identity stub there neutralised both the commit path and the paint path. `posToSortedRect`
+// was a byte-equivalent hand-copy of `util/rect.ts:95-104`, which is the strongest version
+// of the same defect: it is guaranteed to agree with production, so it can never fail and
+// can never catch anything.
 vi.mock('../../util/rect.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../util/rect.ts')>();
   return {
     ...actual,
     getCanvasSize: rectUtilsMock.getCanvasSize,
-    posToSortedRect: rectUtilsMock.posToSortedRect,
   };
 });
 
@@ -164,6 +169,13 @@ describe('useRect', () => {
 
   it('clears selection on clearSelection', () => {
     const onRepaint = vi.fn();
+    // The same wiring `renderWithLeakedAlpha` uses, so the test holds the very context
+    // `drawMask` paints through instead of trusting the canvas to hand one back.
+    const { overlayCanvas } = createTestContext();
+    const ctx = createMockCanvasContext({ canvas: overlayCanvas });
+    vi.mocked(overlayCanvas.getContext).mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+    testContext.overlayCanvas = overlayCanvas;
+
     const { result } = renderUseRect({
       initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
       onRepaint,
@@ -171,14 +183,28 @@ describe('useRect', () => {
     // Seed the rect so the clear is observable at all: the mount effect paints it.
     expect(onRepaint).toHaveBeenLastCalledWith({ x1: 100, y1: 100, x2: 300, y2: 250 });
     onRepaint.mockClear();
+    // The mount paint clears the overlay too, so this has to go or the assertion below
+    // is satisfied by a paint that happened before the clear ever ran.
+    vi.mocked(ctx.clearRect).mockClear();
 
     act(() => {
       result.current.clearSelection();
     });
 
-    // `drawMask` returns at `if (!rect) return`, which is above the `onRepaint` call, so
-    // a cleared selection is observable as the repainting of the rect stopping. An
-    // empty `clearSelection` would leave the rect in place and repaint it.
+    // TWO assertions, because `expect(onRepaint).not.toHaveBeenCalled()` alone is not a
+    // test of anything: it is satisfied just as well by a `clearSelection` with an EMPTY
+    // BODY, because a body that does nothing never calls `drawMask` and so never repaints.
+    // The old comment here claimed the opposite — that an empty `clearSelection` would
+    // "leave the rect in place and repaint it" — and that is the whole defect: an empty
+    // body does not repaint, it does nothing, and the assertion reads green either way.
+    //
+    // The first assertion is what makes the second mean something. `drawMask` wipes the
+    // whole overlay at `useRect.ts:193`, which is ABOVE the `if (!rect) return` at :196 —
+    // so exactly one `clearRect(0, 0, 800, 600)` says the paint RAN, and no `onRepaint`
+    // says it returned because the rect was already gone. Together they separate
+    // "cleared the rect, then painted" from "never painted at all", and each of the two
+    // mutants is caught by exactly one of them.
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
     expect(onRepaint).not.toHaveBeenCalled();
   });
 
@@ -221,8 +247,10 @@ describe('useRect', () => {
         expect(typeof res).toBe('boolean');
       });
 
-      // Proves the rect-helper mock is live and the layer position was converted.
-      expect(rectUtilsMock.posToSortedRect).toHaveBeenCalledWith(layer.pos);
+      // Proves the rect-util mock is live: `handlePointerDown` measures the canvas through
+      // `getCanvasSize` on its way to painting, so this is the layer position having been
+      // converted by the REAL `posToSortedRect` and painted.
+      expect(rectUtilsMock.getCanvasSize).toHaveBeenCalled();
       expect(result.current.onPointerUp).toBeDefined();
     });
 
