@@ -1817,3 +1817,57 @@ verdicts are unattributable and must be reported as unknown rather than as a win
 This is the same shape as §0's standing note about stale citations, one layer up: there, a citation
 moved and still read plausibly; here, a _verdict_ moved and was credited to the wrong commit. A
 plausible reading is not evidence of when it became true.
+
+## 77. `## 15a.` yields no item, and a suffixed retirement retires its PARENT
+
+`scripts/lib/agent-board/handoff-import.mjs` — `NUMBERED`
+
+Found while fixing §70's defect, and deliberately **not** fixed with it. The end-anchored
+`DEAD_HEADING` landed as `eba42f8`; a letter-suffix fix for `NUMBERED` was written in the same
+branch and then reverted, because it introduced an origin shape that collides with the board's own
+namespace and left an unguarded regex in the test. Half-finished is worse than filed.
+
+**The loss, measured.** `NUMBERED = /^(?:item\s+)?#?(\d+)\b/i` cannot match a letter suffix —
+there is no word boundary between `5` and `a`, so `NUMBERED.exec('15a. A self-anchored reorder …')`
+is `null`. `assemble` then falls through to the `SEVERITY` test (also false) and reaches
+`if (open && record.level <= open.level) close(...)`. `HANDOFF.md:424` is a **level-2**
+`## 15a. A self-anchored reorder is refused, and the refusal is load-bearing`, a sibling of
+`## 15.` — so it **closes item 15's body there** and opens nothing itself. **870 raw characters**
+of prose from `HANDOFF.md:425-438` are unreachable from any item title or body. Item 15's stored
+body is 3994 chars and ends mid-sentence; the 15a prose is not in it. The entry is a load-bearing
+tripwire, so this is live work loss, not latent.
+
+**The same root cause, opposite direction, and worse: a suffixed retirement retires the parent.**
+`deadNumbers('## 15a. An old thing — deleted')` returns `[15]` — `NUMBER_OR_RANGE` harvests the
+`15` out of `15a` — so item 15 is silently filed as _finished_ by a heading that says `15a` is done.
+`## 15a, 16. Old things — deleted` returns `[15,16]`. This is silent corruption, not silent loss,
+and a fix that only widens `NUMBERED` does not address it.
+
+**Why the test suite cannot see either.** `handoff-import.test.mjs:196`'s own heading-count regex
+carries the **identical** `\d+\b` blind spot, so `items === headings` holds for `## 15a.`, `## 15b.`
+and `## 16a.` simultaneously. Both sides miss it; the equality stays green. Proven: with `NUMBERED`
+fixed and the count regex left alone, the count test fails `HANDOFF.md: expected 38 to be 37`.
+
+**A real fix must change all of these together:**
+
+| Where                              | What                                                                                                                                                                            |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `handoff-import.mjs` `NUMBERED`    | the suffix, and its case rule                                                                                                                                                   |
+| `handoff-import.test.mjs:196`      | the count regex, same blind spot. Hoist both to module constants so they cannot drift apart again                                                                               |
+| `handoff-import.mjs` `makeItem`    | `` `${base}#${number}` `` — `Number('15a')` is `NaN`, so every suffixed entry gets a literal `#NaN` origin                                                                      |
+| `handoff-import.mjs` `planImport`  | the `/#(\d+)$/` dead-set filter cannot match `#15a`, so a suffixed item can never be suppressed by the document's own dead list                                                 |
+| `handoff-import.test.mjs:126`      | `Number(/#(\d+)$/.exec(item.origin)[1])` is **unguarded** and throws `TypeError` on any suffixed origin. `:93` in `liveItems` already uses the guarded `?.[1]` form — copy that |
+| `handoff-import.mjs` `deadNumbers` | the dead set is `number[]` end to end — typedef, both `Set`s, and `planImport`'s `.map(Number).filter(Number.isInteger)`. It cannot represent a non-integer at all              |
+
+**Open design question, for a human.** What origin shape should a suffixed entry get? `#15a` is
+the label the document actually wrote and is the natural key, but it is grammatically
+indistinguishable from a slug under `isImportedOrigin` in `db.mjs` (`<file>.md#<number-or-slug>`,
+slugs are `[a-z0-9-]+`), so neither `planImport` nor the board can tell the two apart. `#15-a-slug`
+is unambiguous but invents a label the document never wrote. Folding `15a` into `15` is **not**
+available: two headings sharing one origin makes one of them unfileable on every later run, which
+is the collision the `NUMBERED` comment already warns about. The larger question is whether the
+parser should support suffixes at all — or keep rejecting them and make the rejection **loud**,
+because the current failure is silent, with nothing anywhere reporting that an entry vanished.
+
+`## 15A.`, `## 15ab.` are the same silent content-loss path: no item, no origin, and a level-2
+one closes its parent exactly as `## 15a.` does.
