@@ -98,7 +98,7 @@ describe('the import of the handoff documents', () => {
   it('files a P0 item as critical, so ready puts it first', async () => {
     mkdirSync(join(dir, 'e2e'), { recursive: true });
     writeFileSync(
-      join(dir, 'e2e/OPEN-PROBLEMS.md'),
+      join(dir, 'e2e/OPEN_PROBLEMS.md'),
       [
         '## P2 — the smaller thing',
         '',
@@ -111,7 +111,7 @@ describe('the import of the handoff documents', () => {
       ].join('\n')
     );
     const board = boardFor();
-    await importDocuments({ board, files: ['e2e/OPEN-PROBLEMS.md'], cwd: dir });
+    await importDocuments({ board, files: ['e2e/OPEN_PROBLEMS.md'], cwd: dir });
     expect(board.listIssues().map((issue) => issue.priority)).toEqual(['critical', 'normal']);
     expect(board.readyIssues().map((issue) => issue.title)).toEqual(['P0 — the worst thing', 'P2 — the smaller thing']);
   });

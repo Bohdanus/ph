@@ -5,6 +5,7 @@ import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
+import { SEQUENTIAL_LAYER_TEST_TIMEOUT_MS } from './helpers/timeouts';
 /** Canvas-relative point where the three strokes cross; used for pixel sampling. */
 const LAYER_OVERLAP_X = 300;
 const LAYER_OVERLAP_Y = 260;
@@ -18,7 +19,7 @@ test.describe('Layers', () => {
 
   // layers change order and are deleted sequentially
   test('layers change order and are deleted sequentially', async ({ page }, testInfo) => {
-    test.setTimeout(90_000);
+    test.setTimeout(SEQUENTIAL_LAYER_TEST_TIMEOUT_MS);
 
     const canvas = getWorkspaceCanvas(page);
     const box = await canvas.boundingBox();
