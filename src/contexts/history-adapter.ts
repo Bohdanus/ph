@@ -553,6 +553,19 @@ export function legacyHistoryToDurable(
   let currentFrame = { ...initial.frame };
   let currentSelections: SelectionSnapshot = selectionBaseline;
   const entries: DurableHistoryEntry[] = [];
+  // Ids already published as a durable entry. `replayDurableDocument` addresses
+  // history by ARRAY INDEX (`durable-replay.ts:65`), and `toggleDisabled` resolves
+  // its `entryId` against the LEGACY timeline (`useHistory.ts:148-153`), so a
+  // repeated id does not misresolve a replay — which is why this is a warning and
+  // not an error, and why skipping the repeat keeps the shadow usable instead of
+  // voiding every entry around it.
+  //
+  // Only ids that actually reached `entries` are recorded, which is the exact
+  // scope of the guarantee. An entry the conversion never published — the
+  // baseline document source, a refused document replacement, or one whose
+  // derivation threw into the per-item catch — does not consume its id, so a
+  // later entry may still legitimately claim it.
+  const publishedEntryIds = new Set<string>();
 
   for (const item of legacyHistory) {
     if (item.documentSource && (item.actionName === OPEN_DOCUMENT_ACTION || entries.length === 0)) {
@@ -627,6 +640,27 @@ export function legacyHistoryToDurable(
         if (frameEntry) {
           operation = frameEntry.operation;
           if (frameEntry.enabled) currentFrame = { ...(frameEntry.operation as { next: DocumentFrame }).next };
+        } else {
+          // `replayHistory` drops a frame action whose `nextFrame` is not a valid
+          // frame too (`history-replay.ts:91-97` guards the assignment on
+          // `isValidDocumentFrame`), so the shadow is in PARITY with legacy replay
+          // and there is no disagreement to fail closed over. But parity alone is
+          // not observability: this branch cannot throw, so without a diagnostic
+          // the conversion reports `status: 'current'` while silently losing a
+          // document-frame change, and the only other evidence is a frame that no
+          // longer matches what the user cropped to. Warning, not error, is the
+          // severity the rest of this file reserves for "one entry the durable
+          // model could not represent" — an error diagnostic withholds the whole
+          // shadow (`convertLegacyHistorySafely` voids on the first one), and that
+          // would punish every later entry for a defect the legacy timeline
+          // tolerates.
+          diagnostics.push({
+            historyId: item.id,
+            actionName: item.actionName,
+            severity: 'warning',
+            code: 'invalid-history-entry',
+            message: `History entry ${item.id} carries no usable next document frame, so it was not published as a durable entry. Legacy replay drops the same entry, so the durable document stays in parity; the document frame is unchanged at this point in the timeline.`,
+          });
         }
       } else if (item.actionName === SELECTION_ACTION) {
         const next = (item.args as { nextSelectionState?: unknown } | undefined)?.nextSelectionState;
@@ -696,7 +730,27 @@ export function legacyHistoryToDurable(
     } catch (error) {
       diagnostics.push(diagnosticFromError(error, item));
     }
-    if (operation) entries.push(entry(item.id, operation, enabled));
+    if (operation) {
+      if (publishedEntryIds.has(item.id)) {
+        // A repeat of an id that is already a durable entry's id. The fold state
+        // (`currentLayers`, `currentFrame`, `currentSelections`) is deliberately
+        // LEFT ADVANCED: the legacy timeline is authoritative and the duplicate is
+        // a real edit, so the operations derived after it must see the state the
+        // legacy timeline would have produced. Only the publication is withheld,
+        // and the cursor map below already records the preceding durable index —
+        // the same handling a dropped rename gets.
+        diagnostics.push({
+          historyId: item.id,
+          actionName: item.actionName,
+          severity: 'warning',
+          code: 'invalid-history-entry',
+          message: `History entry ${item.id} (${item.actionName}) repeats an id already published as a durable entry, so it was not published again. A history entry id must be unique within a document; replay addresses entries by position, so the durable document stays usable, but the duplicate is not represented in it.`,
+        });
+      } else {
+        publishedEntryIds.add(item.id);
+        entries.push(entry(item.id, operation, enabled));
+      }
+    }
     legacyCursorToDurableCursor.push(entries.length - 1);
   }
 
