@@ -128,7 +128,6 @@ test.describe('History panel', () => {
   });
 
   test('a new document starts a fresh timeline, not the previous one', async ({ page }) => {
-    test.setTimeout(60_000);
     const box = await canvasBox(page);
     const strokeClip = canvasRedrawClip(box);
 

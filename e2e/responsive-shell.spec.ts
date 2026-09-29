@@ -98,15 +98,30 @@ test.describe('No global scroll lock', () => {
     // scrolling instead. Allowlist rather than a denylist of `hidden`, because `clip`
     // reaches the same permanently-unreachable state and only declines to offer a
     // scrollbar — the grid items that own scrolling are `auto`, which is on the list.
-    const mayOwnScrolling = ['visible', 'auto', 'scroll', 'overlay'];
+    //
+    // The two LONGSHANDS, not the `overflow` shorthand: the shorthand serializes BOTH of
+    // them, so `overflow-x: hidden; overflow-y: visible` comes back as the two-token
+    // string `"hidden auto"`. That string is in no allowlist, so the test would go red on a
+    // document that scrolls vertically perfectly well — and the message would then name
+    // the horizontal lock on an element whose only fault is the one axis. Reading them
+    // separately says which axis is locked and nothing more.
+    //
+    // `scroll` is deliberately NOT on the list: it is a global lock too, in the form this
+    // pin exists to catch — a scrollbar on the document at every width, whether or not
+    // anything overflows. `overlay` cannot appear at all: Chrome computes it to `auto`.
+    const mayOwnScrolling = ['visible', 'auto'];
     for (const selector of ['html', 'body', '#root']) {
       const overflow = await page
         .locator(selector)
         .first()
-        .evaluate((el) => getComputedStyle(el).overflow);
+        .evaluate((el) => ({ x: getComputedStyle(el).overflowX, y: getComputedStyle(el).overflowY }));
       expect(
-        mayOwnScrolling.includes(overflow),
-        `${selector} must not lock document scrolling, and "${overflow}" does not scroll`
+        mayOwnScrolling.includes(overflow.x),
+        `${selector} must not lock horizontal document scrolling, and overflow-x is "${overflow.x}"`
+      ).toBe(true);
+      expect(
+        mayOwnScrolling.includes(overflow.y),
+        `${selector} must not lock vertical document scrolling, and overflow-y is "${overflow.y}"`
       ).toBe(true);
     }
   });
@@ -321,8 +336,10 @@ test.describe('Crossing the mobile boundary', () => {
 
     // The node is held here, not in the DOM: a marker attribute is re-stamped on whatever
     // the selector resolves to next, so a canvas destroyed and rebuilt reads the same.
+    // `elementHandle()` THROWS rather than returning null — on no match it waits out the
+    // timeout, and on several it raises a strict-mode violation. Its throw is the
+    // diagnosis, so there is nothing here for a null check to add.
     const canvas = await getWorkspaceCanvas(page).elementHandle();
-    expect(canvas, 'the canvas must be in the document before the crossing').not.toBeNull();
 
     for (const size of [{ width: 500, height: 800 }, TABLET, DESKTOP]) {
       await page.setViewportSize(size);

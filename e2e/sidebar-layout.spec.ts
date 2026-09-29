@@ -2,6 +2,13 @@ import { expect, test } from '@playwright/test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 
 test.describe('SidebarLeft - Layout Toggle (fast)', () => {
+  // The 720px viewport the fit test below names, declared on the describe rather than set
+  // inside the test. `devices['Desktop Chrome']` is 1280x720 today, so a `setViewportSize`
+  // to that same size is a no-op against this config that still fires a real resize at a
+  // mounted app — and none of the file's other four tests do that. A `test.use` here makes
+  // the size true by construction and fires nothing.
+  test.use({ viewport: { width: 1280, height: 720 } });
+
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     // Navigation, not the app: `body` is visible on a blank document and on a Vite error
@@ -21,9 +28,6 @@ test.describe('SidebarLeft - Layout Toggle (fast)', () => {
   });
 
   test('the default two-column toolbar fits a 720px viewport without overflowing the page', async ({ page }) => {
-    // The height this test names, set rather than inherited: `devices['Desktop Chrome']`
-    // is 1280x720 today, and a name must not depend on a value nothing here states.
-    await page.setViewportSize({ width: 1280, height: 720 });
     // The metrics below are page-level, so a blank page satisfies them without a toolbar
     // having been laid out at all. The canvas is what the toolbar is being measured against.
     await expect(getWorkspaceCanvas(page)).toBeVisible();
