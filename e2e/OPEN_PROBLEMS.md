@@ -749,3 +749,37 @@ and **is not a defect here**:
   baselines.** The first two are fixed (`noUnusedLocals` and `noUnusedParameters` are
   on, the count is 0); the CDP assertions now derive their scale; the orphans are
   recorded in the P3 entry above.
+- **Four review findings about `getStrokeAnalysis` and the Photopea oracle, left
+  unaddressed when the orchestrator session died.** All four were re-derived against
+  this tree; one was real and is fixed, and three were not defects here:
+  - _The capture scale is read off the width axis and spent on a row measurement._ Real,
+    and fixed — but **not reachable from any current call site**, so the fix is a rule
+    rather than a repair. `canvas-helpers.ts` scales `verticalSpread` (rows) by the row
+    scale and the column gap by the column scale. What a later reader must not do is
+    re-file this as a live bug: it is pinned by two tests whose capture is DELIBERATELY
+    exaggerated, because a real fractional clip diverges by ~2% and that cannot cross a
+    threshold against a one-or-two-pixel measurement. The exaggeration is stated at the
+    test, and the per-call-site arithmetic is in the `CaptureRegion` JSDoc.
+  - _`captureScale` never validates `imageWidth`, so scale 0 is reachable._ Not
+    reachable, and the stated mechanism was wrong. The defence is `bottom < 0`, not the
+    length of `data` — with `width === 0` the coordinate arithmetic yields `NaN`, a
+    `NaN` never compares less than the initial `top`, and the function reports "nothing
+    here" before any threshold is consulted. The pre-existing zero-sized test passes an
+    EMPTY buffer, so it could not tell the two defences apart; a test carrying real ink
+    now does.
+  - _A rejection inside a `waitForCanvasPixels` poll aborts the poll instead of
+    retrying._ True in mechanism, unreachable at the only poll call site —
+    `pen-types.spec.ts` builds its clip's width and height from module constants. The
+    JSDoc now states which of `null` and a rejection is which.
+  - _The Photopea oracle's JSDoc claimed neither check is reachable without the file
+    opening._ The comment was wrong, not the code, and it is corrected in place:
+    `getByText` matches regardless of visibility and `not.toHaveCount(0)` is a count,
+    so a HIDDEN recent-files row satisfies the name check exactly as a visible one
+    would. The canvas-backing-store check is the load-bearing one. Both share the blind
+    spot, and the spec is `test.skip`ped, so neither is a proof.
+
+  What makes this worth recording rather than deleting: **four of five defects found in
+  that review were defects in the CLAIMS, and a green suite could not tell.** The code was
+  correct and every gate was passing in every one of them. A test suite that only fails
+  on behaviour will not find this class, and a comment that over-credits what an
+  assertion proves is invisible to `tsc`, to `eslint` and to a passing run.
