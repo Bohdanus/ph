@@ -2840,8 +2840,7 @@ things, so only one of them is reported."_ Two refusals, one message — so the 
 unreported, it is **misreported**: a publication that is a deliberate no-op is logged with the text
 of a lost logical edit.
 
-**The second reason is an identity affine operation, and it is reachable by an ordinary gesture.**
-Drag a rotate slider back to zero and release:
+**The second reason is an identity affine operation.** The shape, from the code:
 
 - `normalizeCommittedToolArgs` returns `null` for a transform whose retained history args are the
   identity (`src/contexts/useLayer.ts:76`, tested by `isIdentityAffineTransform`,
@@ -2849,7 +2848,7 @@ Drag a rotate slider back to zero and release:
 - The layer record published alongside it is built from the preview and **copies the preview's
   operations array** (`src/contexts/useLayer.ts:391`), so the identity operation is still on it.
 - `pendingToolEdits` is only pushed when the normalized args are truthy
-  (`src/contexts/useLayer.ts:396`), so with nothing recorded the release takes the
+  (`src/contexts/useLayer.ts:396`), so with nothing recorded the commit takes the
   `!pendingToolEdits.length` branch (`src/contexts/useLayer.ts:414`) and dispatches
   `PUBLISH_RUNTIME_PRESENTATION` (`src/contexts/useLayer.ts:417`) with a payload that differs from
   the stored layer in `operations` alone.
@@ -2857,32 +2856,66 @@ Drag a rotate slider back to zero and release:
   and `operations` is durable. The publication is refused, and a no-op is reported as an invariant
   violation.
 
-**Why it matters beyond the log line.** The refusal is contained — the layer keeps rendering from
-its `tmpCanvas` and no logical state moves — so nothing is lost. What is lost is the signal: a
-`console.error` reading "this action's invariant was broken" for a gesture that did exactly what the
-user asked. Once that text exists, the real violation is the one an operator learns to discount.
+**It is NOT reachable by dragging the rotate slider and releasing.** `Transform.tsx:48` calls
+`tempUpdateLayer` and nothing else; the options bar has no commit gesture. The commit is
+`commitDirtyTool(true)` at `src/contexts/useLayer.ts:348`, reached from `goToTool`, the Apply link, a
+new layer, or `mergeAllLayers`. So the operation is **staged** by the slider and only meets the
+publishing branch when one of those commits — and `useLayer.lifecycle.test.tsx:541` already pins
+that a staged identity preview is discarded. Do not write the test for this by moving a slider and
+releasing; nothing publishes.
 
-**Fix.** A second predicate beside `layersDifferOnlyByPresentation` in
-`src/contexts/layer-presentation.ts`, sharing one `layersMatch(current, next, { ignoreIdentityOperations })`
-helper rather than re-walking the record: it accepts when the records differ by presentation caches
-**and** by identity affine operations and nothing else. `StoreContext` then routes the two refusals
-apart — the identity one is the intended no-op and is reported as routine, the other keeps the
-`console.error` and its offending ids. Note the identity case is not only a difference in
-`operations`: `effectiveOperations` must compare the _filtered_ arrays, because a preview carrying
-one identity op and a stored layer carrying none are the same image.
+**Why it matters beyond the log line.** The refusal is contained — nothing is persisted and
+`previewLayersRef.current` is cleared at `src/contexts/useLayer.ts:400` — so no user edit is lost.
+It is NOT the `tmpCanvas` story the comment at `src/contexts/StoreContext.tsx:850-851` tells for the
+other refusal: the transform preview nulls `tmpCanvas` outright (`src/contexts/useLayer.ts:557`), so
+there is no cached raster still rendering. What is lost is the signal — a `console.error` reading
+"this action's invariant was broken" for a commit that did exactly what the user asked. Once that
+text exists, the real violation is the one an operator learns to discount.
 
-**Nothing here is missing for want of a second test.** There is no test asserting the current
-`console.error` text, so splitting it cannot contradict one — but there is also no test for the
-identity path at all, which is why the refusal went unnoticed. A test that publishes a layer whose
-only difference is an identity operation, and asserts it is not reported as a lost edit, fails
-today and is the change's coverage.
+**Two tests already pin the message, so this is a change to them, not an addition beside them.**
+`src/contexts/__tests__/useLayer.commit.test.tsx:258-261` asserts the call count, the invariant text
+and the offending ids — and its own comment at `:256-257` already states the two-refusal claim this
+entry is recording. `src/contexts/__tests__/StoreContext.presentation.test.tsx:315-318` pins the
+count and the layer ids. Any fix must decide what those two assert for the identity case, which is
+the actual design question, and it is not a question this entry can answer for you.
 
-**Files.** `src/contexts/StoreContext.tsx:849-868`, `src/contexts/layer-presentation.ts:96`,
-`src/contexts/useLayer.ts:76,391,396,414-417`, `src/contexts/affine-transform.ts:47`.
+**Fix, and the decision it turns on.** A second predicate beside `layersDifferOnlyByPresentation` in
+`src/contexts/layer-presentation.ts`, sharing one walk of the record rather than re-walking it,
+answers "do these differ by presentation caches and by identity affine operations and nothing else?".
+What `StoreContext` then does with a `true` is the decision:
+
+- **Refuse, and report it as routine** — the smaller change. The invariant "a promotion carries
+  caches only" stays absolute, so the identity case is still a violation of a literal rule, just a
+  benign one. The two tests above keep asserting the lost-edit text for the durable difference, and
+  gain an assertion that the identity case is _not_ reported that way.
+- **Accept, and publish the stored record** — the larger change, and the one the durable model
+  prefers. An identity operation in `layer.operations` with no history entry is live state the
+  durable shadow cannot reproduce: the reducer deliberately does not move `durableStatus` on this
+  transition (`src/contexts/StoreContext.tsx:510-515`), and `history-replay.ts:180` rebuilds
+  `layer.operations` from history entries. Accepting the payload as-is would publish a record whose
+  operations the shadow cannot re-derive. Publishing the STORED record instead makes the preview a
+  pure no-op, which is what the user asked for.
+
+Whichever is chosen, two details are load-bearing. `operations` **is** in `logicalLayerState`, because
+`PRESENTATION_FIELDS` is only `bitmap` and `tmpCanvas`
+(`src/contexts/layer-presentation.ts:70,76-78`), so it must be excluded explicitly on both sides. And
+`getLayerAffineTransform` skips both non-affine kinds and disabled operations
+(`src/contexts/affine-transform.ts:229-236`), so the filter must be exactly `kind === 'affine-transform'
+&& isIdentityAffineTransform(op.transform)` — and since `createAffineLayerOperation` mints a fresh
+uuid per preview (`src/contexts/layer-utils.ts:114`), the two sides are only comparable after the
+identity entries are removed from **both**.
+
+**Files.** `src/contexts/StoreContext.tsx:849-868`,
+`src/contexts/__tests__/useLayer.commit.test.tsx:256-261`,
+`src/contexts/__tests__/StoreContext.presentation.test.tsx:313-318`,
+`src/contexts/layer-presentation.ts:96`, `src/contexts/useLayer.ts:76,391,396,400,414-417,557`,
+`src/contexts/affine-transform.ts:47,229-236`, `src/contexts/layer-utils.ts:114`,
+`src/components/ToolbarsRight/Transform/Transform.tsx:48`.
 
 **Origin.** Salvaged from the unmerged `fix/unit-tests` branch, which also carried two
 `history-adapter` changes — a duplicate-durable-entry-id filter and a frame-omission diagnostic.
 Both have since landed on `main` by other routes (`history-adapter.ts:581,752,780` and the `else`
-at `:656`) and the branch's copy of each is now behind `main`'s. The third change above is the only
-part of that branch still outstanding, which is why it is recorded here rather than left in a
-branch 600 commits behind.
+at `:656`). The `layer-presentation` predicate was the third part, and it has NOT landed: it is
+absent from `main` today, and `fix/unit-tests` remains 2 commits ahead with 13 conflicting files,
+`StoreContext.tsx` and `useLayer.ts` among them. Treat the branch as at-risk salvage, not as a clean
+source, and re-derive from this entry rather than from its copy.
