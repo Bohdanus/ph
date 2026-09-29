@@ -104,39 +104,45 @@ six are visually indistinguishable in the rail.
 
 ## Status tally
 
-Across the family: **0 `present`, 0 `partial`, 16 `inert`, 14 `missing`, 30 control rows.** The three
+Across the family: **0 `present`, 0 `partial`, 15 `inert`, 14 `missing`, 29 control rows.** The three
 anchor-point tools contribute no rows, for the reason under "Add / Delete / Convert".
 
 | Tool            | Controls | present | partial | inert | missing |
 | --------------- | -------- | ------- | ------- | ----- | ------- |
-| `pen`           | 12       | 0       | 0       | 8     | 4       |
+| `pen`           | 12       | 0       | 0       | 7     | 5       |
 | `freeform-pen`  | 9        | 0       | 0       | 4     | 5       |
-| `curvature-pen` | 9        | 0       | 0       | 4     | 5       |
+| `curvature-pen` | 8        | 0       | 0       | 4     | 4       |
 | the three below | 0        | 0       | 0       | 0     | 0       |
 
 **The `inert` count was 15 until an independent audit recounted it, and this table carried the
 error.** The `curvature-pen` row was tallied as three when it is four — it has Mode, Fill, Stroke and
-Selection…/Mask/Shape. Recounted mechanically from `pen.ts`, the family total is 16, and the
-repository-wide total is 20: pen 16, paint 3 (eraser `Flow`, magic-eraser `Anti-aliased`,
-paint-bucket `Anti-aliased`), draw 1 (`Mode`), and zero in selection, focus, shape, type-crop and
-transform. A hand-maintained tally in a prose file is the one number in this directory with nothing
-holding it to the code beside it.
+Selection…/Mask/Shape. A later recount found a second error in the same table: `curvature-pen` was
+given nine controls and five `missing` where the data file and this file's own Curvature Pen table
+both say eight and four, so the family was stated as 30 rows with 14 `missing` when the file holds 29
+with 13. Recounted mechanically from `pen.ts`, the family total is now 15 `inert` across 29 control
+rows: 16 less the one row that moved from `inert` to `missing` under "Path Operations" below, which is
+the only `inert` count this pass changed on purpose. The repository-wide figure in the earlier version
+— pen 16, paint 3 (eraser `Flow`, magic-eraser `Anti-aliased`, paint-bucket `Anti-aliased`), draw 1
+(`Mode`), and zero in selection, focus, shape, type-crop and transform — is **not** re-derived here:
+it was counted in the `tool-descriptions` worktree, and the other tools' description files sit on their
+own branches, so this worktree's copies are not the states it was taken from. A hand-maintained tally in
+a prose file is the one number in this directory with nothing holding it to the code beside it.
 
 **This family is what the `inert` definition is for.** It originally read "_state_ is declared and
 persisted (`src/tools/settings.ts`) but no component renders it", which does not fit here: no state is
 declared at all, the args type _is_ the tool name. The definition was widened to "declared **or
 displayed**, and nothing is wired behind it", with the second shape spelled out as "a label on a
-placeholder chip that no component ever reads" — which is these 16 controls exactly. So `inert` is used
+placeholder chip that no component ever reads" — which is these 15 controls exactly. So `inert` is used
 for the controls whose **name is on screen as a chip** and `missing` for the controls with no chip,
 because `missing` is defined as "the app does not render this control" and a rendered label is not
-that. The alternative — calling all 30 `missing` — loses the fact that eight of the standard Pen's
-control names are literally visible in the app's bar, which is the claim most likely to be mistaken for
-"the app has it".
+that. The alternative — calling all 29 `missing` — loses the fact that seven of the standard Pen's
+twelve control names are literally visible in the app's bar, which is the claim most likely to be
+mistaken for "the app has it". Those seven are exactly the seven chips the bar renders, one for one.
 
 **`inert` is not `present`, and the reason is worth stating because it is the whole point of the
-status.** A screenshot of this bar shows twelve control names and looks like a working Pen. Nothing
-reads any of them. `inert` is the status that survives a screenshot, and `present` is the only status
-that does not.
+status.** A screenshot of this bar shows seven of its twelve control names and looks like a working
+Pen. Nothing reads any of them. `inert` is the status that survives a screenshot, and `present` is the
+only status that does not.
 
 Controls that surprised me, in the order they surprised me:
 
@@ -227,7 +233,7 @@ Path semantics, all sourced:
 | `Fill`                      | Fill color; Shape mode                                                                                                                              | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Fill")            |
 | `Stroke`                    | Stroke color, width, type; Shape mode                                                                                                               | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Stroke")          |
 | `Operation`                 | Path mode: Add To / Subtract From / Intersect / Exclude Overlapping Path Area                                                                       | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Path Operations") |
-| `Path Operations`           | Path Selection tool's menu: Combine Shapes … + Merge Shape Components                                                                               | `inert`   | `toolbarPlaceholderConfig.ts:23` (same chip)              |
+| `Path Operations`           | Path Selection tool's menu: Combine Shapes … + Merge Shape Components                                                                               | `missing` | —                                                         |
 | `Path alignment`            | Align and distribute path components                                                                                                                | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Alignment")       |
 | `Path arrangement`          | Stacking order of multiple paths                                                                                                                    | `missing` | —                                                         |
 | `Path thickness (Weight)`   | On-canvas path line width; display only, lives in the additional-options flyout                                                                     | `missing` | —                                                         |
@@ -236,9 +242,20 @@ Path semantics, all sourced:
 | `Auto Add/Delete`           | On by default; Pen morphs to Add/Delete Anchor over an existing path                                                                                | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Auto Add/Delete") |
 | `Rubber Band`               | Live segment preview; in the additional-options flyout                                                                                              | `missing` | —                                                         |
 
-`Operation` and `Path Operations` share one chip. That is honest — the app has one `Path Operations`
-label standing in for two distinct Adobe controls on two distinct tools — and it is why both rows carry
-the same `appRef`.
+**The two rows are not one chip, and an earlier version of this file said they were.** `Operation` and
+`Path Operations` are two different Adobe controls: `Operation` is the Pen's own Path-mode area control
+(`Add To Path Area` and friends), and `Path Operations` is the Path Selection tool's drop-down over a
+component that already exists. The app renders **one** chip of that name — the fourth of seven on
+`toolbarPlaceholderConfig.ts:23`, after `Make Selection` — and it is `Operation`'s, because the app
+labels the Pen's own control "Path Operations" and because a chip on the Pen's bar can only stand for a
+control the Pen owns. So `Operation` stays `inert` with that `appRef`, and `Path Operations` is
+`missing` with no `appRef` at all: the app's bar does not carry it, and its row now says so in those
+words. That is the same call `shape.ts` makes, where `pathOperationsControl` is declared `missing`
+(`shape.ts:76-81`) and only overridden to `inert` for `custom-shape`, whose own chip list names the
+control (`shape.ts:446`). The earlier wording here — "That is honest — the app has one `Path
+Operations` label standing in for two distinct Adobe controls on two distinct tools" — is what let two
+rows claim one rendering, and it is withdrawn: one chip cannot be the rendering of two controls the same
+record insists are different, so the record now claims the rendering only where it happens.
 
 ### Modifiers, shortcuts, cursor
 

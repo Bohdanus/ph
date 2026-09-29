@@ -31,7 +31,7 @@ const ANCHOR_TOOL_SOURCES = [
 ] as const;
 
 const NO_APP_OPTIONS =
-  'The app registers this tool, but it has no options bar of its own: the panel it renders is the shared amber placeholder with a TODO badge, and every control below is that placeholder chip rather than a working control. The tool carries a single state key, its own name, so there is no setting behind any chip to be out of range. Selecting the tool changes nothing on the canvas — there is no path layer, no anchor point and no stroke to place.';
+  'The app registers this tool, but it has no options bar of its own: the panel it renders is the shared amber placeholder with a TODO badge, and no control below is a working control — the ones that panel names are its chips, and the rest are absent from it entirely. The tool carries a single state key, its own name, so there is no setting behind any chip to be out of range. Selecting the tool changes nothing on the canvas — there is no path layer, no anchor point and no stroke to place.';
 
 /**
  * The canvas side of the same finding, and it is separate from the bar: none of the six
@@ -85,16 +85,15 @@ export const penDescriptions: Record<
       {
         control: 'Operation',
         detail:
-          'Path mode only. The path area option that decides how the component you are about to draw combines with the components already in the path: Add To Path Area, Subtract From Path Area, Intersect Path Areas, or Exclude Overlapping Path Areas. A shape tool may hold Shift to temporarily pick Add and Alt (Windows) or Option (macOS) to temporarily pick Subtract. The app labels this "Path Operations".',
+          'Path mode only. The path area option that decides how the component you are about to draw combines with the components already in the path: Add To Path Area, Subtract From Path Area, Intersect Path Areas, or Exclude Overlapping Path Areas. A shape tool may hold Shift to temporarily pick Add and Alt (Windows) or Option (macOS) to temporarily pick Subtract. The app labels this "Path Operations", and that is the single chip of that name in the list it renders — so this row, and not the Path Selection tool’s control below, is what the chip stands for.',
         status: 'inert',
         appRef: PEN_PLACEHOLDER_CHIPS,
       },
       {
         control: 'Path Operations',
         detail:
-          'The Path Selection tool’s drop-down of the same four overlap modes, named Combine Shapes, Subtract From Shape Area, Intersect Shape Areas and Exclude Overlapping Shape Areas, plus Merge Shape Components, which fuses every overlapping component into one. It acts on an existing path component rather than on the one being drawn, so the Pen family shares the vocabulary without owning the control.',
-        status: 'inert',
-        appRef: PEN_PLACEHOLDER_CHIPS,
+          'The Path Selection tool’s drop-down of the same four overlap modes, named Combine Shapes, Subtract From Shape Area, Intersect Shape Areas and Exclude Overlapping Shape Areas, plus Merge Shape Components, which fuses every overlapping component into one. It acts on an existing path component rather than on the one being drawn, so the Pen family shares the vocabulary without owning the control. The app’s bar does not carry it: the one "Path Operations" chip on it stands for the Pen’s own Operation control above, and nothing on the bar names this one — which is a divergence from Photoshop, not a rendering fact.',
+        status: 'missing',
       },
       {
         control: 'Path alignment',
