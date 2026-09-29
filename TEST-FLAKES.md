@@ -179,7 +179,25 @@ and destroys the only signal that the defect existed.
 
 ## 7. A second, NAMED observation — `useFile.test.tsx` JPEG-quality save
 
-**Status: OPEN. Named, not reproduced. Four recorded full-run failures across three checkouts, and never once in isolation.**
+**Status: OPEN, and now SKIPPED by declaration (2026-09-29, operator decision).
+Five recorded full-run failures across four checkouts, never once in isolation.
+Not fixed. Not a known-failing test; it is intermittent.**
+
+**The skip is a gate decision, not a fix, and it is not a waiver.**
+`src/contexts/__tests__/useFile.test.tsx` carries an `it.skip` on the one test,
+with the reason in the comment above it. It was skipped on §12's grounds, which
+are the same grounds and are not restated here: a default run is contracted to
+zero failures, a test red roughly one run in five makes unrelated merges look
+broken, and that trains the response of ignoring the gate — which costs more
+than this one test buys. A flaky assertion is also worse than no assertion: a
+green result from it carries no information, so it cannot justify a change
+either. **Nothing about the defect is waived; the hunt below is un-done and
+filed, and the skip is one line to remove.**
+
+**Do not "fix" this by loosening anything.** There is no bound here to widen, and
+that is what the capture below establishes: the save resolves, the details are
+correct, and the only thing that failed is a dialog that should not have been
+open. Relaxing the assertion would delete the only statement this test makes.
 
 This one is worth separating from section 1, because unlike it the failing test
 was captured:
