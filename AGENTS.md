@@ -145,7 +145,18 @@ promotes cached canvases outside reducer publication.**
 2. **Green locally** — the commands and gates are
    [`docs/TESTING.md`](docs/TESTING.md). "Already failing" is a fact to report,
    not a reason to stop.
-3. **Covered** by a test that fails without the change.
+3. **Covered** by a test that fails without the change. **Prove it bites, and
+   inject where the value is DECIDED.** A test you have not broken is not
+   evidence it covers anything, and a guard can have several independent gates
+   over the same value — so an injection that passes is evidence of _redundancy_,
+   not of coverage. Reviewing a derived guard, I removed the clean-tree clause
+   from `prunable` and the suite stayed green, because a second gate
+   (`recommendation === PRUNE`) independently excluded those worktrees; the guard
+   covered the decision and not the clause, and I would have reported the
+   opposite had I stopped at the first injection. Inject at the point that
+   computes the asserted value, expect the merely-redundant injection to pass,
+   and say which is which. A test that reads a _list_ rather than a derivation
+   cannot be shown to bite at all this way — that is a reason to derive the set.
 4. **Documented**: handoff updated, plus any new gate, test trap or architecture
    boundary where the next agent looks.
 5. **Reviewed by someone else** — a code review subagent on the prompt in
