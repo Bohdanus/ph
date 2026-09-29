@@ -27,7 +27,7 @@ import type { FullConfig } from '@playwright/test';
  * It cannot see a `test.use({ headless: false })` inside a single spec file: that is
  * resolved per test, below this layer. Nothing in `e2e/` does that today, and
  * closing it would mean every spec importing a shared `test` from a fixtures module
- * instead of `@playwright/test`. The 18 specs import it directly, so the hole is
+ * instead of `@playwright/test`. Most of the specs import it directly, so the hole is
  * real but wide; closing it is a larger change than it looks and is not needed to
  * keep an agent from running `--headed`.
  *

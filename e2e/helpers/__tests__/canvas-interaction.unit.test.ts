@@ -3,7 +3,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Mouse } from '@playwright/test';
 import {
+  CANVAS_REDRAW_CLIP,
   DEFAULT_LINE_CLIP,
+  LINE_END_X,
+  LINE_END_Y,
+  LINE_START_X,
+  LINE_START_Y,
+  canvasRedrawClip,
   drawLine,
   getWorkspaceCanvas,
   takeLineScreenshot,
@@ -242,6 +248,109 @@ describe('takeLineScreenshot', () => {
       takeLineScreenshot(createPageMock({ screenshot: capture }), BOX, 'line-test', testInfo)
     ).rejects.toThrow('reporter offline');
     expect(capture).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * How far the painted line may reach outside its endpoints and centre line, in CSS pixels:
+ * half the Draw tool's default pen width, which is `lineWidth: 10` (`src/tools/settings.ts`).
+ * `drawLine` presses at one endpoint, drags to the other and releases, and the default pen
+ * is a round-capped 10px stroke, so the paint is a 200x10 bar with semicircular ends. Every
+ * containment below is stated against that bar, not against the bare path.
+ */
+const CAP_ALLOWANCE = 5;
+
+interface Rect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** The region `drawLine` actually paints, in the same space the rect passed in is in. */
+function paintedLine(box: BoundingBox): Rect {
+  return {
+    left: box.x + Math.min(LINE_START_X, LINE_END_X) - CAP_ALLOWANCE,
+    top: box.y + Math.min(LINE_START_Y, LINE_END_Y) - CAP_ALLOWANCE,
+    right: box.x + Math.max(LINE_START_X, LINE_END_X) + CAP_ALLOWANCE,
+    bottom: box.y + Math.max(LINE_START_Y, LINE_END_Y) + CAP_ALLOWANCE,
+  };
+}
+
+function contains(clip: Required<ClipOptions>, rect: Rect): boolean {
+  return (
+    clip.x <= rect.left &&
+    clip.y <= rect.top &&
+    clip.x + clip.width >= rect.right &&
+    clip.y + clip.height >= rect.bottom
+  );
+}
+
+/**
+ * `CANVAS_REDRAW_CLIP` and `DEFAULT_LINE_CLIP` describe the same thing - the region the
+ * standard test line occupies - in the same space, and both are offsets added to the canvas
+ * box (`canvasRedrawClip` and the default in `takeLineScreenshot`). Nothing related them:
+ * each was pinned by value on its own, so moving one, or the line, could leave a clip that
+ * no longer covers the stroke. A redraw wait on a clip that misses the line is not a red
+ * failure, it is a pass that never looked, which is the shape of defect these two constants
+ * exist to serve.
+ *
+ * The first case is the pure invariant in canvas-relative space. The next two run the two
+ * helpers for a representative box, so the arithmetic that turns a constant into a page clip
+ * is part of what is pinned, and not only the constant.
+ */
+describe('the line clips contain the standard test line', () => {
+  afterEach(async () => {
+    await cleanupTempDirs();
+  });
+
+  it('CANVAS_REDRAW_CLIP contains the line drawLine paints, in canvas-relative space', () => {
+    const line = paintedLine({ x: 0, y: 0, width: 0, height: 0 });
+
+    expect(contains(CANVAS_REDRAW_CLIP, line)).toBe(true);
+  });
+
+  it('DEFAULT_LINE_CLIP contains the same line, in canvas-relative space', () => {
+    const line = paintedLine({ x: 0, y: 0, width: 0, height: 0 });
+
+    expect(contains(DEFAULT_LINE_CLIP, line)).toBe(true);
+  });
+
+  it('the page-space clip canvasRedrawClip builds contains the page-space line', () => {
+    // The box origin cancels between the two, which is why the canvas-relative case above is
+    // the whole invariant; this one pins that the helper adds that same origin to both sides
+    // rather than to one of them.
+    const line = paintedLine(BOX);
+
+    expect(contains(canvasRedrawClip(BOX), line)).toBe(true);
+  });
+
+  it('the page-space clip takeLineScreenshot captures contains the page-space line', async () => {
+    const outputDir = await makeOutputDir('line-clip-containment');
+    const capture = createScreenshotSpy(Buffer.from('png'));
+    const { testInfo } = createTestInfoMock(outputDir);
+
+    await takeLineScreenshot(createPageMock({ screenshot: capture }), BOX, 'line-clip', testInfo);
+
+    const clip = capture.mock.calls[0][0].clip;
+    expect(contains(clip, paintedLine(BOX))).toBe(true);
+  });
+
+  it('fails if either clip stops covering the line, which is what the three cases above exist to catch', () => {
+    // The invariant is only as good as its ability to fail. Each clip has
+    // `line.left - clip.x` pixels of margin on its leading edge, so shifting it right by
+    // that margin plus one pixel must break containment: a later edit that slides a clip or
+    // the line is caught rather than tolerated.
+    const line = paintedLine({ x: 0, y: 0, width: 0, height: 0 });
+    const shiftedOffLine = (clip: Required<ClipOptions>): Required<ClipOptions> => ({
+      ...clip,
+      x: line.left + 1,
+    });
+
+    expect(contains(shiftedOffLine(CANVAS_REDRAW_CLIP), line)).toBe(false);
+    expect(contains(shiftedOffLine(DEFAULT_LINE_CLIP), line)).toBe(false);
+    expect(CANVAS_REDRAW_CLIP.x).toBeLessThan(line.left);
+    expect(DEFAULT_LINE_CLIP.x).toBeLessThan(line.left);
   });
 });
 

@@ -199,22 +199,34 @@ describe('bandCentreY', () => {
 });
 
 describe('visibleCanvasBox', () => {
-  const VIEWPORT = { width: 1280, height: 1000 };
+  const VIEWPORT = { width: 1280, height: 720 };
+
+  /**
+   * The measured canvas box in the DEFAULT (two-column) toolbar layout, at the project
+   * default viewport, and the one case that must be a no-op. Both numbers are recorded in
+   * P1 of `e2e/OPEN_PROBLEMS.md`, and a spec run of `e2e/undo-redo.spec.ts` re-measures
+   * them on every run. Deliberately not asserted on: if the layout changes, the right
+   * answer from this function is to CUT, so a unit test for a pure geometry function must
+   * not break with the shell.
+   */
+  const MEASURED_BOX: BoundingBox = { x: 56, y: 100, width: 922, height: 583 };
 
   it('returns the box unchanged when all of it is on screen', () => {
-    expect(visibleCanvasBox({ x: 56, y: 100, width: 974, height: 863 }, VIEWPORT)).toEqual({
-      x: 56,
-      y: 100,
-      width: 974,
-      height: 863,
+    expect(visibleCanvasBox(MEASURED_BOX, VIEWPORT)).toEqual(MEASURED_BOX);
+    expect(visibleCanvasBox({ x: 0, y: 0, width: 10, height: 10 }, VIEWPORT)).toEqual({
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
     });
   });
 
   it('cuts the part of the canvas that hangs below the fold', () => {
-    // This application lays the workspace canvas out taller than a 720px window
-    // (measured: an 840px element in a 720px viewport), and a clipped screenshot
-    // of the overflow comes back as the rows that fit, with no error.
-    expect(visibleCanvasBox({ x: 56, y: 100, width: 974, height: 840 }, { width: 1280, height: 720 })).toEqual({
+    // Not a claim about this application's layout, which no longer overflows: a
+    // property of `page.screenshot({ clip })`, which intersects a clip with the
+    // visible page rect and returns the intersection without saying so. 620 is
+    // 720 minus the 100 the clip starts below the top, measured on this build.
+    expect(visibleCanvasBox({ x: 56, y: 100, width: 974, height: 840 }, VIEWPORT)).toEqual({
       x: 56,
       y: 100,
       width: 974,
@@ -247,6 +259,28 @@ describe('visibleCanvasBox', () => {
       /does not overlap/
     );
     expect(() => visibleCanvasBox({ x: 2000, y: 10, width: 100, height: 100 }, VIEWPORT)).toThrow(/does not overlap/);
+  });
+
+  it('names both operands in the refusal, because that is the reason to throw here at all', () => {
+    // `page.screenshot({ clip })` already refuses an empty intersection, with
+    // `Clipped area is either empty or outside the resulting image`: neither the box
+    // nor the viewport, and from inside the poll loop, so a wait that never resolves
+    // reports its own timeout and never the cause. This is the whole justification for
+    // throwing rather than deferring, so it is pinned rather than left as a comment -
+    // a message that lost either operand would be strictly worse than the browser's.
+    const box = { x: 56, y: 800, width: 974, height: 200 };
+    const viewport = { width: 1280, height: 720 };
+
+    let message = '';
+    try {
+      visibleCanvasBox(box, viewport);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain('visibleCanvasBox');
+    for (const [key, value] of Object.entries(box)) expect(message).toContain(`"${key}":${value}`);
+    expect(message).toContain(`${viewport.width}x${viewport.height}`);
   });
 });
 

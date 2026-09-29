@@ -1,10 +1,19 @@
 import { test } from '@playwright/test';
-import { setupExportTest, setupIcoTest, exportIcoAndVerify } from './helpers';
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
+import { INTEGRATION_TEST_TIMEOUT_MS, exportIcoAndVerify, setupIcoTest } from './helpers';
 
 test('exports to ICO with pixel verification', async ({ page }, testInfo) => {
-  test.setTimeout(60_000);
+  test.setTimeout(INTEGRATION_TEST_TIMEOUT_MS);
 
-  const { downloadDirectory } = await setupExportTest(page, testInfo);
+  // `setupIcoTest` opens its own 256x256 document through File > New, so running
+  // `setupExportTest` first drew the export line, encoded a source data URL and
+  // navigated a second time for the ICO flow to throw all of it away. Only the
+  // download directory was kept, so it is prepared here directly — the same thing
+  // `visual-regression.spec.ts` does for this helper.
   const sourceDataUrl = await setupIcoTest(page);
+  const downloadDirectory = path.join(testInfo.outputDir, 'exports');
+  await mkdir(downloadDirectory, { recursive: true });
+
   await exportIcoAndVerify(page, sourceDataUrl, downloadDirectory);
 });

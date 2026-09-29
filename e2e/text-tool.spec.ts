@@ -11,7 +11,7 @@ import {
   STROKE_ANALYSIS,
 } from './helpers/canvas-helpers';
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
-import { captureCanvasScreenshot, getDevicePixelRatio } from './helpers/cdp-helpers';
+import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { clickToolButton } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 import { imageBoundsToCss } from './helpers/screenshot-scale';
@@ -32,10 +32,25 @@ import { imageBoundsToCss } from './helpers/screenshot-scale';
 const TEXT_TOOL_TIMEOUT_MS = 60_000;
 
 /**
- * The rectangle the draft is dragged out in, in canvas-box coordinates. The workspace
- * canvas measures 974x840 at the suite's 1280x720 desktop viewport and the starting
- * document is 800x600 (`App.tsx:16-21`), so this lands well inside the document and
- * inside the visible viewport.
+ * The rectangle the draft is dragged out in, in canvas-box coordinates — `drawLine`
+ * offsets its arguments by the canvas box, so these are CSS px from the box's top-left
+ * (`canvas-helpers.ts:471-478`).
+ *
+ * Measured at the suite's 1280x720 desktop viewport: the workspace canvas box is
+ * 922x583 at page (108, 100); the page does NOT overflow, because
+ * `documentElement.scrollHeight` is 720, the same as `clientHeight` — the left rail's
+ * `min-h-0 overflow-y-auto` (`src/components/SidebarLeft/SidebarLeft.tsx:359`) owns its
+ * own scrolling, so the shell is exactly viewport-tall. The 800x600 starting document
+ * (`src/App.tsx:20-25`) therefore letterboxes into that element HEIGHT-limited, at
+ * scale 0.97167, rendering 777x583 at box x 72.5..849.5 and all 583 rows. So the
+ * rectangle below — box x 200..600, y 200..320, i.e. document x 131..543, y 206..329 —
+ * is inside the document, and there are 263 rows of element below it and no fold to
+ * clear. (`e2e/OPEN_PROBLEMS.md` holds the layout table.)
+ *
+ * The 922 is the TWO-COLUMN width, which is the default: `grid-cols-[auto_1fr_250px]`
+ * (`src/App.tsx:75`) with a 108px rail gives 1280 - 108 - 250 = 922. The 974 quoted in
+ * some of this file's earlier comments is the ONE-COLUMN width (rail 3.5rem = 56px),
+ * which nothing here selects.
  */
 const DRAFT_RECT = { x1: 200, y1: 200, x2: 600, y2: 320 };
 
@@ -50,14 +65,23 @@ const DRAFT_DRAG_STEPS = 10;
  * It cannot be 0: the glyphs are inset by `TEXT_PADDING` (5 document px,
  * `src/util/constants.ts:3`) plus the font's own side bearing and ascent, and the
  * document is displayed at a contain scale rather than 1:1. Measured on this host with
- * the corrected capture - the whole canvas, mapped onto the canvas box - the ink sits
- * 11 / 20 / 328 / 45 CSS px inside the dragged rectangle on left / top / right / bottom.
+ * the whole canvas captured and mapped onto the canvas box — the same capture the test
+ * itself takes — the ink for `Hi` sits 9 / 9 / 343 / 67 CSS px inside the dragged
+ * rectangle on left / top / right / bottom, identical on three consecutive runs.
  *
- * Left is the binding edge, so the margin has to stay BELOW that 11: at 12 it was the
- * margin rather than a placement change that decided whether the run went red, which is
- * the same as no margin at all. 6 leaves 5px of cushion on the tightest edge against
- * font and rasterisation variation, and is still ~66x tighter than the rectangle is
- * wide, so ink from anywhere else cannot pass on it.
+ * Left and top are BOTH the binding edge, at 9, so the margin has to stay BELOW that: at
+ * 10 it would be the margin rather than a placement change that decided whether the run
+ * went red, which is the same as no margin at all. 6 leaves 3px of cushion on the
+ * tightest edges, and is still ~66x tighter than the rectangle is wide, so ink from
+ * anywhere else on the canvas cannot pass on it.
+ *
+ * The cushion is 3px rather than the 5px the taller box this margin was first measured
+ * against gave, because the element is height-limited here (scale 0.97167) and the glyphs
+ * land smaller on screen. Widening the cushion by raising the margin would weaken the
+ * assertion rather than stabilise it, so the margin stays at 6 and the thinner cushion is
+ * recorded here as what it is. The capture that produced 9/9/343/67 is deterministic
+ * here — three runs, identical to the pixel — so the exposure is to font and
+ * device-pixel-ratio variation on another host, not to this one.
  */
 const INK_MARGIN = 6;
 
@@ -67,10 +91,15 @@ const INK_MARGIN = 6;
  * `INK_MARGIN` so that a containment failure is reported by the four comparisons rather
  * than by this poll timing out on an empty region.
  *
- * It also has to stay inside the 720px viewport, because `waitForCanvasPixels` reads
- * through `page.screenshot` (`canvas-helpers.ts:380`) and that truncates a clip at the
- * fold silently - a truncated region reads as "no pixels" rather than as an error. The
- * CDP capture below does not truncate, which is why the two clips differ.
+ * It does NOT have to stay inside a viewport, and the reason it used to say so is gone:
+ * there is no fold at 1280x720 to truncate anything (see `DRAFT_RECT` above). What is
+ * still true is the mechanism — `waitForCanvasPixels` reads through `page.screenshot`
+ * (`canvas-helpers.ts:531`) with the clip re-derived on every poll by `onScreenClip`
+ * (`canvas-helpers.ts:529`), which is a no-op while the region is in view, so with zero
+ * page overflow it is a no-op on every poll. Measured, the clip this margin produces is
+ * page x 284..732, y 276..444: inside the 1280x720 page and inside the 922x583 canvas
+ * box, with room over. The CDP capture below does not go through either, which is why
+ * the two clips differ.
  */
 const POLL_MARGIN = 24;
 
@@ -79,7 +108,8 @@ const FOREGROUND = '#ff0000';
 
 /**
  * `createLayerSource` names a tool layer `${toolName} ${maxOrder}` after the tool that
- * produced it (`src/contexts/layer-utils.ts:141-148`, `:167`), and the blank document
+ * produced it — the name is composed at `src/contexts/layer-utils.ts:181` from the `tool`
+ * arm of `getNameFromSource` (`:155-164`, the return at `:162`) — and the blank document
  * layer the app starts with is order 1, so the first text layer over it is `text 2`.
  *
  * Asserted as a shape, not as that literal: the order suffix is `maxOrder`, which the
@@ -90,7 +120,11 @@ const FOREGROUND = '#ff0000';
  */
 const TOOL_LAYER_NAME = /^text \d+$/;
 
-/** The blank bedrock layer `App.tsx:16-21` creates on start, named `Blank` at `layer-utils.ts:145`. */
+/**
+ * The blank bedrock layer `src/App.tsx:20-25` creates on start, named `Blank` at
+ * `src/contexts/layer-utils.ts:160` (the `'blank'` arm's return) with the order appended
+ * by the same `:181` composition, which is why this constant carries the ` 1`.
+ */
 const STARTING_LAYER_NAME = 'Blank 1';
 
 /**
@@ -124,10 +158,11 @@ function toClip(rect: Rect): { x: number; y: number; width: number; height: numb
 }
 
 /**
- * The Type tool is a one-tool group in `toolbar-mapping.ts:74`, so `SidebarLeft` gives it
- * a plain `tool-button-text`: a group only publishes a flyout when it holds more than one
- * tool (`SidebarLeft.tsx:143`). `clickToolButton` therefore resolves on its first attempt
- * and no flyout long-press is needed.
+ * The Type tool is a one-tool group in `toolbar-mapping.ts:107` (its group is the single
+ * entry `[{ label: 'Horizontal Type Tool', name: 'text', shortcut: 'T' }]`), so
+ * `SidebarLeft` gives it a plain `tool-button-text`: a group only publishes a flyout when
+ * `group.length > 1` (`SidebarLeft.tsx:168`), and this one holds exactly one. `clickToolButton`
+ * therefore resolves on its first attempt and no flyout long-press is needed.
  */
 async function selectTextTool(page: Page): Promise<void> {
   await clickToolButton(page, 'text');
@@ -146,9 +181,17 @@ async function dragDraftRect(page: Page, box: BoundingBox): Promise<void> {
 }
 
 /**
- * Re-reads the canvas box. Selecting a tool mounts its options toolbar, which can reflow
- * the workspace, so a box measured before the click can be stale - the reason
- * `levels.spec.ts:93-96` re-measures for the same reason.
+ * Re-reads the canvas box, after the tool is selected.
+ *
+ * Every test in this file calls this AFTER `selectTextTool` has run, which is the only
+ * order that makes a stale box possible: the draft drag is expressed in canvas-box
+ * coordinates, so a box read before the tool click would address different pixels if the
+ * click reflowed the workspace. Measured, it does not — the box is 922x583 at page
+ * (108, 100) both before and after selecting the Text tool, because the tool's options
+ * mount in the RIGHT sidebar and the left rail scrolls inside its own box. So this re-read
+ * is not load-bearing today; it is here so that a reflow that did change the box could not
+ * make the drag quietly address a different pixel, and it is the reason nothing here
+ * caches a box across the tool click.
  */
 async function canvasBox(page: Page): Promise<BoundingBox> {
   const box = await getWorkspaceCanvas(page).boundingBox();
@@ -172,11 +215,28 @@ test.describe('Text tool', () => {
     // Neither input: no rectangle dragged and no text typed.
     await expect(apply).toBeDisabled();
 
-    // A rectangle on its own does not enable it. The selection outline is what makes
-    // this half mean something: without it, `toBeDisabled()` would also pass when the
-    // drag never registered, so the assertion would be about a drag that did not happen
-    // rather than about the gate. The wait clip is grown by `INK_MARGIN` because the
-    // outline is stroked along the rectangle's own edge (`drawSelectionOutline`).
+    // A rectangle on its own does not enable it. Something has to make this half mean
+    // more than "the drag never registered, and the gate is still closed for that
+    // reason", and this wait is it: the live draft rectangle `useRect` paints as it drags
+    // (`src/hooks/useRect.ts:178-233` — the stroke at `:210-214` in `#007bff`, the four
+    // handles at `:218-224`), which is inside `getSelectionBounds`' thresholds, puts
+    // selection-blue pixels in the dragged region, so the wait fails if the pointer events
+    // never reached the tool area. The wait clip is grown by `INK_MARGIN` so a partially
+    // drawn outline is not read as a missing one.
+    //
+    // What it does NOT prove, stated because it is easy to assume: that the rectangle was
+    // COMMITTED. The stroke above is painted on every pointer-move, before the drag ends,
+    // so it is satisfied by the live draft alone. Measured: neutering the outline (stroke
+    // and handles) leaves this wait green, and so does skipping the `onChangeEnd` call at
+    // `useRect.ts:430` — the live draft satisfies the wait in both cases.
+    //
+    // What DOES prove the drag committed is the pixel test's four comparisons, and it is
+    // worth saying how, because it is indirect and was measured rather than assumed.
+    // Disabling that `onChangeEnd` call leaves the tool's `rect` null, so the same
+    // `calculateNewRect` substitution described below manufactures the origin rect, the
+    // commit lands at the canvas's top-left corner, and the ink-containment test goes red
+    // on `ink escaped the left of the dragged rectangle`. So a drag that commits nothing
+    // cannot pass this file — just not at the line a reader would guess.
     await dragDraftRect(page, box);
     await waitForCanvasPixels(
       page,
@@ -189,13 +249,24 @@ test.describe('Text tool', () => {
 
     await expect(apply).toBeDisabled();
 
-    // Text is what lifts it. Typed after the drag, never instead of it: `!rect` is not
-    // reachable from this toolbar at all, because `calculateNewRect` manufactures a
-    // rectangle from its null placeholder on every keystroke (`src/util/rect.ts:123`), so
-    // Apply enables on text alone. That is the open problem recorded in
-    // `e2e/OPEN_PROBLEMS.md`, and typing without a drag here would pin the behaviour the
-    // entry questions - so this test keeps the drag-then-type order and a fix to the gate
-    // leaves it green.
+    // Text is what lifts it. Typed after the drag, never instead of it.
+    //
+    // WHY THE ORDER MATTERS, and it is a KNOWN BUG, not a stylistic choice. The Apply
+    // button is gated on `disabled={!text || !rect}` (`Text.tsx:210`), so `rect` being
+    // non-null is half the gate — but `rect` is never allowed to be null once text exists.
+    // `calculateNewRect` opens with `const rect = newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 }`
+    // (`src/util/rect.ts:123`), and `handleTextChange` (`Text.tsx:37-42`) calls exactly that
+    // on every keystroke. So typing with NO rectangle dragged manufactures a degenerate rect
+    // at the origin, `!rect` is unreachable from this toolbar at all today, and Apply enables
+    // on text alone — committing ink at (0,0). That is the open problem recorded in
+    // `e2e/OPEN_PROBLEMS.md`, and a test that typed without a drag would PIN that behaviour
+    // rather than catch it.
+    //
+    // Verified against the fix that entry asks for, because the order above is only worth
+    // anything if it survives it: with `rect.ts:123` no longer substituting the placeholder,
+    // `!rect` becomes reachable and the gate is a real gate, and all four tests in this file
+    // stay green — every one of them drags before it types, so none of them depends on the
+    // bug.
     await input.fill('Applied');
     await expect(apply).toBeEnabled();
   });
@@ -236,7 +307,7 @@ test.describe('Text tool', () => {
     // The commit empties the draft (`Text.tsx:86`). That is what makes the pixel read
     // below a statement about the document rather than about the live preview: while the
     // draft is non-empty the tool overlay repaints the same glyphs on every keystroke
-    // (`TextToolArea.tsx:46-50` -> `redrawText` -> `renderText`), so red pixels on screen
+    // (`TextToolArea.tsx:45-49` -> `redrawText` at `:51` -> `renderText`), so red pixels on screen
     // would not yet prove anything reached the layer. With the draft gone the overlay
     // draws nothing, and the only red on the canvas is the committed layer.
     await expect(input).toHaveValue('');
@@ -257,21 +328,39 @@ test.describe('Text tool', () => {
     // pattern: capture an element, map with that element's box.
     //
     // `box` is `captureCanvasScreenshot`'s fallback for when no clip is passed
-    // (`cdp-helpers.ts:52-57`); no clip is passed here, so the fallback IS the capture.
+    // (`cdp-helpers.ts:67-72`); no clip is passed here, so the fallback IS the capture.
     const capture = await captureCanvasScreenshot(page, box, testInfo, 'text-committed');
     const image = await loadImageData(capture);
     const ink = await scanPixelsForBounds(image, isForegroundInk);
     expect(ink.found, 'no foreground-red pixels anywhere on the canvas after Apply').toBe(true);
 
     // The capture really is the whole canvas box and not a clipped fragment of it, since
-    // the mapping below divides by this box's extent. CDP returns
-    // `clip x clip.scale x deviceScaleFactor` image pixels (`cdp-helpers.ts:39-51`), so the
-    // two can differ by a rounding step and by nothing else.
-    const dpr = await getDevicePixelRatio(page);
+    // the mapping below divides by this box's extent.
+    //
+    // The property asserted is the one that holds in every mode: the capture is exactly
+    // the requested rect at one integral scale shared by both axes. It is deliberately
+    // NOT `image.width === box.width * devicePixelRatio`. CDP's `Page.captureScreenshot`
+    // bypasses Playwright's device emulation and captures at Chrome's own surface
+    // scale, so the emulated ratio and the capture scale are not the same quantity.
+    // The two modes that expose it are named here because "it is wrong" is not
+    // reproducible without them: at an emulated `deviceScaleFactor: 2` CDP stayed at 1x
+    // while `window.devicePixelRatio` reported 2, and headed on a HiDPI host CDP was 2x
+    // while the ratio reported 1. Both make the DPR form red for a capture that is
+    // correct, which is what `getDevicePixelRatio` was deleted for. See
+    // `cdp-helpers.spec.ts` for the same measurement and `playwright.config.ts` for the
+    // headed/headless split.
+    const captureScaleX = image.width / box.width;
     expect(
-      Math.abs(image.width - box.width * dpr),
-      'the capture is not the full width of the canvas box'
-    ).toBeLessThanOrEqual(2);
+      Math.abs(image.height / box.height - captureScaleX),
+      'the capture is not the canvas box at one scale on both axes'
+    ).toBeLessThanOrEqual(0.01);
+    expect(Number.isInteger(captureScaleX), 'the capture scale is not integral').toBe(true);
+    expect(captureScaleX, 'the capture is smaller than the CSS rect it claims to cover').toBeGreaterThanOrEqual(1);
+    // A capture no larger than the box cannot be the box, so this is also what rules
+    // out a fragment: a 120x80 clip of a 240x160 canvas shares its scale with the
+    // whole-canvas capture, and only the extent tells them apart.
+    expect(image.width, 'the capture is not the full width of the canvas box').toBeGreaterThan(box.width * 0.9);
+    expect(image.height, 'the capture is not the full height of the canvas box').toBeGreaterThan(box.height * 0.9);
 
     // Presence of ink, not its shape: glyph rasterisation is antialiased and
     // font-dependent, so the assertion is that the ink is confined to the rectangle the
