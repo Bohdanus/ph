@@ -1905,3 +1905,128 @@ groups", not "no letter repeats".
 
 **These are filed, not fixed.** Deleting `draw` and re-grouping the flyout are §74's work, and
 doing them here would land the deletion without the replacement rail.
+
+## 79. A move drag that goes out and back releases the selection where it was never taken
+
+`src/components/Main/EllipticalSelectionToolArea.tsx:200-204`, and the two accumulators
+disagree about which frame of the drag they are tracking. `delta` is measured from `drag.origin`,
+which line 203 then **advances** to the current pointer position, and it is applied to
+`drag.baseline`, which **never** advances. The running displacement is therefore the last frame's
+delta alone, and every earlier frame is discarded. Take a selection 60px right and 40px down,
+retract the pointer to the point you pressed from, and release: the commit lands the selection at
+`(-60, -40)` on a document that starts at the origin. One frame's worth of history, applied twice,
+in opposite directions — and the preview overlay shows the same wrong position for the whole
+gesture, because `drag.preview` feeds `redrawOverlay` at `:205-207`.
+
+The fix is already written elsewhere in the same directory. `PolygonClickToolArea.tsx:817-819`
+applies the same delta to `selectionDrag.selection` and advances **both** accumulators into the
+next ref record in one statement; that is the correct shape and it is what line 202 should be.
+`moveSelectionByDelta(drag.preview, delta)` puts this arm on the same footing, and the first
+frame needs no special case because `drag.preview` is already seeded with `activeSelection` at
+`:161`. The release gate at `:222` then does the rest for free: a net displacement of zero lands
+the preview back on the baseline's own geometry, `hasSameSelectionGeometry` reports them equal,
+and the gesture commits nothing.
+
+**Why nothing saw it, and why that is a gap rather than a blessing.** Every move-drag case in
+`EllipticalSelectionToolArea.test.tsx` issued exactly one `pointerMove`, and with a single frame
+the last delta _is_ the whole delta — so `moveSelectionByDelta(baseline, delta)` and
+`moveSelectionByDelta(preview, delta)` return the same selection. The suite was blind to the
+difference by construction rather than by accident. Verified by mutation: changing line 202 to
+`drag.preview` leaves all five pre-existing cases green.
+
+The half of that which was sound: no assertion in the file pins the drifted position, so nothing
+enshrines the bug. It was uncovered, not endorsed — and it was recorded in no handoff entry while
+a suite named for this component sat beside it, so the next reader of that file would reasonably
+conclude the move arm was covered.
+
+Pinned as `it.fails` in `EllipticalSelectionToolArea.test.tsx`, "commits nothing for a move drag
+that went out and came back to the press point". A zero net displacement is observed through the
+absence of a commit rather than through a committed position, which is the same observable the
+neighbouring zero-delta case pins for the one-frame shape of the same gesture; the case carries
+its own control — a second, single-frame drag on the same mount, which is independent of the
+defect — so the empty assertion cannot pass by the arm never having run. **Delete the `it.fails`
+in the same change that fixes line 202**, per `AGENTS.md`: it is a tripwire for broken behaviour,
+and left behind it turns the fix into a red suite.
+
+## 80. Five components fold `!isBedrock` into `usePaintStroke`; four of them gained a test, and `CloneStampToolArea` is the one that did not
+
+A correction, because a wrong claim in this repository's own history is read by every future agent
+that runs `git log`. `b001d7d` states that five components fold `!isBedrock` into the flag they
+hand `usePaintStroke` — Dodge, Burn, Smudge, CloneStamp and Gradient — "and not one had a test".
+Both halves need narrowing, and the error in the second one is about coverage rather than about
+the flag.
+
+The list of five is **correct**: `DodgeToolArea.tsx:59`, `BurnToolArea.tsx:65`, `SmudgeToolArea.tsx:79`,
+`CloneStampToolArea.tsx:210` and `GradientToolArea.tsx:85` each compute an `enabled` /
+`isEnabled` from `activeLayer && !activeLayer.isBedrock` and pass it to `usePaintStroke`. What is
+wrong is "not one had a test" as a description of the finished branch: `b001d7d` added suites for
+four of the five, and **`CloneStampToolArea` still has no test file** — `git ls-tree main --
+src/components/Main/__tests__/` answers none. The fifth area the commit covers is
+`EllipticalSelectionToolArea`, which is **not** one of the five: it imports no `usePaintStroke`
+and reads no `isBedrock`. It is a selection tool, and the rule it shares with the four is nothing
+more than "the suite mounts a store fixture and drives real pointer events".
+
+Two components read `isBedrock` without `usePaintStroke` and must not be counted into that set
+either: `CloneStampToolArea` folds it into `isEnabled` **and** uses `usePaintStroke`, so it is
+in; `MoveToolArea.tsx:35`, `EraserToolArea.tsx:56-63` and `FillToolArea` read the flag directly
+and are out of it. **The cheapest thing that settles whether `CloneStampToolArea` is actually
+covered is a test, not a sentence** — and until one exists, treat the "not one had a test" claim
+as four, not five.
+
+## 81. The two `it.fails` on the polyline animation loop were mock artefacts, and the production comment that justified them is stale
+
+`src/hooks/usePolylineAnts.ts:134-136` — pending animation-frame handle
+
+Two `it.fails` tests in `src/hooks/__tests__/usePolylineAnts.animation.test.tsx` were **deleted
+and the behaviour pinned as working**, because both were pinned to a defect that a rAF mock
+manufactured rather than to a real one. That conclusion is right. What is left behind is not:
+**the production comment those two tripwires were written against still asserts the opposite, and
+the test suite now contradicts it.**
+
+**(a) The handles were an artefact of the mock, not a defect.** The mock counted frame handles
+from `0`. HTML Standard §8.12 (Animation frames) defines the handle as a pre-increment: the target
+object has "an animation frame callback identifier, which is a number that **must initially be
+zero**", and the `requestAnimationFrame(callback)` steps say to "**increment target's animation
+frame callback identifier by one, and let handle be the result**". Handles are therefore `1, 2, 3,
+…` and `0` is unreachable. The first `it.fails` reported that pausing with frame 0 pending did not
+stop the loop, and the second that a second loop ran in parallel at double speed — both inputs a
+browser cannot produce. **The mock now starts at `1` and both are ordinary passing tests.** An
+earlier version of the comment justified this with the spec defining a frame handle as a "new
+POSITIVE long"; that phrase is in no version of the spec and the IDL return type is
+`unsigned long`, so the claim was unciteable even though the conclusion held. The mechanism is
+the pre-increment above.
+
+**(b) The production guard is a truthiness guard where its sibling uses `!== null`.**
+`usePolylineAnts.ts` guards a pending frame three times — `:80` (the `clear` cancel), `:124` (the
+`draw` cancel before rescheduling) and `:148` (the `isPaused` effect cleanup) — and all three are
+`if (animationIdRef.current)`. `useAnts.ts:40` and `:82` do the identical job for the identical
+"pending animation handle" and use `if (animationIdRef.current !== null)` and
+`=== null`. `useAnts` nulls the ref immediately after cancelling, so `0` and `null` are genuinely
+distinguishable there; `usePolylineAnts` never produces `0` either way, which is why the
+truthiness form is currently correct. **It is correct by the spec argument in (a), not by
+construction**, and the sibling in the same directory is the standing counterexample to "0 cannot
+happen" — which is a local property of one file's mocks, not of the platform.
+
+**(c) The comment at `:134-136` is stale and asserts the branch removed.** It reads:
+
+> A pending handle of 0 is the one case the cleanup's own truthy guard skips, but 0 is falsy here
+> too, so cancelling here never had anything to do. That falsy-0 path is why pausing with frame 0
+> pending does not stop the loop.
+
+The last sentence is the claim `usePolylineAnts.animation.test.tsx:145` now **falsifies**: the
+test at that line asserts that pausing before the first frame has run _does_ stop the loop, and
+cites `:148` — the very line this comment describes. The repo currently holds a production comment
+saying the loop does not stop and a test saying it does, and only one of them can be right.
+
+**When production is next touched, `usePolylineAnts.ts:134-136` must be corrected or deleted**, and
+the two sibling counters that still start at `0` — `usePolylineAnts.test.tsx:9`,
+`useAnts.test.tsx:9`, `useAnts.transform.test.tsx:20` — should move to `1` in the same change, so
+the four rAF mocks in `src/hooks/__tests__/` stop disagreeing about a value the platform fixes.
+Switching the three guards to `!== null` to match `useAnts` is the durable fix and makes the whole
+question disappear; it is deliberately **not** done here, because this branch is tests and handoff
+only and may not edit production.
+
+**No defect is claimed here.** Nothing user-visible is broken today, the truthiness guards do the
+right thing in a browser, and the two `it.fails` were correctly removed. The finding is that the
+justification for that removal is still in production prose in the opposite form, and a reader who
+trusts it would re-add the tripwires.
