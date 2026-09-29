@@ -8,6 +8,9 @@ spec helpers themselves. The application under test is `src/` in this repository
   [Current status](#current-status).
 - [`MIGRATION-TODO.md`](MIGRATION-TODO.md) — what the move into this repository left
   undone: open fixes, pipeline gaps, and carried-over debt.
+- [`../docs/TESTING.md`](../docs/TESTING.md) — the gate contract: which checks run at
+  commit, at push, and in CI, the blocked headed commands, and the test traps. This
+  file is the e2e suite's own depth; the gate itself is stated there, once.
 
 The tree, at the level of shape rather than of inventory. New spec files land here
 constantly, so read the directory instead of a list, and keep no counts in this
@@ -299,14 +302,11 @@ at runtime.
 
 `e2e/` is a TypeScript project reference off the root `tsconfig.json`, so
 `npm run tsc` (`tsc -b`) type-checks the specs, the helpers and the unit tests
-alongside the app and node projects. It is green. `.husky/pre-commit` runs
-`lint-staged`, `npm run tsc` and `npm run build`, so a change under `e2e/` is
-type-checked and built before it is committed. It does **not** run the helper
-unit tests: `test:e2e:unit` is not in the commit gate. It is the only coverage
-these helpers have — `vitest.config.ts` excludes `e2e/**` — and it is not
-optional, because the `e2e-unit` CI job runs it as its own blocking step,
-separately from `ci`, so a break in the app pipeline cannot remove the only gate
-on `e2e/`. Run `npm run test:e2e:unit` by hand when you change anything here.
+alongside the app and node projects. Which gate runs it, and what is not in that
+gate, is [`../docs/TESTING.md`](../docs/TESTING.md) — the e2e-specific consequence
+is only that `test:e2e:unit` is the **only** coverage these helpers have
+(`vitest.config.ts` excludes `e2e/**`), which is why it is a blocking CI job
+separate from `ci`, and why you run it by hand when you change anything here.
 
 Settings that differ from `tsconfig.app.json`, and why:
 

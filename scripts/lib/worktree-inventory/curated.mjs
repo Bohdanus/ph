@@ -179,6 +179,11 @@ export const CURATED = {
       'A documentation-truth pass over e2e/README.md, e2e/OPEN_PROBLEMS.md, e2e/global-setup.ts and TEST-FLAKES section 8, correcting claims a review found false against the tree: the spec and helper counts in the README tree block, two README bullets that attributed a pattern to a spec that does not follow it, the per-spec count in the headless guard comment, a deleted-entry check, and a cluster of drifted file:line citations. Its distinct value was largely taken by main while the branch was in review: main deleted the same stale Text-toolbar entry, cut OPEN_PROBLEMS by more than half its entries, and replaced the README count block with an explicit "keep no counts here" decision. NOT LANDED, and landing it now would re-introduce counts main deliberately removed.',
     note: 'Superseded, not wrong. The three findings that were still unique at review time were the rotted cdp-helpers and canvas-helpers citation clusters (main re-derived its own against a larger tree, so neither side’s line numbers can be taken verbatim across the merge) and one citation that moved rather than resolved. A reviewer wanting the residual must re-derive every number against current main; there is nothing here that contradicts the tree. The branch is ahead of main and not on it, so the inventory already refuses to prune it and no flag is owed on top of that.',
   },
+  'concise-agents-guidance': {
+    summary:
+      'AGENTS.md restructured into a thin root plus three linked files: docs/TESTING.md (gates, tsc, test, lint, e2e, CI, headed-browser ban), docs/ORCHESTRATION.md (worktrees, the swarm board, the WORKTREES.json inventory, dead-agent recovery) and docs/PHOTOSHOP-UX.md (Tools-rail clone requirement and the five open violations). The worktree, merge, stash, claim, lease and disposal rules are preserved in the linked file, not deleted.',
+    note: 'Documentation only, and the branch is ahead of main and not on it, so the inventory already refuses to prune it. No curated preservation flag is owed on top of that; add one only if the work turns out to exist on no ref.',
+  },
   'polygon-marching-ants': {
     summary:
       'Polygon-selection marching ants: the ants component, the selection-ants hook, a new usePolylineAnts module and its tests, and edits to the lasso, magic wand and click tool areas.',
