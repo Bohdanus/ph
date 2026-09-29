@@ -978,6 +978,18 @@ export const CURATED = {
     summary:
       'The worktree guard for work that git cannot see, derived from the live worktrees instead of a hand-maintained list: every `mustNotPrune` field deleted, the six hardcoded names replaced by a set computed from git on each run, and a synthetic worktree pinning the rule so it cannot go vacuous when the repository happens to hold none of that shape.',
   },
+  'curated-round5': {
+    summary:
+      'A curation pass for the two worktrees created while the derived-guard change was in review, and the first demonstration that the half it left out of scope still goes red on its own: main was red within minutes of the guard landing.',
+  },
+  'review-agents-flakes': {
+    summary:
+      'Scratch space for reviewing the agent-flake findings: no work of its own yet, the branch tip a main commit and the working tree clean.',
+  },
+  'review-append-gate': {
+    summary:
+      'Reviewing the append-boundary validation guard over the remove-append work, on a branch six commits ahead of main with one test file still modified on top of it. The branch is a ref git can see, so it is protected by being a branch and owes no flag.',
+  },
   'skill-handoff-cites': {
     summary:
       'Re-deriving the tool-creation skill’s `file:line` citations against the tree, and the handoff entries’ citations into the same files.',
