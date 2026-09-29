@@ -64,10 +64,23 @@ matters most:
 Paragraph settings — alignment, justification, indents, hyphenation — are paragraph-type
 only, because with point type every line _is_ a paragraph.
 
-The type tool has a flyout: the three tools Photoshop 2024–2026 ships are Horizontal Type,
+The type tool has a flyout: the four tools Photoshop 2024–2026 ships are Horizontal Type,
 Vertical Type, Horizontal Type Mask and Vertical Type Mask, with the mask variants creating
 a selection outline in the shape of the type instead of a type layer. `T` selects the tool
-and `Shift+T` cycles the group.
+and `Shift+T` cycles the group. **The app has one entry for that four-tool group**
+(`toolbar-mapping.ts:107`, a single `{ label: 'Horizontal Type Tool', name: 'text' }`), and
+the record now says so in its `appNotes`, because an entry that names Adobe's exact string
+for one of four tools otherwise reads as a complete stand-in. Vertical Type sets type
+top-to-bottom, and the two mask variants are not a variant of the entry the app has at all —
+they produce a selection, not a layer. Adobe's own sentence for the mask tools, from its
+teaching-resources page: "When you use the Horizontal Type Mask tool or Vertical Type Mask
+tool, you create a selection in the shape of the type."
+(`https://edex.adobe.com/teaching-resources/photoshop-type-mask-tool`, Adobe, reached through
+the live crawler.) The Adobe shortcut sheet that lists all four on `T` is cited by the
+revalidation brief but **could not be opened in this pass** — `webfetch` returns the raw PDF
+bytes, not text — so it is not in the data file's `sources`, and the four names rest on that
+Adobe page, on Adobe's Type overview table as recorded in `AGENTS.md`, and on third-party
+walkthroughs that all name the same four.
 
 ### Bar order
 
@@ -85,12 +98,27 @@ Character/Paragraph panel settings are listed separately below rather than folde
 source in this file, no longer there. That is a statement about the passage of time rather
 than a contradiction of the page, and it is why the data file's `purpose` no longer says
 "this describes Photoshop 2024-2026" — the version claim was doing work the bar-order claim
-cannot do. The control stays in the census with the routes that replaced it, because the
-control is a real Photoshop control; what changed is where it lives. See `Unverified` item 3.
+cannot do. The control no longer holds a bar position either, and that is the load-bearing
+half of the correction: `options[]` is contractually "every control Photoshop places in this
+tool's options bar, in bar order", so a control whose own row says it is off the bar cannot
+occupy a slot in it. **The row is out of the census** and the control is documented in its
+own section below instead. What stays in the data file is the part that is true of the
+current bar — that the pull-down is no longer on it, the five presets, and the routes that
+replaced it — which `purpose` now carries.
+
+**The enumeration also stops before the bar's end, which is what made one row wrong.** The
+CC-era page ends at the panels toggle, and the Commit / Cancel pair is the row the data file
+puts after it. "The last button in the bar" was an inference that enumeration does not
+support, so the row no longer claims a position at all: the panel toggle is the last of the
+bar's settings controls, and the Commit / Cancel pair sits after it — a pair the same record
+says "appear only while a type layer is in edit mode". The app's own bar is a different
+surface and is not evidence for Adobe's order, but it is what this worktree can read, and it
+has the same shape: `Text.tsx:175` the align control, `:189` the B/I pair, then `Apply` at
+`:210` and `Clear` at `:213` at the right end.
 
 ### Options-bar control census
 
-Thirteen controls. `present` 1 · `partial` 4 · `inert` 0 · `missing` 8.
+Twelve controls. `present` 1 · `partial` 4 · `inert` 0 · `missing` 7.
 
 | #   | Control                                   | Status    | `appRef`                                         |
 | --- | ----------------------------------------- | --------- | ------------------------------------------------ |
@@ -99,14 +127,45 @@ Thirteen controls. `present` 1 · `partial` 4 · `inert` 0 · `missing` 8.
 | 3   | Font family                               | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:123` |
 | 4   | Font Style                                | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:189` |
 | 5   | Size                                      | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:136` |
-| 6   | Anti-Alias                                | `missing` | —                                                |
-| 7   | Text color                                | `missing` | —                                                |
-| 8   | Align Text Left / Center / Right          | `present` | `src/components/ToolbarsRight/Text/Text.tsx:175` |
-| 9   | Toggle the type on a path                 | `missing` | —                                                |
-| 10  | Create Work Path                          | `missing` | —                                                |
-| 11  | Warp Text                                 | `missing` | —                                                |
-| 12  | Toggle the Character and Paragraph panels | `missing` | —                                                |
-| 13  | Commit / Cancel                           | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:210` |
+| 6   | Text color                                | `missing` | —                                                |
+| 7   | Align Text Left / Center / Right          | `present` | `src/components/ToolbarsRight/Text/Text.tsx:175` |
+| 8   | Toggle the type on a path                 | `missing` | —                                                |
+| 9   | Create Work Path                          | `missing` | —                                                |
+| 10  | Warp Text                                 | `missing` | —                                                |
+| 11  | Toggle the Character and Paragraph panels | `missing` | —                                                |
+| 12  | Commit / Cancel                           | `partial` | `src/components/ToolbarsRight/Text/Text.tsx:210` |
+
+**The thirteenth control is gone, and what replaced it in the array is not a row.**
+`Anti-Alias` sat at bar slot 6, between `Size` and `Text color`, while its own `detail` said
+the control "is no longer on the type options bar" — a row that could not be in a bar-order
+census and simultaneously say it was off the bar. The array's contract settles it, so the
+row is out and the control is documented in the next section instead. Renumbering is the
+only other consequence: nothing above slot 5 moved.
+
+### Anti-aliasing: off the bar in 27.x, and where the five presets went
+
+The control is real and still matters; it is simply not a bar control any more. The five
+presets are **None, Sharp, Crisp, Strong, Smooth** — from the third-party mirror of the
+Photoshop Scripting Reference, which is where the five `AntiAlias` static properties and
+their one-line descriptions are stated
+(`https://theiviaxx.github.io/photoshop-docs/Photoshop/AntiAlias.html`; Sharp renders type at
+its sharpest, Crisp somewhat sharp, Strong heavier, Smooth smoother).
+
+**Where it is reached from changed twice, and the file had the older of the two.** The
+CC-era route is Adobe's own, in the CS-era help mirrored at
+`http://www.underwaterphotography.com/photoshop/photoshop/1_16_3_4.html`: "**To apply
+anti-aliasing to a type layer: Select the type layer… Choose an option from the anti-aliasing
+menu in the options bar or the Character palette. Or, choose Layer > Type**." In 27.x those
+commands are a **top-level `Type` menu**, not a submenu of `Layer` — Adobe's Warp Text page
+gives the current form of one of them, "select Type > Warp Text"
+(`warp-and-unwarp-text.html`). The `Anti-Alias` row said "the Layer > Type menu" and the
+same record's `purpose` said "the Type menu", so the file contradicted itself, and the
+`purpose` is the one that is right. The row that carried the error is gone; the routes now
+stand as: the **Character panel**, the **layer's properties**, and the **Type menu** — the
+three the data file's `purpose` names.
+
+**When it left the bar is still not sourced, and no version number is asserted.** See
+`Unverified` item 3; the timing is community-reported and stays out of the data file.
 
 **Every `appRef` in this table was re-derived from the control's meaning, not from the number
 the previous pass wrote.** All eight of the old numbers were off by a small amount, and all
@@ -122,6 +181,17 @@ followed by an agent, so a line that lands one line early is a wrong answer dres
 right one, and the test that checks these citations deliberately validates the path and the
 bound only (`scripts/__tests__/tool-descriptions.test.mjs:26-33` says so in its own
 comment), so nothing but re-derivation catches it.
+
+**Every `implementationRefs` entry was re-opened for the same reason, and four were wrong in
+the way a bound check cannot see: each landed on the _previous_ entry's closing line.**
+`settings.ts:62` was `resizeX: 100,` inside the TRANSFORM block, and the crop seed is `:67`;
+`settings.ts:77` was `color: '#000000',` inside the SHAPE block, and the text seed is `:82`;
+`toolProcessors.ts:145` was the `},` that closes the transform processor, and the crop entry
+begins at `:146`; `toolProcessors.ts:159` was the `shape` processor, and the text entry
+begins at `:160`. Every other entry was opened and confirmed to be what its record claims —
+`crop.ts:26` the crop creator, `rect.ts:36` `trimRect`, `useRect.ts:167` the 0.7 fill,
+`layer-renderer.ts:32` the six-name `vectorToolNames` set, `toolbar-mapping.ts:59` the
+single crop entry, `toolbar-mapping.ts:107` the single type entry.
 
 Why each verdict:
 
@@ -187,7 +257,7 @@ semantically different from Photoshop's leading.
    no retained text object anywhere in the module.
 2. `src/tools/text.ts:66-75` — the `text` creator allocates an `OffscreenCanvas`, calls
    `renderText` onto it and returns `[canvas]`. A creator tool's return value is a raster.
-3. `src/tools/toolProcessors.ts:159-165` — the `text` processor is `commit: 'source'`,
+3. `src/tools/toolProcessors.ts:160-166` — the `text` processor is `commit: 'source'`,
    `creator: true`, so the layer source is that raster.
 4. `src/contexts/layer-renderer.ts:32` — `vectorToolNames` is a `Set` of **six** tool names:
    `shape`, `rectangle`, `ellipse`, `triangle`, `polygon`, `line`. `text` is not in it, so
@@ -260,6 +330,7 @@ Adobe official help:
 - https://helpx.adobe.com/photoshop/using/layers.html
 - https://www.adobe.com/learn/photoshop/web/rasterize-type-shape-layer
 - https://www.adobe.com/products/photoshop/rasterize.html
+- https://edex.adobe.com/teaching-resources/photoshop-type-mask-tool — Adobe's own teaching-resources page, and the source for the mask tools: "When you use the Horizontal Type Mask tool or Vertical Type Mask tool, you create a selection in the shape of the type." Reached through the live crawler; `webfetch` returns the page's empty app shell, so the quotation is the crawler's.
 
 Adobe Community (a user report, not a specification):
 
@@ -283,17 +354,35 @@ Third party, labelled as such:
 ### What the tool is
 
 A crop is a **pending, non-destructive framing**. Selecting the Crop tool shows a crop box
-over the photo. It is drawn by dragging, resized by its corner and edge handles, rotated by
-dragging outside a corner, and the crop box can be moved without touching the image by
-dragging outside the box. Dragging _inside_ the box moves the **image** while the box stays
-put — the distinction between those two drags is the interaction everyone gets wrong.
+over the photo. It is drawn by dragging, resized by its corner and edge handles, and rotated
+by dragging just outside a corner. Adobe's own sentence for that last one, and the whole of
+Adobe's text on it: "**Place the pointer a little outside the corner handles and drag to
+rotate the image. A grid displays inside the crop box and the image rotates behind it.**"
+(`crop-straighten-photos.html`.)
+
+**There is no drag that moves the box, and this file used to say there was.** The previous
+version of this section — and of the data file's `purpose` — claimed that the crop box "can
+be moved without touching the image by dragging outside the box", in the same breath as the
+correct first clause. Two clauses, one gesture, and the second one is false: dragging outside
+a corner **rotates**. The distinction that does exist is between the three regions — handles
+resize, outside a corner rotates, and inside the box moves the **image** while the box stays
+put, which is the interaction everyone gets wrong. That last half is Adobe's too, from a
+different page: "Select inside the crop border and drag to reposition the image"
+(`tool-techniques/crop-tool.html`). Adobe's product FAQ covers the same region with a
+sentence whose object is not named unambiguously — "click inside the crop area and drag to
+move it", inside an answer about repositioning a crop area (`crop-image.html`) — so the one
+unambiguous Adobe sentence about the inside drag is the one the data file uses, and what the
+other page means by "it" is filed as `Unverified`.
 
 Nothing is committed until you confirm: Enter (Windows) / Return (Mac OS), the check mark
 below the box, or a double-click inside the box. **Esc cancels** and restores the previous
-framing. The three variants are Straight Crop (the default mode of the tool), **Perspective
-Crop** — a _separate tool_ in the same flyout, reached by holding the Crop tool in the Tools
-panel or by `Shift+C`, which also holds Slice and Slice Select — and the Straighten and
-Content-Aware variants reachable from the options bar.
+framing. The crop variants are Straight Crop (the default mode of the tool) and
+**Perspective Crop** — a _separate tool_ in the same flyout, reached by holding the Crop tool
+in the Tools panel or by `Shift+C`, which also holds Slice and Slice Select. `Straighten` is
+the one crop-variant button on the bar, and **Content-Aware is not a bar control at all**:
+it is a value inside the `Fill` dropdown. See the census below; the previous version of this
+paragraph described "the Straighten and Content-Aware variants reachable from the options
+bar", which is half wrong.
 
 Modifiers, as a set: **Shift** constrains the box to the proportions it already has, **Alt**
 draws and resizes from the center, and **Shift+Alt** does both. `X` swaps the box between
@@ -391,24 +480,107 @@ and offers neither the setting nor an `Image ▸ Reveal All` to change that. The
 version of this section said the app implemented the ON case, which inverted Adobe's own
 delete-versus-hide contrast; see "Is the app's crop destructive?" below.
 
+### Use Classic Mode, and the version boundary that was not Adobe's
+
+The row used to open "Reverts the tool to the legacy behavior from **before Creative Cloud
+2019**", stated as fact, with no source behind the boundary — while the sibling
+`Delete Cropped Pixels` row went to real trouble to label its four unsourced clauses as
+third-party. Same table, two different disciplines, and the unsourced one was the version
+claim.
+
+Adobe states the boundary itself, and it is not the one the row used: "**Enable this option
+if you want to use the Crop tool like it was in previous versions of Photoshop (CS5 and
+earlier).**" (`crop-straighten-photos.html`; a third-party walkthrough of the same bar
+independently says "Classic Mode reverts the Crop tool to its Photoshop CS5 (and older)
+self", which is corroboration rather than the reason.) The row now leads with Adobe's
+sentence.
+
+What the legacy behaviour _is_ — the crop box moving while the image stays put — is not on
+that page and not on any other Adobe page reached; it is a consistent third-party
+description, and the row says so in the same breath, which is the discipline the
+`Delete Cropped Pixels` row already followed. The Creative Cloud 2019 boundary is not
+reasserted anywhere: it may well be a true reading of when the behaviour changed, but no
+source in this file supports it, and an unsourced version number is the exact failure
+`Unverified` item 3 exists to prevent on the type side.
+
 ### Options-bar control census
 
-Twelve controls. `present` 0 · `partial` 3 · `inert` 0 · `missing` 9.
+Fourteen controls. `present` 0 · `partial` 4 · `inert` 0 · `missing` 10.
 
-| #   | Control                                      | Status    | `appRef`                                        |
-| --- | -------------------------------------------- | --------- | ----------------------------------------------- |
-| 1   | Aspect ratio menu                            | `partial` | `src/components/ToolbarsRight/Crop/Crop.tsx:61` |
-| 2   | Swap Width and Height values                 | `missing` | —                                               |
-| 3   | Straighten / Curve / Content-Aware / Default | `missing` | —                                               |
-| 4   | Fill (incl. Content-Aware Fill)              | `missing` | —                                               |
-| 5   | Delete Cropped Pixels                        | `missing` | —                                               |
-| 6   | Show Cropped Area                            | `partial` | `src/hooks/useRect.ts:167`                      |
-| 7   | Enable Crop Shield                           | `partial` | `src/hooks/useRect.ts:167`                      |
-| 8   | Use Classic Mode                             | `missing` | —                                               |
-| 9   | Auto Center Preview                          | `missing` | —                                               |
-| 10  | Overlay (Rule of Thirds default)             | `missing` | —                                               |
-| 11  | Grid                                         | `missing` | —                                               |
-| 12  | Done / Cancel                                | `partial` | `src/components/ToolbarsRight/Crop/Crop.tsx:79` |
+| #   | Control                          | Status    | `appRef`                                        |
+| --- | -------------------------------- | --------- | ----------------------------------------------- |
+| 1   | Aspect ratio menu                | `partial` | `src/components/ToolbarsRight/Crop/Crop.tsx:61` |
+| 2   | Swap Width and Height values     | `missing` | —                                               |
+| 3   | Clear                            | `missing` | —                                               |
+| 4   | Straighten                       | `missing` | —                                               |
+| 5   | Fill (incl. Content-Aware Fill)  | `missing` | —                                               |
+| 6   | Settings (gear) menu             | `missing` | —                                               |
+| 7   | Delete Cropped Pixels            | `missing` | —                                               |
+| 8   | Show Cropped Area                | `partial` | `src/hooks/useRect.ts:167`                      |
+| 9   | Enable Crop Shield               | `partial` | `src/hooks/useRect.ts:167`                      |
+| 10  | Use Classic Mode                 | `missing` | —                                               |
+| 11  | Auto Center Preview              | `missing` | —                                               |
+| 12  | Overlay (Rule of Thirds default) | `missing` | —                                               |
+| 13  | Grid                             | `missing` | —                                               |
+| 14  | Done / Cancel                    | `partial` | `src/components/ToolbarsRight/Crop/Crop.tsx:79` |
+
+**Two rows were added and one was rewritten, and the count line above was wrong before any of
+that.** It said "Twelve controls · `partial` 3 · `missing` 9" while the table beneath it
+listed four `partial` rows and the next heading already said "the four `partial` verdicts".
+The two new controls are `Clear` and the `Settings (gear) menu`; the rewritten one is the
+`Straighten` row, which used to be `Straighten / Curve / Content-Aware / Default` and named
+three things the 27.x bar does not have:
+
+- **`Straighten` is a button, and Adobe says so on the page the revalidation turned up**:
+  "Click Straighten in the control bar and then using the Straighten tool, draw a reference
+  line to straighten the photo" (`crop-straighten-photos.html`).
+- **`Content-Aware` is a value, not a control.** The current Adobe instruction is "Go to the
+  Fill dropdown in the Options bar and select Content-Aware Fill"
+  (`apply-content-aware-fill-while-cropping-images.html`), and the page's own Note is "To use
+  Content-Aware Fill on Crop, ensure Use Classic Mode is turned off". The bar-row version of
+  it belongs to CC 2015.5 through the CC-era walkthroughs, which is where the old row's
+  confidence came from.
+- **`Curve` and `Default` appear in no source at all** — not an Adobe page, not a third
+  party. `Curve` is the shape the separate **Perspective Crop tool** covers, and `Default`
+  is the unmarked state the tool is in before you touch the bar.
+- The old row also claimed that holding Ctrl (Windows) or Command (Mac OS) "reaches
+  Straighten without visiting the bar". No source in this pass supports it, and the app's own
+  reading of those two keys is the opposite operation (aspect-ratio lock), so the clause is
+  out of the data file and filed as `Unverified`.
+
+**`Clear` — Adobe's own FAQ, and what it collides with in the app.** Adobe's crop product
+page answers its own "How do I crop freely?" question with the control:
+"Select the Crop tool (C) and set the crop preset to 'Ratio' or 'W x H x Resolution' in the
+upper setting bar. Next, **press 'clear' to remove any constraints applied to your crop
+preset**." (`crop-image.html`.) That is also the source `Unverified` item 13 wanted for the
+Aspect-ratio row's clause about clearing the two Width and Height fields: the button is the
+mechanism, and the row now says so instead of leaving the behaviour unattributed.
+
+The app is `missing` this control, and the name collision is the trap: the panel's own
+`Clear` button (`Crop.tsx:89-95`) drops the draft crop rect and leaves the aspect ratio
+alone, which is Photoshop's cancel, not its `Clear`. The data file's new row says so, because
+a reader who sees "Clear" in both places would otherwise read the verdict as a name match.
+
+**The `Settings (gear) menu` is a container, and it is what the census was missing.** Adobe's
+crop-straighten page introduces the crop's own fly-out with one sentence — "**Click the
+Settings (gear) menu to specify additional crop options**" — and the five settings the
+options page tabulates (Delete Cropped Pixels, Use Classic Mode, Auto Center Preview, Show
+Cropped Area, Enable Crop Shield) are its contents. The census listed all five and never
+listed the thing that holds them, which is how a reader ends up expecting five bar
+positions that do not exist as five bar positions.
+
+**Where the two new rows sit, and how far that is from a verified order.** `options[]` is
+"in bar order", and no Adobe page found in this pass enumerates the crop bar left to right —
+`crop-straighten-photos.html` captions a figure ("A. Aspect Ratio menu B. Swap Width and
+Height values C.") and the options page tabulates settings, not positions. So the two
+placements are **structural, not measured**: `Clear` goes with the aspect-ratio group it acts
+on (slots 1–3), and the gear goes immediately before the five rows it contains (slot 6,
+ahead of slot 7). The one current left-to-right enumeration that was reachable is a
+third-party screenshot description — "options for Straighten, Grid, settings, Delete Cropped
+Pixels, and Fill dropdown" (`shotkit.com`, in the sources list) — and it puts the gear to the
+right of Grid, which is consistent with the structural placement and **not** with a full
+ordering of the bar. What is filed as `Unverified` is the bar's exact order, not the two
+controls.
 
 Why the four `partial` verdicts:
 
@@ -422,6 +594,8 @@ Why the four `partial` verdicts:
 - **Enable Crop Shield — `partial`,** on the one line of code that draws the shield
   (`useRect.ts:167`): it is always on, its opacity is fixed at 0.7 rather than the adjustable
   figure Adobe documents, and its color is not configurable.
+- **Show Cropped Area — `partial`,** on that same line and for the reasons in the next
+  paragraph, which is the long version of this bullet rather than a separate argument.
 - **Done / Cancel — `partial`.** `Apply` calls `applyDocumentCrop` and `Clear` drops the
   draft rect, which is the same pair of effects as the check mark and the cross. There is no
   Enter, no Return, no double-click and no Escape.
@@ -452,7 +626,7 @@ behaviour, not the control.
 
 **No `inert` control here either, also checked rather than assumed.** `CropToolArgs` has
 three keys — `rect`, `preRatioRect`, `aspectRatio` — plus the seed in
-`src/tools/settings.ts:62`. All three are read and written: `preRatioRect` by
+`src/tools/settings.ts:67`. All three are read and written: `preRatioRect` by
 `Crop.tsx:40,48` and cleared on both write paths, `aspectRatio` by `CropToolArea.tsx:19,26`
 and passed into `useRect`, `rect` by every writer. The `preRatioRect` field is a
 regression-repair field, not a user-facing control, so it has no Photoshop counterpart to be
@@ -554,13 +728,15 @@ Adobe official help:
 
 Adobe product marketing:
 
-- https://www.adobe.com/products/photoshop/crop-image.html — the Rule of Thirds overlay, the Ratio / W x H x Resolution names, and the drag-inside-to-move behaviour
+- https://www.adobe.com/products/photoshop/crop-image.html — the Rule of Thirds overlay, the Ratio / W x H x Resolution names, the drag-inside-to-move behaviour, and the `Clear` button: "press 'clear' to remove any constraints applied to your crop preset"
+- https://www.adobe.com/products/photoshop/generative-fill.html — Generative Extend's own Crop-tool sentence: "Just click and drag beyond the borders of an image with the Crop tool, and then fill the extended canvas with new content that blends with the existing image"
 
 Third party, labelled as such:
 
 - https://www.photoshopessentials.com/basics/photoshop-crop-tool-tips-and-tricks — the Shift / Alt / Shift+Alt constraint set and the `X` swap
 - https://creativepro.com/essential-tips-for-cropping-images-photoshop — `Shift+C` flyout, `O` overlay cycling, Alt from center, Enter commits and Esc cancels
-- https://design.tutsplus.com/tutorials/10-things-you-should-know-about-the-crop-tool--psd-34592 — the six-entry overlay set
+- https://design.tutsplus.com/tutorials/10-things-you-should-know-about-the-crop-tool--psd-34592 — the six-entry overlay set, and the Classic Mode behaviour (the crop rectangle moves while the image stays put)
+- https://shotkit.com/extend-background-photoshop-generative-fill — the current `Fill` dropdown as read off the bar: **Transparent**, Content-Aware and **Generative Expand**; also the one left-to-right reading of the bar reached in this pass ("options for Straighten, Grid, settings, Delete Cropped Pixels, and Fill dropdown")
 
 ---
 
@@ -600,8 +776,13 @@ appears as an assertion in `type-crop.ts`.
    That is the file's own rule broken — an unsourced claim in the data file, a concession in the
    notes — so **the number is gone from both places**. What the data file says now is only what
    every source agrees on: the pull-down is no longer on the type options bar, and it is reached
-   from the Character panel, the layer's properties and the `Layer > Type` menu — the last of
-   which is Adobe's own route, quoted in item 1. Where the data file mentions timing at all it
+   from the Character panel, the layer's properties and the **Type menu**. The menu moved:
+   `Layer > Type` is Adobe's own route in the **CS-era** help quoted in item 1, and in 27.x the
+   same commands are a top-level `Type` menu ("select Type > Warp Text",
+   `warp-and-unwarp-text.html`). The `Anti-Alias` row used to say `Layer > Type` while the
+   record's own `purpose` said `Type menu`, so the file contradicted itself; the row is out of
+   the census now (see "Anti-aliasing: off the bar in 27.x") and the routes in `purpose` name
+   the current menu. Where the data file mentions timing at all it
    says "community-reported only". Do not reintroduce a version number without an Adobe release
    note.
    Closest: https://community.adobe.com/bug-reports-711/p-bring-back-font-anti-aliasing-pulldown-in-the-type-tool-bar-658044
@@ -645,13 +826,55 @@ Reveal All` route back, and the file growth are third-party throughout; Adobe's 
     **not** Adobe text and the row no longer implies that they are. See the section under "Delete
     Cropped Pixels" for the split.
     Closest: https://helpx.adobe.com/photoshop/desktop/crop-resize-transform/crop-straighten/crop-tool-options.html
-13. **Whether clearing the two Width and Height fields is what returns the crop to unconstrained.**
-    The data file says so, on the strength of third-party walkthroughs describing the CLEAR
-    button; Adobe's own table defines `Ratio` as "Crops freely without a fixed ratio" and does not
-    describe the CLEAR button's effect. The two are consistent but they are not the same claim,
-    and the "free" half of the old `Ratio (free)` gloss — which attached the behaviour to the
-    item's _name_ — is what has been taken out. Closest:
+13. **Partly resolved since this was filed: what returns the crop to unconstrained.** Adobe's
+    options table defines `Ratio` as "Crops freely without a fixed ratio" and still does not
+    describe the Clear button, but Adobe's own product FAQ now names the control and its
+    effect — "press 'clear' to remove any constraints applied to your crop preset" — so the
+    **button** is sourced and is a row of its own. What remains unverified is the narrower
+    claim the Aspect-ratio row still makes, that _clearing the two Width and Height fields_ is
+    the same act; the two are consistent, but consistency is not the same claim, and the
+    field-level description is still third-party walkthrough wording. The "free" half of the
+    old `Ratio (free)` gloss — which attached the behaviour to the item's _name_ — is what was
+    taken out, and it stays out. Closest:
     https://www.photoshopessentials.com/basics/how-to-crop-images-photoshop-cc
 14. **Any runtime measurement.** No browser was executed and no test was run for this family.
     Every claim about the app's behaviour above is read off the source in this worktree, not
     observed at runtime.
+15. **The crop bar's exact left-to-right order.** `options[]` is contractually "in bar order"
+    and no Adobe page reached in this pass enumerates the 27.x crop bar: the crop-straighten
+    page captions a figure ("A. Aspect Ratio menu B. Swap Width and Height values C.") and
+    the options page tabulates _settings_, not _positions_. The only current left-to-right
+    reading is a third-party screenshot description — "Straighten, Grid, settings, Delete
+    Cropped Pixels, and Fill dropdown" — which is not a full order and does not place every
+    row. The `Clear` and `Settings (gear) menu` placements are therefore **structural**: the
+    first sits with the aspect-ratio group it clears, the second immediately before the five
+    settings it contains. Do not read the table as a measured order without a source that
+    measures one.
+    Closest: https://shotkit.com/extend-background-photoshop-generative-fill
+16. **That Ctrl (Windows) / Command (Mac OS) reaches Straighten without visiting the bar.**
+    The previous `Straighten / Curve / Content-Aware / Default` row asserted it, no source in
+    this pass supports it, and the app reads those two keys for the opposite operation
+    (aspect-ratio lock, `useRect.ts:96-99`). The clause is out of the data file; it is not
+    asserted to be false either, only unsourced here.
+17. **The `Fill` dropdown's complete value list.** No Adobe page enumerates it. The
+    Transparent / Content-Aware / Generative Expand set in the data file is a third-party
+    reading of the current bar; the CC-era list the row used to give (None, Content-Aware
+    Fill, Background, Foreground Color, Black, 50% Gray, White) is third-party, undated in
+    this file, and predates Generative Expand. The data file now says which is which rather
+    than presenting either as the menu's contents. Adobe's own text establishes only that
+    Content-Aware Fill is a value in it and that Generative Expand is what the crop flow is
+    built around.
+18. **Which of the two an inside drag moves.** `tool-techniques/crop-tool.html` is
+    unambiguous — "Select inside the crop border and drag to reposition the image" — and is
+    what the data file uses. `crop-image.html` covers the same region with "click inside the
+    crop area and drag to move **it**", inside an answer about repositioning a crop area, and
+    the pronoun's object is not stated. Both are Adobe; they cannot both be a description of
+    the same product's behaviour, so one of them is loose, and which one is not determinable
+    from the pages.
+19. **The Adobe shortcut sheet that lists all four type tools on `T`.** The revalidation
+    brief cites `https://cdn.edex.adobe.com/.../08d7c4a0-….pdf` for it; `webfetch` returns raw
+    PDF bytes rather than text and no search result surfaced the sheet's contents, so the URL
+    is **not** in the data file's `sources` — that array takes only URLs that were opened. The
+    four names are carried by Adobe's own Type-mask teaching page, by the Adobe overview table
+    recorded in `AGENTS.md`, and by third-party walkthroughs. Anyone who can open the PDF
+    should add it and tighten the wording.

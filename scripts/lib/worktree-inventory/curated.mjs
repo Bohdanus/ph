@@ -705,6 +705,21 @@ export const CURATED = {
       },
     ],
   },
+  'e2e-findings-tail': {
+    // The tail of the work `fix-e2e-findings` already landed: the four findings its
+    // adversarial review produced after the fixes merged, which the orchestrator session
+    // died before acting on. All four were comment/precision defects rather than behaviour
+    // regressions, so the tree was green and only the claims about it were wrong.
+    summary:
+      'Finishes the transferred e2e findings: the per-axis capture scale in getStrokeAnalysis, the throw its JSDoc never stated, the zero-width defence pinned by a test that carries ink, the Photopea oracle’s load-bearing check, and the ledger’s own arithmetic.',
+    issues: [
+      {
+        ref: 'e2e/OPEN_PROBLEMS.md#transferred-findings--external-review-of-the-pre-migration-tree',
+        title:
+          'the review tail left four unaddressed findings and a section header that counted two entries below it and found three',
+      },
+    ],
+  },
   'handoff-citation-rotation': {
     summary:
       'Rotates the line-numbered citations in the handoff documents after they were invalidated by file growth, and corrects one false claim in section 1.',
@@ -732,6 +747,40 @@ export const CURATED = {
     summary:
       'Test-comment accuracy for the flyout specs: two false explanations corrected, a duplicated assertion dropped, the expanded-wait timeout pinned as a floor rather than a literal, and the line citations this diff moved re-derived.',
     landed: true,
+  },
+  'desc-selection': {
+    summary:
+      'One of eight disjoint per-family branches revalidating the tool descriptions against Adobe docs and this app. Holds the selection family only; lands via audit/tool-desc-revalidation.',
+  },
+  'desc-paint': {
+    summary:
+      'Paint-family branch of the tool-description revalidation: brush, pencil, color-replacement, eraser, magic-eraser, paint-bucket, clone-stamp. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-focus': {
+    summary:
+      'Focus-family branch of the tool-description revalidation: blur, sharpen, smudge, dodge, burn, gradient. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-shape': {
+    summary:
+      'Shape-family branch of the tool-description revalidation: the shape group and its six figures. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-pen': {
+    summary:
+      'Pen-family branch of the tool-description revalidation: pen, freeform, curvature and the three anchor-point tools. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-type-crop': {
+    summary: 'Type-and-crop branch of the tool-description revalidation. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-transform': {
+    summary:
+      'Transform-family branch of the tool-description revalidation: reposition, transform, levels, color. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-eyedropper-draw': {
+    summary: 'Eyedropper-and-draw branch of the tool-description revalidation. Lands via audit/tool-desc-revalidation.',
+  },
+  'tool-desc-integration': {
+    summary:
+      'Integration branch for the tool-description revalidation: merges the eight disjoint per-family branches, regenerates tooltips.ts and docs/TOOLS.md from them, and runs the gates once over all eight.',
   },
 };
 

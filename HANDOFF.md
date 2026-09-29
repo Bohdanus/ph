@@ -1871,3 +1871,37 @@ because the current failure is silent, with nothing anywhere reporting that an e
 
 `## 15A.`, `## 15ab.` are the same silent content-loss path: no item, no origin, and a level-2
 one closes its parent exactly as `## 15a.` does.
+
+## 78. Three rail defects §74 does not name, and no test can catch any of them
+
+**Validated by an independent audit pass over `toolbar-mapping.ts` against Adobe's own
+documentation, 2026-09-29.** §74 carries the inventory; these are the _mechanical_ consequences,
+and each is a one-line fix.
+
+**1. Two tools render the letter `B`, and the real `B` handler never reaches one of them.**
+`toolbar-mapping.ts:96` gives the non-Photoshop `draw` entry `shortcut: 'B'`, the same letter
+`toolbar-mapping.ts:72` gives the Brush. The badge is rendered from the map
+(`SidebarLeft.tsx:431`), so the user is told the Draw Tool answers to `B`; and
+`AppKeyboardShortcuts.tsx:18` puts `b` on `brushGroup = ['brush','pencil','color-replacement','eraser']`,
+so pressing it can never select `draw`. The same pass found `Shift+B` cycling into `eraser`, which
+is wrong twice: `B` cycles only within the brush group, and the Eraser's own letter is `E`.
+
+**2. Three Photoshop groups are collapsed into one flyout, and the evidence for the split is
+Adobe's own shortcut table, not a third-party diagram.** The app has one six-entry flyout —
+Brush, Pencil, Color Replacement, Eraser, Magic Eraser, Paint Bucket. Adobe's table binds
+`B` to Brush, `E` to Eraser and `G` to Paint bucket, with `Shift+G` for "Switch between Paint
+bucket and Gradient tool": distinct letters are how Adobe proves the three groups are three. The
+app's own `G` handler already cycles a Gradient/Paint-Bucket pair, and the Gradient sits in its
+**own single-tool tile** rather than sharing `G` — so the one grouping fact Adobe states outright
+is the one the rail contradicts. This matters independently of §74's unresolved order questions:
+group membership is settled, only position is not.
+
+**3. Nothing asserts that two tools cannot share a letter.** `toolbar-mapping.test.ts:126-131`
+checks the `U` group and nothing else, so a `B`/`B` collision is invisible to the suite. One
+`expect` over the flattened map's `shortcut` values would have found defect 1 on the day it
+shipped. Note the trap it must not fall into: `draw` and `pen` variants legitimately share a
+letter with their group leader, so the assertion is "no letter is claimed by two _different_
+groups", not "no letter repeats".
+
+**These are filed, not fixed.** Deleting `draw` and re-grouping the flyout are §74's work, and
+doing them here would land the deletion without the replacement rail.
