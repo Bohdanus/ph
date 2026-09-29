@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-29T07:54:37.286Z",
+  "generatedAt": "2026-09-29T07:57:22.010Z",
   "generator": "scripts/worktree-inventory.mjs",
   "base": "main",
   "mainHead": "cb66444aee134891c21e883b39c0f96755480226",
@@ -38,6 +38,7 @@
     "desc-shape",
     "desc-transform",
     "desc-type-crop",
+    "e2e-findings-tail",
     "eyedropper-crop",
     "fix-overlay-teardown",
     "fix-replay-coordinator-tests",
@@ -492,11 +493,11 @@
   "totals": {
     "worktrees": 95,
     "prunable": 13,
-    "readyToLand": 19,
+    "readyToLand": 20,
     "disposalCandidates": 13,
     "atRisk": 60,
     "salvage": 60,
-    "inUse": 3,
+    "inUse": 2,
     "holdingUncommittedWork": 13,
     "withoutSummary": 19,
     "byStatus": {
@@ -506,14 +507,14 @@
     },
     "byRecommendation": {
       "salvage": 60,
-      "in-use": 3,
-      "ready-to-land": 19,
+      "in-use": 2,
+      "ready-to-land": 20,
       "prune": 13
     },
     "byAction": {
       "at-risk": 60,
-      "in-use": 3,
-      "land": 19,
+      "in-use": 2,
+      "land": 20,
       "dispose": 13
     },
     "byChatState": {
@@ -1843,9 +1844,9 @@
       "ahead": 0,
       "behind": 8,
       "mergedIntoMain": true,
-      "dirty": 1,
+      "dirty": 2,
       "untracked": 0,
-      "dirtyPaths": ["scripts/lib/worktree-inventory/curated.mjs"],
+      "dirtyPaths": ["scripts/__tests__/worktree-inventory.test.mjs", "scripts/lib/worktree-inventory/curated.mjs"],
       "lastCommit": {
         "sha": "e1e4ead914369a9a957ddd4ae36d8261c274eb37",
         "subject": "docs(handoff): a letter-suffixed heading loses its content, and its retirement corrupts the parent",
@@ -2274,9 +2275,17 @@
       "ahead": 0,
       "behind": 8,
       "mergedIntoMain": true,
-      "dirty": 1,
+      "dirty": 7,
       "untracked": 0,
-      "dirtyPaths": ["src/hooks/__tests__/useRect.test.ts"],
+      "dirtyPaths": [
+        "src/components/Main/__tests__/DrawToolArea.test.tsx",
+        "src/components/ToolbarsRight/Lasso/__tests__/FreehandLasso.test.tsx",
+        "src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx",
+        "src/contexts/__tests__/ThemeContext.test.tsx",
+        "src/contexts/__tests__/useLayer.text.test.tsx",
+        "src/contexts/__tests__/useSelectionClipboard.layerViaCopy.test.tsx",
+        "src/hooks/__tests__/useRect.test.ts"
+      ],
       "lastCommit": {
         "sha": "e1e4ead914369a9a957ddd4ae36d8261c274eb37",
         "subject": "docs(handoff): a letter-suffixed heading loses its content, and its retirement corrupts the parent",
@@ -2605,9 +2614,13 @@
       "ahead": 0,
       "behind": 8,
       "mergedIntoMain": true,
-      "dirty": 2,
+      "dirty": 3,
       "untracked": 0,
-      "dirtyPaths": ["scripts/__tests__/handoff-import.test.mjs", "scripts/lib/agent-board/handoff-import.mjs"],
+      "dirtyPaths": [
+        "HANDOFF.md",
+        "scripts/__tests__/handoff-import.test.mjs",
+        "scripts/lib/agent-board/handoff-import.mjs"
+      ],
       "lastCommit": {
         "sha": "e1e4ead914369a9a957ddd4ae36d8261c274eb37",
         "subject": "docs(handoff): a letter-suffixed heading loses its content, and its retirement corrupts the parent",
@@ -5411,7 +5424,7 @@
       "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/tool-desc-integration",
       "branch": "audit/tool-desc-revalidation",
       "isPrimary": false,
-      "head": "9df6023dc5979614bf313d4314cb3dbfc1920d57",
+      "head": "87aa584c4556a5988589910f771570fbc074d93e",
       "detached": false,
       "status": "unmerged-work",
       "recommendation": "salvage",
@@ -5422,23 +5435,58 @@
       "mergeChecked": true,
       "riskScore": 90,
       "statusReasons": [
-        "25 commit(s) ahead of main",
+        "26 commit(s) ahead of main",
         "the working tree holds uncommitted changes",
         "merging into the base branch conflicts in HANDOFF.md, so it needs a rebase first"
       ],
-      "ahead": 25,
+      "ahead": 26,
       "behind": 25,
       "mergedIntoMain": false,
-      "dirty": 2,
+      "dirty": 29,
       "untracked": 0,
-      "dirtyPaths": ["AGENTS.md", "docs/TOOLS.md"],
+      "dirtyPaths": [
+        "HANDOFF.md",
+        "TEST-FLAKES.md",
+        "e2e/global-setup.ts",
+        "e2e/helpers/__tests__/global-setup.unit.test.ts",
+        "e2e/history-panel.spec.ts",
+        "e2e/responsive-shell.spec.ts",
+        "e2e/sidebar-layout.spec.ts",
+        "scripts/__tests__/handoff-import.test.mjs",
+        "scripts/lib/worktree-inventory/curated.mjs",
+        "src/__tests__/harness-integrity.test.ts",
+        "src/components/SidebarLeft/__tests__/AnchoredOverlay.test.tsx",
+        "src/components/SidebarRight/__tests__/LayersTab.store.test.tsx",
+        "src/components/ToolbarsRight/Figures/__tests__/Shape.test.tsx",
+        "src/components/ToolbarsRight/Lasso/__tests__/FreehandLasso.test.tsx",
+        "src/components/ToolbarsRight/Transform/__tests__/Transform.test.tsx",
+        "src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx",
+        "src/contexts/__tests__/RightPanelVisibility.test.tsx",
+        "src/contexts/__tests__/StoreContext.durable-boundary.test.tsx",
+        "src/contexts/__tests__/ThemeContext.test.tsx",
+        "src/contexts/__tests__/document-frame.test.ts",
+        "src/contexts/__tests__/history-adapter.branches.test.ts",
+        "src/contexts/__tests__/history-append.test.ts",
+        "src/contexts/__tests__/layer-presentation.test.ts",
+        "src/contexts/__tests__/materialization.ordering.test.ts",
+        "src/contexts/__tests__/useHistory.test.tsx",
+        "src/contexts/__tests__/useLayer.text.test.tsx",
+        "src/hooks/__tests__/useRect.test.ts",
+        "src/util/__tests__/clipboard.test.ts",
+        "vitest.config.ts"
+      ],
       "lastCommit": {
-        "sha": "9df6023dc5979614bf313d4314cb3dbfc1920d57",
-        "subject": "Merge branch 'fix/desc-focus' into audit/tool-desc-revalidation",
-        "date": "2026-09-29T09:54:10+02:00",
+        "sha": "87aa584c4556a5988589910f771570fbc074d93e",
+        "subject": "fix(tools): clear the four blocking review findings, and the inventory debt they exposed",
+        "date": "2026-09-29T09:57:05+02:00",
         "author": "Bohdan"
       },
       "commitsAhead": [
+        {
+          "sha": "87aa584",
+          "subject": "fix(tools): clear the four blocking review findings, and the inventory debt they exposed",
+          "date": "2026-09-29T09:57:05+02:00"
+        },
         {
           "sha": "9df6023",
           "subject": "Merge branch 'fix/desc-focus' into audit/tool-desc-revalidation",
@@ -5533,11 +5581,6 @@
           "sha": "f2335b7",
           "subject": "fix(tools): revalidate the eyedropper-draw family against Adobe's docs and this app's code",
           "date": "2026-09-29T08:33:35+02:00"
-        },
-        {
-          "sha": "79236a4",
-          "subject": "fix(tools): revalidate the transform family against Adobe's docs and this app's code",
-          "date": "2026-09-29T08:33:35+02:00"
         }
       ],
       "commitsAheadTruncated": true,
@@ -5567,121 +5610,6 @@
         "fileLocks": [],
         "agents": [],
         "held": false
-      },
-      "read": []
-    },
-    {
-      "name": "e2e-findings-tail",
-      "inRepo": true,
-      "path": ".kilo/worktrees/e2e-findings-tail",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-findings-tail",
-      "branch": "e2e/findings-tail",
-      "isPrimary": false,
-      "head": "29cf5e90c19427f637f5c12f3774d24ecedd47af",
-      "detached": false,
-      "status": "unmerged-work",
-      "recommendation": "in-use",
-      "action": "in-use",
-      "prunable": false,
-      "mergeConflict": false,
-      "mergeConflictFiles": [],
-      "mergeChecked": true,
-      "riskScore": 70,
-      "statusReasons": [
-        "1 commit(s) ahead of main",
-        "the board saw agent e2e/findings-tail in this worktree inside the last 30 minutes"
-      ],
-      "ahead": 1,
-      "behind": 8,
-      "mergedIntoMain": false,
-      "dirty": 0,
-      "untracked": 0,
-      "dirtyPaths": [],
-      "lastCommit": {
-        "sha": "29cf5e90c19427f637f5c12f3774d24ecedd47af",
-        "subject": "fix(e2e): the review tail the dead orchestrator left, and the ledger that miscounts itself",
-        "date": "2026-09-29T09:49:58+02:00",
-        "author": "Bohdan"
-      },
-      "commitsAhead": [
-        {
-          "sha": "29cf5e9",
-          "subject": "fix(e2e): the review tail the dead orchestrator left, and the ledger that miscounts itself",
-          "date": "2026-09-29T09:49:58+02:00"
-        }
-      ],
-      "commitsAheadTruncated": false,
-      "claimedLanded": null,
-      "summary": null,
-      "summarySource": "none",
-      "issues": [],
-      "inferredBoardIssues": [],
-      "note": null,
-      "liveNote": null,
-      "mustNotPrune": false,
-      "chats": {
-        "count": 0,
-        "chatIds": [],
-        "subagentCount": 0,
-        "byState": {},
-        "activeChatIds": [],
-        "unfinishedChatIds": [],
-        "lastActivity": null,
-        "readUnfinished": [],
-        "read": [],
-        "unfinished": [],
-        "dead": []
-      },
-      "board": {
-        "claims": [
-          {
-            "issueId": "ph-60",
-            "agentId": "e2e/findings-tail",
-            "branch": "e2e/findings-tail",
-            "leaseUntil": "2026-09-29T08:10:20.126Z"
-          }
-        ],
-        "fileLocks": [
-          {
-            "path": "e2e/helpers/canvas-helpers.ts",
-            "agentId": "e2e/findings-tail",
-            "issueId": null,
-            "expiresAt": "2026-09-29T08:10:20.533Z"
-          },
-          {
-            "path": "e2e/helpers/screenshot-scale.ts",
-            "agentId": "e2e/findings-tail",
-            "issueId": null,
-            "expiresAt": "2026-09-29T08:10:20.533Z"
-          },
-          {
-            "path": "e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts",
-            "agentId": "e2e/findings-tail",
-            "issueId": null,
-            "expiresAt": "2026-09-29T08:10:20.533Z"
-          },
-          {
-            "path": "e2e/export/helpers.ts",
-            "agentId": "e2e/findings-tail",
-            "issueId": null,
-            "expiresAt": "2026-09-29T08:10:20.533Z"
-          },
-          {
-            "path": "e2e/OPEN_PROBLEMS.md",
-            "agentId": "e2e/findings-tail",
-            "issueId": null,
-            "expiresAt": "2026-09-29T08:10:20.533Z"
-          }
-        ],
-        "agents": [
-          {
-            "agentId": "e2e/findings-tail",
-            "branch": "e2e/findings-tail",
-            "lastSeenMs": 1790666720445,
-            "live": true
-          }
-        ],
-        "held": true
       },
       "read": []
     },
@@ -5771,8 +5699,8 @@
       "chats": {
         "count": 65,
         "chatIds": [
-          "ses_f15c90080ffe1YJx2hO8ZBWRfU",
           "ses_f15a9359bffeXEL9Y07MzWNLMA",
+          "ses_f15c90080ffe1YJx2hO8ZBWRfU",
           "ses_f1613f000ffeMAW6gTzPWe6kBm",
           "ses_f13f4c962ffekM6A7G3Bxqd5f1",
           "ses_f13f78b22ffeibSrHw4o1p4PtF",
@@ -5844,16 +5772,16 @@
           "abandoned-midflight": 9
         },
         "activeChatIds": [
-          "ses_f15c90080ffe1YJx2hO8ZBWRfU",
           "ses_f15a9359bffeXEL9Y07MzWNLMA",
+          "ses_f15c90080ffe1YJx2hO8ZBWRfU",
           "ses_f1613f000ffeMAW6gTzPWe6kBm",
           "ses_f13f4c962ffekM6A7G3Bxqd5f1",
           "ses_f13f78b22ffeibSrHw4o1p4PtF",
           "ses_f13f1cf59ffeM17cdcWgGDeHcj"
         ],
         "unfinishedChatIds": [
-          "ses_f15c90080ffe1YJx2hO8ZBWRfU",
           "ses_f15a9359bffeXEL9Y07MzWNLMA",
+          "ses_f15c90080ffe1YJx2hO8ZBWRfU",
           "ses_f1613f000ffeMAW6gTzPWe6kBm",
           "ses_f13f4c962ffekM6A7G3Bxqd5f1",
           "ses_f13f78b22ffeibSrHw4o1p4PtF",
@@ -5868,7 +5796,7 @@
           "ses_f18cb10c7ffeQyGIipjfTQJifF",
           "ses_f183ab42cffeVdFwk5GNadKyhe"
         ],
-        "lastActivity": 1790668477286,
+        "lastActivity": 1790668632229,
         "readUnfinished": [
           {
             "id": "ses_f167d43ebffenKG4aRh8qnMKN5",
@@ -6648,31 +6576,31 @@
         ],
         "unfinished": [
           {
-            "id": "ses_f15c90080ffe1YJx2hO8ZBWRfU",
-            "title": "-- e2e warmup",
-            "state": "active",
-            "idleMs": 0,
-            "reasons": ["last message 0m ago"],
-            "toolErrors": 5,
-            "creditsFailures": 0,
-            "blockedOn": null
-          },
-          {
             "id": "ses_f15a9359bffeXEL9Y07MzWNLMA",
             "title": "New session - 2026-09-28T23:25:51.588Z",
             "state": "active",
-            "idleMs": 14641,
+            "idleMs": 9781,
             "reasons": ["last message 0m ago"],
             "toolErrors": 3,
             "creditsFailures": 5,
             "blockedOn": null
           },
           {
+            "id": "ses_f15c90080ffe1YJx2hO8ZBWRfU",
+            "title": "-- e2e warmup",
+            "state": "active",
+            "idleMs": 164724,
+            "reasons": ["last message 3m ago"],
+            "toolErrors": 5,
+            "creditsFailures": 0,
+            "blockedOn": null
+          },
+          {
             "id": "ses_f1613f000ffeMAW6gTzPWe6kBm",
             "title": "!!! DAMAGES !!!",
             "state": "active",
-            "idleMs": 161830,
-            "reasons": ["last message 3m ago"],
+            "idleMs": 326554,
+            "reasons": ["last message 5m ago"],
             "toolErrors": 13,
             "creditsFailures": 0,
             "blockedOn": null
@@ -6681,8 +6609,8 @@
             "id": "ses_f13f4c962ffekM6A7G3Bxqd5f1",
             "title": "New session - 2026-09-29T07:22:32.989Z",
             "state": "active",
-            "idleMs": 235397,
-            "reasons": ["last message 4m ago"],
+            "idleMs": 400121,
+            "reasons": ["last message 7m ago"],
             "toolErrors": 3,
             "creditsFailures": 1,
             "blockedOn": null
@@ -6691,8 +6619,8 @@
             "id": "ses_f13f78b22ffeibSrHw4o1p4PtF",
             "title": "New session - 2026-09-29T07:19:32.317Z",
             "state": "active",
-            "idleMs": 328534,
-            "reasons": ["last message 5m ago"],
+            "idleMs": 493258,
+            "reasons": ["last message 8m ago"],
             "toolErrors": 3,
             "creditsFailures": 0,
             "blockedOn": null
@@ -6701,8 +6629,8 @@
             "id": "ses_f13f1cf59ffeM17cdcWgGDeHcj",
             "title": "New session - 2026-09-29T07:25:48.070Z",
             "state": "active",
-            "idleMs": 1001390,
-            "reasons": ["last message 17m ago"],
+            "idleMs": 1166114,
+            "reasons": ["last message 19m ago"],
             "toolErrors": 0,
             "creditsFailures": 0,
             "blockedOn": null
@@ -6711,7 +6639,7 @@
             "id": "ses_f1417ec8dffeXWLLligjufoJKz",
             "title": "Taking over ~~~ HANDOFF cleanup ~~~ orchestration",
             "state": "abandoned-midflight",
-            "idleMs": 2986978,
+            "idleMs": 3151702,
             "reasons": ["idle for 1h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 0,
             "creditsFailures": 0,
@@ -6721,7 +6649,7 @@
             "id": "ses_f1426d547ffe8oN74vIW7cUpCM",
             "title": "New session - 2026-09-29T06:27:53.144Z",
             "state": "abandoned-midflight",
-            "idleMs": 3086139,
+            "idleMs": 3250863,
             "reasons": ["idle for 1h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 0,
             "creditsFailures": 1,
@@ -6731,7 +6659,7 @@
             "id": "ses_f1424b9d2fferoDADjvlLe03UH",
             "title": "<<< tool descriptions >>>",
             "state": "abandoned-midflight",
-            "idleMs": 4237576,
+            "idleMs": 4402300,
             "reasons": ["idle for 1h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 0,
             "creditsFailures": 0,
@@ -6741,7 +6669,7 @@
             "id": "ses_f16147650ffe9C2zfklMCP473I",
             "title": "~~~ HANDOFF cleanup ~~~",
             "state": "abandoned-midflight",
-            "idleMs": 5027439,
+            "idleMs": 5192163,
             "reasons": ["idle for 1h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 9,
             "creditsFailures": 0,
@@ -6751,7 +6679,7 @@
             "id": "ses_f17814e67ffeOru2rhgVgAb9a5",
             "title": "Fixing flyout panel not opening in sidebar",
             "state": "abandoned-midflight",
-            "idleMs": 32049336,
+            "idleMs": 32214060,
             "reasons": ["idle for 9h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 8,
             "creditsFailures": 2,
@@ -6761,8 +6689,8 @@
             "id": "ses_f162b4452ffei0YUQf4OjQiJn7",
             "title": "*** PW tests fix & migration ***",
             "state": "abandoned-midflight",
-            "idleMs": 34130934,
-            "reasons": ["idle for 9h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 34295658,
+            "reasons": ["idle for 10h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 7,
             "creditsFailures": 1,
             "blockedOn": null
@@ -6771,7 +6699,7 @@
             "id": "ses_f174eec52ffedigagDe7uAkRob",
             "title": "-- del --",
             "state": "abandoned-midflight",
-            "idleMs": 56996553,
+            "idleMs": 57161277,
             "reasons": ["idle for 16h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 2,
             "creditsFailures": 0,
@@ -6781,7 +6709,7 @@
             "id": "ses_f18cb10c7ffeQyGIipjfTQJifF",
             "title": "-- e2e orchestrator",
             "state": "abandoned-midflight",
-            "idleMs": 65913505,
+            "idleMs": 66078229,
             "reasons": ["idle for 18h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 7,
             "creditsFailures": 0,
@@ -6791,7 +6719,7 @@
             "id": "ses_f183ab42cffeVdFwk5GNadKyhe",
             "title": "-- PNG todo --",
             "state": "abandoned-midflight",
-            "idleMs": 73183653,
+            "idleMs": 73348377,
             "reasons": ["idle for 20h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 2,
             "creditsFailures": 1,
@@ -8144,6 +8072,121 @@
           }
         ],
         "held": false
+      },
+      "read": []
+    },
+    {
+      "name": "e2e-findings-tail",
+      "inRepo": true,
+      "path": ".kilo/worktrees/e2e-findings-tail",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-findings-tail",
+      "branch": "e2e/findings-tail",
+      "isPrimary": false,
+      "head": "29cf5e90c19427f637f5c12f3774d24ecedd47af",
+      "detached": false,
+      "status": "unmerged-work",
+      "recommendation": "ready-to-land",
+      "action": "land",
+      "prunable": false,
+      "mergeConflict": false,
+      "mergeConflictFiles": [],
+      "mergeChecked": true,
+      "riskScore": 30,
+      "statusReasons": [
+        "1 commit(s) ahead of main",
+        "the working tree is clean and the merge into the base branch applies with no conflict"
+      ],
+      "ahead": 1,
+      "behind": 8,
+      "mergedIntoMain": false,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
+      "lastCommit": {
+        "sha": "29cf5e90c19427f637f5c12f3774d24ecedd47af",
+        "subject": "fix(e2e): the review tail the dead orchestrator left, and the ledger that miscounts itself",
+        "date": "2026-09-29T09:49:58+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [
+        {
+          "sha": "29cf5e9",
+          "subject": "fix(e2e): the review tail the dead orchestrator left, and the ledger that miscounts itself",
+          "date": "2026-09-29T09:49:58+02:00"
+        }
+      ],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": null,
+      "summarySource": "none",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "readUnfinished": [],
+        "read": [],
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [
+          {
+            "issueId": "ph-60",
+            "agentId": "e2e/findings-tail",
+            "branch": "e2e/findings-tail",
+            "leaseUntil": "2026-09-29T08:10:20.126Z"
+          }
+        ],
+        "fileLocks": [
+          {
+            "path": "e2e/helpers/canvas-helpers.ts",
+            "agentId": "e2e/findings-tail",
+            "issueId": null,
+            "expiresAt": "2026-09-29T08:10:20.533Z"
+          },
+          {
+            "path": "e2e/helpers/screenshot-scale.ts",
+            "agentId": "e2e/findings-tail",
+            "issueId": null,
+            "expiresAt": "2026-09-29T08:10:20.533Z"
+          },
+          {
+            "path": "e2e/helpers/__tests__/canvas-stroke-analysis.unit.test.ts",
+            "agentId": "e2e/findings-tail",
+            "issueId": null,
+            "expiresAt": "2026-09-29T08:10:20.533Z"
+          },
+          {
+            "path": "e2e/export/helpers.ts",
+            "agentId": "e2e/findings-tail",
+            "issueId": null,
+            "expiresAt": "2026-09-29T08:10:20.533Z"
+          },
+          {
+            "path": "e2e/OPEN_PROBLEMS.md",
+            "agentId": "e2e/findings-tail",
+            "issueId": null,
+            "expiresAt": "2026-09-29T08:10:20.533Z"
+          }
+        ],
+        "agents": [
+          {
+            "agentId": "e2e/findings-tail",
+            "branch": "e2e/findings-tail",
+            "lastSeenMs": 1790666720445,
+            "live": false
+          }
+        ],
+        "held": true
       },
       "read": []
     },
