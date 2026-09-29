@@ -176,6 +176,12 @@ export const CURATED = {
       'Corrections to AGENTS.md and the worktree-inventory comments, from a code review of AGENTS.md against the tree. The structural orphan under "The board is cross-session" and the board-to-swarm regression it introduced; the toolbar section, which listed a shipped Color Replacement options bar as a PlaceholderTool and understated the hand-copied tool lists by fourfold; the mergeChecked semantics, which the document and the code comment both got wrong; the npx tsc --noEmit explanation, which named a missing exclude that does not exist; and the drifted enumerations (orphaned, the curated code sample, the at-risk third source). Adds mergeChecked to the --check watched list.',
     note: 'Short-lived documentation work. Safe to drop once the branch is an ancestor of main; the only non-AGENTS.md change that outlives the prose is the mergeChecked entry in scripts/worktree-inventory.mjs.',
   },
+  'e2e-truth': {
+    summary:
+      'A documentation-truth pass over e2e/README.md, e2e/OPEN_PROBLEMS.md, e2e/global-setup.ts and TEST-FLAKES section 8, correcting claims a review found false against the tree: the spec and helper counts in the README tree block, two README bullets that attributed a pattern to a spec that does not follow it, the per-spec count in the headless guard comment, a deleted-entry check, and a cluster of drifted file:line citations. Its distinct value was largely taken by main while the branch was in review: main deleted the same stale Text-toolbar entry, cut OPEN_PROBLEMS by more than half its entries, and replaced the README count block with an explicit "keep no counts here" decision. NOT LANDED, and landing it now would re-introduce counts main deliberately removed.',
+    mustNotPrune: true,
+    note: "Superseded, not wrong. The three findings that were still unique at review time were the rotted cdp-helpers and canvas-helpers citation clusters (main re-derived its own against a larger tree, so neither side's line numbers can be taken verbatim across the merge) and one citation that moved rather than resolved. A reviewer wanting the residual must re-derive every number against current main; there is nothing here that contradicts the tree.",
+  },
   'polygon-marching-ants': {
     summary:
       'Polygon-selection marching ants: the ants component, the selection-ants hook, a new usePolylineAnts module and its tests, and edits to the lasso, magic wand and click tool areas. The branch has no commits of its own.',
@@ -631,6 +637,10 @@ export const CURATED = {
     summary:
       'Pins the test harness invariants themselves, including the context factory that a prior audit showed returns a different object per call.',
   },
+  'integration-test-pins': {
+    summary:
+      'Integration branch merging the eight test-pin branches for a single cross-branch gate run; held no work of its own, and the handoff section numbering collision was resolved here.',
+  },
   'hooks-pins': {
     summary: 'Pins the commit-gate hooks, which were the subject of the silent-no-gate bug in 89 of 118 worktrees.',
   },
@@ -705,6 +715,21 @@ export const CURATED = {
       },
     ],
   },
+  'e2e-findings-tail': {
+    // The tail of the work `fix-e2e-findings` already landed: the four findings its
+    // adversarial review produced after the fixes merged, which the orchestrator session
+    // died before acting on. All four were comment/precision defects rather than behaviour
+    // regressions, so the tree was green and only the claims about it were wrong.
+    summary:
+      'Finishes the transferred e2e findings: the per-axis capture scale in getStrokeAnalysis, the throw its JSDoc never stated, the zero-width defence pinned by a test that carries ink, the Photopea oracle’s load-bearing check, and the ledger’s own arithmetic.',
+    issues: [
+      {
+        ref: 'e2e/OPEN_PROBLEMS.md#transferred-findings--external-review-of-the-pre-migration-tree',
+        title:
+          'the review tail left four unaddressed findings and a section header that counted two entries below it and found three',
+      },
+    ],
+  },
   'handoff-citation-rotation': {
     summary:
       'Rotates the line-numbered citations in the handoff documents after they were invalidated by file growth, and corrects one false claim in section 1.',
@@ -732,6 +757,40 @@ export const CURATED = {
     summary:
       'Test-comment accuracy for the flyout specs: two false explanations corrected, a duplicated assertion dropped, the expanded-wait timeout pinned as a floor rather than a literal, and the line citations this diff moved re-derived.',
     landed: true,
+  },
+  'desc-selection': {
+    summary:
+      'One of eight disjoint per-family branches revalidating the tool descriptions against Adobe docs and this app. Holds the selection family only; lands via audit/tool-desc-revalidation.',
+  },
+  'desc-paint': {
+    summary:
+      'Paint-family branch of the tool-description revalidation: brush, pencil, color-replacement, eraser, magic-eraser, paint-bucket, clone-stamp. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-focus': {
+    summary:
+      'Focus-family branch of the tool-description revalidation: blur, sharpen, smudge, dodge, burn, gradient. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-shape': {
+    summary:
+      'Shape-family branch of the tool-description revalidation: the shape group and its six figures. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-pen': {
+    summary:
+      'Pen-family branch of the tool-description revalidation: pen, freeform, curvature and the three anchor-point tools. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-type-crop': {
+    summary: 'Type-and-crop branch of the tool-description revalidation. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-transform': {
+    summary:
+      'Transform-family branch of the tool-description revalidation: reposition, transform, levels, color. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-eyedropper-draw': {
+    summary: 'Eyedropper-and-draw branch of the tool-description revalidation. Lands via audit/tool-desc-revalidation.',
+  },
+  'tool-desc-integration': {
+    summary:
+      'Integration branch for the tool-description revalidation: merges the eight disjoint per-family branches, regenerates tooltips.ts and docs/TOOLS.md from them, and runs the gates once over all eight.',
   },
 };
 

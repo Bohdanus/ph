@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FILL_TOLERANCE_MAX, magicEraser, paintBucket, type FillToolArgs, type FillToolName } from '../fill.ts';
+import {
+  FILL_TOLERANCE_DEFAULT,
+  FILL_TOLERANCE_MAX,
+  magicEraser,
+  paintBucket,
+  type FillToolArgs,
+  type FillToolName,
+} from '../fill.ts';
+import { toolProcessors } from '../toolProcessors.ts';
 import { defaultSettings } from '../settings.ts';
 import { createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
@@ -102,6 +110,22 @@ const writtenPixels = (): Uint8ClampedArray => RecordingOffscreenCanvas.written.
 const alphaAt = (x: number, y: number) => writtenPixels()[(y * SIZE.width + x) * 4 + 3];
 const rgbAt = (x: number, y: number, channel: number) => writtenPixels()[(y * SIZE.width + x) * 4 + channel];
 
+/**
+ * The same run, but through `toolProcessors[name]` rather than through a function this file
+ * picked by its own `toolName` argument.
+ *
+ * The registry wires all three raster fills through an inline adapter closure rather than
+ * naming the module export, so no test could see a copy-paste slip between them: identity
+ * comparison is vacuous across three distinct closures, and the dispatch table runs them all
+ * on default settings, where an alpha-only erase and a black fill over transparent produce
+ * byte-identical output. Going through the registry is the only way to pin the delegation.
+ */
+const runThroughRegistry = (toolName: FillToolName, overrides: Partial<FillToolArgs> = {}): void => {
+  const params = { size: SIZE, bitmap: createMockImageBitmap(SIZE.width, SIZE.height) };
+
+  toolProcessors[toolName].imageProcessor(params)(fillArgs(toolName, overrides));
+};
+
 beforeEach(() => {
   RecordingOffscreenCanvas.instances = [];
   RecordingOffscreenCanvas.written = [];
@@ -115,6 +139,17 @@ afterEach(() => {
 describe('fill tolerance scale', () => {
   it('is Adobe 0-255 and not the Magic Wand 0-100', () => {
     expect(FILL_TOLERANCE_MAX).toBe(255);
+  });
+
+  it('seeds both fill tools with the exported default, which is what makes its doc comment true', () => {
+    // `FILL_TOLERANCE_DEFAULT` is documented as "Adobe's seeded default for both the bucket
+    // and the magic eraser", but nothing referenced it: `settings.ts` writes the literal 32
+    // twice, independently. Re-seeding either tool from a different number would leave the
+    // exported constant describing a default the app no longer ships, and nothing would fail
+    // except this assertion. The equality is the doc comment; the value alone is not.
+    expect(FILL_TOLERANCE_DEFAULT).toBe(32);
+    expect(defaultSettings['magic-eraser'].tolerance).toBe(FILL_TOLERANCE_DEFAULT);
+    expect(defaultSettings['paint-bucket'].tolerance).toBe(FILL_TOLERANCE_DEFAULT);
   });
 });
 
@@ -229,5 +264,37 @@ describe('fill processors are distinct', () => {
     // `tool-processors.test.ts` pins the registry entries separately; this pins the functions.
     expect(paintBucket).not.toBe(magicEraser);
     expect(paintBucket({ size: SIZE })).not.toBe(magicEraser({ size: SIZE }));
+  });
+});
+
+/**
+ * The registry's own delegation, observed through it.
+ *
+ * Each entry is an inline `(params) => (args) => fn(params)(args)` adapter, so the three
+ * raster fills are three distinct closures and every identity-based test in the suite passes
+ * for all of them. The default-settings dispatch row cannot tell them apart either: the
+ * bucket's default colour is black, so it writes black over transparent exactly like the
+ * alpha-only magic eraser. These two cases are the discriminating pair — a bucket write
+ * carries the fill colour and a full alpha, and an erase carries neither.
+ */
+describe('fill registry delegation', () => {
+  it('routes paint-bucket to the colour write, through the registry', () => {
+    runThroughRegistry('paint-bucket', { color: '#0000FF', tolerance: 0, alpha: 1 });
+
+    // Both halves of a bucket write are asserted, because either alone is satisfiable by
+    // the wrong processor: the blue channel is the fill colour arriving, and the alpha is
+    // the coverage a fill has to raise or a fill over transparent would tint nothing.
+    expect(rgbAt(0, 0, 2)).toBe(255);
+    expect(alphaAt(0, 0)).toBe(255);
+  });
+
+  it('routes magic-eraser to the alpha-only write, through the registry', () => {
+    runThroughRegistry('magic-eraser', { tolerance: 0, alpha: 1 });
+
+    // Full alpha, so the region is gone rather than faded, and the colour is untouched: an
+    // erase discards alpha, it does not paint. A bucket routed here would fail both.
+    expect(alphaAt(0, 0)).toBe(0);
+    expect(rgbAt(0, 0, 0)).toBe(255);
+    expect(rgbAt(0, 0, 2)).toBe(0);
   });
 });
