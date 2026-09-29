@@ -7,8 +7,12 @@
  *
  *   1. A worktree reporting 0 commits ahead of main and being an ancestor of
  *      main is NOT prunable while its working tree holds changes. This is the
- *      "0 ahead is not a safety test" case, and it is the exact shape of the
- *      17 worktrees here that look disposable and are not.
+ *      "0 ahead is not a safety test" case, and it is the shape of every
+ *      worktree here that looks disposable and is not. The set is DERIVED from
+ *      the live worktrees on every run rather than listed by name: the list was
+ *      the recurring red, and it was re-derived by hand three times in one
+ *      session because an agent had committed, disposed a worktree, or created
+ *      one.
  *   2. A paid-model launch that died at zero tokens is classified as a
  *      failure, not as a finished session that happened to be quiet.
  *
@@ -230,6 +234,94 @@ function wt(overrides = {}) {
 
 const noChats = { count: 0, lastActivity: null };
 const noSessions = [];
+
+/**
+ * The shape the curated table used to have to be told about by hand, read off a
+ * GENERATED record rather than a fixture: a branch git already calls disposable
+ * (0 ahead of main, already on it) whose working tree holds the work anyway.
+ *
+ * This is `STATUS.UNCOMMITTED_ONLY` expressed over the fields the inventory
+ * prints, and it is the only shape for which a hand-written `mustNotPrune` ever
+ * earned its keep. Everything else in the curated table is either a branch git
+ * can see (so it is protected by being a branch) or prose.
+ */
+const holdsWorkGitCannotSee = (r) => r.ahead === 0 && r.mergedIntoMain === true && r.dirty + r.untracked > 0;
+
+/**
+ * Every worktree of this repository, with the git facts the rule above reads.
+ *
+ * `collectWorktrees` is not used because it also runs `git merge-tree` on every
+ * unmerged branch: that is the right cost for a generator which has to print all
+ * of them, and the wrong cost for a guard that only needs three facts per
+ * worktree. The merge answer is deliberately absent below, and it cannot change
+ * any verdict here — `STATUS.UNCOMMITTED_ONLY` is decided before the merge is
+ * consulted, so a worktree of this shape is `salvage` whether or not anyone
+ * asked git whether it would merge.
+ *
+ * `tip` is read for real rather than left out: `classify` reads a MISSING tip as
+ * `STATUS.UNREADABLE`, which reports `unknown` and `prunable: false` for
+ * everything, and a guard written that way is green no matter what the generator
+ * does with a dirty merged branch.
+ *
+ * Memoised: two tests below need the same few seconds of git, and a second read
+ * of a repository other agents are actively writing to could see a different
+ * shape than the first.
+ */
+let _liveFacts = null;
+function liveWorktreeFacts() {
+  if (_liveFacts) return _liveFacts;
+  const cwd = process.cwd();
+  const missing = new Set(findMissingWorktrees(cwd).map((w) => w.path));
+  // The MAIN checkout is the first entry of `git worktree list`, never `cwd`:
+  // this suite is run from a task worktree as often as from the root checkout,
+  // and "the main worktree" has to be the same worktree in both, or the guard
+  // asserts a different repository depending on where it was invoked.
+  const mainPath = listWorktrees(cwd)[0].path;
+  // A registration whose directory is gone is reported by the generator under
+  // `dataSources.git.missingWorktrees`; git cannot be asked about a tree that is
+  // not there, and an `ahead` of `null` would read as "not derived" for a
+  // worktree that is simply not there.
+  const worktrees = listWorktrees(cwd)
+    .filter((w) => !missing.has(w.path))
+    .map((w) => {
+      const { ahead, behind } = __testables.aheadBehind(w.path, 'main');
+      return {
+        ...w,
+        isPrimary: w.path === mainPath,
+        tip: __testables.tipCommit(w.path),
+        ahead,
+        behind,
+        mergedIntoBase: __testables.isMergedInto(w.path, 'main'),
+        workingTree: __testables.workingTreeState(w.path),
+        commitsAhead: [],
+      };
+    });
+  _liveFacts = { mainPath, worktrees };
+  return _liveFacts;
+}
+
+/**
+ * The real inventory, built from the real worktrees, with every LIVENESS signal
+ * deliberately empty.
+ *
+ * `in-use` is a protection of its own, so leaving the board and the chats in
+ * would let this guard pass for the wrong reason: a worktree nobody happens to
+ * be in is protected by the rule under test, and one somebody is in is protected
+ * by liveness. With them out, the only thing standing between a dirty merged
+ * branch and `disposalCandidates` is the derivation.
+ */
+function liveInventory() {
+  const { mainPath, worktrees } = liveWorktreeFacts();
+  return buildInventory({
+    worktrees,
+    root: mainPath,
+    base: 'main',
+    mainHead: execFileSync('git', ['rev-parse', 'main'], { cwd: mainPath, encoding: 'utf8' }).trim(),
+    board: { available: false, dbPath: null, claims: new Map(), fileLocks: new Map(), agents: new Map(), issues: [] },
+    chatAudit: { available: false, dbPath: null, byDirectory: new Map(), total: 0, newestSessionAt: 0 },
+    nowMs: NOW,
+  });
+}
 
 describe('git.mjs against a real repository', () => {
   it('maps rev-list --left-right --count to behind=left, ahead=right', () => {
@@ -1811,7 +1903,11 @@ describe('the curated table', () => {
     expect(CURATED['worktree-inventory']).toBeUndefined();
   });
 
-  it('requires a mustNotPrune entry to say WHY, because the flag alone is unfalsifiable', () => {
+  it('requires a curated mustNotPrune entry to say WHY, because the flag alone is unfalsifiable', () => {
+    // The flag is a human claim about a tree git already calls disposable, so it
+    // is unfalsifiable by anything except prose. No entry sets it today — the
+    // case it was written for is derived, in the describe block below — and this
+    // rule is what the next entry that genuinely needs a veto has to satisfy.
     for (const [name, entry] of Object.entries(CURATED)) {
       if (entry.mustNotPrune) {
         expect(
@@ -1822,68 +1918,38 @@ describe('the curated table', () => {
     }
   });
 
-  it('sets mustNotPrune on every worktree whose danger is invisible to git', () => {
-    // The names are a curator's list, and they are checked against GIT rather
-    // than against the table. The previous version asserted the flag on fifteen
-    // names without looking at any of them, and every one of those fifteen was
-    // a branch that git could already see: ahead of main, clean, not on main —
-    // so `prunable` was already false and the flag protected nothing. Six of
-    // their notes said so, in prose, on the same lines.
+  it('never asks the table to protect a worktree whose protection is derived', () => {
+    // What the flag used to cost. It was a name on a hand-written list, and the
+    // list was re-derived by hand three times in one session: agents commit, so
+    // the flag goes stale; agents dispose worktrees, so a name refers to nothing
+    // and the guard fails on its own premise; agents create worktrees, so the
+    // table has no entry for a worktree that is genuinely holding work on no
+    // ref. It was stale in BOTH directions the last time it was read:
+    // `skill-handoff-cites` was listed and its worktree was gone, while
+    // `chat-damage-followup` and `layers-panel-spec` held uncommitted work on a
+    // main commit and carried no flag at all.
     //
-    // So the claim is now what is asserted, not the membership. A flag is a
-    // claim that the work here exists on no ref, and the shape that makes it
-    // true is exactly the one the generator already names
-    // `STATUS.UNCOMMITTED_ONLY`: a branch git calls disposable, carrying edits
-    // that are in no commit on it. Anything else — a committed branch, a clean
-    // tree — is a flag about nothing.
-    //
-    // The list stays hand-written on purpose. A derived list would go stale in
-    // the other direction: the moment the owning agent commits, the shape
-    // disappears and a derived rule would drop the flag off work that is still
-    // uncommitted elsewhere. Re-derive these against
-    // `git -C <path> status --porcelain` and
-    // `git merge-base --is-ancestor <branch> main` before adding a name.
-    //
-    // Every name here was re-derived with the three helpers below rather than
-    // carried over, and all three of the names this list held before have left
-    // it: `rail-drop-draw` and `shape-truth` were captured by `wip(salvage)`
-    // commits and `text-tool-requirements` was committed and landed, so each is
-    // a branch git can see and each flag was a claim about nothing. They were
-    // not all caught at once — `expect` throws, so the loop below reported the
-    // FIRST name that no longer had the shape and never reached the other two,
-    // which is why the list had to be re-derived whole instead of edited where
-    // it failed.
-    const invisibleToGit = [
-      'agents-audit',
-      'durable-followups',
-      'handoff-remove-layer-assets',
-      'skill-handoff-cites',
-      'history-append-assets',
-      'history-remove-append',
-    ];
-    expect(invisibleToGit.length, 'the list went empty, so this guard asserts nothing').toBeGreaterThan(0);
-
-    const live = listWorktrees(process.cwd());
-    for (const name of invisibleToGit) {
-      const w = live.find((x) => x.name === name);
-      expect(w, `${name} is not a live worktree, so there is nothing to protect`).toBeTruthy();
-      // Only the names on this list are asked about. `collectWorktrees` runs
-      // `git status` and `git merge-tree` in every worktree in the repository,
-      // which is the right cost for a generator that must print all of them and
-      // the wrong cost for a test that needs a handful of facts.
-      const { ahead } = __testables.aheadBehind(w.path, 'main');
-      const held = __testables.workingTreeState(w.path);
-      const onMain = __testables.isMergedInto(w.path, 'main');
-      expect(
-        ahead === 0 && onMain === true && held.modified + held.untracked > 0,
-        `${name} is listed as holding work git cannot see, but git says ahead=${ahead} ` +
-          `onMain=${onMain} modified=${held.modified} untracked=${held.untracked}. Either the ` +
-          'work was committed — in which case drop the name and the flag — or the shape ' +
-          'changed and this entry has to say so.'
-      ).toBe(true);
-      expect(CURATED[name]?.mustNotPrune, `${name} holds work on no ref and is not protected`).toBe(true);
-    }
-  });
+    // So the flag is not how this case is expressed any more. `classify` already
+    // refuses to prune a working tree that holds anything, so a flag on a
+    // worktree of this shape protected nothing while asserting a claim that went
+    // out of date on its own. The rule itself is the describe block below; this
+    // test is the tripwire against the flag coming back for it.
+    const derived = liveInventory()
+      .worktrees.filter((r) => r.inRepo && holdsWorkGitCannotSee(r))
+      .map((r) => r.name);
+    const flagged = derived.filter((name) => CURATED[name]?.mustNotPrune);
+    expect(
+      flagged,
+      `these entries hold work git cannot see and are flagged mustNotPrune: ${flagged.join(', ')}. ` +
+        'The generator derives that protection, so the flag is a claim that goes stale the moment the ' +
+        'owner commits — delete the field and keep the note.'
+    ).toEqual([]);
+    // A derived set cannot be cheaper than the facts it is derived from: this
+    // reads git in every worktree in the repository, which is precisely what the
+    // hand-written list was pretending not to have to do. `liveWorktreeFacts`
+    // memoises, so the suite pays for the read once, and which of the two tests
+    // asking first is not something the budget may depend on.
+  }, 60_000);
 
   it('declares no key twice, because a duplicate key silently discards a curation change', () => {
     // Five keys were declared twice: a rich entry written deliberately near the
@@ -2074,6 +2140,112 @@ describe('the curated table', () => {
         expect(issue.title, `${name} has an issue with no title`).toBeTruthy();
       }
     }
+  });
+});
+
+describe('work git cannot see: derived from the worktrees, never curated', () => {
+  /**
+   * A board and a chat audit with nothing in them, for a synthetic build.
+   *
+   * An in-use worktree is protected by liveness, so a guard that left liveness in
+   * would pass for the wrong reason. Every assertion in this block is about what
+   * git's own facts derive.
+   */
+  const silent = () => ({
+    board: { available: false, dbPath: null, claims: new Map(), fileLocks: new Map(), agents: new Map(), issues: [] },
+    chatAudit: { available: false, dbPath: null, byDirectory: new Map(), total: 0, newestSessionAt: 0 },
+  });
+
+  it('never offers a live worktree that holds uncommitted work on no ref for disposal', () => {
+    // This is the whole rule, and it is asserted over the repository as it is
+    // rather than over a list of names in this file. There is no name here to go
+    // stale: the set is recomputed from `git` on every run, so an agent that
+    // commits, an agent that disposes a worktree and an agent that creates one
+    // all change the set without changing a line of this suite. That is the point
+    // — the hand-written list was re-derived three times in one session, and each
+    // pass cost ten minutes and a hold.
+    const inv = liveInventory();
+    const inRepo = inv.worktrees.filter((r) => r.inRepo);
+
+    // The facts must have been read at all. An `ahead` that is `null` means git
+    // could not be asked, and a derived set built from unread facts is not
+    // evidence that nothing is at risk — it is evidence that nothing was looked
+    // at, and the assertion below would pass on it.
+    const unread = inRepo.filter((r) => typeof r.ahead !== 'number' || typeof r.mergedIntoMain !== 'boolean');
+    expect(
+      unread.map((r) => `${r.name} (ahead=${r.ahead} onMain=${r.mergedIntoMain})`),
+      'git could not be read in these worktrees, so the derived set below would be empty for a ' +
+        'reason that has nothing to do with whether any work is at risk'
+    ).toEqual([]);
+
+    // Three ways to lose, not one. `prunable` and the disposal list are what an
+    // operator acts on, but they are not the only thing that has to hold: a
+    // generator that stopped reading the working tree at all still refuses to
+    // prune a dirty tree, because the clean-tree clause is inside `prunable`
+    // itself — and it would do that while printing `status: landed` and
+    // `recommendation: prune` for the one copy of the work. So the verdict is
+    // asserted too, and the message says which of the three gave.
+    const exposed = inRepo
+      .filter((r) => holdsWorkGitCannotSee(r))
+      .filter(
+        (r) => r.prunable || inv.disposalCandidates.includes(r.name) || r.recommendation === RECOMMENDATION.PRUNE
+      );
+    expect(
+      exposed.map(
+        (r) =>
+          `${r.name}: ahead=${r.ahead} onMain=${r.mergedIntoMain} dirty=${r.dirty} untracked=${r.untracked} ` +
+          `status=${r.status} recommendation=${r.recommendation} action=${r.action} prunable=${r.prunable}`
+      ),
+      'these worktrees are 0 ahead of main, already on it, and hold uncommitted work that is in no ' +
+        'commit on the branch — so the only copy of it is the working tree, and the generator is ' +
+        'calling it disposable'
+    ).toEqual([]);
+    // See the timeout note on the curated-table test that shares this read.
+  }, 60_000);
+
+  it('refuses to dispose of that shape even with nothing but a dirty tree behind it', () => {
+    // The live set above can legitimately be EMPTY — every worktree of this shape
+    // may have committed or been disposed, which is the GOOD outcome and must not
+    // turn this guard red. So the rule is pinned here as well, on a worktree that
+    // cannot drift: no curated entry, no board agent, no chat, no branch of its
+    // own, nothing but `ahead: 0`, already on main, and files in the tree.
+    //
+    // `classify` is pinned for the same shape one level down ('never marks a
+    // worktree prunable while it holds uncommitted work'); this case is the
+    // assembled document and the `disposalCandidates` list an operator reads,
+    // which is a different surface and can disagree with `classify` without any
+    // test noticing.
+    const inv = buildInventory({
+      worktrees: [
+        wt({
+          name: 'derived-shape',
+          ahead: 0,
+          behind: 0,
+          mergedIntoBase: true,
+          workingTree: { modified: 2, untracked: 1, paths: [] },
+        }),
+      ],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      ...silent(),
+      nowMs: NOW,
+    });
+    const [record] = inv.worktrees;
+    expect(record.status).toBe(STATUS.UNCOMMITTED_ONLY);
+    expect(record.prunable).toBe(false);
+    expect(inv.disposalCandidates).toEqual([]);
+    // And the same worktree with a clean tree IS offered, so the assertion above
+    // is about the dirty tree and not about a list that is always empty.
+    const clean = buildInventory({
+      worktrees: [wt({ name: 'derived-shape', ahead: 0, behind: 0, mergedIntoBase: true })],
+      root: '/repo',
+      base: 'main',
+      mainHead: 'deadbeef',
+      ...silent(),
+      nowMs: NOW,
+    });
+    expect(clean.disposalCandidates).toEqual(['derived-shape']);
   });
 });
 
