@@ -1,8 +1,9 @@
 # Testing, gates, and CI
 
-Everything about running this repository's checks. `AGENTS.md` keeps only the two
-rules an agent needs before it starts (`npm run tsc`, never open a browser
-window); this file is the rest, and it is read when doing gate work.
+Everything about running this repository's checks: the commands, the local and CI
+gates, the traps, and the browser-window ban. `AGENTS.md` carries the rules that
+apply to every task and a one-line pointer here; read this file when you are
+running or changing a check.
 
 ## NEVER OPEN A BROWSER WINDOW
 
@@ -57,10 +58,9 @@ documentation.
 
 - **RUN FROM THE REPO ROOT** (`ph`), via the shell tool's `workdir`. A parent
   directory silently resolves the wrong package and the wrong tsconfig.
-- **`npm run tsc` is the only trustworthy typecheck.** The root `npx tsc` /
-  `npx tsc --noEmit` resolves the solution stub, checks zero files, and exits 0;
-  never use it as a gate. `tsc -b` covers `tsconfig.app/node/e2e.json`, so it
-  also checks the Playwright specs and the test files.
+- **`npm run tsc` IS THE ONLY TRUSTWORTHY TYPECHECK. NEVER GATE ON `npx tsc --noEmit`.** `tsc -b` covers `tsconfig.app/node/e2e.json`, so it also checks the Playwright specs and the test files. `npx tsc --noEmit` at the root resolves the **solution stub** and type-checks **zero files**, for the reason in the next bullet — it is not a narrower project, it is an empty one.
+- **The bare `npx tsc` type-checks ZERO files and always exits 0.** The root `tsconfig.json` is a solution stub — `"files": []`, no `include`, three `references` — so `npx tsc --showConfig -p tsconfig.json` prints `{"compilerOptions": {}}` and the references. It is indistinguishable from a pass, and `.claude/settings.local.json` in the operator's ROOT checkout carries a `"allow": ["Bash(npx tsc:*)"]` wildcard that auto-approves exactly that command. That file is untracked and globally gitignored (`~/.config/git/ignore` has `**/.claude/settings.local.json`), so no worktree, `git status` or `git ls-files` can see it — its absence from your worktree is not its absence from the machine. Only `npm run tsc` (`tsc -b`) type-checks anything.
+  - **It is the stub, not a missing `exclude`, that makes the stub empty.** `tsconfig.app.json` has **no** `exclude` and its `include` is `["src", "toolbar-mapping.ts"]`, so the app project pulls in its test files rather than hiding them. Any future note explaining the trap as "the app tsconfig excludes tests" is wrong on both clauses.
 - `npm run test` is `pool: 'vmThreads'`, `maxWorkers: 4` — a timing-sensitive
   test that only fails in a full run is usually the pool, not the code.
 - `npm run test:e2e` starts Vite on :5173 itself. Pass `--retries=1` for a trace;
@@ -102,7 +102,12 @@ documentation.
   `e2e/no-document-overflow.spec.ts` and its `P2` handoff entry.
 - **Left-rail geometry is a measured constant.** The canonical values live only in
   the header of `e2e/no-document-overflow.spec.ts`; they are font-metric dependent
-  and not asserted, so do not copy them into another document.
+  and not asserted, so do not copy them into another document. The rail is a scroll
+  container with `scrollbar-none`, pinned on both halves. **`min-h-0` on the rail
+  is redundant** with `overflow-y-auto` — a scroll container's automatic minimum
+  size is zero, and deleting the class leaves every viewport case green (measured,
+  not argued) — and it is kept as the explicit form of an otherwise implicit
+  contract.
 - **`scripts/__tests__/*.test.mjs` runs under the root jsdom project and must stay
   environment-agnostic.** The swarm board is a Node script whose only dependency
   is the built-in `node:sqlite`, and it is tested there deliberately: a test file
@@ -134,15 +139,25 @@ Hooks use a shared common-git entry rather than a per-worktree husky directory;
 - `test:e2e:unit` is a Node Vitest suite for e2e helpers, not a browser run or
   commit-gate step. It is the blocking `e2e-unit` CI job; run it when touching
   `e2e/`.
-- The commit gate runs no app unit tests. Run `npm run test` on demand; `gate:push`
-  runs the full suite.
+- **The commit gate runs no app unit test, and that is deliberate.** `npm run test` is the whole-tree check: run it on demand, and `gate:push` runs it for you. The scoped fan-out that used to sit in the gate is a command now — see below. Accepted cost: a test that was already failing before the commit started is caught at push, in CI, or when someone runs `npm run test` — and this repo's worktrees are full of commits that needed exactly that catch.
 - `*.{ts,tsx}` uses ESLint + Prettier;
   `*.{js,jsx,mjs,cjs,scss,css,jsonc,yml,yaml,md,json}` uses Prettier only. **Do
   not add ESLint for the latter group**: no config covers it, and doing so breaks
   Markdown/SCSS commits. `scripts/*.js` is in that second group.
-- **`lint:check` lints `git ls-files`, not `.`.** Its extension lists live in
-  `scripts/lint-tracked.js`; tracked images, `snippet.txt`, and `index.html` are
-  deliberately excluded. Legacy files outside the linted set are not a problem.
+- **`lint:check` lints `git ls-files`, not `.`.** `scripts/lint-tracked.js` is the
+  only place the two extension lists live, and they are the same rule on both
+  sides: `lint:check` covers every tracked file of those types, `.husky/pre-commit`
+  covers the staged subset. A filesystem-scoped command took `.kilo/`'s worktrees,
+  `dist/`, and generated e2e output as input, and needed a hand-maintained
+  `.prettierignore` to stop `npm run format` rewriting them — that file is gone
+  because nothing it listed is tracked. The tracked images,
+  `src/components/SidebarLeft/snippet.txt` (the only tracked `.txt`) and
+  `index.html` are **not** linted, deliberately. **"The dotfiles are not linted" is
+  not quite true and should not be repeated:** it means dotfiles with no linted
+  extension — `.gitattributes`, `.gitignore`, `.nvmrc`, `.prettierrc` — while
+  `.copilot-instructions.md` is a dotfile that _is_ linted, because it matches
+  `*.md`. The globs in the script are where that decision is written down.
+  **Legacy files being outside the linted set is not a problem to solve.**
 - `--fail-on-changes --no-stash` leaves formatter fixes unstaged and blocks the
   commit; never allow hooks to rewrite the index. `--no-stash` is not optional:
   without it lint-staged keeps its backup stash every time it declines to revert,
@@ -160,9 +175,24 @@ Hooks use a shared common-git entry rather than a per-worktree husky directory;
 `npm run test:staged` runs the tests that transitively import the staged paths. It
 is **deliberately not in the commit gate**; `npm run test` is the whole-tree check.
 
-It cannot replace `npm run test`, catch a test that was already failing, or find
-coverage gaps. A staged path with no importing test selects zero files and exits
-zero. Keep the pipeline NUL-safe: `git diff --cached --name-only -z | xargs -0`.
+It was in the gate and was taken out, because its cost is a function of a file's
+fan-in across the test suite rather than of the change. Measured, the selection
+was about 5% of the suite for a hook, a util or a component; 44% for
+`src/contexts/StoreContext.tsx`; 64% for `src/util/draw.ts`; and 100% for
+`src/test/setup.ts` or `vitest.config.ts`, at which point it costs about as much
+as the full suite and can cost more, because the module-graph build is a second
+whole-tree pass. Proportions are the stable fact and absolute counts go stale
+every time a test file lands, which is why only those are recorded here.
+
+It is worth knowing for what it is good: cost tracks blast radius, and so does
+risk, so the expensive case is the one that genuinely needs the widest net. What
+it cannot do is see a test that was **already** failing before the commit started,
+which is exactly the state this repository's history is full of, and what it
+cannot do is find a coverage gap. Two limits to hold in mind when you run it: a
+staged path that no test imports selects 0 files and exits 0 (usually correct —
+nothing covers it, so nothing can fail), and the pipeline must stay NUL-safe,
+`git diff --cached --name-only --diff-filter=ACMR -z | xargs -0`, because an
+unquoted `$(...)` word-splits and globs into a silent pass.
 
 ### CI
 

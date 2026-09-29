@@ -1,6 +1,8 @@
 # AGENTS.md
 
-Photoshop-inspired, production-grade photo editor. Instructions for coding agents.
+Photoshop-inspired, production-grade photo editor — a Photoshop clone, not a
+"Photoshop-inspired" surface with room for app-specific extras. Instructions for
+coding agents.
 
 **The detail lives in linked files.** Read the root file for the rules that apply
 to every task; open the linked file when the task is that kind of work.
@@ -9,7 +11,7 @@ to every task; open the linked file when the task is that kind of work.
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
 | [`docs/TESTING.md`](docs/TESTING.md)                   | running or changing any check: `tsc`, `test`, `lint`, `e2e`, build, CI                                 |
 | [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md)       | working alongside other agents: worktrees, the swarm board, the worktree list, recovering a dead agent |
-| [`docs/PHOTOSHOP-UX.md`](docs/PHOTOSHOP-UX.md)         | touching the Tools rail, tool names, or panel behaviour                                                |
+| [`docs/PHOTOSHOP-UX.md`](docs/PHOTOSHOP-UX.md)         | touching the Tools rail, tool names, or Photoshop-fidelity requirements                                |
 | `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN_PROBLEMS.md` | filing or checking a known defect — see "Handoff documents"                                            |
 
 ## Subagents: THE DEFAULT, NOT THE FALLBACK
@@ -120,9 +122,11 @@ reducer publication.**
 3. **Covered** by a test that fails without the change. A fix that cannot be pinned by a test is a fix that comes back.
 4. **Documented**: handoff docs updated, and any new gate, test trap, or architecture boundary written down where the next agent looks.
 5. **Reviewed by someone else**, thoroughly: the diff, the surrounding code, the tests, and its own load-bearing claim re-run. Not the author. A finding sends the task back.
-6. **Merged into `main`** after review and passing gates.
+6. **Merged into `main`** after review and passing gates. Pushed, `main` green afterwards.
 7. **Reported as done**: what changed, what validation ran, what the review said.
 
+- **A green gate is the floor, not the review.** `gate:commit` and `gate:push` are mechanical, and a review that was not performed is not a review that found nothing.
+- **Only step 6 writes to `main`** (plus a hotfix the operator asked for on `main`).
 - **A blocked merge is not done.** Operator decision pending, a defect the operator wants kept, a conflict that needs judgement: say so and name what is outstanding. Reporting "done" with an unmerged branch is the failure mode this section exists to prevent.
 
 ## Handoff documents
@@ -131,9 +135,20 @@ reducer publication.**
 
 - **Route by scope.** `HANDOFF.md` is for history/replay and document-state defects. `TEST-FLAKES.md` is for test-infrastructure defects — flakiness, the pool, the runner, the gates themselves. `e2e/OPEN_PROBLEMS.md` is for Playwright. Do not file a gate or pool defect in `HANDOFF.md`; it is scoped, and a cross-scope entry is the one nobody reads.
 - **Nothing durable goes in `.kilo/` or the swarm database.** Both are machine-local; findings belong in the scoped handoff documents. Close the swarm entry when its verified finding is deleted from the handoff.
-- **Line-numbered handoff citations move with the file.** If a diff adds or removes lines above `file.ts:NNN`, re-derive every citation below it from the prose's claim.
+- **Line-numbered handoff citations move with the file.** Growing a file **silently**
+  invalidates every `file.ts:NNN` in the handoffs that points into it. If a diff adds
+  or removes lines above `file.ts:NNN`, re-derive every citation below it from the
+  prose's claim. **A `grep` sweep does not catch it, because the text at the stale
+  line still looks plausible.** A correction applied from an audit is as
+  load-bearing as the original and needs the same check.
 
 **WRITE OR UPDATE THE HANDOFF WITHOUT ASKING** for every validated issue, strong recommendation, or durable finding. Ship it with the work.
+
+**THE COMMIT GATE AND THESE DOCS CARRY NO WALL-CLOCK NUMBERS.** Every cost figure
+written into a hook comment or a doc has gone stale, and one — "the app suite is
+likely minutes" — was never measured at all and was the stated reason for a design
+decision that then shipped. Measure before you design; do not leave a number
+behind.
 
 ### Lifecycle: entries die, they never get reworded
 

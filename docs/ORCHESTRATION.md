@@ -116,7 +116,7 @@ node scripts/worktree-inventory.mjs --quiet    # totals only
 ```
 
 **Read `action` first.** Every record carries one value, and it is the whole
-answer — which of the three things is it:
+answer — which of the six things it is:
 
 | `action`    | meaning                                                                                         | do this           |
 | ----------- | ----------------------------------------------------------------------------------------------- | ----------------- |
@@ -142,14 +142,26 @@ If `at-risk` and `mergedIntoMain` are both true, read the protecting entry's
 
 **`mustNotPrune` vetoes `land` and `dispose`.** It records a human claim that the
 worktree is not accounted for; every such entry must include a note explaining
-what would be lost. Anything a human must decide lives in
-`scripts/lib/worktree-inventory/curated.mjs` and survives regeneration. Curated
+what would be lost. A merge recommendation is as much a claim about the contents
+as a prune recommendation is, so a `land` entry carrying `mustNotPrune: true` is
+impossible by construction; if you see one, the flag is stale and belongs
+retracted in the same change that noticed it. Anything a human must decide lives
+in `scripts/lib/worktree-inventory/curated.mjs` and survives regeneration. Curated
 entries are not interchangeable: `polygon-marching-ants` has `mustNotPrune` and a
-note but no `issues` or `landed`, while `ps-pixel-tools` has `issues` and a claimed
-`landed` state. Read the source file rather than copying a prose example.
-**When you create a worktree, add its entry in the same change** — an uncurated
-worktree is one nobody has written down what it is for, which is how a preservation
-branch gets mistaken for a disposable one.
+note but no `issues` or `landed`, while `ps-pixel-tools` has `issues` and a
+claimed `landed` state. Read the source file rather than copying a prose
+example. **When you create a worktree, add its entry in the same change** — an
+uncurated worktree is one nobody has written down what it is for, which is how a
+preservation branch gets mistaken for a disposable one.
+
+`readyToLand`, `disposalCandidates`, `atRisk`, `readUnfinished`, `workOnNoRef` and
+`readLostWorktree` are named at the top of the file so you do not have to filter
+the whole list to find them, and `node scripts/worktree-inventory.mjs` prints the
+first two before the evidence. `readLostWorktree` matters most of those: it is
+the only list that names a session whose worktree was **deleted**, which no
+computed signal can produce, and it cannot be derived from the worktree record it
+used to live on — the loop that fills it only visits worktrees that still exist,
+so it was structurally always false.
 
 **"merges cleanly" is VERIFIED, not assumed.** `mergeConflict` comes from
 `git merge-tree --write-tree`, which performs the merge in a scratch object store
@@ -173,14 +185,34 @@ prunable.
 
 ### What the chat columns do and do not tell you
 
-`WORKTREES.json` has computed `chats.byState` and observed `chats.read` views.
-Never reconcile them: disagreement is the finding. `session.directory` is where a
-chat opened, not necessarily where it worked; `board.agents` is the second
+`WORKTREES.json` has computed `chats.byState` and observed `chats.read` views;
+the observed one comes from `scripts/lib/worktree-inventory/chat-audit.data.json`,
+where each record carries a `readState` (`struggling`, `blocked`, `abandoned`,
+`failed`, `unknown`, `finished`), a `readRisk`, and a `note` — conclusions about
+sessions, never their contents, so the file cannot leak what was said. Never
+reconcile the two views: disagreement is the finding. `session.directory` is where
+a chat opened, not necessarily where it worked; `board.agents` is the second
 liveness signal and `in-use` uses either. **An empty `chats.count`, empty
 `board.agents`, or old timestamp means unknown, never "nobody worked there".**
-Re-check read-derived lists against the live tree before removing a worktree.
-`active` is never reported abandoned; `blocked` means a live machine is waiting on
-a human, so answer it; `rejected-credits` is a caller bug, not work to redo.
+Re-check read-derived lists against the live tree before removing a worktree: a
+read-derived count is a claim about a moment, which is why `workOnNoRef` carries
+`stillOnNoRef`.
+
+`chats.unfinished` holds **six** states (`chats.mjs:57-64`): `active`,
+`abandoned-midflight` (a stale session whose last turn ended on a tool call),
+`blocked` (waiting on a human answer), `died-at-birth`, `rejected-credits` and
+`orphaned` (the worktree directory no longer exists). `chats.dead` holds the
+subset that will never produce anything: `died-at-birth`, `rejected-credits` and
+`orphaned`. **Count `rejected-credits` before blaming a branch for making no
+progress** — it means a launcher resolved a bare model name onto a paid GPT id
+and the subagent died at zero tokens, so the fix is in the caller and there is
+nothing to salvage or redo. `active` is never reported abandoned: recency is
+checked before the shape of the last turn, because a live machine's most recent
+turn always ends in a tool call.
+
+**`landed: true` is a curator's claim**, printed next to git's answer as
+`claimedLanded` against `mergedIntoMain`. A test re-derives it from
+`git merge-base --is-ancestor` and fails when the two disagree.
 
 **Never put a count in a summary.** `dirty`, `untracked`, `ahead`, `behind` and
 `commitsAheadTruncated` are already on every record — describe WHAT a worktree
@@ -205,6 +237,9 @@ npm run swarm -- watch    # the event log; --follow to tail it
 npm run swarm -- health   # is this board being USED, or only carried?
 npm run swarm -- doctor   # release claims from dead worktrees and expired leases
 ```
+
+There is no `swarm` binary: every command is `npm run swarm -- <command>`. The rest
+of this file names subcommands bare for readability.
 
 **There are two boards and they are not the same thing.** Kilo ships a built-in
 tool called `board_read`, and it is empty _on purpose_: it carries messages
@@ -234,10 +269,10 @@ their own numbering, so re-running files only what is new.
   outside a dedicated worktree — on `main`, or detached — pass `--agent` or set
   `AGENT_BOARD_AGENT`, or you and the next agent are the same agent to the board.
 - **A claim lives while your worktree does — there is no heartbeat to forget.**
-  `swarm claim ph-12` holds it for 45 minutes, and every later command renews it
-  automatically, because your worktree is still on disk. `swarm heartbeat` still
-  exists and is still correct — it is the only thing that can renew for an agent
-  with **no worktree** (working on `main`, or detached).
+  `npm run swarm -- claim ph-12` holds it for 45 minutes, and every later command
+  renews it automatically, because your worktree is still on disk. `swarm
+heartbeat` still exists and is still correct — it is the only thing that can
+  renew for an agent with **no worktree** (working on `main`, or detached).
 - **A claim whose worktree is gone is released by the next command from anybody.**
   The board renews your own claim **first** and sweeps **second**, and that order
   is the entire safety argument: renewing first means a working agent's lease is
@@ -274,13 +309,16 @@ their own numbering, so re-running files only what is new.
   naming somebody else is a name the caller supplies about an agent that is not in
   the room. A reviewer closes an issue by being the reviewer.
 - **`--agent <id>` is unauthenticated, and it DEFEATS the self-close check.** The
-  guard compares the string you pass, not who you are, so `swarm close <id>
---agent somebody-else` closes an issue you resolved yourself. **Use `--agent`
+  guard compares the string you pass, not who you are, so `npm run swarm -- close
+<id> --agent somebody-else` closes an issue you resolved yourself. **Use `--agent`
   only to speak for a branch you actually are**, and never to close anything.
-- **`swarm note` is how one agent addresses the swarm**; `swarm watch --follow`
-  tails the same log. Every command appends to it, which is the replacement for N
-  agents each writing their own account of the same work into a document nobody
-  else can see until it is merged.
+  Verified: `close` as the resolving agent exits 5; the same `close` with a
+  different `--agent` exits 0. **The operator owns the decision on whether to
+  close this, so it is filed, not fixed.**
+- **`npm run swarm -- note` is how one agent addresses the swarm**; `npm run swarm
+-- watch --follow` tails the same log. Every command appends to it, which is the
+  replacement for N agents each writing their own account of the same work into a
+  document nobody else can see until it is merged.
 - **Exit codes are the interface:** 0 ok · 1 usage or error · 2 not found · 3
   claimed or not claimable · 4 file held by another agent · 5 self-verification
   refused.
@@ -296,14 +334,14 @@ first Kilo run to touch a branch and is never read back. So a `swarm note` from
 one worktree is in the same log every other session's `swarm watch --follow`
 tails. That is why these are not optional politeness:
 
-- **Claim before the first edit**, not after: `swarm claim <id> --files <paths you
-will touch>`, or `swarm hold <path>` for a path with no issue. `swarm check
-<paths>` before you edit anything a brief, a handoff, or a sibling subagent
-  names. Both exit 1 on a path somebody else holds, and the refusal names the
-  holder.
+- **Claim before the first edit**, not after: `npm run swarm -- claim <id> --files
+<paths you will touch>`, or `npm run swarm -- hold <path>` for a path with no
+  issue. Run `npm run swarm -- check <paths>` before you edit anything a brief, a
+  handoff, or a sibling subagent names. `check` exits 1 on a path somebody else
+  holds, and `claim`/`hold` exit 4; both name the holder.
 - **Claim the merge, not just the files.** A branch that is about to land carries
-  a hazard to every path in it, and no file claim expresses that. `swarm note` the
-  branch and the paths _before_ you start resolving.
+  a hazard to every path in it, and no file claim expresses that. `npm run swarm
+-- note` the branch and the paths _before_ you start resolving.
 - **A delivered note is a log write, not a delivery.** There is no recipient
   column, no wake and no activity notice: `note` is broadcast, and `comment <id>`
   needs an issue somebody filed. Put the fact where a running agent will meet it

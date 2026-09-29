@@ -6,8 +6,8 @@ same group, same name, same spot, same letter. A user switching from Photoshop
 must find the same tool where their hand expects it.
 
 `docs/TOOLS.md` is the generated per-tool specification, built from
-`src/tools/descriptions/*.ts` and `.notes.md`. This file is the requirement and
-the open violations.
+`src/tools/descriptions/*.ts` and the `src/tools/descriptions/*.notes.md` files
+beside them. This file is the requirement and the open violations.
 
 ## The requirement
 
@@ -57,9 +57,13 @@ violations on `main`.
   currently render a `PlaceholderTool` chip bar instead — the six Pen-family tools
   and Custom Shape. Photoshop's grouping and naming are the specification; the stub
   bar is the debt.
-  - **The placeholder roster is seven, not eight.** Re-derive it with
-    `grep -c "placeholderTool(" src/tools/toolsMap.ts` and the `placeholderNames`
-    membership in `tool-processors.test.ts`.
+  - **The placeholder roster is seven, not eight.** **Color Replacement is NOT on
+    that list and must not be put back on it.** It left the roster:
+    `toolsMap.ts:117-121` wires the real `ColorReplacement.tsx`,
+    `toolbarPlaceholderConfig.ts:13-16` records the removal, and
+    `tool-processors.test.ts:592-615` and `:617-635` assert the real bar.
+    Re-derive the count with `grep -c "placeholderTool(" src/tools/toolsMap.ts` and
+    the `placeholderNames` membership in the same test; both answer seven.
 
 ## What is not a tool
 
@@ -72,11 +76,21 @@ violations on `main`.
 ## Confidence and provenance
 
 **Membership is Adobe-confirmed; group order and separator placement are not.**
-Adobe publishes no page that enumerates the Tools panel top-to-bottom, so the
-group order is a reconstruction from third-party diagrams cross-checked against
-Adobe for membership. Treat it as a good hypothesis and prefer a grouping a user
-recognises over one a source asserts. `docs/TOOLS.md` and the `.notes.md` files
-carry the per-tool sources; a description without a source is a rumour.
+Adobe publishes no page that enumerates the Tools panel top-to-bottom — they
+publish five topical overview tables (selection, retouch, painting, drawing,
+navigation-and-measuring) plus a Customize toolbar page — so the group order is a
+reconstruction from two independent third-party 2026 toolbar diagrams,
+cross-checked against Adobe for membership. Treat it as a good hypothesis and
+prefer a grouping a user recognises over one a source asserts. `docs/TOOLS.md` and
+the `.notes.md` files carry the per-tool sources; a description without a source is
+a rumour.
+
+The navigation-and-measuring overview is Adobe's least complete: only one line
+was retrievable ("Ruler tool Measures distances, locations, and angles"). Hand,
+Rotate View, Zoom, Frame, Slice, Perspective Crop, Slice Select, Path Selection
+and Direct Selection are therefore **not Adobe-table-confirmed** and are listed
+from the shortcut PDF and individual tool pages. That list lives here; nothing
+else in the repository carries it.
 
 Two 2026 candidates are **not** Adobe-confirmed and must not ship as tools: Clone
 Source (a gap in one diagram's icon numbering, name never printed) and Generate
@@ -87,10 +101,19 @@ feature involving an adjustment layer plus a painted mask) are desktop Photoshop
 and Adobe-confirmed. `HANDOFF.md` §74 records the corrections that brought them
 into the list.
 
+**Naming traps in the source material, so nobody "fixes" them later:** Adobe's
+tables say "Elliptical Marquee tool" and "Ellipse tool" — two different words for
+two different tools. Adobe's painting table prints "Gradient tools" in the
+plural, which conflicts with the singular everywhere else; that one is a genuine
+Adobe-side inconsistency. "Content-Aware Move tool" is hyphenated.
+
 ## What it costs
 
 Adding a tool means updating every hand-written registry list, including
-`dispatchTable`, `icons`, and `toolIcons.test.tsx`'s union. HANDOFF §68 has the
+`dispatchTable`, `icons`, and `toolIcons.test.tsx`. The hand-copied lists in the
+tests are the expensive part. `toolIcons.test.tsx` carries a 46-name union by hand
+(46 = the 41 tool ids plus 5 `shape-*` figure icons), byte-identical to
+`ToolIconName` in `SidebarLeft/types.ts`; **keep it that way**. HANDOFF §68 has the
 file-by-file blast radius and the tests that pin tool names. Count the lists
 yourself before estimating an edit rather than trusting a number written
 anywhere.
