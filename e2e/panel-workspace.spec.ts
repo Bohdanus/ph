@@ -12,9 +12,13 @@ import { openToolFlyout } from './helpers/toolbar-helpers';
  *    exist, and `toBeVisible()` cannot tell the two apart — it checks for a box, not for
  *    pixels receiving the event. `e2e/sidebar-flyout.spec.ts` already established this trap here
  *    and the same discipline applies.
- *  - **Clipping.** The rail is `overflow-y: auto`, so it clips on both axes, and the tools
- *    rail is now movable to the right edge where a flyout has to open the other way. Whether
- *    the overlay is actually PAINTED is `elementFromPoint` territory.
+ *  - **Overlap.** The tools rail is now movable to the right edge, where a flyout has to open
+ *    the other way — and the flyout is PORTALLED to `document.body`, so it is never clipped by
+ *    the rail and no `toBeVisible()` failure would ever report it. It can still land ON TOP of
+ *    the rail, which is a real defect that only a geometry assertion sees: the rail's tiles sit
+ *    on a 108px grid inside a narrower content box, so a second-column tile starts past the
+ *    rail's own right edge. `elementFromPoint` is used to confirm the overlay is actually
+ *    painted rather than merely present, which is the one claim a box cannot support.
  *  - **Persistence.** A reload is the only way to prove the layout survives one, and it is the
  *    behaviour Photoshop documents ("workspaces display your last arrangement of panels").
  *  - **Reflow.** The canvas is sized by a `ResizeObserver` on its own box, so a wider dock has
@@ -30,10 +34,17 @@ const RAIL_GRIP = '[data-testid="rail-re-dock-handle"]';
 
 const width = (locator: Locator) => locator.evaluate((node) => node.getBoundingClientRect().width);
 
-/** What a panel heading says, top to bottom. The order IS the state under test. */
+/**
+ * What a panel heading says, top to bottom. The order IS the state under test.
+ *
+ * `panel-header-row-*` is the header ROW and `panel-header-*` is the draggable control inside
+ * it, so a bare `^=` prefix matches both and this returns four entries where there are two
+ * panels. The row is excluded by name rather than by position, because a positional filter
+ * would keep working right up until the row order changed.
+ */
 const panelOrder = (page: Page) =>
   page
-    .locator(`${DOCK} [data-testid^="panel-header-"]`)
+    .locator(`${DOCK} [data-testid^="panel-header-"]:not([data-testid^="panel-header-row-"])`)
     .evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-testid')?.replace('panel-header-', '')));
 
 test.describe('Panel workspace (fast)', () => {
@@ -72,7 +83,11 @@ test.describe('Panel workspace (fast)', () => {
 
     expect(await width(page.locator(DOCK))).toBeCloseTo(330, 0);
     // And the canvas gets the space back, which is the reason the gesture is worth having.
-    expect(await width(page.locator('main'))).toBeCloseTo(1280 - 108 - 330, 0);
+    // Read the rail rather than naming its width: 108px is the two-column layout's, and the
+    // rail is one column below `lg` or after the toggle, so a hard-coded 108 would be a
+    // constant that happens to hold at this viewport and nowhere else.
+    const railWidth = await width(page.locator(RAIL));
+    expect(await width(page.locator('main'))).toBeCloseTo(1280 - railWidth - 330, 0);
   });
 
   test('does not resize from a click inside the panels', async ({ page }) => {
@@ -126,12 +141,19 @@ test.describe('Panel workspace (fast)', () => {
     // "Release the tab when a blue highlight appears" — the target is drawn DURING the drag.
     const line = page.locator('[data-testid="panel-drop-line"]');
     await expect(line).toBeVisible();
-    // `toBeVisible` only proves a box and a visibility value. The drop target is a promise
-    // about where the release will land, so it has to be painted where it says it is.
+    // `toBeVisible` only proves a box and a visibility value, and this line is
+    // `pointer-events: none` inside an `overflow: hidden` column — a clipped drop target keeps
+    // a non-zero box, so the test has to paint-probe it. `elementFromPoint` ignores
+    // `pointer-events: none` elements, so the probe is made against the column's own child
+    // beneath the line's centre and the line's own geometry is compared to it.
     const lineBox = (await line.boundingBox())!;
     expect(lineBox.height).toBeGreaterThanOrEqual(1);
     expect(lineBox.x).toBeGreaterThanOrEqual(dockBox.x);
     expect(lineBox.x + lineBox.width).toBeLessThanOrEqual(dockBox.x + dockBox.width + 1);
+
+    // And it must sit inside the column's clipped box, or `overflow: hidden` eats it. The line
+    // is at the column's bottom edge in this gesture, so that is the edge that has to hold.
+    expect(lineBox.y + lineBox.height).toBeLessThanOrEqual(dockBox.y + dockBox.height + 1);
 
     await page.mouse.up();
     expect(await panelOrder(page)).toEqual(['layers', 'history']);
@@ -160,17 +182,20 @@ test.describe('Panel workspace (fast)', () => {
     const group = page.locator('[data-testid="panel-group-history"]');
     await expect(tab).toHaveAttribute('aria-expanded', 'false');
     const groupBox = (await group.boundingBox())!;
-    const headerBox = (await tab.boundingBox())!;
-    // A rolled-up group is its tab and nothing else. Its own 1px bottom border rides along —
-    // that border is the separator to the group below, and it is drawn whether or not there is
-    // still a body under it — so the tolerance is the border, and the check that matters is
-    // that the group is not tall enough to hold a panel.
-    expect(Math.abs(groupBox.height - headerBox.height)).toBeLessThanOrEqual(2);
-    expect(groupBox.height).toBeLessThan(headerBox.height * 2);
+    // The ROW, not the control inside it: the row is the tab bar, and the control is a
+    // `self-stretch` child of it, so measuring the control compares a stretched box against the
+    // box that stretched it. A rolled-up group is its tab bar and nothing else.
+    const rowBox = (await page.locator('[data-testid="panel-header-row-history"]').boundingBox())!;
+    // The group's own 1px bottom border rides along — that border is the separator to the
+    // group below, drawn whether or not there is still a body under it — so the tolerance is
+    // the border.
+    expect(Math.abs(groupBox.height - rowBox.height)).toBeLessThanOrEqual(2);
 
     await tab.dblclick();
     await expect(tab).toHaveAttribute('aria-expanded', 'true');
-    expect((await group.boundingBox())!.height).toBeGreaterThan(headerBox.height * 4);
+    // Expanded, the group is a panel again rather than a tab bar — several times taller, which
+    // is the pair that says "rolled up" and not merely "short".
+    expect((await group.boundingBox())!.height).toBeGreaterThan(rowBox.height * 4);
   });
 
   test('resizes both groups from the shared divider', async ({ page }) => {
@@ -243,9 +268,10 @@ test.describe('Panel workspace (fast)', () => {
   });
 
   test('opens a flyout on the canvas side of a rail that is on the right edge', async ({ page }) => {
-    // The rail is `overflow-y: auto` and therefore clips on both axes, so a flyout placed on
-    // the wrong side of a right-hand rail is in the DOM with a real box and PAINTS NOTHING.
-    // `toBeVisible()` passes for that; `elementFromPoint` does not.
+    // The flyout is PORTALLED to `document.body` and positioned `fixed`, so the rail's
+    // `overflow-y: auto` cannot clip it and `toBeVisible()` would pass whatever side it landed
+    // on. What is asserted below is geometry — clear of the rail, and on screen — plus a paint
+    // probe for the case where a correct box still paints nothing.
     const grip = (await page.locator(RAIL_GRIP).boundingBox())!;
     await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
     await page.mouse.down();
@@ -303,15 +329,37 @@ test.describe('Panel workspace (fast)', () => {
     expect(await panelOrder(page)).toEqual(['history', 'layers']);
   });
 
-  test('restores the default for a user with no stored layout at all', async ({ page }) => {
-    // The control case the three assertions above need: with a clean key there is no stored
-    // record to restore, so "restores what it found" has to mean "opens on the default" and
-    // not "opens on nothing".
-    await page.addInitScript(() => window.localStorage.removeItem('panelLayout'));
+  test('a corrupt stored layout degrades to the default rather than to nothing', async ({ page }) => {
+    // The control the persistence test above needs. A hand-edited or cross-version record is
+    // the only way `panelLayout` gets a value the app never wrote, and `readStoredLayout` exists
+    // for exactly that. Without a control, "restores what it found" would also be satisfied by
+    // a store that returns null for everything — which is what an empty key looks like.
+    await page.addInitScript(() =>
+      window.localStorage.setItem('panelLayout', '{"dockWidth": "wide", "panelOrder": ["nope"]}')
+    );
     await page.reload();
     await expect(page.locator(RAIL)).toBeVisible();
 
     expect(await width(page.locator(DOCK))).toBeCloseTo(250, 0);
     expect(await panelOrder(page)).toEqual(['history', 'layers']);
+  });
+
+  test('a stored width below the label floor is reachable back out of', async ({ page }) => {
+    // The one-way door. The icon strip's only expand control calls `setDockWidth(dockWidth)`,
+    // which collapses again on a width that is still under the floor, and the double-arrow is
+    // not rendered while collapsed — so a 45px stored width left only `Window > Reset`.
+    await page.addInitScript(() =>
+      window.localStorage.setItem('panelLayout', '{"dockWidth": 45, "isCollapsed": false}')
+    );
+    await page.reload();
+    await expect(page.locator(RAIL)).toBeVisible();
+
+    const dock = page.locator(DOCK);
+    expect(await width(dock)).toBeLessThan(56);
+    await expect(page.locator('[data-testid="dock-icon-strip"]')).toBeVisible();
+
+    // Out, without the reset menu.
+    await page.locator('[data-testid="dock-icon-layers"]').click();
+    expect(await width(dock)).toBeGreaterThanOrEqual(56);
   });
 });

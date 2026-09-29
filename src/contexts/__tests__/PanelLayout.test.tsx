@@ -208,6 +208,39 @@ describe('PanelLayout', () => {
     });
   });
 
+  describe('rememberDockWidth', () => {
+    // A second writer of `dockWidth`, and the one-way door is a property of `dockWidth` being
+    // below the label floor, so a writer that could put it there reopens what `setDockWidth`
+    // closes.
+    it('will not remember a width below the label floor', () => {
+      const { result } = renderLayout();
+
+      act(() => result.current.rememberDockWidth(10));
+      expect(result.current.dockWidth).toBe(DOCK_LABEL_MIN_WIDTH);
+    });
+
+    it('still clamps an absurd width', () => {
+      const { result } = renderLayout();
+
+      act(() => result.current.rememberDockWidth(1_000_000));
+      expect(result.current.dockWidth).toBe(DOCK_MAX_WIDTH);
+    });
+
+    it('remembers a real width without expanding a collapsed dock', () => {
+      const { result } = renderLayout();
+
+      act(() => result.current.setDockWidth(30));
+      expect(result.current.isCollapsed).toBe(true);
+
+      act(() => result.current.rememberDockWidth(420));
+      expect(result.current.dockWidth).toBe(420);
+      // Remembering is not the same as setting: the dock stays where it is and comes back to
+      // 420 on the way out, which is the whole point of remembering it.
+      expect(result.current.isCollapsed).toBe(true);
+      expect(result.current.effectiveDockWidth).toBe(DOCK_MIN_WIDTH);
+    });
+  });
+
   describe('resetWorkspace', () => {
     it('returns every field to the opening layout', () => {
       const { result } = renderLayout();

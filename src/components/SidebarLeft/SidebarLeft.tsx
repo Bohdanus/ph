@@ -32,11 +32,18 @@ const RE_DOCK_ZONE = 0.25;
 /**
  * The grip that drags the rail to the other edge.
  *
- * Photoshop's Tools panel has no such control of its own — you drag the panel itself, by its
- * grab area. This rail has no title bar to grab, and inventing one would put a row of chrome
- * above the tools that Photoshop does not have. So the grip goes in the row that already exists
- * for the one/two-column toggle, which is the same place the user already goes to change the
- * rail's shape, and the row keeps its height either way.
+ * Adobe's Photoshop training material describes exactly this control: "the Tool bar can be
+ * relocated and even 'docked' to the panels on the right side of the screen. Simply drag it by
+ * the grabber handle — when you see the solid blue line next to your panels on the right,
+ * release the cursor to 'dock' the panel." (Adobe, Photoshop training: re-locating the tool
+ * bar.) So the grip is not an invention, and an earlier version of this comment saying
+ * Photoshop has no such control was simply wrong.
+ *
+ * What the app lacks is the TITLE BAR the gesture starts from — a rail of forty tool tiles with
+ * no panel header to drag. Inventing one would put a row of chrome above the tools, which is a
+ * different rail from Photoshop's. So the grip goes in the row that already exists for the
+ * one/two-column toggle: that is where a user already goes to change the rail's shape, the row
+ * keeps its height either way, and the blue drop line is the one the quote describes.
  */
 const RailGripIcon = () => (
   <span aria-hidden="true" className="flex flex-col gap-[2px]">
@@ -564,6 +571,9 @@ const SidebarLeft = () => {
 
   return (
     <aside
+      // The other `complementary` landmark. Unnamed, a screen reader announces two
+      // indistinguishable regions, and one of them holds every tool in the app.
+      aria-label="Tools"
       // `scrollbar-none` is main's, and the border is now CONDITIONAL because the rail can sit
       // on either edge: `overflow-y: auto` computes `overflow-x` to `auto` and the border
       // always sits outside the content box, so the border belongs on whichever side faces the

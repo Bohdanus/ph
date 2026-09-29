@@ -25,12 +25,18 @@ import PanelGroup from './PanelGroup.tsx';
  *
  * ## Why the aside is not `overflow: hidden` any more
  *
- * The resize handle has to sit ON the canvas-side edge, half outside the column, which is where
- * Photoshop puts it and the only place the pointer is unambiguously "on the divider". An
- * absolutely positioned child at `left: -4px` is clipped by any `overflow` other than
- * `visible` on the aside, so the clipping moved inward to the column that actually needs it.
- * The panel groups keep exactly the clipping they had; only the aside's own box is now
- * overflow-visible, and nothing inside it is positioned against the aside.
+ * The resize handle sits ON the dock's canvas-side edge, which is where Photoshop puts it and
+ * the only place the pointer is unambiguously "on the divider". It is `absolute` with a
+ * `left-0` or `right-0`, so it lies WITHIN the aside's padding box: an earlier version of this
+ * comment claimed the handle sat half outside at `left: -4px`, which no rule in this file ever
+ * did, and `overflow: hidden` would therefore not have clipped it. The e2e measurement says so
+ * directly — the handle lands 1px inside the 1px border.
+ *
+ * The clipping moved inward anyway, to the column that genuinely needs it, and the reason is
+ * not the handle. The dock-edge drop line is `position: fixed` and renders as a SIBLING of that
+ * column; an `overflow: hidden` aside is not a containing block for it either, but it is one
+ * step closer to becoming one, and the aside is the element most likely to acquire a transform
+ * if the rail's re-dock ever animates. The panel groups keep exactly the clipping they had.
  *
  * ## The panel drag does two things
  *
@@ -42,7 +48,18 @@ import PanelGroup from './PanelGroup.tsx';
  * targets are drawn as a blue line before the release, never after.
  */
 
-/** Neither panel is useful below this, so the divider stops here rather than past it. */
+/**
+ * Neither panel is useful below this, so the divider stops here rather than past it.
+ *
+ * `PanelLayout` expresses the same floor as `PANEL_MIN_RATIO`, a fraction. They are two
+ * expressions of one constraint and they do not agree: the ratio is the PERSISTED clamp, so a
+ * split that is reachable at a tall window is not necessarily reachable at a short one, where
+ * the pixel floor below is the tighter of the two and wins. The persisted value is still in
+ * bounds, so this is a felt asymmetry rather than a broken one — but the two constants are the
+ * reason a divider can refuse a drag that a previous session accepted, and they are named for
+ * what they are rather than unified because unifying them would make the persisted clamp depend
+ * on the window the user happened to have.
+ */
 const PANEL_MIN_HEIGHT = 88;
 
 /** How far out toward the opposite edge a tab has to travel before the dock will follow it. */
@@ -99,6 +116,10 @@ const SidebarRight = () => {
   const [insertionIndex, setInsertionIndex] = useState<number | null>(null);
   const [edgeTarget, setEdgeTarget] = useState<'left' | 'right' | null>(null);
   const dragOriginXRef = useRef(0);
+  // The same three, for the commit to read. See `onPanelDragEnd`.
+  const draggingPanelRef = useRef<PanelId | null>(null);
+  const insertionIndexRef = useRef<number | null>(null);
+  const edgeTargetRef = useRef<'left' | 'right' | null>(null);
 
   /** Where the column was and how tall when a divider drag began, so deltas convert to a ratio. */
   const splitterStartRef = useRef<{ ratio: number; height: number } | null>(null);
@@ -106,10 +127,16 @@ const SidebarRight = () => {
   /** The width the last move asked for, which is what tells a collapse from a resize. */
   const lastColumnWidthRef = useRef(0);
 
+  // Measured from the WIDTH ON SCREEN, not the remembered one. The handle is rendered on the
+  // collapsed 40px strip too, and `dockWidth` is the width to come BACK to (250, say) while
+  // `effectiveDockWidth` is the 40 it currently occupies. Measuring from the remembered width
+  // meant one pixel of movement opened a 250px dock and overwrote the 250 with 251 — a 211px
+  // jump, and the user's width gone. Cancelling such a drag had the same defect: Escape called
+  // `setDockWidth(250)`, which UN-collapses, so it changed the value rather than restoring it.
   const onColumnResizeStart = useCallback(() => {
-    dockWidthStartRef.current = layout.dockWidth;
-    lastColumnWidthRef.current = layout.dockWidth;
-  }, [layout.dockWidth]);
+    dockWidthStartRef.current = layout.effectiveDockWidth;
+    lastColumnWidthRef.current = layout.effectiveDockWidth;
+  }, [layout.effectiveDockWidth]);
 
   const onColumnResize = useCallback(
     ({ dx }: { dx: number }) => {
@@ -145,12 +172,18 @@ const SidebarRight = () => {
 
   const onPanelDragStart = useCallback(
     (id: PanelId) => (event: React.PointerEvent<HTMLElement>) => {
+      draggingPanelRef.current = id;
       setDraggingPanel(id);
       dragOriginXRef.current = event.clientX;
-      setInsertionIndex(layout.panelOrder.indexOf(id));
+      // `null` until the pointer has actually MOVED. Setting it on the press showed a blue
+      // drop line on a bare click, which promises a drop target for a gesture that is not
+      // happening and is not going to.
+      insertionIndexRef.current = null;
+      setInsertionIndex(null);
+      edgeTargetRef.current = null;
       setEdgeTarget(null);
     },
-    [layout.panelOrder]
+    []
   );
 
   const onPanelDrag = useCallback(
@@ -170,10 +203,13 @@ const SidebarRight = () => {
           ? pointerX > viewportWidth * (1 - RE_DOCK_ZONE)
           : pointerX < viewportWidth * RE_DOCK_ZONE;
         if (wantsLeft) {
-          setEdgeTarget(layout.dockOnLeft ? 'right' : 'left');
+          edgeTargetRef.current = layout.dockOnLeft ? 'right' : 'left';
+          setEdgeTarget(edgeTargetRef.current);
+          insertionIndexRef.current = null;
           setInsertionIndex(null);
           return;
         }
+        edgeTargetRef.current = null;
         setEdgeTarget(null);
 
         if (height <= 0) return;
@@ -181,7 +217,9 @@ const SidebarRight = () => {
         // measurement of the neighbour, because the neighbour is what is being swapped with and
         // it moves as the swap is previewed.
         const midpoint = index === 0 ? height / 2 : -height / 2;
-        setInsertionIndex(dy > midpoint ? 1 : dy < midpoint ? 0 : index);
+        const next = dy > midpoint ? 1 : dy < midpoint ? 0 : index;
+        insertionIndexRef.current = next;
+        setInsertionIndex(next);
       },
     [layout.dockOnLeft, layout.panelOrder]
   );
@@ -192,31 +230,42 @@ const SidebarRight = () => {
   const onPanelDragEnd = useCallback(
     (cancelled: boolean) => {
       if (cancelled) {
+        draggingPanelRef.current = null;
+        insertionIndexRef.current = null;
+        edgeTargetRef.current = null;
         setDraggingPanel(null);
         setInsertionIndex(null);
         setEdgeTarget(null);
         dragOriginXRef.current = 0;
         return;
       }
-      if (edgeTarget !== null) {
-        layout.setDockOnLeft(edgeTarget === 'left');
-      } else if (draggingPanel !== null && insertionIndex !== null) {
+      // Read through refs, for the reason `SidebarLeft` gives at length: the hook refreshes
+      // its callback ref in a PASSIVE effect, and a `pointerup` that arrives before that effect
+      // flushes would commit the previous gesture's target — a silently dropped re-dock, or a
+      // reorder into the wrong slot. The outcome is previewed continuously on screen, so the
+      // commit is reading which preview is showing, and the preview is state.
+      if (edgeTargetRef.current !== null) {
+        layout.setDockOnLeft(edgeTargetRef.current === 'left');
+      } else if (draggingPanelRef.current !== null && insertionIndexRef.current !== null) {
         const order = [...layout.panelOrder];
-        const from = order.indexOf(draggingPanel);
+        const from = order.indexOf(draggingPanelRef.current);
         // `splice` on a copy, because `PanelOrder` is a readonly tuple: the state is the order,
         // and a caller that could mutate it in place would make every comparison of it suspect.
-        if (from !== -1 && from !== insertionIndex) {
+        if (from !== -1 && from !== insertionIndexRef.current) {
           const [moved] = order.splice(from, 1);
-          order.splice(insertionIndex, 0, moved);
+          order.splice(insertionIndexRef.current, 0, moved);
           layout.setPanelOrder(order);
         }
       }
+      draggingPanelRef.current = null;
+      insertionIndexRef.current = null;
+      edgeTargetRef.current = null;
       setDraggingPanel(null);
       setInsertionIndex(null);
       setEdgeTarget(null);
       dragOriginXRef.current = 0;
     },
-    [draggingPanel, edgeTarget, insertionIndex, layout]
+    [layout]
   );
 
   // A resize is written continuously, so a cancelled one has to be rolled back to where the
@@ -227,6 +276,9 @@ const SidebarRight = () => {
     onMove: onColumnResize,
     onEnd: (cancelled) => {
       if (cancelled) {
+        // Below the floor means "put it back collapsed", and `setDockWidth` is what knows how.
+        // Passing the starting width back through it is the only way to restore the collapsed
+        // state rather than to expand past it.
         layout.setDockWidth(dockWidthStartRef.current);
         return;
       }
@@ -293,7 +345,7 @@ const SidebarRight = () => {
         style={isRolledUp ? { flex: '0 0 auto' } : { flex: `${share} 1 0%`, minHeight: PANEL_MIN_HEIGHT }}
         title={PANEL_TITLES[id]}
         headerAction={
-          index === 0 ? (
+          index === 0 && !isRolledUp ? (
             <button
               aria-label={layout.isCollapsed ? 'Expand panels' : 'Collapse panels to icons'}
               aria-pressed={layout.isCollapsed}
@@ -318,6 +370,9 @@ const SidebarRight = () => {
   return (
     <aside
       id="right-panel"
+      // Two `complementary` landmarks with no names is a screen reader announcing two
+      // indistinguishable regions, so both sides name theirs. `SidebarLeft` names the rail.
+      aria-label="History and Layers panels"
       ref={dockRef}
       // The width lives on the element, not the grid track: the tablet collapse is a
       // `display: none` item, and only an `auto` track collapses to nothing for one. See the
@@ -332,13 +387,10 @@ const SidebarRight = () => {
           rows; the panel drag's blue line is a fixed overlay at `z-[60]` and outranks both. */}
       <div
         {...columnDrag.handleProps}
-        aria-label="Resize the panel dock"
+        aria-hidden="true"
         className={`absolute top-0 z-20 h-full w-2 cursor-col-resize touch-none ${handleSideClass} ${
           columnDrag.isDragging ? 'border-blue-500' : 'border-transparent'
         }`}
-        role="separator"
-        aria-orientation="vertical"
-        tabIndex={0}
         data-testid="dock-resize-handle"
       />
 
@@ -359,7 +411,7 @@ const SidebarRight = () => {
               onClick={() => layout.setDockWidth(layout.dockWidth)}
               title="Expand panels"
               type="button"
-              data-testid="dock-collapse-toggle"
+              data-testid="dock-icon-expand"
             >
               <span aria-hidden="true" className="text-sm leading-none">
                 »
@@ -375,6 +427,10 @@ const SidebarRight = () => {
                   onClick={() => {
                     layout.setDockWidth(layout.dockWidth);
                     for (const other of layout.panelOrder) layout.setRolledUp(other, other !== id);
+                    // One `setRolledUp` per panel, so this is two functional updates and two
+                    // renders for one click. They compose because each reads the previous state
+                    // through its updater, which is the only reason it is correct rather than
+                    // merely working.
                   }}
                   title={PANEL_TITLES[id]}
                   type="button"
@@ -393,12 +449,10 @@ const SidebarRight = () => {
                 the divider are resized" — with two groups, that is the whole column. */}
             <div
               {...splitterDrag.handleProps}
-              aria-label="Resize the History and Layers panels"
+              aria-hidden="true"
               className={`h-1.5 shrink-0 cursor-row-resize touch-none border-y border-gray-300 bg-gray-200 hover:bg-blue-200 dark:border-gray-600 dark:bg-gray-700 dark:hover:bg-blue-700 ${
                 splitterDrag.isDragging ? 'bg-blue-300 dark:bg-blue-600' : ''
               }`}
-              role="separator"
-              aria-orientation="horizontal"
               data-testid="dock-splitter"
             />
 

@@ -91,6 +91,8 @@ const PanelGroup = ({
   children,
 }: PanelGroupProps) => {
   const movedRef = useRef(false);
+  /** Space activates on keyup, so the held state has to survive from the keydown. */
+  const spaceHeldRef = useRef(false);
 
   const { handleProps, isDragging: isHandleDragging } = useDockDrag({
     onStart: (event) => {
@@ -108,33 +110,62 @@ const PanelGroup = ({
 
   return (
     <div className={`flex flex-col overflow-hidden ${className}`} style={style} data-testid={`panel-group-${id}`}>
+      {/* The header is a ROW, not a single control, because `headerAction` is a real button.
+          A button nested inside an element carrying `role="button"` is invalid ARIA, and it
+          was not only invalid: the tab's own `onKeyDown` handled Enter and Space, `preventDefault`
+          suppressed the inner button's synthesized click, and focusing "Collapse panels to
+          icons" and pressing Enter rolled the panel up instead. Stopping propagation for
+          pointer and double-click was not enough, because the key never went near those. */}
       <div
-        {...handleProps}
-        aria-expanded={!isRolledUp}
-        className={`${HEADER_CLASS} flex shrink-0 cursor-grab select-none items-center justify-between border-blue-500 active:cursor-grabbing ${
+        className={`${HEADER_CLASS} flex shrink-0 items-center border-blue-500 ${
           isHandleDragging ? 'bg-blue-200 dark:bg-blue-700' : ''
         }`}
-        onDoubleClick={() => {
-          // A double-click is a click twice. The first click has to be allowed through, so the
-          // roll-up waits for the second and only then checks that no drag happened.
-          if (movedRef.current) return;
-          onToggleRolledUp();
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            onToggleRolledUp();
-          }
-        }}
-        role="button"
-        tabIndex={0}
-        title={`${title} panel — drag this tab to move it, double-click to roll it up`}
-        data-testid={`panel-header-${id}`}
+        data-testid={`panel-header-row-${id}`}
         data-dragging={isDragging || undefined}
       >
-        <span className="truncate">{title}</span>
+        <div
+          {...handleProps}
+          aria-controls={`panel-body-${id}`}
+          aria-expanded={!isRolledUp}
+          className="flex min-w-0 flex-1 cursor-grab select-none items-center self-stretch active:cursor-grabbing"
+          onDoubleClick={() => {
+            // A double-click is a click twice. The first click has to be allowed through, so the
+            // roll-up waits for the second and only then checks that no drag happened.
+            if (movedRef.current) return;
+            onToggleRolledUp();
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              onToggleRolledUp();
+            } else if (event.key === ' ') {
+              // `preventDefault` here is what stops the page scrolling under the keypress, and
+              // it is why Space activates on KEYUP: the ARIA button pattern pairs the two, and
+              // activating on keydown fires while the key is still down, so a user who changes
+              // their mind cannot take it back.
+              event.preventDefault();
+              spaceHeldRef.current = true;
+            }
+          }}
+          onKeyUp={(event) => {
+            if (event.key === ' ' && spaceHeldRef.current) {
+              event.preventDefault();
+              spaceHeldRef.current = false;
+              onToggleRolledUp();
+            }
+          }}
+          role="button"
+          tabIndex={0}
+          // The testid names the CONTROL, not the row around it, because that is what a test
+          // drags and double-clicks.
+          title={`${title} panel — drag this tab to move it, double-click to roll it up`}
+          data-testid={`panel-header-${id}`}
+        >
+          <span className="truncate">{title}</span>
+        </div>
         {headerAction}
       </div>
+      {!isRolledUp && <div className="contents" id={`panel-body-${id}`} />}
       {!isRolledUp && children}
     </div>
   );

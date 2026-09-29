@@ -36,6 +36,38 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * the very element that started it.
  */
 
+/**
+ * Live gestures, counted.
+ *
+ * The cursor and the selection lock live on `document.body` because they are global by nature —
+ * a drag that leaves the handle must keep its cursor, and only a rule that reaches the whole
+ * tree does that. That makes the unlock a shared resource, and the guard against two gestures
+ * at once is PER HOOK INSTANCE, so a second finger on a second handle starts a second gesture
+ * that has not asked for the lock. The first one to end then took it away from the one still
+ * running: a live resize with the cursor snapped back to the text I-beam and text selection
+ * re-enabled under the pointer.
+ *
+ * Counting is what makes the unlock safe, and the module scope is what makes the count correct
+ * across every hook instance in the app.
+ */
+let liveGestures = 0;
+
+const lockBody = () => {
+  liveGestures += 1;
+  if (liveGestures > 1) return;
+  // `cursor-grabbing` is already a rule in `index.scss:69-71` and is applied to the whole
+  // tree by `*`, which is what keeps the cursor steady once the pointer is off the handle.
+  document.body.classList.add('cursor-grabbing');
+  document.body.style.setProperty('user-select', 'none');
+};
+
+const unlockBody = () => {
+  liveGestures = Math.max(0, liveGestures - 1);
+  if (liveGestures > 0) return;
+  document.body.classList.remove('cursor-grabbing');
+  document.body.style.removeProperty('user-select');
+};
+
 export type DragDelta = { dx: number; dy: number };
 
 export interface DockDragOptions {
@@ -93,8 +125,7 @@ export function useDockDrag({ onStart, onMove, onEnd, cancelSignal = false }: Do
     if (gestureRef.current === null) return;
     gestureRef.current = null;
     setIsDragging(false);
-    document.body.classList.remove('cursor-grabbing');
-    document.body.style.removeProperty('user-select');
+    unlockBody();
     latest.current.onEnd?.(cancelled);
   }, []);
 
@@ -123,10 +154,7 @@ export function useDockDrag({ onStart, onMove, onEnd, cancelSignal = false }: Do
 
     gestureRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
     setIsDragging(true);
-    // `cursor-grabbing` is already a rule in `index.scss:69-71` and is applied to the whole
-    // tree by `*`, which is what keeps the cursor steady once the pointer is off the handle.
-    document.body.classList.add('cursor-grabbing');
-    document.body.style.setProperty('user-select', 'none');
+    lockBody();
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
     } catch {
@@ -170,14 +198,16 @@ export function useDockDrag({ onStart, onMove, onEnd, cancelSignal = false }: Do
       document.removeEventListener('pointerup', onPointerUp);
       document.removeEventListener('pointercancel', onPointerCancel);
       document.removeEventListener('keydown', onKeyDown, true);
-      // The gesture's own cleanup only runs if a pointerup arrives. Unmounting mid-drag — a
-      // route change, a thrown error boundary, a StrictMode remount — takes this cleanup
-      // instead, and without this the app is left with a stuck grabbing cursor and text
-      // selection disabled for the rest of the session. `onEnd` is deliberately NOT called:
-      // an unmounted drag has no caller left to report to, and calling one would be a
-      // setState on an unmounted provider.
-      document.body.classList.remove('cursor-grabbing');
-      document.body.style.removeProperty('user-select');
+      // A gesture that never ended is reported as CANCELLED, and that is the point rather than
+      // a caveat. Unmounting mid-drag happens for reasons the caller cannot see — a state
+      // change re-renders the very handle that started it, and a narrow dock crossing the label
+      // threshold unmounts every panel group. A caller that keeps `draggingPanel` set because
+      // `onEnd` never ran is left with a permanently highlighted tab and a blue drop line and no
+      // gesture in flight, which is worse than a stuck cursor because nothing clears it.
+      //
+      // `finish` is a no-op unless a gesture is live, so the normal release path is unaffected:
+      // by the time the cleanup runs for `isDragging` going false, the ref is already null.
+      if (gestureRef.current !== null) finish(true);
     };
   }, [isDragging, finish]);
 

@@ -138,9 +138,12 @@ export interface PanelLayout extends LayoutState {
   /** Width the dock occupies. The minimum while collapsed to icons. */
   effectiveDockWidth: number;
   /**
-   * Whether the dock is showing icons only. Always equal to `isCollapsed`, because
-   * `setDockWidth` is the only path to a narrow dock and it collapses rather than storing a
-   * sub-label width.
+   * Whether the dock is showing icons only. Always equal to `isCollapsed`.
+   *
+   * `setDockWidth` and `readStoredLayout` are the only two paths to a sub-label width, and
+   * both collapse rather than store one — which is what makes this identity hold, and is why
+   * the read path has to collapse too. It once did not, and a stored 45px width became a dock
+   * with no way out of the icon strip.
    */
   isIconOnly: boolean;
   /**
@@ -217,7 +220,16 @@ const clampDockWidth = (width: number) => clamp(width, DOCK_MIN_WIDTH, DOCK_MAX_
  * here rather than trusted, and the whole record is discarded if its shape is wrong.
  */
 const readStoredLayout = (): Partial<LayoutState> => {
-  const raw = localStorage.getItem('panelLayout');
+  let raw: string | null;
+  try {
+    // `getItem` THROWS, not returns, when storage is blocked by policy or the page is in a
+    // sandboxed iframe with no allow-same-origin. The function's contract is "anything
+    // unrecognised is treated as absent", and a throw during a `useState` initialiser takes the
+    // whole app down rather than degrading to the default layout.
+    raw = localStorage.getItem('panelLayout');
+  } catch {
+    return {};
+  }
   if (raw === null) return {};
 
   let parsed: unknown;
@@ -231,8 +243,24 @@ const readStoredLayout = (): Partial<LayoutState> => {
   const record = parsed as Record<string, unknown>;
   const stored: Partial<LayoutState> = {};
 
+  // The width and the collapse are ONE invariant, and this has to enforce it rather than only
+  // clamping each field. A stored `dockWidth` below `DOCK_LABEL_MIN_WIDTH` is a one-way door:
+  // the only way out of the icon strip is `setDockWidth(layout.dockWidth)`, which re-collapses
+  // on a width that is still under the floor, and the double-arrow that would otherwise widen it
+  // is not rendered while collapsed. A hand-edited, stale or cross-version value was enough to
+  // reach it, and `Window > Reset Workspace` was the only escape.
+  //
+  // So: collapse on read, exactly as `setDockWidth` does on write, and let the remembered width
+  // be the one that will fit again. The second pass is what keeps the dock recoverable — a
+  // collapsed 45px dock restores to the label floor, not to 45.
   if (typeof record.dockWidth === 'number' && Number.isFinite(record.dockWidth)) {
-    stored.dockWidth = clampDockWidth(record.dockWidth);
+    const width = clampDockWidth(record.dockWidth);
+    if (width < DOCK_LABEL_MIN_WIDTH) {
+      stored.dockWidth = DOCK_LABEL_MIN_WIDTH;
+      stored.isCollapsed = true;
+    } else {
+      stored.dockWidth = width;
+    }
   }
   if (typeof record.splitRatio === 'number' && Number.isFinite(record.splitRatio)) {
     stored.splitRatio = clamp(record.splitRatio, PANEL_MIN_RATIO, 1 - PANEL_MIN_RATIO);
@@ -252,7 +280,11 @@ const readStoredLayout = (): Partial<LayoutState> => {
   if (typeof record.dockOnLeft === 'boolean') {
     stored.dockOnLeft = record.dockOnLeft;
   }
-  if (typeof record.isCollapsed === 'boolean') {
+  // Read LAST, and only when the width did not already decide it. A record that says
+  // `isCollapsed: false` beside a 45px width is not a dock that opens — it is a 45px column
+  // with both panel groups and their labels, no icon strip, and a control that says
+  // "Collapse panels to icons" on a dock already below the floor.
+  if (typeof record.isCollapsed === 'boolean' && stored.isCollapsed === undefined) {
     stored.isCollapsed = record.isCollapsed;
   }
 
@@ -268,7 +300,12 @@ export function PanelLayoutProvider({ children }: { children: ReactNode }) {
   // One write, one key, in its own effect — the `ThemeContext` idiom (`ThemeContext.tsx:28`).
   // A bare lowercase noun, no namespace, matching the only other persisted key in the app.
   useEffect(() => {
-    localStorage.setItem('panelLayout', JSON.stringify(state));
+    try {
+      localStorage.setItem('panelLayout', JSON.stringify(state));
+    } catch {
+      // A blocked or full store means the layout does not survive a reload. That is a
+      // degraded feature, not a broken app, and throwing here would take the app down for it.
+    }
   }, [state]);
 
   const setDockWidth = useCallback((width: number) => {
@@ -280,10 +317,16 @@ export function PanelLayoutProvider({ children }: { children: ReactNode }) {
 
   // The ratio is a fraction, so both ends are the same clamp: a divider dragged to the very top
   // gives the top panel everything, which is the same as giving the bottom panel nothing.
+  // Clamped to the LABEL floor and no lower. This is a second writer of `dockWidth`, and the
+  // one-way door above is a property of `dockWidth` being below the floor with `isCollapsed`
+  // false — so a writer that could put it there would reopen the door `setDockWidth` closes.
   const rememberDockWidth = useCallback((width: number) => {
-    setState((current) => ({ ...current, dockWidth: clampDockWidth(width) }));
+    setState((current) => ({ ...current, dockWidth: Math.max(clampDockWidth(width), DOCK_LABEL_MIN_WIDTH) }));
   }, []);
 
+  // The ratio is a fraction, so both ends are the same clamp: a divider dragged to the very top
+  // gives the top panel everything, which is the same as giving the bottom panel nothing. The
+  // `PANEL_MIN_RATIO` bound is what actually stops it reaching either end.
   const setSplitRatio = useCallback((ratio: number) => {
     setState((current) => ({ ...current, splitRatio: clamp(ratio, PANEL_MIN_RATIO, 1 - PANEL_MIN_RATIO) }));
   }, []);

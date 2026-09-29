@@ -188,10 +188,19 @@ describe('SidebarRight', () => {
     // Both are the two gestures that make the column a dock rather than a fixed panel: the
     // column's own edge, and the boundary between the two groups. "When you drag these icons,
     // all groups that share the divider are resized."
+    // Neither handle is focusable or announced. A focusable `role="separator"` is the window
+    // splitter widget and must carry `aria-valuenow`/`valuemin`/`valuemax` and answer arrow
+    // keys; these carried none and had no key handler, so `tabIndex={0}` was a focus stop that
+    // did nothing. Asserting the ABSENCE is the assertion — a `tabIndex` or a `role` reappearing
+    // here means a control has been re-promised to keyboard users without being re-implemented.
     const edge = container.querySelector('[data-testid="dock-resize-handle"]');
     const splitter = container.querySelector('[data-testid="dock-splitter"]');
-    expect(edge).toHaveAttribute('aria-orientation', 'vertical');
-    expect(splitter).toHaveAttribute('aria-orientation', 'horizontal');
+    for (const handle of [edge, splitter]) {
+      expect(handle).toHaveAttribute('aria-hidden', 'true');
+      expect(handle).not.toHaveAttribute('tabindex');
+      expect(handle).not.toHaveAttribute('role');
+      expect(handle).not.toHaveAttribute('aria-valuenow');
+    }
 
     // The edge handle is half outside the column, because that is the only place the pointer
     // is unambiguously on the divider. It is a child of the aside, whose `overflow` had to
@@ -203,7 +212,15 @@ describe('SidebarRight', () => {
     // resize grip for nothing.
     expect(edge).toHaveClass('left-0', 'border-l-2');
     expect(edge).not.toHaveClass('right-0');
+    // WITHIN the aside's box, not straddling its edge. An earlier version of this asserted
+    // `overflow: hidden` on the aside was what the rule depended on, on the stated basis that
+    // the handle sat at `left: -4px`; no rule ever did that, and `e2e/panel-workspace.spec.ts`
+    // measures the handle 1px inside the 1px border. The measurement is the assertion, and it
+    // is a browser one because jsdom gives every box a zero width.
+    expect(edge).not.toHaveClass('-left-4', '-ml-4', '-translate-x-1/2');
+    // And the clipping that IS needed is on the inner column, not the aside.
     expect(aside.className).not.toContain('overflow-hidden');
+    expect(aside.querySelector(':scope > .overflow-hidden')).not.toBeNull();
   });
 
   it('drags the tab to reorder, and draws the drop target before the release', async () => {
@@ -315,6 +332,57 @@ describe('SidebarRight', () => {
     expect(edge).not.toHaveClass('left-0');
   });
 
+  it('widens a collapsed dock by the distance dragged, not by jumping to the remembered width', () => {
+    seed();
+    const restoreLayout = withLayout();
+    try {
+      const { container } = renderWithLayout(<SidebarRight />);
+      const dock = () => container.querySelector('aside') as HTMLElement;
+      const edge = () => container.querySelector('[data-testid="dock-resize-handle"]') as HTMLElement;
+
+      fireEvent.click(container.querySelector('[data-testid="dock-collapse-toggle"]')!);
+      expect(dock().style.width).toBe('40px');
+      const collapsedAt = (edge().getBoundingClientRect().left ?? 0) as number;
+
+      // The handle is rendered on the collapsed strip too, so it is hittable. Measured from the
+      // REMEMBERED width, one pixel of movement would have opened a 250px dock — a 211px jump
+      // that also overwrote the width the user had chosen.
+      fireEvent.pointerDown(edge(), { button: 0, buttons: 1, pointerId: 1, clientX: collapsedAt, clientY: 400 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: collapsedAt - 20, clientY: 400 });
+      fireEvent.pointerUp(document, { pointerId: 1 });
+
+      // 40 on screen, 20 dragged left. Anything near 250 is the bug.
+      expect(Number.parseFloat(dock().style.width)).toBeCloseTo(60, 0);
+    } finally {
+      restoreLayout();
+    }
+  });
+
+  it('leaves a collapsed dock collapsed when its resize drag is cancelled', () => {
+    seed();
+    const restoreLayout = withLayout();
+    try {
+      const { container } = renderWithLayout(<SidebarRight />);
+      const dock = () => container.querySelector('aside') as HTMLElement;
+
+      fireEvent.click(container.querySelector('[data-testid="dock-collapse-toggle"]')!);
+      expect(dock().style.width).toBe('40px');
+
+      const edge = container.querySelector('[data-testid="dock-resize-handle"]') as HTMLElement;
+      fireEvent.pointerDown(edge, { button: 0, buttons: 1, pointerId: 1, clientX: 1240, clientY: 400 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 1180, clientY: 400 });
+      fireEvent.keyDown(document, { key: 'Escape' });
+      fireEvent.pointerUp(document, { pointerId: 1 });
+
+      // A cancel restores the STARTING value, and the starting value here is a collapsed 40px
+      // dock. Restoring the remembered 250 instead would have expanded it — the one thing a
+      // cancel must not do.
+      expect(dock().style.width).toBe('40px');
+    } finally {
+      restoreLayout();
+    }
+  });
+
   it('reverses the drag direction once the dock is on the left edge', () => {
     seed();
     const { container } = renderWithLayout(<SidebarRight />, { dockOnLeft: true });
@@ -332,19 +400,57 @@ describe('SidebarRight', () => {
 
   it('resizes both groups when the shared divider is dragged', () => {
     seed();
-    const restoreLayout = withLayout();
+    const restoreLayout = withLayout({ dockHeight: 600 });
     try {
       const { container } = renderWithLayout(<SidebarRight />);
+      const shares = () =>
+        ['history', 'layers'].map((id) => {
+          const group = container.querySelector<HTMLElement>(`[data-testid="panel-group-${id}"]`)!;
+          // The first number of the `flex` shorthand is the grow factor, which IS the share
+          // of the column's free space. Reading it back is the assertion; an earlier version
+          // asserted `!Number.isNaN(parseFloat(style.flex))`, which is true of every string
+          // `flex` can hold and of a divider drag that did nothing at all.
+          return Number.parseFloat(group.style.flex);
+        });
 
+      const before = shares();
+
+      // UP by 100px of a 600px column, which is a sixth of the column: the top panel's share
+      // rises by exactly that and the bottom one's falls by the same amount, because they
+      // share one divider. "All groups that share the divider are resized."
       const splitter = container.querySelector('[data-testid="dock-splitter"]') as HTMLElement;
-      // The column reports 0px tall in jsdom, so this pins the arithmetic and its guard
-      // together: a zero-height column must not divide, and must not write a NaN ratio.
-      fireEvent.pointerDown(splitter, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 100 });
-      fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: -100 });
+      fireEvent.pointerDown(splitter, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 300 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: 200 });
       fireEvent.pointerUp(document, { pointerId: 1 });
 
-      const top = container.querySelector('[data-testid="panel-group-history"]') as HTMLElement;
-      expect(Number.isNaN(parseFloat(top.style.flex))).toBe(false);
+      const after = shares();
+      expect(after[0] - before[0]).toBeCloseTo(1 / 6, 2);
+      expect(after[1] - before[1]).toBeCloseTo(-1 / 6, 2);
+      // Complementary, so the column is never over- or under-filled by the pair.
+      expect(after[0] + after[1]).toBeCloseTo(1, 10);
+    } finally {
+      restoreLayout();
+    }
+  });
+
+  it('refuses to divide a column that measures zero', () => {
+    seed();
+    // A column that measures nothing, which is both jsdom's default and what a dock does in the
+    // frame between being hidden and being laid out. Dividing by it writes Infinity, and
+    // Infinity through a clamp is a share no drag can reach back from — so the guard has to be
+    // the early return rather than the arithmetic below it.
+    const restoreLayout = withLayout({ dockHeight: 0 });
+    try {
+      const { container } = renderWithLayout(<SidebarRight />);
+      const group = container.querySelector<HTMLElement>('[data-testid="panel-group-history"]')!;
+      const before = group.style.flex;
+
+      const splitter = container.querySelector('[data-testid="dock-splitter"]') as HTMLElement;
+      fireEvent.pointerDown(splitter, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 300 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: 200 });
+      fireEvent.pointerUp(document, { pointerId: 1 });
+
+      expect(group.style.flex).toBe(before);
     } finally {
       restoreLayout();
     }
@@ -362,8 +468,11 @@ describe('SidebarRight', () => {
     expect(container.querySelector('[data-testid="dock-icon-strip"]')).toBeInTheDocument();
     expect(screen.queryByText('History')).toBeNull();
 
-    // An icon strip with no way out is a one-way trip, so the double-arrow comes with it.
-    fireEvent.click(container.querySelector('[data-testid="dock-icon-strip"] [data-testid="dock-collapse-toggle"]')!);
+    // An icon strip with no way out is a one-way trip, so the double-arrow comes with it, under
+    // a DIFFERENT testid from the header's. They are mutually exclusive renders today, and a
+    // shared one would silently turn the first of the pair into a strict-mode violation the
+    // moment anything ever renders both.
+    fireEvent.click(container.querySelector('[data-testid="dock-icon-strip"] [data-testid="dock-icon-expand"]')!);
     expect(aside.style.width).toBe('250px');
   });
 

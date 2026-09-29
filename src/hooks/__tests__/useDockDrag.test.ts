@@ -52,6 +52,9 @@ describe('useDockDrag', () => {
     ends.length = 0;
     document.body.className = '';
     document.body.style.userSelect = '';
+    // A `visibilityState` left at 'hidden' by the mid-drag test would make every later gesture
+    // in this file cancel itself on the first `visibilitychange` it happened to dispatch.
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
   });
 
   describe('what starts a drag', () => {
@@ -238,6 +241,44 @@ describe('useDockDrag', () => {
     });
   });
 
+  describe('two gestures at once', () => {
+    // The guard against a second gesture is PER HOOK INSTANCE, and the cursor and selection lock
+    // live on `document.body` — so the first gesture to end used to take the lock away from the
+    // one still running. A live resize with the cursor snapped back to an I-beam and text
+    // selection re-enabled under the pointer.
+    it('keeps the cursor lock until the last concurrent gesture ends', () => {
+      const first = setup({ onMove: () => {} });
+      const second = setup({ onMove: () => {} });
+
+      act(() => first.result.current.handleProps.onPointerDown(pointerEvent({ pointerId: 1 })));
+      act(() => second.result.current.handleProps.onPointerDown(pointerEvent({ pointerId: 2 })));
+      expect(document.body).toHaveClass('cursor-grabbing');
+
+      dispatch('pointerup', { pointerId: 1 });
+      // The second is still live, so the lock must survive.
+      expect(document.body).toHaveClass('cursor-grabbing');
+      expect(document.body.style.userSelect).toBe('none');
+
+      dispatch('pointerup', { pointerId: 2 });
+      expect(document.body).not.toHaveClass('cursor-grabbing');
+      expect(document.body.style.userSelect).toBe('');
+    });
+
+    it('unlocks once even when both are cancelled by the same Escape', () => {
+      const first = setup({ onMove: () => {}, onEnd: (c) => ends.push(c) });
+      const second = setup({ onMove: () => {}, onEnd: (c) => ends.push(c) });
+
+      act(() => first.result.current.handleProps.onPointerDown(pointerEvent({ pointerId: 1 })));
+      act(() => second.result.current.handleProps.onPointerDown(pointerEvent({ pointerId: 2 })));
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      });
+
+      expect(ends).toEqual([true, true]);
+      expect(document.body).not.toHaveClass('cursor-grabbing');
+    });
+  });
+
   describe('unmount', () => {
     it('takes the cursor class with it', () => {
       const { result, unmount } = setup({ onMove: () => {} });
@@ -251,6 +292,34 @@ describe('useDockDrag', () => {
       // the whole app unselectable.
       expect(document.body).not.toHaveClass('cursor-grabbing');
       expect(document.body.style.userSelect).toBe('');
+    });
+
+    // A caller that keeps its own drag state set because `onEnd` never ran is left with a
+    // permanently highlighted tab and a blue drop line and no gesture in flight, and nothing
+    // clears it. The caller is very often still mounted when this hook's owner is not: a narrow
+    // dock crossing the label threshold unmounts every panel group underneath a live drag.
+    it('reports the in-flight gesture as cancelled, so the caller can clear its own state', () => {
+      const onEnd = (cancelled: boolean) => ends.push(cancelled);
+      const { result, unmount } = setup({ onMove: () => {}, onEnd });
+
+      act(() => result.current.handleProps.onPointerDown(pointerEvent({})));
+      unmount();
+
+      expect(ends).toEqual([true]);
+      expect(document.body).not.toHaveClass('cursor-grabbing');
+    });
+
+    it('does not report a gesture that already ended', () => {
+      const onEnd = (cancelled: boolean) => ends.push(cancelled);
+      const { result, unmount } = setup({ onMove: () => {}, onEnd });
+
+      act(() => result.current.handleProps.onPointerDown(pointerEvent({})));
+      dispatch('pointerup');
+      unmount();
+
+      // One release, one report. A second on unmount would double-apply whatever the caller
+      // does at the end of a gesture.
+      expect(ends).toEqual([false]);
     });
   });
 });
