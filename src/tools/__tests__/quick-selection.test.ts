@@ -207,11 +207,17 @@ describe('quickSelection type contract', () => {
     expect(isQuickSelectionMode('intersect')).toBe(false);
   });
 
-  it('hands a creator-param call no source bitmap, so it publishes none rather than blanking one', () => {
-    // `sourceBitmap` in src/contexts/materialization.ts calls every `creator: true` processor
-    // as `imageProcessor({ size })(args)`, with no `bitmap` at all. The processor reads that
-    // member straight out of the params and returns it, so on the creator path it yields
-    // `undefined` — the shape the caller already handles before it can touch a canvas.
+  it('hands a creator-param call no source bitmap, and yields the undefined that throws', () => {
+    // `sourceBitmap` in src/contexts/materialization.ts calls every `creator: true` processor as
+    // `imageProcessor({ size })(args)`, with no `bitmap` at all. The processor reads that member
+    // straight out of the params and returns it, so on the creator path it yields `undefined`.
+    //
+    // `undefined` is a LATENT THROW, not a handled case: `materialization.ts:172` rejects it with
+    // `Source tool … produced no raster`. So this is pinned so the `creator: true` registry
+    // entry and the `ProcessorToolParams` the processor declares stay VISIBLE as a mismatch —
+    // the assertion records the current behaviour and does not claim it is correct.
+    expect(toolProcessors['quick-selection'].creator).toBe(true);
+
     const result = toolProcessors['quick-selection'].imageProcessor({ size: { width: 40, height: 24 } })(
       defaultSettings['quick-selection'] as never
     );
