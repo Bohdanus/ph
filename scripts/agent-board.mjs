@@ -77,6 +77,8 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
   check <path...>        who holds these files  (exit 1 if any is held)
   comment <id> <text>    say something on an issue
   note <text>            say something to the swarm
+  complain <text>        this tool cost me time      --tool <name> --kind --command
+  complaints             traps reported, grouped by tool, recurring first
   resolve <id>           the work is done       --note
   close <id>             verified by YOU, done
   defer <id>             park it                --reason --until
@@ -117,6 +119,8 @@ const VALUE_FLAGS = new Set([
   'reason',
   'scope',
   'since',
+  'tool',
+  'command',
   'status',
   'title',
   'until',
@@ -674,8 +678,73 @@ export async function run(
       case 'note': {
         const message = leadingArgs.join(' ').trim();
         if (!message) throw new BoardError('note needs a message', { code: 1 });
-        board.note(message);
-        emit({ message }, 'noted');
+        const result = board.note(message);
+        // The seq comes back because a note you cannot FIND is a note you
+        // cannot confirm. This board read its own log from the wrong end for
+        // most of a day, and an agent that had this number could have asked
+        // `swarm watch --since <seq>` and been answered, instead of grepping a
+        // window that did not contain the event and concluding it had failed.
+        emit(
+          { message, seq: result.seq },
+          `noted — event #${result.seq}; read it back: swarm watch --since ${result.seq}`
+        );
+        return 0;
+      }
+
+      case 'complain': {
+        // A trap report, not a task. It is one cheap command with no title to
+        // invent and no priority to choose, because the reporter is usually
+        // mid-investigation and will not do either.
+        const message = leadingArgs.join(' ').trim();
+        if (!message) throw new BoardError('complain needs a message', { code: 1 });
+        const tool = flags.tool === undefined ? null : String(flags.tool);
+        const result = board.complain(message, {
+          tool,
+          kind: flags.kind === undefined ? 'trap' : String(flags.kind),
+          data: flags.command === undefined ? null : { command: String(flags.command) },
+        });
+        // How many times THIS tool has now been named. One report is a shrug;
+        // the second one is the signal, so it is worth printing back at the
+        // moment somebody is deciding whether this was worth reporting.
+        const totals = board.complaintTotals();
+        emit(
+          { message, tool: result.tool, seq: result.seq, totals },
+          [
+            `complaint recorded as event #${result.seq} against ${result.tool}`,
+            totals.top && totals.top.tool === result.tool && totals.top.count > 1
+              ? `that tool has now been named ${totals.top.count} times — swarm complaints`
+              : 'swarm complaints — the grouped view, when it happens again',
+          ].join('\n')
+        );
+        return 0;
+      }
+
+      case 'complaints': {
+        const groups = board.complaints();
+        const totals = board.complaintTotals();
+        emit(
+          { complaints: groups, totals },
+          groups.length === 0
+            ? 'no complaints: no tool has been reported as costing time'
+            : [
+                `${totals.total} complaint(s) across ${totals.tools} tool(s), ${totals.recurring} reported more than once:`,
+                '',
+                ...groups.map((group) =>
+                  [
+                    `  ${group.tool} — ${group.count} report(s) from ${group.reporters} agent(s)` +
+                      (group.promoted.length ? `, promoted: ${group.promoted.join(', ')}` : ''),
+                    `    first #${group.firstSeq} · last #${group.lastSeq} (${group.lastSeen})`,
+                    ...group.samples.map((s) => `    #${s.seq} ${s.agent}: ${s.message}`),
+                  ].join('\n')
+                ),
+                '',
+                // Stated as a question because it is one, and it is the only
+                // line here that can change what an agent does next.
+                totals.recurring > 0
+                  ? `${totals.recurring} tool(s) were named twice or more. Recurrence is the finding — a file an issue can hold and a note cannot. Promote: swarm new "<title>" --body "<complaints>"`
+                  : 'nothing has recurred yet; a second report of the same tool is what makes it worth an issue',
+              ].join('\n')
+        );
         return 0;
       }
 
@@ -790,7 +859,7 @@ export async function run(
         const kind = flags.kind ? String(flags.kind) : null;
         // Reading the log from the beginning was ALSO wrong, and it is the half
         // that cost two agents a session. A bare `watch` took `--since 0`, read
-        // one page, and stopped: on a 572-event board it printed seq 1-200 —
+        // one page, and stopped: on a 633-event board it printed seq 1-200 —
         // the first seventeen hours — and every `note` written since was simply
         // not in the output. An agent grepping for its own note text got
         // nothing and concluded the note had not landed. It had. The output is
@@ -805,22 +874,25 @@ export async function run(
         //                 more. A follower wants the story so far, and the spawn
         //                 test that watches for an event written BEFORE it
         //                 started depends on exactly that.
-        //   `--since N`  EVERY event after N, streamed, because `swarm status`
-        //                 hands out exactly this invocation and a reader who
-        //                 names a sequence number is asking for a suffix. The
-        //                 old code stopped after 200 and silently lost the rest.
-        //   bare         The last PAGE of the log, and a `#` line saying which
-        //                 window that is, because a reader cannot see it from
-        //                 the lines.
+        //   `--since N`  EVERY event after N, read to the end, because `swarm
+        //                 status` hands out exactly this invocation and a reader
+        //                 who names a sequence number is asking for a suffix.
+        //                 The old code stopped after 200 and silently lost the
+        //                 rest — the other half of the same defect.
+        //   bare         The last PAGE of matching events, and a `#` line saying
+        //                 which window that is, because a reader cannot see it
+        //                 from the lines.
         //
-        // The bare window is found by READING the log and keeping a rolling
-        // buffer, not by asking for a sequence range. That is what makes
-        // `--kind` work: a window is a set of matching events, so the last 200
-        // `note` events may sit at sequence 40 on a board where sequence 40 is
-        // not in the last 200 events. Reading backwards by seq got that wrong
-        // and missed the event entirely — a `watch --kind` that finds nothing
-        // is the one answer a log search must never give.
-        const since = flags.since === undefined ? null : Number(flags.since);
+        // `--since` is validated rather than coerced. `Number('abc')` is NaN,
+        // and `seq > NaN` is false in SQLite for every row, so an unvalidated
+        // flag answered a typo with a silently EMPTY log — the same shape of
+        // lie this command is being fixed for, one layer up.
+        const rawSince = flags.since === undefined ? null : String(flags.since);
+        if (rawSince !== null && !/^\d+$/.test(rawSince)) {
+          throw new BoardError(`--since wants a whole sequence number, got: ${rawSince}`, { code: 1 });
+        }
+        const since = rawSince === null ? null : Number(rawSince);
+
         if (flags.follow || since !== null) {
           let cursor = since ?? 0;
           for (;;) {
@@ -828,6 +900,9 @@ export async function run(
             for (const event of events) out.write(`${eventLine(event)}\n`);
             if (events.length > 0) cursor = Number(events.at(-1).seq);
             if (!flags.follow) {
+              // A page shorter than PAGE is the last one. The loop continues on
+              // a FULL page, so a deliberate `--since 0` read cannot silently
+              // stop at 200 and lose everything after it.
               if (events.length < PAGE) break;
               continue;
             }
@@ -838,30 +913,40 @@ export async function run(
           return 0;
         }
 
-        // The window. Bounded at PAGE events, whatever the log's length, and the
-        // header counts what is in the buffer rather than what the sequences
-        // suggest: `events()` filters `seq > cursor`, so "the last 200" is a
-        // range whose arithmetic is one wider than it looks, and a header that
-        // miscounts is how event 1 goes missing with a note promising it is
-        // reachable.
-        const window = [];
-        let matched = 0;
-        let cursor = 0;
-        for (;;) {
-          const events = board.events({ since: cursor, limit: PAGE, kind });
-          if (events.length === 0) break;
-          matched += events.length;
-          window.push(...events);
-          if (window.length > PAGE) window.splice(0, window.length - PAGE);
-          cursor = Number(events.at(-1).seq);
-          if (events.length < PAGE) break;
+        // The window. `recentEvents` filters in SQL and reverses, so this is one
+        // indexed read whatever the log's length — a window is a set of
+        // MATCHING events, and the last 200 `note`s can sit anywhere in the log.
+        // Reading the whole log forward to collect them, as an earlier attempt
+        // here did, is correct but O(log length) for a fixed-size answer, and it
+        // justified itself with a claim about backwards queries that was false.
+        const { events: window, matched } = board.recentEvents({ limit: PAGE, kind });
+        // `--json` is honoured here, not just documented. The help promises
+        // machine-readable output on every command except help and --version,
+        // and this one used to write its lines straight to `out` and ignore the
+        // flag — which is the flag an agent reaches for precisely when a grep
+        // has just failed it.
+        if (json) {
+          emit(
+            {
+              events: window,
+              shown: window.length,
+              matched,
+              truncated: matched > window.length,
+              kind,
+              lastSeq: board.lastSeq(),
+            },
+            null
+          );
+          return 0;
         }
         if (matched > window.length) {
           // `#` so it is a comment a pipeline can drop, not an event line: the
-          // window is the one thing the reader cannot see from the output.
+          // window is the one thing the reader cannot see from the output. The
+          // count is `matched` from the query, never arithmetic on the buffer,
+          // so the header cannot claim a completeness the read did not have.
           out.write(
             `# the last ${window.length} of ${matched} matching event(s)${kind ? ` of kind ${kind}` : ''}; ` +
-              `the other ${matched - window.length}: swarm watch --since 0${kind ? ` --kind ${kind}` : ''}\n`,
+              `the other ${matched - window.length}: swarm watch --since 0${kind ? ` --kind ${kind}` : ''}\n`
           );
         }
         for (const event of window) out.write(`${eventLine(event)}\n`);

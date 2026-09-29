@@ -596,6 +596,42 @@ export class Board {
     return this.db.prepare(`SELECT * FROM events WHERE ${where.join(' AND ')} ORDER BY seq ASC LIMIT ?`).all(...params);
   }
 
+  /**
+   * The NEWEST `limit` events, in the ascending order a log reader expects,
+   * plus how many matched in total.
+   *
+   * A window is a set of MATCHING events, not a range of sequence numbers, so
+   * the filter has to be inside the query: the last 200 `note` events can sit
+   * anywhere in the log, and slicing the log by sequence and then filtering
+   * loses them. An earlier version of this fix did the reverse — it read the
+   * WHOLE log forward keeping a rolling buffer, on a comment claiming that
+   * querying backwards was wrong. The claim was false: `ORDER BY seq DESC
+   * LIMIT n` filtered in SQL is exactly this, in one indexed read, and it also
+   * removes the O(log length) scan that made a bare `watch` slow on a long
+   * board. `events_kind_idx` is `(kind, seq)`, so the filtered case is an index
+   * seek as well.
+   *
+   * The reversal happens here so every caller gets a log in reading order; a
+   * caller that forgot it would show the newest event first, which reads as a
+   * board running backwards.
+   */
+  recentEvents({ limit = 200, kind = null, issue = null } = {}) {
+    const where = [];
+    const params = [];
+    if (issue) {
+      where.push('issue_id = ?');
+      params.push(issue);
+    }
+    if (kind) {
+      where.push('kind = ?');
+      params.push(kind);
+    }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const matched = Number(this.db.prepare(`SELECT COUNT(*) AS n FROM events ${clause}`).get(...params)?.n ?? 0);
+    const rows = this.db.prepare(`SELECT * FROM events ${clause} ORDER BY seq DESC LIMIT ?`).all(...params, limit);
+    return { events: rows.reverse(), matched };
+  }
+
   lastSeq() {
     const row = this.db.prepare('SELECT COALESCE(MAX(seq), 0) AS seq FROM events').get();
     return Number(row?.seq ?? 0);
@@ -1539,6 +1575,142 @@ export class Board {
       const seq = this.addEvent('note', { agent: who, message, data });
       return { seq };
     });
+  }
+
+  /**
+   * A complaint: "this tool cost me time, and here is the evidence."
+   *
+   * It is a NOTE and not an issue on purpose, and the difference is the whole
+   * design. An issue is a task with an owner and a definition of done; this
+   * board's own history says the issue tracker is the part nobody uses, while
+   * `note` is what agents actually reach for. A defect report that has to be
+   * filed as a task is a defect report that never gets filed, because the
+   * reporter is mid-investigation, has no fix in mind, and would have to
+   * invent a title and a priority to be believed. So a complaint is one cheap
+   * command that records the trap verbatim, and PROMOTION to an issue is a
+   * separate, deliberate act by whoever decides it is real.
+   *
+   * `tool` is the load-bearing field and it is required, because a complaint
+   * with no tool attached is a complaint about the weather. The finding this
+   * exists for was reported as "swarm watch output is ANSI-coloured, so grep
+   * returns nothing" — and the tool named there (`swarm watch`) was right while
+   * the diagnosis was wrong. Recording the tool made the difference visible in
+   * one query, which is the only reason that misdiagnosis was caught at all.
+   */
+  complain(message, { tool, agent, data = null, kind = 'trap' } = {}) {
+    if (!message || !String(message).trim()) {
+      throw new BoardError('a complaint needs a message', { code: 1 });
+    }
+    const subject = tool === undefined || tool === null ? '' : String(tool).trim();
+    if (!subject) {
+      throw new BoardError('a complaint needs --tool: which tool cost you the time', { code: 1 });
+    }
+    return this.transaction(() => {
+      const who = agent ?? this.identity?.agentId ?? 'unknown';
+      const seq = this.addEvent('complaint', {
+        agent: who,
+        path: subject,
+        message: String(message).trim(),
+        data: data === null ? { kind } : { ...data, kind },
+      });
+      return { seq, tool: subject };
+    });
+  }
+
+  /**
+   * Complaints grouped by the tool they name, most-reported first.
+   *
+   * Grouped rather than listed because a SINGLE complaint is a shrug and the
+   * only signal worth acting on is recurrence: one agent misreading a tool is
+   * that agent, and three agents hitting the same one is a defect in the tool.
+   * Counting by tool is the coarsest grouping that still answers "is this
+   * going to keep happening", and it needs no taxonomy nobody will maintain.
+   *
+   * `promoted` is read back off the linked issue rather than stored, so a
+   * complaint promoted to an issue and later closed still reads as promoted —
+   * a flag here would have to be kept in step with a lifecycle it does not own.
+   */
+  complaints({ limit = NO_LIMIT } = {}) {
+    const rows = this.db
+      .prepare(
+        `SELECT seq, ts, agent_id, path, message, data FROM events
+                WHERE kind = 'complaint' ORDER BY seq DESC`
+      )
+      .all();
+    const byTool = new Map();
+    for (const row of rows) {
+      let parsed = {};
+      try {
+        parsed = row.data ? JSON.parse(row.data) : {};
+      } catch {
+        // A malformed `data` column is a complaint still worth counting: the
+        // message and the tool are the two fields this is read for, and both
+        // are top-level columns that no JSON parse can take away.
+        parsed = {};
+      }
+      const tool = row.path ?? 'unstated';
+      if (!byTool.has(tool)) {
+        byTool.set(tool, {
+          tool,
+          count: 0,
+          firstSeq: row.seq,
+          lastSeq: row.seq,
+          firstSeen: row.ts,
+          lastSeen: row.ts,
+          reporters: new Set(),
+          kinds: new Set(),
+          promoted: [],
+          samples: [],
+        });
+      }
+      const group = byTool.get(tool);
+      group.count += 1;
+      group.firstSeq = Math.min(group.firstSeq, row.seq);
+      group.firstSeen = row.ts < group.firstSeen ? row.ts : group.firstSeen;
+      group.lastSeen = row.ts > group.lastSeen ? row.ts : group.lastSeen;
+      group.reporters.add(row.agent_id);
+      if (parsed.issue) group.promoted.push(parsed.issue);
+      if (parsed.kind) group.kinds.add(parsed.kind);
+      if (group.samples.length < 3) {
+        group.samples.push({ seq: row.seq, agent: row.agent_id, message: row.message });
+      }
+    }
+    return (
+      [...byTool.values()]
+        .map((group) => ({
+          tool: group.tool,
+          count: group.count,
+          reporters: group.reporters.size,
+          reporterIds: [...group.reporters],
+          kinds: [...group.kinds],
+          promoted: group.promoted,
+          firstSeq: group.firstSeq,
+          lastSeq: group.lastSeq,
+          firstSeen: group.firstSeen,
+          lastSeen: group.lastSeen,
+          samples: group.samples,
+        }))
+        // Recurrence first, then recency: a tool hit once an hour ago and a tool
+        // hit nine times today are not the same finding, and the nine is the one
+        // that is still happening.
+        .sort((a, b) => b.count - a.count || b.lastSeq - a.lastSeq)
+        .slice(0, limit)
+    );
+  }
+
+  /**
+   * The count `status` prints. Kept as its own method so the human line and the
+   * `--json` field cannot disagree, which is the failure every hand-written
+   * summary in this script has already had once.
+   */
+  complaintTotals() {
+    const groups = this.complaints();
+    return {
+      total: groups.reduce((sum, group) => sum + group.count, 0),
+      tools: groups.length,
+      recurring: groups.filter((group) => group.count > 1).length,
+      top: groups[0] ? { tool: groups[0].tool, count: groups[0].count } : null,
+    };
   }
 
   /**
