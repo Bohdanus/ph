@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createMockImageBitmap, createMockOffscreenCanvas } from '../../__tests__/fixtures/canvas.ts';
+import { createImageHistoryItem } from '../../__tests__/fixtures/history.ts';
 import { createMockLayer, createMockLayers } from '../../__tests__/fixtures/layer.ts';
 import type { ImageLayerSource, Layer, LayerId, LayersRecord } from '../layer-types.ts';
 import type { BitmapSource } from '../general-types.ts';
+import type { HistoryItem } from '../history-types.ts';
 import {
   closePresentationBitmap,
   DocumentPresentationScope,
@@ -15,6 +17,38 @@ import {
 
 function staged(): BitmapSource {
   return createMockOffscreenCanvas(20, 10) as unknown as BitmapSource;
+}
+
+/**
+ * Stands in for the store's liveness answer, which is not exported. It is the
+ * fixture that makes a test's SCENARIO real; the assertions are about how the
+ * scope reacts to that answer, so a change to the store's collector is not what
+ * these tests claim to cover.
+ *
+ * The real collector is not left untested for that reason: it is driven through
+ * the dispatcher in `StoreContext.retirement.test.tsx`, which pins each alias it
+ * reads. This copy is a scope-reaction fixture, not a second implementation of
+ * the rule, and a change to either side belongs in both files.
+ */
+function collectLive(next: LayersRecord, history: readonly HistoryItem[]): Set<BitmapSource> {
+  const live = new Set<BitmapSource>();
+  const addSource = (value: unknown) => {
+    const candidate = value as { kind?: unknown; bitmap?: BitmapSource } | null;
+    if (candidate?.kind === 'image' && candidate.bitmap) live.add(candidate.bitmap);
+  };
+  const addLayer = (layer: Layer) => {
+    if (layer.bitmap) live.add(layer.bitmap);
+    if (layer.tmpCanvas) live.add(layer.tmpCanvas);
+    addSource(layer.source);
+  };
+  for (const layer of Object.values(next)) addLayer(layer);
+  for (const entry of history) {
+    addSource(entry.layerSource);
+    addSource(entry.args);
+    const snapshot: LayersRecord = entry.documentSource?.layers ?? {};
+    for (const layer of Object.values(snapshot)) addLayer(layer);
+  }
+  return live;
 }
 
 describe('isSamePresentationCanvas', () => {
@@ -122,6 +156,28 @@ describe('closePresentationBitmap', () => {
 });
 
 describe('materializePresentationBitmap', () => {
+  it('materializes the staged canvas and closes nothing', async () => {
+    // The store owns the result, so this boundary only hands the bitmap over:
+    // the superseded-canvas refusal and the close both live at the store
+    // boundary (`PROMOTE_LAYER_PRESENTATIONS`), which is the only place that can
+    // tell whether the requesting canvas is still the layer's canvas. A success
+    // path that closed what it just produced hands the store a closed raster and
+    // the layer draws blank — the caller has no way to detect it.
+    const canvas = staged();
+    const bitmap = createMockImageBitmap();
+    const createImageBitmapStub = vi.fn(async () => bitmap);
+    vi.stubGlobal('createImageBitmap', createImageBitmapStub);
+
+    await expect(materializePresentationBitmap(canvas)).resolves.toBe(bitmap);
+    // The staged canvas is the source: materializing anything else would publish
+    // a raster of the wrong content under the layer's id.
+    expect(createImageBitmapStub).toHaveBeenCalledWith(canvas);
+    expect(bitmap.close).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
   it('contains a materialization failure and resolves undefined', async () => {
     const failure = new Error('materialization failed');
     vi.stubGlobal(
@@ -217,6 +273,46 @@ describe('DocumentPresentationScope ownership', () => {
     scope.dispose();
   });
 
+  it('keeps an adopted raster alive while a history entry still names it, then closes it once', () => {
+    // An ADOPTED raster — an import, a merge, a document import — is named by
+    // three aliases, and after the layer is replaced the only one left is the
+    // `layerSource` reference a history entry RETAINS rather than copies:
+    // `history-replay` reads that exact bitmap back on undo. Closing it is the
+    // use-after-close that made the next undo draw from a closed bitmap.
+    //
+    // The veto is what this test carries, because it is the half that fails in the
+    // dangerous direction: closing a raster a history entry still names breaks
+    // undo. The second retirement is a control rather than a second claim — it
+    // shows the raster is closed exactly once once nothing names it, but it does
+    // NOT show the first call kept it as a candidate, because
+    // `retireUnreferenced` returns before its delete loop whenever the departed
+    // list is empty, so the first call could not have dropped it in any case.
+    //
+    // Whether the STORE names the raster is deliberately not claimed here: the
+    // liveness answer is this file's fixture. The real
+    // `collectLivePresentationBitmaps` is driven through the dispatcher in
+    // `StoreContext.retirement.test.tsx`, which is what keeps this mirror honest.
+    const scope = new DocumentPresentationScope();
+    const adopted = createMockImageBitmap();
+    scope.trackPublished('doc-1', adopted);
+
+    // The layer now names a different, freshly promoted raster.
+    const next = { 'layer-1': createMockLayer({ id: 'layer-1', bitmap: createMockImageBitmap(64, 32) }) };
+    const history = [createImageHistoryItem(adopted)];
+    expect(collectLive(next, history).has(adopted)).toBe(true);
+    expect(next['layer-1'].bitmap).not.toBe(adopted);
+
+    scope.retireUnreferenced('doc-1', () => collectLive(next, history));
+    expect(adopted.close).not.toHaveBeenCalled();
+
+    // The merge's entry is truncated away by the next append, so the last name is
+    // gone and the raster is now a full-document `ImageBitmap` nobody can reach.
+    scope.retireUnreferenced('doc-1', () => collectLive(next, []));
+    expect(adopted.close).toHaveBeenCalledTimes(1);
+
+    scope.dispose();
+  });
+
   it('never asks for the liveness set when it owns nothing for the document', () => {
     // The liveness question is the store's, and answering it is O(history) over an
     // array that grows for the life of a session. It is passed as a thunk precisely
@@ -238,6 +334,54 @@ describe('DocumentPresentationScope ownership', () => {
 
     expect(walk).toHaveBeenCalledTimes(1);
     expect(ownedElsewhere.close).toHaveBeenCalledTimes(1);
+
+    scope.dispose();
+  });
+
+  it('stops asking for the liveness set once a document has retired its last cache', () => {
+    // The SECOND way a document ends up owning nothing: the first is that this
+    // scope never published for it. Here the set is emptied by a completed
+    // retirement, and it is the trigger that RECURS — it is true again after
+    // every retirement cycle, on a document that was actively publishing one
+    // commit earlier. Answering is an O(history) walk over an array that grows
+    // for the life of a session, paid on every commit, undo and layer mutation.
+    const scope = new DocumentPresentationScope();
+    const retired = createMockImageBitmap();
+    scope.trackPublished('doc-1', retired);
+    const walk = vi.fn<() => ReadonlySet<BitmapSource>>(() => new Set());
+
+    scope.retireUnreferenced('doc-1', walk);
+    expect(walk).toHaveBeenCalledTimes(1);
+    expect(retired.close).toHaveBeenCalledTimes(1);
+
+    scope.retireUnreferenced('doc-1', walk);
+    expect(walk).toHaveBeenCalledTimes(1);
+
+    scope.dispose();
+  });
+
+  it('retires the departing document without reaching the one that replaced it', () => {
+    // Candidacy is keyed by document. A replacement commits in the same turn as a
+    // promotion, which is why the scope is provider-scoped rather than
+    // per-document, so a retirement addressed to the old document must not close
+    // what the new one already owns: the freshly opened document's layer would
+    // render blank on arrival. The second half is the mirror image — the arriving
+    // raster must stay REGISTERED against its own document, or the retirement
+    // that spared it would have leaked it instead.
+    const scope = new DocumentPresentationScope();
+    const departing = createMockImageBitmap();
+    const arriving = createMockImageBitmap(64, 32);
+    scope.trackPublished('doc-old', departing);
+    scope.trackPublished('doc-new', arriving);
+
+    // Nothing is live: the document was replaced, so its layers and history are
+    // gone and every raster it published is unreachable.
+    scope.retireUnreferenced('doc-old', () => new Set());
+    expect(departing.close).toHaveBeenCalledTimes(1);
+    expect(arriving.close).not.toHaveBeenCalled();
+
+    scope.retireUnreferenced('doc-new', () => new Set());
+    expect(arriving.close).toHaveBeenCalledTimes(1);
 
     scope.dispose();
   });

@@ -479,7 +479,7 @@ into the layer that is already there.
 
 **What this app does.** Layer opacity has no writer: `Layer.opacity` is a required field, PSD import
 populates it and materialization applies it, and nothing in the app ever writes it. The defect and its
-blast radius are `HANDOFF.md` §56 (`HANDOFF.md:1184`); it is recorded here only because closing it is
+blast radius are `HANDOFF.md` §56 (`HANDOFF.md:1244`); it is recorded here only because closing it is
 not a small change.
 
 The paint model is the larger half. A brush stroke commits as a **new layer** rather than painting the

@@ -39,8 +39,8 @@ export const ellipticalSelection =
  * this tool's, so the commit borrows `'magic-wand'` instead of inventing a cast. It is
  * the one borrowed value that is also the right behaviour: `drawSelectionOutline` skips
  * its per-vertex anchor dots for `'magic-wand'` and `'freehand-lasso'`
- * (`src/util/selection.ts:155`) and `findSelectionAnchorAtPoint` returns `null` for them
- * (`src/util/selection.ts:178`), and a tessellated ellipse must carry neither 141
+ * (`src/util/selection.ts:201`) and `findSelectionAnchorAtPoint` returns `null` for them
+ * (`src/util/selection.ts:239`), and a tessellated ellipse must carry neither 141
  * draggable handles nor an anchor hit-test. Adding the real member to the union and
  * adding it to the two `selection.ts` exclusions is the whole follow-up; until then
  * every reference goes through this one constant.
