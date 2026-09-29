@@ -29,9 +29,11 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  *
  * | Bar                     | Control         | Element                       | id                              | Label text        | Accessible name | Range                              |
  * | ----------------------- | --------------- | ----------------------------- | ------------------------------- | ----------------- | --------------- | ---------------------------------- |
- * | Eraser                  | Mode            | `<select>`                    | `eraser-mode`                   | `Mode`            | `Mode`          | brush (disabled) / pencil / block  |
+ * | Eraser                  | Mode            | `<select>`                    | `eraser-mode`                   | `Mode`            | `Mode`          | brush / pencil / block             |
  * | Eraser                  | Size            | `<input type=range>`          | `eraser-size`                   | `Size 40px`       | `Size 40px`     | 1..500, step 1                     |
  * | Eraser                  | Opacity         | `<input type=range>`          | `eraser-opacity`                | `Opacity 100%`    | `Opacity 100%`  | 0..100, step 1; absent in Block    |
+ * | Eraser                  | Hardness        | `<input type=range>`          | `eraser-hardness`               | `Hardness 50%`    | `Hardness 50%`  | 0..100; Brush mode only            |
+ * | Eraser                  | Spacing         | `<input type=range>`          | `eraser-spacing`                | `Spacing 25%`     | `Spacing 25%`   | 1..100; Brush mode only            |
  * | Eraser                  | Flow            | `<input type=range>` DISABLED | `eraser-flow`                   | `Flow 100%`       | `Flow 100%`     | 1..100, always disabled            |
  * | Magic Eraser / Bucket   | Tolerance       | `<input type=range>`          | `<tool>-tolerance`              | `Tolerance 32`    | `Tolerance 32`  | 0..255, step 1 (Adobe, not 0..100) |
  * | Magic Eraser / Bucket   | Contiguous      | `<input type=checkbox>`       | `<tool>-contiguous`             | `Contiguous`      | `Contiguous`    | checked                             |
@@ -383,15 +385,16 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     });
   });
 
-  // eraser: the deliberate scope cut — Brush renders disabled because one stroke() has no falloff
-  test('the eraser mode select offers Pencil and Block and refuses Brush', async ({ page }) => {
+  // eraser: the Brush mode is a stamped soft tip now, so all three are offered and all three work
+  test('the eraser mode select offers all three Photoshop modes, and the select is live', async ({ page }) => {
     await openWorkspace(page);
     await selectBrushFamilyTool(page, 'brush', 'eraser', 'Eraser Tool');
 
     const mode = page.getByRole('combobox', { name: 'Mode' });
     await expect(mode).toBeVisible();
-    // The seeded default is Pencil, because that is what this renderer honestly produces.
-    await expect(mode).toHaveValue('pencil');
+    // The seeded default is Brush, because a soft tip is what Photoshop's eraser opens on and a
+    // hard first stroke is the defect this replaced.
+    await expect(mode).toHaveValue('brush');
 
     const brushOption = mode.locator('option[value="brush"]');
     await expect(brushOption).toHaveText('Brush');
@@ -400,18 +403,14 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     // form control up to `label.control` — so an `<option>` inside a label-wrapped `<select>` is
     // reported against the SELECT, which is enabled, no matter what the option carries. The
     // attribute plus the enabled set is the same fact read through a channel that is not
-    // retargeted, and it is what a user can actually do: choose between these two and no other.
-    // See e2e/OPEN_PROBLEMS.md.
-    await expect(brushOption, 'Brush eraser mode must stay disabled until a stamped-dab engine exists').toHaveAttribute(
-      'disabled',
-      ''
-    );
+    // retargeted, and it is what a user can actually do. See e2e/OPEN_PROBLEMS.md.
+    await expect(brushOption).not.toHaveAttribute('disabled', '');
     const selectable = await mode
       .locator('option')
       .evaluateAll((nodes) =>
         nodes.filter((node) => !(node as HTMLOptionElement).disabled).map((node) => (node as HTMLOptionElement).value)
       );
-    expect(selectable, 'only Pencil and Block may be offered').toEqual(['pencil', 'block']);
+    expect(selectable, 'all three Photoshop modes may be offered').toEqual(['brush', 'pencil', 'block']);
 
     // The select is live rather than decorative: Adobe drops Opacity from Block mode entirely,
     // so a select that only rendered options would fail here.

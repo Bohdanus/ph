@@ -55,6 +55,20 @@
       // terminal. `npm run test:e2e:headed` still works for them - it sets the
       // variable inside package.json, which Kilo never inspects.
       "*PLAYWRIGHT_ALLOW_HEADED*": "deny",
+
+      // A bare `npx tsc` at this repo's root type-checks ZERO files and exits 0,
+      // because the root tsconfig is a solution stub - indistinguishable from a
+      // clean typecheck, and something a model that never read a doc will run.
+      // `npm run tsc` is the real one and does not match these patterns.
+      //
+      // The re-allows below matter: build mode is the authoritative check, and
+      // ORDER IS THE MECHANISM, so the exception must come AFTER the denial.
+      // `scripts/tsc-guard.mjs`, linked to `node_modules/.bin/tsc` by `npm
+      // install`, refuses the same invocations at the process itself and is the
+      // layer that also covers `tsc` and `./node_modules/.bin/tsc`.
+      "*npx tsc*": "deny",
+      "*npx tsc -b*": "allow",
+      "*npx tsc --build*": "allow",
     },
   },
 }

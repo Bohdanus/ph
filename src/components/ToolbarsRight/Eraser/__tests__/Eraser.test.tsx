@@ -2,12 +2,21 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import Eraser, { ERASER_SIZE_MAX, ERASER_SIZE_MIN } from '../Eraser.tsx';
+import { ERASER_HARDNESS_MAX, ERASER_HARDNESS_MIN } from '../../../../tools/eraser.ts';
+import { BRUSH_SPACING_MAX, BRUSH_SPACING_MIN } from '../../../../util/brush-engine.ts';
 
+/**
+ * Mirrors the shipped defaults in `src/tools/settings.ts`, spelled out because `vi.hoisted` runs
+ * before any import is initialized. `eraser.brush.test.ts` is what asserts the values themselves,
+ * against `defaultSettings` rather than against this copy.
+ */
 const toolArgs = vi.hoisted(() => ({
   alpha: 1,
   color: '#000000',
   lineWidth: 40,
-  mode: 'pencil',
+  mode: 'brush',
+  hardness: 50,
+  spacing: 25,
   points: [] as unknown[],
 }));
 
@@ -31,7 +40,9 @@ const resetToolArgs = () => {
   toolArgs.alpha = 1;
   toolArgs.color = '#000000';
   toolArgs.lineWidth = 40;
-  toolArgs.mode = 'pencil';
+  toolArgs.mode = 'brush';
+  toolArgs.hardness = 50;
+  toolArgs.spacing = 25;
   toolArgs.points = [];
 };
 
@@ -80,29 +91,62 @@ describe('Eraser toolbar', () => {
     expect(size).toHaveAttribute('step', '1');
   });
 
-  it('offers the three Photoshop modes, with Brush unselectable', () => {
+  it('offers the three Photoshop modes, all of them selectable', () => {
     render(<Eraser />);
     const options = [...screen.getByLabelText('Mode').querySelectorAll('option')];
 
     expect(options.map((option) => option.textContent)).toEqual(['Brush', 'Pencil', 'Block']);
-    // `disabled` on the option itself, not a filtered-out list: the bar is Photoshop-shaped, and an
-    // e2e assertion can prove the mode is not offered as though it worked.
-    expect(options[0]).toBeDisabled();
-    expect(options[1]).toBeEnabled();
-    expect(options[2]).toBeEnabled();
+    // No `disabled` anywhere: the Brush option used to carry it because a soft tip needed a
+    // stamped-dab engine this renderer did not have. It has one now (`src/tools/eraser.ts`), and a
+    // rendered-disabled option is a mode the bar advertises and refuses.
+    expect(options.every((option) => !option.disabled)).toBe(true);
   });
 
-  it('never renders Brush as the current mode, because EraserMode excludes it', () => {
+  it('opens on Brush, so the first stroke already has a soft edge', () => {
     render(<Eraser />);
     const select = screen.getByLabelText('Mode') as HTMLSelectElement;
 
-    expect(select.value).toBe('pencil');
-    // A user cannot pick it; only a script assigning `.value` could, and the union makes that a
-    // type error at the patch site rather than a silently stored mode.
-    expect([...select.options].filter((option) => !option.disabled).map((option) => option.value)).toEqual([
-      'pencil',
-      'block',
+    expect(select.value).toBe('brush');
+  });
+
+  it('switches to Pencil', () => {
+    render(<Eraser />);
+
+    fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'pencil' } });
+
+    expect(patchToolArgsMock).toHaveBeenCalledWith('eraser', { mode: 'pencil' });
+  });
+
+  it('patches Hardness and Spacing in Brush mode, on Photoshop’s ranges', () => {
+    render(<Eraser />);
+    const hardness = screen.getByLabelText(/Hardness/) as HTMLInputElement;
+    const spacing = screen.getByLabelText(/Spacing/) as HTMLInputElement;
+
+    expect(hardness).toHaveAttribute('min', String(ERASER_HARDNESS_MIN));
+    expect(hardness).toHaveAttribute('max', String(ERASER_HARDNESS_MAX));
+    expect(spacing).toHaveAttribute('min', String(BRUSH_SPACING_MIN));
+    expect(spacing).toHaveAttribute('max', String(BRUSH_SPACING_MAX));
+
+    fireEvent.change(hardness, { target: { value: '25' } });
+    fireEvent.change(spacing, { target: { value: '60' } });
+
+    expect(patchToolArgsMock.mock.calls).toEqual([
+      ['eraser', { hardness: 25 }],
+      ['eraser', { spacing: 60 }],
     ]);
+  });
+
+  it('withholds Hardness and Spacing in the hard modes, because they are properties of a stamped tip', () => {
+    const { rerender } = render(<Eraser />);
+    expect(screen.getByLabelText(/Hardness/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Spacing/)).toBeInTheDocument();
+
+    toolArgs.mode = 'pencil';
+    rerender(<Eraser />);
+
+    expect(screen.queryByLabelText(/Hardness/)).toBeNull();
+    expect(screen.queryByLabelText(/Spacing/)).toBeNull();
+    expect(screen.getByLabelText(/Size/)).toBeInTheDocument();
   });
 
   it('switches to Block mode', () => {

@@ -9,7 +9,18 @@ linked files; this file is the rules that apply to every task.
 | [`docs/TESTING.md`](docs/TESTING.md)                   | any check: `tsc`, `test`, `lint`, `e2e`, build, CI                  |
 | [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md)       | other agents: worktrees, the board, the worktree list, a dead agent |
 | [`docs/PHOTOSHOP-UX.md`](docs/PHOTOSHOP-UX.md)         | the Tools rail, tool names, Photoshop fidelity                      |
-| `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN_PROBLEMS.md` | filing or checking a known defect                                   |
+| [`docs/TOOLS-TOO-HARD.md`](docs/TOOLS-TOO-HARD.md)     | a Photoshop capability this browser cannot do, before estimating it |
+| [`docs/CODE-REVIEW.md`](docs/CODE-REVIEW.md)           | finishing non-trivial work: launching the review subagent           |
+| `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN-PROBLEMS.md` | filing or checking a known defect                                   |
+
+Skills are loaded from `.kilo/skills/`, gitignored, so the durable copy of every skill is the
+tracked document it points at. There is no registry: the loader's `description` is the only
+discovery mechanism, and a skill nobody can find is a skill nobody reads.
+
+| Skill                     | Tracked document                                                           | Read it when                                                     |
+| ------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `hard-merge`              | [`.skills/hard-merge.md`](.skills/hard-merge.md)                           | two branches implemented overlapping features and one has landed |
+| `photoshop-tool-creation` | [`.skills/photoshop-tool-creation.md`](.skills/photoshop-tool-creation.md) | adding or changing a tool or its options bar                     |
 
 ## Subagents: THE DEFAULT, NOT THE FALLBACK
 
@@ -57,6 +68,11 @@ before spawning a fleet:
 - **Background for long work**; wait for every result you depended on. NEVER
   answer while one is still running.
 
+## ALWAYS launch a code review subagent after non-trivial work
+
+Read-only (`edit: deny`), before the merge — the prompt, the permissions and the
+rules are [`docs/CODE-REVIEW.md`](docs/CODE-REVIEW.md).
+
 ## NEVER OPEN A BROWSER WINDOW
 
 **A headed browser takes over the operator's screen and their input reaches the
@@ -66,6 +82,11 @@ code.** Never pass `--headed`, `--ui`, `--debug`, `show-report`, `show-trace`,
 the mode. If it only reproduces visually, ask the operator to run
 `npm run test:e2e:headed`. Table and the two holes in enforcement:
 [`docs/TESTING.md`](docs/TESTING.md).
+
+## Typecheck
+
+`npx tsc` type-checks **zero files** and exits 0 — `node_modules/.bin/tsc` is a
+guard that refuses it. `npm run tsc` (`tsc -b`) is the real typecheck.
 
 ## Working with other agents
 
@@ -127,8 +148,9 @@ promotes cached canvases outside reducer publication.**
 3. **Covered** by a test that fails without the change.
 4. **Documented**: handoff updated, plus any new gate, test trap or architecture
    boundary where the next agent looks.
-5. **Reviewed by someone else** — diff, surrounding code, tests, and its own
-   load-bearing claim re-run. A finding sends the task back.
+5. **Reviewed by someone else** — a code review subagent on the prompt in
+   [`docs/CODE-REVIEW.md`](docs/CODE-REVIEW.md): the diff, the surrounding code, the
+   tests, and its own load-bearing claim re-run. A finding sends the task back.
 6. **Merged into `main`** after review and passing gates. Pushed, `main` green.
 7. **Reported as done**: what changed, what validation ran, what the review said.
 

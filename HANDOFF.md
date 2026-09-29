@@ -2325,3 +2325,96 @@ gesture always has an unmount cleanup, which is the point of using one.
 **The two docks are not keyboard-reachable at all**, and that is a real gap rather than a
 non-issue: a rail or a dock cannot be moved with the keyboard, and nothing in `Window` lists the
 panels. The honest cost of that is recorded here rather than hidden behind `aria-hidden`.
+
+## 85. Two agents shipped overlapping features in two branches, and the conflict was the cheap part
+
+**The defect.** On 2026-09-29 two root agents implemented the same surfaces in separate branches.
+`feat/toolbar-overflow-collapse` (session "Implement collapsible left toolbar") and
+`feat/panel-docks` (session "+++++ draggable Photoshop-like panels +++++") both rewrote
+`src/components/SidebarLeft/SidebarLeft.tsx`, and both shipped a different answer to the same
+unwritten question: what the tools rail does when it does not fit. The panel work landed first as
+`1eb275a1`; the toolbar branch then merged `main` into itself as `e473a45f` and met **8 real
+conflicts across 11 files** — 15 candidates, of which 6 merged cleanly.
+
+**Why it is not a merge that could have been avoided.** `git range-diff` between the two branch
+tips returns **every line `-` / `>`: zero corresponding commits**. Four panel commits against nine
+toolbar commits, not one pair. These were not two attempts at one change; they were two different
+changes to the same files, so a merge was the only available tool and the conflict volume was
+intrinsic. The mistake was upstream of the merge — nothing stopped the second agent from choosing
+the same surfaces — and it was made once, before a single line conflicted.
+
+**The signal existed, on the board, twice, and was reasoned past.** The panel agent's first tool
+call showed it the toolbar agent's live lock on `SidebarLeft.tsx`; its second, `swarm ready`, named
+the same file as held. Its own recorded reasoning two minutes later was: _"Wait — `swarm check`
+says free. But the ready listing earlier said `SidebarLeft.tsx — feat/toolbar-overflow-collapse ·
+2m left`. That lease has now expired or been released. Let me be careful: I'll claim the files
+before editing."_ It then asked the board the one question the board could answer — **is the lease
+live?** — instead of the one that mattered, **is somebody working in this file right now?** A
+45-minute lease had lapsed at 08:19:56 and the worktree was on disk and fully populated until
+12:25:34, over four hours in which the branch was invisible to every other agent. `swarm check`
+returned `free`, which is exactly what it is built to return.
+
+**And the board has no axis for this.** Identity is the git branch and the lock test is
+foreign-vs-self by agent id, so arbitration happens on **paths**, and only between agents the board
+considers different. Two root sessions on two branches are correctly two agents; there is no second
+axis on which "we are both working on the left rail" could be expressed. `issues.scope` is a `TEXT`
+column defaulting to `'prod'`, read by one `list` filter and one display line and absent from
+`ready`'s ranking — and the live pair proves it cannot work: `ph-66` is `--scope e2e`, `ph-72` is
+`--scope prod`, so no `list --scope` returns both. `new`'s only dedup is `--origin`, so filing the
+same feature twice creates two unrelated rows with no warning. The curated inventory knows what
+each worktree is _for_, but only as prose written at land time — four hours too late — and the two
+overlap records that exist are human `note` strings no code compares.
+
+**The retrieval failure worth recording separately.** The toolbar agent DID run
+`npm run swarm -- watch` — and piped it through a `grep` of its own keywords. The panel agent's
+`note` ("starting feat/panel-docks: Photoshop-style draggable panel docks…") matched none of them,
+so the one agent that could have learned of the overlap filtered the message out. **A log that must
+be grepped is not a notification.**
+
+**What a hard merge now costs.** `.skills/hard-merge.md` is the procedure. The parts of it that
+exist because of this incident are: recover the requirements from the chat transcripts _before_
+opening a diff (the operator's turn-3 "get ready to this (but dont implement it)" and the panel
+agent's "must become draggable" are 28m59s apart and neither message mentions the other, so neither
+transcript alone contains the collision); arbitrate against Adobe and the web platform rather than
+against the hunk; and run four post-merge sweeps, because a clean merge is not a correct one.
+
+**That last clause happened here.** `e473a45f` was flagged
+`remerge CONFLICT: Merge conflict in AGENTS.md`, the commit landed, and the committed file still
+carried **six** live marker lines — `<<<<<<< HEAD` at :57, `=======` at :759 and :1001, an
+**indented** `<<<<<<<` at :848, and two space-separated `> > > > > > > main` label lines at :818
+and :1003. They passed through three further commits before `ef85d3ab` repaired them. Neither
+`--remerge-diff` nor `--cc` nor the existence of a merge commit catches a committed marker, and
+`--cc` under-reports on the same merge in a way that is easy to misread as clean: it names 9 files
+where `--remerge-diff` names 11, missing two genuine conflicts.
+
+**The sweep that finds it took three attempts, and the third is the one that shipped.** The first,
+`'^[[:space:]]*(<{7}|={7}|>)'`, finds only **3 of the 6** markers — it misses the indented one and
+both space-separated `diff3` labels — and it fires **171 times** across that merge's own changed
+files on ordinary `>` lines. A gate that reports clean files as broken teaches its reader to ignore
+it, which is worse than no gate at all. The second was right about the pattern and wrong about the
+input: it grepped the _working tree_, where `ef85d3ab` has since repaired those markers, so the
+retrospective run found **zero** in the commit it was written to check. The third searches the
+merge's own tree and reads a single `git grep` exit code:
+
+```bash
+git grep -nIE '^[[:space:]]*(<{7}|={7}|>([[:space:]]*>){6,})' <merge> -- \
+  $(git diff --name-only --diff-filter=ACMR <merge>^1 <merge>)
+```
+
+A third trap lives in the `|| echo "clean"` that version carried: **`xargs` exits 123 when any of
+its batches finds nothing**, so a pipeline over a dozen-plus files ends non-zero even when one
+matched, and the `||` prints `clean` on the line below the marker it just printed.
+
+**Test that fails without the fix.** None, and deliberately: this section records a process, not a
+defect, and there is no assertion to add. The measurement that the sweep is not optional is that
+same `git grep` on `e473a45f` — **exit 0**, naming all six markers — against `ef85d3ab` and against
+`HANDOFF.md`, `AGENTS.md`, `docs/TESTING.md` and `e2e/OPEN_PROBLEMS.md` on `main`, where it returns
+**exit 1**.
+
+The class-5 detector the skill adds in the same phase earned its place immediately: comparing each
+side's _newly added_ keys against the base and intersecting the two lists prints exactly one key
+for this incident, `'toolbar-overflow':`, which the merged tree then holds once instead of twice.
+
+**Files.** `.skills/hard-merge.md`, the `hard-merge-skill` entry in
+`scripts/lib/worktree-inventory/curated.mjs`, and the skill registry rows in `AGENTS.md`. The
+loader lives at `.kilo/skills/hard-merge/SKILL.md` and is gitignored, so it is not a durable copy.
