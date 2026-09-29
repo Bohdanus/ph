@@ -7,6 +7,7 @@ import type { Point, Selection } from '../../contexts/general-types.ts';
 import { usePointerPosition } from '../../hooks/usePointerPosition.ts';
 import { useKeyDownShortcut } from '../../hooks/useKeyboardEvents.tsx';
 import type { FeatherMagneticLassoToolArgs } from '../../tools/featherMagneticLasso.ts';
+import { magneticLassoAnchorSpan } from '../../tools/featherMagneticLasso.ts';
 import { createCommittedPolygonSelection, distanceBetweenPoints, drawSelectionOutline } from '../../util/selection.ts';
 import {
   createEdgeMapFromCanvas,
@@ -464,7 +465,7 @@ export const FeatherMagneticLassoToolArea = ({ className, overlayCtxRef }: Feath
   function maybeCommitAutoAnchor(segment: MagneticSegmentResult) {
     const now = Date.now();
     if (now - lastAutoAnchorTimeRef.current < MIN_AUTO_ANCHOR_TIME_MS) return false;
-    if (pathLength(segment.path) < args.frequency) return false;
+    if (pathLength(segment.path) < magneticLassoAnchorSpan(args.frequency)) return false;
 
     commitSegment(segment);
     lastAutoAnchorTimeRef.current = now;
