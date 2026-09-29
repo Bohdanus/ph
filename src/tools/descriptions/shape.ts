@@ -1,9 +1,20 @@
 import type { ToolControl, ToolDescription, ToolModifier, ToolShortcut } from './types.ts';
 
+/**
+ * The FIRST of the two rows in this file whose `control` is `Mode`.
+ *
+ * `types.ts:39-42` makes `control` the name Photoshop's options bar prints, verbatim, and
+ * Adobe prints `Mode` twice on this bar: once for the three-button drawing-mode group at
+ * its left end, and once for the blend mode it adds in Pixel mode. Renaming either row
+ * would break the one rule that field exists to enforce, so the collision is resolved in
+ * `detail` instead — each row says which `Mode` it is and where the control sits. This is
+ * the same move `pathModeOperationControl` makes below for `Operation` against `Path
+ * Operations`, and the same one the `Path Operations` row already makes.
+ */
 const modeControl: ToolControl = {
   control: 'Mode',
   detail:
-    'The three-button drawing-mode group: Shape creates a filled shape layer, Path creates a vector path with no pixels, and Pixels rasterizes the shape straight into the current layer. Shape is the default.',
+    'The first of the two controls Adobe names Mode, and the one at the left of the bar: the three-button drawing-mode group, where Shape creates a filled shape layer, Path creates a vector path with no pixels, and Pixels rasterizes the shape straight into the current layer. Shape is the default.',
   status: 'partial',
   appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:129',
 };
@@ -59,10 +70,19 @@ const opacityControl: ToolControl = {
   appRef: 'src/components/ToolbarsRight/Figures/Shape.tsx:284',
 };
 
+/**
+ * The SECOND of the two rows whose `control` is `Mode`, and a different control.
+ *
+ * Adobe's Pixel-mode bar really does label a blend-mode control `Mode`, which is why
+ * `types.ts:39-42` cannot be satisfied by inventing a name here. The `detail` therefore
+ * opens by saying which of the two `Mode` rows this is and names the other one by its
+ * position, so a reader of the generated table — where both rows print as `Mode` — can
+ * tell them apart without leaving the row.
+ */
 const pixelBlendModeControl: ToolControl = {
   control: 'Mode',
   detail:
-    'Pixel mode only: the blend mode the rasterized shape composites with, from the full layer blend-mode list. Shape and Path modes have no blend mode.',
+    'The second of the two controls Adobe names Mode, and a different control from the three-button drawing-mode group at the left of the bar: the blend mode the rasterized shape composites with, chosen from the full layer blend-mode list. Pixel mode only, and it sits at the right-hand end of the bar in the group with Opacity and Anti-alias, which Shape and Path modes do not have either.',
   status: 'missing',
 };
 
@@ -450,22 +470,26 @@ export const shapeDescriptions: Record<
     summary: "Draws a preset vector graphic from Photoshop's shape library, or one you define from a path.",
     purpose:
       'The Custom Shape tool draws any of the vector presets in Photoshop’s shape library — a library that includes the Leaf Trees, Wild Animals, Boats and Flowers groups, with the full set reached through Legacy Shapes and More in the Shapes panel. Those four were the default loaded groups in a 2020 account, and Adobe Community threads from 2019–2021 report that the picker changed and moved them behind Legacy Shapes and More, so what a current install shows on first launch is not established here. Third-party accounts, not Adobe’s own documentation, say this is the only shape tool whose Shift constraint preserves the drawn shape’s own aspect ratio rather than squaring the drag box, so a recognisable graphic comes out undistorted. Its Path Operations menu is where the boolean work happens: New Shape Layer, Combine Shapes, Subtract Front Shape — which Adobe’s 2022 wording calls Subtract From Shape Area — Intersect Shape Areas, Exclude Overlapping Shapes, and Merge Shape Components, which converts the live shape into a plain path and warns you that it can no longer be edited component by component. No single Adobe page enumerates that whole set. Any path — drawn with the Pen tool, made from a shape layer, or produced by converting text to a path — becomes a new preset through Edit ▸ Define Custom Shape, and Preset Manager saves and loads the result as a `.csh` file.',
+    /**
+     * The same bar in the same order, with one row this tool adds.
+     *
+     * The sequence is `sharedFigureOptions` verbatim — the family's declared bar order,
+     * which the comment above that list derives from `modify-shapes.html` and the
+     * mode-by-mode page — with `Shape Picker` at its head. The rows that differ from the
+     * shared list are the `status` and the `appRef`, and only those: they are the chip
+     * list's doing, not a claim about Photoshop's order. Nothing in the earlier version
+     * of this list was sourced as a different order — it simply ran the shared rows out in
+     * a different sequence, which contradicted the order the same file declares two
+     * hundred lines above it, so the list is aligned rather than defended.
+     *
+     * The picker's position is the one judgment here, and it is recorded rather than
+     * hidden: no Adobe page opened in this pass enumerates the Custom Shape bar in bar
+     * order (`draw-custom-shapes.html` documents the tool and the picker, not the order
+     * of the bar), so this row leads the bar on the same reasoning the rest of the list
+     * runs on — it is the only control that chooses which shape is drawn, and every row
+     * after it modifies that choice.
+     */
     options: [
-      { ...modeControl, status: 'inert', appRef: CUSTOM_SHAPE_CHIPS },
-      {
-        control: 'Fill',
-        detail:
-          'The interior colour of the shape, as a swatch offering None, Solid Color, Gradient or Pattern. Fill and Stroke are independent: a shape can have a fill and no stroke, or the reverse.',
-        status: 'inert',
-        appRef: CUSTOM_SHAPE_CHIPS,
-      },
-      { ...strokeControl, status: 'inert', appRef: CUSTOM_SHAPE_CHIPS },
-      withoutAppRef({ ...strokeWidthControl, status: 'missing' }),
-      withoutAppRef({ ...strokeTypeControl, status: 'missing' }),
-      withoutAppRef({ ...weightControl, status: 'missing' }),
-      withoutAppRef({ ...opacityControl, status: 'missing' }),
-      withoutAppRef({ ...pixelBlendModeControl, status: 'missing' }),
-      withoutAppRef({ ...antiAliasControl, status: 'missing' }),
       {
         control: 'Shape Picker',
         detail:
@@ -473,16 +497,25 @@ export const shapeDescriptions: Record<
         status: 'inert',
         appRef: CUSTOM_SHAPE_CHIPS,
       },
+      { ...modeControl, status: 'inert', appRef: CUSTOM_SHAPE_CHIPS },
+      { ...fillControl, status: 'inert', appRef: CUSTOM_SHAPE_CHIPS },
+      { ...strokeControl, status: 'inert', appRef: CUSTOM_SHAPE_CHIPS },
+      withoutAppRef({ ...strokeWidthControl, status: 'missing' }),
+      withoutAppRef({ ...strokeTypeControl, status: 'missing' }),
       {
         ...shapeWHControl,
         status: 'inert',
         appRef: CUSTOM_SHAPE_CHIPS,
       },
       { ...pathOperationsControl, status: 'inert', appRef: CUSTOM_SHAPE_CHIPS },
-      withoutAppRef({ ...pathArrangementControl, status: 'missing' }),
       withoutAppRef({ ...pathAlignmentControl, status: 'missing' }),
+      withoutAppRef({ ...pathArrangementControl, status: 'missing' }),
       withoutAppRef({ ...pathModeOperationControl, status: 'missing' }),
+      withoutAppRef({ ...weightControl, status: 'missing' }),
       withoutAppRef({ ...gearControl, status: 'missing' }),
+      withoutAppRef({ ...pixelBlendModeControl, status: 'missing' }),
+      withoutAppRef({ ...opacityControl, status: 'missing' }),
+      withoutAppRef({ ...antiAliasControl, status: 'missing' }),
     ],
     modifiers: [
       {
