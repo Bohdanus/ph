@@ -104,10 +104,21 @@ function plainValue(value: unknown, path: string): PlainObject[keyof PlainObject
     return value;
   }
   if (Array.isArray(value))
+    // `undefined` is dropped here for the same reason the object branch below
+    // drops it: it is absence, not a value, and a history arg carrying one is a
+    // sparse array rather than a defect. The asymmetry was a bug — an object
+    // arg could hold an absent key and convert, while the same absence inside an
+    // array threw, and a throw here is an `error` diagnostic, which withholds
+    // the WHOLE shadow (`convertLegacyHistorySafely` voids on the first one).
+    // One holey tool-arg array was therefore enough to lose the document.
+    // Filtering re-indexes, which is correct: a sparse array and its compacted
+    // form describe the same sequence of values.
     return Object.freeze(
-      value.map(
-        (item, index) => plainValue(item, `${path}[${index}]`) as Exclude<PlainObject[keyof PlainObject], undefined>
-      )
+      value
+        .filter((item) => item !== undefined)
+        .map(
+          (item, index) => plainValue(item, `${path}[${index}]`) as Exclude<PlainObject[keyof PlainObject], undefined>
+        )
     );
   if (!value || Object.getPrototypeOf(value) !== Object.prototype) throw new Error(`Non-plain value at ${path}`);
   return Object.freeze(
@@ -584,6 +595,29 @@ export function legacyHistoryToDurable(
     if (item.documentSource && (item.actionName === OPEN_DOCUMENT_ACTION || entries.length === 0)) {
       // The first open-document source is the baseline, not a replay operation.
       if (entries.length === 0) {
+        if (!isEntryEnabled(item)) {
+          // `replayHistory` skips a disabled item outright (`history-replay.ts:74`
+          // `if (!item || item.disabled) continue;`), so at this cursor the legacy
+          // timeline describes an EMPTY document. Adopting this entry as the
+          // durable baseline describes a FULL one, and the two models disagree
+          // from the first cursor on.
+          //
+          // The baseline is NOT re-derived as empty here, and that is a decision
+          // rather than an oversight. Every entry after this one derives against
+          // `currentLayers`, so an empty baseline makes each of them fail its
+          // derivation, and a failed derivation is an `error` diagnostic — which
+          // withholds the entire shadow. Refusing to convert is a worse outcome
+          // for the user than a shadow that reports a divergence it can see, so
+          // the divergence is named instead and the behavioural question is left
+          // open rather than answered here.
+          diagnostics.push({
+            historyId: item.id,
+            actionName: item.actionName,
+            severity: 'warning',
+            code: 'invalid-history-entry',
+            message: `History entry ${item.id} is disabled and carries the document's opening state, so legacy replay describes an empty document at this cursor while the durable baseline describes a full one. The durable conversion kept the opening state; the two models disagree from the first cursor until the entry is enabled again.`,
+          });
+        }
         legacyCursorToDurableCursor.push(-1);
         continue;
       }

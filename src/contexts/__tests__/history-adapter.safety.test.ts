@@ -2,11 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createSelectionHistoryItem } from '../../__tests__/fixtures/history.ts';
 import { AssetRegistry } from '../asset-registry.ts';
-import { convertLegacyHistorySafely, deriveSetSelectionEntry, legacyHistoryToDurable } from '../history-adapter.ts';
+import {
+  convertLegacyHistorySafely,
+  deriveSetSelectionEntry,
+  legacyHistoryToDurable,
+  type DurableConversionAttempt,
+} from '../history-adapter.ts';
 import {
   collectDurableAssetIds,
   DURABLE_SCHEMA_VERSION,
   type AssetId,
+  type PlainValue,
   type SelectionSnapshot,
 } from '../history-model.ts';
 import type { Selection } from '../general-types.ts';
@@ -739,5 +745,189 @@ describe('deriveSetSelectionEntry', () => {
     );
 
     expect(derived?.enabled).toBe(false);
+  });
+});
+
+/**
+ * `plainValue` (`history-adapter.ts:101`) treats `undefined` as ABSENCE in the
+ * object branch (`:127`) and, after the fix, in the array branch (`:118`). The
+ * two branches disagreeing WAS the defect: an array element of `undefined` fell
+ * through to the non-plain throw at `:123`, the throw became an `error`
+ * diagnostic, and `convertLegacyHistorySafely` withholds the WHOLE durable
+ * shadow on the first one — so a single holey tool-arg array was enough to lose
+ * the document, which is a far worse outcome than the object branch's own
+ * handling of the very same value.
+ *
+ * The guard rails the fix must not relax: a non-finite number (`:103`) and a
+ * non-plain value (`:123`) inside an array are still defects, and `null` is a
+ * value the guard explicitly admits at the top of the function (`:102`), so
+ * only `undefined` is absence.
+ *
+ * (The non-finite-in-array rejection is already pinned by
+ * `history-adapter.branches.test.ts:843` and is deliberately not repeated here.)
+ */
+describe('plainValue array-argument absence handling (history-adapter)', () => {
+  /**
+   * `levels` commits as `layer-operation`, so `history-adapter.ts:481` runs its
+   * args through `plainObject` and `:485-490` stores them at
+   * `operation.filter.args`. The array therefore survives into the durable
+   * document, which is what makes the STORED shape assertable rather than only
+   * the diagnostic.
+   */
+  function levelsItem(overrides: Record<string, unknown>, id = 'levels-edit'): HistoryItem {
+    return {
+      id,
+      actionName: TOOL_ACTION,
+      layerId,
+      args: { toolName: 'levels', brightness: 1, contrast: 2, ...overrides },
+    };
+  }
+
+  /** The array exactly as the durable document holds it, or `undefined` if the operation is not a filter. */
+  function durableStops(document: DurableConversionAttempt['document']): readonly PlainValue[] | undefined {
+    const operation = document?.history[0]?.operation;
+    if (operation?.kind !== 'apply-filter') return undefined;
+    const stops = operation.filter.args.stops;
+    return Array.isArray(stops) ? stops : undefined;
+  }
+
+  it('converts an array arg that carries an absent element instead of withholding the whole shadow', () => {
+    const registry = new AssetRegistry();
+
+    const result = convertSafely([levelsItem({ stops: [0, undefined, 0.5, undefined, 1] })], registry);
+
+    // The defect: the absent elements reached the non-plain throw, the throw
+    // became an `error` diagnostic, and the entire document was voided.
+    expect(result.diagnostics).toEqual([]);
+    expect(result.status).toBe('current');
+    // The document is USABLE, not merely non-null: the baseline and the tool
+    // entry both survived, so the shadow can actually shadow the replay.
+    expect(result.document?.baseline.layers).toHaveLength(1);
+    expect(result.document?.history).toHaveLength(1);
+    expect(result.document?.history[0]?.operation).toMatchObject({
+      kind: 'apply-filter',
+      layerId,
+      filter: { toolName: 'levels' },
+    });
+  });
+
+  it('stores the compacted array, dense and in order, rather than a hole-padded one', () => {
+    const registry = new AssetRegistry();
+    const sparse = [0, undefined, 0.5, undefined, 1];
+
+    const stops = durableStops(convertSafely([levelsItem({ stops: sparse })], registry).document);
+
+    // A sparse array and its compacted form describe the same sequence of
+    // values, so the holes are gone: three values, not five.
+    expect(stops).toEqual([0, 0.5, 1]);
+    expect(stops?.length).toBe(3);
+    // Every index is a real own property, so nothing is hole-padded.
+    expect(stops && Object.keys(stops)).toEqual(['0', '1', '2']);
+    // The survivors keep the order they were written in.
+    expect(stops && [...stops]).toEqual([0, 0.5, 1]);
+    // A new, frozen array: the legacy array is never aliased into the shadow.
+    expect(stops).not.toBe(sparse);
+    expect(stops && Object.isFrozen(stops)).toBe(true);
+  });
+
+  it('compacts a hole-padded array to the same dense sequence of values', () => {
+    const registry = new AssetRegistry();
+    // eslint-disable-next-line no-sparse-arrays -- the hole IS the subject under test: a history arg carrying an absent element is the input §93 is about, and a dense literal could not express it
+    const holey: unknown[] = [0, , 1];
+
+    const stops = durableStops(convertSafely([levelsItem({ stops: holey })], registry).document);
+
+    expect(stops).toEqual([0, 1]);
+    expect(stops?.length).toBe(2);
+    expect(stops && Object.keys(stops)).toEqual(['0', '1']);
+  });
+
+  it('preserves a null inside an array, because null is a value and not an absence', () => {
+    const registry = new AssetRegistry();
+
+    const result = convertSafely([levelsItem({ stops: [null, 0.5, null] })], registry);
+    const stops = durableStops(result.document);
+
+    // `plainValue:102` admits `null` as a plain value and `:118` filters on
+    // `!== undefined` only. A filter written against falsiness rather than
+    // absence would swallow every `null` here, and three values would silently
+    // become one — so this is the likeliest regression the fix could introduce.
+    expect(result.diagnostics).toEqual([]);
+    expect(result.status).toBe('current');
+    expect(stops).toEqual([null, 0.5, null]);
+    expect(stops?.length).toBe(3);
+  });
+
+  it('converts an empty array and an array holding only absence to empty arrays', () => {
+    const registry = new AssetRegistry();
+
+    const empty = convertSafely([levelsItem({ stops: [] }, 'empty-array')], registry);
+    const onlyAbsence = convertSafely([levelsItem({ stops: [undefined] }, 'only-absence')], registry);
+
+    // Both are values the shadow can legitimately hold: an empty array is a real
+    // argument, and an array of nothing but absence compacts to the same thing.
+    expect(empty.diagnostics).toEqual([]);
+    expect(empty.status).toBe('current');
+    expect(durableStops(empty.document)).toEqual([]);
+
+    expect(onlyAbsence.diagnostics).toEqual([]);
+    expect(onlyAbsence.status).toBe('current');
+    expect(durableStops(onlyAbsence.document)).toEqual([]);
+  });
+
+  it('still rejects a non-plain value nested inside an array and names its index', () => {
+    class FakeClass {
+      foo = 'bar';
+    }
+    const registry = new AssetRegistry();
+
+    const result = convert([levelsItem({ stops: [0, new FakeClass()] }, 'hostile-array')], registry);
+
+    // The filter dropped `undefined`; it must not have become a general amnesty
+    // for non-plain values inside an array.
+    expect(result.document.history).toHaveLength(0);
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      historyId: 'hostile-array',
+      actionName: TOOL_ACTION,
+      severity: 'error',
+      code: 'invalid-history-entry',
+    });
+    // `plainValue` is called with the DURABLE path, so the index has to be the
+    // one a reader can find the value at in the array the shadow actually holds.
+    expect(result.diagnostics[0]?.message).toContain('history:hostile-array.args.stops[1]');
+  });
+
+  it('names the compacted index in the path, not the legacy one, so it addresses the durable array', () => {
+    class FakeClass {
+      foo = 'bar';
+    }
+    const registry = new AssetRegistry();
+
+    const result = convert([levelsItem({ stops: [undefined, new FakeClass()] }, 'shifted-array')], registry);
+
+    // The absent element is gone, so index 1 in the legacy array is index 0 in
+    // the compacted one. A path naming the legacy index would point past the end
+    // of the array the shadow holds. (A fix that filtered and then hole-padded
+    // instead of compacting would report `stops[1]` here.)
+    expect(result.diagnostics[0]).toMatchObject({ historyId: 'shifted-array', severity: 'error' });
+    expect(result.diagnostics[0]?.message).toContain('history:shifted-array.args.stops[0]');
+  });
+
+  it('drops an absent key from an object arg, the handling the array branch was aligned to', () => {
+    const registry = new AssetRegistry();
+
+    const result = convertSafely([levelsItem({ stops: undefined })], registry);
+    const operation = result.document?.history[0]?.operation;
+    const args = operation?.kind === 'apply-filter' ? operation.filter.args : undefined;
+
+    // The object branch at `:125-129` filters the entry out, so the key is
+    // ABSENT from the durable object rather than present-and-undefined — the
+    // behaviour the array branch was brought in line with, and the one that
+    // made the asymmetry a bug rather than a design choice.
+    expect(result.diagnostics).toEqual([]);
+    expect(result.status).toBe('current');
+    expect(args && Object.keys(args)).toEqual(['toolName', 'brightness', 'contrast']);
+    expect(args && 'stops' in args).toBe(false);
   });
 });
