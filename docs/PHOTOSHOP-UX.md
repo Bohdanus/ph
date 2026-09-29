@@ -9,6 +9,13 @@ must find the same tool where their hand expects it.
 `src/tools/descriptions/*.ts` and the `src/tools/descriptions/*.notes.md` files
 beside them. This file is the requirement and the open violations.
 
+This file is the rail. The **panels** are specified in
+[`LAYERS-PANEL.md`](LAYERS-PANEL.md), and the same two rules apply to them: a
+control Photoshop does not have is not added, and a control it has is not
+relabelled or renamed into an app-specific word. The title keeps "the panels"
+because the panel-side rules this file states below are general — the Channels
+and Paths tabs, when they exist, are governed by the same requirement.
+
 ## The requirement
 
 **A tool Photoshop does not have must be deleted and replaced by the Photoshop
