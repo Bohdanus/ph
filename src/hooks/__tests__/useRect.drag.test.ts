@@ -884,3 +884,123 @@ describe('useRect pointer up and move tool', () => {
     expect(onRepaint).toHaveBeenCalledWith(RECT);
   });
 });
+
+/**
+ * Photoshop's rectangular marquee modifiers: Shift holds the drag to a square, Alt grows the
+ * rectangle out from the press point, and both at once is a square centred on it.
+ *
+ * They are per-consumer props rather than a behaviour of the hook, because `useRect` is shared
+ * with crop and the Move tool and neither of them constrains a drag. The first case below is
+ * the regression guard for that: the same gesture with neither prop set is the pre-existing
+ * `adjustFreePoint` path, byte for byte.
+ */
+describe('useRect fresh-drag modifiers', () => {
+  beforeEach(resetPointerMock);
+
+  function dragFrom(
+    {
+      from,
+      to,
+      down,
+      move,
+    }: {
+      from: { x: number; y: number };
+      to: { x: number; y: number };
+      down?: Record<string, unknown>;
+      move?: Record<string, unknown>;
+    },
+    props: Partial<UseRectProps> = {}
+  ) {
+    const onChange = vi.fn();
+    const { result, event, flushFrame } = setup({ ...props, onChange });
+
+    act(() => {
+      result.current.onPointerDown(event(from.x, from.y, down));
+    });
+    pointer.data.isMouseDown.current = true;
+    act(() => {
+      result.current.onPointerMove(event(to.x, to.y, move));
+    });
+    flushFrame();
+
+    return onChange;
+  }
+
+  it.each([
+    ['neither modifier leaves the drag a plain 200x50 rectangle', {}, {}, { x1: 100, y1: 100, x2: 300, y2: 150 }],
+    [
+      'shift grows the short side into a square anchored on the press point',
+      { shiftKey: true },
+      { shiftKey: true },
+      { x1: 100, y1: 100, x2: 300, y2: 300 },
+    ],
+    [
+      'alt mirrors the drag through the press point',
+      { altKey: true },
+      { altKey: true },
+      { x1: -100, y1: 50, x2: 300, y2: 150 },
+    ],
+    [
+      'shift and alt together are a square centred on the press point',
+      { shiftKey: true, altKey: true },
+      { shiftKey: true, altKey: true },
+      { x1: -100, y1: -100, x2: 300, y2: 300 },
+    ],
+  ] as const)('%s', (_name, down, move, expected) => {
+    const onChange = dragFrom(
+      { from: { x: 100, y: 100 }, to: { x: 300, y: 150 }, down, move },
+      {
+        constrainToSquare: true,
+        fromCentre: true,
+      }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(expected);
+  });
+
+  it('mirrors a drag that runs up and to the left as well as down and right', () => {
+    const onChange = dragFrom(
+      { from: { x: 400, y: 300 }, to: { x: 250, y: 250 }, down: { altKey: true }, move: { altKey: true } },
+      { fromCentre: true }
+    );
+
+    // 150x50 from the press point, mirrored, so (400,300) is the centre of a 300x100 rect.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 250, y1: 250, x2: 550, y2: 350 });
+  });
+
+  it('leaves a consumer that opts out of both modifiers completely alone', () => {
+    const onChange = dragFrom({
+      from: { x: 100, y: 100 },
+      to: { x: 300, y: 150 },
+      down: { altKey: true, shiftKey: true },
+      move: { altKey: true, shiftKey: true },
+    });
+
+    // Crop and the Move tool: the modifiers are pressed and nothing about the rect changes.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 300, y2: 150 });
+  });
+
+  it('prefers the square over the ratio an existing selection implies', () => {
+    // A fresh drag that lands outside an existing 2:1 selection. `getEdgeAtPoint` still reads
+    // the pressed shift and records the selection's own ratio, which would otherwise win.
+    const onChange = dragFrom(
+      { from: { x: 500, y: 500 }, to: { x: 700, y: 550 }, down: { shiftKey: true }, move: { shiftKey: true } },
+      { initialRect: RATIO_RECT, constrainToSquare: true }
+    );
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 500, y1: 500, x2: 700, y2: 700 });
+  });
+
+  it('leaves a corner-handle resize on its own aspect lock, square or not', () => {
+    // Resizing the existing 2:1 selection by its top-left corner with shift held keeps the
+    // ratio `getEdgeAtPoint` captured, because this is a resize and not a fresh drag.
+    const onChange = dragFrom(
+      { from: { x: 100, y: 100 }, to: { x: 50, y: 75 }, down: { shiftKey: true }, move: { shiftKey: true } },
+      { initialRect: RATIO_RECT, constrainToSquare: true, fromCentre: true }
+    );
+
+    // A 2:1 rect dragged by its top-left corner is still 2:1, measured from the shared
+    // opposite corner the handle anchored it to: 250 wide, 125 tall.
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 50, y1: 75, x2: 300, y2: 200 });
+  });
+});

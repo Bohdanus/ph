@@ -266,7 +266,7 @@ describe('saveLastSettings', () => {
   });
 
   it('stores magic-wand settings verbatim', () => {
-    const args = { tolerance: 30, smoothing: 1.5, toolName: 'magic-wand' as const };
+    const args = { contiguous: true, tolerance: 30, smoothing: 1.5, toolName: 'magic-wand' as const };
     saveLastSettings(args);
     expect(lastSavedSettings['magic-wand']).toMatchObject(args);
   });

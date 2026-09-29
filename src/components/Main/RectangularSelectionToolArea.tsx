@@ -67,6 +67,12 @@ export const RectangularSelectionToolArea = ({ className }: rectangularSelection
     initialRect: activeRectangleRect,
     containerRef,
     overlayRef: toolOverlayRef,
+    // Adobe's marquee modifiers. They are asked for here rather than defaulted on in the hook
+    // because `useRect` is shared with crop and the Move tool, and neither of them constrains a
+    // drag. Shift squares the marquee, Alt grows it from the press point, and both at once is a
+    // square centred on it.
+    constrainToSquare: true,
+    fromCentre: true,
     onChangeEnd: (rect: RectXYSorted) => {
       // FIRST, before anything can return. `onChangeEnd` is the single function
       // whose body covers BOTH exits — the early return below and the commit at

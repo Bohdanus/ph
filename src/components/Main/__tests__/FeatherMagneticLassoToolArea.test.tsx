@@ -30,7 +30,7 @@ const h = vi.hoisted(() => ({
     antiAlias: true,
     edgeContrast: 100,
     featherRadius: 8,
-    frequency: 1000,
+    frequency: 0,
     magneticWidth: 10,
     previewFeather: true,
     smoothing: 0,
@@ -108,7 +108,7 @@ describe('FeatherMagneticLassoToolArea', () => {
       antiAlias: true,
       edgeContrast: 100,
       featherRadius: 8,
-      frequency: 1000,
+      frequency: 0,
       magneticWidth: 10,
       previewFeather: true,
       smoothing: 0,
@@ -812,6 +812,49 @@ describe('FeatherMagneticLassoToolArea', () => {
 
       expect(alphaAtStroke.length).toBeGreaterThan(0);
       expect(alphaAtStroke.every((alpha) => alpha === 1)).toBe(true);
+    });
+  });
+
+  /**
+   * Adobe: "A higher value anchors the selection border in place more quickly."
+   *
+   * The gate is a path LENGTH, so the sense has to be inverted by the conversion the tool area
+   * calls rather than by the slider, and only the call site can prove it. The observable is the
+   * 4.5px anchor dot: a committed fastening point is one, the 6px dot is the draft's first
+   * anchor and the 3px dot is the live preview, so counting one radius separates all three.
+   */
+  describe('frequency', () => {
+    const START = 1_000_000;
+
+    function committedAnchorsAfterOneMove(frequency: number): number {
+      h.toolArgs.frequency = frequency;
+      installManualRaf();
+      const { ctx } = createRecordingContext();
+      const toolArea = renderArea({ current: ctx }).ctx;
+
+      // `MIN_AUTO_ANCHOR_TIME_MS` gates every fastening point, so the move has to land on a
+      // later tick than the press that opened the draft.
+      const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(START);
+      try {
+        fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 10 });
+        nowSpy.mockReturnValue(START + 500);
+
+        vi.mocked(ctx.arc).mockClear();
+        fireEvent.pointerMove(toolArea, { clientX: 30, clientY: 10 });
+        rafCallbacks[rafCallbacks.length - 1](performance.now());
+      } finally {
+        nowSpy.mockRestore();
+      }
+
+      return vi.mocked(ctx.arc).mock.calls.filter(([, , radius]) => radius === 4.5).length;
+    }
+
+    it('adds a fastening point on a short step at the top of the range', () => {
+      expect(committedAnchorsAfterOneMove(100)).toBe(1);
+    });
+
+    it('leaves a short step uncommitted at the bottom of the range', () => {
+      expect(committedAnchorsAfterOneMove(0)).toBe(0);
     });
   });
 
