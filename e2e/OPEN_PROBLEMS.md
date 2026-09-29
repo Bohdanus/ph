@@ -826,6 +826,42 @@ reachability test that scrolls the bar to its last tile and asserts that tile is
 the viewport — the same shape as the rail's swatch test in
 `e2e/no-document-overflow.spec.ts`.
 
+## P1 — a committed Text layer draws no foreground pixels, and the commit path is where to look
+
+**Deterministic, and it is on `main`, not on the branch that found it.** A full headless run
+reports `331 passed, 3 failed, 3 skipped`, and this is the one failure that is not the machine's
+AVIF encoder timeout (that one is filed on `audit/retina-canvas-dpr` and is a slow-encode
+infrastructure failure, not a defect):
+
+- `e2e/text-tool.spec.ts:367` — "committed text reaches the canvas as foreground pixels inside the
+  dragged rectangle" — `Error: Canvas did not render red text pixels within 10000ms`
+
+**What has been ruled out, so the next agent does not repeat it.** It is not the e2e harness. The
+identical `playwright.config.ts` and `scripts/e2e-run.mjs` ran this spec **green** at 16:41 on
+2026-09-29; the only difference between that run and the failing one is that `main` advanced
+through the eyedropper/text/crop fixes, the selection and overlay fixes, and the feather lasso
+work. The wrapper allocates a different port each run and nothing else about the run's shape
+changed, so the regression is in the app, not in how the suite reaches it.
+
+It is also not the type change in `src/tools/text.ts` from `a12e35c9` — that hunk only stops
+omitting `color` from `TextToolSettings`, and a type has no effect on what reaches the canvas.
+
+**The two candidate shapes, and neither is confirmed.** Either the commit path stopped writing
+foreground pixels for a colour that comes from the tool's own swatch (the same commit made `color`
+the tool's setting rather than a value mirrored out of the store, so a commit can now be issued
+with a colour the bar never showed), or the text layer still commits but the pixels land outside
+the dragged rectangle the test measures — which would be a geometry change rather than a rendering
+one. `waitForCanvasRedraw` reports a timeout rather than a wrong colour, so the screenshot in the
+run's output directory is the evidence that separates them, and it is worth looking at before
+reading any source.
+
+**Exact remaining verification:** bisect `main` between the last run where this spec passed
+(16:41 on 2026-09-29) and the first run where it failed, and read the failure PNG from
+`test-results/runs/<run-id>/text-tool-*/test-failed-1.png` to establish whether the text is absent
+or merely displaced. Do not close it by widening the timeout: a 10s wait for a committed text
+layer to appear is not a marginal budget, and the spec was green on the same machine minutes
+earlier.
+
 ## Checked here and rejected
 
 Recorded so the same ground is not re-audited. Each was re-derived against this tree
