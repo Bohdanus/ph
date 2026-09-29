@@ -915,6 +915,18 @@ ordinary laptop height satisfies, and do not pin a viewport number to mean it: t
 slot, and `SidebarLeft.overflow.test.tsx` asserts that a different window at the same slot height
 changes nothing.
 
+**The default TOOL is the Draw tool, which the collapse puts in the three-dots tile at every
+realistic window, so the three-dots tile is the only lit tile on load.** `DEFAULT_TOOL` is `draw`
+(`src/util/constants.ts:17`) and `draw` is the seventeenth group — the last row, so the first the
+collapse takes. Photoshop's default is Move, which has a tile. This is faithful to Photoshop's own
+behaviour when the current tool is one of the hidden ones, and it is not a defect, but it is
+surprising enough to look like one, and it makes `aria-pressed` on the three-dots tile a poor
+discriminator for "did selecting this change anything" — it reads `true` before and after a switch
+whenever both tools are in the same collapsed set. A spec asserting a tool got selected must
+discriminate on that tool's own options-bar control, not on the tile lighting up; that is why
+`keyboard-shortcuts.spec.ts` grew one control per row. `draw` is also on the list above for
+deletion, which resolves it either way.
+
 **Naming traps in the source material, so nobody "fixes" them later:** Adobe's tables say
 "Elliptical Marquee tool" and "Ellipse tool" — two different words for two different tools. Adobe's
 painting table prints "Gradient tools" in the plural, which conflicts with the singular everywhere

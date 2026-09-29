@@ -407,10 +407,56 @@ export async function selectFromFlyout(page: Page, item: FlyoutItem): Promise<vo
 
 /**
  * Gets the tool button locator by testid.
+ *
+ * This is the tool's OWN tile and nothing else, which is the right answer when a test is
+ * asking a question about that tile specifically — "does hovering this tile open a flyout",
+ * "what does this tile's label read". It is the WRONG answer for a test asking a question
+ * about the TOOL, because a tool the rail could not fit has no tile of its own: it lives in
+ * the three-dots flyout, and `getByTestId` reports zero elements rather than failing, so the
+ * failure arrives at the next assertion as "element(s) not found" against a test id that is
+ * correct and simply absent. Use {@link resolveToolTile} for that question.
  */
 export function getToolButton(page: Page, toolName: string): Locator {
   const normalizedName = resolveToolName(toolName);
   return page.getByTestId(`tool-button-${normalizedName}`);
+}
+
+/**
+ * Whether the rail still shows this tool on a tile of its own.
+ *
+ * The two questions are separate on purpose, and conflating them is how a spec ends up
+ * asserting against a tile the rail legitimately folded away. "Is there a tile for it" is a
+ * layout claim that changes with the window; "which tile represents it" is the reachability
+ * claim, and it has an answer at every window.
+ */
+export async function hasOwnToolTile(page: Page, toolName: string): Promise<boolean> {
+  return (await getToolButton(page, toolName).count()) > 0;
+}
+
+/**
+ * The tile that currently REPRESENTS a tool: its own if the rail still shows it, and the
+ * three-dots tile if the rail folded it away.
+ *
+ * This is the selector for any question about a TOOL rather than about a tile — "is this tool
+ * the selected one", "what does the user see when they look at it". It works because the app
+ * already computes the same thing: the three-dots tile's `aria-pressed` is true when ANY tool
+ * of the collapsed set is the current one, and its `aria-label` is the tile's own rather than a
+ * tool's, so a caller reading `aria-pressed` off the resolved tile reads the truth either way.
+ *
+ * Async because the question is: a locator has to exist before anything is known about it, and
+ * a tool's tile may or may not be on the rail depending on the window. Returning a Locator
+ * synchronously would mean an OR of two selectors, where the absent half silently contributes
+ * nothing and the caller cannot tell which tile it got — and "which tile it got" is the whole
+ * point. Callers that need to know ask {@link hasOwnToolTile}.
+ */
+export async function resolveToolTile(page: Page, toolName: string): Promise<Locator> {
+  const ownTile = getToolButton(page, toolName);
+  if (await ownTile.count()) return ownTile.first();
+  const overflow = page.getByTestId(OVERFLOW_TILE_TESTID);
+  if (await overflow.count()) return overflow;
+  // Neither. Returning the tool's own id is the useful failure: the caller's assertion then
+  // names a test id that exists nowhere, which says which tool was being looked for.
+  return ownTile;
 }
 
 /**
@@ -424,9 +470,14 @@ export async function toggleToolbarLayout(page: Page): Promise<void> {
 
 /**
  * Verifies the primary tool shown on a grouped button matches the expected label.
+ *
+ * Resolved rather than addressed by id, because a collapsed group's primary label is on the
+ * three-dots tile and there is no tile of its own to read. A test that says "the brush tile
+ * reads Pencil" must be able to say it when the rail is showing the brush tile; a test that
+ * says "the tool the user is looking at is Brush" must survive the rail being short.
  */
 export async function verifyPrimaryTool(page: Page, toolName: string, expectedLabel: string): Promise<void> {
-  const button = getToolButton(page, toolName);
+  const button = await resolveToolTile(page, toolName);
   await expect(button).toContainText(expectedLabel);
 }
 

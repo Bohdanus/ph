@@ -15,7 +15,13 @@ import {
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { cssPointToImage, imagePointToCss } from './helpers/screenshot-scale';
-import { clickToolButton, openToolFlyout, selectFromFlyout, verifyPrimaryTool } from './helpers/toolbar-helpers';
+import {
+  clickToolButton,
+  openToolFlyout,
+  resolveToolTile,
+  selectFromFlyout,
+  verifyPrimaryTool,
+} from './helpers/toolbar-helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 /**
@@ -228,13 +234,21 @@ async function swatchDelta(page: Page, expected: Rgb): Promise<number> {
  * `from` is the tile that currently owns the group, because the tile's `data-testid` follows its
  * CURRENT primary tool (`SidebarLeft.tsx:238`). It is `brush` until one of the family is chosen,
  * and that chosen tool's own name afterwards: the flyout is only reachable again from whichever
- * tile currently leads it. The assertion is made against the tool just selected for the same
- * reason.
+ * tile currently leads it.
+ *
+ * At 1280x720 there is no such tile: the rail folds a SUFFIX, so the whole brush group — the
+ * fifth of sixteen — is in the three-dots tile, and this helper's `openToolFlyout` reaches it
+ * through the collapse branch rather than through the long press. The selection is then proved on
+ * the tile that REPRESENTS the tool, which for a collapsed tool is the three-dots tile and nothing
+ * else. That is also why `verifyPrimaryTool` could not be used here: it is a `toContainText` on
+ * that tile, whose text is empty because its label ("More Tools") lives in `aria-label`. The
+ * eyedropper below keeps `verifyPrimaryTool`, because that tool does have a tile of its own.
  */
 async function selectBrushFamilyTool(page: Page, from: string, toolName: string, label: string): Promise<void> {
   await openToolFlyout(page, from);
   await selectFromFlyout(page, { toolName, label });
-  await verifyPrimaryTool(page, toolName, label);
+  const tile = await resolveToolTile(page, toolName);
+  await expect(tile, `${label} must be the tool the rail reports as selected`).toHaveAttribute('aria-pressed', 'true');
 }
 
 /**

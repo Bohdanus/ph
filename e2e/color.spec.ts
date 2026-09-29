@@ -12,7 +12,7 @@ import {
 } from './helpers/canvas-helpers';
 import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
-import { clickToolButton } from './helpers/toolbar-helpers';
+import { clickToolButton, resolveToolTile } from './helpers/toolbar-helpers';
 
 async function waitForRedStroke(page: Page, box: BoundingBox): Promise<void> {
   await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'red pixels' });
@@ -34,7 +34,11 @@ test('screenshot of canvas area contains line of selected red color', async ({ p
   // change, which turns the second assertion into a check that the click did
   // something rather than a check that the app booted.
   await clickToolButton(page, 'reposition');
-  await expect(page.getByTestId('tool-button-draw'), 'draw is not active while another tool is').toHaveAttribute(
+  // Resolved, not addressed: `draw` is the seventeenth group, so at this viewport it has been
+  // folded into the three-dots tile and there is no `tool-button-draw` element at all. The
+  // three-dots tile computes `aria-pressed` with the same `group.some(...)` the real tiles do,
+  // so this says the same thing whether the tool has a tile or not.
+  await expect(await resolveToolTile(page, 'draw'), 'draw is not active while another tool is').toHaveAttribute(
     'aria-pressed',
     'false'
   );
