@@ -12,6 +12,9 @@ which are approximate, and which are not reachable at all in a browser.
 
 **Status legend.** `HAVE` — implemented in this repo. `PARTIAL` — implemented, behaviour narrower
 than the requirement. `GAP` — not implemented. `OUT` — deliberately not implemented, with the reason.
+`SCOPE` — a Photoshop capability this file routes to another file, and says which. `UNVERIFIED` — a
+fact about Photoshop this document could not establish; it is neither required nor ruled out. Read
+the marker, not just the prose around it: `UNVERIFIED` in particular is not a decision.
 
 **Scope.** The Layers panel only. It is the tab `SidebarRight` renders at
 `src/components/SidebarRight/SidebarRight.tsx:372`, and its mobile counterpart
@@ -57,8 +60,9 @@ requirement on top of that list. Two facts drive most of what follows:
 
 ## 2. Panel chrome
 
-Photoshop's Layers panel is a tab group, a filter row, a property row, a lock row, the list itself,
-and a bottom action bar. In that order. Each is specified below with its current status.
+Photoshop's Layers panel is a tab group, a **single** filter row (the kind selector and its icons sit
+on one line), a blend-mode/Opacity row, a lock/Fill row, the list itself, and a bottom action bar. In
+that order. Each is specified below with its current status.
 
 Adobe describes both the Opacity slider and the lock controls as sitting **above** the layer stack —
 "the Opacity slider located near the top of the Layers panel", "the lock icon above your stack of
@@ -101,9 +105,14 @@ editingLayerId`, `:28 animatingLayerId`, `:29 isShrinking`, `:30 isExpanding`) a
 - **Requirement.** Filtering changes panel display only. It must never change what the document
   renders and must never change which layer is active.
 
-### 2.3 The quick-filter icon row
+### 2.3 The quick-filter icons (same row as the selector)
 
-When `Kind` is selected the row shows **six** controls, left to right:
+These are **not a second row**. They sit to the right of the `Kind` selector in
+[§2.2](#22-the-filter-row) and are the same control: the number and meaning of the icons change with
+the selected kind. When `Kind` is selected the row shows **six** controls, left to right — the
+selector, five icons and the switch. The count and order rest on two third-party sources that agree;
+**whether a separate magnifier glyph also sits in this row is `UNVERIFIED`**
+([§21](#21-sources)) — build the six and treat a seventh as a question, not a defect.
 
 | #   | Control                            | Filters for          |
 | --- | ---------------------------------- | -------------------- |
@@ -153,8 +162,10 @@ Two controls on one row: an unlabelled blend-mode pop-up on the left (default **
 
 ### 2.5 The lock row and Fill
 
-An unlabelled row reading `Lock:` with **four** icons, then a `Fill:` field at the right (default
-**100%**). The four locks, in Photoshop's order:
+A row labelled `Lock:` with **four** icons at the left, and the `Fill:` field at the right of the
+**same row** (default **100%**). Fill shares the row with the locks and not with Opacity — see
+[§2.4](#24-blend-mode-and-opacity) — and the label itself is `Lock:`. The four locks, in Photoshop's
+order:
 
 | #   | Lock                    | Adobe's words                                                                                                                                           | Glyph             |
 | --- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
@@ -163,8 +174,16 @@ An unlabelled row reading `Lock:` with **four** icons, then a `Fill:` field at t
 | 3   | Lock Position           | "Prevents the layer's pixels from being moved."                                                                                                         | crossed arrows    |
 | 4   | Lock All                | "Click the Lock All option in the Layers panel."                                                                                                        | padlock           |
 
+Lock All is the sum of the other three: it is the one lock that maps onto Photoshop's "prevent
+everything", and on this model it is equivalent to the single `locked` boolean `Layer` has today.
+That is why the import collapse at `psd-utils.ts:125` is lossy in only one direction — four flags in,
+one out, never the reverse.
+
 The three partial locks are primary-sourced twice each (the `moving-stacking-locking-layers` help page
-and the `unlock-layers` product page); the order is corroborated by a third-party source that agrees.
+and the `unlock-layers` product page) — **both excerpt-only** ([§21](#21-sources)); the order is
+corroborated by a third-party source that agrees.
+Note that four visible controls do not imply four model fields: Adobe's UXP `Layer` class exposes
+**five** lock booleans, so the UXP surface is a superset of this row.
 
 - `GAP` — no lock control, and the model cannot express one. `Layer.locked` is a single boolean
   (`src/contexts/layer-types.ts:59`): it is `true` only when a PSD import collapses Photoshop's
@@ -305,7 +324,7 @@ a `DragHandleIcon` between the eye and the name is a control that Photoshop does
 - `OUT` — the four-corner bounding box seen around the active text layer in a Photoshop screenshot.
   **No source documents a bounding box in the panel row**; Adobe documents transform borders in the
   _document window_. Do not specify it as panel chrome.
-- `OUT` — the _italic_ rendering of a Background layer's name. **Unresolved, and left unresolved
+- `UNVERIFIED` — the _italic_ rendering of a Background layer's name. **Unresolved, and left unresolved
   deliberately.** No Adobe page and no third-party source describes any special typeface for a layer
   name; the only documented visual distinction is the padlock at the right of the name, and the
   Background row is otherwise drawn like any other. Settling it takes one look at a live Photoshop,
@@ -342,8 +361,9 @@ a `DragHandleIcon` between the eye and the name is a control that Photoshop does
   (`src/contexts/psd-utils.ts:130`).
 - **This is the largest single gap in the panel** and it is not a UI gap. Nesting changes the meaning
   of `order`, of every render pass, of selection, of delete, of drag-to-reorder, and of the durable
-  document. It is sequenced last in [§17](#17-priorities) for that reason and not because it is
-  cosmetic.
+  document. It is sequenced **ninth** in [§17](#17-priorities), not last, and only because §17's
+  bottom-action-bar row is narrowed to new-layer and delete; drop that button and group nesting goes
+  last, as the rest of this section argues.
 
 ---
 
@@ -358,12 +378,21 @@ Photoshop's model, in Adobe's words:
 
 (Adobe, primary — the `select-layers` help page, corroborated by the `ps-layers-basics` learn page.)
 
-- `GAP` — `StoreData` holds a single `activeLayerId`. `LayersTab.tsx:174` is a bare
-  `setActiveLayer(layer.id)`. There is no selection set to add to.
-- **Requirement.** The store must be able to hold _selected_ (a set) and _active_ (one member of it)
-  **separately**, or multi-select cannot be added without renaming every consumer of `activeLayerId`.
-  This is a data-model decision that must be made **before** the first multi-select feature, not with
-  it.
+- **THE NAME COLLISION IS A TRAP. Read this before adding anything.**
+  `StoreData` already holds `selections: Selection[]` and `activeSelectionId: string | null`
+  (`src/contexts/StoreContext.tsx:118-120`) — and those are **marquee** selections, not layers. They
+  are history-bearing: `useSelectionHistory.ts:114,263` writes `previousSelectionState` /
+  `nextSelectionState` entries for them, `history-model.ts:110` carries a durable `set-selection`
+  operation with `before`/`after` snapshots, and `selection-baseline.ts:56` reconstructs them by
+  scanning the timeline. **Do not add `LayerId`s to `selections`, and do not reuse
+  `activeSelectionId` for the active layer.** That would retype a structure three subsystems assume
+  holds `Selection` geometry, and it would corrupt replay.
+- `GAP` — the **layer** selection. The panel has `activeLayerId: LayerId | null` and no layer set;
+  `LayersTab.tsx:174` is a bare `setActiveLayer(layer.id)`.
+- **Requirement.** The store must be able to hold layer _selected_ (a set) and layer _active_ (one
+  member of it) **separately**, or multi-select cannot be added without renaming every consumer of
+  `activeLayerId`. Name the new fields so they cannot be confused with the two above —
+  `selectedLayerIds` / `activeLayerId`, never `selections` / `activeSelectionId`.
 - `docs/TOOLS.md:2020` already tells the Move tool that "Click a layer in the canvas or the Layers
   panel to add it to the current selection" — and that tool's overall verdict is `partial`
   (`docs/TOOLS.md:2028`). The panel is the blocker, not the Move tool.
@@ -407,7 +436,10 @@ Layer`. (Adobe, primary, twice.)
 - **The precision requirement**: double-clicking _on the name text_ renames; double-clicking elsewhere
   on the row — the thumbnail, the empty row area — opens the **Layer Style** dialog instead. (Adobe
   primary: "Access the Layer Style dialog by double-clicking a layer (outside the layer name or
-  thumbnail)".)
+  thumbnail)".) **This rule is not implementable before layer styles are** — [§9](#9-the-layer-model-the-panel-requires)
+  marks them `GAP` and no §17 row builds them. Do not add the double-click gesture without also
+  recording that its Layer Style half is deferred with the dialog, or the row grows a gesture that
+  opens nothing.
 - Tab / Shift-Tab walk the rename edit box down and up through the layers. (Third-party.)
 
 - `HAVE` — `contentEditable` on mousedown (`LayersTab.tsx:206-210`), commit on blur (`:215-217`),
@@ -460,7 +492,10 @@ the Delete key**." (Adobe, primary; corroborated by the Elements shortcut page a
 
 - `PARTIAL` — there is a delete control on every row (`LayersTab.tsx:252-263`) and it deletes
   immediately, with no confirmation path and no modifier. It is also available on a **bedrock**
-  layer, which `LayersTab.test.tsx:312` pins as intended.
+  layer, which `LayersTab.test.tsx:312` pins as intended. **Fix the test with the change:** honouring
+  `isBedrock` in the panel ([§17](#17-priorities) row 2) removes this control from bedrock rows, so
+  `LayersTab.test.tsx:312` will fail with an assertion that reads like a deliberate product decision.
+  The same hazard `MobileLayersDrawer.test.tsx:261` carries for opacity is called out in [§14](#14-mobile).
 - `GAP` — confirmation. **The requirement is not "add a confirm dialog"**; it is that the _default_
   path confirms and the _modified_ path does not, so the fast path stays fast.
 - `GAP` — the `Delete` key as a panel-level shortcut, and drag-a-row-onto-the-trash.
@@ -478,6 +513,9 @@ Every panel requirement in this document reduces to a field. This is the table t
 
 | Photoshop concept | `Layer` field today                         | Status | Consequence of the gap                                                                                         |
 | ----------------- | ------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------- |
+| Backing image     | `isBedrock` `:52`                           | `HAVE` | Enforced at 12 sites but **not in this panel** — [§12](#12-the-background-layer)                               |
+| Background layer  | none                                        | `GAP`  | Not the same thing as `isBedrock`, which is the document's backing image                                       |
+| Layer selection   | `selectedLayerIds` (proposed)               | `GAP`  | Singular only. **Must not reuse `selections`** — [§5](#5-selection)                                            |
 | Visibility        | `visible: boolean` `:57`                    | `HAVE` | —                                                                                                              |
 | Opacity           | `opacity: number` `:58`                     | `GAP`  | Field exists, renderer honours it (`layer-renderer.ts:100`); three construction sites write it, **no UI does** |
 | Fill opacity      | none                                        | `GAP`  | Folded into `opacity` on import — `psd-utils.ts:122` warns "Fill opacity is approximated as layer opacity"     |
@@ -497,7 +535,7 @@ Every panel requirement in this document reduces to a field. This is the table t
 
 ### 9.1 Opacity and Fill are not the same field
 
-Adobe: "A layer's overall opacity determines to what degree it obscures or reveals the layer beneath
+Adobe, **excerpt only** ([§21](#21-sources)): "A layer's overall opacity determines to what degree it obscures or reveals the layer beneath
 it … In addition to overall opacity, which affects layer styles and blending modes applied to a layer,
 you can specify fill opacity. **Fill opacity affects only pixels, shapes, or text on a layer without
 affecting the opacity of layer effects such as drop shadows.**" (Adobe, primary.)
@@ -556,9 +594,9 @@ than repeated in every section.
 
 ## 11. What the panel must not do
 
-- It must not change what the document renders as a side effect of showing a control. Hiding a layer
-  is the only row-level action that changes the composite, and it is already a history entry of its
-  own (`e2e/layers-panel.spec.ts:387`).
+- It must not change what the document renders **as a side effect of showing** a control: a control is
+  inert until used. Used, the row-level actions that do change the composite are **hide, reorder and
+  delete** — and each is already, or must be, exactly **one** history entry.
 - It must not be the only route to a capability that belongs elsewhere. **Merge is the live example,
   and it is a warning rather than a rule**: `mergeAllLayers` (`src/contexts/useLayer.ts:668`) is
   reachable only from the **Move** tool's options bar
@@ -596,15 +634,20 @@ From Background`, or clicking its padlock. (Adobe, primary.)
   change, and the kind a clone that predates it gets wrong by accident.)
 
 - **`GAP` — the app has no Background layer, and it should not claim that `isBedrock` is one.**
-  `isBedrock` (`src/contexts/layer-types.ts:52`) is the document's **backing image**, not Photoshop's
-  Background layer: PSD import sets it `false` on every layer it reads
-  (`src/contexts/psd-utils.ts:157`), and it is `true` only for a new blank document
-  (`src/App.tsx:25`), the flattened composite (`src/contexts/psd-utils.ts:196`), an opened file
-  (`src/hooks/useApp.ts:163`) and the mobile drawer's New Layer
-  (`src/components/Mobile/MobileLayersDrawer.tsx:173`). **An opened Photoshop document with a
-  genuine Background layer therefore imports with no Background layer at all.** The two concepts
-  overlap — both refuse most edits — and the app enforces the flag widely, but a clone that treats
-  them as one will be wrong on import and right on the canvas by coincidence.
+  `isBedrock` is the document's **backing image**, not Photoshop's Background layer. **There are two
+  fields of that name and they do not always agree**, which is the part worth knowing before touching
+  anything:
+  - The **layer** field (`Layer.isBedrock`) is `true` for a new blank document
+    (`src/App.tsx:25`), an opened image file (`src/hooks/useApp.ts:163`) and the mobile drawer's New
+    Layer (`src/components/Mobile/MobileLayersDrawer.tsx:173`).
+  - The **source** field (`LayerSource.isBedrock`) is what `psd-utils.ts:189-196` sets: PSD import
+    marks every layer it reads `false` (`:157`), and the flattened composite carries `false` on the
+    layer (`:189`) but **`true` on its source** (`:196`).
+  - `history-adapter.ts:848` derives the layer field back from the source on durable replay
+    (`isBedrock: !!source.isBedrock`). **So a PSD composite can come back as a bedrock layer after a
+    round trip when it was not one at runtime.** That divergence is real, it is not what this spec
+    set out to fix, and it is recorded here so nobody "corrects" the import to `false` and changes
+    durable behaviour.
 - `HAVE` — the flag is enforced at **twelve** production sites, so this is not an unenforced field:
   `MoveToolArea.tsx:35,153,197,240` (a press on a bedrock layer is refused and the selection
   cleared), `useRect.ts:454`, `FillToolArea.tsx:107`, and `EraserToolArea.tsx:79`,
@@ -625,10 +668,10 @@ From Background`, or clicking its padlock. (Adobe, primary.)
 
 Not this file's scope, named once so nobody files the omission here:
 
-- `OUT` — the **Channels** and **Paths** tabs. They are not layer rows; they are a different panel
-  with a different data model. See [§2.1](#21-the-tab-group-layers-channels-paths) for the tab-group
+- `SCOPE` — the **Channels** and **Paths** tabs. They are not layer rows; they are a different panel
+  with a different data model. See [§2.1](#21-the-tab-group--layers-channels-paths) for the tab-group
   requirement that gates them.
-- `HAVE` — the **History** panel, and it is a good one: rewind, per-entry enable/disable
+- `HAVE` — the **History** panel: rewind, per-entry enable/disable
   (`e2e/history-panel.spec.ts`, `src/components/SidebarRight/HistoryTab.tsx`).
 
 ---
@@ -665,7 +708,7 @@ Renaming anything in this panel has blast radius beyond the panel. Current contr
 | Row testid         | `data-testid="layer-row"` (`LayersTab.tsx:116`)                       | `e2e/layers-panel.spec.ts:325` disambiguates rows from History rows                    |
 | List testid        | `data-testid="layers-list"` (`LayersTab.tsx:103`)                     | —                                                                                      |
 | Name testid        | `data-testid="layer-name"` (`LayersTab.tsx:203`)                      | one e2e file (`e2e/layers-panel.spec.ts:43`); no unit file queries it                  |
-| Row title          | `title="Drag to reorder"` (`LayersTab.tsx:181`)                       | 7 e2e call sites in 5 files + 3 unit files, substring-matched — [§7](#7-rename)        |
+| Row title          | `title="Drag to reorder"` (`LayersTab.tsx:181`)                       | 7 e2e call sites, 3 unit files, substring-matched — [§7](#7-rename)                    |
 | Panel header title | `${title} panel — drag this tab to move it, …` (`PanelGroup.tsx:167`) | Deliberately avoids the phrase above (`PanelGroup.tsx:57-62`)                          |
 | Panel body id      | `id="panel-body-{id}"` (`PanelGroup.tsx:179`)                         | `aria-controls` must name the element that exists                                      |
 | Default layer name | `Blank 1`                                                             | `openWorkspace` waits for the seeded row **by name** — the row name is a test contract |
@@ -690,8 +733,6 @@ Renaming anything in this panel has blast radius beyond the panel. Current contr
 
 ---
 
----
-
 ## 17. Priorities
 
 Ordered by what each one unblocks, **not** by Photoshop's own order — which would put a thumbnail
@@ -713,6 +754,11 @@ this table or explicitly marked as not blocking.
 | 11  | **Filter row**                     | Needs #3. Useless without it ([§2.2](#22-the-filter-row))                                                                                                                                              |
 | 12  | **The four arrange commands**      | Needs #8 for multi-layer move, and ships in #10's menu ([§6](#6-reorder))                                                                                                                              |
 
+**This table is not a definition of done.** Not sequenced here: layer color labels, Fill,
+Background conversion and the `isBackground` concept, the panel-menu commands beyond Merge, layer
+styles and the `fx` control, and mobile parity ([§14](#14-mobile), which is in scope and whose pinned
+tests any opacity work changes). They are requirements, not priorities.
+
 The ordering rule this table encodes: **a visual requirement that a model field enables comes after
 the field, and a control that needs a model feature comes after that feature even when Photoshop puts
 it first.** Group nesting is #9 rather than last only because #5's new-group button is explicitly
@@ -728,8 +774,8 @@ A requirement is not done until a test fails without the change. For this panel 
   `history-replay` test proving the property reverts, and a `history-adapter` test proving the
   durable entry derives. The third is the one that gets skipped.
 - Any new **row locator** needs the e2e audit first: `rg 'getByTitle|getByTestId' e2e/` and count
-  what resolves to the row. A renamed `title` breaks all ten of them — the 7 e2e call sites and
-  3 unit files named in [§7](#7-rename) — silently.
+  what resolves to the row. A renamed `title` breaks all **ten** of them — the 7 e2e call sites
+  and 3 unit files in [§7](#7-rename) — silently.
 - Any **history count** claim needs an e2e that counts History rows, not a unit test — the unit test
   sees one dispatch, the user sees one row per step.
 - **Not pinned by a test, and not pinnable here:** the drawing of an eye, a padlock and a thumbnail
@@ -765,10 +811,11 @@ A requirement is not done until a test fails without the change. For this panel 
    later agent may want to move this one next to `LayersTab.tsx`.
 2. **Filter row before the thumbnails, or after?** The filter needs a kind discriminator; the
    thumbnail does not. Sequencing follows [§17](#17-priorities) but the call is not forced.
-3. **Do `activeLayerId` and a selection set both land in `StoreData`, or does the set replace the
-   singular and `activeLayerId` becomes a derived value?** Every existing consumer of `activeLayerId`
-   is affected. This is the largest single decision in the panel and it belongs to whoever owns
-   `StoreContext.tsx`.
+3. **Does the layer-selection set and the active layer both land in `StoreData` as new fields, and
+   under what names?** Every existing consumer of `activeLayerId` is affected, and the two existing
+   `selections` / `activeSelectionId` fields are marquee state that must not be reused
+   ([§5](#5-selection)). This is the largest single decision in the panel and it belongs to whoever
+   owns `StoreContext.tsx`.
 4. **Does Fill get a real field now, or is collapsing it into `opacity` recorded as accepted?** See
    [§9.1](#91-opacity-and-fill-are-not-the-same-field). Collapsing is defensible while there are no
    layer effects; it is a migration the day there are.
@@ -791,7 +838,17 @@ A requirement is not done until a test fails without the change. For this panel 
 
 ## 21. Sources
 
-**Primary — Adobe.** Every claim marked "Adobe, primary" traces to one of these.
+**Primary — Adobe.** Two tiers, and the difference is load-bearing:
+
+- `(Adobe, primary)` — the `/photoshop/desktop/…` and `adobe.com` pages resolved, or the text was
+  read from a web-archive capture of the page.
+- `(Adobe, primary — excerpt)` — a `helpx.adobe.com/photoshop/using/*.html` page, which returns 403
+  to a direct fetch. **The quotation is Adobe's; it came from a search-result excerpt of the page, not
+  from a full-page read.** Treat an excerpt as a strong quotation of a sentence and as a weak claim
+  that the page says nothing more. Any requirement resting only on an excerpt is a requirement to
+  re-verify when the page becomes reachable.
+
+Every claim marked "Adobe, primary" traces to one of these.
 
 - [Manage layers and groups in Photoshop](https://helpx.adobe.com/photoshop/using/layers.html) — rename
   gestures, the three delete paths, `Merge Down` / `Merge Linked` / `Merge Visible` / `Flatten Image`,
