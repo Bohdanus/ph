@@ -43,8 +43,8 @@ function toClosedSelectionPath(points: Point[]): Path2D | null {
  *
  * The border gets a canvas of its own instead of sharing `toolOverlayRef` with the
  * tool areas, because all three polygon tool areas full-clear that canvas before
- * every repaint (`PolygonClickToolArea.tsx:77`, `MagicWandToolArea.tsx:34`,
- * `FeatherMagneticLassoToolArea.tsx:77`) and a loop painting into it would be
+ * every repaint (`PolygonClickToolArea.tsx:81`, `MagicWandToolArea.tsx:38`,
+ * `FeatherMagneticLassoToolArea.tsx:79`) and a loop painting into it would be
  * erased mid-gesture. Owning the canvas outright is also why each frame clears all
  * of it rather than erasing only the previously painted bounds: two selections can
  * overlap, and a bounds-shaped erase would take the neighbour's dashes with it.

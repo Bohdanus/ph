@@ -392,14 +392,22 @@ describe('EllipticalSelectionToolArea', () => {
     // tools are deliberately absent, so their border is the static `drawSelectionOutline` stroke
     // and there is no ants canvas behind them. Both commit with `sourceTool: 'magic-wand'` — the
     // constant each borrows from the wand — and `drawSelectionAnchors` SKIPS that source, so
-    // repointing either call site at the anchors would leave this tool with no border at all,
-    // and the rest of this file would stay green because it only ever read dispatches.
+    // repointing the call site at the anchors would leave this tool with no border at all, and
+    // the rest of this file would stay green because it only ever read dispatches.
     //
-    // The fixture below is a selection this tool itself commits: the real one carries
-    // `ELLIPTICAL_SELECTION_SOURCE_TOOL`, not the polygonal lasso the shared fixture uses.
+    // `QuickSelectionToolArea.tsx:104` is the OTHER caller and has no test anywhere — the module is
+    // mocked away in `Main.toolAreas.test.tsx` and there is no QuickSelection spec. So the ownership
+    // is guarded for one of the two, and the second is a live gap rather than a covered one.
+    //
+    // The fixture below is a selection this tool ITSELF commits, which is the part that makes
+    // this a tripwire rather than a paint test: it carries `ELLIPTICAL_SELECTION_SOURCE_TOOL`,
+    // not the polygonal lasso the shared fixture uses. That constant is `'magic-wand'`, and
+    // `drawSelectionAnchors` returns early on that source — so this exact fixture is the one
+    // that would render NOTHING if the call site were repointed at the anchors.
     storeState.selections = [
       {
         ...coveringSelection(),
+        sourceTool: ELLIPTICAL_SELECTION_SOURCE_TOOL,
         // `points` are NORMALIZED to the selection's own origin and `pos` offsets them
         // (`getSelectionAbsolutePoints`), so the drawn border is at pos + points — which is what
         // the assertions below read. Writing absolute coordinates in both would double the offset

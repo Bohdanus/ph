@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-29T20:27:12.207Z",
+  "generatedAt": "2026-09-29T20:52:25.884Z",
   "generator": "scripts/worktree-inventory.mjs",
   "base": "main",
   "mainHead": "8e83b27c0e70db5cbf1635bdfc1daaf2d2f2c5f1",
@@ -29,7 +29,7 @@
       "windowHours": 30
     }
   },
-  "readyToLand": ["durable-diag", "fix-replay-coordinator-tests", "swarm-file-index"],
+  "readyToLand": ["fix-replay-coordinator-tests", "swarm-file-index"],
   "disposalCandidates": ["hard-merge-skill", "paint-easy"],
   "atRisk": [
     "agent-board",
@@ -59,6 +59,7 @@
     "fix-useapp-psd-tests",
     "fix-userect-tests",
     "harden-flyout",
+    "history-append-assets",
     "history-append-layer-ops-main",
     "history-append-readiness",
     "history-presentation-lifecycle",
@@ -81,7 +82,6 @@
     "responsive-design-plan",
     "retina-dpr",
     "shape-truth",
-    "stale-reclaim-skill",
     "swarm-watch-tail",
     "text-tool-requirements",
     "tsc-guard"
@@ -449,36 +449,36 @@
   ],
   "readLostWorktreeHighRisk": 3,
   "totals": {
-    "worktrees": 62,
+    "worktrees": 65,
     "prunable": 2,
-    "readyToLand": 3,
+    "readyToLand": 2,
     "disposalCandidates": 2,
     "atRisk": 53,
     "salvage": 51,
-    "inUse": 4,
-    "holdingUncommittedWork": 3,
-    "withoutSummary": 5,
+    "inUse": 8,
+    "holdingUncommittedWork": 8,
+    "withoutSummary": 8,
     "byStatus": {
       "unmerged-work": 54,
-      "uncommitted-only": 2,
+      "uncommitted-only": 5,
       "landed": 6
     },
     "byRecommendation": {
       "salvage": 51,
       "review-residue": 2,
-      "in-use": 4,
-      "ready-to-land": 3,
+      "in-use": 8,
+      "ready-to-land": 2,
       "prune": 2
     },
     "byAction": {
       "at-risk": 53,
-      "in-use": 4,
-      "land": 3,
+      "in-use": 8,
+      "land": 2,
       "dispose": 2
     },
     "byChatState": {
-      "active": 5,
-      "finished": 32,
+      "active": 8,
+      "finished": 31,
       "abandoned-midflight": 7
     }
   },
@@ -2699,6 +2699,99 @@
       "read": []
     },
     {
+      "name": "history-append-assets",
+      "inRepo": true,
+      "path": ".kilo/worktrees/history-append-assets",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/history-append-assets",
+      "branch": "fix/history-append-assets",
+      "isPrimary": false,
+      "head": "d452ffdb58167afdb3fa3f85d9069cd9bdd89b82",
+      "detached": false,
+      "status": "uncommitted-only",
+      "recommendation": "salvage",
+      "action": "at-risk",
+      "prunable": false,
+      "mergeConflict": null,
+      "mergeConflictFiles": [],
+      "mergeChecked": false,
+      "riskScore": 90,
+      "statusReasons": [
+        "the branch reports 0 commits ahead of main and is an ancestor of it",
+        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
+        "git cannot distinguish this from a branch that landed and was then edited",
+        "work here is not reachable from any commit on this branch"
+      ],
+      "ahead": 0,
+      "behind": 13,
+      "mergedIntoMain": true,
+      "dirty": 1,
+      "untracked": 0,
+      "dirtyPaths": ["AGENTS.md"],
+      "lastCommit": {
+        "sha": "d452ffdb58167afdb3fa3f85d9069cd9bdd89b82",
+        "subject": "chore(inventory): regenerate WORKTREES.json after the agents-md-dry worktree landed",
+        "date": "2026-09-29T21:27:44+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": null,
+      "summarySource": "none",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "readUnfinished": [],
+        "read": [],
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [
+          {
+            "issueId": "ph-21",
+            "agentId": "fix/history-append-assets",
+            "branch": "fix/history-append-assets",
+            "leaseUntil": "2026-09-29T21:56:48.737Z"
+          }
+        ],
+        "fileLocks": [
+          {
+            "path": "AGENTS.md",
+            "agentId": "fix/history-append-assets",
+            "issueId": null,
+            "expiresAt": "2026-09-29T21:57:06.962Z"
+          },
+          {
+            "path": "src/contexts/StoreContext.tsx",
+            "agentId": "fix/history-append-assets",
+            "issueId": null,
+            "expiresAt": "2026-09-29T21:57:06.962Z"
+          }
+        ],
+        "agents": [
+          {
+            "agentId": "fix/history-append-assets",
+            "branch": "fix/history-append-assets",
+            "lastSeenMs": 1790712523972,
+            "live": false
+          }
+        ],
+        "held": true
+      },
+      "read": []
+    },
+    {
       "name": "history-append-layer-ops-main",
       "inRepo": true,
       "path": ".kilo/worktrees/history-append-layer-ops-main",
@@ -4574,76 +4667,6 @@
       "read": []
     },
     {
-      "name": "stale-reclaim-skill",
-      "inRepo": true,
-      "path": ".kilo/worktrees/stale-reclaim-skill",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/stale-reclaim-skill",
-      "branch": "fix/stale-reclaim-skill",
-      "isPrimary": false,
-      "head": "86d0ed9f1e23b28ed2d0a5a2d2216d4744ae71c1",
-      "detached": false,
-      "status": "unmerged-work",
-      "recommendation": "salvage",
-      "action": "at-risk",
-      "prunable": false,
-      "mergeConflict": true,
-      "mergeConflictFiles": ["WORKTREES.json"],
-      "mergeChecked": true,
-      "riskScore": 90,
-      "statusReasons": [
-        "1 commit(s) ahead of main",
-        "merging into the base branch conflicts in WORKTREES.json, so it needs a rebase first"
-      ],
-      "ahead": 1,
-      "behind": 13,
-      "mergedIntoMain": false,
-      "dirty": 0,
-      "untracked": 0,
-      "dirtyPaths": [],
-      "lastCommit": {
-        "sha": "86d0ed9f1e23b28ed2d0a5a2d2216d4744ae71c1",
-        "subject": "docs(skills): fix stale-worktree-reclaim and give it a tracked copy",
-        "date": "2026-09-29T22:24:26+02:00",
-        "author": "Bohdan"
-      },
-      "commitsAhead": [
-        {
-          "sha": "86d0ed9f",
-          "subject": "docs(skills): fix stale-worktree-reclaim and give it a tracked copy",
-          "date": "2026-09-29T22:24:26+02:00"
-        }
-      ],
-      "commitsAheadTruncated": false,
-      "claimedLanded": null,
-      "summary": null,
-      "summarySource": "none",
-      "issues": [],
-      "inferredBoardIssues": [],
-      "note": null,
-      "liveNote": null,
-      "mustNotPrune": false,
-      "chats": {
-        "count": 0,
-        "chatIds": [],
-        "subagentCount": 0,
-        "byState": {},
-        "activeChatIds": [],
-        "unfinishedChatIds": [],
-        "lastActivity": null,
-        "readUnfinished": [],
-        "read": [],
-        "unfinished": [],
-        "dead": []
-      },
-      "board": {
-        "claims": [],
-        "fileLocks": [],
-        "agents": [],
-        "held": false
-      },
-      "read": []
-    },
-    {
       "name": "swarm-watch-tail",
       "inRepo": true,
       "path": ".kilo/worktrees/swarm-watch-tail",
@@ -4878,6 +4901,102 @@
       "read": []
     },
     {
+      "name": "durable-diag",
+      "inRepo": true,
+      "path": ".kilo/worktrees/durable-diag",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/durable-diag",
+      "branch": "history/durable-conversion-diagnostics",
+      "isPrimary": false,
+      "head": "d9d6c73595ca1bcb119beb8f7bb7694579f430ce",
+      "detached": false,
+      "status": "unmerged-work",
+      "recommendation": "in-use",
+      "action": "in-use",
+      "prunable": false,
+      "mergeConflict": false,
+      "mergeConflictFiles": [],
+      "mergeChecked": true,
+      "riskScore": 70,
+      "statusReasons": [
+        "2 commit(s) ahead of main",
+        "the working tree holds uncommitted changes",
+        "the board saw agent history/durable-conversion-diagnostics in this worktree inside the last 30 minutes"
+      ],
+      "ahead": 2,
+      "behind": 13,
+      "mergedIntoMain": false,
+      "dirty": 5,
+      "untracked": 0,
+      "dirtyPaths": [
+        "src/contexts/__tests__/StoreContext.retirement.test.tsx",
+        "src/contexts/__tests__/history-adapter.branches.test.ts",
+        "src/contexts/__tests__/history-adapter.diagnostics.test.ts",
+        "src/contexts/__tests__/history-append.test.ts",
+        "src/contexts/__tests__/layer-presentation.test.ts"
+      ],
+      "lastCommit": {
+        "sha": "d9d6c73595ca1bcb119beb8f7bb7694579f430ce",
+        "subject": "test(history): cover both conversion diagnostics, and four gaps beside them",
+        "date": "2026-09-29T22:06:29+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [
+        {
+          "sha": "d9d6c735",
+          "subject": "test(history): cover both conversion diagnostics, and four gaps beside them",
+          "date": "2026-09-29T22:06:29+02:00"
+        },
+        {
+          "sha": "e8c9c584",
+          "subject": "fix(history): make two silent conversion losses observable",
+          "date": "2026-09-29T21:42:44+02:00"
+        }
+      ],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": null,
+      "summarySource": "none",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "readUnfinished": [],
+        "read": [],
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [
+          {
+            "path": "src/contexts/__tests__/history-append.test.ts",
+            "agentId": "history/durable-conversion-diagnostics",
+            "issueId": null,
+            "expiresAt": "2026-09-29T21:20:09.803Z"
+          }
+        ],
+        "agents": [
+          {
+            "agentId": "history/durable-conversion-diagnostics",
+            "branch": "history/durable-conversion-diagnostics",
+            "lastSeenMs": 1790714110203,
+            "live": true
+          }
+        ],
+        "held": true
+      },
+      "read": []
+    },
+    {
       "name": "e2e-own-server",
       "inRepo": true,
       "path": ".kilo/worktrees/e2e-own-server",
@@ -4896,7 +5015,7 @@
       "riskScore": 70,
       "statusReasons": [
         "the branch is an ancestor of main and the working tree is clean",
-        "the board saw agent fix/e2e-own-server in this worktree inside the last 30 minutes"
+        "the board saw agent e2e-run/fix/e2e-own-server/12055 in this worktree inside the last 30 minutes"
       ],
       "ahead": 0,
       "behind": 0,
@@ -4953,7 +5072,7 @@
             "agentId": "fix/e2e-own-server",
             "branch": "fix/e2e-own-server",
             "lastSeenMs": 1790711951896,
-            "live": true
+            "live": false
           },
           {
             "agentId": "e2e-run/fix/e2e-own-server/4166",
@@ -4977,7 +5096,7 @@
             "agentId": "e2e-run/fix/e2e-own-server/11003",
             "branch": "fix/e2e-own-server",
             "lastSeenMs": 1790712966126,
-            "live": true
+            "live": false
           },
           {
             "agentId": "e2e-run/fix/e2e-own-server/12055",
@@ -4991,13 +5110,13 @@
       "read": []
     },
     {
-      "name": "history-append-assets",
+      "name": "history-remove-append",
       "inRepo": true,
-      "path": ".kilo/worktrees/history-append-assets",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/history-append-assets",
-      "branch": "fix/history-append-assets",
+      "path": ".kilo/worktrees/history-remove-append",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/history-remove-append",
+      "branch": "feat/history-remove-append",
       "isPrimary": false,
-      "head": "d452ffdb58167afdb3fa3f85d9069cd9bdd89b82",
+      "head": "8e83b27c0e70db5cbf1635bdfc1daaf2d2f2c5f1",
       "detached": false,
       "status": "uncommitted-only",
       "recommendation": "in-use",
@@ -5011,18 +5130,18 @@
         "the branch reports 0 commits ahead of main and is an ancestor of it",
         "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
         "git cannot distinguish this from a branch that landed and was then edited",
-        "the board saw agent fix/history-append-assets in this worktree inside the last 30 minutes"
+        "the board saw agent feat/history-remove-append in this worktree inside the last 30 minutes"
       ],
       "ahead": 0,
-      "behind": 13,
+      "behind": 0,
       "mergedIntoMain": true,
-      "dirty": 1,
+      "dirty": 3,
       "untracked": 0,
-      "dirtyPaths": ["AGENTS.md"],
+      "dirtyPaths": ["src/contexts/history-adapter.ts", "src/contexts/history-append.ts", "src/contexts/useLayer.ts"],
       "lastCommit": {
-        "sha": "d452ffdb58167afdb3fa3f85d9069cd9bdd89b82",
-        "subject": "chore(inventory): regenerate WORKTREES.json after the agents-md-dry worktree landed",
-        "date": "2026-09-29T21:27:44+02:00",
+        "sha": "8e83b27c0e70db5cbf1635bdfc1daaf2d2f2c5f1",
+        "subject": "chore(inventory): regenerate WORKTREES.json before landing",
+        "date": "2026-09-29T22:24:48+02:00",
         "author": "Bohdan"
       },
       "commitsAhead": [],
@@ -5049,33 +5168,32 @@
         "dead": []
       },
       "board": {
-        "claims": [
-          {
-            "issueId": "ph-21",
-            "agentId": "fix/history-append-assets",
-            "branch": "fix/history-append-assets",
-            "leaseUntil": "2026-09-29T21:56:48.737Z"
-          }
-        ],
+        "claims": [],
         "fileLocks": [
           {
-            "path": "AGENTS.md",
-            "agentId": "fix/history-append-assets",
+            "path": "src/contexts/history-adapter.ts",
+            "agentId": "feat/history-remove-append",
             "issueId": null,
-            "expiresAt": "2026-09-29T21:57:06.962Z"
+            "expiresAt": "2026-09-29T21:32:57.005Z"
           },
           {
-            "path": "src/contexts/StoreContext.tsx",
-            "agentId": "fix/history-append-assets",
+            "path": "src/contexts/history-append.ts",
+            "agentId": "feat/history-remove-append",
             "issueId": null,
-            "expiresAt": "2026-09-29T21:57:06.962Z"
+            "expiresAt": "2026-09-29T21:33:01.826Z"
+          },
+          {
+            "path": "src/contexts/useLayer.ts",
+            "agentId": "feat/history-remove-append",
+            "issueId": null,
+            "expiresAt": "2026-09-29T21:33:08.590Z"
           }
         ],
         "agents": [
           {
-            "agentId": "fix/history-append-assets",
-            "branch": "fix/history-append-assets",
-            "lastSeenMs": 1790712523972,
+            "agentId": "feat/history-remove-append",
+            "branch": "feat/history-remove-append",
+            "lastSeenMs": 1790714888525,
             "live": true
           }
         ],
@@ -5104,9 +5222,9 @@
       "ahead": 0,
       "behind": 0,
       "mergedIntoMain": true,
-      "dirty": 0,
+      "dirty": 1,
       "untracked": 0,
-      "dirtyPaths": [],
+      "dirtyPaths": ["WORKTREES.json"],
       "lastCommit": {
         "sha": "8e83b27c0e70db5cbf1635bdfc1daaf2d2f2c5f1",
         "subject": "chore(inventory): regenerate WORKTREES.json before landing",
@@ -5179,15 +5297,17 @@
       "liveNote": null,
       "mustNotPrune": false,
       "chats": {
-        "count": 44,
+        "count": 46,
         "chatIds": [
-          "ses_f117003d1ffeP6ZydiXwA27ls1",
-          "ses_f134de2ceffe9ngj0vk6hAEI1g",
+          "ses_f1120bdefffeUK76BqtqAfoZ8g",
           "ses_f11810148ffem3vLobTrVfDFMD",
           "ses_f114790d7ffe2CyjiJyDEquW60",
-          "ses_f1176b3ceffekdmEtEBq8orDqe",
-          "ses_f1167c463ffeh9JYgIxlo7pCxu",
+          "ses_f117003d1ffeP6ZydiXwA27ls1",
           "ses_f1171b8c4ffevYMgDik741SGDS",
+          "ses_f1115e889ffeFhFRd2PS3jkYpn",
+          "ses_f1176b3ceffekdmEtEBq8orDqe",
+          "ses_f134de2ceffe9ngj0vk6hAEI1g",
+          "ses_f1167c463ffeh9JYgIxlo7pCxu",
           "ses_f1173ccf9ffel3qff4VmVOjiT3",
           "ses_f12232eaeffeLCai72Xp4unL3A",
           "ses_f11a93cadfferz4vSvvuncfWb7",
@@ -5228,23 +5348,29 @@
         ],
         "subagentCount": 0,
         "byState": {
-          "active": 5,
-          "finished": 32,
+          "active": 8,
+          "finished": 31,
           "abandoned-midflight": 7
         },
         "activeChatIds": [
-          "ses_f117003d1ffeP6ZydiXwA27ls1",
-          "ses_f134de2ceffe9ngj0vk6hAEI1g",
+          "ses_f1120bdefffeUK76BqtqAfoZ8g",
           "ses_f11810148ffem3vLobTrVfDFMD",
           "ses_f114790d7ffe2CyjiJyDEquW60",
-          "ses_f1176b3ceffekdmEtEBq8orDqe"
+          "ses_f117003d1ffeP6ZydiXwA27ls1",
+          "ses_f1171b8c4ffevYMgDik741SGDS",
+          "ses_f1115e889ffeFhFRd2PS3jkYpn",
+          "ses_f1176b3ceffekdmEtEBq8orDqe",
+          "ses_f134de2ceffe9ngj0vk6hAEI1g"
         ],
         "unfinishedChatIds": [
-          "ses_f117003d1ffeP6ZydiXwA27ls1",
-          "ses_f134de2ceffe9ngj0vk6hAEI1g",
+          "ses_f1120bdefffeUK76BqtqAfoZ8g",
           "ses_f11810148ffem3vLobTrVfDFMD",
           "ses_f114790d7ffe2CyjiJyDEquW60",
+          "ses_f117003d1ffeP6ZydiXwA27ls1",
+          "ses_f1171b8c4ffevYMgDik741SGDS",
+          "ses_f1115e889ffeFhFRd2PS3jkYpn",
           "ses_f1176b3ceffekdmEtEBq8orDqe",
+          "ses_f134de2ceffe9ngj0vk6hAEI1g",
           "ses_f11f31f84ffeiL3CGOLcJ60Ei0",
           "ses_f13c35f3dffeNkDIgjkzwbywAu",
           "ses_f13d26707ffeb4oQY1wCrgb5ER",
@@ -5253,7 +5379,7 @@
           "ses_f17814e67ffeOru2rhgVgAb9a5",
           "ses_f162b4452ffei0YUQf4OjQiJn7"
         ],
-        "lastActivity": 1790713628855,
+        "lastActivity": 1790715145884,
         "readUnfinished": [
           {
             "id": "ses_f167d43ebffenKG4aRh8qnMKN5",
@@ -5292,6 +5418,8 @@
           }
         ],
         "read": [
+          null,
+          null,
           null,
           null,
           null,
@@ -5459,41 +5587,61 @@
         ],
         "unfinished": [
           {
-            "id": "ses_f117003d1ffeP6ZydiXwA27ls1",
-            "title": "New session - 2026-09-29T19:06:48.750Z",
+            "id": "ses_f1120bdefffeUK76BqtqAfoZ8g",
+            "title": "Match Photoshop left sidebar styling",
             "state": "active",
-            "idleMs": 3352,
+            "idleMs": 0,
             "reasons": ["last message 0m ago"],
-            "toolErrors": 2,
+            "toolErrors": 0,
             "creditsFailures": 0,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f134de2ceffe9ngj0vk6hAEI1g",
-            "title": "Playwright e2e concurrency lock for agent swarms",
-            "state": "active",
-            "idleMs": 53542,
-            "reasons": ["last message 1m ago"],
-            "toolErrors": 11,
-            "creditsFailures": 2,
             "blockedOn": null
           },
           {
             "id": "ses_f11810148ffem3vLobTrVfDFMD",
             "title": "Reclaiming stale worktree branches",
             "state": "active",
-            "idleMs": 157114,
-            "reasons": ["last message 3m ago"],
-            "toolErrors": 2,
+            "idleMs": 3343,
+            "reasons": ["last message 0m ago"],
+            "toolErrors": 4,
             "creditsFailures": 0,
             "blockedOn": null
           },
           {
             "id": "ses_f114790d7ffe2CyjiJyDEquW60",
-            "title": "History migration implementation",
+            "title": "$$$ History migration implementation $$$",
             "state": "active",
-            "idleMs": 323453,
-            "reasons": ["last message 5m ago"],
+            "idleMs": 12039,
+            "reasons": ["last message 0m ago"],
+            "toolErrors": 0,
+            "creditsFailures": 0,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f117003d1ffeP6ZydiXwA27ls1",
+            "title": "New session - 2026-09-29T19:06:48.750Z",
+            "state": "active",
+            "idleMs": 16662,
+            "reasons": ["last message 0m ago"],
+            "toolErrors": 3,
+            "creditsFailures": 0,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f1171b8c4ffevYMgDik741SGDS",
+            "title": "Photoshop skill contradiction review",
+            "state": "active",
+            "idleMs": 26311,
+            "reasons": ["last message 0m ago"],
+            "toolErrors": 2,
+            "creditsFailures": 0,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f1115e889ffeFhFRd2PS3jkYpn",
+            "title": "New session - 2026-09-29T20:45:13.974Z",
+            "state": "active",
+            "idleMs": 77929,
+            "reasons": ["last message 1m ago"],
             "toolErrors": 0,
             "creditsFailures": 0,
             "blockedOn": null
@@ -5502,17 +5650,27 @@
             "id": "ses_f1176b3ceffekdmEtEBq8orDqe",
             "title": "--  fix/unit-tests",
             "state": "active",
-            "idleMs": 1225083,
-            "reasons": ["last message 20m ago"],
+            "idleMs": 1072583,
+            "reasons": ["last message 18m ago"],
             "toolErrors": 0,
             "creditsFailures": 0,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f134de2ceffe9ngj0vk6hAEI1g",
+            "title": "Playwright e2e concurrency lock for agent swarms",
+            "state": "active",
+            "idleMs": 1567219,
+            "reasons": ["last message 26m ago"],
+            "toolErrors": 11,
+            "creditsFailures": 2,
             "blockedOn": null
           },
           {
             "id": "ses_f11f31f84ffeiL3CGOLcJ60Ei0",
             "title": "New session - 2026-09-29T16:43:36.443Z",
             "state": "abandoned-midflight",
-            "idleMs": 10850373,
+            "idleMs": 12364050,
             "reasons": ["idle for 3h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 0,
             "creditsFailures": 0,
@@ -5522,8 +5680,8 @@
             "id": "ses_f13c35f3dffeNkDIgjkzwbywAu",
             "title": "Investigating swarm watch ANSI codes breaking grep",
             "state": "abandoned-midflight",
-            "idleMs": 40641768,
-            "reasons": ["idle for 11h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 42155445,
+            "reasons": ["idle for 12h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 0,
             "creditsFailures": 1,
             "blockedOn": null
@@ -5532,7 +5690,7 @@
             "id": "ses_f13d26707ffeb4oQY1wCrgb5ER",
             "title": "-- swarm fix",
             "state": "abandoned-midflight",
-            "idleMs": 43134236,
+            "idleMs": 44647913,
             "reasons": ["idle for 12h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 0,
             "creditsFailures": 1,
@@ -5542,7 +5700,7 @@
             "id": "ses_f1424b9d2fferoDADjvlLe03UH",
             "title": "<<< tool descriptions >>>",
             "state": "abandoned-midflight",
-            "idleMs": 49392497,
+            "idleMs": 50906174,
             "reasons": ["idle for 14h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 1,
             "creditsFailures": 0,
@@ -5552,7 +5710,7 @@
             "id": "ses_f16147650ffe9C2zfklMCP473I",
             "title": "~~~ HANDOFF cleanup ~~~",
             "state": "abandoned-midflight",
-            "idleMs": 50182360,
+            "idleMs": 51696037,
             "reasons": ["idle for 14h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 9,
             "creditsFailures": 0,
@@ -5562,8 +5720,8 @@
             "id": "ses_f17814e67ffeOru2rhgVgAb9a5",
             "title": "Fixing flyout panel not opening in sidebar",
             "state": "abandoned-midflight",
-            "idleMs": 77204257,
-            "reasons": ["idle for 21h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 78717934,
+            "reasons": ["idle for 22h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 0,
             "creditsFailures": 1,
             "blockedOn": null
@@ -5572,7 +5730,7 @@
             "id": "ses_f162b4452ffei0YUQf4OjQiJn7",
             "title": "*** PW tests fix & migration ***",
             "state": "abandoned-midflight",
-            "idleMs": 79285855,
+            "idleMs": 80799532,
             "reasons": ["idle for 22h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 7,
             "creditsFailures": 1,
@@ -5587,10 +5745,16 @@
             "issueId": "ph-9",
             "agentId": "main",
             "branch": "main",
-            "leaseUntil": "2026-09-29T20:59:41.030Z"
+            "leaseUntil": "2026-09-29T21:31:38.717Z"
           }
         ],
         "fileLocks": [
+          {
+            "path": "src/components/SidebarLeft/SidebarLeft.tsx",
+            "agentId": "main",
+            "issueId": "ph-55",
+            "expiresAt": "2026-09-29T21:35:05.494Z"
+          },
           {
             "path": "src/components/Main/Main.tsx",
             "agentId": "main",
@@ -5608,6 +5772,42 @@
             "agentId": "main",
             "issueId": null,
             "expiresAt": "2026-09-29T22:23:01.499Z"
+          },
+          {
+            "path": "scripts/lib/worktree-inventory/curated.mjs",
+            "agentId": "main",
+            "issueId": null,
+            "expiresAt": "2026-09-29T21:36:01.441Z"
+          },
+          {
+            "path": "src/components/SidebarLeft/__tests__/SidebarLeft.layout.test.tsx",
+            "agentId": "main",
+            "issueId": null,
+            "expiresAt": "2026-09-29T21:35:05.986Z"
+          },
+          {
+            "path": "scripts/agent-board.mjs",
+            "agentId": "main",
+            "issueId": null,
+            "expiresAt": "2026-09-29T21:36:01.441Z"
+          },
+          {
+            "path": "scripts/lib/agent-board/db.mjs",
+            "agentId": "main",
+            "issueId": null,
+            "expiresAt": "2026-09-29T21:36:01.441Z"
+          },
+          {
+            "path": "scripts/__tests__/agent-board.test.mjs",
+            "agentId": "main",
+            "issueId": null,
+            "expiresAt": "2026-09-29T21:36:01.441Z"
+          },
+          {
+            "path": "docs/ORCHESTRATION.md",
+            "agentId": "main",
+            "issueId": null,
+            "expiresAt": "2026-09-29T21:36:01.441Z"
           },
           {
             "path": "src/util/selection.ts",
@@ -5649,14 +5849,14 @@
             "path": ".skills/stale-worktree-reclaim.md",
             "agentId": "main",
             "issueId": null,
-            "expiresAt": "2026-09-29T21:44:58.543Z"
+            "expiresAt": "2026-09-29T21:36:01.441Z"
           }
         ],
         "agents": [
           {
             "agentId": "main",
             "branch": "main",
-            "lastSeenMs": 1790713560072,
+            "lastSeenMs": 1790715170882,
             "live": true
           },
           {
@@ -5816,44 +6016,49 @@
       "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/polygon-marching-ants",
       "branch": "feature/polygon-marching-ants",
       "isPrimary": false,
-      "head": "b369da0eea40b2877f62f05a70b85206e0d2027e",
+      "head": "c0a2ec0ee7fa6a9cdbf9f2e3566cdcc06a786608",
       "detached": false,
       "status": "unmerged-work",
       "recommendation": "in-use",
       "action": "in-use",
       "prunable": false,
-      "mergeConflict": false,
-      "mergeConflictFiles": [],
+      "mergeConflict": true,
+      "mergeConflictFiles": ["WORKTREES.json"],
       "mergeChecked": true,
       "riskScore": 70,
       "statusReasons": [
-        "2 commit(s) ahead of main",
+        "4 commit(s) ahead of main",
         "the working tree holds uncommitted changes",
-        "the board saw agent e2e-run/feature/polygon-marching-ants/31254 in this worktree inside the last 30 minutes"
+        "the board saw agent e2e-run/feature/polygon-marching-ants/19461 in this worktree inside the last 30 minutes"
       ],
-      "ahead": 2,
+      "ahead": 4,
       "behind": 16,
       "mergedIntoMain": false,
-      "dirty": 9,
+      "dirty": 4,
       "untracked": 0,
       "dirtyPaths": [
-        "AGENTS.md",
         "HANDOFF.md",
-        "docs/CODE-REVIEW.md",
-        "e2e/selection-gestures.spec.ts",
         "src/components/Main/__tests__/EllipticalSelectionToolArea.test.tsx",
-        "src/hooks/__tests__/useSelectionAnts.test.tsx",
-        "src/tools/ellipticalSelection.ts",
-        "src/tools/quickSelection.ts",
+        "src/hooks/useSelectionAnts.ts",
         "src/util/__tests__/selection.test.ts"
       ],
       "lastCommit": {
-        "sha": "b369da0eea40b2877f62f05a70b85206e0d2027e",
-        "subject": "merge(main): land the polygon selection's marching ants onto main",
-        "date": "2026-09-29T22:12:10+02:00",
+        "sha": "c0a2ec0ee7fa6a9cdbf9f2e3566cdcc06a786608",
+        "subject": "fix(merge): restore 15 more files the same `git add -A` had reverted",
+        "date": "2026-09-29T22:33:07+02:00",
         "author": "Bohdan"
       },
       "commitsAhead": [
+        {
+          "sha": "c0a2ec0e",
+          "subject": "fix(merge): restore 15 more files the same `git add -A` had reverted",
+          "date": "2026-09-29T22:33:07+02:00"
+        },
+        {
+          "sha": "772f3997",
+          "subject": "fix(merge): the review's findings, all of them",
+          "date": "2026-09-29T22:31:22+02:00"
+        },
         {
           "sha": "b369da0e",
           "subject": "merge(main): land the polygon selection's marching ants onto main",
@@ -5901,48 +6106,54 @@
             "agentId": "e2e-run/feature/polygon-marching-ants/31254",
             "branch": "feature/polygon-marching-ants",
             "lastSeenMs": 1790711916368,
-            "live": true
+            "live": false
           },
           {
             "agentId": "e2e-run/feature/polygon-marching-ants/31679",
             "branch": "feature/polygon-marching-ants",
             "lastSeenMs": 1790711935764,
-            "live": true
+            "live": false
           },
           {
             "agentId": "e2e-run/feature/polygon-marching-ants/36430",
             "branch": "feature/polygon-marching-ants",
             "lastSeenMs": 1790712150009,
-            "live": true
+            "live": false
           },
           {
             "agentId": "e2e-run/feature/polygon-marching-ants/37072",
             "branch": "feature/polygon-marching-ants",
             "lastSeenMs": 1790712198343,
-            "live": true
+            "live": false
           },
           {
             "agentId": "e2e-run/feature/polygon-marching-ants/51595",
             "branch": "feature/polygon-marching-ants",
             "lastSeenMs": 1790712238173,
-            "live": true
+            "live": false
           },
           {
             "agentId": "e2e-run/feature/polygon-marching-ants/55542",
             "branch": "feature/polygon-marching-ants",
             "lastSeenMs": 1790712281873,
-            "live": true
+            "live": false
           },
           {
             "agentId": "e2e-run/feature/polygon-marching-ants/59765",
             "branch": "feature/polygon-marching-ants",
             "lastSeenMs": 1790712318745,
-            "live": true
+            "live": false
           },
           {
             "agentId": "e2e-run/feature/polygon-marching-ants/60150",
             "branch": "feature/polygon-marching-ants",
             "lastSeenMs": 1790712711316,
+            "live": false
+          },
+          {
+            "agentId": "e2e-run/feature/polygon-marching-ants/19461",
+            "branch": "feature/polygon-marching-ants",
+            "lastSeenMs": 1790714422884,
             "live": true
           }
         ],
@@ -5951,48 +6162,217 @@
       "read": []
     },
     {
-      "name": "durable-diag",
+      "name": "rail-flatten",
       "inRepo": true,
-      "path": ".kilo/worktrees/durable-diag",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/durable-diag",
-      "branch": "history/durable-conversion-diagnostics",
+      "path": ".kilo/worktrees/rail-flatten",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/rail-flatten",
+      "branch": "fix/rail-flatten",
       "isPrimary": false,
-      "head": "d9d6c73595ca1bcb119beb8f7bb7694579f430ce",
+      "head": "8e83b27c0e70db5cbf1635bdfc1daaf2d2f2c5f1",
+      "detached": false,
+      "status": "uncommitted-only",
+      "recommendation": "in-use",
+      "action": "in-use",
+      "prunable": false,
+      "mergeConflict": null,
+      "mergeConflictFiles": [],
+      "mergeChecked": false,
+      "riskScore": 70,
+      "statusReasons": [
+        "the branch reports 0 commits ahead of main and is an ancestor of it",
+        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
+        "git cannot distinguish this from a branch that landed and was then edited",
+        "the board saw agent e2e-run/fix/rail-flatten/42234 in this worktree inside the last 30 minutes"
+      ],
+      "ahead": 0,
+      "behind": 0,
+      "mergedIntoMain": true,
+      "dirty": 3,
+      "untracked": 0,
+      "dirtyPaths": [
+        "src/components/SidebarLeft/SidebarLeft.tsx",
+        "src/components/SidebarLeft/__tests__/SidebarLeft.layout.test.tsx",
+        "src/components/SidebarLeft/__tests__/SidebarLeft.workspace.test.tsx"
+      ],
+      "lastCommit": {
+        "sha": "8e83b27c0e70db5cbf1635bdfc1daaf2d2f2c5f1",
+        "subject": "chore(inventory): regenerate WORKTREES.json before landing",
+        "date": "2026-09-29T22:24:48+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": null,
+      "summarySource": "none",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "readUnfinished": [],
+        "read": [],
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [
+          {
+            "path": "e2e/.swarm-e2e-runner",
+            "agentId": "e2e-run/fix/rail-flatten/42234",
+            "issueId": null,
+            "expiresAt": "2026-09-29T21:22:35.059Z"
+          }
+        ],
+        "agents": [
+          {
+            "agentId": "e2e-run/fix/rail-flatten/42234",
+            "branch": "fix/rail-flatten",
+            "lastSeenMs": 1790715155030,
+            "live": true
+          }
+        ],
+        "held": true
+      },
+      "read": []
+    },
+    {
+      "name": "skill-handoff31",
+      "inRepo": true,
+      "path": ".kilo/worktrees/skill-handoff31",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/skill-handoff31",
+      "branch": "docs/skill-handoff31",
+      "isPrimary": false,
+      "head": "8e83b27c0e70db5cbf1635bdfc1daaf2d2f2c5f1",
+      "detached": false,
+      "status": "uncommitted-only",
+      "recommendation": "in-use",
+      "action": "in-use",
+      "prunable": false,
+      "mergeConflict": null,
+      "mergeConflictFiles": [],
+      "mergeChecked": false,
+      "riskScore": 70,
+      "statusReasons": [
+        "the branch reports 0 commits ahead of main and is an ancestor of it",
+        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
+        "git cannot distinguish this from a branch that landed and was then edited",
+        "the board saw agent docs/skill-handoff31 in this worktree inside the last 30 minutes"
+      ],
+      "ahead": 0,
+      "behind": 0,
+      "mergedIntoMain": true,
+      "dirty": 1,
+      "untracked": 0,
+      "dirtyPaths": [".skills/photoshop-tool-creation.md"],
+      "lastCommit": {
+        "sha": "8e83b27c0e70db5cbf1635bdfc1daaf2d2f2c5f1",
+        "subject": "chore(inventory): regenerate WORKTREES.json before landing",
+        "date": "2026-09-29T22:24:48+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": null,
+      "summarySource": "none",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": null,
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "readUnfinished": [],
+        "read": [],
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [
+          {
+            "path": ".skills/photoshop-tool-creation.md",
+            "agentId": "docs/skill-handoff31",
+            "issueId": null,
+            "expiresAt": "2026-09-29T21:26:05.989Z"
+          }
+        ],
+        "agents": [
+          {
+            "agentId": "docs/skill-handoff31",
+            "branch": "docs/skill-handoff31",
+            "lastSeenMs": 1790714465960,
+            "live": true
+          }
+        ],
+        "held": true
+      },
+      "read": []
+    },
+    {
+      "name": "stale-reclaim-skill",
+      "inRepo": true,
+      "path": ".kilo/worktrees/stale-reclaim-skill",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/stale-reclaim-skill",
+      "branch": "fix/stale-reclaim-skill",
+      "isPrimary": false,
+      "head": "1ce2616131eb33f05179082f703fcc95d0252a2a",
       "detached": false,
       "status": "unmerged-work",
-      "recommendation": "ready-to-land",
-      "action": "land",
+      "recommendation": "in-use",
+      "action": "in-use",
       "prunable": false,
       "mergeConflict": false,
       "mergeConflictFiles": [],
       "mergeChecked": true,
-      "riskScore": 30,
+      "riskScore": 70,
       "statusReasons": [
-        "2 commit(s) ahead of main",
-        "the working tree is clean and the merge into the base branch applies with no conflict"
+        "3 commit(s) ahead of main",
+        "the board saw agent fix/stale-reclaim-skill in this worktree inside the last 30 minutes"
       ],
-      "ahead": 2,
-      "behind": 13,
+      "ahead": 3,
+      "behind": 0,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
       "dirtyPaths": [],
       "lastCommit": {
-        "sha": "d9d6c73595ca1bcb119beb8f7bb7694579f430ce",
-        "subject": "test(history): cover both conversion diagnostics, and four gaps beside them",
-        "date": "2026-09-29T22:06:29+02:00",
+        "sha": "1ce2616131eb33f05179082f703fcc95d0252a2a",
+        "subject": "Merge branch 'main' into fix/stale-reclaim-skill",
+        "date": "2026-09-29T22:41:36+02:00",
         "author": "Bohdan"
       },
       "commitsAhead": [
         {
-          "sha": "d9d6c735",
-          "subject": "test(history): cover both conversion diagnostics, and four gaps beside them",
-          "date": "2026-09-29T22:06:29+02:00"
+          "sha": "1ce26161",
+          "subject": "Merge branch 'main' into fix/stale-reclaim-skill",
+          "date": "2026-09-29T22:41:36+02:00"
         },
         {
-          "sha": "e8c9c584",
-          "subject": "fix(history): make two silent conversion losses observable",
-          "date": "2026-09-29T21:42:44+02:00"
+          "sha": "7e989a55",
+          "subject": "fix(skills): make the reclaim family walk actually transitive, and correct the claim",
+          "date": "2026-09-29T22:39:59+02:00"
+        },
+        {
+          "sha": "86d0ed9f",
+          "subject": "docs(skills): fix stale-worktree-reclaim and give it a tracked copy",
+          "date": "2026-09-29T22:24:26+02:00"
         }
       ],
       "commitsAheadTruncated": false,
@@ -6020,7 +6400,14 @@
       "board": {
         "claims": [],
         "fileLocks": [],
-        "agents": [],
+        "agents": [
+          {
+            "agentId": "fix/stale-reclaim-skill",
+            "branch": "fix/stale-reclaim-skill",
+            "lastSeenMs": 1790714901056,
+            "live": true
+          }
+        ],
         "held": false
       },
       "read": []

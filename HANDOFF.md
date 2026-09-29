@@ -2430,8 +2430,8 @@ loader lives at `.kilo/skills/hard-merge/SKILL.md` and is gitignored, so it is n
 calls `drawMask(true)`, which redraws the same fixed dash. It looks alive during a drag only because
 the drag is RAF-throttled, so the line is redrawn at pointer rate — the dashes never move.
 
-**It is the only border in the app that redraws without animating, and it is the only one still
-drawn this way by a tool that shares it with a selection.** `useMarchingAnts`
+**`useRect` is the one border in the app that redraws without advancing, and THREE selection
+borders are drawn that way — not one.** `useMarchingAnts`
 (`src/hooks/useAnts.ts:24,48-70`) is the real marching-ants loop, and its only production consumer is
 `MoveToolArea.tsx:6`, which paints the outline of a **hovered layer** in `reposition` mode. So
 "marching ants on a rectangle" is the Move tool's layer outline.
@@ -2441,7 +2441,7 @@ drawn this way by a tool that shares it with a selection.** `useMarchingAnts`
 `POLYGON_SELECTION_MODES`. The elliptical and quick selection tools are deliberately absent from it
 and map to their own `interactionMode`s (`Main.tsx:104,106`), so their borders stay the static
 `drawSelectionOutline` stroke — and they commit `geometry: 'polygon'` selections
-(`createCommittedPolygonSelection`, `src/util/selection.ts:48`), so nothing about the selection's
+(`createCommittedPolygonSelection`, `src/util/selection.ts:29`, whose `geometry: 'polygon'` is at `:51`), so nothing about the selection's
 own shape marks them as un-animated. That leaves THREE static selection borders: the rectangle
 (`useRect`), the elliptical marquee and quick selection. Fixing only the rectangle — the cheap half
 of the choice below — would leave two behind, which is why they are named here together.
@@ -2466,7 +2466,7 @@ borders, and the entry above says which is which — pick the scope deliberately
   `rectangular-selection` from `Main.tsx`'s `POLYGON_SELECTION_MODES` exclusion
   (`useSelectionAnts.ts:69` currently skips rectangles on the assumption that `useRect` still paints
   one), and let the ants canvas own the rect. Note the constraint this has to respect: `useRect` also
-  draws the dim-out scrim and the corner handles (`:233-246`), so the border and the handles have to
+  draws the dim-out scrim (`:226`) and, in the same pass, the border and the corner handles (`:233-246`), so the border and the handles have to
   end up on different canvases or the scrim will wipe the ants mid-drag.
 - Or extend the ants to the two marquee tools as well, which is the only shape that reaches all
   three: add `'elliptical-selection'` and `'quick-selection'` to `POLYGON_SELECTION_MODES`
