@@ -661,8 +661,9 @@ does not do.
 
 **A real red gate, and the first question for whoever takes it is "is the test wrong or is the
 product?" — the evidence below points at the test.** A full headless run reports
-`331 passed, 3 failed, 3 skipped`. Two of the failures are the machine's AVIF encoder timeout
-(filed on `audit/retina-canvas-dpr`, a slow-encode infrastructure failure rather than a defect).
+`331 passed, 3 failed, 3 skipped`. Two of the failures are the machine's AVIF encoder timeout —
+a slow-encode infrastructure failure rather than a defect — now filed on its own below rather
+than only on `audit/retina-canvas-dpr`, where a reader of this file would not find it.
 This is the third:
 
 - `e2e/text-tool.spec.ts:367` — "committed text reaches the canvas as foreground pixels inside the
@@ -709,8 +710,51 @@ the range a bisect would search is not where the defect is. **Do not close it by
 wait**: a committed text layer that has not painted in 10s is not a marginal budget.
 
 **Do not fix the product to satisfy the test.** If discriminator 4 passes, the change belongs in the
-spec, and its premise — that the sidebar's foreground swatch is what a Text tool commits — should be
-re-examined on its own terms rather than restored by making the renderer read the store again.
+spec, and its premise — that the sidebar's foreground swatch is what a Text tool commits — should
+be re-examined on its own terms rather than restored by making the renderer read the store again.
+
+**Reproduced unchanged on 2026-09-29**, by run `2026-09-29T22-33-27-196Z-21344` on
+`feat/history-remove-append`: `334 passed, 3 failed, 3 skipped`, the same three failures, the other
+two being the AVIF pair filed below. So the counts here are current and the subject is still
+unfixed — discriminators 1-3 remain unrun, and the cause below is still a hypothesis.
+
+## P2 — the AVIF export waits on a wasm encoder inside a 30s download timeout, and only AVIF exceeds it
+
+**The two export failures in one run are the same wait, and the format is the discriminator.**
+Run `2026-09-29T22-33-27-196Z-21344` — on `feat/history-remove-append`, a branch whose whole diff
+is history/durable-document code with no export surface in it — reported
+`334 passed, 3 failed, 3 skipped`, and its two export failures are the same error twice:
+
+- `e2e/export/raster-formats.spec.ts:8` — "exports to AVIF (.avif) with pixel verification"
+- `e2e/export/visual-regression.spec.ts:58` — "exports to AVIF (.avif) matches visual baseline"
+
+both `TimeoutError: page.waitForEvent: Timeout 30000ms exceeded while waiting for event
+"download"` at `e2e/export/helpers.ts:408`. **In the same run, in the same two specs, bmp, gif,
+jpeg, webp, png, ebp and svg all passed.** The save dialog, the download plumbing and the export
+path are therefore not what fails; AVIF is.
+
+**What the 30s is actually timing.** `submitSaveDialogForDownload` (`e2e/export/helpers.ts:402`)
+waits `DOWNLOAD_TIMEOUT_MS` (`:52`) for a download event that can only fire once the encoder has
+returned a Blob, and `encodeAvif` (`src/contexts/avif-utils.ts:33`) awaits `@jsquash/avif`'s
+`encode` — which first has to load the `avif_enc-*.wasm` asset the build emits, next to a small
+worker shim. So this is an AVIF-encode budget wearing a download's name, and a machine running
+other agents' work can spend it before the first pixel is encoded.
+
+**Not established, and that is the whole remaining verification.** One observation, on a loaded
+machine. It has not been shown deterministic, and it has not been run against `main`.
+
+**Fix, in order.**
+
+1. **One run, one spec, quiet machine:** `npm run test:e2e -- e2e/export/raster-formats.spec.ts`.
+   Green means the 30s was the machine, and this belongs in `TEST-FLAKES.md` as a load
+   observation rather than as a defect in this file.
+2. **Red again means the encode is over budget on an ordinary machine,** and the defect is the
+   encode's cost rather than the wait: `encodeAvif` holds the save open across a wasm module load
+   and a full-canvas encode, and moving that off the main thread is the fix that does not also
+   hide the cost.
+3. **Do not raise `DOWNLOAD_TIMEOUT_MS` to get this green.** The same rule as a widened pixel
+   budget applies to a widened wait: it hides the cost, and it would equally mask a real hang in
+   a format that is not slow at all.
 
 # Transferred findings — external review of the pre-migration tree
 
