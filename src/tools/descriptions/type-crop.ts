@@ -6,7 +6,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
     summary:
       'Creates live, resolution-independent type as a heading, a wrapped paragraph, or type flowing along a path.',
     purpose:
-      "Photoshop's Type tools create live, vector-based type: glyph outlines re-rendered from the font, so a type layer stays resolution-independent and editable until you deliberately rasterize it. Clicking places point type, whose lines are independent and never wrap; dragging a bounding box places paragraph type, whose lines wrap and reflow as you resize the box. Type can also flow along an open or closed work path, or fill the inside of a closed shape. Paragraph settings — alignment, justification, indents and hyphenation — apply to paragraph type only, because with point type each line is its own paragraph. The anti-aliasing pull-down is no longer on the type options bar; it is reached from the Character panel, the layer's properties and the Type menu instead. When exactly it left the bar is community-reported only and is not asserted here.",
+      "Photoshop's Type tools create live, vector-based type: glyph outlines re-rendered from the font, so a type layer stays resolution-independent and editable until you deliberately rasterize it. Clicking places point type, whose lines are independent and never wrap; dragging a bounding box places paragraph type, whose lines wrap and reflow as you resize the box. Type can also flow along an open or closed work path, or fill the inside of a closed shape. Paragraph settings — alignment, justification, indents and hyphenation — apply to paragraph type only, because with point type each line is its own paragraph. The anti-aliasing pull-down — None, Sharp, Crisp, Strong and Smooth — is no longer on the type options bar; it is reached from the Character panel, the layer's properties and the Type menu instead. When exactly it left the bar is community-reported only and is not asserted here.",
     options: [
       {
         control: 'Tool preset',
@@ -42,12 +42,6 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         appRef: 'src/components/ToolbarsRight/Text/Text.tsx:136',
       },
       {
-        control: 'Anti-Alias',
-        detail:
-          'Five presets — None, Sharp (type appears at its sharpest), Crisp (somewhat sharp), Strong (heavier) and Smooth (smoother) — that control how the glyph edges are rendered into pixels. It is no longer on the type options bar, and is reached from the Character panel, the layer’s properties and the Layer > Type menu instead; when it left the bar is community-reported only, and no Adobe page states a version boundary.',
-        status: 'missing',
-      },
-      {
         control: 'Text color',
         detail:
           'A color swatch that opens the Color Picker and sets the type fill, also reachable by Alt+Backspace for the foreground color and Ctrl+Backspace for the background color. Selecting characters rather than the layer limits the change to those characters.',
@@ -81,7 +75,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       {
         control: 'Toggle the Character and Paragraph panels',
         detail:
-          'The last button in the bar, which brings the Character and Paragraph panels to the front of the panel group so the settings that are not on the bar can be reached.',
+          'The last of the bar’s settings controls, which brings the Character and Paragraph panels to the front of the panel group so the settings that are not on the bar can be reached. It is not the last button on the bar: the Commit and Cancel pair sits to its right, and that pair is the part of the bar that appears only in edit mode.',
         status: 'missing',
       },
       {
@@ -100,15 +94,15 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'src/tools/text.ts:66',
       'src/components/ToolbarsRight/Text/Text.tsx:26',
       'src/components/Main/TextToolArea.tsx:24',
-      'src/tools/settings.ts:77',
-      'src/tools/toolProcessors.ts:159',
+      'src/tools/settings.ts:82',
+      'src/tools/toolProcessors.ts:160',
       'src/contexts/useLayer.ts:345',
       'src/contexts/layer-renderer.ts:32',
       'src/util/rect.ts:116',
       'toolbar-mapping.ts:107',
     ],
     appNotes:
-      "The app's type layer is baked pixels, not live type. renderText paints the string into a 2D context with fillText, and the text processor hands back a single OffscreenCanvas, so what reaches the Layers panel is a bitmap; the layer renderer re-runs a tool's creator only for the six shape tools, and text is not on that list, so its retained args are never re-rendered. Enlarging a text layer therefore rescales those pixels where a Photoshop type layer re-renders at the new size. There is no text box either: the app grows the rect to the widest line instead of wrapping, so a long line runs to the canvas edge rather than reflowing, and every newline is a hard break. Text is typed into a textarea in the right-hand panel rather than onto the canvas, so there is no caret, no text selection and no per-character formatting; the draft is committed by Apply or implicitly by switching tools, and the commit creates a raster layer. There is no colour control on this bar at all: the type fill is slaved to the global foreground swatch in the left rail, which this panel only mirrors into the tool args and the overlay, so the colour is a whole-app choice rather than a per-type-layer one. Font size is a CSS pixel range of 8-500 rather than points, the font list is fourteen hard-coded families rather than the system enumeration, and leading is a unitless multiplier of the font size where Photoshop's is an absolute baseline-to-baseline distance in points. T is the only type key, and only while the textarea does not hold focus — the canvas tool area focuses it as soon as the tool is selected, and a shortcut that does not opt into inputs is refused while a field is focused, so a T pressed mid-edit types a letter rather than reselecting the tool. The type tile holds a single entry, so Shift+T re-selects the same tool instead of cycling a flyout. Nothing binds Ctrl+Enter, Enter or Esc to a type commit or cancel: Enter inside the focused textarea takes the textarea's own newline, and the one Escape handler the type tool would have had is commented out; the only live Escape near this bar belongs to the font popup, where it reverts the pending family and closes the list.",
+      "The app's type layer is baked pixels, not live type. renderText paints the string into a 2D context with fillText, and the text processor hands back a single OffscreenCanvas, so what reaches the Layers panel is a bitmap; the layer renderer re-runs a tool's creator only for the six shape tools, and text is not on that list, so its retained args are never re-rendered. Enlarging a text layer therefore rescales those pixels where a Photoshop type layer re-renders at the new size. There is no text box either: the app grows the rect to the widest line instead of wrapping, so a long line runs to the canvas edge rather than reflowing, and every newline is a hard break. Text is typed into a textarea in the right-hand panel rather than onto the canvas, so there is no caret, no text selection and no per-character formatting; the draft is committed by Apply or implicitly by switching tools, and the commit creates a raster layer. There is no colour control on this bar at all: the type fill is slaved to the global foreground swatch in the left rail, which this panel only mirrors into the tool args and the overlay, so the colour is a whole-app choice rather than a per-type-layer one. Font size is a CSS pixel range of 8-500 rather than points, the font list is fourteen hard-coded families rather than the system enumeration, and leading is a unitless multiplier of the font size where Photoshop's is an absolute baseline-to-baseline distance in points. T is the only type key, and only while the textarea does not hold focus — the canvas tool area focuses it as soon as the tool is selected, and a shortcut that does not opt into inputs is refused while a field is focused, so a T pressed mid-edit types a letter rather than reselecting the tool. The type tile holds a single entry, so Shift+T re-selects the same tool instead of cycling a flyout — and that one entry stands in for a four-tool group. Adobe ships Horizontal Type, Vertical Type, Horizontal Type Mask and Vertical Type Mask behind this one tile, and the three the app has no entry for are not variants of the one it has: Vertical Type sets type top-to-bottom, and the two mask variants create a selection in the shape of the type rather than a type layer at all. Nothing binds Ctrl+Enter, Enter or Esc to a type commit or cancel: Enter inside the focused textarea takes the textarea's own newline, and the one Escape handler the type tool would have had is commented out; the only live Escape near this bar belongs to the font popup, where it reverts the pending family and closes the list.",
     sources: [
       'https://helpx.adobe.com/photoshop/using/creating-type.html',
       'https://helpx.adobe.com/photoshop/using/editing-text.html',
@@ -118,6 +112,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'https://helpx.adobe.com/photoshop/using/line-character-spacing.html',
       'https://helpx.adobe.com/photoshop/desktop/text-typography/text-on-paths-shapes/add-text-along-paths-or-inside-shapes.html',
       'https://helpx.adobe.com/photoshop/desktop/text-typography/text-on-paths-shapes/warp-and-unwarp-text.html',
+      'https://edex.adobe.com/teaching-resources/photoshop-type-mask-tool',
       'https://helpx.adobe.com/photoshop/using/layers.html',
       'https://www.adobe.com/learn/photoshop/web/rasterize-type-shape-layer',
       'https://www.adobe.com/products/photoshop/rasterize.html',
@@ -133,7 +128,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
     summary:
       'Frames a new boundary for the photo; nothing is committed until you confirm, and Esc restores the old framing.',
     purpose:
-      "A crop sets a new boundary for the document. Selecting the Crop tool shows a crop box you can drag out, resize by its handles, and rotate by dragging outside a corner; dragging inside the box moves the image while the box stays where it is, and dragging outside repositions the box without moving the image. Nothing is committed until you confirm with Enter, Return, the check mark, or a double-click inside the box, and Esc restores the framing you had before. Photoshop treats the crop as non-destructive until that commit, and it is only irreversible once the commit happens with Delete Cropped Pixels on. This describes Photoshop 2024-2026, where Straight Crop is the tool's default mode and Perspective Crop is a separate tool in the same flyout rather than a mode of this one.",
+      'A crop sets a new boundary for the document. Selecting the Crop tool shows a crop box you can drag out and resize by its handles; dragging just outside a corner rotates the image inside the box, which is Adobe\'s own sentence — "Place the pointer a little outside the corner handles and drag to rotate the image. A grid displays inside the crop box and the image rotates behind it" — while dragging inside the box moves the image and leaves the box where it is. Nothing is committed until you confirm with Enter, Return, the check mark, or a double-click inside the box, and Esc restores the framing you had before. Photoshop treats the crop as non-destructive until that commit, and it is only irreversible once the commit happens with Delete Cropped Pixels on. This describes Photoshop 2024-2026, where Straight Crop is the tool\'s default mode and Perspective Crop is a separate tool in the same flyout rather than a mode of this one.',
     options: [
       {
         control: 'Aspect ratio menu',
@@ -149,15 +144,27 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
         status: 'missing',
       },
       {
-        control: 'Straighten / Curve / Content-Aware / Default',
+        control: 'Clear',
         detail:
-          'The row of crop variants under the ratio menu. Straighten takes a dragged reference line and rotates the image inside the box to match it; Curve is the adjustable form; Content-Aware is the fill variant; Default returns to an unrotated crop. Holding Ctrl (Windows) or Command (Mac OS) reaches Straighten without visiting the bar.',
+          'The button beside the Width and Height fields that removes the constraints applied to the current crop preset, which is how the tool is returned to unconstrained — Adobe’s own answer to its "how do I crop freely" question: "press ‘clear’ to remove any constraints applied to your crop preset". The app has a button labelled Clear in the same panel, but it drops the draft crop rect rather than clearing a preset’s constraints.',
+        status: 'missing',
+      },
+      {
+        control: 'Straighten',
+        detail:
+          'A control-bar button that arms the Straighten tool, so that the reference line you drag across the photo rotates the image inside the box to match it — Adobe names it as the alternative to dragging outside a corner: "Click Straighten in the control bar and then using the Straighten tool, draw a reference line to straighten the photo." Straighten is the only crop-variant control on the 27.x bar: no Adobe page and no third party gives the crop a Curve, a Default or a Content-Aware control, Content-Aware being a value inside the Fill dropdown rather than a bar item, and the adjustable corner form being the separate Perspective Crop tool.',
         status: 'missing',
       },
       {
         control: 'Fill',
         detail:
-          'What the area the crop adds outside the photo is filled with: None, Content-Aware Fill, Background, Foreground Color, Black, 50% Gray or White. Choosing Content-Aware Fill is what lets the crop box extend past the image edge and synthesize the gap instead of leaving it transparent; it requires Use Classic Mode to be off.',
+          'What the area the crop adds outside the photo is filled with. No Adobe page enumerates this dropdown, and the flat list the previous version of this row gave — None, Content-Aware Fill, Background, Foreground Color, Black, 50% Gray or White — is third-party throughout and predates Generative Expand; what a current walkthrough of the bar reads is Transparent, Content-Aware and Generative Expand, the last being the value Adobe’s own crop flow is built around: "Just click and drag beyond the borders of an image with the Crop tool, and then fill the extended canvas with new content that blends with the existing image." The first entry therefore reads Transparent, not None. Choosing Content-Aware Fill is what lets the crop box extend past the image edge and synthesize the gap instead of leaving it transparent, and Adobe’s own note for it is "To use Content-Aware Fill on Crop, ensure Use Classic Mode is turned off".',
+        status: 'missing',
+      },
+      {
+        control: 'Settings (gear) menu',
+        detail:
+          'The gear that opens the crop’s own settings fly-out: "Click the Settings (gear) menu to specify additional crop options." It is a container rather than a setting of its own, and the five rows below — Delete Cropped Pixels, Use Classic Mode, Auto Center Preview, Show Cropped Area and Enable Crop Shield — are what lives inside it.',
         status: 'missing',
       },
       {
@@ -183,7 +190,7 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       {
         control: 'Use Classic Mode',
         detail:
-          'Reverts the tool to the legacy behavior from before Creative Cloud 2019, in which the crop box itself rotates; the modern mode rotates the image inside a stationary box.',
+          'Adobe’s whole sentence for it: "Enable this option if you want to use the Crop tool like it was in previous versions of Photoshop (CS5 and earlier)." What that legacy behavior is — the crop box moving while the image stays put, against the modern mode where the image moves behind a stationary box — is a third-party description, not Adobe text, and so is the Creative Cloud 2019 boundary an earlier version of this row asserted; the CS5 boundary is Adobe’s.',
         status: 'missing',
       },
       {
@@ -234,8 +241,8 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'src/hooks/useRect.ts:255',
       'src/util/rect.ts:36',
       'src/contexts/useLayer.ts:612',
-      'src/tools/settings.ts:62',
-      'src/tools/toolProcessors.ts:145',
+      'src/tools/settings.ts:67',
+      'src/tools/toolProcessors.ts:146',
       'toolbar-mapping.ts:59',
     ],
     appNotes:
@@ -251,6 +258,8 @@ export const typeCropDescriptions: Record<'text' | 'crop', ToolDescription> = {
       'https://helpx.adobe.com/in/photoshop/using/new-shortcuts-cs6.html',
       'https://helpx.adobe.com/ph_fil/photoshop/how-to/content-aware-crop-fill.html',
       'https://www.adobe.com/products/photoshop/crop-image.html',
+      'https://www.adobe.com/products/photoshop/generative-fill.html',
+      'https://shotkit.com/extend-background-photoshop-generative-fill',
       'https://www.photoshopessentials.com/basics/photoshop-crop-tool-tips-and-tricks',
       'https://creativepro.com/essential-tips-for-cropping-images-photoshop',
       'https://design.tutsplus.com/tutorials/10-things-you-should-know-about-the-crop-tool--psd-34592',

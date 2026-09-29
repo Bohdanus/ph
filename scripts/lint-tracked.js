@@ -33,8 +33,8 @@
  * images, the one `.txt`, `index.html`, and dotfiles with no linted extension
  * (`.gitattributes`, `.gitignore`, `.nvmrc`, `.prettierrc`) — are not linted,
  * and that is intended, not a gap. "The dotfiles" is not the whole truth and
- * should not be written as though it were: `.copilot-instructions.md` is a
- * dotfile that IS linted, because it matches `*.md`.
+ * should not be written as though it were: tracked Markdown dotfiles are linted
+ * because they match `*.md`.
  *
  * `.husky/pre-commit` and `.husky/pre-push` are in that set for a reason worth
  * writing down, because they are the two files that ARE the gate and their

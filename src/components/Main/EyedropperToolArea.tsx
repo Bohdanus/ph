@@ -17,10 +17,12 @@ type EyedropperToolAreaProps = {
 export const EYEDROPPER_READBACK_UNAVAILABLE = 'eyedropper-readback-unavailable';
 
 /**
- * `Sample All Layers` renders `disabled` in the options bar because it needs a composite read of
- * every visible layer, and the single workspace canvas is not that. It is a no-op input, not a
- * silently-ignored one: a `true` here reports why nothing happened instead of sampling the active
- * layer's pixels and presenting them as the whole document's.
+ * `Sample All Layers` has NO control on the options bar: it needs a composite read of every visible
+ * layer, and the single workspace canvas is not that, so a permanently `disabled` box was a
+ * promise the app could not keep and has been removed. The value survives in the args because
+ * `settings.ts` still seeds it, so this stays the loud refusal rather than a silent no-op: a `true`
+ * arriving from any other writer reports why nothing happened instead of sampling the composited
+ * canvas and presenting it as the whole document's.
  */
 export const EYEDROPPER_ALL_LAYERS_UNSUPPORTED = 'eyedropper-sample-all-layers-unsupported';
 
@@ -85,10 +87,10 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
     const centerX = Math.floor(canvasSeed.x);
     const centerY = Math.floor(canvasSeed.y);
 
-    // Sample Size is the side of the square averaged around the click, and all three values are
-    // odd, so the block is centred. The block is then CLIPPED to the canvas rather than shifted
-    // inward: a click on the border averages the pixels that exist instead of reading out of
-    // bounds or quietly sliding the sample off the edge the user clicked.
+    // Sample Size is the side of the square averaged around the click, and all seven values Adobe
+    // offers are odd, so the block is centred. The block is then CLIPPED to the canvas rather than
+    // shifted inward: a click on the border averages the pixels that exist instead of reading out
+    // of bounds or quietly sliding the sample off the edge the user clicked.
     const sampleSize: EyedropperSampleSize = args.sampleSize;
     const half = Math.floor(sampleSize / 2);
     const left = Math.max(0, centerX - half);
@@ -118,14 +120,17 @@ export const EyedropperToolArea = ({ className }: EyedropperToolAreaProps) => {
 
     // Alpha is dropped: the store's foreground is a CSS colour consumed by an `<input type="color">`,
     // which cannot express it, and the composited canvas has already resolved it.
-    dispatch({
-      type: 'SET_COLOR',
-      payload: toHexColor(
-        Math.round(red / sampleCount),
-        Math.round(green / sampleCount),
-        Math.round(blue / sampleCount)
-      ),
-    });
+    //
+    // Alt-click writes the BACKGROUND swatch instead, which is Adobe's own rule: "Alt-click
+    // (Windows) / Command-Option-click (Mac) to sample to the background color"
+    // (https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html). The modifier
+    // is `altKey` on both platforms, so there is no platform branch here.
+    const sampledColor = toHexColor(
+      Math.round(red / sampleCount),
+      Math.round(green / sampleCount),
+      Math.round(blue / sampleCount)
+    );
+    dispatch({ type: event.altKey ? 'SET_BACKGROUND_COLOR' : 'SET_COLOR', payload: sampledColor });
   };
 
   return (

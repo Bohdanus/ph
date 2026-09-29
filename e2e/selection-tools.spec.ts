@@ -506,6 +506,13 @@ test.describe('Eyedropper', () => {
   });
 
   test('the eyedropper is reachable from its own sidebar tile', async ({ page }) => {
+    // The window is grown, because the test's NAME is its claim: it is about the eyedropper's OWN
+    // tile, and at the suite's 1280x720 the eyedropper is the fifth of sixteen rows, so the
+    // collapse — which is a suffix — has already taken it. Measured by `e2e/toolbar-fit.spec.ts`:
+    // 720 shows four tool tiles, and 900 shows seven. So this test would otherwise be asserting
+    // its own premise rather than the app, and `toBeVisible` against a tile that is correctly
+    // absent fails as "element not found" against a test id that is right.
+    await page.setViewportSize({ width: 1280, height: 900 });
     await expect(page.getByTestId('tool-button-eyedropper')).toBeVisible();
     await clickToolButton(page, 'eyedropper');
     // The eyedropper's bar is a real panel, not the `PlaceholderTool` the other unimplemented
@@ -659,6 +666,31 @@ test.describe('Elliptical marquee', () => {
     expect
       .soft(dragAspect, 'the drag itself is deliberately not the locked ratio')
       .not.toBeCloseTo(Number(FIXED_RATIO_VALUE), 1);
+    // The WIDTH, and it is the assertion that says which side the ratio grew. Both
+    // readings produce the same aspect, so the aspect alone cannot tell them apart, and
+    // `applyRatio` preserves the width only on the branch a drag WIDER than the ratio
+    // takes: `width / height > ratio ? { width, height: width / ratio }`. So the premise
+    // this test leans on is `dragAspect > FIXED_RATIO_VALUE`, and it is asserted rather
+    // than assumed — `not.toBeCloseTo(1.5, 1)` only rules out 1.5 to within 0.05, so a
+    // 1.4 drag would satisfy it, take the OTHER branch, grow the width, and be rejected
+    // by the width check below as a false failure rather than as a real one.
+    expect
+      .soft(
+        dragAspect,
+        `this test reads the width as the preserved side, which needs a drag wider than ${FIXED_RATIO_VALUE}`
+      )
+      .toBeGreaterThan(Number(FIXED_RATIO_VALUE));
+    // Under that premise the committed width is the drag's own width: the ratio grew the
+    // height from `width / 1.5` up to it. The height check below already rules out a
+    // commit that shrank the long side, because that leaves the height AT the drag's; what
+    // the width adds is exact preservation rather than a direction, so a commit that grew
+    // BOTH sides — which the height check reads as a pass — is rejected here.
+    expect
+      .soft(
+        Math.abs(outlineWidth(outline!) - rect.width) <= OUTLINE_BOUNDS_TOLERANCE_PX,
+        `the ratio must leave the drag's width alone, and the committed width is ${outlineWidth(outline!).toFixed(1)} against a drag of ${rect.width}`
+      )
+      .toBe(true);
     expect
       .soft(outlineAspect(outline!), `committed aspect should be ${FIXED_RATIO_VALUE}, not the drag's`)
       .toBeCloseTo(Number(FIXED_RATIO_VALUE), 1);
@@ -752,11 +784,6 @@ test.describe('Elliptical marquee', () => {
     expect.soft(Math.abs(outlineHeight(outline!) - rect.height) <= OUTLINE_BOUNDS_TOLERANCE_PX).toBe(true);
     expect.soft(Math.abs(centre.x - absolutePress.left) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'centre x').toBe(true);
     expect.soft(Math.abs(centre.y - absolutePress.top) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'centre y').toBe(true);
-    // A corner-anchored drag would put the press point on the boundary, half a size away
-    // from the centre on both axes.
-    expect
-      .soft(Math.abs(centre.x - absolutePress.left) <= OUTLINE_BOUNDS_TOLERANCE_PX)
-      .not.toBe(outlineWidth(outline!) / 2);
   });
 
   test('an elliptical marquee click without movement commits nothing', async ({ page }) => {

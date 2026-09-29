@@ -10,6 +10,7 @@ import {
   isSamePresentationCanvas,
   layersDifferOnlyByPresentation,
   materializePresentationBitmap,
+  type LayerPresentationRequest,
 } from '../layer-presentation.ts';
 
 function staged(): BitmapSource {
@@ -317,10 +318,18 @@ describe('DocumentPresentationScope ownership', () => {
 });
 
 describe('LayerPresentationRequest identity', () => {
+  // This test's value is COMPILE-TIME, not runtime: the annotation below is a compile-time tripwire
+  // and the two `expect`s are tautologies — vitest does not typecheck, so it reports PASS whether or
+  // not the annotation holds. The only evidence it works is `npm run tsc` (`tsc -b`) failing on this
+  // file when `LayerPresentationRequest` grows a required field. Do not read a green vitest run as
+  // evidence for it. (Adding such a field also breaks `useLayer.ts`, which constructs the type, so
+  // `tsc -b` names both — read the path in the error, not just the count of them.)
   it('keeps the layer id and canvas it was created with', () => {
     const layerId: LayerId = 'layer-1';
     const canvas = staged();
-    const request = { layerId, canvas };
+    // Annotated so the compiler, not the runtime, holds this literal to the type's shape: a third
+    // required field on `LayerPresentationRequest` has to break the build here.
+    const request: LayerPresentationRequest = { layerId, canvas };
 
     expect(request.layerId).toBe(layerId);
     expect(request.canvas).toBe(canvas);

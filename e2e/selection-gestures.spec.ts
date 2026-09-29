@@ -21,24 +21,39 @@ import { setForegroundColor } from './helpers/color-helpers';
 /**
  * Seven pixel-level tests for the five selection tools.
  *
- * ## The viewport is pinned here, and it is pinned on purpose
+ * ## The viewport is pinned here, and it is pinned on a MEASURED reason
  *
  * `playwright.config.ts` sets no viewport, so this file would inherit
- * `devices['Desktop Chrome']`'s 1280x720, and this file's geometry does not comfortably fit
- * inside it. Measured at that size, the workspace canvas element is 974x840 at (56, 100) — its
- * bottom 220px sit below the fold — the polygonal lasso's third vertex lands at page y=638,
- * and the magic wand's measured bar region reaches y=718, two pixels from the bottom edge.
- * `page.screenshot({ clip })` truncates a clip at the viewport edge SILENTLY, so a region
- * below the fold reads as "clean": a false pass, not a failure. Two pixels of headroom is not
- * a margin to build on, so `VIEWPORT` is set explicitly instead of inherited. Measured there,
- * the same canvas is 974x863 at (56, 100) — the whole element is inside the viewport.
+ * `devices['Desktop Chrome']`'s 1280x720. It used to be pinned to get away from a fold: at
+ * 1280x720 the canvas element was 974x840 at (56, 100) with its bottom 220px below the edge,
+ * the polygonal lasso's third vertex landed at page y=638, and the magic wand's bar region
+ * reached y=718 — two pixels of headroom, against a capture API that truncates a clip at the
+ * viewport edge SILENTLY, so a region below the fold reads as "clean": a false pass, not a
+ * failure.
  *
- * Nothing below depends on the choice. Every drag is a FRACTION of the measured canvas box
- * (`boxRect`), the wand's bar is measured back off the screenshot rather than predicted, and
- * the document-to-CSS fit scale is identical at both sizes (974/800 = 1.2175 still binds,
- * because the box's WIDTH does not change), so `OUTLINE_SLACK_PX` and every expected bound
- * behave the same either way. `overlayClip` stays as the guard for the silent-truncation
- * hazard regardless, and is a no-op at `VIEWPORT` — it is a floor, not a measurement.
+ * THAT REASON IS GONE, and both halves of it were re-measured rather than assumed. The rail
+ * no longer outgrows the viewport — it is `min-h-0 overflow-y-auto` and the tiles COLLAPSE into
+ * the three-dots tile instead of pushing the page taller — so the shell is exactly
+ * viewport-tall at every desktop size, `documentElement.scrollHeight` equals `clientHeight`,
+ * and at 1280x720 the canvas element is 974x583 at (56, 100) with its bottom at 683, entirely
+ * on screen. There is no fold to clear and nothing to truncate. The measured headroom at 720 is
+ * 118px below the wand's bar region and the lasso vertex lands at y=473.
+ *
+ * The pin STAYS, on a different and much smaller reason: the two sizes no longer share a fit
+ * scale. The box's WIDTH is 974 either way, but at 720 the element is 583 tall and the
+ * width-limited fit the document would need (800x600 at 1.2175 is 730.5 rows) no longer fits,
+ * so the fit flips to HEIGHT-limited at 0.97167 — where at 1280x1000, with the element 863
+ * tall, it stays WIDTH-limited at 1.21750. An earlier version of this header claimed the scale
+ * was identical at both sizes "because the box's WIDTH does not change", and that was true
+ * then and is false now: the width did not change, the HEIGHT did. `OUTLINE_SLACK_PX` is a
+ * CSS-px budget, and pinning the viewport is what makes the scale it is measured against a
+ * constant of this file instead of a property of whatever the suite happened to inherit.
+ *
+ * Nothing else below depends on the choice. Every drag is a FRACTION of the measured canvas box
+ * (`boxRect`) and the wand's bar is measured back off the screenshot rather than predicted, so
+ * both sizes address the same fractions of the same element; `overlayClip` stays as the guard
+ * for the silent-truncation hazard regardless, and is a no-op at `VIEWPORT` — a floor, not a
+ * measurement.
  *
  * ## What "these blue pixels are a selection" actually rests on
  *
@@ -74,21 +89,28 @@ const SELECTION_COLOR_THRESHOLDS = { redMax: 80, greenMin: 80, blueMin: 180 };
 /**
  * How far outside the intended shape a selection-blue pixel may land.
  *
- * Every selection renderer paints outside its own geometry by a known amount, and all of it
- * measures in CSS pixels because the document is letterboxed inside the canvas box and both the
- * drag and the outline travel through the same `usePointerPosition` scale in opposite
- * directions (`getLocalCoords` divides by the fit scale, the canvas is then drawn back through
- * it), so a document-pixel offset of N comes back out as N CSS pixels:
+ * Every selection renderer paints outside its own geometry by a known amount:
  *
  * - the marquee fills corner handles of `HANDLE_SIZE / 2` (6) beyond each corner
- *   (`src/hooks/useRect.ts:172-178`) and strokes a 2px line, so its blue reaches 7px past the rect;
+ *   (`src/hooks/useRect.ts:172-178`) and strokes a 2px line, so its blue reaches ~7px past the
+ *   rect;
  * - `drawSelectionOutline` paints a 5px-radius anchor circle with a 2px stroke at each vertex
- *   (`src/util/selection.ts:157-165`), so its blue reaches 6px past the geometry;
+ *   (`src/util/selection.ts:157-165`), so its blue reaches ~6px past the geometry;
  * - the magic wand's `simplifyClosedPath` can move a vertex by the smoothing tolerance
  *   (1.5 by default) either way, and its flood fill drops the outermost anti-aliased ring.
  *
- * 10 is above all four and far below the shortest distance any test here asserts on (a ~290px
- * drag), so it cannot absorb a wrong answer.
+ * MEASURED rather than argued: dragging a marquee to a known box-relative rectangle and
+ * reading the blue back with the clip origin added, the overshoot is 6px on the left and top
+ * and 5px on the right and bottom — and it is the SAME at both this file's 1.2175 fit and the
+ * 0.9717 fit an inherited 1280x720 gives. The offset is therefore not being scaled by the
+ * document-to-CSS fit at all, which is worth stating because an earlier version of this comment
+ * argued it from the drag and the outline travelling through the same scale in opposite
+ * directions; that argument gives a document-pixel offset as a document-pixel offset only at
+ * scale 1, and neither viewport is at scale 1. The measurement is what the number rests on.
+ *
+ * 10 is above the measured 6 and far below the shortest distance any test here asserts on (a
+ * ~290px drag), so it cannot absorb a wrong answer, and the pin is what keeps the 6
+ * reproducible.
  */
 const OUTLINE_SLACK_PX = 10;
 
@@ -476,10 +498,11 @@ test.describe('Selection tools', () => {
 
     // The bar is MEASURED, not predicted. The brush width is a canvas line width, so it is in
     // document pixels, and the document is fitted into the canvas box by a scale that depends on
-    // the viewport (measured here as 800x600 document in a 974x840 box, i.e. 1.2175). Predicting
-    // the bar's CSS height from BRUSH_PX would bake that scale in and break at any other viewport,
-    // so the painted pixels are read back instead. The only geometry asserted directly is the
-    // bar's horizontal centre, which a round-capped stroke puts on the stroke's midpoint at any scale.
+    // the viewport (measured at this file's pinned size as an 800x600 document in a 974x863
+    // box, i.e. 1.2175, width-limited). Predicting the bar's CSS height from BRUSH_PX would
+    // bake that scale in and break at any other viewport, so the painted pixels are read back
+    // instead. The only geometry asserted directly is the bar's horizontal centre, which a
+    // round-capped stroke puts on the stroke's midpoint at any scale.
     const barRegion = regionClip(clip, {
       x: stroke.from.x - BRUSH_PX * 2,
       y: stroke.from.y - BRUSH_PX * 2,

@@ -102,6 +102,17 @@ const FLYOUT_GAP = 8;
 
 /** Each tile is given a distinct x, so the overlay's placement names the tile it measured. */
 const TILE_STEP = 60;
+/**
+ * … and a distinct y, for the same reason on the axis that actually failed in a real
+ * browser: with every tile at `top: 0` the vertical placement was degenerate, and a tall
+ * menu anchored to the WRONG tile's top edge ran off the bottom of the window while still
+ * being correct on x. One tile height per group keeps the deepest of the sixteen inside the
+ * 720px layout viewport, so the expectation below is the placement and not the clamp.
+ */
+const TILE_ROW_STEP = TILE_HEIGHT;
+
+/** The rail's own width, which is the horizontal anchor a flyout now hangs from. */
+const RAIL_WIDTH = 108;
 
 const toolbarButtonByName = (name: string) => screen.getByTestId(`tool-button-${name}`);
 
@@ -122,45 +133,63 @@ const openFlyout = (tile: HTMLElement): void => {
 /** The wrapper `AnchoredOverlay` positions, portalled into `document.body`. */
 const overlayWrapper = (): HTMLElement => screen.getByRole('menu').parentElement as HTMLElement;
 
-const tileRect = (left: number): DOMRect =>
+const tileRect = (left: number, top: number, width = TILE_WIDTH): DOMRect =>
   ({
     left,
-    top: 0,
-    width: TILE_WIDTH,
+    top,
+    width,
     height: TILE_HEIGHT,
-    right: left + TILE_WIDTH,
-    bottom: TILE_HEIGHT,
+    right: left + width,
+    bottom: top + TILE_HEIGHT,
     x: left,
-    y: 0,
+    y: top,
     toJSON: () => ({}),
   }) as DOMRect;
 
 /**
  * jsdom has no layout engine, so every box is zeroed and the overlay's placement — the only
  * observable that says WHICH tile a flyout is measured against — is collapsed to the viewport
- * padding for all of them. Each tool group's `<li>` is therefore given a distinct x, and
- * `AnchoredOverlay` is placed at `anchorRight + gap`, which names the anchor in the result.
+ * padding for all of them. Each tool group's `<li>` is therefore given a distinct x AND a
+ * distinct y, and `AnchoredOverlay` is placed at `anchorRight + gap` and `anchorTop`, which
+ * names the anchor in both results.
  *
  * The stub is installed on the elements themselves rather than on the prototype, so it does
  * not reach anything else in the suite, and it has to be installed after the render and
  * before the flyout mounts: the overlay measures its anchor in a layout effect on mount.
  *
- * The returned reader maps a tile button to the x its group was given, so a test can state
+ * EVERY `<ul>` is walked, not just the first. The one-column rail renders one `<ul>` per
+ * toolbar section, so reading `querySelector('ul')` used to hand back section 0's tiles and
+ * nothing else: `boxOf('shape')` came back `undefined` and the placement assertion compared
+ * against `NaN`, which fails loudly. The louder failure is the lucky case — a reader who had
+ * stubbed a `<ul>` holding every tile, and a reader who had not, differ only in which
+ * assertions degrade to `not.toBe` rather than in which tiles are stubbed at all. A missing
+ * entry is also invisible in the positive direction: `undefined !== number` fails, but a stub
+ * that never saw the tile cannot fail at all.
+ *
+ * The returned reader maps a tile button to the box its group was given, so a test can state
  * the placement as "beside THAT tile" instead of a magic number.
  */
-const stubTileBoxes = (): ((tile: HTMLElement) => number) => {
-  const groups = Array.from(screen.getByTestId('left-toolbar-tools').querySelector('ul')!.children) as HTMLElement[];
-  const leftByGroup = new Map<HTMLElement, number>();
+const stubTileBoxes = (): ((tile: HTMLElement) => { left: number; top: number }) => {
+  const groups = Array.from(screen.getByTestId('left-toolbar-tools').querySelectorAll('ul > li')) as HTMLElement[];
+  const boxByGroup = new Map<HTMLElement, { left: number; top: number }>();
 
   groups.forEach((group, index) => {
     const left = index * TILE_STEP;
-    leftByGroup.set(group, left);
-    group.getBoundingClientRect = () => tileRect(left);
+    const top = index * TILE_ROW_STEP;
+    boxByGroup.set(group, { left, top });
+    group.getBoundingClientRect = () => tileRect(left, top);
   });
+
+  // The rail is the HORIZONTAL anchor: a flyout hangs off the panel's edge rather than off a
+  // tile's, because the tiles sit on a 108px grid inside a narrower content box and a
+  // second-column tile can start past the rail's own right edge — which would put the flyout
+  // back over the rail's first column. jsdom measures the rail as nothing, so it is stubbed
+  // here for the same reason the tiles are.
+  screen.getByTestId('left-sidebar').getBoundingClientRect = () => tileRect(0, 0, RAIL_WIDTH);
 
   // The tile button is wrapped in the tooltip's own span, so the anchor is the group `<li>`
   // above it rather than its direct parent.
-  return (tile) => leftByGroup.get(tile.closest('li') as HTMLElement)!;
+  return (tile) => boxByGroup.get(tile.closest('li') as HTMLElement)!;
 };
 
 /**
@@ -288,7 +317,11 @@ describe('SidebarLeft flyout hardening', () => {
 
   it('anchors the next group flyout to its own tile after the previous one closed', () => {
     render(<SidebarLeft />);
-    const leftOf = stubTileBoxes();
+    // Tall enough that neither group's top is clamped. `AnchoredOverlay` clamps a placement
+    // that would run past the viewport, and a clamp would move the flyout's top onto a value
+    // that names no tile at all — which is exactly the assertion this test makes.
+    setLayoutViewport(1280, 4000);
+    const boxOf = stubTileBoxes();
 
     const brushTile = toolbarButtonByName('brush');
     openFlyout(brushTile);
@@ -306,9 +339,68 @@ describe('SidebarLeft flyout hardening', () => {
     expect(menuByName('Brush Tool tools')).toBeNull();
     expect(screen.getByRole('menuitemradio', { name: 'Rectangle Tool' })).toBeInTheDocument();
     expect(screen.queryByRole('menuitemradio', { name: 'Brush Tool' })).toBeNull();
-    // Placed beside the SHAPE tile, not the brush one the menu was open on a moment ago.
-    expect(overlayWrapper().style.left).toBe(`${leftOf(shapeTile) + TILE_WIDTH + FLYOUT_GAP}px`);
-    expect(overlayWrapper().style.left).not.toBe(`${leftOf(brushTile) + TILE_WIDTH + FLYOUT_GAP}px`);
+    // VERTICAL placement is what names the tile. The HORIZONTAL placement is the RAIL's edge
+    // rather than the tile's — a tool flyout hangs off the panel, because the tiles sit on a
+    // 108px grid inside a narrower content box and a second-column tile can start past the
+    // rail's own right edge, which would put the flyout back over the rail's first column. So
+    // `left` is now identical for every group and cannot name one, and asserting it to name a
+    // tile would pass for the previous group exactly as readily as for the current one.
+    expect(overlayWrapper().style.left).toBe(`${RAIL_WIDTH + FLYOUT_GAP}px`);
+    // On both axes for the vertical, which is where a tall menu anchored to the wrong tile went
+    // off the bottom of the window in a real browser, and it stayed invisible to every
+    // assertion the suite had, because the stub gave every tile the same top.
+    expect(overlayWrapper().style.top).toBe(`${boxOf(shapeTile).top}px`);
+    expect(overlayWrapper().style.top).not.toBe(`${boxOf(brushTile).top}px`);
+    // The rail box is stubbed, so this is a real number rather than a zero-width element the
+    // placement would have collapsed against.
+    expect(boxOf(shapeTile).left).not.toBe(boxOf(brushTile).left);
+  });
+
+  /**
+   * The vertical axis on its own, because the axis that failed is the one the file left
+   * degenerate. `openFlyout` is the file's own helper — `onContextMenu`, which reaches the
+   * same `openFlyout` in one event — so no test here schedules the tile's animation frame and
+   * leaves a pending timer behind for a later one to trip over.
+   *
+   * The pair matters more than either value: with every tile at `top: 0` both flyouts read
+   * the same thing — the viewport padding, because a 0 anchored against a 0-tall box is what
+   * the clamp is asked to place — and so any anchor matched any of them. Asserting an exact
+   * top for a tile near the top of the rail and a different exact top for one near the bottom
+   * of it is what makes the placement name its anchor.
+   *
+   * The clamping half — a menu that would run past the bottom of the window — is NOT
+   * observable here: `offsetHeight` is 0 in jsdom without a stub, so a flyout measures as
+   * nothing tall and never binds the clamp. The real geometry is `e2e/sidebar-flyout.spec.ts`;
+   * the arithmetic is the subject of `AnchoredOverlay.test.tsx`, which stubs the size.
+   */
+  it('places the flyout on the vertical axis of the tile it was opened from, not the rail top', () => {
+    render(<SidebarLeft />);
+    const boxOf = stubTileBoxes();
+
+    // The first group in the rail that has a flyout at all: `reposition` above it is a
+    // single-tool tile, and a group of one opens no menu.
+    const highTile = toolbarButtonByName('rectangular-selection');
+    openFlyout(highTile);
+    const highTop = boxOf(highTile).top;
+    expect(overlayWrapper().style.top).toBe(`${highTop}px`);
+
+    act(() => {
+      fireEvent.keyDown(window, { key: 'Escape' });
+    });
+    expect(screen.queryByRole('menu')).toBeNull();
+
+    // The last group in the rail, so the two tops are as far apart as the rail can put them.
+    const lowTile = toolbarButtonByName('shape');
+    openFlyout(lowTile);
+    const lowTop = boxOf(lowTile).top;
+    expect(overlayWrapper().style.top).toBe(`${lowTop}px`);
+
+    expect(lowTop).toBeGreaterThan(highTop);
+    expect(overlayWrapper().style.top).not.toBe(`${highTop}px`);
+    // And never the value the old shared stub collapsed every anchor to, which is the
+    // viewport PADDING rather than a literal 0: `AnchoredOverlay` clamps, so a 0 anchored
+    // top for a box it measured as 0 tall comes out as `padding`, not as `0px`.
+    expect(overlayWrapper().style.top).not.toBe('8px');
   });
 
   /**

@@ -358,11 +358,15 @@ describe('LayersTab against a live layer store', () => {
       fireEvent.blur(span);
     });
 
+    // The store still holds the old name, so a later store-driven render restores it.
+    expect((liveStore.snapshot.layers as LayersRecord)['layer-3'].name).toBe('Top Layer');
     expect(layerActions.updateLayer).not.toHaveBeenCalled();
-    // the store still holds the old name, so a later store-driven render restores it
-    // (the blank label surviving until then is documented in LayersTab.test.tsx)
     expect(row).toBeInTheDocument();
     expect(container.querySelectorAll('span.truncate')).toHaveLength(3);
+    // The row's own label is NOT asserted here: `handleNameChange` (LayersTab.tsx:76-82) refuses the
+    // blank but never writes the previous name back into the contentEditable span, so the row keeps
+    // showing the blank label until an unrelated store render rewrites it. That defect is pinned as
+    // `it.fails` in LayersTab.test.tsx:549 — asserting it here would pin the bug instead.
   });
 
   it('leaves the stacking order untouched when a drop is refused', () => {

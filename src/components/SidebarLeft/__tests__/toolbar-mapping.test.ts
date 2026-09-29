@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { availableTools, extraTools, toolbarMap } from '../../../../toolbar-mapping.ts';
 import type { ToolbarTool } from '../../../../toolbar-mapping.ts';
 import { isFigureType, type FigureType } from '../../../tools/shape.ts';
+import { toolIcons } from '../toolIcons.tsx';
+import type { ToolIconName } from '../types.ts';
 
 const allGroups: readonly (readonly ToolbarTool[])[] = toolbarMap.flat() as readonly (readonly ToolbarTool[])[];
 const shapeFlyout = allGroups.find((group) => group.some((tool) => tool.name === 'shape'))!;
@@ -156,5 +158,49 @@ describe('toolbar mapping shape group contract', () => {
     const figures = shapeFlyout.flatMap((tool) => (tool.figure ? [tool.figure] : []));
 
     expect([...figures].sort()).toEqual([...figureTypes].sort());
+  });
+});
+
+describe('toolbar mapping icon contract', () => {
+  /**
+   * Every mapped tool resolves to a real icon, because `SidebarLeft.getToolIcon` returns the
+   * lookup and the rail renders the result as a component. A tool added to the mapping
+   * without an icon therefore has no failure of its own: it surfaces as React's "Element
+   * type is invalid" render error inside every suite that mocks `toolIcons`, which is a
+   * cryptic way to learn that a name is misspelled, once per suite. This file imports the
+   * real mapping and the real icon module, so the name can be reported once, here.
+   *
+   * The key is built the way production builds it — a template literal for a figure
+   * (`shape-${figure}`), the bare tool name otherwise. A hand-written union of names cannot
+   * express that form, so enumerating names and checking each is a different and weaker
+   * test: it would never look at a figure tool.
+   *
+   * `toolIcons` is typed `Record<ToolIconName, SvgIconFactory>`, which asserts the lookup is
+   * total, so the compiler cannot catch a name that is missing at runtime.
+   */
+  it('resolves every mapped tool to a real icon component', () => {
+    const unresolved: string[] = [];
+
+    for (const tool of allTools) {
+      const preferredKey = tool.figure ? `shape-${tool.figure}` : tool.name;
+      const preferred = toolIcons[preferredKey as ToolIconName];
+      if (typeof preferred === 'function') continue;
+
+      // The PREFERRED key is what is checked, and not merely whatever production ends up
+      // rendering. A figure with no `shape-` icon of its own falls through to the generic
+      // `shape` icon rather than crashing, so a resolution-only assertion would pass on
+      // exactly the authoring mistake a figure tool is most likely to carry — verified by
+      // mutating this key to a misspelling, which the fall-through swallowed. The
+      // fall-through is a tolerance; a tolerance is not a pin. Both shapes are reported by
+      // tool name and by the key that was missing.
+      const resolved = toolIcons[tool.name];
+      unresolved.push(
+        typeof resolved === 'function'
+          ? `${tool.label} -> no ${preferredKey} icon; renders the generic ${tool.name} icon`
+          : `${tool.label} -> neither ${preferredKey} nor ${tool.name} resolves to an icon`
+      );
+    }
+
+    expect(unresolved).toEqual([]);
   });
 });

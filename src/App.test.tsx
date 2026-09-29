@@ -217,14 +217,22 @@ describe('App shell layout', () => {
       "[grid-template-areas:'header_header_header''toolbar_toolbar_toolbar''left_main_right''footer_footer_footer']"
     );
     expect(classes).toContain('grid-rows-[auto_auto_1fr_auto]');
-    expect(classes).toContain('grid-cols-[auto_1fr_250px]');
-    // `max-lg:grid-cols-[auto_1fr_auto]` lets the layers column size to content, so the
-    // tablet collapse reclaims the 250px instead of leaving an empty column.
-    expect(classes).toContain('max-lg:grid-cols-[auto_1fr_auto]');
+    // BOTH side tracks are `auto`, at every width. The dock's width is the user's to choose,
+    // and the tablet collapse reclaims it by rendering `display: none` — which contributes
+    // nothing to an `auto` track and a full 250px of nothing to a fixed one. The former
+    // `max-lg:grid-cols-[auto_1fr_auto]` is therefore gone: a single `auto` template at
+    // every breakpoint is the same behaviour with one rule instead of two, and the paired
+    // assertion below is what it depends on.
+    expect(classes).toContain('grid-cols-[auto_1fr_auto]');
+    expect(classes).not.toContain('250px');
     // Below the mobile boundary the shell is header / main / bottom.
     expect(classes).toContain("max-md:[grid-template-areas:'header''main''bottom']");
     expect(classes).toContain('max-md:grid-rows-[auto_1fr_auto]');
   });
+
+  // The companion fact — the 250px lives on the dock ELEMENT, not on a track — is asserted in
+  // `SidebarRight.test.tsx`, because this file mocks `SidebarRight` out entirely and there is
+  // no element here to measure.
 
   it('mounts the mobile shell on desktop too, so the breakpoint crossing is a CSS flip', () => {
     render(<App />);

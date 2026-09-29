@@ -4,6 +4,7 @@ import { useStore } from '../../contexts/StoreContext.tsx';
 import { useLayers } from '../../contexts/useLayer.ts';
 import { getSortedLayersArray } from '../../contexts/layer-utils.ts';
 import type { LayerId } from '../../contexts/layer-types.ts';
+import { lockDragCursor, unlockDragCursor } from '../../hooks/dragCursorLock.ts';
 import { TrashIcon } from '../Icons/TrashIcon.tsx';
 import { EyeIcon } from '../Icons/EyeIcon.tsx';
 import { DragHandleIcon } from '../Icons/DragHandleIcon.tsx';
@@ -32,17 +33,30 @@ export default function LayersTab() {
   const dragImageRef = useRef<HTMLDivElement>(null);
   const dragImageNameRef = useRef<HTMLSpanElement>(null);
 
+  // The shared drag lock, not a direct write to `document.body`. A layer drag that ended while a
+  // dock gesture was still running used to remove the grabbing cursor and the selection lock
+  // from under it, because this wrote the class itself and knew nothing about the other writer.
+  // `lockedRef` makes the effect idempotent: a re-render with the same `draggedLayerId` must not
+  // take a second lock it will never release.
+  const lockedRef = useRef(false);
   useEffect(() => {
-    if (draggedLayerId) {
-      document.body.classList.add('cursor-grabbing');
-    } else {
-      document.body.classList.remove('cursor-grabbing');
+    if (draggedLayerId && !lockedRef.current) {
+      lockedRef.current = true;
+      lockDragCursor();
+    } else if (!draggedLayerId && lockedRef.current) {
+      lockedRef.current = false;
+      unlockDragCursor();
     }
   }, [draggedLayerId]);
 
   useEffect(() => {
     return () => {
-      document.body.classList.remove('cursor-grabbing');
+      // Unmounting mid-drag happens whenever the dock crosses the label threshold under a live
+      // column resize, which unmounts this whole tab.
+      if (lockedRef.current) {
+        lockedRef.current = false;
+        unlockDragCursor();
+      }
     };
   }, []);
   /////
