@@ -304,9 +304,17 @@ Two things follow, and they are different:
    red tests are the first N in file order, suspect the server before the
    application.
 
-Not yet done. The warm-up in (1) is a one-request change to a file nothing else
-touches, and it is left alone here so it does not ride in on a toolbar fix that
-does not need it.
+Implemented, but not as (1) was written — see below. It was left alone for a while
+so it would not ride in on a toolbar fix that did not need it.
+
+**Implemented, against a different request than (1) describes.** `e2e/global-setup.ts`
+now fetches the **module entry** (`index.html`'s `type="module"` `src`, read from the
+file), not the base URL. A `GET /` would have been a no-op twice over: Playwright's
+own `webServer` plugin has already made that request before `globalSetup` runs, and
+Vite's transform middleware declines it anyway, so it walks none of the module graph.
+It uses Node `fetch` rather than a browser — this file exists to stop an agent opening
+a window, and a launch here would be invisible to the guard above — never throws, and
+logs one line saying whether the warm-up happened.
 
 ## 9. Files
 
