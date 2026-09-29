@@ -1107,21 +1107,24 @@ describe('decideDurableAppend: known gaps in the publication preconditions', () 
     operation: { kind: 'set-document-frame', previous, next },
   });
 
-  const durableBase = (history: readonly DurableHistoryEntry[], cursor: number) =>
-    ({
-      documentId: 'doc-1',
-      documentRevision: 4,
-      branchRevision: 0,
-      durableRevision: 7,
-      baseline: {
-        frame: baselineFrame,
-        layers: [],
-        selections: { selections: [], activeSelectionId: null },
-        activeLayerId: null,
-      },
-      history,
-      cursor,
-    }) as unknown as DurableDocument;
+  // Typed by the return annotation rather than cast, so a new REQUIRED field on
+  // `DurableDocument` is a compile error here instead of a fixture that silently
+  // omits it. Nothing in the boundary mutates its base, so the literal needs no
+  // freeze to be honest.
+  const durableBase = (history: readonly DurableHistoryEntry[], cursor: number): DurableDocument => ({
+    documentId: 'doc-1',
+    documentRevision: 4,
+    branchRevision: 0,
+    durableRevision: 7,
+    baseline: {
+      frame: baselineFrame,
+      layers: [],
+      selections: { selections: [], activeSelectionId: null },
+      activeLayerId: null,
+    },
+    history,
+    cursor,
+  });
 
   const gapPriorEntries = [createMockHistoryItem({ id: 'legacy-0' }), createMockHistoryItem({ id: 'legacy-1' })];
   const gapPrior: HistoryTimeline = {
@@ -1267,6 +1270,33 @@ describe('decideDurableAppend: known gaps in the publication preconditions', () 
   // nothing reports it. Durable replay still replays correctly (it addresses
   // history by index, `durable-replay.ts:64-65`), so the document is not visibly
   // broken, which is why the pin asserts the disagreement rather than a crash.
+  //
+  // Latent in the store today, because the collision needs a repeated id and
+  // every production plan mints a fresh one: `useLayer.ts:478` and
+  // `useLayer.ts:648` pass no `id`, so `createHistoryItem` mints a `uuidv4()`
+  // (`history-utils.ts:81`), and the two `planHistoryAppend` calls in
+  // `useSelectionHistory.ts:133` and `useSelectionHistory.ts:289` pass the
+  // `uuidv4()` of `useSelectionHistory.ts:124` and `useSelectionHistory.ts:277`.
+  // The base's own ids are those same minted ids, carried in by the rebuild
+  // (`StoreContext.tsx:666-673`, which converts the legacy timeline), so a
+  // collision requires a uuid that repeats. Nothing in the boundary checks it;
+  // only that accident does.
+  //
+  // TRIPWIRE. The fix `HANDOFF.md` §17 prescribes — return `durableEntry: null`
+  // when `validateTimeline` produces an `error` diagnostic
+  // (`history-append.ts:309-315`) — does NOT change anything the two blocks above
+  // assert: `decideDurableAppend` never calls `validateTimeline`, and the plan
+  // there is against a legacy prior that holds no entry under this id, so it
+  // takes no diagnostic branch at all. On its own this pin would stay green
+  // through that fix. The LAST block below is therefore the part that fires on
+  // it, and it is what makes this a tripwire rather than a description: it pins
+  // the branch the fix edits, an `error` diagnostic published beside a non-null
+  // `durableEntry`. It is close to a deliberate near-duplicate of the
+  // `reports a duplicate entry id without changing the entry` case in the
+  // append-point-validation block above, and it is duplicated ON PURPOSE: that one
+  // is a statement about the plan, this one is the alarm the fix has to trip.
+  // Delete or re-point the last block, and the `durableEntry` assertion in that
+  // other test, in the SAME change that applies the fix — never relax either.
   it('publishes an entry id the durable document already holds, and the shadow keeps both', () => {
     const entry = cropEntryWith('crop-1', appendedFrame);
     const base = durableBase(
@@ -1301,5 +1331,26 @@ describe('decideDurableAppend: known gaps in the publication preconditions', () 
     });
     expect(plan.diagnostics).toEqual([]);
     expect(plan.durableEntry).not.toBeNull();
+
+    // The branch the prescribed fix edits, pinned here so the pin goes RED when
+    // that fix lands. It is the same blindness one route up: `validateTimeline`
+    // can only see the LEGACY timeline, and this is the one place that side can
+    // name the duplicate at all. Today the two statements coexist — an `error`
+    // diagnostic AND a durable entry the store would publish — and the fix makes
+    // them exclusive, so this assertion fails the moment `durableEntry` goes null.
+    const collidingPlan = planHistoryAppend({
+      item: {
+        layerId: 'document',
+        actionName: SET_DOCUMENT_FRAME_ACTION,
+        args: { previousFrame: baselineFrame, nextFrame: appendedFrame },
+      },
+      timeline: { entries: [...gapPriorEntries, entry], cursor: gapPriorEntries.length, branchRevision: 0 },
+      currentFrame: baselineFrame,
+      id: 'crop-1',
+    });
+    expect(collidingPlan.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ historyId: 'crop-1', severity: 'error' })])
+    );
+    expect(collidingPlan.durableEntry).not.toBeNull();
   });
 });

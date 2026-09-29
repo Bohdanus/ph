@@ -17,6 +17,7 @@ import {
   type DurableOperation,
 } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
+import { updateHistoryTimeline } from '../history-timeline.ts';
 import type { LayerSource } from '../layer-types.ts';
 import {
   NEW_LAYER_ACTION,
@@ -582,7 +583,19 @@ describe('durable entry id uniqueness', () => {
     // the ones the legacy timeline handles without complaint.
     expect(result.status).toBe('current');
     expect(result.document).not.toBeNull();
-    expect(result.diagnostics.every((diagnostic) => diagnostic.severity === 'warning')).toBe(true);
+    // Spelled out, not `every(...)`: a predicate over an empty array is true, so
+    // it would have passed with no diagnostic at all — the one thing this test
+    // exists to prevent. The exact array also pins the severity to `warning`,
+    // which is the claim under the test, and the length to the single repeat.
+    expect(result.diagnostics).toEqual([
+      {
+        historyId: 'shared-id',
+        actionName: TOOL_ACTION,
+        severity: 'warning',
+        code: 'invalid-history-entry',
+        message: expect.stringContaining('shared-id'),
+      },
+    ]);
     expect(result.document!.history.map((entry) => entry.id)).toEqual(['shared-id', 'after']);
   });
 
@@ -721,7 +734,8 @@ describe('durable entry id uniqueness', () => {
     // so one cursor per legacy entry is load-bearing: a short map makes the NEXT
     // entry after the repeat resolve to -1, which replays the document back to
     // its untouched baseline — every undo after the duplicate losing its history.
-    expect(result.legacyCursorToDurableCursor).toHaveLength(history.length);
+    // The exact `toEqual` already pins the length, so no separate length
+    // assertion is needed here.
     expect(result.legacyCursorToDurableCursor).toEqual([-1, 0, 0, 1]);
   });
 
@@ -796,11 +810,15 @@ describe('durable entry id uniqueness', () => {
     ]);
   });
 
-  it('preserves a duplicate id handed straight to the document, which is why the guard belongs in conversion', () => {
+  it('freezes a duplicate id handed straight to the document, so the id guard has to live in conversion', () => {
+    // NOT a converter test. It exercises only `freezeDurableDocument` and
+    // `toggleDurableEntry` — the document is hand-built from a converted one so
+    // that a genuine duplicate id can be handed to the freezer on purpose — and it
+    // asserts nothing `legacyHistoryToDurable` decides. It lives in this file
+    // because it is the evidence for the guarantee this suite pins: the duplicate
     // `freezeDurableDocument` maps 1:1 over `history` and copies each `id`
     // verbatim, so it is neither the source of a duplicate nor a place that could
-    // remove one. That is why the guarantee has to be enforced upstream. This is
-    // the evidence for that claim: freeze preserves a defect it was handed.
+    // remove one. That is why the guarantee has to be enforced upstream.
     const registry = new AssetRegistry();
     const converted = legacyHistoryToDurable([...baselineHistory(), blurItem('dup')], { documentId, registry });
     const first = converted.document.history[0]!;
@@ -850,5 +868,60 @@ describe('durable entry id uniqueness', () => {
     const atTip = replayDurableDocument(document, result.legacyCursorToDurableCursor[3]!);
     expect(atTip.cursor).toBe(1);
     expect(filterToolNames(atTip.layers[layerId]?.operations ?? [])).toEqual(['blur', 'color']);
+  });
+
+  it('KNOWN LIMIT: publishes a later entry that reuses the baseline open-document id with no diagnostic', () => {
+    // KNOWN LIMIT, pinned deliberately as the CURRENT behaviour. The baseline
+    // document-source branch `continue`s BEFORE the duplicate-id guard
+    // (`history-adapter.ts:571-576`), so the baseline entry's id never reaches
+    // `publishedEntryIds` and a later entry claiming that id is published as a
+    // first occurrence: the ids collide in a way the diagnostic does not report.
+    //
+    // That is a real limit rather than a cosmetic gap, because the two id-based
+    // resolvers disagree about what the id MEANS. `updateHistoryTimeline`
+    // (`history-timeline.ts:24`) resolves `toggle-disabled <id>` by first match
+    // over the LEGACY timeline and lands on the baseline entry, while
+    // `toggleDurableEntry` (`history-adapter.ts:850`) resolves the same key by
+    // first match over the DURABLE history and lands on the LATER entry — the
+    // baseline is not in the durable document at all, so "first match" means
+    // different entries on the two sides.
+    //
+    // No production route produces this: the open-document entry is minted by
+    // `createHistoryItem` with its default fresh `uuidv4()` per commit
+    // (`history-utils.ts:81`, called at `useApp.ts:120-125`), and every other
+    // writer mints one the same way, so no two committed entries can share an id.
+    //
+    // Whoever closes the limit MUST update this test. It is the tripwire saying
+    // "conversion is silent here"; it starts failing the moment the baseline id is
+    // recorded (or the baseline is published as an entry), and the honest
+    // expectation then becomes the repeat warning.
+    const registry = new AssetRegistry();
+    const sharedId = 'baseline-id-collision';
+    const history = [...baselineHistory(sharedId), blurItem(sharedId)];
+
+    const result = legacyHistoryToDurable(history, { documentId, registry });
+
+    // CURRENT: published silently, with a cursor per legacy entry as usual.
+    expect(result.diagnostics).toEqual([]);
+    expect(result.document.history.map((entry) => entry.id)).toEqual([sharedId]);
+    expect(result.document.history[0]?.operation).toMatchObject({
+      kind: 'apply-filter',
+      layerId,
+      filter: { toolName: 'blur' },
+    });
+    expect(result.legacyCursorToDurableCursor).toEqual([-1, 0]);
+
+    // The LEGACY resolver takes that id to the baseline open-document entry...
+    const legacy = updateHistoryTimeline(
+      { entries: history, cursor: 1, branchRevision: 0 },
+      { type: 'toggle-disabled', entryId: sharedId }
+    );
+    expect(legacy.entries[0]?.actionName).toBe(OPEN_DOCUMENT_ACTION);
+    expect(legacy.entries[0]?.disabled).toBe(true);
+    expect(legacy.entries[1]?.disabled).toBeUndefined();
+
+    // ...while the DURABLE resolver takes the very same id to the later entry.
+    const durable = toggleDurableEntry(result.document, sharedId);
+    expect(durable.history.map((entry) => [entry.operation.kind, entry.enabled])).toEqual([['apply-filter', false]]);
   });
 });

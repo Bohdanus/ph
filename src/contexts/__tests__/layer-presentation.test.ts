@@ -24,6 +24,11 @@ function staged(): BitmapSource {
  * fixture that makes a test's SCENARIO real; the assertions are about how the
  * scope reacts to that answer, so a change to the store's collector is not what
  * these tests claim to cover.
+ *
+ * The real collector is not left untested for that reason: it is driven through
+ * the dispatcher in `StoreContext.retirement.test.tsx`, which pins each alias it
+ * reads. This copy is a scope-reaction fixture, not a second implementation of
+ * the rule, and a change to either side belongs in both files.
  */
 function collectLive(next: LayersRecord, history: readonly HistoryItem[]): Set<BitmapSource> {
   const live = new Set<BitmapSource>();
@@ -275,11 +280,18 @@ describe('DocumentPresentationScope ownership', () => {
     // `history-replay` reads that exact bitmap back on undo. Closing it is the
     // use-after-close that made the next undo draw from a closed bitmap.
     //
-    // Both halves of the veto are pinned, because they fail in opposite
-    // directions. Closing while named breaks undo; DELETING the candidate while
-    // named leaks it for the life of the document, since nothing else knows the
-    // raster existed. The second retirement below is what tells the two apart —
-    // it can only close the raster if the first one kept it as a candidate.
+    // The veto is what this test carries, because it is the half that fails in the
+    // dangerous direction: closing a raster a history entry still names breaks
+    // undo. The second retirement is a control rather than a second claim — it
+    // shows the raster is closed exactly once once nothing names it, but it does
+    // NOT show the first call kept it as a candidate, because
+    // `retireUnreferenced` returns before its delete loop whenever the departed
+    // list is empty, so the first call could not have dropped it in any case.
+    //
+    // Whether the STORE names the raster is deliberately not claimed here: the
+    // liveness answer is this file's fixture. The real
+    // `collectLivePresentationBitmaps` is driven through the dispatcher in
+    // `StoreContext.retirement.test.tsx`, which is what keeps this mirror honest.
     const scope = new DocumentPresentationScope();
     const adopted = createMockImageBitmap();
     scope.trackPublished('doc-1', adopted);

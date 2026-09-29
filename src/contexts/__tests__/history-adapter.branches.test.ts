@@ -325,7 +325,10 @@ describe('legacyHistoryToDurable per-action option branches', () => {
     const converted = convert(
       [
         {
-          id: 'frame',
+          // The id must not be the bare word `frame`: the message body says
+          // "document frame" twice on its own, so `toContain('frame')` would pass
+          // even with the interpolation removed.
+          id: 'frame-without-next',
           actionName: SET_DOCUMENT_FRAME_ACTION,
           layerId: 'document',
           args: { previousFrame: baselineFrame },
@@ -344,7 +347,7 @@ describe('legacyHistoryToDurable per-action option branches', () => {
     // frame that no longer matches what the user cropped to.
     expect(converted.diagnostics).toHaveLength(1);
     expect(converted.diagnostics[0]).toMatchObject({
-      historyId: 'frame',
+      historyId: 'frame-without-next',
       actionName: SET_DOCUMENT_FRAME_ACTION,
       // WARNING, not error: `convertLegacyHistorySafely` withholds the ENTIRE
       // durable document on the first error diagnostic, so an error here would
@@ -353,8 +356,9 @@ describe('legacyHistoryToDurable per-action option branches', () => {
       code: 'invalid-history-entry',
     });
     // The message names the offending entry, so a warning is actionable without
-    // the caller having to correlate it back to the cursor map itself.
-    expect(converted.diagnostics[0]?.message).toContain('frame');
+    // the caller having to correlate it back to the cursor map itself. The id is
+    // absent from the message body, so this pins the `${item.id}` interpolation.
+    expect(converted.diagnostics[0]?.message).toContain('frame-without-next');
     registry.shutdown();
   });
 
@@ -659,6 +663,17 @@ describe('document frame conversion diagnostics', () => {
  * visible, not an endorsement of the divergence.
  */
 describe('durable shadow divergences from legacy replay', () => {
+  /**
+   * NOT a protection for the first test below. Its only entry is a disabled one
+   * carrying a `documentSource`, and `replayHistory` skips a disabled item at
+   * `history-replay.ts:74` — before it could reach a dependency — and applies a
+   * `documentSource` by assignment at `history-replay.ts:78-84`, which also
+   * returns before any dependency call. So neither body can run for that
+   * fixture, and `expect(legacy.layers).toEqual({})` is the assertion that
+   * carries the test; deleting it because these deps "already" throw leaves a
+   * green test pinning nothing. They stay as a tripwire against a future replay
+   * that starts routing a skipped entry through `createLayer`/`applyRasterTool`.
+   */
   const unreachableDependencies: HistoryReplayDependencies = {
     createLayer: () => {
       throw new Error('a disabled history entry must not create a layer');
@@ -668,6 +683,14 @@ describe('durable shadow divergences from legacy replay', () => {
     },
   };
 
+  /**
+   * Duplicates the production layer-construction shape (`createLayerSource` in
+   * `layer-utils.ts:166`) so `replayHistory` has a `Layer` to insert — but NO
+   * assertion in the bedrock test below reads it: the frame rewrite it exists to
+   * reach happens at `history-replay.ts:85-89`, BEFORE `createLayer` is called at
+   * `history-replay.ts:108`. Returning a `Layer` at all is load-bearing (the call
+   * would throw otherwise); the fields are not, so treat any change here as untested.
+   */
   function runtimeLayerFor(layerId: LayerId, source: LayerSource): Layer {
     const size = source.isBedrock ? source.size : { width: source.pos.width, height: source.pos.height };
     return {
@@ -698,9 +721,10 @@ describe('durable shadow divergences from legacy replay', () => {
 
     // KNOWN DIVERGENCE, pinned as-is rather than endorsed. `replayHistory` skips
     // a disabled item outright (`history-replay.ts:74`), so the document the
-    // USER sees after disabling the first History row is empty...
+    // USER sees after disabling the first History row is empty. This is the
+    // assertion that proves it — the throwing deps above are never reached.
     expect(legacy.layers).toEqual({});
-    // ...while the converter takes that same entry as the durable BASELINE
+    // The converter instead takes that same entry as the durable BASELINE
     // without ever consulting `isEntryEnabled` (`history-adapter.ts:571`), and
     // maps it to cursor -1 as if it were the pre-history state.
     expect(converted.legacyCursorToDurableCursor).toEqual([-1]);
@@ -741,14 +765,18 @@ describe('durable shadow divergences from legacy replay', () => {
     expect(legacy.documentFrame).toEqual({ x: 0, y: 0, ...bedrockSize });
     // KNOWN DIVERGENCE, pinned as-is rather than endorsed: the converter's
     // create-layer arm never touches `currentFrame` and `replayDurableDocument`'s
-    // create-layer case ignores `isBedrock` (`durable-replay.ts:69-75`), so the
-    // durable frame stays the pre-add size at EVERY cursor.
+    // create-layer case ignores `isBedrock` (`durable-replay.ts:69-75`). The
+    // document has exactly ONE durable entry, so -1 and 0 are the only two
+    // positions `replayDurableDocument` can return — any larger cursor clamps to
+    // 0 and would assert the tip twice.
+    expect(replayDurableDocument(converted.document, -1).frame).toEqual(baselineFrame);
     expect(replayDurableDocument(converted.document, 0).frame).toEqual(baselineFrame);
-    expect(replayDurableDocument(converted.document, 1).frame).toEqual(baselineFrame);
     // The layer itself IS published, so the divergence is the frame alone — and
     // it is silent: no diagnostic says the durable frame disagrees with the one
-    // the document replays.
-    expect(Object.keys(replayDurableDocument(converted.document, 1).layers)).toEqual(['layer-1', 'layer-bedrock']);
+    // the document replays. At -1 the bedrock layer is not there yet, so this
+    // pins the frame as the ONLY thing that fails to track the add.
+    expect(Object.keys(replayDurableDocument(converted.document, -1).layers)).toEqual(['layer-1']);
+    expect(Object.keys(replayDurableDocument(converted.document, 0).layers)).toEqual(['layer-1', 'layer-bedrock']);
     expect(converted.diagnostics).toEqual([]);
     registry.shutdown();
   });
