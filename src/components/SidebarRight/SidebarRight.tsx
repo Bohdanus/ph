@@ -126,6 +126,8 @@ const SidebarRight = () => {
   const dockWidthStartRef = useRef(0);
   /** The width the last move asked for, which is what tells a collapse from a resize. */
   const lastColumnWidthRef = useRef(0);
+  /** The width a collapse must restore: the remembered one, not the on-screen one. */
+  const rememberedWidthRef = useRef(0);
 
   // Measured from the WIDTH ON SCREEN, not the remembered one. The handle is rendered on the
   // collapsed 40px strip too, and `dockWidth` is the width to come BACK to (250, say) while
@@ -135,8 +137,13 @@ const SidebarRight = () => {
   // `setDockWidth(250)`, which UN-collapses, so it changed the value rather than restoring it.
   const onColumnResizeStart = useCallback(() => {
     dockWidthStartRef.current = layout.effectiveDockWidth;
-    lastColumnWidthRef.current = layout.effectiveDockWidth;
-  }, [layout.effectiveDockWidth]);
+    // The width to come BACK TO, which is not the width on screen once the dock is collapsed.
+    // Recording only the effective one and feeding it to `rememberDockWidth` at the end meant a
+    // bare click on the collapsed strip's handle — a press with no movement, which starts a
+    // gesture because nothing here has a movement threshold — remembered 40 and clamped it to
+    // the label floor, so the dock opened at 56px instead of the 250 the user had chosen.
+    rememberedWidthRef.current = layout.dockWidth;
+  }, [layout.dockWidth, layout.effectiveDockWidth]);
 
   const onColumnResize = useCallback(
     ({ dx }: { dx: number }) => {
@@ -288,7 +295,7 @@ const SidebarRight = () => {
       // label floor — dragging a 250px dock down to the icon strip and back would then leave a
       // 69px dock rather than the 250px one the user had.
       if (lastColumnWidthRef.current < DOCK_LABEL_MIN_WIDTH) {
-        layout.rememberDockWidth(dockWidthStartRef.current);
+        layout.rememberDockWidth(rememberedWidthRef.current);
       }
     },
   });
@@ -362,7 +369,7 @@ const SidebarRight = () => {
           ) : null
         }
       >
-        <div className="min-h-0 flex-1 overflow-y-auto">{id === 'history' ? <HistoryTab /> : <LayersTab />}</div>
+        {id === 'history' ? <HistoryTab /> : <LayersTab />}
       </PanelGroup>
     );
   };
@@ -382,8 +389,9 @@ const SidebarRight = () => {
         layout.dockOnLeft ? 'border-r border-gray-300 [grid-area:left]' : 'border-l border-gray-300 [grid-area:right]'
       }`}
     >
-      {/* The dock's canvas-side edge. Half outside the column, so it is the divider Photoshop
-          describes, and so the pointer is unambiguously on it. `z-20` keeps it above the panel
+      {/* The dock's canvas-side edge, WITHIN the column rather than straddling it: `left-0` on an
+          8px box puts it 1px inside the aside's 1px border, which is where the e2e measures it
+          and where the pointer is unambiguously on the divider. `z-20` keeps it above the panel
           rows; the panel drag's blue line is a fixed overlay at `z-[60]` and outranks both. */}
       <div
         {...columnDrag.handleProps}

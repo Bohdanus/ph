@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { lockDragCursor, unlockDragCursor } from './dragCursorLock.ts';
 
 /**
  * The pointer primitive every dock drag is built on: resize a column, resize the divider
@@ -35,38 +36,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * unmounted mid-gesture, which happens whenever a drag commits a state change that re-renders
  * the very element that started it.
  */
-
-/**
- * Live gestures, counted.
- *
- * The cursor and the selection lock live on `document.body` because they are global by nature —
- * a drag that leaves the handle must keep its cursor, and only a rule that reaches the whole
- * tree does that. That makes the unlock a shared resource, and the guard against two gestures
- * at once is PER HOOK INSTANCE, so a second finger on a second handle starts a second gesture
- * that has not asked for the lock. The first one to end then took it away from the one still
- * running: a live resize with the cursor snapped back to the text I-beam and text selection
- * re-enabled under the pointer.
- *
- * Counting is what makes the unlock safe, and the module scope is what makes the count correct
- * across every hook instance in the app.
- */
-let liveGestures = 0;
-
-const lockBody = () => {
-  liveGestures += 1;
-  if (liveGestures > 1) return;
-  // `cursor-grabbing` is already a rule in `index.scss:69-71` and is applied to the whole
-  // tree by `*`, which is what keeps the cursor steady once the pointer is off the handle.
-  document.body.classList.add('cursor-grabbing');
-  document.body.style.setProperty('user-select', 'none');
-};
-
-const unlockBody = () => {
-  liveGestures = Math.max(0, liveGestures - 1);
-  if (liveGestures > 0) return;
-  document.body.classList.remove('cursor-grabbing');
-  document.body.style.removeProperty('user-select');
-};
 
 export type DragDelta = { dx: number; dy: number };
 
@@ -125,9 +94,20 @@ export function useDockDrag({ onStart, onMove, onEnd, cancelSignal = false }: Do
     if (gestureRef.current === null) return;
     gestureRef.current = null;
     setIsDragging(false);
-    unlockBody();
+    unlockDragCursor();
     latest.current.onEnd?.(cancelled);
   }, []);
+
+  // Releases a gesture this hook still owns WHEN IT GOES AWAY, and this effect is the one place
+  // that can do it. The listener effect above is gated on `isDragging`, so if the owner is
+  // unmounted by the SAME batch that set `isDragging(true)`, that effect never ran, it never
+  // registered a cleanup, and the lock was held for the rest of the session: a grabbing cursor
+  // and no text selection for the whole app, with the count left one high, so every later
+  // gesture's `lock` short-circuits and never re-adds the class.
+  //
+  // A `[]`-deps effect always has an unmount cleanup, which is the whole point of using one
+  // here. `finish` is stable and `gestureRef` is a ref, so this never re-registers.
+  useEffect(() => () => finish(true), [finish]);
 
   // A drag that never ends — a pointerup delivered to another element, a window that lost
   // focus mid-gesture — leaves the body stuck in the grabbing cursor with selection disabled.
@@ -154,7 +134,7 @@ export function useDockDrag({ onStart, onMove, onEnd, cancelSignal = false }: Do
 
     gestureRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
     setIsDragging(true);
-    lockBody();
+    lockDragCursor();
     try {
       event.currentTarget.setPointerCapture(event.pointerId);
     } catch {

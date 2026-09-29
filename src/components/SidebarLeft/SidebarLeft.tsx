@@ -213,10 +213,14 @@ const SidebarLeft = () => {
   const [reDockTarget, setReDockTarget] = useState<'left' | 'right' | null>(null);
   const reDockOriginXRef = useRef(0);
   const reDockTargetRef = useRef<'left' | 'right' | null>(null);
+  /** Whether the last press turned into a drag, so its synthesised click is not also a swap. */
+  const railDragMovedRef = useRef(false);
 
   const onRailDragStart = useCallback(
     (event: React.PointerEvent<HTMLElement>) => {
       reDockOriginXRef.current = event.clientX;
+      railDragMovedRef.current = false;
+      reDockTargetRef.current = null;
       setReDockTarget(null);
       // A rail that moves with a flyout open takes the portal's anchor with it, and the
       // overlay re-measures against a tile that is no longer where the user aimed.
@@ -232,6 +236,10 @@ const SidebarLeft = () => {
   // because the updater's return value is the only thing React is guaranteed to use.
   const onRailDrag = useCallback(
     ({ dx }: { dx: number }) => {
+      // 3px, the same threshold `PanelGroup` uses for its own drag. Below it the press is a
+      // click, and a click here is a swap, so the flag has to be set before the drop target is
+      // or a twitch at the origin reads as a completed re-dock.
+      if (Math.abs(dx) > 3) railDragMovedRef.current = true;
       const viewportWidth = document.documentElement.clientWidth;
       const pointerX = reDockOriginXRef.current + dx;
       // Toward the edge the rail is NOT on. A rail in the left column swaps by going RIGHT,
@@ -622,9 +630,27 @@ const SidebarLeft = () => {
           {!isTablet && (
             <button
               {...railDrag.handleProps}
-              aria-label="Drag the toolbar to the other side"
+              aria-label="Move the toolbar to the other side"
               className="cursor-grab rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 active:cursor-grabbing dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
-              title="Drag to the other side"
+              // The keyboard path, and the reason this is a `<button>` at all rather than a
+              // decorative `<div>`. Dragging needs a pointer; this control is announced, sits in
+              // the tab order, and is next to a sibling that works on click — so a button with no
+              // activation is a promise it does not keep. It was dead for a MOUSE user too, not
+              // only a keyboard one: `onRailDragEnd` only commits once the pointer has moved, so a
+              // plain click on the grip did nothing.
+              //
+              // `railDragMovedRef` keeps a drag from also counting as a click. A `<button>`
+              // synthesises a click from any pointerdown+pointerup on it, including one that
+              // travelled to the opposite edge, so without this a completed drag swapped on the
+              // release and then swapped again on the click — landing the rail where it started.
+              onClick={() => {
+                if (railDragMovedRef.current) {
+                  railDragMovedRef.current = false;
+                  return;
+                }
+                setDockOnLeft(!dockOnLeft);
+              }}
+              title="Drag to the other side, or press Enter"
               type="button"
               data-testid="rail-re-dock-handle"
             >

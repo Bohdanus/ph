@@ -2293,6 +2293,35 @@ announced a button and activated nothing on Enter — got the one non-pointer ac
 a swap. **A focus stop with no behaviour is worse than no focus stop: it costs a keyboard user a
 tab press to learn nothing.**
 
+That grip was dead for a MOUSE user too, and the reason is the one to remember: `onRailDragEnd`
+only commits once `reDockTargetRef` is set, and that happens in `onRailDrag` — so a press with no
+movement produced no drop target and no swap. "It needs a drag, so it is a drag control" is not
+the same as "it is a control", and a `<button>` beside a sibling that works on click is read by
+every user as clickable. A movement guard is also required in the other direction: a `<button>`
+synthesises a click from any pointerdown+pointerup, including one that travelled to the opposite
+edge, so an unguarded `onClick` swaps on the release and then swaps again on the click.
+
+**`aria-controls` has to name an element that holds something.** It named an empty
+`display: contents` div beside the real body, and while the group was rolled up the guarded render
+removed the id and left the reference dangling — the same "a promise the control does not keep"
+argument used to justify `aria-hidden` on the handles, applied to a control that was left
+focusable. The body moved inside `PanelGroup` so the id and the element cannot drift apart.
+
+**A module-scope counter is only correct if every writer shares it.** The first fix reference-
+counted the grabbing cursor inside `useDockDrag` alone, while `LayersTab` — the layer-row
+reorder, which predates it — still added and removed the same `document.body` class itself. A
+layer drag that ended while a dock divider was still being dragged took the cursor and the
+selection lock away from it, which is the defect the counter existed to fix, reintroduced through
+the other door. The lock now lives in `src/hooks/dragCursorLock.ts` and both writers call it.
+
+**And a counter can still leak, because an effect that never ran has no cleanup.** The lock was
+released only from inside the listener effect, which is gated on `isDragging`. If the hook's owner
+unmounted in the SAME batch that set `isDragging(true)` — which is what a gesture whose `onStart`
+drops its own subtree does — that effect never registered, no cleanup existed, and the lock was
+held for the rest of the session: a grabbing cursor, no text selection, and a count left one high
+so every later gesture's lock short-circuited. A `[]`-deps effect whose cleanup finishes a live
+gesture always has an unmount cleanup, which is the point of using one.
+
 **The two docks are not keyboard-reachable at all**, and that is a real gap rather than a
 non-issue: a rail or a dock cannot be moved with the keyboard, and nothing in `Window` lists the
 panels. The honest cost of that is recorded here rather than hidden behind `aria-hidden`.

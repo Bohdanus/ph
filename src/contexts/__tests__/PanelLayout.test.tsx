@@ -117,8 +117,13 @@ describe('PanelLayout', () => {
 
       for (const ratio of [0.12, 0.2, 0.5, 0.88]) {
         act(() => result.current.setSplitRatio(ratio));
-        const top = result.current.splitRatio;
-        expect(top + (1 - top)).toBeCloseTo(1, 10);
+        // STORED, not merely clamped into range. An earlier version asserted only
+        // `top + (1 - top) === 1`, which is an arithmetic identity: it holds for every finite
+        // `top`, so it passed for a no-op setter, an inverted one, and a constant 0.5 one. The
+        // input is compared to the output, and the identity is kept only as the second half of
+        // the claim.
+        expect(result.current.splitRatio).toBeCloseTo(ratio, 10);
+        expect(result.current.splitRatio + (1 - result.current.splitRatio)).toBeCloseTo(1, 10);
       }
     });
   });

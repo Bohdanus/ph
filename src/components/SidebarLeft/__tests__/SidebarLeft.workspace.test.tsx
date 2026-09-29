@@ -255,6 +255,64 @@ describe('SidebarLeft workspace placement', () => {
     expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:left]');
   });
 
+  it('is operable by keyboard, and by a mouse click, because it is a real button', () => {
+    renderRail();
+
+    // It is a `<button>`, so it is announced as one and it is in the tab order. A button that
+    // does nothing on Enter is a promise the control does not keep, and it was dead for a mouse
+    // user too: `onRailDragEnd` only commits once the pointer has moved, so a plain click on the
+    // grip did nothing at all.
+    const grip = screen.getByTestId('rail-re-dock-handle');
+    expect(grip.tagName).toBe('BUTTON');
+    expect(grip).toHaveAccessibleName(/move the toolbar to the other side/i);
+
+    fireEvent.click(grip);
+    expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:right]');
+
+    fireEvent.click(grip);
+    expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:left]');
+  });
+
+  it('does not also count a completed drag as a click, which would swap it back', () => {
+    const restore = stubViewportWidth(1024);
+    try {
+      renderRail();
+
+      // A `<button>` synthesises a click from any pointerdown+pointerup on it, including one
+      // that travelled to the far edge. Without the movement guard, a successful drag swapped
+      // on the release and then swapped again on the click, landing the rail where it started.
+      const grip = screen.getByTestId('rail-re-dock-handle');
+      fireEvent.pointerDown(grip, { button: 0, buttons: 1, pointerId: 1, clientX: 60, clientY: 20 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 1000, clientY: 20 });
+      fireEvent.pointerUp(document, { pointerId: 1 });
+      fireEvent.click(grip);
+
+      expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:right]');
+    } finally {
+      restore();
+    }
+  });
+
+  it('still swaps on a press too small to be a drag, and treats it as the click it is', () => {
+    const restore = stubViewportWidth(1024);
+    try {
+      renderRail();
+
+      // Under the 3px movement threshold the press never became a drag, so there is no drop
+      // target and the release is a click — which is the one action it can offer.
+      const grip = screen.getByTestId('rail-re-dock-handle');
+      fireEvent.pointerDown(grip, { button: 0, buttons: 1, pointerId: 1, clientX: 500, clientY: 20 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 501, clientY: 20 });
+      expect(screen.queryByTestId('rail-drop-line')).toBeNull();
+      fireEvent.pointerUp(document, { pointerId: 1 });
+      fireEvent.click(grip);
+
+      expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:right]');
+    } finally {
+      restore();
+    }
+  });
+
   it('keeps the toggle and the grip in the one row that already existed', () => {
     // The rail has no title bar of Photoshop's own to grab, so a second row would be chrome
     // Adobe does not have. The grip joins the row the one/two-column toggle was already in,

@@ -32,6 +32,12 @@ import type { PanelId } from '../../contexts/PanelLayout.tsx';
  * click, not a drag.
  */
 
+/**
+ * Renders the body inside its own `overflow-y: auto` box and gives it the id the tab's
+ * `aria-controls` points at. The caller passes the panel's CONTENT, not a wrapper: a wrapper
+ * here would be a second scroll container, and the tab would name an element that is not the one
+ * holding anything.
+ */
 const HEADER_CLASS =
   'px-3 py-1 bg-gray-200 dark:bg-gray-700 text-xs font-bold uppercase tracking-wider text-gray-600 dark:text-gray-400';
 
@@ -165,8 +171,15 @@ const PanelGroup = ({
         </div>
         {headerAction}
       </div>
-      {!isRolledUp && <div className="contents" id={`panel-body-${id}`} />}
-      {!isRolledUp && children}
+      {/* The id `aria-controls` names goes on the element that actually holds the body, not on an
+          empty `display: contents` placeholder beside it — a control that announces what it
+          controls has to control something, and a placeholder is nothing. The body is rendered
+          here rather than passed in so the id and the element cannot drift apart. */}
+      {!isRolledUp && (
+        <div className="min-h-0 flex-1 overflow-y-auto" id={`panel-body-${id}`}>
+          {children}
+        </div>
+      )}
     </div>
   );
 };

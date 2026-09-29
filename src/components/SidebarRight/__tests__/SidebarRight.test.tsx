@@ -383,6 +383,53 @@ describe('SidebarRight', () => {
     }
   });
 
+  it('keeps the remembered width when the collapsed handle is clicked without moving', () => {
+    seed();
+    const restoreLayout = withLayout();
+    try {
+      const { container } = renderWithLayout(<SidebarRight />);
+      const dock = () => container.querySelector('aside') as HTMLElement;
+
+      fireEvent.click(container.querySelector('[data-testid="dock-collapse-toggle"]')!);
+      expect(dock().style.width).toBe('40px');
+
+      // A press with no movement still starts a gesture — nothing here has a movement threshold —
+      // and a `<button>`-less press is the case that used to destroy the remembered width: the
+      // drag recorded the on-screen 40, and the release fed it to `rememberDockWidth`, which
+      // clamped it up to the label floor. The dock then opened at 56px instead of 250.
+      const edge = container.querySelector('[data-testid="dock-resize-handle"]') as HTMLElement;
+      fireEvent.pointerDown(edge, { button: 0, buttons: 1, pointerId: 1, clientX: 1240, clientY: 400 });
+      fireEvent.pointerUp(document, { pointerId: 1 });
+
+      fireEvent.click(container.querySelector('[data-testid="dock-icon-layers"]')!);
+      expect(Number.parseFloat(dock().style.width)).toBe(250);
+    } finally {
+      restoreLayout();
+    }
+  });
+
+  it('names the body the tab controls, and the id goes when it rolls up', () => {
+    seed();
+    const { container } = renderWithLayout(<SidebarRight />);
+
+    const tab = container.querySelector('[data-testid="panel-header-history"]') as HTMLElement;
+    const bodyId = tab.getAttribute('aria-controls')!;
+    const body = container.querySelector(`#${bodyId}`);
+    // A control that announces what it controls has to control something holding something. An
+    // earlier version pointed `aria-controls` at an empty `display: contents` placeholder, and
+    // `aria-expanded` said "false" while the id it named was still in the tree.
+    expect(body).not.toBeNull();
+    expect(body!.textContent).not.toBe('');
+    // And the id belongs to the body rather than the tab or the row around it.
+    expect(body!.parentElement).toBe(container.querySelector('[data-testid="panel-group-history"]'));
+    expect(tab).not.toHaveAttribute('id');
+
+    fireEvent.doubleClick(tab);
+    // Rolled up, the reference DANGLE rather than pointing at nothing that exists: the honest
+    // pair is `aria-expanded="false"` and no `aria-controls`, not a name with no target.
+    expect(container.querySelector(`#${bodyId}`)).toBeNull();
+  });
+
   it('reverses the drag direction once the dock is on the left edge', () => {
     seed();
     const { container } = renderWithLayout(<SidebarRight />, { dockOnLeft: true });
