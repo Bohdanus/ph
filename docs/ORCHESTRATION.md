@@ -95,9 +95,28 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
   what makes it misleading. Vite does **not** walk up, so fonts, images and AVIF
   assets from the ancestor checkout 404 in a worktree. Run `npm ci` there before
   debugging an asset that will not load.
-- **Every worktree's dev server wants :5173.** Locally `reuseExistingServer` is
-  on, so `test:e2e` can attach to a server another worktree started and then test
-  _that_ checkout. Use `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` in a worktree.
+- **Every worktree's dev server wants :5173, and that used to be the reason e2e
+  lied.** A bare `npx playwright test` in a worktree attached to whichever server
+  got to :5173 first — another checkout — and passed for the wrong reason;
+  `TEST-FLAKES.md` §10 is a mutation campaign that reported seven mutations green
+  that way. **That is over: `npm run test:e2e` now runs `scripts/e2e-run.mjs`,
+  which takes a swarm lock so one suite runs at a time across every worktree,
+  allocates a free port per run, and writes the run's output to its own
+  directory.** Server reuse is opt-in (`PLAYWRIGHT_REUSE_EXISTING_SERVER=1`)
+  instead of on-by-default. A bare `npx playwright test` still bypasses all of it —
+  that is `npm run test:e2e:raw`, and it is what CI runs, where one job owns one
+  checkout.
+- **The e2e sentinel is a virtual path held as a RUN, not a branch.**
+  `e2e/.swarm-e2e-runner` never exists on disk, and every board call passes
+  `--agent e2e-run/<branch>/<pid>`. Board identity is the branch by default and a
+  branch never conflicts with itself, so with branch identity two runs in one
+  worktree both "acquire" and the second one's release frees the first. `npm run
+swarm status` shows the holder as `e2e-run/<branch>/<pid>` while a suite is in
+  flight, which is the useful reading: the branch says which checkout, the pid
+  says which process. A run that gives up waiting exits 4; `swarm check` exits 1
+  for a busy path, and the two answer different questions. The lease is renewed
+  while the suite runs and a failed renewal stops the run, because a file lock is
+  never renewed by the board itself.
 
 ## The list of worktrees: `WORKTREES.json`
 

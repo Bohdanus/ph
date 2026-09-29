@@ -15,7 +15,7 @@ import {
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { cssPointToImage, imagePointToCss } from './helpers/screenshot-scale';
-import { clickToolButton, openToolFlyout, selectFromFlyout, verifyPrimaryTool } from './helpers/toolbar-helpers';
+import { clickToolButton, openToolFlyout, resolveToolTile, selectFromFlyout } from './helpers/toolbar-helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 /**
@@ -228,13 +228,24 @@ async function swatchDelta(page: Page, expected: Rgb): Promise<number> {
  * `from` is the tile that currently owns the group, because the tile's `data-testid` follows its
  * CURRENT primary tool (`SidebarLeft.tsx:238`). It is `brush` until one of the family is chosen,
  * and that chosen tool's own name afterwards: the flyout is only reachable again from whichever
- * tile currently leads it. The assertion is made against the tool just selected for the same
- * reason.
+ * tile currently leads it.
+ *
+ * At 1280x720 there is no such tile: the rail folds a SUFFIX, so the whole brush group — the
+ * fifth of sixteen — is in the three-dots tile, and this helper's `openToolFlyout` reaches it
+ * through the collapse branch rather than through the long press. The selection is then proved on
+ * the tile that REPRESENTS the tool, which for a collapsed tool is the three-dots tile and nothing
+ * else. That is also why `verifyPrimaryTool` cannot be used here: it asserts a tile's ACCESSIBLE
+ * NAME, and the tile standing for a collapsed tool is the three-dots tile, whose name is
+ * "More Tools" and never the tool's label. `verifyPrimaryTool` now says exactly that when a tool
+ * has no tile of its own, instead of failing on an empty text content. The eyedropper tests below
+ * confirm selection through the eyedropper's own options bar for the same reason: it is the fifth
+ * of sixteen rows, so the 1280x720 suite viewport folds it away too.
  */
 async function selectBrushFamilyTool(page: Page, from: string, toolName: string, label: string): Promise<void> {
   await openToolFlyout(page, from);
   await selectFromFlyout(page, { toolName, label });
-  await verifyPrimaryTool(page, toolName, label);
+  const tile = await resolveToolTile(page, toolName);
+  await expect(tile, `${label} must be the tool the rail reports as selected`).toHaveAttribute('aria-pressed', 'true');
 }
 
 /**
@@ -612,9 +623,17 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await openWorkspace(page);
     await drawSlab(page, RED, SLAB, hasRedPixels);
 
-    // Its own single-tool tile, so no flyout is involved.
+    // The eyedropper is a single-tool group, so there is no flyout to open — but at the suite's
+    // 1280x720 it is also the FIFTH row, and the collapse is a suffix, so it has no tile of its
+    // own either. The comment that used to claim otherwise was written when the rail defaulted to
+    // two columns and showed seven groups. Selection is therefore confirmed through the tool's own
+    // options bar, which is the one thing in the document driven by `toolName` itself; the tile
+    // that stands for the eyedropper is the three-dots tile, and its own identity is "More Tools".
     await clickToolButton(page, 'eyedropper');
-    await verifyPrimaryTool(page, 'eyedropper', 'Eyedropper Tool');
+    await expect(
+      page.getByRole('combobox', { name: 'Sample Size' }),
+      'the eyedropper is the active tool'
+    ).toBeVisible();
 
     const target = (await readPixel(page, { x: 300, y: LINE_Y }))!;
     expect(target.red, 'the sample target must be the red the Draw tool laid down').toBeGreaterThan(180);
@@ -655,9 +674,11 @@ test.describe('Eraser, fill tools and eyedropper', () => {
     await openWorkspace(page);
     await drawSlab(page, RED, SLAB, hasRedPixels);
 
+    // Selection is confirmed by the combobox below, which is the eyedropper's own bar; the tile
+    // it stands on is the three-dots tile at this window, for the reason given in the sibling test.
     await clickToolButton(page, 'eyedropper');
-    await verifyPrimaryTool(page, 'eyedropper', 'Eyedropper Tool');
     const sampleSize = page.getByRole('combobox', { name: 'Sample Size' });
+    await expect(sampleSize, 'the eyedropper is the active tool').toBeVisible();
     await expect(sampleSize).toHaveValue('1');
 
     // Find the slab's top edge from the capture itself rather than assuming where the line

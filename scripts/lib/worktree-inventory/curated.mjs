@@ -659,6 +659,11 @@ export const CURATED = {
     summary:
       'Reads every agent transcript in a 30-hour window and records what each one actually delivered, so the inventory answers whether work is finished instead of inferring it from turn shape.',
   },
+  'e2e-swarm-lock': {
+    summary:
+      'Serializes Playwright runs across agents: scripts/e2e-run.mjs takes the swarm lock e2e/.swarm-e2e-runner, allocates a free port per run and gives each run its own output directory, and the scripts that run a suite route through it. Makes playwright.config.ts server reuse opt-in and rewrites the e2e docs, AGENTS.md, TEST-FLAKES 10/11 and .skills/photoshop-tool-creation.md to match.',
+    note: 'Adds a wrapper the commit gate and CI do not run. The e2e job still calls npx playwright test directly, because a CI job owns its checkout and collects artifacts from the shared test-results/.',
+  },
   'fix-e2e-findings': {
     // The SECOND worktree to land on this directory name, and the second time a
     // curated entry outlived the worktree it described. The first entry here said
@@ -853,9 +858,8 @@ export const CURATED = {
   },
   'toolbar-overflow': {
     summary:
-      'A left rail that collapses its tool tiles into the three-dots tile rather than demanding vertical room: the pure fit arithmetic split from the DOM measuring so the boundary can be pinned in jsdom.',
-    mustNotPrune: true,
-    note: 'The collapse itself is committed and this branch is not on main, so git does see that much. The rail and the flyout specs that have to move with it are uncommitted, and an earlier version of this note claimed the fit module was an untracked file — there is no untracked file in this worktree, so read the record rather than that claim.',
+      'The left rail fits its tiles to the space it has and moves the ones that do not fit into a Photoshop-style three-dots tile, with one column as the default. A pure planner, a DOM-measuring fit store reached by ref callbacks, the tile itself, and the e2e specs it de-fragilised off hard-coded rail widths.',
+    note: "Do NOT record a width or a viewport height here \u2014 that is the thing this branch removed. The three-dots menu needs a `max-h` and scrolls: `AnchoredOverlay` clamps a flyout's position and never its size, so a menu as tall as its contents in a `position: fixed` wrapper is unreachable below the fold.",
   },
   'swarm-watch-tail': {
     summary:
@@ -878,7 +882,8 @@ export const CURATED = {
   },
   'panel-docks': {
     summary:
-      'Photoshop-style draggable panel docks: the right dock resizable by dragging, a History/Layers splitter with drag-reorder between them, the tools rail relocatable, and the layout persisted. Board issue ph-72.',
+      'Photoshop-style draggable panel workspace: a new PanelLayout context owning the dock width, the History/Layers split, panel order, roll-up and which edge the dock is on; a shared useDockDrag pointer primitive; a resizable, reorderable, roll-up-able right dock; a tools rail that re-docks to the opposite edge by drag; and a Window > Reset Workspace. Board issue ph-72.',
+    note: 'Two sessions curated this key independently and the merge kept both, where the second silently discarded the first. Defaults are chosen so the first render is pixel-identical to the fixed layout it replaces (250px dock, 20/80 split, History above Layers, dock on the right), which is what keeps the e2e shell arithmetic valid.',
   },
   'chat-damage-audit': {
     summary:

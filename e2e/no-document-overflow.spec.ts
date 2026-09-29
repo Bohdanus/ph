@@ -322,27 +322,55 @@ test.describe('Containers that scroll do so without a scrollbar', () => {
     });
   }
 
-  test('the left tool rail stays scrollable to its last control with no scrollbar shown', async ({ page }) => {
+  test('the tool rail FITS rather than overflowing, and the band that must scroll does so with no scrollbar', async ({
+    page,
+  }) => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
-    // iPad 10.2" portrait, the viewport this one overflows at most in the matrix. The rail's
-    // content is 1014px there against 943px of rail, so it genuinely overflows, which is why
-    // this test exists rather than the previous one alone. A shorter desktop window overflows
-    // by more. Hiding the scrollbar is only acceptable because the content stays reachable.
+    // This test used to assert that the rail OVERFLOWS at iPad 10.2 portrait and that scrolling
+    // it keeps the last control reachable, and it even carried the message "if it no longer
+    // does, update this test". It no longer does, and that is the point of the change rather
+    // than a regression: the rail is 1014px of tool tiles and 943px of rail, and instead of
+    // demanding the difference the tiles are fitted to the space they have and the rows that
+    // do not fit move into the three-dots tile. The premise, not the claim, went stale — so
+    // both halves are now stated against what is actually true, and the suppression is
+    // asserted where it can now be exercised.
     const viewport = VIEWPORTS.find((v) => v.name.startsWith('iPad 10.2'))!;
     await open(page, viewport.width, viewport.height);
 
     const rail = page.getByTestId('left-sidebar');
     const overflow = await rail.evaluate((el) => el.scrollHeight - el.clientHeight);
-    expect(
-      overflow,
-      'the rail is expected to overflow at this size; if it no longer does, update this test'
-    ).toBeGreaterThan(0);
+    expect(overflow, 'the rail fits its row: the tiles collapse rather than push the page taller').toBe(0);
 
+    // And what replaced the overflow is the tile, not a gap: the tools that no longer fit are
+    // reachable, so "the rail does not overflow" is not "the rail lost tools".
+    await expect(
+      page.getByTestId('tool-overflow-tile'),
+      'the tiles that do not fit have somewhere to go'
+    ).toBeVisible();
     const swatch = page.getByTestId('foreground-color-swatch');
-    await swatch.scrollIntoViewIfNeeded();
-    await expect(swatch, 'the bottom of the rail must still be reachable by scrolling').toBeVisible();
-    const box = await swatch.boundingBox();
-    expect(box!.y + box!.height, 'the swatch must end up inside the window').toBeLessThanOrEqual(viewport.height);
+    await expect(swatch, 'and the last control is where it always was, unpainted-over by nothing').toBeVisible();
+
+    // The scroll container MOVED: it is the tools slot now, not the aside, and the
+    // `scrollbar-none` went with it. It only overflows in the degenerate band — a window so
+    // short that the budget cannot hold even the three-dots tile's row — so that is where the
+    // suppression is exercised. The previous version of this test asserted suppression on an
+    // element that can no longer overflow, which is asserting nothing.
+    await open(page, 1280, 380);
+    const slot = page.getByTestId('left-toolbar-slot');
+    const slotOverflow = await slot.evaluate((el) => el.scrollHeight - el.clientHeight);
+    expect(slotOverflow, 'a 380px window is inside the degenerate band, so the slot must overflow').toBeGreaterThan(0);
+    expect(
+      await slot.evaluate((el) => getComputedStyle(el).scrollbarWidth),
+      'and it must suppress the scrollbar itself, not merely stop overflowing'
+    ).toBe('none');
+
+    // The thing suppression is allowed to cost: reachability. A scrollable slot with hidden
+    // content would satisfy everything above, so the last tile is scrolled to and checked.
+    const overflowTile = page.getByTestId('tool-overflow-tile');
+    await overflowTile.scrollIntoViewIfNeeded();
+    await expect(overflowTile, 'the one reachable tile is still reachable inside the scrolling slot').toBeVisible();
+    const box = await overflowTile.boundingBox();
+    expect(box!.y + box!.height, 'and it ends up inside the window').toBeLessThanOrEqual(380);
   });
 });

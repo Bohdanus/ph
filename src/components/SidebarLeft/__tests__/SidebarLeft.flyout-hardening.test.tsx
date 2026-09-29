@@ -111,6 +111,9 @@ const TILE_STEP = 60;
  */
 const TILE_ROW_STEP = TILE_HEIGHT;
 
+/** The rail's own width, which is the horizontal anchor a flyout now hangs from. */
+const RAIL_WIDTH = 108;
+
 const toolbarButtonByName = (name: string) => screen.getByTestId(`tool-button-${name}`);
 
 /** The flyout for a tool group, by the `aria-label` the group renders it with. */
@@ -130,13 +133,13 @@ const openFlyout = (tile: HTMLElement): void => {
 /** The wrapper `AnchoredOverlay` positions, portalled into `document.body`. */
 const overlayWrapper = (): HTMLElement => screen.getByRole('menu').parentElement as HTMLElement;
 
-const tileRect = (left: number, top: number): DOMRect =>
+const tileRect = (left: number, top: number, width = TILE_WIDTH): DOMRect =>
   ({
     left,
     top,
-    width: TILE_WIDTH,
+    width,
     height: TILE_HEIGHT,
-    right: left + TILE_WIDTH,
+    right: left + width,
     bottom: top + TILE_HEIGHT,
     x: left,
     y: top,
@@ -154,11 +157,20 @@ const tileRect = (left: number, top: number): DOMRect =>
  * not reach anything else in the suite, and it has to be installed after the render and
  * before the flyout mounts: the overlay measures its anchor in a layout effect on mount.
  *
+ * EVERY `<ul>` is walked, not just the first. The one-column rail renders one `<ul>` per
+ * toolbar section, so reading `querySelector('ul')` used to hand back section 0's tiles and
+ * nothing else: `boxOf('shape')` came back `undefined` and the placement assertion compared
+ * against `NaN`, which fails loudly. The louder failure is the lucky case — a reader who had
+ * stubbed a `<ul>` holding every tile, and a reader who had not, differ only in which
+ * assertions degrade to `not.toBe` rather than in which tiles are stubbed at all. A missing
+ * entry is also invisible in the positive direction: `undefined !== number` fails, but a stub
+ * that never saw the tile cannot fail at all.
+ *
  * The returned reader maps a tile button to the box its group was given, so a test can state
  * the placement as "beside THAT tile" instead of a magic number.
  */
 const stubTileBoxes = (): ((tile: HTMLElement) => { left: number; top: number }) => {
-  const groups = Array.from(screen.getByTestId('left-toolbar-tools').querySelector('ul')!.children) as HTMLElement[];
+  const groups = Array.from(screen.getByTestId('left-toolbar-tools').querySelectorAll('ul > li')) as HTMLElement[];
   const boxByGroup = new Map<HTMLElement, { left: number; top: number }>();
 
   groups.forEach((group, index) => {
@@ -167,6 +179,13 @@ const stubTileBoxes = (): ((tile: HTMLElement) => { left: number; top: number })
     boxByGroup.set(group, { left, top });
     group.getBoundingClientRect = () => tileRect(left, top);
   });
+
+  // The rail is the HORIZONTAL anchor: a flyout hangs off the panel's edge rather than off a
+  // tile's, because the tiles sit on a 108px grid inside a narrower content box and a
+  // second-column tile can start past the rail's own right edge — which would put the flyout
+  // back over the rail's first column. jsdom measures the rail as nothing, so it is stubbed
+  // here for the same reason the tiles are.
+  screen.getByTestId('left-sidebar').getBoundingClientRect = () => tileRect(0, 0, RAIL_WIDTH);
 
   // The tile button is wrapped in the tooltip's own span, so the anchor is the group `<li>`
   // above it rather than its direct parent.
@@ -298,6 +317,10 @@ describe('SidebarLeft flyout hardening', () => {
 
   it('anchors the next group flyout to its own tile after the previous one closed', () => {
     render(<SidebarLeft />);
+    // Tall enough that neither group's top is clamped. `AnchoredOverlay` clamps a placement
+    // that would run past the viewport, and a clamp would move the flyout's top onto a value
+    // that names no tile at all — which is exactly the assertion this test makes.
+    setLayoutViewport(1280, 4000);
     const boxOf = stubTileBoxes();
 
     const brushTile = toolbarButtonByName('brush');
@@ -316,14 +339,21 @@ describe('SidebarLeft flyout hardening', () => {
     expect(menuByName('Brush Tool tools')).toBeNull();
     expect(screen.getByRole('menuitemradio', { name: 'Rectangle Tool' })).toBeInTheDocument();
     expect(screen.queryByRole('menuitemradio', { name: 'Brush Tool' })).toBeNull();
-    // Placed beside the SHAPE tile, not the brush one the menu was open on a moment ago.
-    expect(overlayWrapper().style.left).toBe(`${boxOf(shapeTile).left + TILE_WIDTH + FLYOUT_GAP}px`);
-    expect(overlayWrapper().style.left).not.toBe(`${boxOf(brushTile).left + TILE_WIDTH + FLYOUT_GAP}px`);
-    // On both axes. The vertical one is where a tall menu anchored to the wrong tile went off
-    // the bottom of the window in a real browser, and it stayed invisible to every assertion
-    // the suite had, because the stub gave every tile the same top.
+    // VERTICAL placement is what names the tile. The HORIZONTAL placement is the RAIL's edge
+    // rather than the tile's — a tool flyout hangs off the panel, because the tiles sit on a
+    // 108px grid inside a narrower content box and a second-column tile can start past the
+    // rail's own right edge, which would put the flyout back over the rail's first column. So
+    // `left` is now identical for every group and cannot name one, and asserting it to name a
+    // tile would pass for the previous group exactly as readily as for the current one.
+    expect(overlayWrapper().style.left).toBe(`${RAIL_WIDTH + FLYOUT_GAP}px`);
+    // On both axes for the vertical, which is where a tall menu anchored to the wrong tile went
+    // off the bottom of the window in a real browser, and it stayed invisible to every
+    // assertion the suite had, because the stub gave every tile the same top.
     expect(overlayWrapper().style.top).toBe(`${boxOf(shapeTile).top}px`);
     expect(overlayWrapper().style.top).not.toBe(`${boxOf(brushTile).top}px`);
+    // The rail box is stubbed, so this is a real number rather than a zero-width element the
+    // placement would have collapsed against.
+    expect(boxOf(shapeTile).left).not.toBe(boxOf(brushTile).left);
   });
 
   /**
