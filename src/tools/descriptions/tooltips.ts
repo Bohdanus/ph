@@ -26,7 +26,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   'elliptical-selection': {
     summary:
       'Drag an elliptical selection; Shift makes a circle, Alt draws from the center, Style locks ratio or size.',
-    implementation: 'partial',
+    implementation: 'implemented',
   },
   'freehand-lasso': {
     summary: 'Drag a freehand selection border that goes exactly where the cursor goes and closes itself on release.',
@@ -207,7 +207,7 @@ export const toolTooltips: Record<ToolName, ToolTooltipProjection> = {
   },
   eyedropper: {
     summary:
-      'Samples a color from anywhere in the image and makes it the foreground color, on a click rather than a drag.',
+      'Samples a color from anywhere in the image and makes it the foreground color, previewing as you drag and confirming on release.',
     implementation: 'partial',
   },
   draw: {

@@ -92,6 +92,17 @@ describe('Transform toolbar', () => {
     expect(screen.getByText('Reset All')).toBeInTheDocument();
   });
 
+  // These three used to live here as 'rotate buttons are clickable without error', 'mirror
+  // buttons are clickable without error' and 'Reset All button is clickable without error'.
+  // They contained no assertions at all, so they only re-proved that the component renders,
+  // which the three tests above already establish: emptying any of those click handlers to a
+  // no-op left all three green. Every control they clicked is exercised by name, with an
+  // assertion on the value handed to the mocked tool-args writer, further down this file —
+  // 'rotation wrap-around' and 'trapezoid exclusivity' for the three rotate buttons,
+  // 'mirror toggles' for the two mirror toggles, and 'optional layer actions' plus
+  // 'keyboard navigation' for Reset All — so re-adding them would duplicate real coverage
+  // without adding any.
+
   describe('accessible names of the icon buttons', () => {
     it('falls back to the icon glyph as the accessible name, with the tooltip only as title', () => {
       render(<Transform />);

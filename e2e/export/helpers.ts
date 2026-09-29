@@ -662,16 +662,31 @@ function readPsdDocumentSize(bytes: Uint8Array): { width: number; height: number
  * there — menu chrome, an advertisement, a file name in a recent-files list — so a
  * whole-page substring match passes with nothing loaded at all, and it would go on
  * passing if the upload silently did nothing. Two properties of the uploaded file
- * are asserted instead, and neither is reachable without the file having opened:
+ * are asserted instead:
  *
  * 1. an element whose **entire** text is the document name — an exact, whole-element
  *    match, so a label that merely contains the name cannot satisfy it. The name is
  *    derived from the path rather than from the name the export dialog was filled
- *    with, so a renamed export fails loudly instead of verifying a file nobody opened;
+ *    with, so a renamed export fails loudly;
  * 2. a canvas whose **backing store is exactly the width and height in the PSD
  *    header**, read from the file this function was handed. The expected size follows
  *    the document instead of being hard-coded here, and the same query style is the
  *    one `waitForPhotopeaReady` already relies on.
+ *
+ * **Check 2 is the load-bearing one, and check 1 is not.** An earlier version of this
+ * comment claimed neither was reachable without the file having opened, which over-credited
+ * check 1: `getByText` matches on text content regardless of visibility, and
+ * `not.toHaveCount(0)` is a match-count assertion, so a HIDDEN recent-files row or a
+ * pre-open filename field carrying the name satisfies it exactly as a visible one would.
+ * Check 1 proves the name is *rendered somewhere*, not that the document is open — so the
+ * guarantee it used to be described as giving ("verifying a file nobody opened") is not one
+ * it gives on its own. Check 2 is what carries that: a backing store of exactly the
+ * document's dimensions does not arise without the file having been parsed. Read the two as
+ * one strong check and one weak corroboration — and note check 2 has the same visibility
+ * blind spot, since it queries every canvas on the page including hidden ones, so neither
+ * alone is a proof and the pair together is a strong prior. Making either visibility-aware is
+ * a real improvement, and unverifiable while this spec is skipped, so it belongs with the
+ * re-enable work below rather than in a change nobody can run.
  *
  * The file input is asserted to be **unique**. `.first()` was removed from that
  * locator: it caps the match set at one element, so `toHaveCount(1)` on the result

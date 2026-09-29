@@ -1,6 +1,6 @@
 import type { ToolDescription } from './types.ts';
 
-const PEN_PLACEHOLDER_CHIPS = 'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:14';
+const PEN_PLACEHOLDER_CHIPS = 'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23';
 
 const PEN_SOURCES = [
   'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/overview-of-pen-tool-settings.html',
@@ -31,7 +31,7 @@ const ANCHOR_TOOL_SOURCES = [
 ] as const;
 
 const NO_APP_OPTIONS =
-  'The app registers this tool, but it has no options bar of its own: the panel it renders is the shared amber placeholder with a TODO badge, and every control below is that placeholder chip rather than a working control. The tool carries a single state key, its own name, so there is no setting behind any chip to be out of range. Selecting the tool changes nothing on the canvas — there is no path layer, no anchor point and no stroke to place.';
+  'The app registers this tool, but it has no options bar of its own: the panel it renders is the shared amber placeholder with a TODO badge, and no control below is a working control — the ones that panel names are its chips, and the rest are absent from it entirely. The tool carries a single state key, its own name, so there is no setting behind any chip to be out of range. Selecting the tool changes nothing on the canvas — there is no path layer, no anchor point and no stroke to place.';
 
 /**
  * The canvas side of the same finding, and it is separate from the bar: none of the six
@@ -85,16 +85,15 @@ export const penDescriptions: Record<
       {
         control: 'Operation',
         detail:
-          'Path mode only. The path area option that decides how the component you are about to draw combines with the components already in the path: Add To Path Area, Subtract From Path Area, Intersect Path Areas, or Exclude Overlapping Path Areas. A shape tool may hold Shift to temporarily pick Add and Alt (Windows) or Option (macOS) to temporarily pick Subtract. The app labels this "Path Operations".',
+          'Path mode only. The path area option that decides how the component you are about to draw combines with the components already in the path: Add To Path Area, Subtract From Path Area, Intersect Path Areas, or Exclude Overlapping Path Areas. A shape tool may hold Shift to temporarily pick Add and Alt (Windows) or Option (macOS) to temporarily pick Subtract. The app labels this "Path Operations", and that is the single chip of that name in the list it renders — so this row, and not the Path Selection tool’s control below, is what the chip stands for.',
         status: 'inert',
         appRef: PEN_PLACEHOLDER_CHIPS,
       },
       {
         control: 'Path Operations',
         detail:
-          'The Path Selection tool’s drop-down of the same four overlap modes, named Combine Shapes, Subtract From Shape Area, Intersect Shape Areas and Exclude Overlapping Shape Areas, plus Merge Shape Components, which fuses every overlapping component into one. It acts on an existing path component rather than on the one being drawn, so the Pen family shares the vocabulary without owning the control.',
-        status: 'inert',
-        appRef: PEN_PLACEHOLDER_CHIPS,
+          'The Path Selection tool’s drop-down of the same four overlap modes, named Combine Shapes, Subtract From Shape Area, Intersect Shape Areas and Exclude Overlapping Shape Areas, plus Merge Shape Components, which fuses every overlapping component into one. It acts on an existing path component rather than on the one being drawn, so the Pen family shares the vocabulary without owning the control. The app’s bar does not carry it: the one "Path Operations" chip on it stands for the Pen’s own Operation control above, and nothing on the bar names this one — which is a divergence from Photoshop, not a rendering fact.',
+        status: 'missing',
       },
       {
         control: 'Path alignment',
@@ -113,6 +112,12 @@ export const penDescriptions: Record<
         control: 'Path thickness (Weight)',
         detail:
           'Sets the width in pixels of the on-canvas line that represents the path. A display aid only: it has no effect on a stroke applied later, and on the pen family it lives in the Set additional pen and path options flyout, where newer releases label it Weight.',
+        status: 'missing',
+      },
+      {
+        control: 'Path color',
+        detail:
+          'The other half of the same Path Options panel, and Adobe states the pair as one control: "Path options: Thickness and Color". The color of the on-canvas line that represents the path, set in the same Set additional pen and path options flyout as the thickness. A display aid only, for the same reason — it changes nothing about the path and has no effect on a stroke applied later.',
         status: 'missing',
       },
       {
@@ -146,6 +151,11 @@ export const penDescriptions: Record<
         action:
           'Converts a smooth point to a corner point when you click it, and unhinges a direction handle from its opposite so you can set the two independently while dragging a curve.',
       },
+      {
+        keys: 'Ctrl/Command',
+        action:
+          'Temporarily activates the Direct Selection tool while you draw, so that you can adjust segments you have already drawn.',
+      },
     ],
     shortcuts: [
       {
@@ -167,20 +177,20 @@ export const penDescriptions: Record<
     ],
     implementation: 'placeholder',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:299',
-      'src/tools/toolProcessors.ts:109',
-      'src/tools/toolsMap.ts:127',
+      'src/tools/toolProcessors.ts:300',
+      'src/tools/toolProcessors.ts:110',
+      'src/tools/toolsMap.ts:128',
       'src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8',
-      'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:14',
-      'src/tools/settings.ts:259',
-      'src/contexts/tool-types.ts:57',
-      'src/util/settings.ts:81',
-      'src/components/Main/Main.tsx:195',
+      'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23',
+      'src/tools/settings.ts:265',
+      'src/contexts/tool-types.ts:58',
+      'src/util/settings.ts:101',
+      'src/components/Main/Main.tsx:226',
       'src/components/Common/AppKeyboardShortcuts.tsx:387',
-      'src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:33',
+      'src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:30',
       'src/tools/__tests__/tool-processors.test.ts:336',
     ],
-    appNotes: `Not implemented. The processor exists but is the shared stub that returns a null bitmap, and its commit kind is unimplemented, so a drag over the canvas produces no layer, no history state and no durable operation. ${NO_APP_OPTIONS} ${NO_APP_GESTURE_SURFACE} The app does bind the letter P and Shift+P cycling for the Pen group — and those two keys are the whole of the Pen's Photoshop chrome here, along with a tool-preset entry for the tool. Neither of the two shortcuts the bar above names that act on a path, \`Ctrl+Enter\` and \`Ctrl+Alt\`, is bound anywhere in the app.`,
+    appNotes: `Not implemented. The processor exists but is the shared stub that returns a null bitmap, and its commit kind is unimplemented, so a drag over the canvas produces no layer, no history state and no durable operation. ${NO_APP_OPTIONS} ${NO_APP_GESTURE_SURFACE} The app does bind the letter P and Shift+P cycling for the Pen group — and those two keys are the whole of the Pen's Photoshop chrome here, along with a tool-preset entry for the tool. Neither of the two shortcuts the bar above names that act on a path, \`Ctrl+Enter\` and \`Ctrl+Alt\`, is bound anywhere in the app. The options table above is the Shape and Path mode bar; Adobe's own enumeration of the Pixels-mode controls — \`Mode\`, \`Opacity\` and \`Anti-alias\` — carries the scope line "When using the Line tool or other shape tools", and the Pen settings page confirms that the Pen has a Pixels mode without ever listing what that mode's bar contains, so no row above describes Pixels mode and none is invented for it.`,
     sources: PEN_SOURCES,
   },
 
@@ -236,6 +246,12 @@ export const penDescriptions: Record<
         appRef: PEN_PLACEHOLDER_CHIPS,
       },
       {
+        control: 'Path color',
+        detail:
+          'The color half of the Path Options panel — Adobe states the pair as one control, "Path options: Thickness and Color" — which sets the color of the on-canvas line that represents the path. A display aid only, in the same Set additional pen and path options flyout as the thickness, and it has no effect on a stroke applied later.',
+        status: 'missing',
+      },
+      {
         control: 'Rubber Band',
         detail: 'Live preview of the pending path segment. Lives in the Set additional pen and path options flyout.',
         status: 'missing',
@@ -252,16 +268,16 @@ export const penDescriptions: Record<
     ],
     implementation: 'placeholder',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:303',
-      'src/tools/toolProcessors.ts:109',
-      'src/tools/toolsMap.ts:131',
+      'src/tools/toolProcessors.ts:301',
+      'src/tools/toolProcessors.ts:110',
+      'src/tools/toolsMap.ts:132',
       'src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8',
-      'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:15',
-      'src/tools/settings.ts:260',
-      'src/contexts/tool-types.ts:58',
-      'src/util/settings.ts:82',
-      'src/components/Main/Main.tsx:195',
-      'src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:150',
+      'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:24',
+      'src/tools/settings.ts:266',
+      'src/contexts/tool-types.ts:59',
+      'src/util/settings.ts:102',
+      'src/components/Main/Main.tsx:226',
+      'src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:156',
       'src/components/Common/AppKeyboardShortcuts.tsx:32',
     ],
     appNotes:
@@ -275,6 +291,8 @@ export const penDescriptions: Record<
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html',
       'https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/drawing-tools-overview.html',
       'https://helpx.adobe.com/photoshop/using/paths.html',
+      'https://helpx.adobe.com/photoshop/using/editing-paths.html',
+      'https://helpx.adobe.com/photoshop/desktop/make-selections/freehand-selections/snap-to-image-edges-using-magnetic-lasso-tool.html',
     ],
   },
 
@@ -313,6 +331,12 @@ export const penDescriptions: Record<
         status: 'missing',
       },
       {
+        control: 'Path color',
+        detail:
+          'The other half of the Path Options panel Adobe states as one control — "Path options: Thickness and Color" — the color of the on-canvas line representing the path, set in that same flyout beside the thickness. A display aid only, for the same reason the thickness is.',
+        status: 'missing',
+      },
+      {
         control: 'Align Edges',
         detail:
           'The neighboring control in that flyout, which straightens a segment against the edge it snapped to. It is reported as unavailable while the Curvature Pen is the active tool.',
@@ -331,7 +355,17 @@ export const penDescriptions: Record<
         status: 'missing',
       },
     ],
-    modifiers: [],
+    modifiers: [
+      {
+        keys: 'Shift',
+        action: 'Constrains the path you are placing to 90° and 45° angles.',
+      },
+      {
+        keys: 'Alt/Option',
+        action:
+          'Creates a corner point where you click — the same result as double-clicking a point, which switches it between straight and curved.',
+      },
+    ],
     shortcuts: [
       {
         keys: 'P',
@@ -343,16 +377,16 @@ export const penDescriptions: Record<
     ],
     implementation: 'placeholder',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:308',
-      'src/tools/toolProcessors.ts:109',
-      'src/tools/toolsMap.ts:136',
+      'src/tools/toolProcessors.ts:306',
+      'src/tools/toolProcessors.ts:110',
+      'src/tools/toolsMap.ts:137',
       'src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8',
-      'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:16',
-      'src/tools/settings.ts:261',
-      'src/contexts/tool-types.ts:59',
-      'src/util/settings.ts:83',
-      'src/components/Main/Main.tsx:195',
-      'src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:150',
+      'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:25',
+      'src/tools/settings.ts:267',
+      'src/contexts/tool-types.ts:60',
+      'src/util/settings.ts:103',
+      'src/components/Main/Main.tsx:226',
+      'src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:156',
       'src/components/Common/AppKeyboardShortcuts.tsx:32',
     ],
     appNotes:
@@ -374,15 +408,15 @@ export const penDescriptions: Record<
     shortcuts: [],
     implementation: 'placeholder',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:313',
-      'src/tools/toolProcessors.ts:109',
-      'src/tools/toolsMap.ts:141',
+      'src/tools/toolProcessors.ts:311',
+      'src/tools/toolProcessors.ts:110',
+      'src/tools/toolsMap.ts:142',
       'src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8',
-      'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:14',
-      'src/tools/settings.ts:262',
-      'src/contexts/tool-types.ts:60',
-      'src/util/settings.ts:84',
-      'src/components/Main/Main.tsx:195',
+      'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23',
+      'src/tools/settings.ts:268',
+      'src/contexts/tool-types.ts:61',
+      'src/util/settings.ts:104',
+      'src/components/Main/Main.tsx:226',
       'src/components/SidebarLeft/toolIcons.tsx:77',
     ],
     appNotes:
@@ -403,15 +437,15 @@ export const penDescriptions: Record<
     shortcuts: [],
     implementation: 'placeholder',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:318',
-      'src/tools/toolProcessors.ts:109',
-      'src/tools/toolsMap.ts:146',
+      'src/tools/toolProcessors.ts:316',
+      'src/tools/toolProcessors.ts:110',
+      'src/tools/toolsMap.ts:147',
       'src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8',
-      'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:14',
-      'src/tools/settings.ts:263',
-      'src/contexts/tool-types.ts:61',
-      'src/util/settings.ts:85',
-      'src/components/Main/Main.tsx:195',
+      'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23',
+      'src/tools/settings.ts:269',
+      'src/contexts/tool-types.ts:62',
+      'src/util/settings.ts:105',
+      'src/components/Main/Main.tsx:226',
       'src/components/SidebarLeft/toolIcons.tsx:78',
     ],
     appNotes:
@@ -438,15 +472,15 @@ export const penDescriptions: Record<
     ],
     implementation: 'placeholder',
     implementationRefs: [
-      'src/tools/toolProcessors.ts:323',
-      'src/tools/toolProcessors.ts:109',
-      'src/tools/toolsMap.ts:151',
+      'src/tools/toolProcessors.ts:321',
+      'src/tools/toolProcessors.ts:110',
+      'src/tools/toolsMap.ts:152',
       'src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8',
-      'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:14',
-      'src/tools/settings.ts:264',
-      'src/contexts/tool-types.ts:62',
-      'src/util/settings.ts:86',
-      'src/components/Main/Main.tsx:195',
+      'src/components/ToolbarsRight/toolbarPlaceholderConfig.ts:23',
+      'src/tools/settings.ts:270',
+      'src/contexts/tool-types.ts:63',
+      'src/util/settings.ts:106',
+      'src/components/Main/Main.tsx:226',
       'src/components/SidebarLeft/toolIcons.tsx:79',
       'src/contexts/__tests__/history-adapter.tool-conversion.test.ts:242',
     ],

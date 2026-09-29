@@ -858,11 +858,27 @@ Adobe-confirmed tool names, by the overview table each comes from:
 | Type                        | Horizontal Type, Vertical Type, Vertical Type Mask, Horizontal Type Mask                                                                                                                                                                                                                                                                                                   |
 | Unverified family           | Adobe's navigation-and-measuring overview (upd. 2026-02-23) exists but only one line was retrievable: "Ruler tool Measures distances, locations, and angles." Hand, Rotate View, Zoom, Frame, Slice, Perspective Crop, Slice Select, Path Selection and Direct Selection are **not Adobe-table-confirmed** and are listed from the shortcut PDF and individual tool pages. |
 
-**Four 2026 candidates that are NOT Adobe-confirmed and must not ship as tools:** Adjustment Brush
-(two third-party diagrams, zero Adobe pages), Clone Source tool (one diagram's icon numbering has
-a gap where it would sit, the name was never printed), Selection Brush (Adobe documents it for
-Photoshop on the web, not the desktop panel), and Generate Image (a real feature, but its placement
-in the panel footer is unconfirmed).
+**Two 2026 candidates that are NOT Adobe-confirmed and must not ship as tools:** Clone Source tool
+(one diagram's icon numbering has a gap where it would sit, the name was never printed), and
+Generate Image (a real feature, but its placement in the panel footer is unconfirmed).
+
+**Two that an earlier version of this list had here are Adobe-confirmed, and both errors had the
+same cause: a product page mistaken for the desktop user guide.** `HANDOFF.md` §74 recorded the
+corrections; this list did not catch up, and it is the list a build reads.
+
+- **Selection Brush** is desktop Photoshop and lives in the **Lasso** group. The page that proves
+  it is titled "Selection Brush and Lasso tools": "Select Selection Brush Tool from the **Lasso
+  tool group** in the toolbar." <https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html>
+  (upd. 2024-12-12).
+- **Adjustment Brush** is desktop Photoshop and is a **Brush flyout** sibling, not its own tile:
+  "Select Adjustment Brush Tool from the toolbar."
+  <https://helpx.adobe.com/photoshop/using/tool-techniques/adjustment-brush-tool.html> (upd.
+  2024-05-22), and <https://helpx.adobe.com/photoshop/using/adjustment-brush.html> (upd.
+  2024-12-12). It is a large _feature_ — an adjustment layer plus a painted mask — which is a
+  separate decision from membership in the rail.
+
+**A tool named by a panel's title is not a tool.** Adobe's Clone Source is `Window ▸ Clone Source`,
+a panel, not a Tools-panel entry. That is how it got into the list in the first place.
 
 **Not tools, and not to be implemented as tools:** the foreground/background swatches, "Edit in Quick
 Mask Mode", the three screen-mode toggles, the `…` Edit Toolbar caret, the toolbar grip, and the

@@ -13,23 +13,24 @@ icon and a `P`/`Shift+P` binding — and then does nothing at all when you use o
 
 The three facts that settle it, in the order they matter:
 
-1. **A processor exists for each, and it is the shared no-op stub.** `src/tools/toolProcessors.ts:299-324`
+1. **A processor exists for each, and it is the shared no-op stub.** `src/tools/toolProcessors.ts:300-325`
    gives all six `commit: 'unimplemented'`, `replay: replay('unimplemented', false, false)` and
    `imageProcessor: unimplemented`. That `unimplemented` is `() => () => [null as never]`
-   (`src/tools/toolProcessors.ts:109`) — a zero-arity function returning a null bitmap, so a drag
+   (`src/tools/toolProcessors.ts:110`) — a zero-arity function returning a null bitmap, so a drag
    commits no pixels, records no history state and produces no durable operation. None of the six is a
-   `creator`. `src/tools/__tests__/tool-processors.test.ts:338-343` pins all six commit kinds, and
-   `src/tools/__tests__/tool-processors.test.ts:695-696` pins that all six share the one stub instance.
-2. **All six render `PlaceholderTool`, through the same config key.** `src/tools/toolsMap.ts:127-152`
+   `creator`. `src/tools/__tests__/tool-processors.test.ts:336-341` pins all six commit kinds, and
+   `src/tools/__tests__/tool-processors.test.ts:690-691` pins that all six share the one stub instance.
+2. **All six render `PlaceholderTool`, through the same config key.** `src/tools/toolsMap.ts:128-153`
    calls `placeholderTool('<Tool> Tool', 'pen')` for all six — note `'pen'`, not each tool's own key.
    `src/components/ToolbarsRight/ToolbarPlaceholder.tsx:8-36` renders an amber dashed panel with a
-   `TODO` badge and a row of static `<span>` chips. `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:33-38`
+   `TODO` badge and a row of static `<span>` chips. `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:30-35`
    pins all six to `configKey: 'pen'`.
 3. **There is no state behind any of it.** Each tool's args type is literally its own name and nothing
-   else — `src/contexts/tool-types.ts:57-62` — and `src/tools/settings.ts:259-264` seeds the same
-   `{ toolName }` default. `src/util/settings.ts:80-89` reduces all six back to `{ toolName }` on every
-   save, and the comment at `src/util/settings.ts:72-78` names the pen family as the group that still
-   does this. `src/tools/__tests__/tool-settings.test.ts:398-402` asserts the reduction.
+   else — `src/contexts/tool-types.ts:58-63` — and `src/tools/settings.ts:265-270` seeds the same
+   `{ toolName }` default. The arm at `src/util/settings.ts:100-108` reduces all six back to
+   `{ toolName }` on every save (`:109`), and the comment at `src/util/settings.ts:93-98` names the pen
+   family as the group that still does this. `src/tools/__tests__/tool-settings.test.ts:399-405`
+   asserts that every `unimplemented` tool's seeded default is a bare tool name.
 
 The substrate is missing too, which is the deeper point: the app has **no Paths panel and no work-path
 concept at all**. `grep -rn "workPath|work path" src` returns nothing, and no component under
@@ -41,13 +42,13 @@ honest state rather than a gap someone forgot.
 
 The three anchor-point entries used to say each acts "over a tool that has no processor", and that is
 the one wording in this family that was strictly false while sounding like a caveat. In this codebase
-**no processor** has a precise meaning and it excludes these three: `src/tools/toolsMap.ts:124-126`
+**no processor** has a precise meaning and it excludes these three: `src/tools/toolsMap.ts:125-127`
 uses the phrase for the eyedropper, whose absence is real because the eyedropper is the only tool in
 `PIXEL_FREE_TOOLS` and so genuinely carries only an icon and a bar. All six Pen tools are registered
 in `toolProcessors`, and all three anchor-point tools are wired to the same `unimplemented` instance
 the rest of the family uses — the same one this note's first fact above already names. The file's own
 `pen` entry had it right, and it now says so in all three, with
-`src/tools/toolProcessors.ts:109` cited in each entry so the "shared" is checkable rather than
+`src/tools/toolProcessors.ts:110` cited in each entry so the "shared" is checkable rather than
 asserted.
 
 ## The canvas and the keyboard, which are a different axis from the bar
@@ -55,10 +56,11 @@ asserted.
 Everything above is about the options bar and the processor. Two further facts are about what a user
 can actually do with the tool, and they are the ones that survive a screenshot of the amber panel:
 
-- **No Pen tool has a gesture surface at all.** `src/components/Main/Main.tsx:60-75` turns a tool name
+- **No Pen tool has a gesture surface at all.** `src/components/Main/Main.tsx:61-124` turns a tool name
   into an `interactionMode`, and none of the six appears in any branch of that chain, so
   `interactionMode` stays its `'zoom'` default and `EventHandler` stays `DummyToolArea`
-  (`src/components/Main/Main.tsx:195`), which renders a `display: none` div
+  (the default at `src/components/Main/Main.tsx:203`, the fallthrough every Pen tool takes at
+  `src/components/Main/Main.tsx:226`), which renders a `display: none` div
   (`src/components/Main/DummyToolArea.tsx:15`). That is why no `modifiers` row in this family is
   backed by anything, and why `Esc` and `Ctrl+Alt` are recorded as absent rather than merely unlisted.
   For the record, the app binds `Escape` in exactly four places and none is a Pen tool:
@@ -81,14 +83,15 @@ binding is also `enabled: hasImage` (`:387`), so it does nothing until an image 
 
 Two further app facts, both first-class and both test-pinned:
 
-- **The Freeform Pen and the Curvature Pen render the wrong chip list.** `toolbarPlaceholderConfig.ts:15-16`
+- **The Freeform Pen and the Curvature Pen render the wrong chip list.** `toolbarPlaceholderConfig.ts:24-25`
   defines a `[Tool Mode, Fill, Stroke, Magnetic, Curve Fit]` list for each — and `toolsMap.ts` never asks
-  for either key. `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:158` asserts
-  `unreachableKeys` is exactly `['freeform-pen', 'curvature-pen', 'rectangle']`, i.e. those two lists are
+  for either key. `src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx:156` asserts
+  `unreachableKeys` is exactly `['freeform-pen', 'curvature-pen', 'rectangle']` (the binding it compares
+  is at `:150`), i.e. those two lists are
   dead config that a test now requires to stay dead. So the Freeform Pen's bar names neither `Magnetic`
   nor `Curve Fit` — the two controls that are its entire reason for existing — and the Curvature Pen
   inherits the Freeform Pen's controls rather than its own. The unreachable list is the load-bearing
-  evidence; `:116-117` separately pins the dead lists' contents.
+  evidence; `:113-115` separately pins the dead lists' contents.
 - **The durable document refuses the family.** `src/contexts/__tests__/history-adapter.tool-conversion.test.ts:242`
   asserts that converting a history item naming an `unimplemented` tool is rejected with an
   unsupported-feature diagnostic, and `src/contexts/__tests__/history-replay.branches.test.ts:637-648`
@@ -101,39 +104,45 @@ six are visually indistinguishable in the rail.
 
 ## Status tally
 
-Across the family: **0 `present`, 0 `partial`, 16 `inert`, 11 `missing`, 27 control rows.** The three
+Across the family: **0 `present`, 0 `partial`, 15 `inert`, 14 `missing`, 29 control rows.** The three
 anchor-point tools contribute no rows, for the reason under "Add / Delete / Convert".
 
 | Tool            | Controls | present | partial | inert | missing |
 | --------------- | -------- | ------- | ------- | ----- | ------- |
-| `pen`           | 11       | 0       | 0       | 8     | 3       |
-| `freeform-pen`  | 8        | 0       | 0       | 4     | 4       |
+| `pen`           | 12       | 0       | 0       | 7     | 5       |
+| `freeform-pen`  | 9        | 0       | 0       | 4     | 5       |
 | `curvature-pen` | 8        | 0       | 0       | 4     | 4       |
 | the three below | 0        | 0       | 0       | 0     | 0       |
 
 **The `inert` count was 15 until an independent audit recounted it, and this table carried the
 error.** The `curvature-pen` row was tallied as three when it is four — it has Mode, Fill, Stroke and
-Selection…/Mask/Shape. Recounted mechanically from `pen.ts`, the family total is 16, and the
-repository-wide total is 20: pen 16, paint 3 (eraser `Flow`, magic-eraser `Anti-aliased`,
-paint-bucket `Anti-aliased`), draw 1 (`Mode`), and zero in selection, focus, shape, type-crop and
-transform. A hand-maintained tally in a prose file is the one number in this directory with nothing
-holding it to the code beside it.
+Selection…/Mask/Shape. A later recount found a second error in the same table: `curvature-pen` was
+given nine controls and five `missing` where the data file and this file's own Curvature Pen table
+both say eight and four, so the family was stated as 30 rows with 14 `missing` when the file holds 29
+with 13. Recounted mechanically from `pen.ts`, the family total is now 15 `inert` across 29 control
+rows: 16 less the one row that moved from `inert` to `missing` under "Path Operations" below, which is
+the only `inert` count this pass changed on purpose. The repository-wide figure in the earlier version
+— pen 16, paint 3 (eraser `Flow`, magic-eraser `Anti-aliased`, paint-bucket `Anti-aliased`), draw 1
+(`Mode`), and zero in selection, focus, shape, type-crop and transform — is **not** re-derived here:
+it was counted in the `tool-descriptions` worktree, and the other tools' description files sit on their
+own branches, so this worktree's copies are not the states it was taken from. A hand-maintained tally in
+a prose file is the one number in this directory with nothing holding it to the code beside it.
 
 **This family is what the `inert` definition is for.** It originally read "_state_ is declared and
 persisted (`src/tools/settings.ts`) but no component renders it", which does not fit here: no state is
 declared at all, the args type _is_ the tool name. The definition was widened to "declared **or
 displayed**, and nothing is wired behind it", with the second shape spelled out as "a label on a
-placeholder chip that no component ever reads" — which is these 16 controls exactly. So `inert` is used
+placeholder chip that no component ever reads" — which is these 15 controls exactly. So `inert` is used
 for the controls whose **name is on screen as a chip** and `missing` for the controls with no chip,
 because `missing` is defined as "the app does not render this control" and a rendered label is not
-that. The alternative — calling all 27 `missing` — loses the fact that eight of the standard Pen's
-control names are literally visible in the app's bar, which is the claim most likely to be mistaken for
-"the app has it".
+that. The alternative — calling all 29 `missing` — loses the fact that seven of the standard Pen's
+twelve control names are literally visible in the app's bar, which is the claim most likely to be
+mistaken for "the app has it". Those seven are exactly the seven chips the bar renders, one for one.
 
 **`inert` is not `present`, and the reason is worth stating because it is the whole point of the
-status.** A screenshot of this bar shows eleven control names and looks like a working Pen. Nothing
-reads any of them. `inert` is the status that survives a screenshot, and `present` is the only status
-that does not.
+status.** A screenshot of this bar shows seven of its twelve control names and looks like a working
+Pen. Nothing reads any of them. `inert` is the status that survives a screenshot, and `present` is the
+only status that does not.
 
 Controls that surprised me, in the order they surprised me:
 
@@ -220,27 +229,42 @@ Path semantics, all sourced:
 
 | Control                     | Photoshop detail                                                                                                                                    | Status    | appRef                                                    |
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | --------------------------------------------------------- |
-| `Mode`                      | Shape / Path / Pixels three-button group — named Shape Layers / Paths / Fill Pixels on Adobe's older drawing page; gates which other controls exist | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Tool Mode")       |
-| `Fill`                      | Fill color; Shape mode                                                                                                                              | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Fill")            |
-| `Stroke`                    | Stroke color, width, type; Shape mode                                                                                                               | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Stroke")          |
-| `Operation`                 | Path mode: Add To / Subtract From / Intersect / Exclude Overlapping Path Area                                                                       | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Path Operations") |
-| `Path Operations`           | Path Selection tool's menu: Combine Shapes … + Merge Shape Components                                                                               | `inert`   | `toolbarPlaceholderConfig.ts:14` (same chip)              |
-| `Path alignment`            | Align and distribute path components                                                                                                                | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Alignment")       |
+| `Mode`                      | Shape / Path / Pixels three-button group — named Shape Layers / Paths / Fill Pixels on Adobe's older drawing page; gates which other controls exist | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Tool Mode")       |
+| `Fill`                      | Fill color; Shape mode                                                                                                                              | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Fill")            |
+| `Stroke`                    | Stroke color, width, type; Shape mode                                                                                                               | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Stroke")          |
+| `Operation`                 | Path mode: Add To / Subtract From / Intersect / Exclude Overlapping Path Area                                                                       | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Path Operations") |
+| `Path Operations`           | Path Selection tool's menu: Combine Shapes … + Merge Shape Components                                                                               | `missing` | —                                                         |
+| `Path alignment`            | Align and distribute path components                                                                                                                | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Alignment")       |
 | `Path arrangement`          | Stacking order of multiple paths                                                                                                                    | `missing` | —                                                         |
 | `Path thickness (Weight)`   | On-canvas path line width; display only, lives in the additional-options flyout                                                                     | `missing` | —                                                         |
-| `Selection… / Mask / Shape` | Converts the _already drawn_ path to a selection, a vector mask, or a shape layer                                                                   | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Make Selection")  |
-| `Auto Add/Delete`           | On by default; Pen morphs to Add/Delete Anchor over an existing path                                                                                | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Auto Add/Delete") |
+| `Path color`                | The other half of the same Path Options panel — "Path options: Thickness and Color"; display only                                                   | `missing` | —                                                         |
+| `Selection… / Mask / Shape` | Converts the _already drawn_ path to a selection, a vector mask, or a shape layer                                                                   | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Make Selection")  |
+| `Auto Add/Delete`           | On by default; Pen morphs to Add/Delete Anchor over an existing path                                                                                | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Auto Add/Delete") |
 | `Rubber Band`               | Live segment preview; in the additional-options flyout                                                                                              | `missing` | —                                                         |
 
-`Operation` and `Path Operations` share one chip. That is honest — the app has one `Path Operations`
-label standing in for two distinct Adobe controls on two distinct tools — and it is why both rows carry
-the same `appRef`.
+**The two rows are not one chip, and an earlier version of this file said they were.** `Operation` and
+`Path Operations` are two different Adobe controls: `Operation` is the Pen's own Path-mode area control
+(`Add To Path Area` and friends), and `Path Operations` is the Path Selection tool's drop-down over a
+component that already exists. The app renders **one** chip of that name — the fourth of seven on
+`toolbarPlaceholderConfig.ts:23`, after `Make Selection` — and it is `Operation`'s, because the app
+labels the Pen's own control "Path Operations" and because a chip on the Pen's bar can only stand for a
+control the Pen owns. So `Operation` stays `inert` with that `appRef`, and `Path Operations` is
+`missing` with no `appRef` at all: the app's bar does not carry it, and its row now says so in those
+words. That is the same call `shape.ts` makes, where `pathOperationsControl` is declared `missing`
+(`shape.ts:76-81`) and only overridden to `inert` for `custom-shape`, whose own chip list names the
+control (`shape.ts:446`). The earlier wording here — "That is honest — the app has one `Path
+Operations` label standing in for two distinct Adobe controls on two distinct tools" — is what let two
+rows claim one rendering, and it is withdrawn: one chip cannot be the rendering of two controls the same
+record insists are different, so the record now claims the rendering only where it happens.
 
 ### Modifiers, shortcuts, cursor
 
 - `Shift` constrains the segment to 45° (`draw-paths-with-the-pen-tool.html`).
 - `Alt` both converts a smooth point to a corner point on click and unhinges a direction handle from
   its opposite while dragging — the same page's tip and its "curve to a straight segment" note.
+- `Ctrl` / `Command` while drawing temporarily activates the Direct Selection tool, so you can adjust
+  segments you have already drawn (`editing-paths.html`). This row was **missing** and is now the third
+  modifier on the `pen` record.
 - `P`; `Shift+P` cycles the nested group. Adobe's own pages only ever state `P`
   (`tool-techniques/pen-tool.html`); `Shift+P` is a third-party and app fact, and the app implements it
   at `src/components/Common/AppKeyboardShortcuts.tsx:32` for exactly the three pens — which matches
@@ -278,7 +302,10 @@ the trace into an edge-following one — the Freeform Pen is the Pen-family memb
 Frequency / Stylus Pressure controls the Magnetic Lasso documents. That last clause was previously
 written as "sharing the Magnetic Lasso's snapping machinery", which claimed more than the evidence
 carries: no Adobe page documents the Freeform Pen's own `Magnetic` flyout, so what can be said is
-which controls it uses, not that it shares one settings object with another tool.
+which controls it uses, not that it shares one settings object with another tool. The Magnetic Lasso
+page that establishes those four control names is now **in the record's `sources` array** — the claim
+was already in the data file, and an unsourced claim belongs in `Unverified` instead
+(`types.ts:140-141`), so the fix was to cite the page rather than to delete the sentence.
 
 Introduced in **Photoshop 5.0 (May 1998)**, alongside the Magnetic Lasso and the Magnetic Pen. Two
 independent sources agree and the corpus's "5.5" is wrong: the Photoshop release history lists 5.0
@@ -290,13 +317,14 @@ features. The Freeform Pen is therefore only slightly younger than the Pen famil
 
 | Control                     | Photoshop detail                                              | Status    | appRef                                                   |
 | --------------------------- | ------------------------------------------------------------- | --------- | -------------------------------------------------------- |
-| `Mode`                      | Shape / Path / Pixels                                         | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Tool Mode")      |
-| `Fill`                      | Fill color; Shape mode                                        | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Fill")           |
-| `Stroke`                    | Stroke color; Shape mode                                      | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Stroke")         |
+| `Mode`                      | Shape / Path / Pixels                                         | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Tool Mode")      |
+| `Fill`                      | Fill color; Shape mode                                        | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Fill")           |
+| `Stroke`                    | Stroke color; Shape mode                                      | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Stroke")         |
 | `Curve Fit`                 | Single numeric field, 0.5–10 px, the simplification tolerance | `missing` | —                                                        |
 | `Magnetic`                  | Checkbox: snap the live segment to the strongest image edge   | `missing` | —                                                        |
 | `Align Edges`               | Straighten a snapped segment; unavailable for this tool       | `missing` | —                                                        |
-| `Selection… / Mask / Shape` | Convert the already drawn path                                | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Make Selection") |
+| `Selection… / Mask / Shape` | Convert the already drawn path                                | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Make Selection") |
+| `Path color`                | Path Options panel: on-canvas path line color, display only   | `missing` | —                                                        |
 | `Rubber Band`               | Live path preview                                             | `missing` | —                                                        |
 
 `modifiers` is empty. Every Freeform Pen modifier I could find — `Alt` as a temporary standard Pen,
@@ -311,6 +339,8 @@ gesture in the data file to fill the array.
 - https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html
 - https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/create-shapes/drawing-tools-overview.html
 - https://helpx.adobe.com/photoshop/using/paths.html
+- https://helpx.adobe.com/photoshop/using/editing-paths.html _(the `Path color` half of the Path Options panel)_
+- https://helpx.adobe.com/photoshop/desktop/make-selections/freehand-selections/snap-to-image-edges-using-magnetic-lasso-tool.html _(the Width / Contrast / Frequency / Stylus Pressure controls the `Magnetic` row names)_
 - https://adobe.fandom.com/wiki/Adobe_Photoshop_release_history
 - https://www.computinghistory.org.uk/det/55601/Adobe-Photoshop-5-0
 
@@ -335,20 +365,28 @@ The gesture set Adobe documents: double-click a point to switch it between corne
 path or on one already drawn; click a point and press Delete to remove it; click anywhere on the curve to
 add a point; `Esc` stops drawing.
 
+Adobe documents **two modifiers** for this tool, and the data file's `modifiers` array was **empty**:
+`Shift`-click constrains the path to 90° and 45° angles, and `Alt`/`Option` while clicking creates a
+corner point — the same result as the documented double-click, which is why the second row is worded as
+an equivalent rather than as a separate gesture
+(`https://helpx.adobe.com/ph_fil/photoshop/how-to/draw-edit-curves-curvature-tool.html`). Both are now
+rows, and `Unverified` item 7 below is updated with the new sourcing rather than left to contradict it.
+
 ### Options bar
 
-| Control                     | Photoshop detail                                    | Status    | appRef                                                   |
-| --------------------------- | --------------------------------------------------- | --------- | -------------------------------------------------------- |
-| `Mode`                      | Shape / Path / Pixels                               | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Tool Mode")      |
-| `Fill`                      | Fill color; Shape mode                              | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Fill")           |
-| `Stroke`                    | Stroke color; Shape mode                            | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Stroke")         |
-| `Path thickness (Weight)`   | Path Options flyout: on-canvas path width and color | `missing` | —                                                        |
-| `Align Edges`               | Unavailable for this tool                           | `missing` | —                                                        |
-| `Selection… / Mask / Shape` | Convert the already drawn path                      | `inert`   | `toolbarPlaceholderConfig.ts:14` (chip "Make Selection") |
-| `Rubber Band`               | Live path preview                                   | `missing` | —                                                        |
+| Control                     | Photoshop detail                                        | Status    | appRef                                                   |
+| --------------------------- | ------------------------------------------------------- | --------- | -------------------------------------------------------- |
+| `Mode`                      | Shape / Path / Pixels                                   | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Tool Mode")      |
+| `Fill`                      | Fill color; Shape mode                                  | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Fill")           |
+| `Stroke`                    | Stroke color; Shape mode                                | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Stroke")         |
+| `Path thickness (Weight)`   | Path Options flyout: on-canvas path width               | `missing` | —                                                        |
+| `Path color`                | The other half of the same flyout: on-canvas path color | `missing` | —                                                        |
+| `Align Edges`               | Unavailable for this tool                               | `missing` | —                                                        |
+| `Selection… / Mask / Shape` | Convert the already drawn path                          | `inert`   | `toolbarPlaceholderConfig.ts:23` (chip "Make Selection") |
+| `Rubber Band`               | Live path preview                                       | `missing` | —                                                        |
 
 No `Magnetic` and no `Curve Fit`: those are the Freeform Pen's, and the app's dead config entry for the
-Curvature Pen lists them anyway (`toolbarPlaceholderConfig.ts:16`).
+Curvature Pen lists them anyway (`toolbarPlaceholderConfig.ts:25`).
 
 ### Sources
 
@@ -383,12 +421,12 @@ point" when you click the anchor point of a direction line.
 
 `editing-paths.html` and `drawing-tools-overview.html` between them document **no options-bar control
 belonging to any of the three.** Selecting one of them shows the Pen group's bar, so every control
-visible is the Pen's and none is these tools' own — which is exactly the case `types.ts:91-94` sanctions
+visible is the Pen's and none is these tools' own — which is exactly the case `types.ts:116-120` sanctions
 an empty array for, and why the brief says an empty array "means so only with a one-line reason". The
 reason is recorded there and the rows are inherited from the `pen` table above, where every control is
 `inert` or `missing`; there is no control in this family that is `present`.
 
-The app nonetheless renders the standard Pen's full seven-chip list on all three (`toolsMap.ts:138-152`),
+The app nonetheless renders the standard Pen's full seven-chip list on all three (`toolsMap.ts:142-152`),
 so the app shows these tools options that are not theirs and lacks the one thing they do need: a Paths
 panel to select a path in.
 
@@ -433,11 +471,13 @@ Areas`, `Exclude Overlapping Path Areas`), not as a Pen `Mode`. An earlier versi
    from four independent sources; it is untouched.
 4. **`Magnetic` as a snapping-_strength_ control on the Freeform Pen.** It is a checkbox. The
    strength controls are the same `Width` / `Contrast` / `Frequency` / `Stylus Pressure` that
-   Adobe documents for the Magnetic Lasso, and the data file now says exactly that — that the
+   Adobe documents for the Magnetic Lasso, and the data file says exactly that — that the
    Freeform Pen uses those same controls — rather than asserting that the two tools share one set
    of settings, which is an inference from the Lasso's documentation rather than a statement about
-   the Freeform Pen's own flyout. No Adobe page documents the Freeform Pen's own `Magnetic`
-   flyout. Closest: https://helpx.adobe.com/photoshop/desktop/make-selections/freehand-selections/snap-to-image-edges-using-magnetic-lasso-tool.html.
+   the Freeform Pen's own flyout. The Lasso page that names those four controls is now in the
+   record's `sources`, which settles the **provenance** of the claim; what is still unverified is
+   the flyout itself, because no Adobe page documents the Freeform Pen's own `Magnetic` flyout.
+   Closest: https://helpx.adobe.com/photoshop/desktop/make-selections/freehand-selections/snap-to-image-edges-using-magnetic-lasso-tool.html.
 5. **`Align Edges` for the Freeform Pen and the Curvature Pen.** Listed as a control with status
    `missing` in both tables, so no status depends on the behaviour — but the behaviour itself is
    third-party only for the Freeform Pen
@@ -449,7 +489,15 @@ Areas`, `Exclude Overlapping Path Areas`), not as a Pen `Mode`. An earlier versi
    double-click closing with a magnetic segment, and dragging back to the start point to close. All
    corpus-and-third-party; none appears on an Adobe page I opened, and the corpus's own citation [93] is
    a third-party tutorial. `modifiers` is therefore empty rather than populated with folklore.
-7. **The Curvature Pen's `Shift` behaviour**, and whether `Shift` constrains it at all. Corpus-only.
+7. **The Curvature Pen's `Shift` behaviour** — the exact constraint it applies. The **row** is no
+   longer corpus-only: the `Shift` and `Alt`/`Option` modifiers on the `curvature-pen` record are
+   carried by Adobe's own curvature-tool page
+   (`https://helpx.adobe.com/ph_fil/photoshop/how-to/draw-edit-curves-curvature-tool.html`, cited
+   verbatim in the finding this revalidation applied), and that page is already in
+   `CURVATURE_SOURCES`. What is still open is the _detail_ — whether the constraint is 90°/45° exactly
+   as stated, or Adobe's shorthand — because that page could not be re-opened during this pass
+   (Adobe returns 403 to this fetcher) and the sentence is carried on the citation rather than on a
+   fresh reading.
 8. **The Pen tool's introduction version.** It is present in every Photoshop release list opened, back
    to 1.0 (February 1990), but no Adobe page states that it shipped in 1.0. Not established.
 9. **The Add / Delete / Convert Anchor Point tools' introduction version.** Not established. No Adobe
@@ -477,3 +525,14 @@ Areas`, `Exclude Overlapping Path Areas`), not as a Pen `Mode`. An earlier versi
     longer mixes operations on a work path with operations from one.
 14. **Pen history granularity** — one history state per completed path rather than per anchor. A corpus
     claim I did not re-verify. Deliberately not in the data file.
+15. **The Pen's Pixels-mode options bar.** The `pen` record reaches Pixels mode and says what it
+    produces, but no Adobe page enumerates the controls that mode's bar contains. Adobe's one
+    enumeration of Pixel-mode options — `Mode` (blend mode), `Opacity` (1–100%) and `Anti-alias` —
+    carries the scope line "When using the Line tool or other shape tools"
+    (`https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/shape-path-and-pixel-mode-options.html`),
+    and the Pen settings page
+    (`https://helpx.adobe.com/photoshop/desktop/draw-shapes-paths/draw-lines-curves/overview-of-pen-tool-settings.html`)
+    confirms the Pen _has_ a Pixels mode without ever listing what that mode's bar holds. So the three
+    controls are **not** invented as rows, and `pen`'s `appNotes` now states in prose that the options
+    table is the Shape and Path mode bar and that nothing above describes Pixels mode. Closing this needs
+    an Adobe page that enumerates the Pen's whole Pixels-mode bar.

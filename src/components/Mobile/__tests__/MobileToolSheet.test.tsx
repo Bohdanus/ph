@@ -141,6 +141,26 @@ describe('MobileToolSheet', () => {
     expect(editGroup.matchingTools).toEqual(['color', 'levels', 'transform']);
   });
 
+  it('keeps the full-width overlay out of hit testing, and the card inside it in', () => {
+    render(<MobileToolSheet isOpen={true} onToggle={vi.fn()} />);
+
+    // The outer wrapper spans the viewport (`left-0 right-0`) at `z-40`, so it is a
+    // full-width band sitting over the whole shell. With `pointer-events: auto` it becomes
+    // a target, and every click aimed past the sheet is swallowed by it — the same rule
+    // `AnchoredOverlay` implements for the tool flyout and the tooltip, and the same one
+    // their suites pin. The card opts back in, so the sheet's own controls still take a
+    // click.
+    const sheet = screen.getByTestId('mobile-tool-sheet');
+    expect(sheet).toHaveClass('left-0', 'right-0');
+    expect(sheet).toHaveClass('pointer-events-none');
+
+    // BOTH elements, because asserting the card alone would pass today and would not notice
+    // the outer wrapper losing its class — the card's own `pointer-events-auto` is
+    // inherited-proof, and the defect is precisely the half that is not there.
+    const card = sheet.firstElementChild as HTMLElement;
+    expect(card).toHaveClass('pointer-events-auto');
+  });
+
   it('renders nothing without a document', () => {
     useStoreMock.mockReturnValue([{ toolName: 'draw', hasImage: false }]);
     const { container } = render(<MobileToolSheet isOpen={true} onToggle={vi.fn()} />);
