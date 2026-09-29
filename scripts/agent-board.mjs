@@ -77,8 +77,6 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
   check <path...>        who holds these files  (exit 1 if any is held)
   comment <id> <text>    say something on an issue
   note <text>            say something to the swarm
-  complain <text>        this tool cost me time      --tool <name> --kind --command
-  complaints             traps reported, grouped by tool, recurring first
   resolve <id>           the work is done       --note
   close <id>             verified by YOU, done
   defer <id>             park it                --reason --until
@@ -86,14 +84,20 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
   dep <id> <depends-on>  record a dependency
   status                 counts, your claims, live locks, expiring leases
   watch                  the event log          --follow --since --kind
-                         (bare: the LAST 200 events, so a note written just now is
-                          in it; --since 0: every event, from the start)
+                         bare: the LAST 200 MATCHING events, ascending, under a '#' line
+                          that says which window this is — drop it with grep -v '^#'
+                         --since <n>: every event after n, read to the END (not one page);
+                          n must be a whole number, and a '#' line says so if there are none
+                         --follow: the WHOLE log from the start, then each new event as it
+                          lands, as lines; --json is not available and lines are the output
   health                 is this board being USED, or only carried?
   doctor                 release claims from dead worktrees and expired leases  --dry-run
   import                 the handoff documents into the board     --dry-run --file
   export                 dump the board as JSON
 
-  --json                 machine-readable output on every command except help and --version
+  --json                 machine-readable output on every command except help and --version,
+                         and \`watch --follow\`, which is an unbounded stream: it prints one
+                         line per event instead, and says so above
   --agent <id>           act as somebody else (default: the current git branch)
   --dir <path>           use another board database (default: $(git rev-parse --git-common-dir)/agent-board)
 
@@ -119,8 +123,6 @@ const VALUE_FLAGS = new Set([
   'reason',
   'scope',
   'since',
-  'tool',
-  'command',
   'status',
   'title',
   'until',
@@ -277,6 +279,78 @@ function eventLine(event) {
   ]
     .filter((part, index) => index < 4 || part !== '')
     .join('  ');
+}
+
+/**
+ * The `#` line a bare `watch` prints above its window, ALWAYS.
+ *
+ * It is unconditional on purpose. It used to print only when the window was
+ * truncated, and both suppressed cases are the failure this command exists to
+ * stop: a `--kind` that matches nothing printed nothing at all and exited 0, so
+ * a reader concluded the event was not there, and a board short enough to fit
+ * in one page printed no header either, which made the documentation's "and it
+ * says so on a `#` line" untrue on exactly the boards nobody thinks to test.
+ *
+ * It carries the three facts a reader cannot get from the lines: how much of the
+ * matching set is on screen, how much is not, and the command that reads the
+ * rest. `matched` is the count from the query, never arithmetic on the buffer,
+ * so the header cannot claim a completeness the read did not have.
+ *
+ * One function, not four call sites: the wording is asserted character for
+ * character by a test, and a second spelling would be a second thing to drift.
+ */
+function windowHeader({ shown, matched, kind, lastSeq }) {
+  const scope = `event(s)${kind ? ` of kind ${kind}` : ''}`;
+  const recovery = `swarm watch --since 0${kind ? ` --kind ${kind}` : ''}`;
+  const head = (count) => `# showing the last ${count} of ${matched} ${scope};`;
+  if (matched === 0) {
+    // A filter that matches nothing is the one case where "the log is empty"
+    // would be a lie, so the log's real size is in the sentence.
+    return kind
+      ? `${head(shown)} nothing matched — the log has ${lastSeq} event(s): ${recovery}\n`
+      : `${head(shown)} the log is empty: ${recovery}\n`;
+  }
+  const omitted = matched - shown;
+  return omitted > 0
+    ? `${head(shown)} the other ${omitted} are not shown, read them: ${recovery}\n`
+    : `${head(shown)} nothing is hidden: ${recovery}\n`;
+}
+
+/**
+ * The `#` line for a `--since` read that matched nothing.
+ *
+ * `--since 999999` on a log of 633 events used to print nothing and exit 0,
+ * which is the same lie as the truncated window one layer up: a well-formed
+ * number no event has is not an answer. The log's real last sequence number is
+ * in the line, so a reader can tell "nothing new" from "past the end".
+ */
+function emptySinceLine({ since, kind, lastSeq }) {
+  const scope = kind ? ` of kind ${kind}` : '';
+  return `# no event${scope} after #${since}; ${lastSeq > 0 ? `the log's last event is #${lastSeq}` : 'the log is empty'}\n`;
+}
+
+/**
+ * The `--json` payload for the two FINITE reads. `watch --follow` has none: it
+ * is an unbounded stream of lines, and the help and the test both say so.
+ *
+ * `matched` means "how many events the filter matched in the range you asked
+ * for": on the bare path that is the whole matching set, which is how a caller
+ * knows it is looking at a window, and on a `--since` path it is what was read,
+ * because that read runs to the end. `truncated` is the bare path's window
+ * boundary and is always false for a suffix.
+ */
+function watchPayload({ mode, since, kind, events, matched = events.length }) {
+  return {
+    mode,
+    since,
+    kind,
+    events,
+    shown: events.length,
+    matched,
+    truncated: mode === 'tail' && matched > events.length,
+    firstSeq: events.length > 0 ? Number(events[0].seq) : null,
+    lastSeq: events.length > 0 ? Number(events[events.length - 1].seq) : null,
+  };
 }
 
 /**
@@ -691,63 +765,6 @@ export async function run(
         return 0;
       }
 
-      case 'complain': {
-        // A trap report, not a task. It is one cheap command with no title to
-        // invent and no priority to choose, because the reporter is usually
-        // mid-investigation and will not do either.
-        const message = leadingArgs.join(' ').trim();
-        if (!message) throw new BoardError('complain needs a message', { code: 1 });
-        const tool = flags.tool === undefined ? null : String(flags.tool);
-        const result = board.complain(message, {
-          tool,
-          kind: flags.kind === undefined ? 'trap' : String(flags.kind),
-          data: flags.command === undefined ? null : { command: String(flags.command) },
-        });
-        // How many times THIS tool has now been named. One report is a shrug;
-        // the second one is the signal, so it is worth printing back at the
-        // moment somebody is deciding whether this was worth reporting.
-        const totals = board.complaintTotals();
-        emit(
-          { message, tool: result.tool, seq: result.seq, totals },
-          [
-            `complaint recorded as event #${result.seq} against ${result.tool}`,
-            totals.top && totals.top.tool === result.tool && totals.top.count > 1
-              ? `that tool has now been named ${totals.top.count} times — swarm complaints`
-              : 'swarm complaints — the grouped view, when it happens again',
-          ].join('\n')
-        );
-        return 0;
-      }
-
-      case 'complaints': {
-        const groups = board.complaints();
-        const totals = board.complaintTotals();
-        emit(
-          { complaints: groups, totals },
-          groups.length === 0
-            ? 'no complaints: no tool has been reported as costing time'
-            : [
-                `${totals.total} complaint(s) across ${totals.tools} tool(s), ${totals.recurring} reported more than once:`,
-                '',
-                ...groups.map((group) =>
-                  [
-                    `  ${group.tool} — ${group.count} report(s) from ${group.reporters} agent(s)` +
-                      (group.promoted.length ? `, promoted: ${group.promoted.join(', ')}` : ''),
-                    `    first #${group.firstSeq} · last #${group.lastSeq} (${group.lastSeen})`,
-                    ...group.samples.map((s) => `    #${s.seq} ${s.agent}: ${s.message}`),
-                  ].join('\n')
-                ),
-                '',
-                // Stated as a question because it is one, and it is the only
-                // line here that can change what an agent does next.
-                totals.recurring > 0
-                  ? `${totals.recurring} tool(s) were named twice or more. Recurrence is the finding — a file an issue can hold and a note cannot. Promote: swarm new "<title>" --body "<complaints>"`
-                  : 'nothing has recurred yet; a second report of the same tool is what makes it worth an issue',
-              ].join('\n')
-        );
-        return 0;
-      }
-
       case 'resolve': {
         const id = args[0];
         if (!id) throw new BoardError('resolve needs an issue id', { code: 1 });
@@ -859,45 +876,75 @@ export async function run(
         const kind = flags.kind ? String(flags.kind) : null;
         // Reading the log from the beginning was ALSO wrong, and it is the half
         // that cost two agents a session. A bare `watch` took `--since 0`, read
-        // one page, and stopped: on a 633-event board it printed seq 1-200 —
-        // the first seventeen hours — and every `note` written since was simply
-        // not in the output. An agent grepping for its own note text got
-        // nothing and concluded the note had not landed. It had. The output is
-        // also plain text with no ESC byte anywhere in it, so the "it is
-        // ANSI-coloured" reading that came with the report is a misdiagnosis and
-        // the wrong thing to go looking for.
+        // one page, and stopped: on a log longer than a page it printed a FIXED
+        // WINDOW PINNED TO THE START — the first PAGE events, forever, and never
+        // one event past it, no matter how many landed since. Every `note`
+        // written after that window was simply not in the output. An agent
+        // grepping for its own note text got nothing and concluded the note had
+        // not landed. It had. (The same report blamed ANSI colour: the output
+        // is plain text with no ESC byte anywhere in it, so that is a
+        // misdiagnosis and the wrong thing to go looking for. No duration is
+        // quoted here on purpose — the shape is the defect, and every number
+        // this paragraph could carry has already gone stale once.)
         //
-        // So the two invocations mean two different things, which is what a
+        // So the three invocations mean three different things, which is what a
         // reader expects from a log:
         //
         //   `--follow`   unchanged: everything from the start, then it waits for
         //                 more. A follower wants the story so far, and the spawn
         //                 test that watches for an event written BEFORE it
-        //                 started depends on exactly that.
+        //                 started depends on exactly that. It is an unbounded
+        //                 stream, so it prints LINES and has no document for
+        //                 `--json` to emit — the one documented exception, and
+        //                 the help says so.
         //   `--since N`  EVERY event after N, read to the end, because `swarm
-        //                 status` hands out exactly this invocation and a reader
-        //                 who names a sequence number is asking for a suffix.
-        //                 The old code stopped after 200 and silently lost the
-        //                 rest — the other half of the same defect.
-        //   bare         The last PAGE of matching events, and a `#` line saying
-        //                 which window that is, because a reader cannot see it
-        //                 from the lines.
+        //                 status` and `swarm note` both hand out exactly this
+        //                 invocation and a reader who names a sequence number is
+        //                 asking for a suffix. The old code stopped after 200
+        //                 and silently lost the rest — the other half of the
+        //                 same defect. Finite, so `--json` is honoured.
+        //   bare         The last PAGE of MATCHING events, ALWAYS under a `#`
+        //                 line saying which window that is. Not only when
+        //                 something was dropped: silence about the window is the
+        //                 same defect one layer up, because a reader who cannot
+        //                 see the window is exactly the reader who concludes the
+        //                 event they want is not there.
         //
         // `--since` is validated rather than coerced. `Number('abc')` is NaN,
         // and `seq > NaN` is false in SQLite for every row, so an unvalidated
-        // flag answered a typo with a silently EMPTY log — the same shape of
-        // lie this command is being fixed for, one layer up.
+        // flag answered a typo with a silently EMPTY log. A well-formed number
+        // past the end of the log is the same lie one layer further up, so it
+        // is answered too.
         const rawSince = flags.since === undefined ? null : String(flags.since);
         if (rawSince !== null && !/^\d+$/.test(rawSince)) {
-          throw new BoardError(`--since wants a whole sequence number, got: ${rawSince}`, { code: 1 });
+          // A bare `--since` parses to the boolean `true`, so `String(true)`
+          // printed "got: true" — a JS value leaked into user-facing text. The
+          // empty case gets its own sentence naming what to type instead.
+          throw new BoardError(
+            rawSince === 'true'
+              ? `--since needs a sequence number: --since <n> (for instance --since 0 for the whole log; the log's last event is #${board.lastSeq()})`
+              : `--since wants a whole sequence number, 0 or more, got: ${rawSince}`,
+            { code: 1 }
+          );
         }
         const since = rawSince === null ? null : Number(rawSince);
 
         if (flags.follow || since !== null) {
+          // The stream. The cursor MOVES — it did not, and a `--follow` re-read
+          // the same page on every poll for as long as it ran.
+          const read = [];
           let cursor = since ?? 0;
           for (;;) {
             const events = board.events({ since: cursor, limit: PAGE, kind });
-            for (const event of events) out.write(`${eventLine(event)}\n`);
+            // `--json` decides BEFORE the first line is written, not after the
+            // loop: emitting the document after the text would print both, and
+            // a caller that asked for JSON would have to choose which half of
+            // the output to believe. A `--follow` writes lines under `--json`
+            // TOO, because that is the documented exception and this loop never
+            // ends — suppressing its lines would leave it printing nothing at
+            // all, forever.
+            if (!json || flags.follow) for (const event of events) out.write(`${eventLine(event)}\n`);
+            read.push(...events);
             if (events.length > 0) cursor = Number(events.at(-1).seq);
             if (!flags.follow) {
               // A page shorter than PAGE is the last one. The loop continues on
@@ -910,6 +957,19 @@ export async function run(
             // back; an empty one means the swarm is quiet, so do not spin on it.
             await new Promise((resolve) => setTimeout(resolve, events.length > 0 ? 50 : 1500));
           }
+          if (json) {
+            // `--json` is honoured on this path, which the flag's own help
+            // promises: the payload says the read is a SUFFIX and not a window,
+            // so a caller cannot mistake `matched: 12` here for a page
+            // boundary. `watch --follow` never reaches this — it is a stream
+            // and it has already written lines.
+            emit(watchPayload({ mode: 'since', since, kind, events: read }), null);
+          } else if (read.length === 0) {
+            // Nothing after N is the one `--since` outcome with no output of its
+            // own, and "printed nothing, exited 0" is the exact reading that
+            // made an agent think its note had not landed.
+            out.write(emptySinceLine({ since, kind, lastSeq: board.lastSeq() }));
+          }
           return 0;
         }
 
@@ -920,35 +980,14 @@ export async function run(
         // here did, is correct but O(log length) for a fixed-size answer, and it
         // justified itself with a claim about backwards queries that was false.
         const { events: window, matched } = board.recentEvents({ limit: PAGE, kind });
-        // `--json` is honoured here, not just documented. The help promises
-        // machine-readable output on every command except help and --version,
-        // and this one used to write its lines straight to `out` and ignore the
-        // flag — which is the flag an agent reaches for precisely when a grep
-        // has just failed it.
         if (json) {
-          emit(
-            {
-              events: window,
-              shown: window.length,
-              matched,
-              truncated: matched > window.length,
-              kind,
-              lastSeq: board.lastSeq(),
-            },
-            null
-          );
+          emit(watchPayload({ mode: 'tail', since: null, kind, events: window, matched }), null);
           return 0;
         }
-        if (matched > window.length) {
-          // `#` so it is a comment a pipeline can drop, not an event line: the
-          // window is the one thing the reader cannot see from the output. The
-          // count is `matched` from the query, never arithmetic on the buffer,
-          // so the header cannot claim a completeness the read did not have.
-          out.write(
-            `# the last ${window.length} of ${matched} matching event(s)${kind ? ` of kind ${kind}` : ''}; ` +
-              `the other ${matched - window.length}: swarm watch --since 0${kind ? ` --kind ${kind}` : ''}\n`
-          );
-        }
+        // `#` so it is a comment a pipeline can drop, not an event line, and
+        // UNCONDITIONAL: the window is the one thing a reader cannot see from
+        // the lines below it, so a run that shows nothing has to say why.
+        out.write(windowHeader({ shown: window.length, matched, kind, lastSeq: board.lastSeq() }));
         for (const event of window) out.write(`${eventLine(event)}\n`);
         return 0;
       }
