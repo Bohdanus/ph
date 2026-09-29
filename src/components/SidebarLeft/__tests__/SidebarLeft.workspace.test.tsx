@@ -343,6 +343,10 @@ describe('SidebarLeft workspace placement', () => {
     const grip = screen.getByTestId('rail-re-dock-handle');
     const toggle = screen.getByTestId('toolbar-layout-toggle');
     expect(grip.parentElement).toBe(toggle.parentElement);
-    expect(grip.parentElement).toHaveClass('mb-2', 'w-full');
+    // `w-full` and the row being one row are the claim; the margin is not, and pinning a
+    // margin name here made a spacing change in the rail look like a workspace regression.
+    // `justify-between` is the part that carries meaning — it is what holds the grip to one
+    // end of the row and the toggle to the other.
+    expect(grip.parentElement).toHaveClass('w-full', 'justify-between');
   });
 });

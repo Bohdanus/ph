@@ -116,11 +116,12 @@ describe('SidebarLeft owns its scrolling', () => {
   afterEach(() => setViewportWidth(DESKTOP_WIDTH, 800));
 
   /**
-   * The rail holds 16 tool groups in 5 sections plus the colour swatches: 612px of content
-   * in the two-column layout and 1014px in the one-column layout, inside the `1fr` row of a
-   * grid whose container is `height: 100%`. Those numbers are measured, font-metric
-   * dependent, and deliberately restated nowhere else — see the header of
-   * `e2e/no-document-overflow.spec.ts` for them and for what asserts what.
+   * The rail holds 16 tool groups in 5 sections plus the colour swatches, inside the `1fr`
+   * row of a grid whose container is `height: 100%`. Its content heights are measured,
+   * font-metric dependent, and deliberately restated nowhere else — see the header of
+   * `e2e/no-document-overflow.spec.ts` for them and for what asserts what. The pair this
+   * used to carry (612px and 1014px) was wrong: it predated the fit, which collapses tiles
+   * into the three-dots entry instead of letting the grid overflow.
    *
    * A `1fr` track is `minmax(auto, 1fr)`, and an element that is a scroll container has an
    * automatic minimum size of zero, so the rail cannot floor that row. The bottom of the

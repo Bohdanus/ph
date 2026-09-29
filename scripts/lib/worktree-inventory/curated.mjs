@@ -839,6 +839,11 @@ export const CURATED = {
     summary:
       'The TOO HARD register: each Photoshop capability too hard for this architecture recorded with what Adobe does, what the app does, why the gap is out of reach here, and what it offers instead — plus the gaps that are the operator’s call rather than an engineering one.',
   },
+  'rail-flatten': {
+    summary:
+      'The tools rail as one flat panel: the dead horizontal padding, the inner framed surface, and a rule across the bottom of the rail that divided nothing — with the e2e assertion that hardcoded a window height as proof the degenerate band exists replaced by one that finds the band.',
+    note: 'The degenerate band moves whenever the rail’s chrome changes height, so no window height can be its address.',
+  },
 
   /* ---------------- worktrees that really do hold work git cannot see ----- */
   // The one shape this table exists for, and the only one that earns

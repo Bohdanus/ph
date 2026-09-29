@@ -194,10 +194,17 @@ const SidebarLeft = () => {
   const bgColorSquareRef = useRef<HTMLDivElement>(null);
   const toolGroupRefs = useRef<Record<string, HTMLLIElement | null>>({});
   /**
-   * The rail itself, for horizontal overlay placement. The tiles sit on a 108px grid inside a
-   * narrower content box, so a second-column tile can start PAST the rail's own right edge;
-   * hanging a flyout off such a tile puts it back over the rail's first column. The rail is
-   * what an overlay has to get clear of, and this is how Photoshop hangs a tool flyout too.
+   * The rail itself, for horizontal overlay placement: a flyout opens off its ANCHOR's
+   * trailing edge, and on the two-column rail that anchor can be a tile in the LEFT-hand
+   * column, whose trailing edge is nowhere near the panel's. The rail is what an overlay has
+   * to get clear of, and this is how Photoshop hangs a tool flyout too.
+   *
+   * An earlier version of this comment claimed the tiles sit on a 108px grid inside a
+   * NARROWER content box, so a second-column tile starts past the rail's own right edge and
+   * the rail has to be measured to find out. The claim was false in both layouts — the tools
+   * box is exactly as wide as the rail, and a second-column tile starts well INSIDE it — but
+   * the mechanism it justified is real, and this is the reason: a tile is not the rail, and
+   * which tile the flyout happens to hang off is not a thing the overlay may assume.
    */
   const [railElement, setRailElement] = useState<HTMLElement | null>(null);
   // The tile a flyout is anchored to. Only the OPEN tile publishes one, and only for
@@ -920,8 +927,23 @@ const SidebarLeft = () => {
           `toolbar-overflow.ts` or `toolbar-fit-store.ts` moves, and
           `SidebarLeft.overflow.test.tsx` asserts the property that makes it so — a different
           window at the same slot height does not change the fit. */}
-      <div className="flex h-full flex-col items-center px-3 py-4">
-        <div className="mb-2 flex w-full shrink-0 items-center justify-between px-1">
+      {/* No `px-*` on this column, and the omission is arithmetic rather than taste. The tools
+          box below is as WIDE as the rail (`w-14` against a `3.5rem` aside, `w-[6.75rem]`
+          against `6.75rem`) and the slot centres it, so its x-position is
+          `(rail − border − itemWidth) / 2` — negative half a pixel, i.e. flush to both edges.
+          The padding therefore had nothing to pad: it moved no box horizontally and only
+          squeezed the header row's two buttons into 23px of content. It was 12px of
+          appearance and zero of geometry.
+
+          `py-2` rather than the `py-4` this replaced, because the vertical padding is the
+          part that is real: 16px of nothing above the header and 16px below the bottom
+          cluster is 32px of window the rail was spending on air. That is tool budget, and the
+          fit sees it directly: the slot is `flex-1`, so every pixel of column padding lands
+          in `slot.getBoundingClientRect().height`, which is the first term of
+          `availableHeight` (`toolbar-fit-store.ts`). The tools box's own chrome is the part
+          the fit subtracts separately, and this change takes 14px off THAT one as well. */}
+      <div className="flex h-full flex-col items-center py-2">
+        <div className="mb-1 flex w-full shrink-0 items-center justify-between">
           {!isTablet && (
             <button
               {...railDrag.handleProps}
@@ -989,17 +1011,43 @@ const SidebarLeft = () => {
           data-testid="left-toolbar-slot"
           ref={attachSlot}
         >
+          {/* Width and nothing else. This used to be a framed panel of its own — a second,
+              lighter fill, a rounded border and an inset shadow, 6px of padding inside it —
+              and the rail read as a small card floating in a wider panel, which is the one
+              thing the real rail never is: its tools sit directly on the panel, and the panel
+              is ONE surface with a single fill. The box survives only as the element the fit
+              measures, because `attachTools` needs a box to read `toolsChrome` from and
+              `data-testid="left-toolbar-tools"` is what specs and helpers select on.
+
+              Dropping the padding and the border is not a loss to the overflow fit, it is a
+              gain: `toolsChrome` is read from computed style rather than hardcoded
+              (`toolbar-fit-store.ts`), so 14px of chrome leaves the measurement and becomes
+              14px of tile budget. The width stays put on purpose — the box being exactly the
+              rail's width is what keeps its content flush to both edges, and both
+              `w-14`/`w-[6.75rem]` track the aside's own `toolbarWidth`. */}
           <div
-            className={`rounded-lg border border-gray-300 bg-gray-200/70 p-1.5 shadow-inner dark:border-gray-700 dark:bg-gray-950/35 ${
-              isSingleColumnMode ? 'w-14' : 'w-[6.75rem]'
-            }`}
+            className={isSingleColumnMode ? 'w-14' : 'w-[6.75rem]'}
             data-testid="left-toolbar-tools"
             ref={attachTools}
           >
             {isSingleColumnMode ? (
               singleColumnSections.map(({ sectionIndex, entries }) => (
                 <ul
-                  className={`grid list-none grid-cols-1 gap-1.5 ${entries.length > 0 && sectionIndex > 0 ? 'mt-1.5 border-t border-gray-300 pt-1.5 dark:border-gray-700' : ''}`}
+                  // `justify-items-center` because the box gave up its padding and a 44px tile
+                  // no longer fills what is left of the track. The grid's tracks are sized by
+                  // free space (`repeat(n, minmax(0, 1fr))`), not by the item, so the track
+                  // got WIDER while the tile stayed 44px — without this the tile would sit
+                  // hard against the left edge of the panel.
+                  //
+                  // What it does move, stated because it is not nothing: `justify-items:
+                  // center` switches the `<li>` from `stretch` to fit-content, so the `<li>`
+                  // narrows to the tile and each tile shifts right by the slack (6px in one
+                  // column, 3.5px in two). Nothing measures any of that — the fit reads only
+                  // `availableHeight`, `tileHeight`, `rowGap` and `sectionBreakHeight`, all
+                  // vertical, and a flyout is anchored to the RAIL's rect, not to a tile's —
+                  // but the tool tooltip hangs off the tile's own trailing edge, so it moves
+                  // with the tile. Centred is the placement the real rail uses.
+                  className={`grid list-none grid-cols-1 justify-items-center gap-1.5 ${entries.length > 0 && sectionIndex > 0 ? 'mt-1.5 border-t border-gray-300 pt-1.5 dark:border-gray-700' : ''}`}
                   key={`toolbar-section-${sectionIndex}`}
                 >
                   {entries.map((entry) =>
@@ -1010,7 +1058,7 @@ const SidebarLeft = () => {
                 </ul>
               ))
             ) : (
-              <ul className="grid list-none grid-cols-2 gap-1.5">
+              <ul className="grid list-none grid-cols-2 justify-items-center gap-1.5">
                 {twoColumnEntries.map((entry) =>
                   entry.kind === 'overflow'
                     ? renderToolGroup(overflowTools, OVERFLOW_GROUP_KEY, OVERFLOW_IDENTITY)
@@ -1020,9 +1068,15 @@ const SidebarLeft = () => {
             )}
           </div>
         </div>
-        <hr className="my-3 shrink-0 border-gray-300 dark:border-gray-700" />
+        {/* One rule, not two, and 8px of margin instead of 12. The rail carries a single
+            divider: it separates the tools from the colour cluster, which is the only
+            boundary in the rail that is a boundary. The second `<hr>` this replaces stood
+            between the colour cluster and NOTHING — the commented-out Zoom control is not
+            markup — so it spent 24px of margin (`my-3` is 12px a side) and a 1px hairline
+            painting a rule across the bottom of the panel for no division at all. */}
+        <hr className="my-2 shrink-0 border-gray-300 dark:border-gray-700" />
 
-        <div className="flex shrink-0 flex-col items-center mt-4">
+        <div className="flex shrink-0 flex-col items-center">
           <div className="relative w-14 h-14" data-testid="color-pickers">
             <div
               className="absolute top-4 left-4 w-8 h-8 cursor-pointer rounded border border-gray-400 dark:border-gray-500 shadow-sm"
@@ -1068,9 +1122,6 @@ const SidebarLeft = () => {
             ⇅ Swap
           </button>
         </div>
-
-        <hr className="my-3 shrink-0 border-gray-300 dark:border-gray-700" />
-        {/*<Zoom />*/}
       </div>
     </aside>
   );

@@ -1245,7 +1245,7 @@ layer property.
 ## 57. The mobile shell has no colour control at all
 
 **Problem.** The desktop rail carries the foreground and background swatches, a swap
-and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:661-668,669-676`).
+and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:1080-1097,1098-1113`).
 The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
 no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
 use whatever colour the document happened to be created with, and the foreground colour
@@ -1265,7 +1265,7 @@ decision. Note the swatches are 32px in the desktop rail; on a touch surface the
 the same 44px floor as the other mobile controls, which is why they should be built
 for mobile rather than copied across.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:661-668,669-676`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:1080-1097,1098-1113`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
 
 ---
@@ -2213,12 +2213,16 @@ tooltip contained that phrase resolved to the tab header instead, and every one 
 locators silently began pointing at the wrong element — five specs failed with
 `Received string: "History«"`. `PanelGroup`'s header `title` must stay clear of it.
 
-**One overlap that `toBeVisible()` cannot see, and its stated mechanism was wrong.** The rail is
-108px wide and its tiles sit on a 108px grid inside a ~83px content box, so a second-column tile
-starts at x≈1229 on a rail that begins at x≈1172. A flyout hung off that tile is at 1020..1221:
-inside the viewport, so nothing complains, and painted over the rail's own first column.
-`AnchoredOverlay` now takes an `xAnchor` — the rail's horizontal edges, with the tile still
-driving vertical — which is what Photoshop does by hanging a tool flyout off the panel edge.
+**One overlap that `toBeVisible()` cannot see.** The rail is 108px wide and its tool
+grid is as wide as the rail, so a tile in the LEFT-hand column of the two-column rail
+ends nowhere near the panel's right edge. A flyout hung off that tile lands over the
+rail's own first column — inside the viewport, so nothing complains, and painted over
+the panel. `AnchoredOverlay` takes an `xAnchor` — the rail's horizontal edges, with the
+tile still driving vertical — which is what Photoshop does by hanging a tool flyout off
+the panel edge. The ORIGINAL version of this entry gave a mechanism that was never true
+(a "108px grid inside a ~83px content box", so the second column started past the rail's
+own right edge); the second column starts well inside the panel, and the overlap came
+from anchoring to a tile at all.
 
 The mechanism is **overlap, not clipping**, and the first version of this entry said clipping. The
 overlay is portalled to `document.body` and positioned `fixed`, so the rail's `overflow-y: auto`
