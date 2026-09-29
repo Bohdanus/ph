@@ -10,6 +10,7 @@ linked files; this file is the rules that apply to every task.
 | [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md)       | other agents: worktrees, the board, the worktree list, a dead agent |
 | [`docs/PHOTOSHOP-UX.md`](docs/PHOTOSHOP-UX.md)         | the Tools rail, tool names, Photoshop fidelity                      |
 | [`docs/TOOLS-TOO-HARD.md`](docs/TOOLS-TOO-HARD.md)     | a Photoshop capability this browser cannot do, before estimating it |
+| [`docs/LAYERS-PANEL.md`](docs/LAYERS-PANEL.md)         | the Layers panel: row anatomy, panel chrome, layer model            |
 | [`docs/CODE-REVIEW.md`](docs/CODE-REVIEW.md)           | finishing non-trivial work: launching the review subagent           |
 | `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN-PROBLEMS.md` | filing or checking a known defect                                   |
 
@@ -133,8 +134,10 @@ absorb a tool that has more than one.
 
 `HistoryItem[]` is the **PRODUCTION REPLAY AUTHORITY** — history,
 `history-replay.ts`, runtime `Layer`s, export. The durable document is
-shadow-only. **DO NOT start single-writer cutover while `saveLayerCanvas()`
-promotes cached canvases outside reducer publication.**
+shadow-only: publication is an optimisation, and a precondition, a mismatch or a
+refusal each fall back to a full conversion from the legacy timeline, so the
+shadow cannot change what the user sees. **DO NOT start single-writer cutover**
+while that fallback is the only thing holding the two models equal.
 
 ## Definition of Done
 
@@ -145,7 +148,18 @@ promotes cached canvases outside reducer publication.**
 2. **Green locally** — the commands and gates are
    [`docs/TESTING.md`](docs/TESTING.md). "Already failing" is a fact to report,
    not a reason to stop.
-3. **Covered** by a test that fails without the change.
+3. **Covered** by a test that fails without the change. **Prove it bites, and
+   inject where the value is DECIDED.** A test you have not broken is not
+   evidence it covers anything, and a guard can have several independent gates
+   over the same value — so an injection that passes is evidence of _redundancy_,
+   not of coverage. Reviewing a derived guard, I removed the clean-tree clause
+   from `prunable` and the suite stayed green, because a second gate
+   (`recommendation === PRUNE`) independently excluded those worktrees; the guard
+   covered the decision and not the clause, and I would have reported the
+   opposite had I stopped at the first injection. Inject at the point that
+   computes the asserted value, expect the merely-redundant injection to pass,
+   and say which is which. A test that reads a _list_ rather than a derivation
+   cannot be shown to bite at all this way — that is a reason to derive the set.
 4. **Documented**: handoff updated, plus any new gate, test trap or architecture
    boundary where the next agent looks.
 5. **Reviewed by someone else** — a code review subagent on the prompt in

@@ -275,6 +275,43 @@ green. **Capture the assertion, not just the test name**, and record whether it
 was a timeout or a value mismatch: a timeout points at the focus/async
 interaction in 3, a value mismatch points at ordering.
 
+**The assertion is now captured, and it is a value mismatch, not a timeout.**
+Fifth occurrence, 2026-09-29, on `feat/history-remove-append` in a full
+`npx vitest --run src/contexts` (81 files, 1960 tests) — the run right after a
+code review on that branch, so the machine was busy:
+
+```
+FAIL  src/contexts/__tests__/useFile.test.tsx > FileProvider PSD integration
+    > passes JPEG quality through to raster encoding and resolves the save details
+AssertionError: expect(screen.queryByText('Save File As...')).toBeNull()
+ ❯ src/contexts/__tests__/useFile.test.tsx:157:51
+ Test Files  1 failed | 80 passed (81)
+      Tests  1 failed | 1956 passed | 3 expected fail (1960)
+```
+
+`useFile.test.tsx:157` is the `expect(...).toBeNull()` half of a test whose
+first assertion has already passed — `expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)'… })`
+at `:156` — so the save **did** resolve and the pipeline **did** hand back its
+details. What failed is that a **Save File As dialog was open when it should not
+be**. Read against this entry's own findings that is a real narrowing: the
+encoder is unreachable (`:8-12` mocks `../image-load-save-utils.ts` wholesale,
+so `saveImageToDisk` is a bare `vi.fn()` and `encodeAvif` never runs), so the
+failure is not an encoding refusal and not `retireUnreferenced` — **it is
+whatever decides whether the confirmation dialog opens at all**, which is a
+dialog-state question, not a pixel one. That is a different subsystem from the
+three candidates this entry had, and it is now the only one the evidence
+supports.
+
+**What this occurrence does not establish.** One failure in five full runs of
+the same tree — the four subsequent runs were `1957 passed | 3 expected fail`
+each — and the file passes alone, so **nothing here shows the branch causes it.**
+The one suggestive datum cuts the other way: a run of the same tree with
+`history-append.remove.test.ts` excluded was green (80 files, 1927 tests), and
+the two-file run was green. That is a coincidence of worker partitioning, not a
+mechanism, because the same file set then ran green four times over. Treat the
+exclusion result as a lead for the next reproduction and nothing more — the same
+standard section 6 applies to a green run.
+
 ## 8. A third, NAMED observation — the paint-bucket contiguous test, once, in a full headless run
 
 **Status: OPEN. Named, not reproduced. One failure in three reproduction attempts.**
@@ -687,7 +724,61 @@ not something to close by re-running until green.
 `test-results/` is the only artefact that can say whether the ink was absent, mis-thresholded
 or mislocated. Until a failing run is captured, a fix here would be a guess.
 
-## 13. Files
+## 13. A spec that loads the page many times loses on Playwright's 30s default, not on its own assertions
+
+Section 9 is the cold-Vite one: the FIRST page loads of a run lose to a transform
+the warm-up has not paid for yet. This is the other half and it looks exactly the
+same in the report, which is the trap. Observed twice, in two different runs, on a
+branch whose only e2e change was a header comment and a viewport ladder:
+
+- `e2e/sidebar-flyout.spec.ts:508` — `Test timeout of 30000ms exceeded while
+running "beforeEach" hook`, `page.goto` never returning. 35.1s elapsed.
+- `e2e/toolbar-fit.spec.ts:188` — the same signature, 35.1s elapsed, inside
+  `open(page, height)`.
+
+Both passed in isolation, in the same tree, with no code change in between: 1.8s
+and 6.1s against those 30s budgets. Both runs had another agent's e2e run holding
+the queue, so the dev server was warm and 39 tests had already passed when the
+first one failed — which is what rules section 9's mechanism out, since nothing
+cold was left to lose to.
+
+The part that is named rather than observed: `e2e/toolbar-fit.spec.ts:188` makes
+EIGHT `open()` calls, one per height per layout, and it never calls
+`test.setTimeout`. Its sibling at `:142` does, for the same file. So a test whose
+whole job is a sweep pays Playwright's 30s default for the whole sweep, and under
+CPU contention from a concurrent run that default is what it runs out of — the
+assertions inside never execute, which is why the report names a navigation and
+not a tool. Whether the other specs in the failing run would have held their own
+budgets is not something the two runs show, and is not claimed here.
+
+Whether the fix is the timeout or a fresh page per height is a call for whoever
+owns the spec. What is not a call: the failure is a budget, and diagnosing it as
+a layout or a product defect wastes a run.
+
+## 14. The lock and queue suites fail inside a full-suite run and never in isolation
+
+Observed four times across two branches: `scripts/__tests__/e2e-run.test.mjs` and
+`scripts/__tests__/agent-board.test.mjs` contribute failures to `npm test` while
+the fleet is active, and every one of them passes when the same file is run on
+its own (158 tests, twice). The named failures are the ones that depend on
+another agent's state rather than on a fixture: _reclaims the queue from a holder
+whose process is gone_, _never reclaims a holder that this wrapper did not
+create_, _is per run, so two runs on one branch are two holders_, and _gives back
+only its own locks when a claim fails_. A run where `npm run swarm -- doctor`
+says "every claim and lock is live" is a run where these are competing with real
+holders.
+
+The distinction that matters when reading the report: a failing test in
+`agent-board.test.mjs` looks like a regression in the board's locking, and a
+failing test in `e2e-run.test.mjs` looks like a regression in the e2e queue. Both
+are the fleet talking to itself. Re-run the file alone before believing either.
+
+NOT ESTABLISHED: which shared read or liveness probe is the one that loses. The
+obvious candidates — the board database and the queue lock file, both shared by
+every agent in the repository — are where to look, but no single mechanism was
+isolated, so this entry records the pattern and the reproduction, not a cause.
+
+## 15. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -736,3 +827,10 @@ or mislocated. Until a failing run is captured, a fix here would be a guess.
   `toBeLessThan(25)` soft assertions section 12 measures
 - `e2e/viewport-drawing.spec.ts:1-15` — the `{ name, width, height }` list whose cases
   section 12 observed moving between runs
+- `e2e/toolbar-fit.spec.ts:188` — the eight-`open()` sweep that never raises its own
+  budget, which is what section 13 observed losing
+- `e2e/toolbar-fit.spec.ts:142` — the same file's other test, which does set one
+- `scripts/__tests__/e2e-run.test.mjs`, `scripts/__tests__/agent-board.test.mjs` — the two
+  suites section 14 saw fail only inside a full run, and pass alone
+- `scripts/lib/worktree-inventory/curated.mjs` — the table whose entries name the worktrees
+  whose shape has to be re-derived when they commit or land

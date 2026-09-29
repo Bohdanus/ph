@@ -9,6 +9,13 @@ must find the same tool where their hand expects it.
 `src/tools/descriptions/*.ts` and the `src/tools/descriptions/*.notes.md` files
 beside them. This file is the requirement and the open violations.
 
+This file is the rail. The **panels** are specified in
+[`LAYERS-PANEL.md`](LAYERS-PANEL.md), and the same two rules apply to them: a
+control Photoshop does not have is not added, and a control it has is not
+relabelled or renamed into an app-specific word. The title keeps "the panels"
+because the panel-side rules this file states below are general — the Channels
+and Paths tabs, when they exist, are governed by the same requirement.
+
 ## The requirement
 
 **A tool Photoshop does not have must be deleted and replaced by the Photoshop
@@ -72,6 +79,27 @@ violations on `main`.
 - **Not tools, and not to be implemented as tools:** the foreground/background
   swatches, "Edit in Quick Mask Mode", the three screen-mode toggles, the `…` Edit
   Toolbar caret, the toolbar grip, and the Extra Tools container.
+
+### The foreground/background swatch pair BELONGS in the rail
+
+Being "not a tool" is not the same as "not in the rail" — and the swatch pair is
+in the rail. Adobe's page on it
+(`helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/set-foreground-and-background-colors.html`)
+carries a section headed **"Set colors with the toolbar"**, and names the _Set
+foreground color box_, the _Set background color box_, _Switch Foreground and
+Background Colors_ and _Default Foreground and Background Colors_ as controls of
+that toolbar. Verified by fetching the page: all five phrases are in the body
+(HTTP 200). It 403s to a browser-shaped User-Agent, so a `curl` with the default
+one is how to read it.
+
+Screenshots of a customized or cropped panel can look like it is missing, and a
+request to remove it is a real fidelity loss here, not a correction: this app has
+no Color, Swatches or HSB panel, so the rail pair is the ONLY way to choose a
+paint colour. Deleting it leaves the Eyedropper
+(`src/components/Main/EyedropperToolArea.tsx:133`) as the sole writer of
+`state.color`, and the Paint options bar, which only READS that colour
+(`src/components/ToolbarsRight/Paint/Paint.tsx:214`), showing a value nothing can
+change.
 
 ## Confidence and provenance
 

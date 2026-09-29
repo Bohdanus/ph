@@ -362,6 +362,7 @@ const LAYER_PROPERTY_BY_ACTION = {
 
 type LayerPropertyAction = keyof typeof LAYER_PROPERTY_BY_ACTION;
 type LayerPropertyOperation = Extract<DurableOperation, { kind: 'set-layer-properties' }>;
+type RemoveLayerOperation = Extract<DurableOperation, { kind: 'remove-layer' }>;
 
 export function isSetLayerPropertiesAction(actionName: ActionType): actionName is LayerPropertyAction {
   return Object.hasOwn(LAYER_PROPERTY_BY_ACTION, actionName);
@@ -413,6 +414,21 @@ export function deriveSetLayerPropertiesEntry(item: HistoryItem): DurableHistory
     layerId: item.layerId,
     patch: Object.freeze(patch),
   });
+  return entry(item.id, operation, isEntryEnabled(item));
+}
+
+/**
+ * The single action-derived remove-layer entry used by conversion and append.
+ * Layer presence is deliberately not a precondition: legacy replay and durable
+ * replay both treat removing an unknown id as a no-op while retaining history.
+ * No asset-retirement work is needed while the durable baseline remains
+ * uncompacted and the full replayable history retains its asset-bearing
+ * create/merge entries: removal only changes which layers are visible during
+ * replay and cannot make a durable asset unreachable.
+ */
+export function deriveRemoveLayerEntry(item: HistoryItem): DurableHistoryEntry<RemoveLayerOperation> | null {
+  if (item.actionName !== REMOVE_ACTION) return null;
+  const operation: RemoveLayerOperation = Object.freeze({ kind: 'remove-layer', layerId: item.layerId });
   return entry(item.id, operation, isEntryEnabled(item));
 }
 
@@ -680,8 +696,11 @@ export function legacyHistoryToDurable(
           }
         }
       } else if (item.actionName === REMOVE_ACTION) {
-        if (enabled) currentLayers.delete(item.layerId);
-        operation = Object.freeze({ kind: 'remove-layer', layerId: item.layerId });
+        const removeLayerEntry = deriveRemoveLayerEntry(item);
+        if (removeLayerEntry) {
+          operation = removeLayerEntry.operation;
+          if (removeLayerEntry.enabled) currentLayers.delete(item.layerId);
+        }
       } else if (item.actionName === SET_DOCUMENT_FRAME_ACTION) {
         const frameEntry = deriveSetDocumentFrameEntry(item, currentFrame);
         if (frameEntry) {

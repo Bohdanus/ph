@@ -23,13 +23,21 @@
  * `behind` are already on every generated record. Describe WHAT is here and
  * leave the arithmetic to the generator.
  *
- * `mustNotPrune` IS A TRIPWIRE, NOT A SUGGESTION
- * ----------------------------------------------
+ * `mustNotPrune` IS A VETO, NOT A SUGGESTION — AND NOT THE ONE YOU WANT HERE
+ * ------------------------------------------------------------------------
  * Setting it makes the inventory refuse to call a worktree prunable even when
- * git reports it as landed and clean. It exists for the case that has already
- * cost this repository real work: a branch at an old main commit with 0
- * commits ahead, reporting itself as merged, while the working tree holds
- * files that exist on no ref at all.
+ * git reports it as landed and clean, and it vetoes a merge recommendation too.
+ * It exists for a claim git CANNOT make about a CLEAN tree.
+ *
+ * IT IS NOT HOW "WORK ON NO REF" IS EXPRESSED, because the generator already
+ * refuses to prune a working tree that holds anything: a branch at an old main
+ * commit with 0 commits ahead, reporting itself as merged, carrying files that
+ * are in no commit on it, is `STATUS.UNCOMMITTED_ONLY` and is never prunable
+ * whatever this file says. Flagging those worktrees by hand protected nothing
+ * and went stale on its own — the moment an owner committed, the claim was
+ * false, and the list had to be re-derived. `worktree-inventory.test.mjs` now
+ * derives that set from the live worktrees and asserts the generator's verdict
+ * on it, so nothing in this file has to name them.
  *
  * `landed` is ASSERTED AGAINST GIT, NOT BELIEVED
  * ----------------------------------------------
@@ -837,66 +845,61 @@ export const CURATED = {
     summary:
       'The TOO HARD register: each Photoshop capability too hard for this architecture recorded with what Adobe does, what the app does, why the gap is out of reach here, and what it offers instead — plus the gaps that are the operator’s call rather than an engineering one.',
   },
+  'rail-flatten': {
+    summary:
+      'The tools rail as one flat panel: the dead horizontal padding, the inner framed surface, and a rule across the bottom of the rail that divided nothing — with the e2e assertion that hardcoded a window height as proof the degenerate band exists replaced by one that finds the band.',
+    note: 'The band moves whenever the rail’s chrome changes height, so no window height can be its address. This worktree was flagged while the flatten was uncommitted; the flatten is now committed (92ce61cc) and the branch tip is not a main commit, so the claim is withdrawn — a committed branch is not work git cannot see, and the flag that carried it is no longer a field here.',
+  },
 
   /* ---------------- worktrees that really do hold work git cannot see ----- */
-  // The one shape this table exists for, and the only one that earns
-  // `mustNotPrune`: a branch git already calls disposable, carrying edits that
-  // are in no commit on it. Every entry under this heading was re-derived with
+  // The one shape this table was written for, and the shape that no longer earns
+  // a `mustNotPrune` here: a branch git already calls disposable, carrying edits
+  // that are in no commit on it. `classify` refuses to prune a working tree that
+  // holds anything, so the generator derives the protection and this file only
+  // has to say what the work IS. Every claim in this section was re-derived with
   // `git rev-list --left-right --count main...<branch>`,
   // `git merge-base --is-ancestor`, and `git -C <path> status --porcelain`
-  // before the claim was written, because the previous version of this section
-  // asserted that shape for entries whose branches were ahead of main and
-  // whose trees were clean — the opposite of what it said.
+  // before it was written, because the previous version of this section
+  // asserted that shape for entries whose branches were ahead of main and whose
+  // trees were clean — the opposite of what it said.
   'rail-drop-draw': {
     summary:
       'The invented Draw tool removed from the rail and the registry, together with the description and settings work that removal forces across the tool areas, the e2e specs that switched away from it, and the pen spec it deletes.',
-    note: 'A `wip(salvage)` commit (603356ac) captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the deletion was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
+    note: 'A `wip(salvage)` commit (603356ac) captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the deletion was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is gone with the field itself.',
   },
   'shape-truth': {
     summary:
       'The shape tools against Adobe’s own behaviour: the Polygon tool’s Sides field normalized for the draw loop and the figures’ options bars, with tests for each.',
-    note: 'A `wip(salvage)` commit (a83e630d) captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the shape settings, the draw loop and their tests were uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
+    note: 'A `wip(salvage)` commit (a83e630d) captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the shape settings, the draw loop and their tests were uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is gone with the field itself.',
   },
   'agents-audit': {
     summary:
       'The agent-guidance audit against the tree: AGENTS.md cut to a thin root plus the linked documents, a committed conflict in it repaired, and the load-bearing clauses the split had dropped restored.',
-    mustNotPrune: true,
-    note: 'A further pass is uncommitted and on no ref — AGENTS.md plus the documents it links, correcting the delegation and testing sections against the tree — while the branch tip is a main commit, so the branch looks disposable while the only copy is the working tree. The branch is at main and the working tree is what the audit is actually in.',
+    note: 'A further pass is uncommitted and on no ref — AGENTS.md plus the documents it links, correcting the delegation and testing sections against the tree — while the branch tip is a main commit, so the branch looks disposable while the only copy is the working tree. The branch is at main and the working tree is what the audit is actually in. Nothing here is flagged: git reads that shape as uncommitted-only and refuses to prune it without being told.',
   },
   'handoff-remove-layer-assets': {
     summary:
       'The handoff correction that takes the layer-asset claim off the writers that do not carry one: a removal carries only a `layerId`, and a tool operation derived by `operationForTool` returns no raster snapshot, so neither is blocked on the registry transaction. The table’s `useLayer.ts` citations are re-derived with it.',
-    mustNotPrune: true,
-    note: 'The correction is uncommitted and on no ref, the whole diff being the one HANDOFF.md, while the branch tip is a main commit — so the branch looks disposable and the only copy of the retraction is the working tree.',
+    note: 'The correction is uncommitted and on no ref, the whole diff being the one HANDOFF.md, while the branch tip is a main commit — so the branch looks disposable and the only copy of the retraction is the working tree, which is enough on its own: `prunable` requires a clean tree.',
   },
   'history-append-assets': {
     summary:
       'The AGENTS.md architecture note about layer-bitmap promotion, corrected against the code: the promotion happens through one dispatch, the async materialization callback never mutates a published layer, and a tool commit publishes its canvas through the reducer transition that also carries the undoable history entry. It stops short of calling cutover ready.',
-    mustNotPrune: true,
-    note: 'The correction is uncommitted and on no ref, the whole diff being the one AGENTS.md paragraph, while the branch tip is a main commit — so the branch looks disposable and the only copy of the corrected claim is the working tree.',
+    note: 'The correction is uncommitted and on no ref, the whole diff being the one AGENTS.md paragraph, while the branch tip is a main commit — so the branch looks disposable and the only copy of the corrected claim is the working tree, which the generator already refuses to prune.',
   },
   'history-remove-append': {
     summary:
       'Layer removal published through the append boundary: a `REMOVE_ACTION` translation to `remove-layer`, a validation arm pinning the canonical operation shape, and a `removeLayer` that plans its history entry and durable entry instead of building the history item by hand.',
-    mustNotPrune: true,
-    note: 'The whole slice is uncommitted and on no ref — the append translation, the store-side adapter and the `removeLayer` caller together — while the branch tip is a main commit, so the branch looks disposable and none of the slice is on any ref.',
-  },
-  'rail-flatten': {
-    summary:
-      'The tools rail as one flat panel: the dead horizontal padding, the inner framed surface and the rule across the rail’s bottom that divided nothing, with the e2e assertion that hardcoded a window height as proof the degenerate band exists replaced by one that finds the band.',
-    mustNotPrune: true,
-    note: 'The flatten is uncommitted and on no ref — the rail component, its layout and workspace tests, two e2e specs and the documentation beside them — while the branch tip is a main commit, so the branch looks disposable while the only copy is the working tree. The rule across the rail’s bottom moves whenever the rail’s chrome changes height, so no window height can be its address.',
+    note: 'The whole slice is uncommitted and on no ref — the append translation, the store-side adapter and the `removeLayer` caller together — while the branch tip is a main commit, so the branch looks disposable and none of the slice is on any ref. The working tree is the copy, and a working tree that holds anything is never a prune candidate.',
   },
   'skill-citation-sweep': {
     summary:
       'A line-numbered citation sweep through the tool-creation skill: every `src/…:NNN` re-derived against the current tree, the settings, selection and shape ranges having all moved under the citation rotation.',
-    mustNotPrune: true,
-    note: 'The sweep is uncommitted and on no ref, the whole diff being the one skill document, while the branch tip is a main commit — so the branch looks disposable and the only copy of the re-derived citations is the working tree. The skill’s claims about tool behaviour are untouched; only their addresses move.',
+    note: 'The sweep is uncommitted and on no ref, the whole diff being the one skill document, while the branch tip is a main commit — so the branch looks disposable and the only copy of the re-derived citations is the working tree, which is enough without a flag. The skill’s claims about tool behaviour are untouched; only their addresses move.',
   },
   'swarm-watch-tail': {
     summary:
       'Makes `swarm watch` mean what a reader expects from a log: an unnamed call tails the last page and says which page it printed, and an explicit --since reads forward to the end of the log instead of stopping after one page.',
-    mustNotPrune: true,
     note: 'The board script and its database module are also edited in the working tree, uncommitted, and this branch is ahead of main rather than sitting on a main commit. An earlier version of this note said the opposite of both, which is why every claim in this section is now re-derived before it is written.',
   },
 
@@ -939,16 +942,71 @@ export const CURATED = {
   },
 
   /* ------- worktrees whose danger git already sees: entry, but no flag ----- */
-  // These were flagged `mustNotPrune` on a premise that was false when written
-  // and is false now. The flag is the claim that the work here is on no ref;
-  // where the branch is ahead of main and the tree is clean, git already
-  // refuses to prune, and a flag on top of that protects nothing while
-  // asserting something untrue. The entry stays: it still says what the
+  // These carried `mustNotPrune` on a premise that was false when written and is
+  // false now, and they carry none today. The flag was the claim that the work
+  // here is on no ref; where the branch is ahead of main and the tree is clean,
+  // git already refuses to prune, and a flag on top of that protected nothing
+  // while asserting something untrue. The entry stays: it still says what the
   // worktree is for.
   //
   // The same rule governs the new entries under this heading: a branch git can
   // see is protected by being a branch, and a flag on top of that is a claim
   // about nothing.
+  'audit-falsehoods': {
+    summary:
+      'A pass correcting claims that no longer match the tree: the export helpers’ stated DPI and colour assumptions, and the tool-description/tooltip text that asserted them, against what `e2e/export/helpers.ts` and the tooltip sources actually do.',
+    note: 'Was uncommitted on a main commit, so the branch looked disposable; it is now two commits ahead of main (55894cac, ff50831c) and git protects it, so the flag is retracted. One file is still modified on top — `e2e/export/helpers.ts` — and that remainder is on no ref.',
+  },
+  'durable-followups': {
+    summary:
+      'Follow-ups to the durable legacy-history conversion: `history-adapter.ts` plus the two adapter test suites that pin the branches it gained, on the diagnostics and safety the conversion can now emit.',
+    note: 'Uncommitted and on no ref — `history-adapter.ts` and `history-adapter.branches.test.ts` / `history-adapter.safety.test.ts` — while the branch tip is a main commit. The files are the same ones the landed §95 entry and the durable-diag work touch, so this is the history core, not an isolated change. Nothing here is flagged: the protection is the dirty tree itself, and a flag on top of it would say the same thing while going stale when it is committed.',
+  },
+  'curated-round3': {
+    summary:
+      'A second curation pass over the curated table itself, after the worktrees it documents moved again: five worktrees added, and rail-flatten’s flag retracted once its flatten was committed (92ce61cc).',
+  },
+  'fix-stale-architecture-gate': {
+    summary:
+      'A gate that fails when AGENTS.md’s architecture rules name a symbol `src/` does not contain, so a doc that points at code which was renamed or deleted cannot pass a doc check that only looks for the file.',
+  },
+  'curated-round4': {
+    summary:
+      'A third curation pass in one session: two more worktrees entered the table, two flags were retracted as their owners committed, and one name left the guard because its worktree was disposed.',
+  },
+  'derive-mustnotprune': {
+    summary:
+      'The worktree guard for work that git cannot see, derived from the live worktrees instead of a hand-maintained list: every `mustNotPrune` field deleted, the six hardcoded names replaced by a set computed from git on each run, and a synthetic worktree pinning the rule so it cannot go vacuous when the repository happens to hold none of that shape.',
+  },
+  'curated-round5': {
+    summary:
+      'A curation pass for the two worktrees created while the derived-guard change was in review, and the first demonstration that the half it left out of scope still goes red on its own: main was red within minutes of the guard landing.',
+  },
+  'review-agents-flakes': {
+    summary:
+      'Scratch space for reviewing the agent-flake findings: no work of its own yet, the branch tip a main commit and the working tree clean.',
+  },
+  'review-append-gate': {
+    summary:
+      'Reviewing the append-boundary validation guard over the remove-append work, on a branch six commits ahead of main with one test file still modified on top of it. The branch is a ref git can see, so it is protected by being a branch and owes no flag.',
+  },
+  'skill-handoff-cites': {
+    summary:
+      'Re-deriving the tool-creation skill’s `file:line` citations against the tree, and the handoff entries’ citations into the same files.',
+    note: 'Uncommitted and on no ref — `.skills/photoshop-tool-creation.md` alone — while the branch tip is a main commit, so the branch looks disposable and the working tree is the only copy of the re-derived citations. The generator refuses to prune a tree that holds them; no flag is owed.',
+  },
+  'abandoned-cleanup': {
+    summary:
+      'Scratch space for triaging abandoned worktrees: no work of its own yet, the branch tip a main commit and the working tree clean.',
+  },
+  'chat-damage-followup': {
+    summary:
+      'Scratch space for following up on the chat-damage findings: no work of its own yet, the branch tip a main commit and the working tree clean.',
+  },
+  'layers-panel-spec': {
+    summary:
+      'Scratch space for the Layers panel spec: no work of its own yet, the branch tip a main commit and the working tree clean.',
+  },
   'stale-reclaim-skill': {
     summary:
       'The stale-worktree-reclaim skill: the reclaim family’s walk made actually transitive, the claim it made corrected, and the hole closed where the guard could pass while asserting nothing — with a tracked copy of the skill, since `.kilo/` is gitignored and the durable copy is the document it points at.',
@@ -956,8 +1014,8 @@ export const CURATED = {
   },
   'curated-inventory': {
     summary:
-      'This table’s own curation pass: an entry for every live in-repo worktree that had none, and the `mustNotPrune` flags retracted from the three branches whose owners committed or landed their own work.',
-    note: 'The branch is ahead of main and not on it and the working tree is clean, so no flag is owed. Every claim in the entries it adds was re-derived with the commands the mustNotPrune test names in its own comment, not inferred from a worktree’s name.',
+      'This table’s own curation pass: an entry for every live in-repo worktree that had none, and the flags retracted from the three branches whose owners committed or landed their own work.',
+    note: 'The branch is ahead of main and not on it and the working tree is clean, so no flag is owed. Every claim in the entries it adds was re-derived from git rather than inferred from a worktree’s name — which is the whole argument for deriving that protection now instead of listing it: the flags it retracted had already been wrong twice before this entry was written.',
   },
   'retina-dpr': {
     summary:
@@ -976,8 +1034,7 @@ export const CURATED = {
   'tsc-guard': {
     summary:
       'Makes a typecheck that checked nothing impossible to mistake for a pass: node_modules/.bin/tsc becomes scripts/tsc-guard.mjs, which refuses any invocation that is not build mode and names the two commands that do work. A tripwire test fails when npm has restored its plain symlink, and kilo.jsonc denies the command at the permission layer.',
-    mustNotPrune: true,
-    note: 'The guard itself is a symlink inside node_modules, which is gitignored and cannot be committed: the work that matters is the tracked guard, its installer, its tests and the prepare wiring, and npm regenerates the link from those. Losing this branch loses the refusal, and the trap it closes is a zero-file exit 0 that reads as a clean typecheck.',
+    note: 'The guard itself is a symlink inside node_modules, which is gitignored and cannot be committed: the work that matters is the tracked guard, its installer, its tests and the prepare wiring, and npm regenerates the link from those. Losing this branch loses the refusal, and the trap it closes is a zero-file exit 0 that reads as a clean typecheck. It is not flagged: everything here is committed, so the branch is what protects it.',
   },
 };
 

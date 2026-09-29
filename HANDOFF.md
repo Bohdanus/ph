@@ -312,30 +312,43 @@ use. What remains here is one real defect the slice found, and the conversion-on
 
 ### The remaining conversion-only writers
 
-Reorder is no longer one of them. These production sites still pass no `durableEntry`, so each one
-runs `buildDurableDocument` over the whole timeline. Passing a `durableEntry` is necessary but not
-sufficient: the store publishes only on `outcome === 'published'` and otherwise reconverts.
+Reorder and `remove-layer` are no longer among them. These production sites still pass no
+`durableEntry`, so each one runs `buildDurableDocument` over the whole timeline. Passing a
+`durableEntry` is necessary but not sufficient: the store publishes only on
+`outcome === 'published'` and otherwise reconverts.
 
-| Site                                    | Action             | Why                                           |
-| --------------------------------------- | ------------------ | --------------------------------------------- |
-| `useLayer.ts:170` `_addLayer`           | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
-| `useLayer.ts:308` `updateLayerByTool`   | `TOOL_ACTION`      | asset-bearing                                 |
-| `useLayer.ts:337` `updateLayerByTool`   | `TOOL_ACTION`      | asset-bearing                                 |
-| `useLayer.ts:400-411` `commitDirtyTool` | `TOOL_ACTION`      | asset-bearing; one commit per pending edit    |
-| `useLayer.ts:421` `removeLayer`         | `REMOVE_ACTION`    | needs layer retirement, see §54               |
-| `useLayer.ts:668` `mergeAllLayers`      | `MERGE_ACTION`     | asset-bearing, retires layers                 |
-| `useSelectionHistory.ts:149`            | `SELECTION_ACTION` | `catch` fallback when planning throws         |
-| `useSelectionHistory.ts:305`            | `SELECTION_ACTION` | `catch` fallback when planning throws         |
+| Site                                      | Action             | Why                                           |
+| ----------------------------------------- | ------------------ | --------------------------------------------- |
+| `useLayer.ts:229` `createBlankLayer`      | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
+| `useLayer.ts:247` `createLayerFromBitmap` | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
+| `useLayer.ts:278` `createLayerFromTool`   | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
+| `useLayer.ts:323` `updateLayerByTool`     | `TOOL_ACTION`      | asset-neutral; not blocked by §54             |
+| `useLayer.ts:365` `commitDirtyTool`       | `TOOL_ACTION`      | asset-neutral; one commit per pending edit    |
+| `useLayer.ts:671` `mergeAllLayers`        | `MERGE_ACTION`     | asset-bearing, retires layers                 |
+| `useSelectionHistory.ts:149`              | `SELECTION_ACTION` | `catch` fallback when planning throws         |
+| `useSelectionHistory.ts:305`              | `SELECTION_ACTION` | `catch` fallback when planning throws         |
+
+The three `NEW_LAYER_ACTION` rows are the creators that mint the history item, not one shared
+dispatch: `useLayer.ts:240`, `:262` and `:316` are the only `layerSource:` writers in the file, and
+`_addLayer` (`:185`) is the sink they all dispatch through.
 
 Three sites have no `durableEntry` concept and reconvert unconditionally: `useHistory.ts:117`
-`resetHistoryTo` (`APPLY_HISTORY_REPLAY`), `useLayer.ts:180` and `useApp.ts:116` (both
+`resetHistoryTo` (`APPLY_HISTORY_REPLAY`), `useLayer.ts:195` and `useApp.ts:117` (both
 `REPLACE_DOCUMENT`). The `useHistory.ts:52 addHistoryEntry` row this table used to carry is
 **deleted**: that symbol no longer exists anywhere in `src/`, and "see item 14" pointed at a
 reader that no longer had a referent.
 
-**Fix, in order.** The asset-bearing operations (`create-layer`, `remove-layer`,
-`merge-document`, the tool operations) cannot be published at all until §54's registry transaction
-exists, and that single gap is what keeps the majority of these writers here.
+**Fix, in order.** Only `create-layer` and `merge-document` are blocked on §54's registry
+transaction, and that gap is what keeps those four writers here. `remove-layer` and the
+`TOOL_ACTION` operations are asset-neutral: a `remove-layer` carries only a `layerId`
+(`history-model.ts:89`), and a `TOOL_ACTION` carrying no layer source is derived by
+`operationForTool` (`history-adapter.ts:442`), whose every arm returns an operation with no raster
+snapshot — `apply-raster-processor` (`:460`, `:511`), `apply-affine-transform` (`:478`),
+`apply-filter` (`:494`) and `reposition-layer` (`:503`) — reached from the caller arm at `:754`.
+`collectDurableAssetIds` scans the whole replayable history but collects only raster-bearing kinds
+(`history-model.ts:158-175`), so a removal or an in-place pixel edit changes no reachable asset and
+needs neither registration nor retirement. They remain here only until a `durableEntry` is planned
+for them; §54 is untouched and still applies to the first actual asset-bearing append writer.
 
 **Files.** `src/contexts/history-adapter.ts`, `src/contexts/history-append.ts`,
 `src/contexts/StoreContext.tsx`, `src/contexts/useLayer.ts`, `src/components/SidebarRight/LayersTab.tsx`
@@ -1159,9 +1172,13 @@ agent not checked `Main.tsx:61`.
 
 **Problem.** `decideDurableAppend` publishes a cloned durable document directly, while full
 conversion wraps asset-bearing operations in `beginDocumentAssetTransaction` / commit / reconcile
-(`history-adapter.ts:728-742`). The current append slice is safe because layer-property operations
-carry no assets, but the next asset-bearing operation could publish a document without registering
-or retiring its raster ownership.
+(`history-adapter.ts:830`, `:843`, `:844`). Every append family published today is asset-neutral —
+`set-document-frame`, `set-selection`, `reorder-layers`, `set-layer-properties` and `remove-layer`
+(`history-append.ts:499,513,534,556,589` are the five `validatePlannedDurableEntry` arms, and its
+terminal refusal at `:600` is what makes the set exhaustive), none of which
+`collectDurableAssetIds` scans (`history-model.ts:158-175`) — so the fast path is safe so far. The
+next asset-bearing operation could publish a document without registering or retiring its raster
+ownership.
 
 **Fix.** Extend the single-writer publication path with the asset-registry transaction before
 publishing the first durable operation that introduces or replaces an asset. Keep the property-only
@@ -1305,7 +1322,7 @@ layer property.
 ## 57. The mobile shell has no colour control at all
 
 **Problem.** The desktop rail carries the foreground and background swatches, a swap
-and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:661-668,669-676`).
+and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:1080-1097,1098-1113`).
 The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
 no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
 use whatever colour the document happened to be created with, and the foreground colour
@@ -1325,7 +1342,7 @@ decision. Note the swatches are 32px in the desktop rail; on a touch surface the
 the same 44px floor as the other mobile controls, which is why they should be built
 for mobile rather than copied across.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:661-668,669-676`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:1080-1097,1098-1113`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
 
 ---
@@ -1890,15 +1907,25 @@ namespace and left an unguarded regex in the test. Half-finished is worse than f
 **The loss, measured.** `NUMBERED = /^(?:item\s+)?#?(\d+)\b/i` cannot match a letter suffix —
 there is no word boundary between `5` and `a`, so `NUMBERED.exec('15a. A self-anchored reorder …')`
 is `null`. `assemble` then falls through to the `SEVERITY` test (also false) and reaches
-`if (open && record.level <= open.level) close(...)`. `HANDOFF.md:429` is a **level-2**
+`if (open && record.level <= open.level) close(...)`. `HANDOFF.md:442` is a **level-2**
 `## 15a. A self-anchored reorder is refused, and the refusal is load-bearing`, a sibling of
 `## 15.` — so it **closes item 15's body there** and opens nothing itself. The span
-`HANDOFF.md:430-443` is **872 raw characters**, or **870** once the span's leading and
-trailing blank lines are trimmed — 870 is the trimmed count, and the raw count is the one
-that includes them. Line 442 is a `---` rule, which `bodyOf` drops as layout, so the prose the
-parser actually strands is lines 430-441. All of it is unreachable from any item title or body.
+`HANDOFF.md:443-456` is **876 raw characters**, or **874** once the span's leading and
+trailing blank lines are trimmed — 874 is the trimmed count, and the raw count is the one
+that includes them. Line 455 is a `---` rule, which `bodyOf` drops as layout, so the prose the
+parser actually strands is lines 443-454. All of it is unreachable from any item title or body.
 Item 15's stored body is 3994 chars and ends mid-sentence; the 15a prose is not in it. The
 entry is a load-bearing tripwire, so this is live work loss, not latent.
+
+**Both counts were wrong on the way in, and the correction is self-stable.** The span's text is
+byte-identical across every base this entry has been re-derived against, so **its length cannot
+change when the line numbers move** — and two earlier revisions "corrected" `872 → 873` and
+`870 → 871` for a span that measured the same both times. `comm` over the region's bytes, not a
+re-read of the number in the prose, is the only check that catches this: the raw count includes
+the digits of the count itself, so replacing three digits with three digits leaves it unchanged
+and needs no second pass. **Item 15's stored body is left alone** at 3994: it sits upstream of
+every hunk in this entry, and it is the one number here that cannot be measured without the
+parser, which is exactly why an unmeasured number must not be edited.
 
 **The same root cause, opposite direction, and worse: a suffixed retirement retires the parent.**
 `deadNumbers('## 15a. An old thing — deleted')` returns `[15]` — `NUMBER_OR_RANGE` harvests the
@@ -2273,12 +2300,16 @@ tooltip contained that phrase resolved to the tab header instead, and every one 
 locators silently began pointing at the wrong element — five specs failed with
 `Received string: "History«"`. `PanelGroup`'s header `title` must stay clear of it.
 
-**One overlap that `toBeVisible()` cannot see, and its stated mechanism was wrong.** The rail is
-108px wide and its tiles sit on a 108px grid inside a ~83px content box, so a second-column tile
-starts at x≈1229 on a rail that begins at x≈1172. A flyout hung off that tile is at 1020..1221:
-inside the viewport, so nothing complains, and painted over the rail's own first column.
-`AnchoredOverlay` now takes an `xAnchor` — the rail's horizontal edges, with the tile still
-driving vertical — which is what Photoshop does by hanging a tool flyout off the panel edge.
+**One overlap that `toBeVisible()` cannot see.** The rail is 108px wide and its tool
+grid is as wide as the rail, so a tile in the LEFT-hand column of the two-column rail
+ends nowhere near the panel's right edge. A flyout hung off that tile lands over the
+rail's own first column — inside the viewport, so nothing complains, and painted over
+the panel. `AnchoredOverlay` takes an `xAnchor` — the rail's horizontal edges, with the
+tile still driving vertical — which is what Photoshop does by hanging a tool flyout off
+the panel edge. The ORIGINAL version of this entry gave a mechanism that was never true
+(a "108px grid inside a ~83px content box", so the second column started past the rail's
+own right edge); the second column starts well inside the panel, and the overlap came
+from anchoring to a tile at all.
 
 The mechanism is **overlap, not clipping**, and the first version of this entry said clipping. The
 overlay is portalled to `document.body` and positioned `fixed`, so the rail's `overflow-y: auto`
@@ -2795,3 +2826,63 @@ that change must re-point the pins at `history-adapter.diagnostics.test.ts:742` 
 assert the advanced fold on purpose.
 
 **Files.** `src/contexts/history-adapter.ts`, `src/contexts/durable-replay.ts`
+
+---
+
+## 95. A refused `PUBLISH_RUNTIME_PRESENTATION` reports an intended no-op as a lost user edit
+
+**Problem.** `StoreContext` refuses the publication when
+`layersDifferOnlyByPresentation(currentState.layers, action.payload.layers)` is false
+(`src/contexts/StoreContext.tsx:849`) and logs one `console.error` for it
+(`src/contexts/StoreContext.tsx:862`). The comment above it already knows the problem
+(`src/contexts/StoreContext.tsx:851-852`): _"Two refusals share that outcome and mean different
+things, so only one of them is reported."_ Two refusals, one message — so the second is not merely
+unreported, it is **misreported**: a publication that is a deliberate no-op is logged with the text
+of a lost logical edit.
+
+**The second reason is an identity affine operation, and it is reachable by an ordinary gesture.**
+Drag a rotate slider back to zero and release:
+
+- `normalizeCommittedToolArgs` returns `null` for a transform whose retained history args are the
+  identity (`src/contexts/useLayer.ts:76`, tested by `isIdentityAffineTransform`,
+  `src/contexts/affine-transform.ts:47`), so the operation is dropped from the **history args**.
+- The layer record published alongside it is built from the preview and **copies the preview's
+  operations array** (`src/contexts/useLayer.ts:391`), so the identity operation is still on it.
+- `pendingToolEdits` is only pushed when the normalized args are truthy
+  (`src/contexts/useLayer.ts:396`), so with nothing recorded the release takes the
+  `!pendingToolEdits.length` branch (`src/contexts/useLayer.ts:414`) and dispatches
+  `PUBLISH_RUNTIME_PRESENTATION` (`src/contexts/useLayer.ts:417`) with a payload that differs from
+  the stored layer in `operations` alone.
+- `layersDifferOnlyByPresentation` (`src/contexts/layer-presentation.ts:96`) compares durable state,
+  and `operations` is durable. The publication is refused, and a no-op is reported as an invariant
+  violation.
+
+**Why it matters beyond the log line.** The refusal is contained — the layer keeps rendering from
+its `tmpCanvas` and no logical state moves — so nothing is lost. What is lost is the signal: a
+`console.error` reading "this action's invariant was broken" for a gesture that did exactly what the
+user asked. Once that text exists, the real violation is the one an operator learns to discount.
+
+**Fix.** A second predicate beside `layersDifferOnlyByPresentation` in
+`src/contexts/layer-presentation.ts`, sharing one `layersMatch(current, next, { ignoreIdentityOperations })`
+helper rather than re-walking the record: it accepts when the records differ by presentation caches
+**and** by identity affine operations and nothing else. `StoreContext` then routes the two refusals
+apart — the identity one is the intended no-op and is reported as routine, the other keeps the
+`console.error` and its offending ids. Note the identity case is not only a difference in
+`operations`: `effectiveOperations` must compare the _filtered_ arrays, because a preview carrying
+one identity op and a stored layer carrying none are the same image.
+
+**Nothing here is missing for want of a second test.** There is no test asserting the current
+`console.error` text, so splitting it cannot contradict one — but there is also no test for the
+identity path at all, which is why the refusal went unnoticed. A test that publishes a layer whose
+only difference is an identity operation, and asserts it is not reported as a lost edit, fails
+today and is the change's coverage.
+
+**Files.** `src/contexts/StoreContext.tsx:849-868`, `src/contexts/layer-presentation.ts:96`,
+`src/contexts/useLayer.ts:76,391,396,414-417`, `src/contexts/affine-transform.ts:47`.
+
+**Origin.** Salvaged from the unmerged `fix/unit-tests` branch, which also carried two
+`history-adapter` changes — a duplicate-durable-entry-id filter and a frame-omission diagnostic.
+Both have since landed on `main` by other routes (`history-adapter.ts:581,752,780` and the `else`
+at `:656`) and the branch's copy of each is now behind `main`'s. The third change above is the only
+part of that branch still outstanding, which is why it is recorded here rather than left in a
+branch 600 commits behind.

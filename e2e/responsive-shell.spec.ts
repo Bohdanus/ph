@@ -78,11 +78,12 @@ const prefersTwoColumns = async (page: Page) => {
 };
 
 test.describe('Left tool rail reachability', () => {
-  // The rail's content is a fixed height per layout and the available height is
-  // `viewportHeight - 137` — the shell's three `auto` grid rows — so it overflows below a
-  // threshold rather than never, and two of the overflowing sizes are ordinary iPads rather
-  // than only very short desktop windows. The numbers, and the font metrics they depend on,
-  // are recorded once in the header of `e2e/no-document-overflow.spec.ts`.
+  // The rail does NOT simply overflow when its tools are taller than the window: the fit
+  // collapses the rows that do not fit into the three-dots tile, so it stays within its row at
+  // every height a person can reach, and the heights at which even that is impossible are
+  // DISCOVERED by a ladder in `e2e/no-document-overflow.spec.ts` rather than named here — a
+  // number for them moves every time the rail's chrome changes height. The content heights and
+  // the font metrics they depend on are recorded once in that file's header.
   //
   // `overflow-y-auto` is what bounds the grid row: a `1fr` track is `minmax(auto, 1fr)`,
   // and a scroll container's automatic minimum size is already zero, so the rail no longer
