@@ -122,35 +122,91 @@ authorised. `AGENTS.md` states the rule for coding agents.
 npm run test:e2e
 ```
 
+**That command is a wrapper, not `playwright test`.** It runs
+`scripts/e2e-run.mjs`, which does three things before Playwright starts, and every
+one of them exists because of a way concurrent runs get silently wrong:
+
+1. **It takes a swarm lock**, so only one suite runs at a time across every
+   worktree on this machine. See [One suite at a time](#one-suite-at-a-time).
+2. **It allocates a port of its own**, so two agents in two worktrees are never
+   asking for :5173.
+3. **It gives the run its own output directory**, because Playwright _deletes_
+   `outputDir` at the start of every run, so a second run otherwise erases the
+   first run's failure screenshots before anybody has read them.
+
+Every argument is forwarded verbatim:
+
+```bash
+npm run test:e2e -- e2e/sidebar-flyout.spec.ts
+npm run test:e2e -- --retries=1 e2e/undo-redo.spec.ts
+```
+
+### One suite at a time
+
+`npm run test:e2e` asks the swarm board for a file lock on
+`e2e/.swarm-e2e-runner` before it starts, and gives it back when the run ends —
+including when the run fails or the wrapper is interrupted. That path is
+**virtual**: it is never created on disk, and `npm run swarm status` shows it as a
+live lock while a suite is in flight, so an agent can see who has it without
+asking.
+
+If another agent has it, the run **queues** rather than starting on top of it. It
+prints the holder's name and waits; if the wait runs out, nothing runs and the
+command exits **4** — the board's own "file held by another agent" code, so
+`npm run swarm check e2e/.swarm-e2e-runner` and this wrapper agree on what 4
+means. Do the other work and run the same command again.
+
+| Variable           | Default | What it does                                            |
+| ------------------ | ------- | ------------------------------------------------------- |
+| `E2E_LOCK_TIMEOUT` | 10 min  | How long to queue. `0` fails immediately.               |
+| `E2E_LOCK_POLL`    | 3 s     | How often to re-check while queued.                     |
+| `E2E_LOCK_LEASE`   | `30m`   | How long a **dead** holder blocks the queue.            |
+| `E2E_SKIP_LOCK`    | unset   | `1` runs unsynchronized, loudly. Operator escape hatch. |
+
+`--no-lock` is the same as `E2E_SKIP_LOCK=1`. The lock is skipped automatically
+under `CI`, where one job owns one checkout and there is no board to talk to. If
+the board cannot be reached at all — outside a git checkout, or a Node without
+`node:sqlite` — the wrapper prints a **warning and runs anyway**: failing every
+suite on that machine would be worse than the collision the lock prevents.
+
+The lease is deliberately shorter than a full suite and renewed while the run
+lives. A file lock is never renewed by the board itself (`renewOwnClaims` only
+touches issue _claims_), so a long run would otherwise watch its own lock expire,
+have it reclaimed by the next `swarm` command from anybody, and start racing a
+second suite. A renewal that fails stops the run rather than risking that.
+
+**A lock is a queue, not a gate.** It never decides that a change does not need
+e2e: the Definition of Done still requires a run for a user-visible change, and
+this is what makes that requirement survivable when several agents are merging at
+once. Run the full suite before merging; use a targeted spec to iterate.
+
+### Ports and servers
+
 Nothing needs to be started by hand. `playwright.config.ts` declares a
-`webServer` running `npm run dev`, so Playwright starts the Vite dev server on
-<http://localhost:5173> and tears it down afterwards. 5173 is a default, not a
-constant: `PLAYWRIGHT_PORT` moves the dev server, the `baseURL` the tests use, and
-the port that is probed, in one step.
+`webServer` running `npm run dev`, so Playwright starts the Vite dev server and
+tears it down afterwards. 5173 is a default, not a constant, and the wrapper
+usually replaces it: it asks the OS for a free port and sets `PLAYWRIGHT_PORT`,
+which moves the dev server, the `baseURL` the tests use, and the port that is
+probed, in one step.
+
+It leaves the port alone when you have already chosen one:
 
 ```bash
 PLAYWRIGHT_PORT=5391 npm run test:e2e
 ```
 
-Set it in a second worktree. Every worktree serves its own checkout, so a run that
-attaches to a :5173 server it did not start is testing the other checkout's code,
-which reads exactly like "my change did nothing". An explicit `PLAYWRIGHT_PORT`
-also turns server reuse off by itself — it is a request to test _this_ checkout, so
-a server already on that port is this run's own stale process rather than someone
-else's to share.
-
-With nothing set, a dev server you already have on :5173 is reused, which is
-convenient when it is the only thing on the port. `PLAYWRIGHT_REUSE_EXISTING_SERVER=false`
-turns that off and forces Playwright to start its own server:
+**Server reuse is opt-in now, and the flag was renamed to say so.** A run used to
+attach to any server already on :5173, which in a worktree is _another
+checkout's_ code — a mutation campaign in `TEST-FLAKES.md` §10 reported every
+mutation green that way. To attach to a dev server you started yourself:
 
 ```bash
-PLAYWRIGHT_REUSE_EXISTING_SERVER=false npm run test:e2e
+PLAYWRIGHT_REUSE_EXISTING_SERVER=1 npm run test:e2e
 ```
 
-That is now a loud failure rather than a workaround: with the port occupied, the
-reuse check refuses before it would launch anything, and the dev server is started
-with `--strictPort` so it cannot silently hop to the next free port. On a port
-somebody else is serving, reach for `PLAYWRIGHT_PORT` instead.
+That is the only way to reuse, `PLAYWRIGHT_PORT` disables it, and with the port
+occupied the dev server is started with `--strictPort` so it fails loudly instead
+of silently hopping to the next free port.
 
 Point the suite at a server you did not start with `PLAYWRIGHT_BASE_URL`. It wins
 navigation, so keep it and `PLAYWRIGHT_PORT` consistent:
@@ -158,6 +214,16 @@ navigation, so keep it and `PLAYWRIGHT_PORT` consistent:
 ```bash
 PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e
 ```
+
+### Output
+
+Each run writes to `test-results/runs/<run-id>/` and
+`playwright-report/runs/<run-id>/`, and the wrapper prints the directory before
+the suite starts. Both parents are gitignored, and `npm run test:e2e:clean`
+removes them. A bare `npx playwright test` (or `npm run test:e2e:raw`) skips the
+wrapper and writes to the shared `test-results/` — that is the same as CI, where
+the JSON reporter's output is collected as an artifact, and it is why CI calls
+Playwright directly.
 
 The project defaults to the system Chrome channel (`channel: 'chrome'`), so
 install it once with:
@@ -380,8 +446,9 @@ never retried away.
 
 ```bash
 # e2e specs  (headless by default - see "Run it headless" above)
-npm run test:e2e                     # plain `playwright test`; CI=true is set by the workflow
-npm run test:e2e:headed               # opt in to a visible window; warns first, do not touch it
+npm run test:e2e                     # locked, own port, own output dir; forwards args after `--`
+npm run test:e2e:raw                 # bare `playwright test`, no lock, shared output dir (what CI runs)
+npm run test:e2e:headed              # opt in to a visible window; warns first, do not touch it
 npm run test:e2e:ui                  # Playwright UI mode
 npm run test:e2e:debug               # Playwright inspector
 npm run test:e2e:install             # one-time browser install
@@ -392,23 +459,27 @@ npm run test:e2e:unit:coverage
 
 # output
 npm run test:e2e:report              # open the last HTML report (opens a window, and blocks)
-npm run test:e2e:clean               # delete generated run output (test-results/)
+npm run test:e2e:clean               # delete generated run output (test-results/, playwright-report/)
 npm run test:e2e:update-baselines    # rewrite the visual-regression baselines
 ```
 
 `test:e2e:headed`, `test:e2e:ui` and `test:e2e:debug` all put a window on your screen,
 and `test:e2e:report` does too — it also serves until you close the tab, so an agent
 that runs it blocks. They are not interchangeable ways of reading a result: the
-`list` reporter on stdout, the screenshot under `test-results/` and the
-`test-results/results.json` written in CI are all readable without a window.
+`list` reporter on stdout, the screenshot under `test-results/runs/<run-id>/` and
+the `test-results/results.json` written in CI are all readable without a window.
 
 ### Local vs CI behaviour
 
-`npm run test:e2e` is deliberately a plain `playwright test` with **no** `CI=true`
-prefix. Setting `CI` locally would flip `forbidOnly` on (a stray `test.only`
-becomes a hard error), enable `retries: 2`, switch the reporter to `github`, and
-default `workers` to full parallelism. Locally you get `workers: 1` and a
-`list`/`html` reporter, which keeps a debug run readable.
+`npm run test:e2e` sets **no** `CI=true`. Setting it would flip `forbidOnly` on (a
+stray `test.only` becomes a hard error), enable `retries: 2`, switch the reporter
+to `github`, and default `workers` to full parallelism. Locally you get
+`workers: 1` and a `list`/`html` reporter, which keeps a debug run readable.
+
+The one thing `CI` does change in the wrapper is that it skips the swarm lock and
+keeps the default :5173 and the shared `test-results/`, because a CI job owns its
+checkout outright. That is also why the `e2e` job in the workflow calls
+`npx playwright test` directly rather than going through `npm run test:e2e`.
 
 **Both local and CI runs are headless.** `playwright.config.ts` resolves
 `headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1'`, so the only way to get a
@@ -420,7 +491,7 @@ when it wants a window, and that must not be sufficient on its own.
 To use a browser other than Chrome, set `PLAYWRIGHT_CHANNEL` yourself:
 
 ```bash
-PLAYWRIGHT_CHANNEL=msedge npx playwright test
+PLAYWRIGHT_CHANNEL=msedge npm run test:e2e
 ```
 
 ## CI

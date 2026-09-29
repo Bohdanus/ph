@@ -76,7 +76,7 @@ only when an operator is looking at a prompt.**
 ```bash
 npm run test            # vitest, jsdom - app unit tests
 npm run test:e2e:unit   # vitest, node - unit tests for the e2e helpers
-npm run test:e2e        # playwright, HEADLESS - starts the dev server itself
+npm run test:e2e        # playwright, HEADLESS, LOCKED - one e2e run at a time, own port + output
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
@@ -88,6 +88,11 @@ npm run swarm -- health   # is this board being USED, or only carried?
 
 node scripts/worktree-inventory.mjs   # WORKTREES.json: what every worktree holds
 ```
+
+`npm run test:e2e` queues behind `e2e/.swarm-e2e-runner`, a swarm file lock that
+serializes e2e across every worktree on this machine. `npm run swarm status` shows who has it;
+`npm run swarm check e2e/.swarm-e2e-runner` exits 1 while it is held, and so does a run that gives
+up waiting. It is a virtual path and is never created on disk.
 
 ## The swarm board
 
@@ -309,7 +314,13 @@ touch>`, or `swarm hold <path>` for a path with no issue. `swarm check <paths>` 
 - **The bare `npx tsc` type-checks ZERO files and always exits 0.** The root `tsconfig.json` is a solution stub — `"files": []`, no `include`, three `references` — so `npx tsc --showConfig -p tsconfig.json` prints `{"compilerOptions": {}}` and the references. It is indistinguishable from a pass, and `.claude/settings.local.json` in the operator's ROOT checkout carries a `"allow": ["Bash(npx tsc:*)"]` wildcard that auto-approves exactly that command. That file is untracked and globally gitignored (`~/.config/git/ignore` has `**/.claude/settings.local.json`), so no worktree, `git status` or `git ls-files` can see it — its absence from your worktree is not its absence from the machine. Only `npm run tsc` (`tsc -b`) type-checks anything.
   - **It is the stub, not a missing `exclude`, that makes the stub empty.** `tsconfig.app.json` has **no** `exclude` and its `include` is `["src", "toolbar-mapping.ts"]`, so the app project pulls in its test files rather than hiding them. Any future note explaining the trap as "the app tsconfig excludes tests" is wrong on both clauses.
 - `npm run test` is `pool: 'vmThreads'`, `maxWorkers: 4` — a timing-sensitive test that only fails in a full run is usually the pool, not the code.
-- `npm run test:e2e` starts Vite on :5173 itself. Pass `--retries=1` for a trace; `trace: 'on-first-retry'` yields nothing at the local `retries: 0`.
+- `npm run test:e2e` is a WRAPPER (`scripts/e2e-run.mjs`), not `playwright test`: it takes the swarm
+  lock `e2e/.swarm-e2e-runner` (one suite at a time, queued with the holder's name, exit 4 if the
+  wait runs out), gives the run a free port and a private output dir, and forwards every argument
+  after `--` verbatim. Pass `--retries=1` for a trace; `trace: 'on-first-retry'` yields nothing at
+  the local `retries: 0`. **The lock is a queue, not a gate: a user-visible change still runs the
+  full suite before it merges** — the lock is what makes that survivable when several agents merge
+  at once, not a reason to skip it. See `e2e/README.md` and the header of `scripts/e2e-run.mjs`.
 
 ## Worktrees and dev servers
 
@@ -383,7 +394,15 @@ Five traps that cost real debugging time:
 - **A worktree used to run no commit gate at all, silently.** `core.hooksPath` was `.husky/_` — a directory husky generates during `npm install` and keeps untracked — and git resolves a relative `core.hooksPath` against the root of the worktree it is running in. Every worktree made by `git worktree add` had no `.husky/_`, so git found no hook, ran nothing, and exited 0. The commit landed with no warning and nothing in its output to notice. 89 of 118 worktrees were in that state while 96 had a populated `node_modules`, so "just run npm install" was never the fix. `core.hooksPath` now points at `<common git dir>/hooks-gate`, which every worktree shares, and the tracked `.husky/pre-commit` is what runs. **If a hook ever stops firing, run `git config core.hooksPath` first and assume nothing.** Re-install with `npm install` (the `prepare` script).
 - **A worktree on an older commit blocks with a specific message, not a mystery one.** Its `.husky/pre-commit` still sources husky's generated preamble, which only an install in _that_ worktree ever created. The dispatcher names the cause; bring the worktree up to date, or `git config --unset core.hooksPath`. It blocks rather than skipping on purpose: a gate that cannot run must not let a commit through.
 - **`node_modules` is empty or missing in most worktrees.** Node walks up to the parent checkout, so `tsc` and `vitest` mostly work anyway — which is exactly what makes it misleading. Vite does **not** walk up: it serves only what `server.fs.allow` permits, so fonts, images and AVIF assets from the ancestor checkout 404 in a worktree and work in the root checkout. Run `npm ci` there before debugging an asset that will not load.
-- **Every worktree's dev server wants :5173.** Locally `reuseExistingServer` is on, so `test:e2e` can attach to a server another worktree started and then test _that_ checkout. Use `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` in a worktree. "My change did nothing" in e2e is this, not a cache.
+- **Every worktree's dev server wants :5173, and that used to be the reason e2e lied.** A bare
+  `npx playwright test` in a worktree attached to whichever server got to :5173 first — another
+  checkout — and passed for the wrong reason; `TEST-FLAKES.md` §10 is a mutation campaign that
+  reported seven mutations green that way. **That is over: `npm run test:e2e` now runs
+  `scripts/e2e-run.mjs`, which takes a swarm lock so one suite runs at a time across every
+  worktree, allocates a free port per run, and writes the run's output to its own directory.**
+  Server reuse is opt-in (`PLAYWRIGHT_REUSE_EXISTING_SERVER=1`) instead of on-by-default. A bare
+  `npx playwright test` still bypasses all of it — that is `npm run test:e2e:raw`, and it is what
+  CI runs, where one job owns one checkout.
 - **An interrupted merge can leave `AUTO_MERGE` and `MERGE_MSG` with no `MERGE_HEAD`, and
   `git commit` then lands a single-parent commit that reads as a resolution.** Observed in a
   worktree mid-rebase: 24 unmerged index stages, no `MERGE_HEAD`, so the next `git commit`
@@ -827,8 +846,10 @@ It is worth knowing for what it is good: cost tracks blast radius, and so does r
   widen `threshold` or `maxDiffPixels` to make a red go green — the argument for the numbers and
   for NOT pinning a Chrome version in CI is written out at that call site.
 - `npm run test:e2e:clean` deletes the per-test output directories under `test-results/` and
-  keeps `test-results/results.json`, so a run's machine-readable result survives it.
-- Read failures from `test-results/`; `trace.zip` needs a window, so ask the operator.
+  `playwright-report/`, and keeps `test-results/results.json`, so a run's machine-readable result
+  survives it. A run through the wrapper writes under `test-results/runs/<run-id>/`; the wrapper
+  prints that path before the suite starts.
+- Read failures from the run's output directory; `trace.zip` needs a window, so ask the operator.
 
 ## Handoff documents
 

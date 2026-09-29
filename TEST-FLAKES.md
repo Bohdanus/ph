@@ -536,19 +536,28 @@ rather than a request to the wrong origin, and an `index.html` whose `src` is no
 URL is a skip rather than a throw, because the one component whose contract is that
 it never fails a run is not the place a malformed HTML file gets to fail one.
 
-**How this composes with sections 10 and 11.** Pinning `PLAYWRIGHT_PORT` is what makes section 10's
-reuse trap go away, and it does so by starting a fresh server every run — which is exactly the cold
-server this section is about. Sections 9, 10 and 11 are one family and three defects, not one defect
-three times: 9 is a server that is right and slow, 10 is the wrong server, 11 is the right server
-serving code you did not write.
+**How this composes with sections 10 and 11.** Every run starts a fresh server, which is
+exactly the cold server this section is about: `npm run test:e2e` allocates a free port per run
+and reuse is opt-in, so a warm server is now something you have to ask for. Sections 9, 10 and 11
+are one family and three defects, not one defect three times: 9 is a server that is right and slow,
+10 is the wrong server, 11 is the right server serving code you did not write.
 
-## 10. An e2e mutation campaign run without `PLAYWRIGHT_PORT` reports every mutation as green
+## 10. An e2e mutation campaign run without a pinned port reports every mutation as green
 
-**The trap.** `playwright.config.ts:118-119` sets `reuseExistingServer: false` only when `CI` or
-`PLAYWRIGHT_PORT` is set. A bare `npx playwright test` from a worktree under `.kilo/worktrees/`
-therefore falls back to :5173 with reuse ON, and attaches to whichever dev server got there first —
-which is another checkout. For an ordinary green/red run this is the trap `AGENTS.md` already
-records under "Worktrees and dev servers": "my change did nothing" is this, not a cache.
+**The trap, and the fix for it.** `playwright.config.ts` used to set
+`reuseExistingServer: false` only when `CI` or `PLAYWRIGHT_PORT` was set, so a bare
+`npx playwright test` from a worktree under `.kilo/worktrees/` fell back to :5173 with reuse ON
+and attached to whichever dev server got there first — which is another checkout. For an ordinary
+green/red run that is the trap `AGENTS.md` records under "Worktrees and dev servers": "my change
+did nothing" is this, not a cache.
+
+**Reuse is now opt-in and `npm run test:e2e` no longer relies on the port being pinned.**
+`playwright.config.ts` reads `PLAYWRIGHT_REUSE_EXISTING_SERVER=1` (and nothing else) as the
+permission to attach to a server this run did not start, and `scripts/e2e-run.mjs` — which every
+`test:e2e*` script routes through — allocates a free port and sets `PLAYWRIGHT_PORT` for the run.
+So the two ways into this section are both narrower than they were: an agent using
+`npm run test:e2e` gets a port of its own without asking, and the remaining exposure is a bare
+`npx playwright test` (which is `npm run test:e2e:raw`, and is what CI runs).
 
 **Why it is much worse for a mutation campaign.** A mutation campaign exists to answer "does this
 assertion actually assert anything?", and the answer it produces is a green run. A run that never
@@ -557,15 +566,16 @@ executed the mutated code is indistinguishable from a test that cannot fail. Mea
 the driver ran without a port and had attached to a different worktree's dev server. Re-running with
 `PLAYWRIGHT_PORT` set and the port pinned turned the same seven into seven real reds.
 
-**The rule.** Any agent verifying that an assertion bites MUST pin the port, and before trusting a
-green result MUST confirm the served module actually contains the mutation — `curl` the mutated
-module off the dev server and look for the change, rather than assuming the local worktree is what
-is being tested. A mutation campaign that reports "all green" has most likely measured nothing.
+**The rule.** Run mutation campaigns through `npm run test:e2e` (the wrapper pins the port for
+you), and before trusting a green result MUST confirm the served module actually contains the
+mutation — `curl` the mutated module off the dev server and look for the change, rather than
+assuming the local worktree is what is being tested. A mutation campaign that reports "all green"
+has most likely measured nothing. Section 11 is the half of that check the port cannot buy you.
 
 ## 11. A mutation campaign that does not verify the SERVED module reports false verdicts
 
-Section 10 is the coarse failure: with no `PLAYWRIGHT_PORT` the run attaches to another
-checkout and every mutation looks green. This is the fine one, and it survives that fix.
+Section 10 is the coarse failure: a run attached to another checkout makes every mutation look
+green. This is the fine one, and it survives that fix completely.
 
 A dev server serves a TRANSFORMED module, not the file on disk. So a mutation that is
 correct on disk can be absent from what the browser ran, and the test then reports the
@@ -636,9 +646,14 @@ or mislocated. Until a failing run is captured, a fix here would be a guess.
 - `e2e/erase-fill-eyedropper.spec.ts` — the spec behind section 8, and the commit that hardened it
 - `e2e/helpers/canvas-helpers.ts:473,577,718` — the predicate, the poll loop and the sampler
 - `src/hooks/usePointerPosition.ts:194-198,214-223` — the validators whose refusal is silent
-- `playwright.config.ts:106-121`, the condition itself at `:118-119` — the `webServer` block, the
-  `reuseExistingServer` condition behind section 10, and why an explicit `PLAYWRIGHT_PORT` disables
-  server reuse
+- `scripts/e2e-run.mjs` — the wrapper every `test:e2e*` script routes through: the
+  `e2e/.swarm-e2e-runner` lock that serializes suites, the per-run port allocation and
+  output directory, and the three outcomes of `SwarmLock.acquire`
+- `scripts/__tests__/e2e-run.test.mjs` — the only coverage of the lock, including a
+  test that reads the board as another agent while a suite is "running"
+- `playwright.config.ts` — the `webServer` block, the now opt-in
+  `reuseExistingServer` condition behind section 10, and why an explicit `PLAYWRIGHT_PORT`
+  disables server reuse
 - `e2e/document-dialogs.spec.ts` — the spec whose mutation method section 11 validates
 - `e2e/undo-redo.spec.ts` — the spec whose mutation campaign section 10 invalidated
 - `e2e/global-setup.ts` — where the warm-up in section 9 belongs; the budget and the
