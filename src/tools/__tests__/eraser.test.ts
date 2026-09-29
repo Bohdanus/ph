@@ -89,7 +89,10 @@ describe('buildEraseArgs', () => {
 
 describe('eraser processor', () => {
   it('subtracts alpha on the committed canvas, through the shared stroke painter', () => {
-    const ctx = renderCommit(eraserArgs({ lineWidth: 7 }));
+    // `mode` is named rather than inherited: the seeded default is `brush`, which does not reach
+    // the shared painter at all. These are the two hard modes' contract, so they say which one
+    // they are about.
+    const ctx = renderCommit(eraserArgs({ mode: 'pencil', lineWidth: 7 }));
 
     expect(ctx.globalCompositeOperation).toBe('destination-out');
     expect(ctx.lineWidth).toBe(7);
@@ -97,8 +100,8 @@ describe('eraser processor', () => {
   });
 
   it('subtracts alpha on the live preview overlay too, so the preview matches the commit', () => {
-    const committed = renderCommit(eraserArgs({ lineWidth: 7 }));
-    const preview = renderPreview(eraserArgs({ lineWidth: 7 }));
+    const committed = renderCommit(eraserArgs({ mode: 'pencil', lineWidth: 7 }));
+    const preview = renderPreview(eraserArgs({ mode: 'pencil', lineWidth: 7 }));
 
     // The whole reason the flag lives on `DrawToolArgs` and is read by `setupDrawCtx`: the overlay
     // and the commit are configured by that one function, so neither can drift from the other.

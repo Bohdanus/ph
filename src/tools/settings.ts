@@ -14,7 +14,7 @@ import type { LassoToolArgs, PolygonSelectionToolSettings } from './polygonSelec
 import type { RectangularSelectionToolArgs } from './rectangularSelection.ts';
 import type { FeatherMagneticLassoToolArgs, FeatherMagneticLassoToolSettings } from './featherMagneticLasso.ts';
 import type { MagicWandToolArgs, MagicWandToolSettings } from './magicWand.ts';
-import type { EraserToolArgs } from './eraser.ts';
+import { ERASER_HARDNESS_DEFAULT, ERASER_SPACING_PERCENT, type EraserToolArgs } from './eraser.ts';
 import type { FillToolArgs } from './fill.ts';
 import {
   COLOR_REPLACEMENT_SMOOTHNESS_DEFAULT,
@@ -180,9 +180,15 @@ export const defaultSettings = {
     toolName: 'color-replacement',
   } satisfies ColorReplacementToolArgs,
   eraser: {
-    mode: 'pencil',
+    // `brush`, not `pencil`: Photoshop's eraser opens on a soft tip, and this one used to open on
+    // a hard edge because `brush` was rendered `disabled` in the options bar. The two tip fields
+    // below are what that mode reads, so they are seeded here rather than defaulted at the call
+    // site — a settings object that arrives without them is a settings object the bar cannot show.
+    mode: 'brush',
     lineWidth: 40,
     alpha: 1,
+    hardness: ERASER_HARDNESS_DEFAULT,
+    spacing: ERASER_SPACING_PERCENT,
     color: '#000000',
     points: [],
     toolName: 'eraser',
