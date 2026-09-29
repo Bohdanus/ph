@@ -1,22 +1,11 @@
-import { afterAll, beforeAll, describe, expect, expectTypeOf, it, vi } from 'vitest';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import sharp from 'sharp';
-import type { Page, TestInfo } from '@playwright/test';
-import { DEFAULT_THRESHOLD, compareScreenshots, saveScreenshotArtifact } from '../image-comparison';
+import { describe, expect, expectTypeOf, it } from 'vitest';
+import { DEFAULT_THRESHOLD, compareScreenshots } from '../image-comparison';
 import type { CompareOptions, CompareResult } from '../image-comparison';
 
-type ScreenshotOptions = NonNullable<Parameters<Page['screenshot']>[0]>;
-type ClipRegion = { x: number; y: number; width: number; height: number };
 type Rgba = { r: number; g: number; b: number; alpha: number };
 type Rect = { left: number; top: number; width: number; height: number };
 type Size = { width: number; height: number };
-
-const createMockPage = (screenshot: Page['screenshot']): Page => ({ screenshot }) as Page;
-const createMockTestInfo = (outputDir: string, attach: TestInfo['attach']): TestInfo =>
-  ({ outputDir, attach }) as TestInfo;
-const noOpScreenshot = () => vi.fn(async (): Promise<Buffer> => Buffer.alloc(0));
 
 const OPAQUE_RED: Rgba = { r: 255, g: 0, b: 0, alpha: 1 };
 const OPAQUE_GREEN: Rgba = { r: 0, g: 255, b: 0, alpha: 1 };
@@ -77,50 +66,6 @@ const red10x10 = () => solidPng(SQUARE_10, OPAQUE_RED);
 const green10x10 = () => solidPng(SQUARE_10, OPAQUE_GREEN);
 const halfGreen10x10 = () => patchedPng(SQUARE_10, OPAQUE_RED, [HALF_PATCH]);
 const patched100 = (...patches: Rect[]) => patchedPng(SQUARE_100, OPAQUE_RED, patches);
-
-const recordedScreenshotOptions = (
-  screenshot: { mock: { calls: [ScreenshotOptions?][] } },
-  callIndex = 0
-): ScreenshotOptions => {
-  const call = screenshot.mock.calls[callIndex];
-  if (!call) throw new Error(`page.screenshot was not called at index ${callIndex}`);
-  const [options] = call;
-  if (!options) throw new Error(`page.screenshot was called without options at index ${callIndex}`);
-  return options;
-};
-
-const fileExists = async (target: string): Promise<boolean> => {
-  try {
-    await fs.access(target);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const createScreenshotWriter = (payload: Buffer) =>
-  vi.fn(async (options?: ScreenshotOptions): Promise<Buffer> => {
-    const target = options?.path;
-    if (target) await fs.writeFile(target, payload);
-    return payload;
-  });
-
-const createFailingScreenshot = (error: Error) =>
-  vi.fn(async (): Promise<Buffer> => {
-    throw error;
-  });
-
-const attachMock = () => vi.fn(async () => {});
-
-let outputDir = '';
-
-beforeAll(async () => {
-  outputDir = await fs.mkdtemp(path.join(os.tmpdir(), 'image-comparison-'));
-});
-
-afterAll(async () => {
-  await fs.rm(outputDir, { recursive: true, force: true });
-});
 
 describe('Image Comparison Helpers', () => {
   describe('DEFAULT_THRESHOLD', () => {
@@ -532,136 +477,25 @@ describe('Image Comparison Helpers', () => {
       }>();
     });
   });
+});
 
-  describe('saveScreenshotArtifact', () => {
-    const artifactPath = (name: string) => path.join(outputDir, `${name}.png`);
-
-    it('writes the artifact into outputDir and attaches that exact path', async () => {
-      const name = 'written-artifact';
-      const payload = await redPng100();
-      const screenshot = createScreenshotWriter(payload);
-      const attach = attachMock();
-
-      const returned = await saveScreenshotArtifact(
-        createMockPage(screenshot),
-        createMockTestInfo(outputDir, attach),
-        name
-      );
-
-      expect(returned).toBe(payload);
-      expect(recordedScreenshotOptions(screenshot).path).toBe(artifactPath(name));
-      expect(await fileExists(artifactPath(name))).toBe(true);
-      expect(await fs.readFile(artifactPath(name))).toEqual(payload);
-      expect(attach).toHaveBeenCalledTimes(1);
-      expect(attach).toHaveBeenCalledWith(name, { path: artifactPath(name), contentType: 'image/png' });
-    });
-
-    it('requests the screenshot with animations disabled', async () => {
-      const screenshot = createScreenshotWriter(await redPng100());
-
-      await saveScreenshotArtifact(
-        createMockPage(screenshot),
-        createMockTestInfo(outputDir, attachMock()),
-        'animations'
-      );
-
-      expect(recordedScreenshotOptions(screenshot).animations).toBe('disabled');
-    });
-
-    it('forwards a clip region when provided', async () => {
-      const clip: ClipRegion = { x: 10, y: 20, width: 30, height: 40 };
-      const screenshot = createScreenshotWriter(await redPng100());
-
-      await saveScreenshotArtifact(createMockPage(screenshot), createMockTestInfo(outputDir, attachMock()), 'clipped', {
-        clip,
-      });
-
-      expect(recordedScreenshotOptions(screenshot).clip).toEqual(clip);
-    });
-
-    it('omits the clip key entirely when no clip is provided', async () => {
-      const screenshot = createScreenshotWriter(await redPng100());
-
-      await saveScreenshotArtifact(
-        createMockPage(screenshot),
-        createMockTestInfo(outputDir, attachMock()),
-        'unclipped'
-      );
-
-      expect(Object.hasOwn(recordedScreenshotOptions(screenshot), 'clip')).toBe(false);
-    });
-
-    it('surfaces a page.screenshot failure and attaches nothing', async () => {
-      const failure = new Error('browser closed');
-      const attach = attachMock();
-
-      await expect(
-        saveScreenshotArtifact(
-          createMockPage(createFailingScreenshot(failure)),
-          createMockTestInfo(outputDir, attach),
-          'screenshot-failure'
-        )
-      ).rejects.toThrow(failure);
-
-      expect(attach).not.toHaveBeenCalled();
-      expect(await fileExists(artifactPath('screenshot-failure'))).toBe(false);
-    });
-
-    it('surfaces a testInfo.attach failure while keeping the written artifact', async () => {
-      const name = 'attach-failure';
-      const failure = new Error('report already closed');
-      const attach = vi.fn(async () => {
-        throw failure;
-      });
-
-      await expect(
-        saveScreenshotArtifact(
-          createMockPage(createScreenshotWriter(await redPng100())),
-          createMockTestInfo(outputDir, attach),
-          name
-        )
-      ).rejects.toThrow(failure);
-
-      expect(await fileExists(artifactPath(name))).toBe(true);
-    });
-
-    it('forwards an invalid clip to Playwright unchanged instead of masking it', async () => {
-      const invalidClip = { x: 0, y: 0, width: -PATCH_SIDE, height: PATCH_SIDE };
-      const screenshot = vi.fn(async (options?: ScreenshotOptions): Promise<Buffer> => {
-        if (options?.clip && options.clip.width <= 0) {
-          throw new Error('Clipped area is either empty or outside the resulting image');
-        }
-        return Buffer.alloc(0);
-      });
-      const attach = attachMock();
-
-      await expect(
-        saveScreenshotArtifact(createMockPage(screenshot), createMockTestInfo(outputDir, attach), 'invalid-clip', {
-          clip: invalidClip,
-        })
-      ).rejects.toThrow('Clipped area is either empty or outside the resulting image');
-
-      expect(recordedScreenshotOptions(screenshot).clip).toEqual(invalidClip);
-      expect(attach).not.toHaveBeenCalled();
-      expect(await fileExists(artifactPath('invalid-clip'))).toBe(false);
-    });
-
-    it('delegates the write to Playwright instead of writing the file itself', async () => {
-      const screenshot = noOpScreenshot();
-      const attach = attachMock();
-
-      await saveScreenshotArtifact(
-        createMockPage(screenshot),
-        createMockTestInfo(outputDir, attach),
-        'delegated-write'
-      );
-
-      expect(recordedScreenshotOptions(screenshot).path).toBe(artifactPath('delegated-write'));
-      expect(await fileExists(artifactPath('delegated-write'))).toBe(false);
-      expect(attach).toHaveBeenCalledWith('delegated-write', {
-        path: artifactPath('delegated-write'),
-        contentType: 'image/png',
-      });
-    });
+describe('the exported surface is exactly what the suite uses', () => {
+  it('exports only the comparison itself and its defaults', async () => {
+    // `saveScreenshotArtifact` was deleted: its only references in the repository were
+    // its own definition and this file, so it was ~30 lines of never-executed code
+    // documenting a second convention the suite does not follow. Its sibling
+    // `expectCanvasToMatch` had already been removed for the same reason, and it is
+    // gone too, which leaves `compareScreenshots` as the one thing here that a spec
+    // actually calls.
+    //
+    // Asserted on the runtime namespace rather than by a source grep so that a
+    // re-export under any spelling, or a new helper added beside it, is what fails.
+    const mod = await import('../image-comparison');
+    expect(Object.keys(mod).sort()).toEqual([
+      'DEFAULT_MAX_DIFF_PIXELS',
+      'DEFAULT_MAX_DIFF_PIXEL_RATIO',
+      'DEFAULT_THRESHOLD',
+      'compareScreenshots',
+    ]);
   });
 });

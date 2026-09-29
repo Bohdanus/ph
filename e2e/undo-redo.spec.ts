@@ -27,8 +27,14 @@ import { clickToolButton } from './helpers/toolbar-helpers';
  * (`CANVAS_REDRAW_TIMEOUT_MS` is 10s) and little else. These tests chain three
  * strokes and up to three navigations, and every step waits on the replayed canvas
  * rather than on a timer, so the floor is a handful of poll loops at their full
- * timeout. 60s is the same figure the other multi-step specs in this suite use
- * (`select-move.spec.ts`, `viewport-drawing.spec.ts`).
+ * timeout. 60s is the figure this suite raises a per-test budget to for work of
+ * this shape — a stroke, then a navigation, then a pixel read — in
+ * `select-move.spec.ts:31` and `select-move.spec.ts:64`, and in
+ * `viewport-drawing.spec.ts:17`. The specs that go higher are heavier: layers are
+ * reordered and deleted one at a time in `layers.spec.ts:21` at 90s, and
+ * `paint-tools.spec.ts:569` uses this same `test.describe.configure` mechanism at
+ * 120s for tests that open an options bar, build a fixture, and make three history
+ * round trips with a capture per poll. None of that is in these five tests.
  */
 const UNDO_REDO_TIMEOUT_MS = 60_000;
 
@@ -44,34 +50,55 @@ const BAND_COUNT = 3;
 /**
  * Horizontal extent of a stroke, as fractions of the canvas box width.
  *
- * The workspace canvas fills the main area and the document is letterboxed inside
- * it, so a point chosen as a fraction of the box is always inside the document:
- * the letterbox maps the box onto the document, and the app draws a stroke at the
- * box-relative coordinate the pointer reported (`usePointerPosition`). The second
- * span is offset from the first so a second stroke in the same band measurably
- * widens it, which is how the branch test tells the new stroke apart from the one
- * it replaced.
+ * A box fraction is not a document coordinate: the document is letterboxed inside
+ * the box, and `usePointerPosition` fits it and centres it, so the fraction range
+ * that lands on the document is the box less a symmetric inset. That inset is what
+ * `documentToCanvasOffset` computes (`e2e/helpers/canvas-helpers.ts:75-84`, which
+ * mirrors the app's own mapping at `src/hooks/usePointerPosition.ts:72-89`), and
+ * for the measured box it is small enough at both ends that 0.2 and 0.85 are
+ * comfortably inside. The claim is not asserted here but demonstrated: a span
+ * reaching past the document puts no ink in its band, and every wait on a band
+ * below is a `waitForBandInked`, so an aim that stopped landing inside the
+ * document times out by name instead of passing on a canvas that never took the
+ * stroke.
+ *
+ * The second span is offset from the first so a second stroke in the same band
+ * measurably widens it, which is how the branch test tells the new stroke apart
+ * from the one it replaced.
  */
 const FIRST_SPAN = { start: 0.2, end: 0.6 };
 const BRANCH_SPAN = { start: 0.45, end: 0.85 };
 
-/**
- * Window size for these tests. The project default is 1280x720, and this app lays
- * the workspace canvas out TALLER than that - measured at 840px of canvas in a
- * 720px window - while `page.screenshot({ clip })` truncates a clip at the viewport
- * edge without saying so. Bands cut from the truncated part would read as
- * permanently clean, which is a silent pass rather than a failure. Asking for a
- * window the whole canvas fits in is what lets "the whole canvas" mean the whole
- * canvas in the assertions below; `visibleCanvasBox` is the belt to that pair of
- * braces, and is what makes the clips correct whatever the window turns out to be.
+/*
+ * WINDOW SIZE: the project default, 1280x720, which is what `devices['Desktop
+ * Chrome']` in `playwright.config.ts` already sets. There is deliberately no
+ * `setViewportSize` call anywhere in this spec, and that absence is a decision.
+ *
+ * There used to be one, at 1280x1000, and it was justified by a premise that
+ * stopped being true. The bump existed to lift the workspace canvas above the fold,
+ * because the app used to lay the canvas out TALLER than a 720px window — measured
+ * at 840px of canvas in a 720px window. It no longer does: `min-h-0 overflow-y-auto`
+ * on the left sidebar's `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx:335`)
+ * is what bounds the grid row, `e2e/sidebar-layout.spec.ts:21` pins that the
+ * default page does not scroll, and P1 of `e2e/OPEN_PROBLEMS.md` records the
+ * measured canvas box and page height for both toolbar layouts. Those numbers are
+ * that document's to own, which is why none of them are written here.
+ *
+ * Dropping the bump makes this spec harder to pass, not easier, and that is the
+ * argument for it. A taller window is exactly what a taller canvas would need, so
+ * 1280x1000 would have MASKED the very regression the 840px canvas was. At the
+ * default size a canvas that grew past the fold again makes `visibleCanvasBox` cut
+ * the bands to the visible intersection, the lower bands stop receiving the strokes
+ * aimed at them, and the per-band assertions fail by name — instead of quietly
+ * passing against a window the test chose for itself. `visibleCanvasBox` is the belt
+ * to that pair of braces, and is what makes the clips correct whatever the window
+ * turns out to be.
  */
-const WORKSPACE_VIEWPORT = { width: 1280, height: 1000 };
 
 test.describe('Undo and redo', () => {
   test.describe.configure({ timeout: UNDO_REDO_TIMEOUT_MS });
 
   test.beforeEach(async ({ page }) => {
-    await page.setViewportSize(WORKSPACE_VIEWPORT);
     await page.goto('/');
     // The blank document is created by an effect, and the canvas stack is only
     // displayed once it exists, so "visible" is also "a document is open".
@@ -122,8 +149,9 @@ test.describe('Undo and redo', () => {
     const bands = canvasBands(box, BAND_COUNT);
 
     // A fresh document is a single history entry, so there is nothing on either
-    // side of the cursor: `canUndo` is `historyIndex > 0` and `canRedo` is
-    // `historyIndex < history.length - 1`, both false at index 0 of 1.
+    // side of the cursor: `canUndo` is `historyIndex > 0` (`src/contexts/useHistory.ts:47`)
+    // and `canRedo` is `historyIndex < history.length - 1`
+    // (`src/contexts/useHistory.ts:56`), both false at index 0 of 1.
     await expect(getUndoButton(page)).toBeDisabled();
     await expect(getRedoButton(page)).toBeDisabled();
 
@@ -169,13 +197,26 @@ test.describe('Undo and redo', () => {
   test('two undos leave the first stroke on the canvas and the other two gone', async ({ page }) => {
     const box = await canvasBox(page);
     const bands = canvasBands(box, BAND_COUNT);
+    const stackClip = bandUnionClip(bands);
 
     await strokeInto(page, box, bands, 0);
     await strokeInto(page, box, bands, 1);
     await strokeInto(page, box, bands, 2);
     await waitForBands(page, bands, [true, true, true], { description: 'all three strokes to reach the canvas' });
 
+    // The state is read after EACH click, and that is the whole point of the per-band
+    // read. An undo that stepped two entries instead of one would reach
+    // [true, false, false] on its first click, and its second click would be refused
+    // by the negative-index guard in `resetHistoryTo` and do nothing - leaving a test
+    // that only looked at the end staring at exactly the state it wanted. Reading the
+    // intermediate state is what makes the NUMBER of steps the assertion, rather than
+    // only the destination.
     await getUndoButton(page).click();
+    await waitForBands(page, bands, [true, true, false], {
+      description: 'one undo to drop the third stroke and leave the first two',
+    });
+    expect(await bandInkFlags(await capture(page, stackClip), bands)).toEqual([true, true, false]);
+
     await getUndoButton(page).click();
     await waitForBands(page, bands, [true, false, false], {
       description: 'the third stroke gone and the second one gone after two undos',
@@ -184,7 +225,7 @@ test.describe('Undo and redo', () => {
     // Read it back as pixels rather than trusting the wait: a per-band read is the
     // assertion, the wait is only what makes it deterministic. This is the check a
     // whole-canvas "is there ink" cannot make - an off-by-one cursor leaves ink too.
-    expect(await bandInkFlags(await capture(page, bandUnionClip(bands)), bands)).toEqual([true, false, false]);
+    expect(await bandInkFlags(await capture(page, stackClip), bands)).toEqual([true, false, false]);
   });
 
   test('the keyboard shortcuts undo and redo to the same pixels as the buttons', async ({ page }) => {
@@ -198,8 +239,11 @@ test.describe('Undo and redo', () => {
     expect(drawn, 'the stroke was not on the canvas at all').toBeTruthy();
 
     // `ControlOrMeta`, not a hardcoded Meta or Control: the app matches the modifier
-    // as `(event.metaKey || event.ctrlKey) !== shortcut.mod`, so either one works on
-    // either OS, and spelling out the platform's own key would only pass on one.
+    // as `(event.metaKey || event.ctrlKey) !== shortcut.mod`
+    // (`src/hooks/useKeyboardEvents.tsx:64`), so either one works on either OS, and
+    // spelling out the platform's own key would only pass on one. The redo side adds
+    // `shift: true` (`src/components/Common/AppKeyboardShortcuts.tsx:174`), which
+    // `matchesShortcut` checks separately, so the plain undo press cannot reach it.
     await page.keyboard.press('ControlOrMeta+z');
     await waitForBands(page, [wholeCanvasBand(box)], [false], { description: 'the canvas to carry no ink' });
 
@@ -235,8 +279,9 @@ test.describe('Undo and redo', () => {
     expect(beforeBranch, 'band 0 carried no ink to branch from').toBeTruthy();
 
     // A new stroke in band 0, on a wider span. The append truncates the timeline at
-    // the cursor (`entries.slice(0, cursor + 1)`), so entries 2 and 3 - the second
-    // and third strokes - are no longer reachable.
+    // the cursor (`entries.slice(0, cursor + 1)`, `src/contexts/history-timeline.ts:31`).
+    // The cursor is at 2 here (blank document, stroke 1, stroke 2), so the slice keeps
+    // those three and the entry it drops is the one just undone: the THIRD stroke.
     await strokeInto(page, box, bands, 0, BRANCH_SPAN);
     await expect(getRedoButton(page), 'the branch should have truncated the redo tail').toBeDisabled();
 
@@ -246,5 +291,21 @@ test.describe('Undo and redo', () => {
     const branched = await getDarkPixelBounds(await capture(page, bands[0].clip));
     expect(branched, 'the branch stroke is not on the canvas at all').toBeTruthy();
     expect(branched!.right, 'the branch stroke did not widen band 0').toBeGreaterThan(beforeBranch!.right);
+
+    // "Redo is disabled" does NOT mean the tail was dropped, and this block is what
+    // pins the difference. The append puts the cursor at the new last entry either
+    // way, so `canRedo` is false whether or not `slice(0, cursor + 1)` ran: an append
+    // that kept the tail is indistinguishable from a truncating one for as long as
+    // nothing walks back into it. Undoing walks back into it. With the tail dropped,
+    // the undo removes the branch stroke and lands on [stroke 1, stroke 2], so band 2
+    // is still clean; with the tail kept it lands one entry further along and revives
+    // the third stroke, so band 2 is inked. Band 2 is the whole assertion - the two
+    // timelines differ there and nowhere else this test can see.
+    await getUndoButton(page).click();
+    await waitForBands(page, bands, [true, true, false], {
+      description: 'the undo to drop the branch stroke without reviving the dropped third stroke',
+    });
+    expect(await bandInkFlags(await capture(page, stackClip), bands)).toEqual([true, true, false]);
+    await expect(getRedoButton(page), 'undoing back to the branch point should make it redoable').toBeEnabled();
   });
 });
