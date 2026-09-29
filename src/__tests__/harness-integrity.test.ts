@@ -99,23 +99,6 @@ describe('global canvas environment (src/test/setup.ts)', () => {
     expect(measured.width).toBeGreaterThanOrEqual(0);
   });
 
-  it('re-installs the canvas stub after a test destroys it with vi.restoreAllMocks()', () => {
-    // The previous version of this test also asserted `isMockFunction(...) === false` right
-    // after `restoreAllMocks()`. That is vitest's own documented behaviour, not project code, and
-    // it contradicts the title. What makes the re-install real is the *next* test: `beforeEach`
-    // must put a working stub back, or every later rasterization test in the repo breaks.
-    vi.restoreAllMocks();
-    expect(vi.isMockFunction(HTMLCanvasElement.prototype.getContext)).toBe(false);
-  });
-
-  it('still provides a working canvas stub in the following test (proves the re-install is not one-shot)', () => {
-    const ctx = document.createElement('canvas').getContext('2d');
-
-    expect(ctx).not.toBeNull();
-    expect(vi.isMockFunction(HTMLCanvasElement.prototype.getContext)).toBe(true);
-    expect(() => (ctx as unknown as CanvasRenderingContext2D).fillRect(0, 0, 1, 1)).not.toThrow();
-  });
-
   it('normalises zero and fractional OffscreenCanvas dimensions the way the real constructor reports them', () => {
     expect(new OffscreenCanvas(0, 0).width).toBe(1);
     expect(new OffscreenCanvas(0, 0).height).toBe(1);
@@ -140,6 +123,29 @@ describe('global canvas environment (src/test/setup.ts)', () => {
     expect(canvas.getContext('2d')).toBe(ctx);
   });
 
+  it('hands every convertToBlob call the same zero-byte blob, whatever the canvas holds (MOCK ARTEFACT, not a contract)', async () => {
+    // `src/util/selection.ts:739-740` reaches this whenever `copyCanvasToClipboard` is given an
+    // OffscreenCanvas, and `src/test/setup.ts:214-216` answers with `new Blob([])` and never
+    // looks at the canvas. A test that reaches that path through the global stub therefore
+    // receives a zero-byte raster, which at the mock boundary is indistinguishable from a
+    // correct one: nothing downstream can tell "the image is empty" from "the stub is empty".
+    // The zero bytes are the STUB's artefact. Nothing here licenses a test to treat an empty
+    // encode as a passing result — a test that needs a real raster must install its own blob,
+    // the way `src/util/__tests__/selection.test.ts:1143` does.
+    const first = await new OffscreenCanvas(40, 25).convertToBlob({ type: 'image/png' });
+    const second = await new OffscreenCanvas(1, 1).convertToBlob({ type: 'image/png' });
+
+    expect(first).toBeInstanceOf(Blob);
+    expect(first.size).toBe(0);
+    expect(first.type).toBe('');
+    expect(await first.text()).toBe('');
+
+    // Size-independent, and a distinct object per call, so two encodes can never be confused
+    // for one another by identity either.
+    expect(second).not.toBe(first);
+    expect(second.size).toBe(0);
+  });
+
   it('produces ImageBitmaps that carry a spy-able close() so bitmap leaks are assertable', async () => {
     const transferred = new OffscreenCanvas(12, 7).transferToImageBitmap();
     const created = await createImageBitmap(new OffscreenCanvas(9, 3));
@@ -158,6 +164,48 @@ describe('global canvas environment (src/test/setup.ts)', () => {
 
     expect(bitmap.width).toBe(33);
     expect(bitmap.height).toBe(21);
+  });
+
+  it('derives createImageBitmap from an HTMLCanvasElement too, not only from an OffscreenCanvas', async () => {
+    // `src/test/setup.ts:236-242` is a second live branch that no other test in the file
+    // reaches. `src/contexts/materialization.ts:178` passes an `HTMLCanvasElement` to this
+    // function, so the branch is a production path rather than dead harness code.
+    const canvas = document.createElement('canvas');
+    canvas.width = 17;
+    canvas.height = 9;
+
+    const bitmap = await createImageBitmap(canvas);
+
+    expect(bitmap.width).toBe(17);
+    expect(bitmap.height).toBe(9);
+    expect(vi.isMockFunction(bitmap.close)).toBe(true);
+  });
+
+  it('answers every unrecognised createImageBitmap source with a fixed 100x100 (MOCK ARTEFACT, not a contract)', async () => {
+    // `src/test/setup.ts:243-247` is the fall-through: any source that is neither an
+    // OffscreenCanvas nor an HTMLCanvasElement gets 100x100 and its own size is never read.
+    // `src/contexts/useLayer.ts:85` and `src/hooks/useApp.ts:29` both call this on an
+    // already-decoded raster — exactly such a source — so an assertion of the form
+    // `expect(bitmap.width).toBe(<real value>)` on that path can be passing because of this
+    // fall-through rather than because the dimensions are right. The value below is pinned so
+    // the fall-through is VISIBLE instead of invisible; it is the stub's answer, not a promise
+    // about production.
+    const decoded = new OffscreenCanvas(4, 4).transferToImageBitmap();
+    const bitmap = await createImageBitmap(decoded);
+
+    // The source is 4x4 and the answer is 100x100: the fall-through discarded the real size.
+    expect(decoded.width).toBe(4);
+    expect(decoded.height).toBe(4);
+    expect(bitmap.width).toBe(100);
+    expect(bitmap.height).toBe(100);
+    expect(vi.isMockFunction(bitmap.close)).toBe(true);
+
+    // The fall-through is idempotent on a second pass, which is precisely why an assertion can
+    // pass for the wrong reason: feeding a 100x100 bitmap back in yields 100x100 whether the
+    // branch read the source or ignored it.
+    const roundTripped = await createImageBitmap(bitmap);
+    expect([roundTripped.width, roundTripped.height]).toEqual([100, 100]);
+    expect(roundTripped).not.toBe(bitmap);
   });
 
   it('exposes the full Path2D segment surface so path building cannot silently no-op', () => {
@@ -332,5 +380,60 @@ describe('shared data fixtures', () => {
 
     expect(tool.tmpCanvas).toBe(tmpCanvas);
     expect(createMockLayer({ id: 'other' }).tmpCanvas).not.toBe(tmpCanvas);
+  });
+});
+
+/**
+ * LAST IN THE FILE, DELIBERATELY.
+ *
+ * Re-evaluating `src/test/setup.ts` to obtain a genuine re-install is the only way to observe
+ * one inside a single test body, but the module also registers its `afterEach` and `beforeEach`
+ * as it evaluates. Those land on the suite that owns the running test and would then fire for
+ * every test after it in this file, giving those tests a second canvas install that the real
+ * harness does not give them — which is the exact "silently different harness" failure this
+ * file exists to prevent. Sitting last, the duplicates are registered when no further test in
+ * the file remains to receive them. Do not move this block up without re-solving that.
+ */
+describe('canvas stub re-installation', () => {
+  it('re-installs the canvas stub after a test destroys it, and cannot be one-shot', async () => {
+    // This scenario used to be two tests: one calling `vi.restoreAllMocks()`, and one asserting
+    // the stub was back "in the following test". A `-t` filter could keep the half with the
+    // assertions and delete the destruction that gave them meaning, and the test still reported
+    // green while proving nothing about re-installation. Both halves are in this body now, so
+    // neither can be filtered away from the other and the two cannot drift apart.
+    //
+    // 1. The state this test was handed. `src/test/setup.ts:361-363` installs the stub from an
+    //    unconditional `beforeEach`, so every test in the repo starts with it no matter what any
+    //    individual test did — and that is what makes the install not one-shot.
+    const installed = HTMLCanvasElement.prototype.getContext;
+    expect(vi.isMockFunction(installed)).toBe(true);
+    const contextBefore = document.createElement('canvas').getContext('2d');
+    expect(contextBefore).not.toBeNull();
+
+    // 2. Destroy it exactly the way a hostile test does.
+    vi.restoreAllMocks();
+
+    // 3. The intermediate state. Without this the re-install below would pass even if the restore
+    //    had never removed anything, so the test would pin an outcome and not the mechanism.
+    expect(vi.isMockFunction(HTMLCanvasElement.prototype.getContext)).toBe(false);
+    expect(HTMLCanvasElement.prototype.getContext).not.toBe(installed);
+
+    // 4. Re-evaluate the harness module itself, so the re-install comes from
+    //    `src/test/setup.ts:353-359` rather than from a copy of the install written in this
+    //    test — a copy would assert only that this file agrees with itself. `vi.resetModules()`
+    //    is what makes the re-import re-execute rather than return the evaluated module.
+    vi.resetModules();
+    await import('../test/setup.ts');
+
+    // 5. A working stub again, and a different mock object — which is only possible if step 2
+    //    really removed the first one.
+    const reinstalled = HTMLCanvasElement.prototype.getContext;
+    expect(vi.isMockFunction(reinstalled)).toBe(true);
+    expect(reinstalled).not.toBe(installed);
+
+    const contextAfter = document.createElement('canvas').getContext('2d');
+    expect(contextAfter).not.toBeNull();
+    expect(contextAfter).not.toBe(contextBefore);
+    expect(() => (contextAfter as unknown as CanvasRenderingContext2D).fillRect(0, 0, 1, 1)).not.toThrow();
   });
 });
