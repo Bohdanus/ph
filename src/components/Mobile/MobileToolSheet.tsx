@@ -65,13 +65,13 @@ export const MobileToolSheet: React.FC<MobileToolSheetProps> = ({ isOpen, onTogg
           // and a `touch-action` set by an ancestor silently wins.
           <div
             id="mobile-tool-options"
-            className="px-4 py-3 max-h-[300px] overflow-x-auto overflow-y-auto touch-pan-x touch-pan-y"
+            className="scrollbar-none px-4 py-3 max-h-[300px] overflow-x-auto overflow-y-auto touch-pan-x touch-pan-y"
           >
             {group && group.tools.length > 1 && (
               <div
                 role="group"
                 aria-label={`${group.label} tools`}
-                className="mb-3 flex gap-1.5 overflow-x-auto overscroll-x-contain touch-pan-x pb-1"
+                className="scrollbar-none mb-3 flex gap-1.5 overflow-x-auto overscroll-x-contain touch-pan-x pb-1"
               >
                 {group.tools.map((tool) => (
                   <button

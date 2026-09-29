@@ -15,11 +15,17 @@ import { createLayerSource } from '../layer-utils.ts';
 // text tool clears `text` and `rect` synchronously on Apply, and `commitDirtyTool`
 // short-circuits on the cleared draft. The layer factory is stubbed so both commit
 // paths can be counted without rasterising anything.
+//
+// The counter is hoisted so `beforeEach` can rewind it. A `let` inside the factory lives
+// in a closure no mock API can reach — `clearAllMocks` clears call history, not a plain
+// variable — so the ids grew monotonically for the whole file and every test's first layer
+// was named after how many tests ran before it.
+const mockLayerId = vi.hoisted(() => ({ counter: 0 }));
+
 vi.mock('../layer-utils.ts', async (importActual) => {
   const actual = await importActual<typeof import('../layer-utils.ts')>();
-  let counter = 0;
   const mockCreateLayerSource = vi.fn((params: { source: unknown }): Layer => ({
-    id: `mock-layer-${++counter}`,
+    id: `mock-layer-${++mockLayerId.counter}`,
     name: 'Mock',
     isBedrock: false,
     tmpCanvas: null,
@@ -114,6 +120,11 @@ function setupSharedDraft() {
 describe('useLayers text commit idempotency boundary', () => {
   beforeEach(() => {
     vi.mocked(createLayerSource).mockClear();
+    // Rewind the id factory so the first layer of every test is `mock-layer-1`. A `let` inside the
+    // factory lives in a closure no mock API can reach, so without this the ids grow monotonically
+    // for the whole file and a test's ids are named after how many tests ran before it. The
+    // exact-id assertion in the fourth test of this describe is what makes the rewind load-bearing.
+    mockLayerId.counter = 0;
   });
 
   it('creates only one layer when Apply fires after commitDirtyTool on the same args', () => {
@@ -214,6 +225,14 @@ describe('useLayers text commit idempotency boundary', () => {
 
     expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(2);
     expect(Object.keys(result.current.store.layers)).toHaveLength(2);
+    // The exact ids, not just the count, and deliberately NOT in the first test of this file: the
+    // counter is 0 there whether or not the per-test rewind runs, so an id pin there is satisfied
+    // identically with and without it. By the fourth test several layers have already been created
+    // above, so without the rewind these ids carry that history and this fails.
+    expect(Object.values(result.current.store.layers).map((layer) => layer.id)).toEqual([
+      'mock-layer-1',
+      'mock-layer-2',
+    ]);
   });
 
   it('repeats the same text verbatim as a new layer, because only the cleared draft suppresses a commit', () => {
@@ -286,6 +305,8 @@ describe('useLayers text commit idempotency boundary', () => {
 describe('useLayers text commit publishes the cleared draft', () => {
   beforeEach(() => {
     vi.mocked(createLayerSource).mockClear();
+    // Same rewind as the suite above, for the same reason.
+    mockLayerId.counter = 0;
   });
 
   it('clears the draft the Apply button reads when commitDirtyTool commits it', () => {

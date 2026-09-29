@@ -7,6 +7,10 @@ export default defineConfig({
     pool: 'vmThreads',
     maxWorkers: 4,
     isolate: true,
+    // Vitest 5 changed the `clearMocks` default to `true`; this suite already depends on that
+    // behaviour, so it is stated here rather than inherited from an unstated version, and it
+    // survives a major bump that flips the default back.
+    clearMocks: true,
     // `include` is left at the Vitest default (`**/*.{test,spec}.?(c|m)[jt]s?(x)`),
     // which also matches the Playwright specs under `e2e/`. Without this exclusion
     // `npm test` would load 21 browser-driven specs into jsdom. The e2e helper unit

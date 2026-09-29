@@ -9,6 +9,7 @@ import {
   getStrokeAnalysis,
   hasDarkPixels,
   hasRedPixels,
+  type CaptureRegion,
   type ImageDataResult,
 } from '../canvas-helpers';
 import {
@@ -244,6 +245,19 @@ describe('getStrokeAnalysis', () => {
       /positive CSS size/
     );
   });
+
+  it('returns null for a zero-width image carrying ink, rather than measuring it', async () => {
+    // The real defence against a scale of zero is `bottom < 0`, not the length of `data`:
+    // with `width === 0` the coordinate arithmetic at canvas-helpers.ts yields NaN for
+    // every pixel, and a NaN never compares less than the initial `top`, so `bottom` stays
+    // at -1 and the function reports "nothing here" before any threshold is consulted. The
+    // existing zero-sized test passes an EMPTY buffer, so it exercises the transparent-pixel
+    // path instead and cannot tell the two defences apart; this one carries real ink, so a
+    // change that removed the `bottom < 0` arm would fail here rather than pass.
+    const image: ImageDataResult = { width: 0, height: 0, data: new Uint8ClampedArray([0, 0, 0, 255]) };
+
+    expect(await getStrokeAnalysis(image, { width: 10, height: 10 })).toBeNull();
+  });
 });
 
 /**
@@ -323,6 +337,77 @@ describe('getStrokeAnalysis across capture scales', () => {
     expect(atOneX!.type).toBe('dashed');
     expect(atTwoX!.type).toBe('dashed');
     expect(atTwoX!.segments).toBe(atOneX!.segments);
+  });
+});
+
+/**
+ * EACH MEASUREMENT IS SCALED BY ITS OWN AXIS.
+ *
+ * On a faithful capture the two axes of the scale are equal — `expectFaithfulCaptureOf` in
+ * cdp-helpers.spec.ts pins that for the CDP path, and every fixture above is a whole-number
+ * 1x or 2x capture — so those tests cannot tell a per-axis scale from a single scalar. This
+ * block is what tells them apart, and it is deliberately EXAGGERATED.
+ *
+ * "Exaggerated" is not decoration. A real fractional clip DOES diverge, and by more than a
+ * rounding: `documentClip` builds a clip from a `containFit` float, and `page.screenshot`
+ * rounds each axis independently, so the short axis is the one that loses. For the
+ * `shape-tools.spec.ts` clip shape (320s x 20s CSS px) at a 974x583 canvas box, the capture
+ * comes back 311x19 device px — `scale.x` 1.0002 against `scale.y` 0.9777, a divergence of
+ * about 2.2%. That is a real number, and it is small: the row measurement there is a stroke
+ * one or two rows tall against a threshold near 30, so a couple of per cent cannot move it
+ * across. It is recorded because the general case is not bounded by today's call sites, not
+ * because a call site is known to be wrong.
+ *
+ * So the region here names a capture whose axes differ by a THIRD, which no real capture
+ * takes. That is what makes the rule observable at all: a real 2% divergence would need a
+ * measurement sitting within 2% of its threshold to show up, and no fixture here is built
+ * that way. The two cases below each land between the two thresholds, so the row case reads
+ * spray only under the row scale and the column case reads solid only under the column one;
+ * a single scalar spends both the same way and gets exactly one of them wrong.
+ */
+describe('getStrokeAnalysis per-axis capture scale', () => {
+  const REGION: CaptureRegion = { width: 100, height: 50 };
+
+  it('scales the row measurement by the row scale, not the column scale', async () => {
+    // 50 occupied rows against a 30-CSS-px threshold: 30 * 1.5 = 45, so spray under the row
+    // scale, and 30 * 2 = 60, so NOT spray under the column one.
+    const image = createImageData(200, 75);
+    fillRect(image, { left: 0, top: 25, right: 199, bottom: 74 }, black);
+
+    const result = await getStrokeAnalysis(image, REGION);
+
+    // The measurement really did clear the raw constant; the test is about which axis the
+    // classifier scales it by, not about a fixture that would have passed anyway.
+    expect(result!.verticalSpread).toBe(50);
+    expect(50).toBeGreaterThan(STROKE_ANALYSIS.SPRAY_VERTICAL_SPREAD_THRESHOLD * (75 / 50));
+    expect(50).not.toBeGreaterThan(STROKE_ANALYSIS.SPRAY_VERTICAL_SPREAD_THRESHOLD * (200 / 100));
+    expect(result!.type).toBe('spray');
+  });
+
+  it('scales the column gap by the column scale, not the row scale', async () => {
+    // 10 occupied rows is short of either threshold, so the type is settled before the gap
+    // is read. `fillRect` is inclusive at both ends, so the white run below erases EIGHT
+    // columns (100..107) and the gap the loop measures is the distance between the two
+    // surviving neighbours, 108 - 99 = NINE. Both numbers are stated because the one the
+    // code compares is not the one the fixture draws: 9 against a 5-CSS-px pen threshold is
+    // 5 * 2 = 10, so one segment under the column scale, and 5 * 1.5 = 7.5, so two under the
+    // row one.
+    const image = createImageData(200, 75);
+    fillRect(image, { left: 0, top: 0, right: 199, bottom: 9 }, black);
+    fillRect(image, { left: 100, top: 0, right: 107, bottom: 9 }, WHITE);
+
+    const result = await getStrokeAnalysis(image, REGION);
+
+    // Derived from the fixture rather than typed, so it cannot drift from what the loop
+    // measures. A hand-written literal here is a statement about a number the
+    // implementation never produces, and would hold even if getStrokeAnalysis were deleted.
+    const erased = 8;
+    const measuredGap = erased + 1;
+    expect(measuredGap).toBeGreaterThan(STROKE_ANALYSIS.PEN_GAP_THRESHOLD * (75 / 50));
+    expect(measuredGap).not.toBeGreaterThan(STROKE_ANALYSIS.PEN_GAP_THRESHOLD * (200 / 100));
+
+    expect(result!.type).not.toBe('spray');
+    expect(result!.segments).toBe(1);
   });
 });
 

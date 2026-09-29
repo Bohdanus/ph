@@ -129,8 +129,14 @@ describe('Shape toolbar', () => {
     // the global HTMLCanvasElement.prototype.getContext spy installed by
     // src/test/setup.ts, which the shape preview needs in order to draw.
     Object.assign(savedArgsPerFigure, structuredClone(PRISTINE_SAVED_ARGS_PER_FIGURE));
+    // `baseToolArgs` is a module-level object the mocked `useCurrentTool` spreads into
+    // `useState` on every mount, so restoring it HERE — not on the line after the
+    // assertion in the test that mutates it — is what makes a red assertion unable to
+    // seed every later render with the wrong tool. It is a plain object, not a mock, so
+    // neither `clearMocks` nor `restoreAllMocks` touches it.
     baseToolArgs.figure = 'rectangle';
     baseToolArgs.lineWidth = 5;
+    (baseToolArgs as { toolName: string }).toolName = 'shape';
     storeState.color = '#000000';
     storeState.backgroundColor = '#ffffff';
     pointerScale.value = 1;
@@ -507,13 +513,14 @@ describe('Shape toolbar', () => {
     it('does not publish anything for args that belong to a different tool (Shape.tsx:32)', () => {
       (baseToolArgs as { toolName: string }).toolName = 'draw';
       storeState.color = '#ff0000';
+      // No inline restore: `afterEach` puts `toolName` back, so this test cannot leave
+      // the module-scoped args naming another tool for the line-cap suite below.
       const view = render(<Shape />);
 
       // The guard is the `args.toolName !== 'shape'` half: a shape toolbar mounted with another
       // tool's args must not overwrite them with the store colours.
       expect(setToolArgsMock).not.toHaveBeenCalled();
       view.unmount();
-      (baseToolArgs as { toolName: string }).toolName = 'shape';
     });
   });
 

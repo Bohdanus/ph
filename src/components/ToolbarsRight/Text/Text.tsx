@@ -1,23 +1,23 @@
-import React, { type ChangeEvent, useEffect, useRef } from 'react';
+import React, { type ChangeEvent, useRef } from 'react';
 import { calculateNewRect } from '../../../util/rect.ts';
 import { useStore } from '../../../contexts/StoreContext.tsx';
 import { useLayers } from '../../../contexts/useLayer.ts';
 import { useCurrentTool } from '../../../contexts/useCurrentTool.tsx';
 import { isTextToolArgs } from '../../../util/typeGuards.ts';
 import FontSelect from './FontSelect.tsx';
-import { PRIMARY_BUTTON, SECONDARY_BUTTON, TOGGLE_BUTTON_ACTIVE, TOGGLE_BUTTON_INACTIVE } from '../buttonStyles.ts';
+import {
+  ICON_BUTTON,
+  PRIMARY_BUTTON,
+  SECONDARY_BUTTON,
+  TOGGLE_BUTTON_ACTIVE,
+  TOGGLE_BUTTON_INACTIVE,
+} from '../buttonStyles.ts';
 
 const Text: React.FC<{}> = () => {
-  const [{ canvasRef, color, textareaRef, totalSize }] = useStore();
+  const [{ canvasRef, textareaRef, totalSize }] = useStore();
   const { createLayerFromTool } = useLayers();
   const { toolArgs, setToolArgs: onChange } = useCurrentTool();
   const appliedArgsRef = useRef<typeof toolArgs | null>(null);
-
-  useEffect(() => {
-    if (isTextToolArgs(toolArgs) && toolArgs.color !== color) {
-      onChange({ ...toolArgs, color });
-    }
-  }, [color, toolArgs, onChange]);
 
   if (!isTextToolArgs(toolArgs)) {
     return null;
@@ -32,6 +32,7 @@ const Text: React.FC<{}> = () => {
     italic = false,
     fontFamily = 'Arial',
     align = 'left',
+    color,
   } = toolArgs;
 
   const handleTextChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
@@ -65,6 +66,18 @@ const Text: React.FC<{}> = () => {
     const alignValue = event.target.value as 'left' | 'center' | 'right';
     const newArgs = { ...toolArgs, align: alignValue };
     onChange(newArgs);
+  };
+
+  /**
+   * The type colour is the tool's OWN setting, edited here, and the store's foreground no longer
+   * writes over it. Photoshop's Type options bar carries this swatch
+   * (https://helpx.adobe.com/photoshop/using/tool-techniques/horizontal-type-tool.html) and the bar
+   * used to mirror the global foreground into `toolArgs.color` on every render instead, so a user
+   * who picked a colour here watched it change under their hands. Colour is not a metric, so the
+   * rect is not recomputed the way the text and font controls recompute it.
+   */
+  const handleColorChange = (event: ChangeEvent<HTMLInputElement>) => {
+    onChange({ ...toolArgs, color: event.target.value });
   };
 
   const toggleBold = () => {
@@ -162,6 +175,13 @@ const Text: React.FC<{}> = () => {
           onChange={handleLineHeightChange}
           className="h-1.5 w-21 cursor-pointer appearance-none rounded-lg bg-gray-200 dark:bg-gray-700"
         />
+      </div>
+
+      <div className="flex flex-col">
+        <label htmlFor="text-color" className="mb-2 text-[10px] font-medium text-gray-700 dark:text-gray-300">
+          Color
+        </label>
+        <input id="text-color" type="color" value={color} onChange={handleColorChange} className={ICON_BUTTON} />
       </div>
 
       <div className="flex flex-col">
