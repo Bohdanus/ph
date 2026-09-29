@@ -974,6 +974,10 @@ export const CURATED = {
     summary:
       'A third curation pass in one session: two more worktrees entered the table, two flags were retracted as their owners committed, and one name left the guard because its worktree was disposed.',
   },
+  'derive-mustnotprune': {
+    summary:
+      'The worktree guard for work that git cannot see, derived from the live worktrees instead of a hand-maintained list: every `mustNotPrune` field deleted, the six hardcoded names replaced by a set computed from git on each run, and a synthetic worktree pinning the rule so it cannot go vacuous when the repository happens to hold none of that shape.',
+  },
   'skill-handoff-cites': {
     summary:
       'Re-deriving the tool-creation skill’s `file:line` citations against the tree, and the handoff entries’ citations into the same files.',
