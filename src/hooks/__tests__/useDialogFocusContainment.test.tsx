@@ -45,8 +45,8 @@ function renderPanel({ closeButton = true, controls }: PanelSpec = {}) {
 }
 
 /** Dispatches a real bubbling keydown from inside the panel, as a keystroke would. */
-function keyDownFrom(panel: HTMLElement, init: { key: string; shiftKey?: boolean }, target: EventTarget = panel) {
-  target.dispatchEvent(new KeyboardEvent('keydown', { key: init.key, shiftKey: init.shiftKey, bubbles: true }));
+function keyDownFrom(panel: HTMLElement, init: { key: string; shiftKey?: boolean }) {
+  panel.dispatchEvent(new KeyboardEvent('keydown', { key: init.key, shiftKey: init.shiftKey, bubbles: true }));
 }
 
 afterEach(() => {

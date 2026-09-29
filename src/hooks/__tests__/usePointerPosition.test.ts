@@ -287,8 +287,14 @@ describe('usePointerPosition', () => {
       // There is no change detection anywhere on that path, so the notify fires on every
       // call — including a second call at the very same coordinates, which is the case a
       // change-detecting implementation would skip. Pinning "it measured" is not the same
-      // as pinning "it notified", and only the second one is the contract a caller
-      // subscribing to `onResize` depends on.
+      // as pinning "it notified", and this pins the second.
+      //
+      // No production caller currently depends on the redundancy — `useRect.ts:117` feeds
+      // `drawMask()`, a pure function of the rect, and `Draw.tsx:24`, `Paint.tsx:54` and
+      // `Shape.tsx:29` call `setBrushScale(scale)`, which React bails on when the value is
+      // unchanged — so this is a pin on observed behaviour, not a required contract. Making
+      // the notify conditional is a legitimate change; it would just have to update this
+      // test in the same commit.
       //
       // Payload, derived from `calculateDimensions` over these fixtures:
       //   container 400x200 at (50, 25), image 100x100
