@@ -14,6 +14,7 @@ import { type CanvasPixelPredicate, waitForCanvasPixels } from './helpers/canvas
 import { openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 const THIN_THICKNESS = '4';
 const WIDE_THICKNESS = '40';
 
@@ -150,7 +151,7 @@ test.describe('Shape tools', () => {
   });
 
   test('the drawn rectangle keeps the drag aspect ratio, and Shift constrains it to a square', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     // The drags are 300x140 and 300x300 in DOCUMENT units, and the contain fit is not
     // square, so a screen-space ratio would not survive the scale. The two shapes sit apart
     // so each clip holds exactly one of them.
@@ -182,7 +183,7 @@ test.describe('Shape tools', () => {
   });
 
   test('a thicker tip lays down a proportionally thicker band', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await selectShape(page, 'Line Tool');
     const thin: Rect = { from: { x: 40, y: 120 }, to: { x: 340, y: 120 } };
     const wide: Rect = { from: { x: 40, y: 420 }, to: { x: 340, y: 420 } };
@@ -202,14 +203,18 @@ test.describe('Shape tools', () => {
   });
 
   test('the Dash toggle turns a solid line into segments', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await selectShape(page, 'Line Tool');
     const solid: Rect = { from: { x: 40, y: 120 }, to: { x: 340, y: 120 } };
     const dashed: Rect = { from: { x: 40, y: 420 }, to: { x: 340, y: 420 } };
 
     await dragShape(page, solid, 'the solid line');
     const solidClip = documentClip(await canvasBox(page), solid, 10);
-    const solidAnalysis = await getStrokeAnalysis(await page.screenshot({ clip: solidClip }));
+    // The clip is the region the capture was taken over, so the classifier can measure the
+    // capture's scale from it. `page.screenshot` defaults to `scale: 'device'`, which is 2x
+    // on a HiDPI host, and a threshold authored in CSS pixels would otherwise be compared
+    // against twice as many columns.
+    const solidAnalysis = await getStrokeAnalysis(await page.screenshot({ clip: solidClip }), solidClip);
     expect(solidAnalysis, 'the solid line has to be analysable').not.toBeNull();
     expect(solidAnalysis!.type, 'an undashed line is one segment').toBe('solid');
     expect(solidAnalysis!.segments).toBe(1);
@@ -218,7 +223,7 @@ test.describe('Shape tools', () => {
     await expect(dashToggle(page)).toBeChecked();
     await dragShape(page, dashed, 'the dashed line');
     const dashedClip = documentClip(await canvasBox(page), dashed, 10);
-    const dashedAnalysis = await getStrokeAnalysis(await page.screenshot({ clip: dashedClip }));
+    const dashedAnalysis = await getStrokeAnalysis(await page.screenshot({ clip: dashedClip }), dashedClip);
     expect(dashedAnalysis, 'the dashed line has to be analysable').not.toBeNull();
     // The dash and gap seed at 10/10, so a 300-unit drag is around fifteen marks.
     expect(dashedAnalysis!.type, 'the gaps are what make it dashed').toBe('dashed');
@@ -226,7 +231,7 @@ test.describe('Shape tools', () => {
   });
 
   test('the Filled checkbox paints the interior, and leaving it alone does not', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     // A filled shape paints with the BACKGROUND colour, so the interior is only observable
     // once the background is something other than the white the canvas already is.
     await page.getByTestId('background-color-input').fill(BLUE);
@@ -265,7 +270,7 @@ test.describe('Shape tools', () => {
   });
 
   test('an oval is inscribed in its drag, so the drag corner is outside the shape', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     // Both figures are drawn from the SAME shape of drag, so the only thing deciding whether
     // the corner is painted is what the geometry does with it: a rectangle's corner sits on
     // its own stroke, an oval's corner is outside the curve. They are drawn in different

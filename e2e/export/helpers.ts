@@ -1,8 +1,19 @@
 import { type Download, expect, type Page, type TestInfo } from '@playwright/test';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { documentToCanvasOffset, drawLine, getWorkspaceCanvas, waitForCanvasRedraw } from '../helpers/canvas-helpers';
+import {
+  DEFAULT_DOCUMENT_HEIGHT,
+  DEFAULT_DOCUMENT_WIDTH,
+  documentToCanvasOffset,
+  drawLine,
+  getWorkspaceCanvas,
+  inkHeight,
+  inkWidth,
+  measureInk,
+  waitForCanvasRedraw,
+} from '../helpers/canvas-helpers';
 import { clickToolButton } from '../helpers/toolbar-helpers';
+import { DEFAULT_TEST_TIMEOUT_MS } from '../helpers/timeouts';
 
 export interface ExportFormat {
   label: string;
@@ -44,8 +55,23 @@ export const DOWNLOAD_TIMEOUT_MS = 30_000;
  * Per-test budget covering the full draw, encode, download and pixel
  * comparison sequence, which is only bound by encoder speed rather than by
  * any single awaited step.
+ *
+ * An alias of `DEFAULT_TEST_TIMEOUT_MS`, not a separate budget: this is the one
+ * sequence in the suite that was a routine length all along, and it used to be the
+ * ONLY named per-test timeout, which is what left the other 51 call sites inlined.
+ * The export specs keep importing it under this name; the value and its rationale now
+ * live with the rest in `helpers/timeouts.ts`.
  */
-export const INTEGRATION_TEST_TIMEOUT_MS = 60_000;
+export const INTEGRATION_TEST_TIMEOUT_MS = DEFAULT_TEST_TIMEOUT_MS;
+
+/**
+ * Budget for photopea.com to raise its consent modal, load its module graph and paint an
+ * editor canvas. A per-step wait on a page this repository does not control, so it is
+ * named here with `DOWNLOAD_TIMEOUT_MS` rather than in `helpers/timeouts.ts`, which holds
+ * the per-TEST budgets: this one bounds a single wait, and the test that contains it has
+ * its own, longer, budget in `THIRD_PARTY_PAGE_TEST_TIMEOUT_MS`.
+ */
+export const PHOTOPEA_READY_TIMEOUT_MS = 60_000;
 
 export const exportFormats: ExportFormat[] = [
   { label: 'PNG', extension: '.png', comparePixels: true },
@@ -115,11 +141,172 @@ export function mimeType(extension: string | null | undefined): string {
 export const EXPORT_LINE_START = { x: 123.203285, y: 78.234086 };
 export const EXPORT_LINE_END = { x: 287.474333, y: 78.234086 };
 
+/**
+ * The line's midpoint and span in document pixels, derived rather than retyped.
+ *
+ * `EXPORT_LINE_START` and `EXPORT_LINE_END` are the only place the two endpoints are
+ * written down; everything about the mark's expected shape follows from them, so a change
+ * to either endpoint cannot leave a second, stale copy of the same numbers behind.
+ */
+export const EXPORT_LINE_MIDPOINT_X = (EXPORT_LINE_START.x + EXPORT_LINE_END.x) / 2;
+export const EXPORT_LINE_SPAN_X = EXPORT_LINE_END.x - EXPORT_LINE_START.x;
+
+/**
+ * The drawn tool's default stroke width, in document pixels.
+ *
+ * Part of the geometry contract rather than a rendering detail: with round caps the ink
+ * reaches one half-width past each endpoint, so the ink's column span is
+ * `EXPORT_LINE_SPAN_X + EXPORT_STROKE_WIDTH`. A fixture that drew a different width would
+ * move the mark's extent and has to be told, not inferred.
+ */
+export const EXPORT_STROKE_WIDTH = 10;
+
+/** The ink's expected column span: the requested span plus one half-width of cap at each end. */
+export const EXPECTED_INK_WIDTH = EXPORT_LINE_SPAN_X + EXPORT_STROKE_WIDTH;
+
+/**
+ * How far, in document pixels, the decoded export's ink may sit from where the fixture asked.
+ *
+ * Every number below is a measured margin over a measured worst case, not a round guess, and
+ * each is recorded against the quantity it guards:
+ *
+ * - `VERTICAL` guards the row the export sits on. The pixel diff already fails a vertical
+ *   shift of 0.012 document pixels, so this is not the binding vertical oracle; it is here
+ *   because the pixel diff counts PIXELS and a mark that moved vertically while changing
+ *   shape can keep the count down. Measured across all seven committed baselines, the
+ *   row centroid lands 0.0086 document pixels from `EXPORT_LINE_START.y` on the lossless PNG
+ *   the spec compares and 0.034 on the 8-bit-palette GIF, so 0.05 is 1.5x the worst case.
+ * - `HORIZONTAL` guards the column, and it is the fix. A 1.0-document-pixel horizontal
+ *   shift produced 88 diff pixels and PASSED the 100-pixel budget; this makes it fail. The
+ *   budget is larger than `VERTICAL` because the ink's centroid does not sit on the
+ *   geometric midpoint: the round caps and the rasteriser's endpoint coverage put it 0.12 to
+ *   0.17 document pixels right of centre on every committed baseline. The offset is itself
+ *   pinned, by the unit test that anchors this fixture's endpoints to the committed
+ *   `drawing.png.png`, so this number is a transfer budget and not a fudge.
+ * - `SPAN` guards the mark's length. The ink bounds are whole pixels, so the achievable
+ *   precision is one pixel and 0.271 is the measured error.
+ */
+export const GEOMETRY_TOLERANCE_VERTICAL = 0.05;
+export const GEOMETRY_TOLERANCE_HORIZONTAL = 0.25;
+export const GEOMETRY_TOLERANCE_SPAN = 1;
+
+/**
+ * How far, in document pixels, this run's decoded export may sit from the committed
+ * baseline's decoded export.
+ *
+ * Tighter than either tolerance above, and for a different reason: it has no cap-bias term
+ * and no encoder-spread term, because both sides are the same format decoded the same way.
+ * What is left is run-to-run rasteriser and encoder noise. This is the assertion that turns
+ * the pixel diff's 1.2-document-pixel horizontal blind spot into a 0.05 one.
+ */
+export const GEOMETRY_TOLERANCE_BASELINE = 0.05;
+
+export interface ExportGeometry {
+  centroidX: number;
+  centroidY: number;
+  inkWidth: number;
+  inkHeight: number;
+  ink: number;
+  spreadX: number;
+  spreadY: number;
+}
+
+/**
+ * Decode an exported image and report where its ink is, in DOCUMENT pixels.
+ *
+ * The export is the flattened document at the document's own resolution — an 800x600
+ * document exports as an 800x600 image — so image pixels ARE document pixels and no
+ * contain-fit inversion is needed. That is worth stating because the tempting alternative is
+ * to convert the export back through the fit, and doing so would be a second, unverified
+ * mapping layered on top of the one under test.
+ */
+export async function readExportGeometry(image: Buffer): Promise<ExportGeometry> {
+  const profile = await measureInk(image);
+  if (!profile) {
+    throw new Error('The exported image carries no ink: the document under test is blank');
+  }
+  expect(
+    profile.imageWidth,
+    'the export is the document at the document resolution, so image pixels are document pixels'
+  ).toBe(DEFAULT_DOCUMENT_WIDTH);
+  expect(profile.imageHeight).toBe(DEFAULT_DOCUMENT_HEIGHT);
+  return {
+    centroidX: profile.centroidX,
+    centroidY: profile.centroidY,
+    inkWidth: inkWidth(profile),
+    inkHeight: inkHeight(profile),
+    ink: profile.ink,
+    spreadX: profile.spreadX,
+    spreadY: profile.spreadY,
+  };
+}
+
+/**
+ * Assert that an exported image's ink is where `EXPORT_LINE_*` said it would be, and that
+ * it has not drifted from the committed baseline that encodes the same claim.
+ *
+ * IN ADDITION TO the pixel diff, not instead of it. The two guard different failures: the
+ * pixel diff catches any change in the exported image at all, and this catches the specific
+ * class the pixel diff is blind to on one axis — a mark that moved sideways, or resized,
+ * or vanished, without moving enough pixels to exhaust the budget.
+ */
+export async function assertExportGeometry(
+  exported: Buffer,
+  baseline: Buffer,
+  label: string
+): Promise<{ actual: ExportGeometry; baseline: ExportGeometry }> {
+  const actual = await readExportGeometry(exported);
+  const expected = await readExportGeometry(baseline);
+
+  const failures: string[] = [];
+  const check = (name: string, actualValue: number, expectedValue: number, tolerance: number) => {
+    const delta = Math.abs(actualValue - expectedValue);
+    if (delta > tolerance) {
+      failures.push(`${name}: ${actualValue.toFixed(4)} vs ${expectedValue.toFixed(4)} (off by ${delta.toFixed(4)})`);
+    }
+  };
+
+  // Absolute: the document points the fixture asked for, on BOTH axes.
+  check('ink centroid row vs EXPORT_LINE_START.y', actual.centroidY, EXPORT_LINE_START.y, GEOMETRY_TOLERANCE_VERTICAL);
+  check(
+    'ink centroid column vs the requested midpoint',
+    actual.centroidX,
+    EXPORT_LINE_MIDPOINT_X,
+    GEOMETRY_TOLERANCE_HORIZONTAL
+  );
+  check(
+    'ink column span vs the requested span plus caps',
+    actual.inkWidth,
+    EXPECTED_INK_WIDTH,
+    GEOMETRY_TOLERANCE_SPAN
+  );
+
+  // Relative: this run against the artifact that already encodes the same claim, on BOTH
+  // axes, with no cap bias and no cross-format spread in the budget.
+  check(
+    'ink centroid row vs the committed baseline',
+    actual.centroidY,
+    expected.centroidY,
+    GEOMETRY_TOLERANCE_BASELINE
+  );
+  check(
+    'ink centroid column vs the committed baseline',
+    actual.centroidX,
+    expected.centroidX,
+    GEOMETRY_TOLERANCE_BASELINE
+  );
+  check('ink column span vs the committed baseline', actual.inkWidth, expected.inkWidth, GEOMETRY_TOLERANCE_BASELINE);
+
+  expect(failures, `Export geometry mismatch for ${label}`).toEqual([]);
+  return { actual, baseline: expected };
+}
+
 export async function setupExportTest(
   page: Page,
   testInfo: TestInfo
 ): Promise<{
   box: { x: number; y: number; width: number; height: number };
+  documentSize: { width: number; height: number };
   sourceDataUrl: string;
   downloadDirectory: string;
 }> {
@@ -133,12 +320,23 @@ export async function setupExportTest(
   const box = await canvas.boundingBox();
   if (!box) throw new Error('Canvas not found');
 
+  // The document size, READ rather than assumed. `documentToCanvasOffset` used to divide by
+  // a hardcoded 800x600, so a document opened at any other size would have been drawn
+  // somewhere the app never looks and the export would silently not be the line the
+  // constants describe. The backing store carries the truth (it is the document's own
+  // resolution, which is also why the exported image is 1:1 with document pixels).
+  const backingStore = await canvas.evaluate((element) => {
+    const node = element as HTMLCanvasElement;
+    return { width: node.width, height: node.height };
+  });
+  const documentSize = { width: backingStore.width, height: backingStore.height };
+
   // The line is specified in document coordinates and mapped into this canvas, so the
   // document it marks — and therefore the exported image — is the same whatever the shell
   // does with the space around it. See `documentToCanvasOffset` for why the box-relative
   // form could not be used here.
-  const start = documentToCanvasOffset(box, EXPORT_LINE_START.x, EXPORT_LINE_START.y);
-  const end = documentToCanvasOffset(box, EXPORT_LINE_END.x, EXPORT_LINE_END.y);
+  const start = documentToCanvasOffset(box, EXPORT_LINE_START.x, EXPORT_LINE_START.y, documentSize);
+  const end = documentToCanvasOffset(box, EXPORT_LINE_END.x, EXPORT_LINE_END.y, documentSize);
 
   await clickToolButton(page, 'draw');
   await drawLine(page, box, start.x, start.y, end.x, end.y);
@@ -164,13 +362,30 @@ export async function setupExportTest(
 
   const sourceDataUrl = await canvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL('image/png'));
 
-  return { box, sourceDataUrl, downloadDirectory };
+  return { box, documentSize, sourceDataUrl, downloadDirectory };
 }
 
 /** Opens the File menu and clicks Save, leaving the Save File As... dialog open. */
 export async function openSaveDialog(page: Page): Promise<void> {
   await page.getByTestId('header-file-menu-button').click();
   await page.getByTestId('header-file-save-button').click();
+}
+
+/**
+ * Asserts the save dialog has unmounted.
+ *
+ * The locator is the dialog's testid, never its title. The title is an implicit
+ * `<h3>`, so `getByRole('heading', { name: 'Save File As...' })` matches the dialog
+ * only while that element is both a heading and spelled exactly this. Render the
+ * title as a `<div>`, or reword it to "Save As…", and the locator matches nothing —
+ * `toHaveCount(0)` then passes forever with the dialog still on screen, and the
+ * export flow would never notice. A testid is a contract this file is asserting on;
+ * a heading's accessible name is a rendering decision somebody can make freely.
+ *
+ * `e2e/document-dialogs.spec.ts` asserts the same thing the same way.
+ */
+async function expectSaveDialogClosed(page: Page): Promise<void> {
+  await expect(page.getByTestId('save-dialog')).toHaveCount(0);
 }
 
 /** Fills the filename and selects `formatLabel` in an already-open save dialog. */
@@ -232,7 +447,7 @@ export async function exportAndVerify(
 
   const target = path.join(downloadDirectory, path.basename(download.suggestedFilename()));
   await download.saveAs(target);
-  await expect(page.getByRole('heading', { name: 'Save File As...' })).toHaveCount(0);
+  await expectSaveDialogClosed(page);
 
   const file = await readFile(target);
   expect(file.byteLength, `${format.label} file should not be empty`).toBeGreaterThan(100);
@@ -342,6 +557,10 @@ export async function exportIcoAndVerify(
   const iconDownload = await submitSaveDialogForDownload(page, icoFormat);
   const iconTarget = path.join(downloadDirectory, path.basename(iconDownload.suggestedFilename()));
   await iconDownload.saveAs(iconTarget);
+  // `exportAndVerify` proves the dialog unmounted before it compares pixels, and this
+  // function does the same job for the ICO path, so the download alone must not be
+  // taken as proof that the save completed and the dialog went with it.
+  await expectSaveDialogClosed(page);
 
   const iconFile = await readFile(iconTarget);
   expect(iconFile.byteLength, 'ICO file should not be empty').toBeGreaterThan(100);
@@ -399,7 +618,7 @@ export async function waitForPhotopeaReady(page: Page): Promise<void> {
       return Array.from(canvases).some((c) => c.width > 100 && c.height > 100);
     },
     undefined,
-    { timeout: 60_000 }
+    { timeout: PHOTOPEA_READY_TIMEOUT_MS }
   );
 
   // Wait for internal API (best effort)
@@ -417,19 +636,95 @@ export async function waitForPhotopeaReady(page: Page): Promise<void> {
     });
 }
 
+/** How long the uploaded document is given to appear in the Photopea editor. */
+const PHOTOPEA_DOCUMENT_TIMEOUT_MS = 30_000;
+
+/**
+ * The document size recorded in a PSD's own header, or `null` when the bytes are not
+ * a PSD. The offsets are the Adobe format's: a 4-byte `8BPS` signature, a 2-byte
+ * version, six reserved bytes, a 2-byte channel count, then height and width as
+ * big-endian uint32. `src/contexts/__tests__/psd-utils.stub.test.ts` builds its
+ * fixtures the same way.
+ */
+function readPsdDocumentSize(bytes: Uint8Array): { width: number; height: number } | null {
+  if (bytes.byteLength < 22) return null;
+  const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (header.getUint32(0) !== 0x38425053) return null; // '8BPS'
+  return { width: header.getUint32(18), height: header.getUint32(14) };
+}
+
+/**
+ * Opens `psdPath` in Photopea and proves the document on screen is that file.
+ *
+ * ## Why the oracle is not `page.locator('body')`
+ *
+ * photopea.com is a third-party page, not ours. `'drawing'` is a common substring
+ * there — menu chrome, an advertisement, a file name in a recent-files list — so a
+ * whole-page substring match passes with nothing loaded at all, and it would go on
+ * passing if the upload silently did nothing. Two properties of the uploaded file
+ * are asserted instead, and neither is reachable without the file having opened:
+ *
+ * 1. an element whose **entire** text is the document name — an exact, whole-element
+ *    match, so a label that merely contains the name cannot satisfy it. The name is
+ *    derived from the path rather than from the name the export dialog was filled
+ *    with, so a renamed export fails loudly instead of verifying a file nobody opened;
+ * 2. a canvas whose **backing store is exactly the width and height in the PSD
+ *    header**, read from the file this function was handed. The expected size follows
+ *    the document instead of being hard-coded here, and the same query style is the
+ *    one `waitForPhotopeaReady` already relies on.
+ *
+ * The file input is asserted to be **unique**. `.first()` was removed from that
+ * locator: it caps the match set at one element, so `toHaveCount(1)` on the result
+ * could only ever distinguish _zero_ from _one_, which is the opposite of the point.
+ *
+ * ## Why the PSD test in `photopea.spec.ts` is skipped
+ *
+ * Photopea loads its consent modal asynchronously *after* "Start using Photopea" and
+ * before the editor is ready. The timing is non-deterministic — sometimes immediate,
+ * sometimes five to ten seconds — and the file input is not interactable while the
+ * modal is present, so the upload cannot be driven from the test side.
+ *
+ * Already tried and failed: a "Do not consent" button (sometimes present, sometimes
+ * not), "Consent"/"Accept all" buttons (the modal arrives too late for them), several
+ * wait strategies (`waitForSelector`, `waitForFunction`, polling), and driving
+ * Photopea's iframe API directly, which runs into cross-origin restrictions and
+ * Photopea's own initialisation sequence.
+ *
+ * Re-enable it by implementing one of the following in this function. The first is
+ * the one that is now open: **`ag-psd@^31.0.2` is a root dependency of this
+ * repository** (`package.json`), so the exported PSD can be read back and asserted
+ * locally — dimensions, layer count, layer names — with no browser and no third party
+ * at all. Earlier notes on this skip rested on there being no PSD library available;
+ * that premise is no longer true. The remaining options are the Photopea API directly
+ * once it stabilises, robust consent handling with retries, or a browser context with
+ * pre-accepted cookies.
+ */
 export async function verifyPsdInPhotopea(page: Page, psdPath: string): Promise<void> {
+  const documentSize = readPsdDocumentSize(await readFile(psdPath));
+  if (!documentSize) {
+    throw new Error(`Not a PSD: ${psdPath}`);
+  }
+
   await page.goto('https://www.photopea.com/', { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await page.getByRole('button', { name: 'Start using Photopea' }).first().click();
 
   await waitForPhotopeaReady(page);
 
-  const input = page.locator('input[type="file"]').first();
+  const input = page.locator('input[type="file"]');
   await expect(input).toHaveCount(1);
   await input.setInputFiles(psdPath);
-  // The uploaded document is named after the file, so the expectation is derived from
-  // the path this function was given rather than from the filename the export dialog
-  // happens to be filled with — a renamed export then fails loudly instead of
-  // verifying a file that was never opened.
+
   const expectedDocumentName = path.basename(psdPath, path.extname(psdPath));
-  await expect(page.locator('body')).toContainText(expectedDocumentName, { timeout: 30_000 });
+  await expect(page.getByText(expectedDocumentName, { exact: true })).not.toHaveCount(0, {
+    timeout: PHOTOPEA_DOCUMENT_TIMEOUT_MS,
+  });
+
+  await page.waitForFunction(
+    ({ width, height }: { width: number; height: number }) =>
+      Array.from(document.querySelectorAll('canvas')).some(
+        (canvas) => canvas.width === width && canvas.height === height
+      ),
+    documentSize,
+    { timeout: PHOTOPEA_DOCUMENT_TIMEOUT_MS }
+  );
 }

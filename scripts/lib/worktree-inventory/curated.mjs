@@ -54,6 +54,32 @@ export const CURATED = {
     summary:
       'One-commit board fix: a file named by an open issue now counts as held, so two agents cannot edit the same file.',
   },
+  /* ------------------------------------------------- unit-test review 2026-09-28 */
+  'test-review-vacuous': {
+    summary:
+      'Unit tests that could not fail: zero-assertion tests in useRect and Transform, a type-only test in layer-presentation, a status-union tautology in StoreContext.durable-boundary, an invented-key test in ToolbarPlaceholder, and a title that promised a name assertion LayersTab.store never made. The four empty tests are deleted and the rest now assert production behaviour.',
+    note: 'The branch that removed tests that asserted nothing added three assertions that also asserted nothing, which its own review caught; those were then made falsifiable. Every strengthening was proven by breaking the expected value and pasting the red output.',
+  },
+  'test-review-harness': {
+    summary:
+      'A guard for the four AGENTS.md test traps — one setup file, e2e/** out of the root project, e2e/** out of app coverage, and scripts/**/*.test.mjs on the vmThreads pool — none of which any test enforced. harness-integrity.test.ts had no filesystem access at all, so editing vitest.config.ts failed nothing in the repo.',
+    note: 'harness-integrity.test.ts itself shipped three expect() calls with no matcher chained, so the guard written to catch dead assertions had three; a review found them by AST scan and by breaking the config, and they are now asserted. `environment: jsdom` cannot be asserted from inside the root project because breaking it stops the file loading — the omission is a real limit, not an oversight.',
+  },
+  'test-review-leaks': {
+    summary:
+      'Test-isolation leaks: module-scope state restored on the line after the assertion rather than in a hook, global spies that outlived a failing assertion, jsdom prototype accessors deleted instead of restored, a shared documentElement classList, and a counter inside a vi.mock factory. Also the missing drawImage geometry assertion in clipboard, and an explicit clearMocks in vitest.config.ts.',
+    note: 'The suite already depended on Vitest 5 defaulting clearMocks to true — 10 tests fail without it — but vitest.config.ts never said so, and the ~40 vi.clearAllMocks() call sites in the repo were no-ops. Stating the default makes the convention true by declaration rather than by an unstated framework version.',
+  },
+  'test-review-titles': {
+    summary:
+      'Tests whose title stated the opposite of their assertion: a reconcile test named "does not reconcile", three document-frame titles asserting the opposite of their bodies, and six durable-append mismatch cases collapsed to toBeTruthy(). Also a hollow materialization test, an unbounded release assertion, and the untested RightPanelVisibility default context.',
+    note: 'The old toBeTruthy() had hidden a real gap: the "a foreign id" case was never a foreign id, so the id guard at history-append.ts:483 had zero coverage because the schema-version guard fired first. Fixing the fixture was what exposed the guard.',
+  },
+  'test-review-parser': {
+    summary:
+      "Regression tests for the handoff importer's end-anchored DEAD_HEADING, which main already landed: the separator forms, the prose-substring-is-live direction, trailing punctuation after a marker, and the inline **Item N** marker case.",
+    note: "main fixed this defect independently in eba42f8 while this branch was in review, so only the additive test coverage landed — main's own two tests cover the §70 shape and nothing else. The letter-suffix half (`## 15a.` producing no item, and a suffixed retirement retiring its PARENT) was reverted as half-finished and is filed in HANDOFF.md instead: it introduces an origin shape that collides with the board's slug namespace and leaves an unguarded /#(\\d+)$/ in the test.",
+  },
   'board-signal': {
     summary:
       'Two-commit board improvement: `ready` reports priority and the files at issue, and locking moves from a column into an object.',
@@ -655,9 +681,29 @@ export const CURATED = {
       'Reads every agent transcript in a 30-hour window and records what each one actually delivered, so the inventory answers whether work is finished instead of inferring it from turn shape.',
   },
   'fix-e2e-findings': {
+    // The SECOND worktree to land on this directory name, and the second time a
+    // curated entry outlived the worktree it described. The first entry here said
+    // `landed: true` about a worktree that moved 33 e2e findings into the ledger
+    // and was then removed; its branch is gone, so the claim was untestable. This
+    // worktree took the same name, the entry attached to it, and the contradiction
+    // test correctly reported that a live, unlanded branch was not on main.
+    //
+    // The directory name is the identity the generator uses, so a recycled name
+    // silently re-points an entry at unrelated work. Renaming the worktree would
+    // have hidden it; the test is what made the collision visible, which is the
+    // only reason it is worth keeping.
+    //
+    // So: this entry is rewritten to describe the work actually in this worktree,
+    // and `landed` is not claimed until the branch really is an ancestor of main.
     summary:
-      'Moves e2e findings off their original branches and onto the documents, so the defects are recorded where an agent will read them.',
-    note: 'This said `landed: true`; it has since taken more commits and holds uncommitted work, so the claim is retracted rather than left to contradict git.',
+      'Implements the transferred e2e findings: the DPI-relative stroke thresholds, the baseline re-record mode, the assertions that could not fail, and the pins that resisted their own fix.',
+    issues: [
+      {
+        ref: 'e2e/OPEN_PROBLEMS.md#transferred-findings--external-review-of-the-pre-migration-tree',
+        title:
+          'the 33 findings transferred in 4d47904: 31 fixed and deleted from the ledger, 2 re-recorded and still open',
+      },
+    ],
   },
   'handoff-citation-rotation': {
     summary:

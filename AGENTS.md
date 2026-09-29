@@ -356,6 +356,14 @@ Five traps that cost real debugging time:
 - **A worktree on an older commit blocks with a specific message, not a mystery one.** Its `.husky/pre-commit` still sources husky's generated preamble, which only an install in _that_ worktree ever created. The dispatcher names the cause; bring the worktree up to date, or `git config --unset core.hooksPath`. It blocks rather than skipping on purpose: a gate that cannot run must not let a commit through.
 - **`node_modules` is empty or missing in most worktrees.** Node walks up to the parent checkout, so `tsc` and `vitest` mostly work anyway — which is exactly what makes it misleading. Vite does **not** walk up: it serves only what `server.fs.allow` permits, so fonts, images and AVIF assets from the ancestor checkout 404 in a worktree and work in the root checkout. Run `npm ci` there before debugging an asset that will not load.
 - **Every worktree's dev server wants :5173.** Locally `reuseExistingServer` is on, so `test:e2e` can attach to a server another worktree started and then test _that_ checkout. Use `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` in a worktree. "My change did nothing" in e2e is this, not a cache.
+- **An interrupted merge can leave `AUTO_MERGE` and `MERGE_MSG` with no `MERGE_HEAD`, and
+  `git commit` then lands a single-parent commit that reads as a resolution.** Observed in a
+  worktree mid-rebase: 24 unmerged index stages, no `MERGE_HEAD`, so the next `git commit`
+  would have produced a commit with one parent and lost the other forever — and it would have
+  looked correct in `git log`. After ANY interrupted or abandoned merge, run
+  `git rev-parse -q --verify MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before
+  committing. The first says whether a merge is still open; the second says whether the commit
+  you are about to trust is the one you think it is.
 - **The main worktree is not stable while you work.** Other sessions commit into it concurrently. Re-read `git status` / `git diff` before staging, and stage only your own paths.
 
 ## WORKTREES.json: the inventory of every worktree
@@ -665,21 +673,20 @@ than only reporting that something changed.
 
 Two hooks, each a one-line wrapper over a `package.json` script, so the hook and the command a developer or CI can run by hand cannot drift:
 
-| hook                | script        | runs                                                                              |
-| ------------------- | ------------- | --------------------------------------------------------------------------------- |
-| `.husky/pre-commit` | `gate:commit` | `lint-staged --fail-on-changes --no-stash`, then `gate:verify` (`tsc` -> `build`) |
-| `.husky/pre-push`   | `gate:push`   | `npm run test` — the full app suite                                               |
-
-On the default headless e2e run **no test fails**. That is the whole contract, and it
-is a contract about the number of _failures_, not about any particular total: an
-earlier version of this line carried "194 pass, 2 skipped (196 total), measured at
-`f7757cf`" and it was already ~40 declarations stale within the day, so the count is
-gone rather than refreshed. A run that reports any failure is a defect or an
-infrastructure failure, never a known-failing test. Note what a failure of the second
-kind looks like: the Vite dev server dying mid-run turns every subsequent spec into
-`ERR_CONNECTION_REFUSED` and reports a wall of red that is not one failure but zero.
-Re-run on a fresh `PLAYWRIGHT_PORT` before believing a large red count.
-
+On the default headless e2e run **no test fails**, and two are `test.skip` by
+declaration because they need an external service or a manual gesture. That is
+the whole contract, and it is a contract about the number of _failures_, not
+about any particular total: an earlier version of this line carried "194 pass,
+2 skipped (196 total), measured at `f7757cf`" and it was already ~40
+declarations stale within the day, so the count is gone rather than refreshed.
+A run that reports any failure is a defect or an infrastructure failure, never a
+known-failing test. If you need a number, produce it rather than reading one
+here: `ls e2e/*.spec.ts e2e/export/*.spec.ts e2e/helpers/*.spec.ts | wc -l` is
+the number of spec files Playwright collects, and `grep -c 'test('` over the
+same set is the number of cases. Note what a failure of the second kind looks
+like: the Vite dev server dying mid-run turns every subsequent spec into
+`ERR_CONNECTION_REFUSED` and reports a wall of red that is not one failure but
+zero. Re-run on a fresh `PLAYWRIGHT_PORT` before believing a large red count.
 Three defect groups used to fail here and have since been fixed in this repository —
 the CDP capture-size assertions, the keyboard flyout race, and the `levels.spec.ts`
 canvas lookup. Each explains a shape the suite must not drift back into, and that
@@ -736,7 +743,17 @@ It is worth knowing for what it is good: cost tracks blast radius, and so does r
 
 - Read `e2e/OPEN_PROBLEMS.md` first. A new failure is a new defect.
 - A pin/`expected-fail` is a tripwire for broken behavior; remove it in the same change that fixes the defect.
-- Visual baselines re-record only with `--update-snapshots`; green means pixels matched.
+- Visual baselines re-record only with `npm run test:e2e:update-baselines`, which runs
+  `playwright test e2e/export/visual-regression.spec.ts --update-snapshots=all`. The `=all` is
+  load-bearing: Playwright declares the flag with `preset: 'changed'`, so a bare
+  `--update-snapshots` resolves to `'changed'`, and `'changed'` is inert against a spec that
+  reads its baseline with `readFile` and compares with `compareScreenshots`. Green means pixels
+  matched.
+- The 100-pixel budget in `visual-regression.spec.ts` is a tripwire, not a tolerance. Do not
+  widen `threshold` or `maxDiffPixels` to make a red go green — the argument for the numbers and
+  for NOT pinning a Chrome version in CI is written out at that call site.
+- `npm run test:e2e:clean` deletes the per-test output directories under `test-results/` and
+  keeps `test-results/results.json`, so a run's machine-readable result survives it.
 - Read failures from `test-results/`; `trace.zip` needs a window, so ask the operator.
 
 ## Handoff documents
@@ -757,6 +774,13 @@ It is worth knowing for what it is good: cost tracks blast radius, and so does r
 - **Never rewrite an open problem as closed.** Keep unverified work as the exact remaining verification; keep only test tripwires after a fix.
 
 ## Architecture status
+
+`PaintToolName` is `'brush' | 'pencil'` and that narrowing is load-bearing, not tidiness. A
+tool that SUBSTITUTES pixels cannot share a processor, an args type or an options bar with one
+that STAMPS them: sharing the union is exactly what let a forced `'spray'` `penType` masquerade
+as a tool setting, and a tool that has left the paint panel must not be widened back into it
+to accommodate a new bar. The corollary for persistence is `HANDOFF.md` 70 — a group that
+persists one key may not absorb a tool that has more than one.
 
 `HistoryItem[]` is the **PRODUCTION REPLAY AUTHORITY**: history, `history-replay.ts`, runtime `Layer`s, and export. The durable document is shadow-only. Re-read code and plans before crossing the boundary. **DO NOT start single-writer cutover while `saveLayerCanvas()` promotes cached canvases outside reducer publication.**
 
