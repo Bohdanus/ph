@@ -715,8 +715,11 @@ be re-examined on its own terms rather than restored by making the renderer read
 
 **Reproduced unchanged on 2026-09-29**, by run `2026-09-29T22-33-27-196Z-21344` on
 `feat/history-remove-append`: `334 passed, 3 failed, 3 skipped`, the same three failures, the other
-two being the AVIF pair filed below. So the counts here are current and the subject is still
-unfixed — discriminators 1-3 remain unrun, and the cause below is still a hypothesis.
+two being the AVIF pair filed below. **Deterministic, which is what discriminator 3 asks about:**
+two runs on `main` (`2026-09-29T22-43-08-281Z-31375`, `2026-09-29T22-44-17-612Z-56869`) fail with
+byte-identical text, each after waiting out the full 10s with the red pixels never observed — so
+this is a content assertion failing, not a slow machine, and not a race. The counts here are
+current and the cause below is still a hypothesis: discriminators 1, 2 and 4 remain unrun.
 
 ## P2 — the AVIF export waits on a wasm encoder inside a 30s download timeout, and only AVIF exceeds it
 
@@ -740,21 +743,30 @@ returned a Blob, and `encodeAvif` (`src/contexts/avif-utils.ts:33`) awaits `@jsq
 worker shim. So this is an AVIF-encode budget wearing a download's name, and a machine running
 other agents' work can spend it before the first pixel is encoded.
 
-**Not established, and that is the whole remaining verification.** One observation, on a loaded
-machine. It has not been shown deterministic, and it has not been run against `main`.
+**Attributed: the pair does not reproduce on `main`, so the run's machine is the open
+question.** Both specs pass there, and quickly — `e2e/export/raster-formats.spec.ts` in
+1.4s (run `2026-09-29T22-43-08-281Z-31375`) and all 13 of `visual-regression.spec.ts` in
+1.4s (run `2026-09-29T22-43-50-038Z-45877`). Neither is a near-miss on the 30s: on `main`
+these two encode in about a second, so the timeout was not approached at all. Since the
+branch that failed carries no export surface, load is the remaining explanation, and it is
+still an explanation rather than a measurement.
+
+**That is the whole remaining verification.** One failing observation, on a loaded
+machine, against a green `main`.
 
 **Fix, in order.**
 
-1. **One run, one spec, quiet machine:** `npm run test:e2e -- e2e/export/raster-formats.spec.ts`.
-   Green means the 30s was the machine, and this belongs in `TEST-FLAKES.md` as a load
-   observation rather than as a defect in this file.
-2. **Red again means the encode is over budget on an ordinary machine,** and the defect is the
-   encode's cost rather than the wait: `encodeAvif` holds the save open across a wasm module load
-   and a full-canvas encode, and moving that off the main thread is the fix that does not also
-   hide the cost.
-3. **Do not raise `DOWNLOAD_TIMEOUT_MS` to get this green.** The same rule as a widened pixel
-   budget applies to a widened wait: it hides the cost, and it would equally mask a real hang in
-   a format that is not slow at all.
+1. **One run of the same two specs on the failing tree, quiet machine:**
+   `npm run test:e2e -- e2e/export/raster-formats.spec.ts e2e/export/visual-regression.spec.ts`.
+   Green closes this into `TEST-FLAKES.md` as a load observation. Red with `main` green
+   means the encode is over budget under contention, which is a real cost finding and not
+   a gate to be widened.
+2. **If it is the contention, the fix is off the main thread, not a longer wait.**
+   `encodeAvif` holds the save open across a wasm module load and a full-canvas encode;
+   that is what consumed the budget.
+3. **Do not raise `DOWNLOAD_TIMEOUT_MS` to get this green.** The same rule as a widened
+   pixel budget applies to a widened wait: it hides the cost, and it would equally mask a
+   real hang in a format that is not slow at all.
 
 # Transferred findings — external review of the pre-migration tree
 
