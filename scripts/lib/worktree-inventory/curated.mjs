@@ -705,6 +705,21 @@ export const CURATED = {
       },
     ],
   },
+  'e2e-findings-tail': {
+    // The tail of the work `fix-e2e-findings` already landed: the four findings its
+    // adversarial review produced after the fixes merged, which the orchestrator session
+    // died before acting on. All four were comment/precision defects rather than behaviour
+    // regressions, so the tree was green and only the claims about it were wrong.
+    summary:
+      'Finishes the transferred e2e findings: the per-axis capture scale in getStrokeAnalysis, the throw its JSDoc never stated, the zero-width defence pinned by a test that carries ink, the Photopea oracle’s load-bearing check, and the ledger’s own arithmetic.',
+    issues: [
+      {
+        ref: 'e2e/OPEN_PROBLEMS.md#transferred-findings--external-review-of-the-pre-migration-tree',
+        title:
+          'the review tail left four unaddressed findings and a section header that counted two entries below it and found three',
+      },
+    ],
+  },
   'handoff-citation-rotation': {
     summary:
       'Rotates the line-numbered citations in the handoff documents after they were invalidated by file growth, and corrects one false claim in section 1.',

@@ -769,10 +769,11 @@ export async function getColorAtPoint(
  * `page.screenshot({ clip })` defaults to `scale: 'device'` and a CDP
  * `Page.captureScreenshot` comes back at Chrome's surface scale, so a capture of a CSS
  * region is not a CSS-resolution image, and never was one host-independently either. The
- * caller knows the CSS size it asked for and the decoded image knows its own pixel size,
- * so `imageWidth / region.width` is the scale: measured rather than declared. It is a
- * required argument rather than an option, because the one thing this classifier must
- * never do is quietly classify a 2x capture against thresholds authored for 1x.
+ * caller knows the CSS size it asked for and the decoded image knows its own pixel size, so
+ * `imageWidth / region.width` and `imageHeight / region.height` are the scales: measured
+ * rather than declared. It is a required argument rather than an option, because the one
+ * thing this classifier must never do is quietly classify a 2x capture against thresholds
+ * authored for 1x.
  */
 export interface CaptureRegion {
   /** CSS-pixel width of the clip the caller passed to the capture API. */
@@ -782,13 +783,22 @@ export interface CaptureRegion {
 }
 
 /**
- * Device pixels per CSS pixel in a capture of `region`, from the decoded image's own
- * width. A faithful capture scales both axes equally (`expectFaithfulCaptureOf` in
- * `cdp-helpers.spec.ts` pins that for the CDP path), and on a fractional clip the two can
- * differ by a fraction of a pixel because each axis is rounded independently, so the width
- * axis is the one read.
+ * Device pixels per CSS pixel on each axis of a capture of `region`, from the decoded
+ * image's own dimensions.
+ *
+ * The two axes are returned separately because the two measurements taken below live on
+ * different ones: `verticalSpread` counts ROWS and the gap between occupied columns counts
+ * COLUMNS, so spending one scalar on both scales the row measurement by the column axis.
+ *
+ * On a faithful capture the axes are equal — `expectFaithfulCaptureOf` in
+ * `cdp-helpers.spec.ts` pins that for the CDP path — so this cannot change a verdict today.
+ * It is not equal in general: `page.screenshot({ clip })` rounds each axis of a fractional
+ * clip independently, and the shorter axis is the one that absorbs the rounding, so a clip
+ * 20 CSS px tall can come back a different number of image rows per CSS row than its width
+ * does. Reading each axis from its own measurement is the rule; the equality is the
+ * convenient case, not the assumption.
  */
-function captureScale(imageWidth: number, region: CaptureRegion): number {
+function captureScale(imageWidth: number, imageHeight: number, region: CaptureRegion): { x: number; y: number } {
   if (
     !(region.width > 0) ||
     !(region.height > 0) ||
@@ -799,7 +809,7 @@ function captureScale(imageWidth: number, region: CaptureRegion): number {
       `getStrokeAnalysis: the captured region needs a positive CSS size to derive the capture scale from, got ${region.width}x${region.height}`
     );
   }
-  return imageWidth / region.width;
+  return { x: imageWidth / region.width, y: imageHeight / region.height };
 }
 
 /**
@@ -808,12 +818,20 @@ function captureScale(imageWidth: number, region: CaptureRegion): number {
  * `region` is the CSS-pixel size of the clip the capture was taken over, and it is what
  * makes the classification independent of the host's pixel density. The thresholds in
  * `STROKE_ANALYSIS` are authored in CSS pixels; the measurements below are taken in the
- * capture's own pixels, so each threshold is multiplied by the capture scale before the
- * comparison. Without that, the same physical stroke measured at 2x carries twice the
+ * capture's own pixels, so each threshold is multiplied by the capture scale of ITS OWN axis
+ * before the comparison — the row measurement by the row scale, the column gap by the
+ * column scale. Without that, the same physical stroke measured at 2x carries twice the
  * vertical spread and twice the gaps against thresholds that did not move: a pen stroke's
  * antialiased edge clears SPRAY_VERTICAL_SPREAD_THRESHOLD and reads as a spray, and a
  * 3-CSS-px antialiasing bridge becomes 6 device columns, clears PEN_GAP_THRESHOLD, and
  * splits one solid stroke into two segments.
+ *
+ * THROWS when `region` is not a positive, finite CSS size — a zero or unmeasurable clip
+ * carries no scale, and classifying against a fabricated one is the failure this argument
+ * exists to prevent. `null` means "no stroke in this capture"; a rejection means the CAPTURE
+ * was not measurable, which is a different fault and fails the test rather than retrying it.
+ * Every poll call site must therefore pass a region it can vouch for: `pen-types.spec.ts`
+ * builds its clip from compile-time constants for exactly that reason.
  */
 export async function getStrokeAnalysis(
   screenshot: Buffer | ImageDataResult,
@@ -821,7 +839,7 @@ export async function getStrokeAnalysis(
 ): Promise<StrokeAnalysis | null> {
   const imageData = isBuffer(screenshot) ? await loadImageData(screenshot) : screenshot;
   const { width, height, data } = imageData;
-  const scale = captureScale(width, region);
+  const scale = captureScale(width, height, region);
 
   const occupiedColumns = new Set<number>();
   let top = height;
@@ -873,8 +891,11 @@ export async function getStrokeAnalysis(
 
   const verticalSpread = bottom - top + 1;
   const columns = [...occupiedColumns].sort((a, b) => a - b);
-  const isSpray = verticalSpread > STROKE_ANALYSIS.SPRAY_VERTICAL_SPREAD_THRESHOLD * scale;
-  const gapThreshold = (isSpray ? STROKE_ANALYSIS.SPRAY_GAP_THRESHOLD : STROKE_ANALYSIS.PEN_GAP_THRESHOLD) * scale;
+  // ROWS against the row scale, COLUMNS against the column scale. See `captureScale`: on a
+  // faithful capture the two scales are equal, so this is indistinguishable from spending
+  // one scalar on both — and is distinguishable on the captures that are not faithful.
+  const isSpray = verticalSpread > STROKE_ANALYSIS.SPRAY_VERTICAL_SPREAD_THRESHOLD * scale.y;
+  const gapThreshold = (isSpray ? STROKE_ANALYSIS.SPRAY_GAP_THRESHOLD : STROKE_ANALYSIS.PEN_GAP_THRESHOLD) * scale.x;
   // Seeded from the first occupied column, which is occupied by definition: the loop above
   // returned null unless there was at least one. The previous `segments = 0; prev = -10`
   // counted the first column as a segment only while `col - prev > gapThreshold`, i.e. only

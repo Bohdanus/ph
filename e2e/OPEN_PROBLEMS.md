@@ -603,8 +603,15 @@ This section recorded 33 findings from a read-only review of the pre-migration t
 written down. **Thirty-one are fixed and their entries deleted**, which is the only thing
 worth reading here: if you are looking for one of them, it is gone, and the code is the
 record of what it was. The commit that carried them in is `4d47904`; the one that fixed
-them is on `fix/e2e-transferred-findings`. Two were not fully closable and are re-recorded
+them is `bfce8f3`, and it is on `main`. Two were not fully closable and are re-recorded
 below.
+
+**Three `## P…` entries appear below this line, and only two of them are those two.** The
+third, `P3 — re-verification: the tablet band's option-row floor…`, was filed by a later
+pass against this tree and is not one of the 33. It is here rather than above the section
+because it was raised while auditing the fixes, and moving it would break the audit trail
+for no gain — but a reader counting the entries to work out which findings survived will
+count three, and the two-line arithmetic above is the one to trust.
 
 The source repository is frozen at `78be956` and its own ledger is not maintained, so that
 review has no other home. The list of what it claimed and what turned out to be already
