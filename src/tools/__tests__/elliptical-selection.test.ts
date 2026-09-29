@@ -114,6 +114,21 @@ describe('ellipticalSelection type contract', () => {
     expect(isMarqueeStyle('fixed-size')).toBe(true);
     expect(isMarqueeStyle('rectangle')).toBe(false);
   });
+
+  it('hands a creator-param call no source bitmap, so it publishes none rather than blanking one', () => {
+    // `sourceBitmap` in src/contexts/materialization.ts calls every `creator: true` processor
+    // as `imageProcessor({ size })(args)`, with no `bitmap` at all. The processor reads that
+    // member straight out of the params and returns it, so on the creator path it yields
+    // `undefined` — the shape the caller already handles before it can touch a canvas.
+    const result = toolProcessors['elliptical-selection'].imageProcessor({ size: { width: 40, height: 24 } })(
+      defaultSettings['elliptical-selection'] as never
+    );
+
+    expect(result).toEqual([undefined]);
+    // The pass-through must not quietly acquire a canvas: a creator that rasterized here
+    // would be a rasterizer `commit: 'selection'` has nowhere to commit.
+    expect(RecordingOffscreenCanvas.instances).toEqual([]);
+  });
 });
 
 describe('resolveEllipseRect', () => {
