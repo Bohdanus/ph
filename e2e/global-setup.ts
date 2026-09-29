@@ -125,18 +125,88 @@ function refuseVisibleBrowser(config: FullConfig): void {
  *
  * Why it never fails the run: this is an optimisation. A genuinely broken dev server
  * must fail the tests, with THEIR diagnostics, not here.
+ *
+ * ## The part that made a wrong entry look like a working one
+ *
+ * A Vite dev server does NOT 404 a path that does not exist. The SPA fallback
+ * answers it with `200` and `content-type: text/html`, verified against a live
+ * Vite 8.3.0. So `response.ok` alone cannot tell "transformed a module graph" from
+ * "served index.html for a URL no module lives at", and the difference is the whole
+ * point of the warm-up. Every success below therefore requires BOTH an ok status
+ * AND a non-HTML content type.
  * --------------------------------------------------------------------------- */
 
-/** The module script `index.html` loads. Derived from the file, not assumed. */
-const MODULE_ENTRY_PATTERN = /<script\b[^>]*\btype=["']module["'][^>]*\bsrc=["']([^"']+)["']/i;
+/** One whole `<script ...>` tag. Attribute order is not the tag's business. */
+const SCRIPT_TAG_PATTERN = /<script\b[^>]*>/gi;
+const SCRIPT_TYPE_PATTERN = /\btype\s*=\s*["']?([^"'\s>]+)/i;
+const SCRIPT_SRC_PATTERN = /\bsrc\s*=\s*["']([^"']+)["']/i;
 
 /** Fallback if `index.html` ever stops matching: the entry Vite is serving today. */
 const FALLBACK_MODULE_ENTRY = '/src/main.tsx';
 
-/** Generous but finite. The web server has already answered, so this is transform time only. */
-export const WARMUP_TIMEOUT_MS = 60_000;
+/**
+ * The whole budget for the warm-up, and it is a BUDGET for a failure, not for the
+ * work. A server that already answered `webServer.url` is alive, so the remaining
+ * cost is Vite's transform of the entry's graph — and on a healthy checkout that is
+ * the only branch that is ever taken. Everything else reaching the loop is a
+ * permanently wrong request: a 404, a 410, or the SPA fallback's HTML (both of
+ * which return immediately below), or a connection that is not being made at all.
+ * At 250ms between attempts that is about twenty tries, enough to outlast a slow
+ * dependency pre-bundle, and short enough that a permanently wrong entry cannot
+ * cost a minute of every run. A genuinely dead server never reaches this code at
+ * all: `webServer.timeout: 120_000` in `playwright.config.ts` gates it first.
+ */
+export const WARMUP_TIMEOUT_MS = 5_000;
+
+/**
+ * The cap on ONE attempt, and it is deliberately below the budget.
+ *
+ * `AbortSignal.timeout(remaining)` reads like a per-attempt timeout and is not: it
+ * hands attempt 1 the entire remaining budget, and a server that accepts the
+ * connection and then hangs spends all of it there. The loop's
+ * `now() + interval >= deadline` check then trips on the first pass and the retry
+ * that was supposed to follow never happens. `Math.min(remaining, …)` is the shape
+ * that fixes it, but the cap only earns its keep if it is SMALLER than the budget —
+ * with the two equal, the minimum is a no-op and the hang still takes everything.
+ *
+ * 2500ms against a 5000ms budget leaves a second attempt to run in, and is about
+ * five times what a cold entry actually costs on this checkout: measured against a
+ * live Vite 8.3.0 on `main`, the first request for `/src/main.tsx` on a server with
+ * no dep cache took 0.35-0.52s and a warm one 0.02-0.05s. Aborting early is not
+ * destructive anyway — Vite does not cancel an in-flight transform when the client
+ * goes away, so a re-request finds the work already done.
+ */
+export const PER_ATTEMPT_TIMEOUT_MS = 2_500;
 
 export const WARMUP_INTERVAL_MS = 250;
+
+/**
+ * Statuses no retry can change. A 404 is a wrong entry; a 410 is a wrong entry on
+ * an origin that has since said so. Both are answers, not failures to wait out, so
+ * they end the loop at once instead of paying the whole budget to learn the same
+ * thing twenty more times.
+ */
+const TERMINAL_STATUSES: ReadonlySet<number> = new Set([404, 410]);
+
+const HTML_CONTENT_TYPE = /\btext\/html\b/i;
+
+/**
+ * The `src` of the first `type="module"` script in `index.html`, or `null`.
+ *
+ * The tag is matched whole and its attributes read separately, because a single
+ * regex over both attributes encodes an attribute ORDER into the code: the obvious
+ * one (`...type=...src=`) does not match `<script src="..." type="module">`, and
+ * every such HTML file is a valid one.
+ */
+function moduleEntryFromHtml(html: string | null): string | null {
+  if (!html) return null;
+  for (const [tag] of html.matchAll(SCRIPT_TAG_PATTERN)) {
+    if (SCRIPT_TYPE_PATTERN.exec(tag)?.[1]?.toLowerCase() !== 'module') continue;
+    const src = SCRIPT_SRC_PATTERN.exec(tag)?.[1];
+    if (src) return src;
+  }
+  return null;
+}
 
 export interface WarmupPlan {
   /** The module URL to request, or `null` when the warm-up is skipped. */
@@ -146,26 +216,42 @@ export interface WarmupPlan {
 }
 
 /**
- * Decide what, if anything, to request. Pure: no clock, no network, no `process`.
+ * Decide what, if anything, to request. Pure: no clock, no network, no `process`,
+ * and it does not throw — including on a `src` that is not a URL, because the
+ * alternative is a malformed `index.html` taking down a whole e2e run from the one
+ * component whose contract is that it cannot.
  *
- * Skips, deliberately rather than defensively:
- * - No usable base URL. `playwright.config.ts` reads `PLAYWRIGHT_BASE_URL` and
- *   pointing the suite at a deployed server is a documented use; a remote origin
- *   is not something a local warm-up can improve, and requesting its module entry
- *   is a harmless GET, so this returns the URL and lets the fetch decide. Only a
- *   missing or non-http(s) base URL skips.
- * - `--list`, which loads the config and the test files without a run. Harmless
- *   here because `config.argv` is read the same way the headless guard reads it.
+ * Skips, each with a reason that names the thing that caused it:
+ * - No usable base URL, or one that does not parse, or one that is not http(s).
+ * - The tests are pointed somewhere other than the server this run started. The
+ *   documented remote workflow (`PLAYWRIGHT_BASE_URL=https://staging.example.com`,
+ *   `e2e/README.md`) does exactly that: `webServer.url` stays LOCAL and only the
+ *   project `use.baseURL` moves, so a warm-up aimed at the base URL asks somebody
+ *   else's server for `/src/main.tsx`. This SKIPS rather than retargeting the
+ *   web server's origin, because in a remote run nothing will ever request that
+ *   origin either — the dev server is started and then ignored — so retargeting
+ *   would pay a full cold transform to warm a server no test touches.
+ * - The derived entry lands outside the base path. `index.html` is read off disk
+ *   and its `src` is usually root-absolute, so `new URL('/src/main.tsx', 'http://h/app')`
+ *   silently drops `/app`. A `base` on the Vite config would do the same; there is
+ *   none today (`vite.config.ts:6-35`), which is exactly why this check is here
+ *   rather than a comment saying the path cannot change.
+ *
+ * There is deliberately no `--list` branch, and there was one. It was unreachable:
+ * `playwright/lib/runner/index.js:6946-6954` builds the task list in a ternary, and
+ * the `listMode` arm is `[createLoadTask, createReportBeginTask]` with
+ * `createGlobalSetupTasks` in the OTHER arm only, so `globalSetup` never runs under
+ * `--list`. A branch for a condition the runner cannot produce is not a safety
+ * property, it is a second code path a reader has to verify and a future refactor
+ * could "fix" in either direction. Deleting it also removed the last reason this
+ * pure function read `config.argv`. `refuseVisibleBrowser` still reads argv, which
+ * is different: `--headed`, `--ui` and `--debug` are flags a real run can carry.
  */
 export function planWarmup(options: {
   baseUrl: string | undefined;
-  argv: readonly string[];
+  webServerUrl: string | undefined;
   html: string | null;
 }): WarmupPlan {
-  if (options.argv.includes('--list')) {
-    return { url: null, reason: 'skipping warm-up: --list runs no tests against a server' };
-  }
-
   const baseUrl = options.baseUrl?.trim();
   if (!baseUrl) {
     return { url: null, reason: 'skipping warm-up: no base URL is configured' };
@@ -181,8 +267,44 @@ export function planWarmup(options: {
     return { url: null, reason: `skipping warm-up: base URL scheme ${origin.protocol} is not http(s)` };
   }
 
-  const entry = options.html?.match(MODULE_ENTRY_PATTERN)?.[1] ?? FALLBACK_MODULE_ENTRY;
-  return { url: new URL(entry, origin).toString(), reason: `warming the dev server with ${entry}` };
+  const webServer = parseHttpUrl(options.webServerUrl);
+  if (webServer && webServer.origin !== origin.origin) {
+    return {
+      url: null,
+      reason:
+        `skipping warm-up: the tests will load ${origin.origin}, not the dev server this run started ` +
+        `at ${webServer.origin}; a local warm-up cannot improve a remote origin`,
+    };
+  }
+
+  const entry = moduleEntryFromHtml(options.html) ?? FALLBACK_MODULE_ENTRY;
+
+  let url: URL;
+  try {
+    url = new URL(entry, origin);
+  } catch {
+    return { url: null, reason: `skipping warm-up: the module entry ${JSON.stringify(entry)} is not a URL` };
+  }
+
+  const basePath = origin.pathname.endsWith('/') ? origin.pathname : `${origin.pathname}/`;
+  if (!url.pathname.startsWith(basePath)) {
+    return {
+      url: null,
+      reason: `skipping warm-up: the module entry resolves to ${url.pathname}, outside the base path ${basePath}`,
+    };
+  }
+
+  return { url: url.toString(), reason: `warming the dev server with ${entry}` };
+}
+
+function parseHttpUrl(value: string | undefined): URL | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface WarmupResult {
@@ -197,16 +319,23 @@ export interface WarmupDeps {
   fetch: (
     url: string,
     init: { signal: AbortSignal; headers: Record<string, string> }
-  ) => Promise<{ ok: boolean; status: number }>;
+  ) => Promise<{ ok: boolean; status: number; contentType: string }>;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
+  /** Injected for the same reason as `fetch`: `AbortSignal.timeout` is a real timer. */
+  abortSignal: (ms: number) => AbortSignal;
   timeoutMs: number;
   intervalMs: number;
 }
 
 /**
  * Request the module entry until it answers, or until the bounded deadline passes.
- * NEVER throws: a fetch rejection, a timeout and a `planWarmup` skip all resolve.
+ * NEVER throws: a fetch rejection, a timeout, a `planWarmup` skip and an unreadable
+ * content type all resolve.
+ *
+ * A response counts as warmed only when it is `ok` AND is not HTML. See the header:
+ * a wrong entry gets a 200 with `text/html` from the SPA fallback, and reporting
+ * that as a success is a log line that says a cold server is warm.
  */
 export async function runWarmup(plan: WarmupPlan, deps: WarmupDeps): Promise<WarmupResult> {
   if (plan.url === null) {
@@ -218,6 +347,16 @@ export async function runWarmup(plan: WarmupPlan, deps: WarmupDeps): Promise<War
   let attempts = 0;
   let lastError = 'no response';
 
+  // One exit shape for every "not warmed" that is not a transport error, so the
+  // reason reads the same however the run stopped.
+  const notWarmed = (why: string): WarmupResult => ({
+    warmed: false,
+    url: plan.url,
+    reason: `${why}; continuing, the tests will report anything real`,
+    attempts,
+    elapsedMs: deps.now() - started,
+  });
+
   // `while (true)` with an explicit break: the only exits are the two returns and
   // the deadline, and a bounded retry is easier to read than a loop condition that
   // encodes three of them.
@@ -228,19 +367,35 @@ export async function runWarmup(plan: WarmupPlan, deps: WarmupDeps): Promise<War
 
     try {
       const response = await deps.fetch(plan.url, {
-        signal: AbortSignal.timeout(remaining),
+        signal: deps.abortSignal(Math.min(remaining, PER_ATTEMPT_TIMEOUT_MS)),
         headers: { accept: '*/*' },
       });
-      if (response.ok) {
+
+      const contentType = response.contentType ?? '';
+      if (response.ok && !HTML_CONTENT_TYPE.test(contentType)) {
         return {
           warmed: true,
           url: plan.url,
-          reason: `warmed the dev server: ${plan.url} answered ${response.status} after ${attempts} attempt(s)`,
+          reason: `warmed the dev server: ${plan.url} answered HTTP ${response.status} (${contentType}) after ${attempts} attempt(s)`,
           attempts,
           elapsedMs: deps.now() - started,
         };
       }
+
+      if (response.ok) {
+        // 200 with an HTML body: the SPA fallback, so no module was transformed.
+        // Retrying cannot change it, and saying "warmed" here would be the exact
+        // lie the content-type check exists to prevent.
+        return notWarmed(
+          `not warmed: ${plan.url} answered HTTP ${response.status} with content-type ${contentType || '(none)'}, ` +
+            'which is the SPA fallback rather than a module, so nothing was transformed'
+        );
+      }
+
       lastError = `HTTP ${response.status}`;
+      if (TERMINAL_STATUSES.has(response.status)) {
+        return notWarmed(`not warmed: ${plan.url} answered HTTP ${response.status}, which no retry will change`);
+      }
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }
@@ -249,13 +404,7 @@ export async function runWarmup(plan: WarmupPlan, deps: WarmupDeps): Promise<War
     await deps.sleep(deps.intervalMs);
   }
 
-  return {
-    warmed: false,
-    url: plan.url,
-    reason: `warm-up gave up after ${attempts} attempt(s) in ${deps.timeoutMs}ms (${lastError}); continuing, the tests will report anything real`,
-    attempts,
-    elapsedMs: deps.now() - started,
-  };
+  return notWarmed(`warm-up gave up after ${attempts} attempt(s) in ${deps.timeoutMs}ms (${lastError})`);
 }
 
 const INDEX_HTML = fileURLToPath(new URL('../index.html', import.meta.url));
@@ -285,6 +434,22 @@ export function resolvedBaseUrl(config: Pick<FullConfig, 'projects'>): string | 
   return process.env.PLAYWRIGHT_BASE_URL;
 }
 
+/**
+ * The origin the dev server this run started is served from, when the config starts
+ * one. `FullConfig.webServer` is `null` for an array of servers and for a config with
+ * no `webServer` block at all (`playwright/lib/common/index.js:541-549`), and `url`
+ * is absent when the block configures `port` instead.
+ *
+ * The warm-up needs this because `webServer.url` and the project `use.baseURL` are
+ * INDEPENDENT settings: `playwright.config.ts` sets the second from
+ * `PLAYWRIGHT_BASE_URL` and leaves the first pointing at localhost, so setting the
+ * documented remote override moves the tests without moving the server.
+ */
+export function resolvedWebServerUrl(config: Pick<FullConfig, 'webServer'>): string | undefined {
+  const url = config.webServer?.url;
+  return typeof url === 'string' && url !== '' ? url : undefined;
+}
+
 export default async function globalSetup(config: FullConfig): Promise<void> {
   // The refusal comes first and is the only thing here that can throw. A warm-up
   // that ran before it would spend Vite's transform cost on a run about to be
@@ -293,16 +458,22 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 
   const plan = planWarmup({
     baseUrl: resolvedBaseUrl(config),
-    argv: config.argv,
+    webServerUrl: resolvedWebServerUrl(config),
     html: readIndexHtml(),
   });
   const result = await runWarmup(plan, {
-    fetch: (url, init) => fetch(url, init),
+    fetch: (url, init) =>
+      fetch(url, init).then((response) => ({
+        ok: response.ok,
+        status: response.status,
+        contentType: response.headers.get('content-type') ?? '',
+      })),
     now: () => Date.now(),
     sleep: (ms) =>
       new Promise((resolve) => {
         setTimeout(resolve, ms);
       }),
+    abortSignal: (ms) => AbortSignal.timeout(ms),
     timeoutMs: WARMUP_TIMEOUT_MS,
     intervalMs: WARMUP_INTERVAL_MS,
   });
