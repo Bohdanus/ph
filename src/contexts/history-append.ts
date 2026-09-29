@@ -174,12 +174,18 @@ function translate(
 
   if (entry.actionName === REMOVE_ACTION) {
     // Layer presence is deliberately not a precondition here or in validation:
-    // conversion and both replay models retain unknown removals as no-ops.
+    // conversion and both replay models retain unknown removals as no-ops, and
+    // `replayHistory` filters the id out of the layer record rather than
+    // refusing the entry (`history-replay.ts:138`). The derivation is the parity
+    // path, so it has no refusal to make for a layer the document never held.
+    // This guard is therefore a narrowing guard, not a check: the derivation
+    // returns null only for an action that is not a removal, which this arm has
+    // already excluded, so the branch below cannot be reached today.
     const durableEntry = deriveRemoveLayerEntry(entry);
     if (!durableEntry) {
       return unavailable(
         entry,
-        'The layer removal does not name a layer, so no durable operation describes it.',
+        'The removal could not be described as a durable operation, so the legacy entry remains authoritative.',
         'invalid-history-entry'
       );
     }

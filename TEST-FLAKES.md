@@ -179,7 +179,25 @@ and destroys the only signal that the defect existed.
 
 ## 7. A second, NAMED observation — `useFile.test.tsx` JPEG-quality save
 
-**Status: OPEN. Named, not reproduced. Four recorded full-run failures across three checkouts, and never once in isolation.**
+**Status: OPEN, and now SKIPPED by declaration (2026-09-29, operator decision).
+Five recorded full-run failures across four checkouts, never once in isolation.
+Not fixed. Not a known-failing test; it is intermittent.**
+
+**The skip is a gate decision, not a fix, and it is not a waiver.**
+`src/contexts/__tests__/useFile.test.tsx` carries an `it.skip` on the one test,
+with the reason in the comment above it. It was skipped on §12's grounds, which
+are the same grounds and are not restated here: a default run is contracted to
+zero failures, a test red roughly one run in five makes unrelated merges look
+broken, and that trains the response of ignoring the gate — which costs more
+than this one test buys. A flaky assertion is also worse than no assertion: a
+green result from it carries no information, so it cannot justify a change
+either. **Nothing about the defect is waived; the hunt below is un-done and
+filed, and the skip is one line to remove.**
+
+**Do not "fix" this by loosening anything.** There is no bound here to widen, and
+that is what the capture below establishes: the save resolves, the details are
+correct, and the only thing that failed is a dialog that should not have been
+open. Relaxing the assertion would delete the only statement this test makes.
 
 This one is worth separating from section 1, because unlike it the failing test
 was captured:
@@ -274,6 +292,43 @@ failure was observed in a full run and section 6 forbids inferring from a scoped
 green. **Capture the assertion, not just the test name**, and record whether it
 was a timeout or a value mismatch: a timeout points at the focus/async
 interaction in 3, a value mismatch points at ordering.
+
+**The assertion is now captured, and it is a value mismatch, not a timeout.**
+Fifth occurrence, 2026-09-29, on `feat/history-remove-append` in a full
+`npx vitest --run src/contexts` (81 files, 1960 tests) — the run right after a
+code review on that branch, so the machine was busy:
+
+```
+FAIL  src/contexts/__tests__/useFile.test.tsx > FileProvider PSD integration
+    > passes JPEG quality through to raster encoding and resolves the save details
+AssertionError: expect(screen.queryByText('Save File As...')).toBeNull()
+ ❯ src/contexts/__tests__/useFile.test.tsx:157:51
+ Test Files  1 failed | 80 passed (81)
+      Tests  1 failed | 1956 passed | 3 expected fail (1960)
+```
+
+`useFile.test.tsx:157` is the `expect(...).toBeNull()` half of a test whose
+first assertion has already passed — `expect(resolved).toHaveBeenCalledWith({ fileName: 'drawing (copy)'… })`
+at `:156` — so the save **did** resolve and the pipeline **did** hand back its
+details. What failed is that a **Save File As dialog was open when it should not
+be**. Read against this entry's own findings that is a real narrowing: the
+encoder is unreachable (`:8-12` mocks `../image-load-save-utils.ts` wholesale,
+so `saveImageToDisk` is a bare `vi.fn()` and `encodeAvif` never runs), so the
+failure is not an encoding refusal and not `retireUnreferenced` — **it is
+whatever decides whether the confirmation dialog opens at all**, which is a
+dialog-state question, not a pixel one. That is a different subsystem from the
+three candidates this entry had, and it is now the only one the evidence
+supports.
+
+**What this occurrence does not establish.** One failure in five full runs of
+the same tree — the four subsequent runs were `1957 passed | 3 expected fail`
+each — and the file passes alone, so **nothing here shows the branch causes it.**
+The one suggestive datum cuts the other way: a run of the same tree with
+`history-append.remove.test.ts` excluded was green (80 files, 1927 tests), and
+the two-file run was green. That is a coincidence of worker partitioning, not a
+mechanism, because the same file set then ran green four times over. Treat the
+exclusion result as a lead for the next reproduction and nothing more — the same
+standard section 6 applies to a green run.
 
 ## 8. A third, NAMED observation — the paint-bucket contiguous test, once, in a full headless run
 

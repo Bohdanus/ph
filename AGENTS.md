@@ -136,8 +136,10 @@ absorb a tool that has more than one.
 
 `HistoryItem[]` is the **PRODUCTION REPLAY AUTHORITY** — history,
 `history-replay.ts`, runtime `Layer`s, export. The durable document is
-shadow-only. **DO NOT start single-writer cutover while `saveLayerCanvas()`
-promotes cached canvases outside reducer publication.**
+shadow-only: publication is an optimisation, and a precondition, a mismatch or a
+refusal each fall back to a full conversion from the legacy timeline, so the
+shadow cannot change what the user sees. **DO NOT start single-writer cutover**
+while that fallback is the only thing holding the two models equal.
 
 ## Definition of Done
 

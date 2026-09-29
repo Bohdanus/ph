@@ -990,6 +990,14 @@ export const CURATED = {
     summary:
       'Reviewing the append-boundary validation guard over the remove-append work, on a branch six commits ahead of main with one test file still modified on top of it. The branch is a ref git can see, so it is protected by being a branch and owes no flag.',
   },
+  'narrow-uncategorised': {
+    summary:
+      'Narrowing the curated-summary rule to the worktrees that actually hold work, so creating a scratch worktree stops turning main red — the same derivation the `mustNotPrune` guard was given, one layer up.',
+  },
+  'fix-handoff-95': {
+    summary:
+      'The corrected HANDOFF §95: the refused-publication entry re-derived after a review found five false claims in it, including that no test pins the console.error text when two do.',
+  },
   'skill-handoff-cites': {
     summary:
       'Re-deriving the tool-creation skill’s `file:line` citations against the tree, and the handoff entries’ citations into the same files.',
@@ -1038,8 +1046,8 @@ export const CURATED = {
   },
   'untrack-inventory': {
     summary:
-      'The worktree inventory declared machine-local: `WORKTREES.json` untracked and gitignored, a tripwire that fails if it is re-added or the ignore rule is deleted, and the three rules that told agents to commit a regeneration corrected. The generator and the curated table stay tracked; only the output does not.',
-    note: 'Nothing is owed a flag. While the change is in flight the tree holds uncommitted work, which the generator already refuses to prune, and once it lands the branch is ahead of main and not on it. The entry also records the cost honestly: a fresh clone has no inventory until something generates one, and `--check` can no longer catch a collaborator’s regeneration because there is no shared file left to regenerate.',
+      'Untracking `WORKTREES.json` — the generated inventory is a machine-local snapshot of session ids, chat ids, absolute worktree paths and a timestamp, so it leaves the index along with the anchored ignore rule, the docs that told agents to commit a regeneration, and the tripwire that fails if it is re-added. The generator and this table stay tracked; only the output does not.',
+    note: 'Two sessions curated this key independently and the merge kept both, where the second silently discarded the first — the `panel-docks` shape again, and the reason this key is one entry rather than two. An earlier version of this note claimed the work was held on no ref, which was true only while the change was uncommitted; it is committed on a branch ahead of main, so the branch is what protects it and no flag is owed.',
   },
 };
 
