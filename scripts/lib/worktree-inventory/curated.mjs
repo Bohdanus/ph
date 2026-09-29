@@ -48,7 +48,6 @@ export const CURATED = {
   'agent-board': {
     summary:
       'The swarm board itself: scripts/agent-board.mjs and its node:sqlite storage under the common git directory.',
-    landed: false,
     note: 'The board work itself is on main. A later `wip(salvage)` commit (3f1d0e2) sits on this branch on top of that, carrying an uncommitted board-schema migration test suite that was on no ref when the owning worktree was swept. It does not pass as it stands — one of the 74 tests in `agent-board.test.mjs` fails on this branch — so the claim is retracted rather than asserted. Landing it is a real fix, not a deletion.',
   },
   'board-file-index': {
@@ -146,11 +145,16 @@ export const CURATED = {
       },
     ],
   },
+  'agents-doc-corrections': {
+    summary:
+      'Corrections to AGENTS.md and the worktree-inventory comments, from a code review of AGENTS.md against the tree. The structural orphan under "The board is cross-session" and the board-to-swarm regression it introduced; the toolbar section, which listed a shipped Color Replacement options bar as a PlaceholderTool and understated the hand-copied tool lists by fourfold; the mergeChecked semantics, which the document and the code comment both got wrong; the npx tsc --noEmit explanation, which named a missing exclude that does not exist; and the drifted enumerations (orphaned, the curated code sample, the at-risk third source). Adds mergeChecked to the --check watched list.',
+    note: 'Short-lived documentation work. Safe to drop once the branch is an ancestor of main; the only non-AGENTS.md change that outlives the prose is the mergeChecked entry in scripts/worktree-inventory.mjs.',
+  },
   'polygon-marching-ants': {
     summary:
       'Polygon-selection marching ants: the ants component, the selection-ants hook, a new usePolylineAnts module and its tests, and edits to the lasso, magic wand and click tool areas. The branch has no commits of its own.',
     mustNotPrune: true,
-    note: 'git reports this as merged and 0 ahead because the branch sits on an old main commit. Seventeen paths exist on no ref.',
+    note: 'git reports this as merged and 0 ahead because the branch sits on an old main commit. The work exists on no ref; see `dirty` and `untracked` for what the working tree holds.',
   },
   'ps-pixel-tools': {
     summary:
@@ -592,10 +596,88 @@ export const CURATED = {
       "Landed: the board command is `swarm` (it was `board`, which is also the name of Kilo's unrelated built-in tool), and `ready` ranks by priority, then live-before-imported, then startable-before-contended.",
     landed: true,
   },
-  'fix-e2e-findings': {
+  // A test-pin tranche: one worktree per subsystem, each pinning behaviour that
+  // currently has no test. All sit on the same merge commit and are unmerged.
+  'durable-replay-pins': {
+    summary: 'Pins durable-replay behaviour that currently has no test asserting it.',
+  },
+  'harness-integrity-pins': {
     summary:
-      'Moves e2e findings off their original branches and onto the documents, so the defects are recorded where an agent will read them.',
-    landed: true,
+      'Pins the test harness invariants themselves, including the context factory that a prior audit showed returns a different object per call.',
+  },
+  'hooks-pins': {
+    summary: 'Pins the commit-gate hooks, which were the subject of the silent-no-gate bug in 89 of 118 worktrees.',
+  },
+  'main-tool-area-pins': {
+    summary: 'Pins Main and the tool areas, whose overlay painters were the subject of the unmount-frame defect.',
+  },
+  'selection-pixel-pins': {
+    summary: 'Pins selection pixel behaviour.',
+  },
+  'store-history-pins': {
+    summary: 'Pins StoreContext and history behaviour that no test currently covers.',
+  },
+  'tools-registry-pins': {
+    summary: 'Pins the tool registry, where a pixel-free tool is not a typecheck error.',
+  },
+  'ui-shell-pins': {
+    summary: 'Pins UI shell behaviour.',
+  },
+  'swarm-file-index': {
+    summary: 'The durable issue_files index on the board, so a file named by an open issue counts as held.',
+  },
+  'swarm-lease': {
+    summary: 'A board worktree on lease behaviour, sitting on the merge that landed the brush-tip-core branch.',
+    mustNotPrune: true,
+    note: 'Holds an uncommitted change and is branched from a main that is already moving; the lease semantics it is about are still the open board item.',
+  },
+  'swarm-units': {
+    summary:
+      'The board worktree on health units: a hold is one event per command while a release is one per file, so the previous health summed incompatible units and reported the encoding as if it were behaviour.',
+  },
+  'test-review-harness': {
+    summary: 'A review of the test harness itself, branched from main while the inventory work was in flight.',
+  },
+  'test-review-leaks': {
+    summary: 'A review looking for leaks between test and production state.',
+  },
+  'test-review-parser': {
+    summary: 'A review of parser behaviour under test.',
+  },
+  'test-review-titles': {
+    summary: 'A review of how tests are titled and grouped.',
+  },
+  'test-review-vacuous': {
+    summary: 'A review hunting assertions that cannot fail — the same class this repository has been bitten by twice.',
+  },
+  'chat-audit': {
+    summary:
+      'Reads every agent transcript in a 30-hour window and records what each one actually delivered, so the inventory answers whether work is finished instead of inferring it from turn shape.',
+  },
+  'fix-e2e-findings': {
+    // The SECOND worktree to land on this directory name, and the second time a
+    // curated entry outlived the worktree it described. The first entry here said
+    // `landed: true` about a worktree that moved 33 e2e findings into the ledger
+    // and was then removed; its branch is gone, so the claim was untestable. This
+    // worktree took the same name, the entry attached to it, and the contradiction
+    // test correctly reported that a live, unlanded branch was not on main.
+    //
+    // The directory name is the identity the generator uses, so a recycled name
+    // silently re-points an entry at unrelated work. Renaming the worktree would
+    // have hidden it; the test is what made the collision visible, which is the
+    // only reason it is worth keeping.
+    //
+    // So: this entry is rewritten to describe the work actually in this worktree,
+    // and `landed` is not claimed until the branch really is an ancestor of main.
+    summary:
+      'Implements the transferred e2e findings: the DPI-relative stroke thresholds, the baseline re-record mode, the assertions that could not fail, and the pins that resisted their own fix.',
+    issues: [
+      {
+        ref: 'e2e/OPEN_PROBLEMS.md#transferred-findings--external-review-of-the-pre-migration-tree',
+        title:
+          'the 33 findings transferred in 4d47904: 31 fixed and deleted from the ledger, 2 re-recorded and still open',
+      },
+    ],
   },
   'handoff-citation-rotation': {
     summary:

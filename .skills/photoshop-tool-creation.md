@@ -1160,7 +1160,7 @@ a `<select>` with no suffix is just `Mode`. Three consequences:
 
 - **Exact-name locators are brittle.** A spec asking for `'Size 10px'` passes until
   someone moves the slider. Every in-repo spec uses a prefix regex or a bare label for
-  this reason: `e2e/levels.spec.ts:88` is
+  this reason: `e2e/levels.spec.ts:103` is
   `page.getByRole('slider', { name: /Brightness/ })`, `e2e/pen-types.spec.ts:85` is
   `page.getByRole('combobox', { name: 'Pen Type' })` — bare, because that select has no
   suffix. Unit tests do the same: `MagicWand.test.tsx:153-154` is
@@ -2011,8 +2011,8 @@ recorded **through the legacy `draw` tool**: `e2e/export/helpers.ts:108-109` in
 `drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y)`, and that is the
 fixture for every export baseline. Seventeen committed PNGs live in
 `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`. They are compared, not
-regenerated: `e2e/export/visual-regression.spec.ts:73-78` re-records **only** under an
-explicit `--update-snapshots`, and the comment at `:67-72` documents that a bare truthiness
+regenerated: `e2e/export/visual-regression.spec.ts:88-99` re-records **only** under
+`--update-snapshots=all`, and the comment at `:88-93` documents that a bare truthiness
 check used to rewrite the baseline on every run and make the oracle disposable.
 
 So **any change to the legacy raster path invalidates a committed oracle**, and `AGENTS.md`
@@ -2348,7 +2348,7 @@ cached anywhere else makes a second replay disagree with the first.
 
 **3. The legacy `draw` raster path must render byte-for-byte unchanged.** The export baselines in
 `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/` were recorded against the current single-path call pattern, and
-re-recording is gated on `testInfo.config.updateSnapshots === 'all'` (`e2e/export/visual-regression.spec.ts:73`). `drawPen` is the pattern
+re-recording is gated on `testInfo.config.updateSnapshots === 'all'` (`e2e/export/visual-regression.spec.ts:94`). `drawPen` is the pattern
 they encode:
 
 ```ts
@@ -2928,7 +2928,7 @@ and it is `max-md:hidden`, so the default 1280x720 viewport is fine. The workspa
 ONLY by `getWorkspaceCanvas(page)` — never `page.locator('canvas')`, **because the options bar
 mounts its own preview canvas and a positional lookup would grab that one.** The repo's convention
 for options-bar controls is a role + accessible-name locator, exactly as
-`e2e/levels.spec.ts:55-57,88-91` does: **match the LABEL PART ONLY with a regex, because the
+`e2e/levels.spec.ts:71-75,103-104` does: **match the LABEL PART ONLY with a regex, because the
 accessible name carries a live value suffix that changes as you drag.** So use
 `page.getByRole('slider', { name: /^<Label>/ })` and `page.getByRole('combobox', { name: '<Label>' })`.
 
@@ -3061,8 +3061,10 @@ timeout error prints `Canvas did not render <description> within 10000ms`. `wait
 light stroke is **invisible to `hasDarkPixels`**, which times out on a stroke that landed — write a
 `CanvasPixelPredicate` polling for "no longer near-white" at the clip centre via
 `getColorAtPoint(..., { ignoreNearWhite: true })`; and **re-measure the canvas box after the panel
-opens**, because opening an options bar reflows the workspace and a box measured before the switch
-can clip empty canvas (`e2e/levels.spec.ts:93-96`).
+opens, and re-take the pre-change reading through that same rect**, because opening an options bar
+reflows the workspace and a box measured before the switch describes a different region of the
+page — so two readings through two rects are not a comparison at all
+(`e2e/levels.spec.ts:106-124`).
 
 **Clip and coordinate helpers.** `takeLineScreenshot(page, box, name, testInfo, clip?)`
 (`canvas-helpers.ts:191`) is the `page.screenshot` path; `captureCanvasScreenshot(page, box,
@@ -3098,7 +3100,7 @@ failure is a new defect, never a known one. Characterised, not listed:
    `boundingBox()` raised a strict-mode violation; and the index was wrong anyway, because the Draw
    toolbar mounts a preview canvas ahead of the workspace and unmounting it on a tool switch shifted
    the index onto a hidden overlay (`canvas-helpers.ts:174-186`, `e2e/README.md:315-319`). That was
-   `e2e/levels.spec.ts:64,109` before the test id landed (`e2e/OPEN_PROBLEMS.md:48-52`).
+   `e2e/levels.spec.ts:82,146` before the test id landed (`e2e/OPEN_PROBLEMS.md:48-52`).
    **`getWorkspaceCanvas` is deliberately a single-selector locator so it can only ever match one
    element.** A tool whose own bar mounts a preview canvas makes the same trap reachable through a
    _new_ path, which is why the brief names it explicitly.
@@ -3151,20 +3153,35 @@ files; 7 are read, one per format with `comparePixels: true` (`drawing.png.png`,
 line-ending normalisation can never rewrite the committed pixels.
 
 **A green run means the pixels matched** — only because the record-vs-compare branch is gated on
-`testInfo.config.updateSnapshots === 'all'` (`e2e/export/visual-regression.spec.ts:73`). It used to
+`testInfo.config.updateSnapshots === 'all'`
+(`e2e/export/visual-regression.spec.ts:88-99`). It used to
 be `if (testInfo.config.updateSnapshots)`, and Playwright's default for that option is the string
 `'missing'`, which is **truthy** — so every run re-recorded the committed baseline and returned
 before `compareScreenshots`, and the comparison below it was unreachable. The 7 formats were a
 no-op reporting success, invisible because re-encoding the same export produced byte-identical
-files (`visual-regression.spec.ts:67-72`, `e2e/MIGRATION-TODO.md:52-60`). Budgets are `threshold:
-0.01` and `maxDiffPixels: 100` at the call site (`:86-89`), defaulting to `DEFAULT_THRESHOLD = 0.2` /
+files (`visual-regression.spec.ts:88-99`, `e2e/MIGRATION-TODO.md:52-60`). Budgets are `threshold:
+0.01` and `maxDiffPixels: 100` at the call site (`:145-148`), defaulting to `DEFAULT_THRESHOLD = 0.2` /
 `DEFAULT_MAX_DIFF_PIXELS = 100` / `DEFAULT_MAX_DIFF_PIXEL_RATIO = 0.01`
 (`e2e/helpers/image-comparison.ts:27-29`); read the call site rather than assuming a budget.
 
-**Re-recording requires an explicit `--update-snapshots` (`npm run test:e2e:update-baselines`) and
-is a recording decision that belongs to the operator.** A missing baseline
-attaches the export and then throws on purpose: the comparison was never made
-(`visual-regression.spec.ts:80-84`).
+**100 pixels is a tripwire, not a tolerance, and the argument is at the call site.** It is 0.021% of
+an 800x600 baseline, four of the seven compared formats are lossy (JPEG, WebP, GIF, AVIF), and the
+browser's encoder — not the app — decides their last digits. A Chrome, libjpeg or libavif bump is
+therefore a hard red on a blocking gate; **widening either number is the wrong repair**, because at
+`maxDiffPixels: 4800` the suite passes a visibly different picture. The Chrome version is **not**
+pinned in `ci.yml` on purpose: nothing in the repository records which Chrome produced the committed
+baselines, so a pin is a guess, and a wrong pin turns a green gate red for an undiagnosable reason.
+The failure message prints `browser.version()` so the first triage question is answerable from the
+run.
+
+**Re-recording requires `--update-snapshots=all` (`npm run test:e2e:update-baselines`) and
+is a recording decision that belongs to the operator.** The `=all` is not decoration: Playwright
+declares the flag with `preset: 'changed'`, so the **bare** flag resolves to `'changed'` and
+re-records nothing — and `'changed'` could not help even if it did, because this spec reads its
+baseline with `readFile` rather than through a snapshot assertion. The script carried the bare
+flag for as long as this document did, and the two no-opped together
+(`visual-regression.spec.ts:105-113`). A missing baseline attaches the export and then throws on
+purpose: the comparison was never made (`visual-regression.spec.ts:101-112`).
 
 **The baselines were recorded through the legacy `draw` tool**, so any change to the legacy raster
 path invalidates them — the shipped brush handoff says so explicitly (`brush-toolbar:HANDOFF.md`
@@ -3492,11 +3509,12 @@ vulnerability half.
 
 **Never weaken a gate to get green**: no skips, no raised thresholds, no deleted assertions, no
 re-recorded visual baselines. The export baselines are genuinely compared now:
-`e2e/export/visual-regression.spec.ts:73` gates re-recording on
+`e2e/export/visual-regression.spec.ts:94` gates re-recording on
 `testInfo.config.updateSnapshots === 'all'` — the exact string, because Playwright's default is the
 truthy string `'missing'` and the earlier truthiness check always re-recorded and returned before
 the comparison (`e2e/OPEN_PROBLEMS.md:396-405`). Re-record only with
-`npm run test:e2e:update-baselines`, an operator decision.
+`npm run test:e2e:update-baselines`, which passes `--update-snapshots=all` — the bare flag
+resolves to `'changed'` and re-records nothing. It is an operator decision.
 
 ---
 

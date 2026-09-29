@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { getWorkspaceCanvas } from './helpers/canvas-helpers';
-import { openToolFlyoutViaKeyboard, verifyPrimaryTool } from './helpers/toolbar-helpers';
+import { openToolFlyoutViaKeyboard, navigateAndSelectInFlyout, verifyPrimaryTool } from './helpers/toolbar-helpers';
 
 // The Enter tests below used to race on `expect(page.getByRole('menu')).toBeHidden()`.
 // Root cause, since fixed: the app focuses the first flyout item from a
@@ -81,11 +81,14 @@ test.describe('SidebarLeft - Keyboard Navigation', () => {
     // Open flyout with keyboard
     await openToolFlyoutViaKeyboard(page, 'color', 'ArrowDown');
 
-    // Navigate to Levels (index 1) and select
-    await page.keyboard.press('ArrowDown');
-    await page.keyboard.press('Enter');
+    // Navigate to Levels and select. `navigateAndSelectInFlyout` finds the index by asking
+    // the open menu for each item's `data-testid`, so the flow does not depend on Levels
+    // happening to sit at index 1 of the Colors/Levels/Transform group.
+    await navigateAndSelectInFlyout(page, 'levels', 'Levels');
 
-    await expect(page.getByRole('menu')).toBeHidden();
-    // Levels tool should now be selected (would need verifyPrimaryTool for 'levels')
+    // The tile becomes the tool the flyout chose, `SidebarLeft` re-keys the group button on
+    // `primaryTool.name`, so this is the assertion that the selection actually landed. Before
+    // it, the test asserted only that the menu closed — which any wrong pick also satisfies.
+    await verifyPrimaryTool(page, 'levels', 'Levels');
   });
 });

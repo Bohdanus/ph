@@ -256,6 +256,90 @@ describe('useRect mask drawing', () => {
   });
 });
 
+/**
+ * The overlay canvas is shared and long-lived: `Main.tsx:239-284` renders both overlay canvases
+ * unconditionally and only toggles `display`, which never touches a backing store. So an area that
+ * goes away has to clear the canvas itself.
+ *
+ * It cannot lean on the effect at `useRect.ts:58-70` seeing `initialRect` turn null. `goToTool`
+ * (`src/hooks/useApp.ts:167-196`) appends the selection clear and dispatches `SET_TOOL_NAME` from
+ * one function body, React batches them, and the marquee's component unmounts in the same commit
+ * that nulls the selection — and an unmounted component's effects do not run. That is what left the
+ * `#007bff` outline, the four handles and the `rgba(0, 0, 0, 0.7)` blend on the next tool's
+ * document.
+ *
+ * Every case here passes an `imageSize` that is NOT the canvas's size, so an assertion that the
+ * clear covers the backing store also fails a clear that read the render-scope `imageSize` — the
+ * mistake a cleanup closing over it makes, freezing the first render's value and under-clearing
+ * after a document resize.
+ */
+describe('useRect overlay teardown', () => {
+  beforeEach(resetPointerMock);
+
+  it('clears the whole backing store on unmount, so a marquee cannot outlive the tool switch', () => {
+    const { ctx, unmount } = setup({ imageSize: { width: 320, height: 240 }, initialRect: RECT });
+    // The mount paint is cleared from the record so the assertion can only be about the teardown.
+    vi.mocked(ctx.clearRect).mockClear();
+
+    unmount();
+
+    // 800x600 is the CANVAS, and `imageSize` above is 320x240.
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
+  });
+
+  it('clears the whole backing store on unmount even when nothing was ever painted', () => {
+    // Unconditional on purpose. A teardown gated on "did this instance paint something" is a
+    // landmine, and the abandoned-drag case is precisely the one where the content was painted by
+    // a frame that never became `initialRect`.
+    const { ctx, unmount } = setup({ imageSize: { width: 320, height: 240 }, initialRect: null });
+    expect(ctx.clearRect).not.toHaveBeenCalled();
+
+    unmount();
+
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
+  });
+
+  it('drops a queued repaint rather than letting it repaint the marquee over the teardown clear', () => {
+    const { ctx, result, event, flushFrame, unmount } = setup({
+      imageSize: { width: 320, height: 240 },
+      initialRect: RECT,
+    });
+    pointer.data.isMouseDown.current = true;
+    act(() => {
+      result.current.onPointerMove(event(200, 175));
+    });
+    // A frame is queued and not fired, so the repaint is still pending.
+    vi.mocked(ctx.clearRect).mockClear();
+    vi.mocked(ctx.strokeRect).mockClear();
+
+    unmount();
+    flushFrame();
+
+    // Cancel FIRST, then clear: a frame that survived would have repainted after the clear.
+    expect(ctx.strokeRect).not.toHaveBeenCalled();
+    expect(ctx.clearRect).toHaveBeenCalledExactlyOnceWith(0, 0, 800, 600);
+  });
+
+  it('does not throw on unmount when the overlay canvas has no 2d context', () => {
+    // The supported null-context state the guard exists for. Without it the teardown throws while
+    // React is already unmounting, which is a crash the user cannot act on.
+    const canvas = document.createElement('canvas');
+    vi.spyOn(canvas, 'getContext').mockReturnValue(null);
+
+    const { unmount } = renderHook(() =>
+      useRect({
+        imageSize: { width: 800, height: 600 },
+        initialRect: RECT,
+        containerRef: { current: document.createElement('div') },
+        overlayRef: { current: canvas },
+        onChangeEnd: vi.fn(),
+      })
+    );
+
+    expect(() => unmount()).not.toThrow();
+  });
+});
+
 describe('useRect handle detection', () => {
   beforeEach(resetPointerMock);
 
