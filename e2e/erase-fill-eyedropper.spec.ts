@@ -15,12 +15,7 @@ import {
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { cssPointToImage, imagePointToCss } from './helpers/screenshot-scale';
-import {
-  clickToolButton,
-  openToolFlyout,
-  resolveToolTile,
-  selectFromFlyout,
-} from './helpers/toolbar-helpers';
+import { clickToolButton, openToolFlyout, resolveToolTile, selectFromFlyout } from './helpers/toolbar-helpers';
 
 import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 /**
