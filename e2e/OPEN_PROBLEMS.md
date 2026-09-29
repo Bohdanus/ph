@@ -70,9 +70,9 @@ are latent defects that no current run trips.
 ### Invariant — headless is the default, and the refusal is structural
 
 **This is not a work item.** The mitigation is already shipped, and the rest of
-this file is the work queue. `playwright.config.ts:83` resolves
+this file is the work queue. `playwright.config.ts:91` resolves
 `headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1'`, and
-`playwright.config.ts:46` loads `e2e/global-setup.ts`, which throws on `--headed`,
+`playwright.config.ts:54` loads `e2e/global-setup.ts`, which throws on `--headed`,
 `--ui` and `--debug` and on any project that resolves to `headless: false`
 (`e2e/global-setup.ts:44-61`). The refusal arrives before a browser exists, so the
 rule is structural rather than remembered. What follows is the reasoning the default
@@ -161,30 +161,39 @@ breaks all of them at once.
 
 `e2e/helpers/screenshot-scale.ts:103-125`, `e2e/helpers/cdp-helpers.ts:45-64`
 
-The hazard, for whoever refactors this next. The app is taller than Playwright's
-720px window, so the window scrolls. `Locator.boundingBox()` measures against the
-VIEWPORT and goes negative as soon as it does — a canvas scrolled 440px down
-reports `y: -340` where it reported `y: 100` before. `page.mouse` shares that
-space. But `page.screenshot({ clip })` and CDP `Page.captureScreenshot`, which
-this suite calls directly, take their clip against the DOCUMENT origin. The two
-take **opposite** conventions from each other for the same numbers: Playwright
-takes a viewport clip and adds the scroll offset itself, so converting there moves
-the clip the wrong way; raw CDP takes a page clip, so converting nothing moves the
-capture 440px away from the region the caller measured. Neither direction throws.
-A clip derived from a scrolled `boundingBox()` and handed to CDP untranslated
-either returns the wrong region or lands off-canvas, where the failure surfaces as
-`Clipped area is either empty or outside the resulting image` and reads as a
-capture bug rather than a coordinate bug.
+The hazard, for whoever refactors this next. `Locator.boundingBox()` measures against
+the VIEWPORT and goes negative the moment the page scrolls, and `page.mouse` shares
+that space. But `page.screenshot({ clip })` and CDP `Page.captureScreenshot`, which
+this suite calls directly, take their clip against the DOCUMENT origin. The two take
+**opposite** conventions from each other for the same numbers: Playwright takes a
+viewport clip and adds the scroll offset itself, so converting there moves the clip
+the wrong way; raw CDP takes a page clip, so converting nothing moves the capture away
+from the region the caller measured. Neither direction throws. A clip derived from a
+scrolled `boundingBox()` and handed to CDP untranslated either returns the wrong region
+or lands off-canvas, where the failure surfaces as `Clipped area is either empty or
+outside the resulting image` and reads as a capture bug rather than a coordinate bug.
+
+**This app no longer scrolls, so the numbers in the original version of this entry no
+longer describe it.** An earlier version opened "The app is taller than Playwright's
+720px window, so the window scrolls… a canvas scrolled 440px down reports `y: -340`
+where it reported `y: 100` before" — measured, that was true of a layout that no longer
+exists. The shell is now exactly viewport-tall at every size in
+`e2e/no-document-overflow.spec.ts`'s matrix, so `getPageScroll` returns `{0, 0}`,
+`boundingBox()` is not negative, and `preservingScroll` has nothing to undo. The
+hazard above is kept because it is about the two conventions disagreeing, which is a
+property of Playwright and CDP rather than of this app, and the same class of bug
+returns the moment anything is allowed to scroll the document again.
 
 **The helper-level fix is done, and it is recorded here so a refactor does not
 undo it.** The conversion is the pure function `viewportRectToPageRect`
 (`screenshot-scale.ts:126-133`), it is applied **at the CDP site only**
 (`cdp-helpers.ts:56-64`) and not in the callers, the scroll offset is read per
-capture rather than cached (`getPageScroll`, `canvas-helpers.ts:356`, because
-the window scrolls between captures — `clickToolButton` alone scrolls 440px, which
-is what `preservingScroll` exists to undo, `toolbar-helpers.ts:117-121,128,161`),
-and the rule is unit-tested for a non-zero offset at
-`e2e/helpers/__tests__/screenshot-scale.unit.test.ts:404-427`.
+capture rather than cached (`getPageScroll`, `canvas-helpers.ts:356` — the offset is
+a live read because a page that scrolls can scroll again between captures, whatever
+currently makes it scroll), and the rule is unit-tested for a non-zero offset at
+`e2e/helpers/__tests__/screenshot-scale.unit.test.ts:404-427`. That unit test is the
+load-bearing part now: it is the only coverage of the non-zero-offset case, since the
+app cannot produce one.
 
 What is left is a rule for new code: a spec that mixes `boundingBox()` with a CDP
 capture must not assume the two agree, and must not introduce a second conversion
@@ -405,6 +414,47 @@ threads a `canvasBox(page)` call through `stroke`, `clickAt`, `readPixel`,
 `measureErasedWidth` and `slabClip` for this reason. A helper that returns the box
 alongside the capture it took would make the mistake harder to make.
 
+## P2 — a CDP capture intermittently returns a screenshot of a page 87px shorter than the one measured
+
+`e2e/helpers/cdp-helpers.ts`
+
+**Signature.** `captureCanvasScreenshot` returns a plausible image of a page that is not the one
+the caller measured. In a 700px window, `window.innerHeight` reported 700 before the call and 613
+after; in a 900px window, 900 before and 813 after. **The same 87px both times**, with the capture
+the only thing between the two readings. The box before was 844x563 and after 844x476 — width and
+origin unchanged, height alone. The image looks correct, so nothing downstream can tell; the
+caller maps a stroke it measured under the old layout through the new one and the mismatch reads
+as a geometry bug in the app.
+
+**How it was found, and what it is not.** `e2e/viewport-drawing.spec.ts` reported a 32.5px /
+31.05px line-vs-cursor error at the `wide` viewport, which predicted the 763→676 box change
+exactly. The obvious suspect was the rail's new width, and that was wrong: measured per viewport,
+all three windows are **height-limited** (the fit never crosses modes, and width-limited at `wide`
+would need a 970px-tall window), the app's pointer→document mapping
+(`src/hooks/usePointerPosition.ts:247-262`) and its `object-contain` paint agree exactly in CSS
+space, and painting the app's own document point back through its own fit returns the cursor to
+the decimal. The residual 3–5.5px is the brush's half-width. So the mapping is self-consistent
+and the geometry is fine; the capture is the liar.
+
+**Not fixed.** `captureBeyondViewport: false` is now passed explicitly, which is the documented
+scope and the obvious suspect, and it did **not** eliminate the drift: 1 failure in 15 repeats
+with it set. Across **50 controlled captures at a fixed viewport the drift did not reproduce at
+all** — not once through the full sequence (load, select draw, `drawLine`, `waitForCanvasRedraw`,
+marker injection, capture), which is what makes it a race rather than a scope problem, and why
+the CDP mechanism is still open. Settling it needs native tracing (`--trace` on a run that
+reproduces, or CDP tracing around the call), not more attempts to reproduce it in a loop.
+
+**What is done about the reporting.** `e2e/viewport-drawing.spec.ts` now re-measures the box
+across the capture and fails with _"the capture is of a DIFFERENT page than the one that was
+measured, so every offset below is meaningless"_ plus both boxes. That guard fired on the real
+drift during a 10x repeat run, so it is not theoretical. Before it, the same drift surfaced as a
+32.5px app geometry error, which would have sent the next agent to the drawing engine.
+
+**Do not "fix" this by widening a tolerance.** The same spec's tolerance is now DERIVED from the
+stroke's own geometry — `(lineWidth / 2) x containFit(box).scale + 2`, which is 6.7–8.4px and
+roughly a third of the fixed 25px it replaced — and there is a control asserting the widest
+derived tolerance stays below 25 so a later edit cannot silently re-widen it.
+
 ## Known-skip tests
 
 Two specs are `test.skip` by declaration:
@@ -548,11 +598,22 @@ mapping has to be inverted before such a literal is meaningful, and it is not. S
 asserts against whatever geometry the current layout happens to produce, and a layout change
 silently changes what is being tested rather than failing.
 
-**Five assertions that fail outright on a 1px rail change**, all in `e2e/responsive-shell.spec.ts`:
-`:186` expects the collapsed rail at 56, `:207` and `:281` expect the right panel at 250, `:221`
-expects the panel's own width delta at 250, and `:296` expects the two-column rail at 108. Those are
-`toBeCloseTo(x, 0)`, so a single pixel fails them. They are the sharp end of the same defect: a
-number written into a test is a pin on the layout, and the layout is not the subject.
+**Three assertions still fail outright on a 1px change**, all in `e2e/responsive-shell.spec.ts`:
+`:336` expects the expanded right panel at 250, `:350` expects the panel's own width delta at 250,
+and `:417` expects the collapsed panel at 250. Those are `toBeCloseTo(x, 0)`, so a single pixel
+fails them. They are the sharp end of the same defect: a number written into a test is a pin on
+the layout, and the layout is not the subject.
+
+**Two more were in this list and are gone.** The entry used to name five. The other two were the
+rail's own width — the collapsed rail at 56 and the two-column rail at 108 — and they are
+resolved, by `feat/toolbar-overflow-collapse`. That change made one column the default and had the
+rail fit its tiles to the space it has, which is exactly the kind of change this entry warns about,
+and both assertions had to go rather than be re-pointed at the new numbers. What replaced them is
+the pattern the rest of this entry asks for: the tablet band's rail is now asserted by the
+`<ul>` count the layout renders (`e2e/responsive-shell.spec.ts:302-319`), and the two-column rail
+by a width RELATION the test measures against itself — one column against two, both measured in the
+same test (`e2e/responsive-shell.spec.ts:420-441`) — so neither pins a pixel. The panel's 250 is the
+same defect and still needs the same treatment.
 
 **The pattern to copy is already in the tree.** `e2e/viewport-drawing.spec.ts:26-27` gestures at
 `box.x + box.width * 0.25` and `box.y + box.height * 0.35` — a fraction of the box, so it tracks the
@@ -603,8 +664,15 @@ This section recorded 33 findings from a read-only review of the pre-migration t
 written down. **Thirty-one are fixed and their entries deleted**, which is the only thing
 worth reading here: if you are looking for one of them, it is gone, and the code is the
 record of what it was. The commit that carried them in is `4d47904`; the one that fixed
-them is on `fix/e2e-transferred-findings`. Two were not fully closable and are re-recorded
+them is `bfce8f3`, and it is on `main`. Two were not fully closable and are re-recorded
 below.
+
+**Three `## P…` entries appear below this line, and only two of them are those two.** The
+third, `P3 — re-verification: the tablet band's option-row floor…`, was filed by a later
+pass against this tree and is not one of the 33. It is here rather than above the section
+because it was raised while auditing the fixes, and moving it would break the audit trail
+for no gain — but a reader counting the entries to work out which findings survived will
+count three, and the two-line arithmetic above is the one to trust.
 
 The source repository is frozen at `78be956` and its own ledger is not maintained, so that
 review has no other home. The list of what it claimed and what turned out to be already
@@ -719,6 +787,45 @@ can say which, so this entry stays open rather than being deleted on a green run
 
 ---
 
+## P2 — the mobile bottom bar scrolls 615px with no affordance, and nothing tests it
+
+`src/components/Mobile/MobileBottomBar.tsx`, `e2e/no-document-overflow.spec.ts`
+
+`nav[data-testid="mobile-bottom-bar"]` is `overflow-x-auto` and carries every
+`mobileToolGroups` entry in one row — 18 focusable tiles, 16 groups plus Options and
+Layers, separated by 5 dividers. Measured, it overflows its own width by **615px** at a
+744×1133 viewport and by **969px** at 390×844, which is the reference phone size the rest
+of the mobile suite already uses. It now carries `scrollbar-none`, so the only cue that
+most of those tiles are off-screen is gone. A user with a mouse and no trackpad has
+nothing left to drag: the bar is `position: fixed`, so the document behind it does not
+scroll either.
+
+This is the same trade the left tool rail makes, and the rail's version is deliberate and
+pinned — the rail scrolls and stays reachable by wheel, arrows and touch. The difference
+is magnitude. The rail overflows by 71px at iPad 10.2" portrait (810×1080) and 5px at iPad
+mini landscape (1133×744); this bar overflows by 615px at the same width and by 969px on
+a phone. A 5px overflow hides a cue for something already within reach of a scroll; a
+969px one hides most of the tool list.
+
+**The CSS is pinned; the overflow is not.** `no-document-overflow.spec.ts` asserts this
+bar is a scroll container with `scrollbar-width: none`, which is a statement about the
+stylesheet and would still pass if the group list grew or shrank by a factor of ten. No
+test reads the bar's `scrollWidth` against its `clientWidth`.
+
+The open question is a product one, not a defect report: a tool bar with 969px of hidden
+overflow needs either a visible scroll affordance or a different layout — the tool sheet
+already exists as `MobileToolSheet`, and wrapping is the other obvious answer. What keeps
+it undecided is coverage, recorded in the `P3 — no mobile or HiDPI project, and no touch
+anywhere` entry below: `e2e/` has zero `hasTouch`, zero `isMobile` and zero `touchscreen`.
+`mobile-shell.spec.ts` does run at a device width (it sets `test.use({ viewport: { width:
+390, height: 844 } })`) and it drives the bar with `page.mouse`, so what is missing is
+touch emulation and a reachability assertion — not a device width, which it already has.
+
+**Exact remaining verification:** decide the affordance, implement it, and add a
+reachability test that scrolls the bar to its last tile and asserts that tile is inside
+the viewport — the same shape as the rail's swatch test in
+`e2e/no-document-overflow.spec.ts`.
+
 ## Checked here and rejected
 
 Recorded so the same ground is not re-audited. Each was re-derived against this tree
@@ -742,3 +849,37 @@ and **is not a defect here**:
   baselines.** The first two are fixed (`noUnusedLocals` and `noUnusedParameters` are
   on, the count is 0); the CDP assertions now derive their scale; the orphans are
   recorded in the P3 entry above.
+- **Four review findings about `getStrokeAnalysis` and the Photopea oracle, left
+  unaddressed when the orchestrator session died.** All four were re-derived against
+  this tree; one was real and is fixed, and three were not defects here:
+  - _The capture scale is read off the width axis and spent on a row measurement._ Real,
+    and fixed — but **not reachable from any current call site**, so the fix is a rule
+    rather than a repair. `canvas-helpers.ts` scales `verticalSpread` (rows) by the row
+    scale and the column gap by the column scale. What a later reader must not do is
+    re-file this as a live bug: it is pinned by two tests whose capture is DELIBERATELY
+    exaggerated, because a real fractional clip diverges by ~2% and that cannot cross a
+    threshold against a one-or-two-pixel measurement. The exaggeration is stated at the
+    test, and the per-call-site arithmetic is in the `CaptureRegion` JSDoc.
+  - _`captureScale` never validates `imageWidth`, so scale 0 is reachable._ Not
+    reachable, and the stated mechanism was wrong. The defence is `bottom < 0`, not the
+    length of `data` — with `width === 0` the coordinate arithmetic yields `NaN`, a
+    `NaN` never compares less than the initial `top`, and the function reports "nothing
+    here" before any threshold is consulted. The pre-existing zero-sized test passes an
+    EMPTY buffer, so it could not tell the two defences apart; a test carrying real ink
+    now does.
+  - _A rejection inside a `waitForCanvasPixels` poll aborts the poll instead of
+    retrying._ True in mechanism, unreachable at the only poll call site —
+    `pen-types.spec.ts` builds its clip's width and height from module constants. The
+    JSDoc now states which of `null` and a rejection is which.
+  - _The Photopea oracle's JSDoc claimed neither check is reachable without the file
+    opening._ The comment was wrong, not the code, and it is corrected in place:
+    `getByText` matches regardless of visibility and `not.toHaveCount(0)` is a count,
+    so a HIDDEN recent-files row satisfies the name check exactly as a visible one
+    would. The canvas-backing-store check is the load-bearing one. Both share the blind
+    spot, and the spec is `test.skip`ped, so neither is a proof.
+
+  What makes this worth recording rather than deleting: **four of five defects found in
+  that review were defects in the CLAIMS, and a green suite could not tell.** The code was
+  correct and every gate was passing in every one of them. A test suite that only fails
+  on behaviour will not find this class, and a comment that over-credits what an
+  assertion proves is invisible to `tsc`, to `eslint` and to a passing run.

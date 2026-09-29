@@ -21,7 +21,15 @@ const POINTS = [
 
 function createRafMocks() {
   const frames = new Map<number, FrameRequestCallback>();
-  let nextId = 0;
+  // Starts at 1, not 0, and the whole file depends on that. HTML Standard §8.12 defines the
+  // handle as a pre-increment of a counter: the target object has "an animation frame callback
+  // identifier, which is a number that must initially be zero", and `requestAnimationFrame`
+  // steps "increment target's animation frame callback identifier by one, and let handle be the
+  // result". So the handles a user agent hands back are 1, 2, 3, … and 0 is unreachable — which
+  // makes the truthiness guards in `usePolylineAnts` correct in every browser. Counting from 0
+  // manufactured the one input they mishandle, and every test written against that mock was
+  // pinned to an artefact of the mock rather than to a defect.
+  let nextId = 1;
 
   return {
     requestAnimationFrame: vi.fn((callback: FrameRequestCallback) => {
@@ -134,19 +142,19 @@ describe('useMarchingPath animation lifecycle', () => {
     expect(rafMocks.frames.size).toBe(1);
   });
 
-  it.fails('stops the loop when paused before the first frame has run (src/hooks/usePolylineAnts.ts:141)', () => {
-    // Product defect: the effect cleanup guards on `if (animationIdRef.current)`,
-    // and the first frame handle is 0. Pausing while frame 0 is still pending
-    // therefore never cancels it, so the animation loop keeps running (frozen,
-    // but never stopping) for the lifetime of the component. The pause branch
-    // in the effect body is gone; this cleanup guard is the only remaining
-    // falsy-0 path.
+  it('stops the loop when paused before the first frame has run (src/hooks/usePolylineAnts.ts:148)', () => {
+    // The effect cleanup cancels the pending handle, and a handle a user agent returns is
+    // `++identifier` off a counter that "must initially be zero" (HTML Standard §8.12), so
+    // the first is 1 and the guard is never wrong in a browser. This used to be an
+    // `it.fails` claiming the guard skipped handle 0 — an input this mock manufactured and
+    // the spec excludes. The production comment at `usePolylineAnts.ts:134-136` still
+    // asserts the opposite; see HANDOFF.md.
     const { rerender } = setup();
-    expect([...rafMocks.frames.keys()]).toEqual([0]);
+    expect([...rafMocks.frames.keys()]).toEqual([1]);
 
     rerender({ points: POINTS, isPaused: true });
 
-    expect(rafMocks.cancelAnimationFrame).toHaveBeenCalledWith(0);
+    expect(rafMocks.cancelAnimationFrame).toHaveBeenCalledWith(1);
     expect(rafMocks.frames.size).toBe(0);
   });
 
@@ -217,10 +225,11 @@ describe('useMarchingPath animation lifecycle', () => {
 
   it('cancels the pending frame when draw is called again', () => {
     const { result, frame } = setup();
-    // Consume frame 0 so the pending id is a non-zero value.
+    // Run the first frame, so the pending handle is the one the LOOP scheduled rather
+    // than the one the initial draw did. That is the distinct case from the test below,
+    // which cancels before any frame has run.
     frame();
     const pendingId = [...rafMocks.frames.keys()][0];
-    expect(pendingId).toBeGreaterThan(0);
 
     act(() => {
       result.current.draw();
@@ -230,14 +239,16 @@ describe('useMarchingPath animation lifecycle', () => {
     expect(rafMocks.frames.size).toBe(1);
   });
 
-  it.fails('cancels the very first pending frame when draw is called again (src/hooks/usePolylineAnts.ts:124)', () => {
-    // Product defect: the guard is `if (animationIdRef.current)`, and the first
-    // frame handle a fresh hook receives is 0. A falsy 0 skips the
-    // cancelAnimationFrame, so the first loop is never cancelled and a second
-    // animation loop runs in parallel (the ants march at double speed).
+  it('cancels the very first pending frame when draw is called again (src/hooks/usePolylineAnts.ts:124)', () => {
+    // The draw guard is `if (animationIdRef.current)`, and the first handle a hook ever
+    // receives is 1: the spec's handle is `++identifier` off a counter that "must initially
+    // be zero" (HTML Standard §8.12), so a falsy 0 is not an input this guard can meet.
+    // This used to be an `it.fails` reporting that a second loop ran in parallel at double
+    // speed — caused entirely by the mock handing back 0, and it would have inverted to red
+    // the moment anyone corrected the counter.
     const { result, frame } = setup();
     const firstId = [...rafMocks.frames.keys()][0];
-    expect(firstId).toBe(0);
+    expect(firstId).toBe(1);
 
     act(() => {
       result.current.draw();
