@@ -44,6 +44,12 @@ describe('ThemeContext', () => {
   beforeEach(() => {
     vi.useFakeTimers();
 
+    // The provider writes to the SHARED `document.documentElement`, and nothing removes
+    // those classes on unmount, so a test that rendered `dark` used to leave `dark` on the
+    // document for every test after it. No mock API touches the DOM: this is a real
+    // element, so the class list has to be reset explicitly.
+    document.documentElement.classList.remove('light', 'dark');
+
     localStorageMock.getItem.mockReset().mockReturnValue(null);
     localStorageMock.setItem.mockReset();
     localStorageMock.removeItem.mockReset();
@@ -133,6 +139,13 @@ describe('ThemeContext', () => {
       return <span data-testid="theme">{theme}</span>;
     };
 
+    // Asserted BEFORE this test's own render, so the class list is being read in the state
+    // the lifecycle hook left it in. Without that reset a `dark` test earlier in the file
+    // would decide this expectation, and the provider's own effect would be what made it
+    // pass — a test that cannot fail.
+    expect(document.documentElement.classList.contains('light')).toBe(false);
+    expect(document.documentElement.classList.contains('dark')).toBe(false);
+
     renderWithProvider(<TestComponent />);
 
     expect(document.documentElement.classList.contains('light')).toBe(true);
@@ -151,6 +164,11 @@ describe('ThemeContext', () => {
         </div>
       );
     };
+
+    // Same reason as the test above: this one only means anything if it starts from a
+    // document element that the previous test did not leave themed.
+    expect(document.documentElement.classList.contains('light')).toBe(false);
+    expect(document.documentElement.classList.contains('dark')).toBe(false);
 
     renderWithProvider(<TestComponent />);
 

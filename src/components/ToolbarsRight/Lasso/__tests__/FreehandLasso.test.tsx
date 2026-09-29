@@ -219,39 +219,49 @@ describe('FreehandLasso toolbar', () => {
   it('copies the active polygon selection and reports success without alerting', () => {
     const alertSpy = vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const activeSelection = { id: 'sel-1', geometry: 'polygon' };
-    setSelectionState({ activeSelection });
-    render(<FreehandLasso />);
 
-    fireEvent.click(getCopyButton());
+    // `restoreMocks` is off, and the only global `afterEach` is `cleanup()` plus
+    // `useRealTimers()`, so a red assertion here used to leave `window.alert` and
+    // `console.error` mocked for every test after it in the file.
+    try {
+      const activeSelection = { id: 'sel-1', geometry: 'polygon' };
+      setSelectionState({ activeSelection });
+      render(<FreehandLasso />);
 
-    expect(clipboardMocks.copyActiveSelection).toHaveBeenCalledWith(activeSelection);
-    expect(alertSpy).not.toHaveBeenCalled();
-    expect(errorSpy).not.toHaveBeenCalled();
+      fireEvent.click(getCopyButton());
 
-    alertSpy.mockRestore();
-    errorSpy.mockRestore();
+      expect(clipboardMocks.copyActiveSelection).toHaveBeenCalledWith(activeSelection);
+      expect(alertSpy).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      alertSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 
   it('surfaces a copy failure to the user and keeps the toolbar usable', () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const alertSpy = vi.spyOn(globalThis, 'alert').mockImplementation(() => {});
-    setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
-    clipboardMocks.copyActiveSelection.mockImplementationOnce(() => {
-      throw new Error('clipboard unavailable');
-    });
-    render(<FreehandLasso />);
 
-    fireEvent.click(getCopyButton());
+    // Same reason as the test above: the restore has to run whatever the assertions do.
+    try {
+      setSelectionState({ activeSelection: { id: 'sel-1', geometry: 'polygon' } });
+      clipboardMocks.copyActiveSelection.mockImplementationOnce(() => {
+        throw new Error('clipboard unavailable');
+      });
+      render(<FreehandLasso />);
 
-    expect(errorSpy).toHaveBeenCalledWith('Error copying freehand lasso selection:', expect.any(Error));
-    expect(alertSpy).toHaveBeenCalledWith('Failed to copy selection');
-    // The transient copying state must be released even when the copy throws.
-    expect(getCopyButton()).toBeEnabled();
-    expect(getCopyButton()).toHaveTextContent('Copy');
+      fireEvent.click(getCopyButton());
 
-    alertSpy.mockRestore();
-    errorSpy.mockRestore();
+      expect(errorSpy).toHaveBeenCalledWith('Error copying freehand lasso selection:', expect.any(Error));
+      expect(alertSpy).toHaveBeenCalledWith('Failed to copy selection');
+      // The transient copying state must be released even when the copy throws.
+      expect(getCopyButton()).toBeEnabled();
+      expect(getCopyButton()).toHaveTextContent('Copy');
+    } finally {
+      alertSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
   });
 
   it('pastes the selection clipboard', () => {
