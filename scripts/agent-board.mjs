@@ -84,6 +84,8 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
   dep <id> <depends-on>  record a dependency
   status                 counts, your claims, live locks, expiring leases
   watch                  the event log          --follow --since --kind
+                         (bare: the LAST 200 events, so a note written just now is
+                          in it; --since 0: every event, from the start)
   health                 is this board being USED, or only carried?
   doctor                 release claims from dead worktrees and expired leases  --dry-run
   import                 the handoff documents into the board     --dry-run --file
@@ -784,22 +786,85 @@ export async function run(
         // test board were printed about seventy times a second, and on a board
         // with more than 200 events it would print the first 200 forever and
         // never show anything new — which is the opposite of tailing a log.
-        let cursor = flags.since ? Number(flags.since) : 0;
-        for (;;) {
-          const events = board.events({
-            since: cursor,
-            limit: 200,
-            kind: flags.kind ? String(flags.kind) : null,
-          });
-          for (const event of events) {
-            out.write(`${eventLine(event)}\n`);
+        const PAGE = 200;
+        const kind = flags.kind ? String(flags.kind) : null;
+        // Reading the log from the beginning was ALSO wrong, and it is the half
+        // that cost two agents a session. A bare `watch` took `--since 0`, read
+        // one page, and stopped: on a 572-event board it printed seq 1-200 —
+        // the first seventeen hours — and every `note` written since was simply
+        // not in the output. An agent grepping for its own note text got
+        // nothing and concluded the note had not landed. It had. The output is
+        // also plain text with no ESC byte anywhere in it, so the "it is
+        // ANSI-coloured" reading that came with the report is a misdiagnosis and
+        // the wrong thing to go looking for.
+        //
+        // So the two invocations mean two different things, which is what a
+        // reader expects from a log:
+        //
+        //   `--follow`   unchanged: everything from the start, then it waits for
+        //                 more. A follower wants the story so far, and the spawn
+        //                 test that watches for an event written BEFORE it
+        //                 started depends on exactly that.
+        //   `--since N`  EVERY event after N, streamed, because `swarm status`
+        //                 hands out exactly this invocation and a reader who
+        //                 names a sequence number is asking for a suffix. The
+        //                 old code stopped after 200 and silently lost the rest.
+        //   bare         The last PAGE of the log, and a `#` line saying which
+        //                 window that is, because a reader cannot see it from
+        //                 the lines.
+        //
+        // The bare window is found by READING the log and keeping a rolling
+        // buffer, not by asking for a sequence range. That is what makes
+        // `--kind` work: a window is a set of matching events, so the last 200
+        // `note` events may sit at sequence 40 on a board where sequence 40 is
+        // not in the last 200 events. Reading backwards by seq got that wrong
+        // and missed the event entirely — a `watch --kind` that finds nothing
+        // is the one answer a log search must never give.
+        const since = flags.since === undefined ? null : Number(flags.since);
+        if (flags.follow || since !== null) {
+          let cursor = since ?? 0;
+          for (;;) {
+            const events = board.events({ since: cursor, limit: PAGE, kind });
+            for (const event of events) out.write(`${eventLine(event)}\n`);
+            if (events.length > 0) cursor = Number(events.at(-1).seq);
+            if (!flags.follow) {
+              if (events.length < PAGE) break;
+              continue;
+            }
+            // A full page means there is probably more waiting, so go straight
+            // back; an empty one means the swarm is quiet, so do not spin on it.
+            await new Promise((resolve) => setTimeout(resolve, events.length > 0 ? 50 : 1500));
           }
-          if (events.length > 0) cursor = Number(events.at(-1).seq);
-          if (!flags.follow) break;
-          // A full page means there is probably more waiting, so go straight
-          // back; an empty one means the swarm is quiet, so do not spin on it.
-          await new Promise((resolve) => setTimeout(resolve, events.length > 0 ? 50 : 1500));
+          return 0;
         }
+
+        // The window. Bounded at PAGE events, whatever the log's length, and the
+        // header counts what is in the buffer rather than what the sequences
+        // suggest: `events()` filters `seq > cursor`, so "the last 200" is a
+        // range whose arithmetic is one wider than it looks, and a header that
+        // miscounts is how event 1 goes missing with a note promising it is
+        // reachable.
+        const window = [];
+        let matched = 0;
+        let cursor = 0;
+        for (;;) {
+          const events = board.events({ since: cursor, limit: PAGE, kind });
+          if (events.length === 0) break;
+          matched += events.length;
+          window.push(...events);
+          if (window.length > PAGE) window.splice(0, window.length - PAGE);
+          cursor = Number(events.at(-1).seq);
+          if (events.length < PAGE) break;
+        }
+        if (matched > window.length) {
+          // `#` so it is a comment a pipeline can drop, not an event line: the
+          // window is the one thing the reader cannot see from the output.
+          out.write(
+            `# the last ${window.length} of ${matched} matching event(s)${kind ? ` of kind ${kind}` : ''}; ` +
+              `the other ${matched - window.length}: swarm watch --since 0${kind ? ` --kind ${kind}` : ''}\n`,
+          );
+        }
+        for (const event of window) out.write(`${eventLine(event)}\n`);
         return 0;
       }
 
