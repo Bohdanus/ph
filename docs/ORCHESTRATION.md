@@ -221,17 +221,25 @@ If `at-risk` and `mergedIntoMain` are both true, read the protecting entry's
 `land` is clean and mergeable; `at-risk` requires preservation or human review.
 
 **`mustNotPrune` vetoes `land` and `dispose`.** It records a human claim that the
-worktree is not accounted for; every such entry must include a note explaining
-what would be lost. A merge recommendation is as much a claim about the contents
-as a prune recommendation is, so a `land` entry carrying `mustNotPrune: true` is
-impossible by construction; if you see one, the flag is stale and belongs
-retracted in the same change that noticed it. Anything a human must decide lives
-in `scripts/lib/worktree-inventory/curated.mjs` and survives regeneration. Curated
-entries are not interchangeable: `polygon-marching-ants` has `mustNotPrune` and a
-note but no `issues` or `landed`, while `ps-pixel-tools` has `issues` and a
-claimed `landed` state. Read the source file rather than copying a prose
-example. **When you create a worktree, add its entry in the same change** — an
-uncurated worktree is one nobody has written down what it is for, which is how a
+worktree is not accounted for, and it is for a claim git cannot make about a
+**clean** tree. Every such entry must include a note explaining what would be
+lost. A merge recommendation is as much a claim about the contents as a prune
+recommendation is, so a `land` entry carrying `mustNotPrune: true` is impossible
+by construction.
+
+**Do not flag a worktree for holding work on no ref — that case is derived.** A
+branch at 0 ahead of main, already on it, with a dirty working tree is reported
+`uncommitted-only` and is never prunable whatever the curated table says, and
+`worktree-inventory.test.mjs` re-derives the set from the live worktrees and
+asserts the generator's verdict on it. A flag on such an entry protected nothing
+and went stale on its own: the moment its owner committed, the claim was false and
+the list had to be re-derived by hand. Anything a human must decide lives in
+`scripts/lib/worktree-inventory/curated.mjs` and survives regeneration. Curated
+entries are not interchangeable: `tsc-guard` has a `note` but no `issues` and no
+`landed`, while `paint-easy` carries an `issues` ref and a claimed `landed` state.
+Read the source file rather than copying a prose example. **When
+you create a worktree, add its entry in the same change** — an uncurated
+worktree is one nobody has written down what it is for, which is how a
 preservation branch gets mistaken for a disposable one.
 
 `readyToLand`, `disposalCandidates`, `atRisk`, `readUnfinished`, `workOnNoRef` and
