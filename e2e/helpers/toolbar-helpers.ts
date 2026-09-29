@@ -99,25 +99,91 @@ function escapeRegExp(value: string): string {
 /**
  * Runs a toolbar interaction and puts the window back where it was afterwards.
  *
- * Playwright scrolls a target into view before it clicks, and the left toolbar is 1177px
- * tall inside Playwright's 720px window, so every click on a tool near the bottom of it
- * drags the page 440px down. That scroll is invisible to the caller and fatal to the specs:
- * a canvas box measured after the click reports `y: -340` where it reported `y: 100`, so
- * the stroke is drawn and read 440px away from where the geometry says, and 19 specs that
- * passed on the parent commit fail here. Restoring the offset is what makes a tool click
- * mean "this tool is now active" and nothing else.
+ * This was written for a rail that did NOT fit: the toolbar was 1177px tall inside
+ * Playwright's 720px window, so every click on a tool near the bottom of it dragged the
+ * page 440px down. That scroll is invisible to the caller and fatal to the specs — a
+ * canvas box measured after the click reported `y: -340` where it reported `y: 100`, so
+ * the stroke was drawn and read 440px away from where the geometry says, and 19 specs
+ * that passed on the parent commit failed for that one reason.
+ *
+ * The rail no longer outgrows the viewport: the column is `h-full` and the tiles
+ * COLLAPSE into the three-dots tile instead of pushing the page taller, so a tool click
+ * is now expected to scroll nothing. 440 is therefore a GUARD, not a derivation — it is
+ * the size of the mistake this undoes, measured against the 1177px rail that no longer
+ * exists, and nothing recomputes it. Do not re-derive it from the current layout, and do
+ * not delete this function because the scroll stopped happening: the rail keeps
+ * `overflow-y-auto` as a backstop on purpose, and any future layout that does grow the
+ * page reintroduces the failure above silently and across the whole suite, which is the
+ * worst way for it to come back.
  *
  * It is deliberately not "scroll to the top": a caller that has scrolled for its own
  * reasons must get its own position back, not a hardcoded one. The restore is
  * unconditional, so it also undoes a scroll the APP caused by selecting the tool — not
  * only the one Playwright caused to reach the button — and `window.scrollTo` to the
- * position the window is already at fires no scroll event, so the common short-toolbar
- * case costs one read and one no-op write.
+ * position the window is already at fires no scroll event, so the expected
+ * no-scroll case costs one read and one no-op write.
  */
 async function preservingScroll(page: Page, action: () => Promise<void>): Promise<void> {
   const before = await getPageScroll(page);
   await action();
   await page.evaluate(({ x, y }) => window.scrollTo(x, y), before);
+}
+
+/**
+ * The three-dots tile's test id, which is deliberately NOT `tool-button-<name>`.
+ *
+ * A tool tile's id names the tool, so minting one for a tile that stands for no tool would
+ * make `getByTestId('tool-button-…')` match a control that selects something else. That
+ * decision is also what makes the collapse below cheap to detect: "this tool has no tile"
+ * and "the three-dots tile is not on the rail" are two separate questions, and both have
+ * to be asked. A tall viewport has no three-dots tile and therefore no collapsed tool, so
+ * asking about the tile first is what keeps a genuinely missing tool a fast, accurate
+ * failure instead of a timeout on a flyout that was never going to open.
+ */
+const OVERFLOW_TILE_TESTID = 'tool-overflow-tile';
+
+/**
+ * Opens a flyout from a tile by right-click, and waits for that flyout to be on screen.
+ *
+ * Right-click rather than the long press `openToolFlyout` uses, because it needs no timer:
+ * `onContextMenu` calls the same `openFlyout(groupIndex)` the long press reaches, and a
+ * right-click cannot be cancelled by a `pointerup` arriving before the 300ms timer fires —
+ * which is the whole defect `openToolFlyout` documents. The three-dots tile is rendered by
+ * the same `renderToolGroup` as every other tile, so it answers to the same gesture.
+ */
+async function openFlyoutFromTile(page: Page, tileTestId: string): Promise<void> {
+  const tile = page.getByTestId(tileTestId);
+  await expect(tile).toBeVisible();
+  await preservingScroll(page, () => tile.click({ button: 'right' }));
+  await waitForFlyout(page);
+}
+
+/**
+ * A collapsed tool's entry in an OPEN three-dots flyout, addressed by test id PREFIX.
+ *
+ * The app mints `tool-flyout-item-${tool.name}-${slugifyToolLabel(tool.label)}`, so the
+ * obvious selector is that whole string, and this deliberately does not mint it. The slug
+ * half needs the APP's display label, and the only label data this file holds is not the
+ * app's: `TOOL_DISPLAY_LABEL_MAP['reposition']` is `Select & Move`, a legacy accessible
+ * name, while the app labels that tool `Move Tool` (`toolbar-mapping.ts`). Minting from
+ * local data would address `tool-flyout-item-reposition-select-move`, an id that exists
+ * nowhere, and the selector would miss silently. `generateSlug` above is the one label rule
+ * this file is allowed to copy, because a label can be handed to it; here there is no label
+ * to hand it.
+ *
+ * The prefix is safe because the trailing `-` is the app's own name/slug delimiter, so it
+ * cannot match a name that merely starts with the same letters — `tool-flyout-item-pencil-…`
+ * is not a `pen` item, nor `item-rectangle-` a `rectangular-selection` one. What it CAN match
+ * is a longer name that begins `name-`, and the map holds exactly one such pair, `color` and
+ * `color-replacement`; the map order puts `color` first, and `.first()` is that order, so the
+ * pair resolves correctly. The one name with several ids in a single menu is `shape` — its
+ * five figures share it — and `.first()` is the correct answer there too rather than an
+ * approximation: the app's rule is that a tile's click selects the FIRST entry of its group,
+ * `overflowTools` pushes `...group` in map order, and collapse is per group, so the figure a
+ * shape tile would have selected is the first `shape` item in the overflow menu.
+ */
+function overflowFlyoutItem(page: Page, toolName: string): Locator {
+  return page.getByTestId(new RegExp(`^tool-flyout-item-${escapeRegExp(toolName)}-`));
 }
 
 export async function clickToolButton(page: Page, toolName: string): Promise<void> {
@@ -126,6 +192,27 @@ export async function clickToolButton(page: Page, toolName: string): Promise<voi
   const testIdTool = page.getByTestId(`tool-button-${normalizedName}`);
   if (await testIdTool.count()) {
     await preservingScroll(page, () => testIdTool.first().click());
+    return;
+  }
+
+  // No tile, so the tool is either collapsed into the three-dots flyout or the rail is an
+  // older build with no such affordance. The collapse is tried first because it is the exact
+  // mechanism — the tile and its items are both addressed by test id — while the role fallback
+  // below is a regex over accessible names kept only for backwards compatibility. Preferring
+  // the current mechanism over the legacy one is the same order this file has always stated.
+  const overflowTile = page.getByTestId(OVERFLOW_TILE_TESTID);
+  if (await overflowTile.count()) {
+    await openFlyoutFromTile(page, OVERFLOW_TILE_TESTID);
+    const collapsedItem = overflowFlyoutItem(page, normalizedName).first();
+    // Not a `try` with a fall-through: a tool that is neither on the rail nor in an open
+    // three-dots menu does not exist, and searching roles for it afterwards could only
+    // produce a more confusing answer than the timeout already names.
+    await expect(collapsedItem).toBeVisible();
+    // The item hangs off a tile at the truncation point, so it is a click that can scroll
+    // exactly as a tool button click can; same reason, same treatment as `selectFromFlyout`.
+    // The app closes the flyout on the pick, so this returns with the tool active and the
+    // menu on its way out — the same contract the tile path above returns under.
+    await preservingScroll(page, () => collapsedItem.click());
     return;
   }
 
@@ -212,6 +299,9 @@ export const FLYOUT_VISIBLE_TIMEOUT_MS = 2000;
  * Use this instead of clickToolButton when you need to select a non-primary
  * tool from a flyout group (e.g., Lasso, Colors, Brush, Pen, Shape).
  *
+ * A tool that has collapsed into the three-dots tile is the one case where this is not a
+ * long press, and the branch says why in place rather than up here.
+ *
  * The gesture is press, wait for the menu, lift — in that order, because that is what
  * the app's own handler requires. `SidebarLeft` arms a 300ms timer on pointerdown and
  * opens the flyout when it fires, while its pointerup handler calls
@@ -236,6 +326,19 @@ export async function openToolFlyout(page: Page, toolName: string): Promise<void
   const normalizedName = resolveToolName(toolName);
 
   const button = page.getByTestId(`tool-button-${normalizedName}`);
+  if (!(await button.count())) {
+    // Absent, not merely hidden: the tool collapsed, and the gesture below is a long press
+    // ON the tile, so there is nothing to dispatch it at. The three-dots tile opens the same
+    // `openFlyout` from a right-click and its menu carries the tool, which leaves the caller's
+    // own `selectFromFlyout` to pick out of it exactly as it did for a tile's own flyout.
+    // Guarded on the tile existing so the "there is no such tool" case below still fails on
+    // the button it is about, and not on a three-dots tile that was never going to appear.
+    const overflowTile = page.getByTestId(OVERFLOW_TILE_TESTID);
+    if (await overflowTile.count()) {
+      await openFlyoutFromTile(page, OVERFLOW_TILE_TESTID);
+      return;
+    }
+  }
   await expect(button).toBeVisible();
 
   // Press.
@@ -329,15 +432,13 @@ export async function verifyPrimaryTool(page: Page, toolName: string, expectedLa
 
 /**
  * Opens a tool flyout via right-click (context menu) for grouped tools.
+ *
+ * Unlike `clickToolButton` and `openToolFlyout` this has no collapse fallback, on purpose:
+ * it asks for ONE NAMED TILE'S flyout, and the three-dots menu is not that tile's menu. A
+ * caller that means "whatever flyout has this tool in it" wants the two functions above.
  */
 export async function openToolFlyoutViaRightClick(page: Page, toolName: string): Promise<void> {
-  const normalizedName = resolveToolName(toolName);
-
-  const button = page.getByTestId(`tool-button-${normalizedName}`);
-  await expect(button).toBeVisible();
-
-  await preservingScroll(page, () => button.click({ button: 'right' }));
-  await waitForFlyout(page);
+  await openFlyoutFromTile(page, `tool-button-${resolveToolName(toolName)}`);
 }
 /**
  * Verifies that hover does NOT open a flyout (Photoshop-style behavior).

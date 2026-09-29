@@ -191,14 +191,28 @@ type MockLocator = {
 };
 
 type MockPage = {
-  getByTestId: Mock<(testId: string) => MockLocator>;
+  // `string | RegExp`, as Playwright's own `Page.getByTestId` is. The implementation below
+  // always accepted both; the declared type was the narrower one, and it only became a type
+  // error when a helper started passing a pattern — which it does, to address a flyout item
+  // by the prefix of its id.
+  getByTestId: Mock<(testId: string | RegExp) => MockLocator>;
   getByRole: Mock<(role: string, options?: { name?: RegExp | string }) => MockLocator>;
   waitForTimeout: Mock<(timeout: number) => Promise<void>>;
   keyboard: { press: Mock<(key: string) => Promise<void>> };
   evaluate: Mock<Page['evaluate']>;
 };
 
-/** The offset Playwright's scroll-into-view produces when a toolbar button is clicked. */
+/**
+ * The offset Playwright's scroll-into-view produced when a toolbar button was clicked.
+ *
+ * A GUARD, not a measurement: it was read off the 1177px rail that made the page outgrow a
+ * 720px window, and the rail no longer does — its tiles collapse into the three-dots tile
+ * instead, so a tool click is now expected to scroll nothing and `scrollOnClick` models a
+ * case the layout should not reach. It is kept, and kept at 440, because the rail retains
+ * `overflow-y-auto` as a deliberate backstop: any layout that does grow the page brings back
+ * a scroll nothing else undoes, across every spec at once. Do not re-derive it from the
+ * current rail, and do not delete it with the rail that produced it.
+ */
 const SCROLLED_BY_CLICK = 440;
 
 interface FakeDom {
@@ -433,9 +447,12 @@ function createFakeDom(domOptions: { scrollOnClick?: boolean } = {}): FakeDom {
       click: vi.fn(async (options?: { button?: string }) => {
         const element = primary();
         if (element) clickElement(element, options);
-        // Playwright scrolls a target into view before clicking it. The left toolbar is
-        // 1177px tall in a 720px window, so a click on a tool near the bottom of it lands
-        // with the window at 440 — which is what `preservingScroll` exists to undo.
+        // Playwright scrolls a target into view before clicking it. It used to do so for
+        // real — the left rail was 1177px tall in a 720px window, so a click on a tool near
+        // the bottom of it landed with the window at 440, which is what `preservingScroll`
+        // exists to undo. The rail now fits by collapsing tiles, so this models the
+        // backstop rather than the expected case, and every test that sets `scrollOnClick`
+        // is proving the restore still works if the layout ever outgrows the window again.
         if (scrollOnClick) {
           void scrollModel.evaluate(() => {
             window.scrollTo(0, SCROLLED_BY_CLICK);
@@ -556,10 +573,43 @@ function addFlyout(
   return { menu, items: elements };
 }
 
+/**
+ * The three-dots tile and the flyout it opens, wired the way the app wires it: a right-click
+ * calls the same `openFlyout` the long press reaches, and the menu lists TOOLS in map order
+ * (`overflowTools` pushes `...group` for every collapsed group), so each item carries the id
+ * the app mints for it and nothing else.
+ */
+function addOverflowTile(
+  dom: FakeDom,
+  tools: ReadonlyArray<{ readonly name: string; readonly label: string }>
+): { tile: FakeElement; menu: FakeElement; items: FakeElement[] } {
+  const { menu, items } = addFlyout(
+    dom,
+    tools.map((tool) => ({ testId: flyoutItemTestId(tool.name, tool.label) })),
+    { visible: false }
+  );
+  const tile = dom.add({
+    testId: 'tool-overflow-tile',
+    onContextMenu: () => {
+      menu.visible = true;
+    },
+  });
+  return { tile, menu, items };
+}
+
+/**
+ * Every tool the app can put in a flyout, in the order it lists them, taken from
+ * `toolbarMap` rather than transcribed — a fixture that listed its own names would agree with
+ * the helper by construction, which is the failure the existing `REAL_TOOL_LABELS` comment
+ * above already warns about for the slug rule.
+ */
+const TOOLBAR_TOOLS: ReadonlyArray<{ readonly name: string; readonly label: string }> = toolbarMap.flatMap((group) =>
+  group.flatMap((menu) => menu.map((tool) => ({ name: tool.name, label: tool.label })))
+);
+
 function visibilityCheckFor(element: FakeElement): { options?: { timeout?: number } } | undefined {
   return visibilityChecks.find((check) => check.target.__elements[0] === element);
 }
-
 function attributeCheckFor(
   element: FakeElement
 ): { name: string; value: string; options?: { timeout?: number } } | undefined {
@@ -1401,6 +1451,179 @@ describe('Toolbar Helpers', () => {
       expect(error.message).toContain(`Timed out ${FLYOUT_VISIBLE_TIMEOUT_MS}ms`);
       expect(error.message).toContain('[testid="tool-button-reposition"]');
       expect(error.message).toContain('aria-expanded');
+    });
+  });
+
+  /**
+   * A tile the rail cannot fit is collapsed into the three-dots tile, and the tool then has
+   * NO `tool-button-<name>` element at all. The whole point of the fallback under test is
+   * that the ~26 specs calling these helpers do not learn that this is possible, so these
+   * assert the collapse is invisible from the outside: same arguments, same promise, same
+   * "this tool is now active" result.
+   */
+  describe('a tool that has collapsed into the three-dots tile', () => {
+    const PENCIL = { name: 'pencil', label: 'Pencil Tool' };
+
+    it('clicks the tile and never goes near the three-dots tile when the tool has one', async () => {
+      const dom = createFakeDom();
+      const button = dom.add({ testId: 'tool-button-brush' });
+      const overflow = addOverflowTile(dom, [PENCIL]);
+
+      await clickToolButton(dom.page, 'brush');
+
+      expect(dom.clicked).toEqual([button]);
+      // The three-dots tile is on this rail and was still never touched. A right-click on it
+      // would have opened a flyout over the canvas the caller is about to measure, and the
+      // tile's own click would have selected a tool nobody asked for.
+      expect(dom.clicked).not.toContain(overflow.tile);
+      expect(overflow.menu.visible).toBe(false);
+    });
+
+    it('opens the three-dots flyout and clicks the tool inside it', async () => {
+      const dom = createFakeDom();
+      const overflow = addOverflowTile(dom, [PENCIL]);
+
+      await clickToolButton(dom.page, 'pencil');
+
+      // Right-click, then the item: the tile answers `onContextMenu` the same way every other
+      // tile does, and no pointer event is dispatched on the way there.
+      expect(dom.clicked).toEqual([overflow.tile, overflow.items[0]]);
+      expect(dom.dispatched).toEqual([]);
+      // The app closes the flyout on the pick, so the helper returns with the tool active
+      // and the menu gone — the same contract the tile path returns under.
+      expect(overflow.menu.visible).toBe(false);
+    });
+
+    it('lands on the exact test id the app mints, for every tool in toolbarMap', async () => {
+      // The slug half of the id is the app's own `slugifyToolLabel` applied to the label the
+      // app shows, and this walks the real map so a respelled or renamed label cannot leave
+      // the helper addressing an id the app no longer renders. The app's ids are unique per
+      // (name, label), so landing on the right element is what pins the slug.
+      for (const name of new Set(TOOLBAR_TOOLS.map((tool) => tool.name))) {
+        const dom = createFakeDom();
+        const overflow = addOverflowTile(dom, TOOLBAR_TOOLS);
+
+        await clickToolButton(dom.page, name);
+
+        // The FIRST tool in map order carrying this name, which is the app's own rule for
+        // what a tile selects, and therefore what a collapsed tile stands in for. It is the
+        // whole answer for `shape`, whose five figures share one name.
+        const expected = overflow.items[TOOLBAR_TOOLS.findIndex((tool) => tool.name === name)];
+        expect(dom.clicked).toEqual([overflow.tile, expected]);
+      }
+    });
+
+    it('builds that id from the slug the app renders, stated as the id itself', () => {
+      // The walk above proves the agreement; this makes it legible. `generateSlug` is the
+      // helper's independent copy of the rule, so the two strings are computed by different
+      // code and the assertion is between the app's output and what the helper clicked.
+      const dom = createFakeDom();
+      const overflow = addOverflowTile(dom, TOOLBAR_TOOLS);
+      const pencil = overflow.items[TOOLBAR_TOOLS.findIndex((tool) => tool.name === 'pencil')];
+
+      expect(pencil.testId).toBe('tool-flyout-item-pencil-pencil-tool');
+      expect(pencil.testId).toBe(`tool-flyout-item-pencil-${generateSlug('Pencil Tool')}`);
+      expect(pencil.testId).toBe(`tool-flyout-item-pencil-${slugifyToolLabel('Pencil Tool')}`);
+      expect(dom.elements).toContain(pencil);
+    });
+
+    it('leaves the window where the caller had it on the collapsed path', async () => {
+      const dom = createFakeDom({ scrollOnClick: true });
+      addOverflowTile(dom, [PENCIL]);
+      await dom.page.evaluate(() => window.scrollTo(120, 300));
+
+      await clickToolButton(dom.page, 'pencil');
+
+      // The item hangs off a tile at the truncation point, so it is a click that can scroll
+      // exactly as a tool button click can — the backstop, not the expected case, and the
+      // restore is unconditional either way.
+      expect(dom.windowScroll()).toEqual({ x: 120, y: 300 });
+    });
+
+    it('does not open the three-dots tile when the rail has none', async () => {
+      // A rail tall enough to show every tile has no three-dots tile, so nothing collapsed
+      // and the legacy role fallback is all that is left. Without the `count()` guard on the
+      // tile this would time out against a control that was never going to appear, and the
+      // failure would name the wrong element.
+      const dom = createFakeDom();
+      const legacy = dom.add({ testId: 'legacy-brush', name: 'Brush Tool' });
+
+      await clickToolButton(dom.page, 'brush');
+
+      expect(dom.clicked).toEqual([legacy]);
+      // The helper does ASK whether the three-dots tile is there — it has to, that is the
+      // collapse check — and it asks with `count()` rather than by asserting visibility.
+      // Nothing is asserted visible anywhere on this path, so there is nothing that could
+      // have spent the flyout budget waiting for a tile that was never going to appear.
+      expect(visibilityChecks).toEqual([]);
+    });
+
+    it('names the missing item rather than searching roles, when it is in neither place', async () => {
+      // The three-dots menu is open and the tool is not in it, so the tool does not exist.
+      // Falling through to the role search could only produce a less honest answer than the
+      // timeout, which already names the element that was not there.
+      const dom = createFakeDom();
+      addOverflowTile(dom, [PENCIL]);
+
+      const error = await captureError(clickToolButton(dom.page, 'clone-stamp'));
+
+      expect(error.message).toContain('toBeVisible()');
+      // No search by accessible name. `waitForFlyout`'s bare `role=menu` is not one: a name
+      // pattern is the legacy fallback's only tool, and it is what a fall-through would use.
+      expect(dom.mocks.getByRole.mock.calls.some(([, options]) => options?.name !== undefined)).toBe(false);
+      // Asserted on the selector, because an empty locator names nothing: the timeout can
+      // only say "no such element", and the element it looked for is what says which.
+      const asked = dom.mocks.getByTestId.mock.calls.at(-1)?.[0];
+      expect(asked).toBeInstanceOf(RegExp);
+      expect((asked as RegExp).source).toBe('^tool-flyout-item-clone-stamp-');
+    });
+
+    it('opens the three-dots flyout from openToolFlyout, which has no tile to press', async () => {
+      const dom = createFakeDom();
+      const overflow = addOverflowTile(dom, [PENCIL]);
+
+      await openToolFlyout(dom.page, 'pencil');
+
+      // A long press is a gesture ON a tile, and there is no tile: nothing is dispatched at
+      // all. The caller's own `selectFromFlyout` finds the tool in the menu left open, which
+      // is how it already worked for a tile's own flyout.
+      expect(dom.dispatched).toEqual([]);
+      expect(dom.clicked).toEqual([overflow.tile]);
+      expect(overflow.menu.visible).toBe(true);
+      expect(visibilityCheckFor(overflow.menu)?.options).toEqual({ timeout: FLYOUT_VISIBLE_TIMEOUT_MS });
+    });
+
+    it('keeps the long press when the tool still has a tile, and never opens the overflow', async () => {
+      const dom = createFakeDom();
+      const { menu } = addFlyout(dom, [{ testId: flyoutItemTestId('levels', 'Levels') }], { visible: false });
+      const button = dom.add({
+        testId: 'tool-button-pencil',
+        onLongPress: () => {
+          button.attributes['aria-expanded'] = 'true';
+          menu.visible = true;
+        },
+      });
+      const overflow = addOverflowTile(dom, [PENCIL]);
+
+      await openToolFlyout(dom.page, 'pencil');
+
+      expect(dom.dispatched.map((event) => event.element)).toEqual([button, button]);
+      expect(dom.clicked).toEqual([]);
+      expect(overflow.menu.visible).toBe(false);
+    });
+
+    it('still fails on the button when a tile exists but is hidden', async () => {
+      // Present and invisible is not collapsed. Collapsing is the absence of a tile, and
+      // treating a hidden tile as collapsed would answer a different question than the one
+      // the fallback asks.
+      const dom = createFakeDom();
+      dom.add({ testId: 'tool-button-pencil', visible: false });
+      const overflow = addOverflowTile(dom, [PENCIL]);
+
+      await expect(openToolFlyout(dom.page, 'pencil')).rejects.toThrow(/toBeVisible\(\)/);
+      expect(dom.dispatched).toEqual([]);
+      expect(dom.clicked).toEqual([]);
+      expect(overflow.menu.visible).toBe(false);
     });
   });
 

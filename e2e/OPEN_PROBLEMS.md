@@ -548,11 +548,22 @@ mapping has to be inverted before such a literal is meaningful, and it is not. S
 asserts against whatever geometry the current layout happens to produce, and a layout change
 silently changes what is being tested rather than failing.
 
-**Five assertions that fail outright on a 1px rail change**, all in `e2e/responsive-shell.spec.ts`:
-`:186` expects the collapsed rail at 56, `:207` and `:281` expect the right panel at 250, `:221`
-expects the panel's own width delta at 250, and `:296` expects the two-column rail at 108. Those are
-`toBeCloseTo(x, 0)`, so a single pixel fails them. They are the sharp end of the same defect: a
-number written into a test is a pin on the layout, and the layout is not the subject.
+**Three assertions still fail outright on a 1px change**, all in `e2e/responsive-shell.spec.ts`:
+`:336` expects the expanded right panel at 250, `:350` expects the panel's own width delta at 250,
+and `:417` expects the collapsed panel at 250. Those are `toBeCloseTo(x, 0)`, so a single pixel
+fails them. They are the sharp end of the same defect: a number written into a test is a pin on
+the layout, and the layout is not the subject.
+
+**Two more were in this list and are gone.** The entry used to name five. The other two were the
+rail's own width — the collapsed rail at 56 and the two-column rail at 108 — and they are
+resolved, by `feat/toolbar-overflow-collapse`. That change made one column the default and had the
+rail fit its tiles to the space it has, which is exactly the kind of change this entry warns about,
+and both assertions had to go rather than be re-pointed at the new numbers. What replaced them is
+the pattern the rest of this entry asks for: the tablet band's rail is now asserted by the
+`<ul>` count the layout renders (`e2e/responsive-shell.spec.ts:302-319`), and the two-column rail
+by a width RELATION the test measures against itself — one column against two, both measured in the
+same test (`e2e/responsive-shell.spec.ts:420-441`) — so neither pins a pixel. The panel's 250 is the
+same defect and still needs the same treatment.
 
 **The pattern to copy is already in the tree.** `e2e/viewport-drawing.spec.ts:26-27` gestures at
 `box.x + box.width * 0.25` and `box.y + box.height * 0.35` — a fraction of the box, so it tracks the

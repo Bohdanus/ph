@@ -547,7 +547,24 @@ const SidebarLeft = () => {
                     ? 'Shape tools'
                     : `${primaryTool.label} tools`
               }
-              className="pointer-events-auto min-w-48 list-none rounded-lg border border-gray-300 bg-gray-100 p-1.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
+              /**
+               * Bounded to the viewport, and scrolling within it, because the three-dots tile
+               * can hold thirty-odd tools and a menu that tall cannot be reached.
+               *
+               * `AnchoredOverlay` clamps the overlay's POSITION and never its size: with a
+               * 1374px menu in a 720px window the clamp resolves to the viewport padding, the
+               * menu starts at the top edge and runs off the bottom, and because the overlay
+               * is `position: fixed` in the body there is no ancestor to scroll — so every
+               * tool past the first dozen or so was off-screen and unreachable, with no
+               * scrollbar and nothing in the DOM to say so. That defeats the entire point of
+               * a tile whose job is to keep the tools that do not fit reachable.
+               *
+               * The bound is a viewport unit rather than a pixel constant so it needs no
+               * measurement and no re-render: the menu shrinks on its own when the window
+               * does. `max-h` rather than `h` because a short menu must not be padded out to
+               * fill the window.
+               */
+              className="pointer-events-auto max-h-[calc(100vh-1rem)] min-w-48 list-none overflow-y-auto overscroll-contain rounded-lg border border-gray-300 bg-gray-100 p-1.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
               data-toolbar-flyout={groupIndex}
               onKeyDown={(event) => {
                 // Tab leaves the menu rather than walking it. The overlay lives in

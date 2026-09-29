@@ -656,6 +656,32 @@ than only reporting that something changed.
   `e2e/sidebar-flyout.spec.ts` and `AnchoredOverlay.test.tsx`. A popover that must escape
   a scroll container goes through `SidebarLeft/AnchoredOverlay.tsx`, which portals to
   `document.body` — `overflow: clip` still clips, so no value on the rail can fix it.
+- **`AnchoredOverlay` clamps a flyout's POSITION and never its SIZE, and the wrapper is
+  `position: fixed`, so an overlay taller than the window has no scrollbar and no
+  reachable tail.** The portal is what makes an overlay escape ancestor clipping; it is
+  also what removes the ancestor a tall one would have scrolled inside. `clampToViewport`
+  resolves a too-tall overlay to the viewport padding, so the overlay starts at the top
+  edge and runs off the bottom, and `toBeVisible()` is true of every item in it. This is
+  the same shape as the row above — a thing that is in the DOM, has a box, and cannot be
+  reached — and the two halves are one component, so read them together.
+  The rail's three-dots menu hit it: it holds every tool the rail could not fit, about
+  thirty of them, which is roughly 1374px of menu, and at 1280x720 two thirds of the
+  Type and shape tools were below the fold with nothing in the DOM to say so. **Any
+  flyout that can hold more than a viewport's worth of items needs a viewport bound and
+  its own scroll** — `max-h-[calc(100vh-1rem)] overflow-y-auto overscroll-contain` on the
+  menu. And because a browser here paints zero-width OVERLAY scrollbars, a test cannot
+  assert a thumb: assert `scrollHeight > clientHeight` as the non-vacuity control, then
+  `scrollIntoViewIfNeeded()` the LAST item and assert it is inside the window.
+  `e2e/toolbar-overflow.spec.ts` is the worked example.
+- **A rail that is a grid item sized by its CONTENT has no height for `flex-1` to divide.**
+  The left rail's column is `h-full` for that reason, and it is load-bearing rather than
+  cosmetic: the tiles' fit measures the slot, so a slot sized by the tiles would measure
+  its own output, agree with it, and never collapse anything. `min-h-full` was correct
+  while the rail scrolled and stopped being correct the moment the tiles were fitted
+  instead. The same reasoning is why the fit reads `left-toolbar-slot` and never
+  `innerHeight` or the rail's own box: that is what lets the panel be dragged off the
+  edge and resized later without touching the rule. `SidebarLeft.overflow.test.tsx`
+  asserts the window-independence rather than promising it.
 - **`scripts/__tests__/*.test.mjs` runs under the root jsdom project and must stay
   environment-agnostic.** The swarm board is a Node script whose only dependency
   is the built-in `node:sqlite`, and it is tested there deliberately: a test file
@@ -867,6 +893,27 @@ in the panel footer is unconfirmed).
 **Not tools, and not to be implemented as tools:** the foreground/background swatches, "Edit in Quick
 Mask Mode", the three screen-mode toggles, the `…` Edit Toolbar caret, the toolbar grip, and the
 Extra Tools container.
+
+**…and the one that looks like the list above but is not: the rail's THREE-DOTS TILE.** The `…`
+Edit Toolbar caret and the Extra Tools container are not _tools_, which is why they are on that
+list — but the tile this app renders for them is load-bearing and must not be deleted as "the Edit
+Toolbar caret". Photoshop's own answer to a Tools panel taller than the window is that tile, and
+this app reproduces it: when the tiles would take more than 80% of the vertical space the rail has,
+the rows that do not fit move into a three-dots tile whose long-press or right-click flyout lists
+**every tool of every collapsed group**, nested ones included, because a group is the unit the rail
+hides and a tool is the unit the user reaches for. Omitting a collapsed group is the same defect
+as omitting a tool from the panel. It is also the only thing keeping those tools reachable, so it
+carries tests on both sides: `e2e/toolbar-overflow.spec.ts` asserts that at four viewport sizes
+every tool is in exactly one of a tile or that flyout — nothing unreachable, nothing offered twice.
+
+**One column is the DEFAULT, and no ordinary desktop window shows all of it.** Sixteen groups of a
+44px tile with a 6px gap and four section separators is about 846px of tiles, the budget is 80% of
+the slot, and the rail's chrome takes another ~190px — so the window has to be roughly 1250px tall
+before nothing collapses at all. That is what two columns is for, and it is why one column is
+Photoshop's default and the chevron is the override. Do not read "everything fits" as something an
+ordinary laptop height satisfies, and do not pin a viewport number to mean it: the rule is on the
+slot, and `SidebarLeft.overflow.test.tsx` asserts that a different window at the same slot height
+changes nothing.
 
 **Naming traps in the source material, so nobody "fixes" them later:** Adobe's tables say
 "Elliptical Marquee tool" and "Ellipse tool" — two different words for two different tools. Adobe's

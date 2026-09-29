@@ -304,6 +304,28 @@ describe('SidebarLeft overflow', () => {
     }
   });
 
+  it('bounds the three-dots menu to the window and lets it scroll', () => {
+    // The defect this pins: a menu as tall as its contents, in a `position: fixed` overlay
+    // that clamps POSITION and never size. Thirty-odd tools is about 1374px of menu in a
+    // 720px window, so the clamp resolved to the top padding, the menu started at the
+    // viewport's top edge and ran off the bottom, and there was no ancestor to scroll — the
+    // tail of the list was off-screen and unreachable with nothing in the DOM to say so.
+    // That defeats the whole point of a tile whose only job is to keep tools reachable.
+    //
+    // The class is the contract jsdom can see; whether the scroll actually works is an
+    // e2e question, and `e2e/toolbar-overflow.spec.ts` asks it by reaching the LAST item.
+    render(<SidebarLeft />);
+    setSlotHeight(300);
+    openOverflowFlyout();
+
+    const menu = screen.getByRole('menu');
+    expect(menu, 'the menu is bounded by the window, not by its contents').toHaveClass('max-h-[calc(100vh-1rem)]');
+    expect(menu, 'and scrolls inside that bound').toHaveClass('overflow-y-auto');
+    // `overscroll-contain` so reaching the end of a long menu does not start scrolling the
+    // page behind it, which is the same trap the rail's own scroll container had.
+    expect(menu).toHaveClass('overscroll-contain');
+  });
+
   it('does not depend on the window, only on the slot it is given', () => {
     // READINESS FOR A MOVABLE PANEL, asserted rather than promised.
     //
