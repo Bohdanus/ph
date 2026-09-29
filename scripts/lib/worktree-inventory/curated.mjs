@@ -840,7 +840,7 @@ export const CURATED = {
   'rail-flatten': {
     summary:
       'The tools rail as one flat panel: the dead horizontal padding, the inner framed surface, and a rule across the bottom of the rail that divided nothing — with the e2e assertion that hardcoded a window height as proof the degenerate band exists replaced by one that finds the band.',
-    note: 'The degenerate band moves whenever the rail’s chrome changes height, so no window height can be its address.',
+    note: 'The band moves whenever the rail’s chrome changes height, so no window height can be its address. A second entry for this worktree was written on main while the flatten was still uncommitted and carried a `mustNotPrune` claim describing exactly that state; both are gone, because a committed branch is not work git cannot see.',
   },
 
   /* ---------------- worktrees that really do hold work git cannot see ----- */
@@ -885,12 +885,6 @@ export const CURATED = {
       'Layer removal published through the append boundary: a `REMOVE_ACTION` translation to `remove-layer`, a validation arm pinning the canonical operation shape, and a `removeLayer` that plans its history entry and durable entry instead of building the history item by hand.',
     mustNotPrune: true,
     note: 'The whole slice is uncommitted and on no ref — the append translation, the store-side adapter and the `removeLayer` caller together — while the branch tip is a main commit, so the branch looks disposable and none of the slice is on any ref.',
-  },
-  'rail-flatten': {
-    summary:
-      'The tools rail as one flat panel: the dead horizontal padding, the inner framed surface and the rule across the rail’s bottom that divided nothing, with the e2e assertion that hardcoded a window height as proof the degenerate band exists replaced by one that finds the band.',
-    mustNotPrune: true,
-    note: 'The flatten is uncommitted and on no ref — the rail component, its layout and workspace tests, two e2e specs and the documentation beside them — while the branch tip is a main commit, so the branch looks disposable while the only copy is the working tree. The rule across the rail’s bottom moves whenever the rail’s chrome changes height, so no window height can be its address.',
   },
   'skill-citation-sweep': {
     summary:

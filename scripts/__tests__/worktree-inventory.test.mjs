@@ -1858,7 +1858,6 @@ describe('the curated table', () => {
       'handoff-remove-layer-assets',
       'history-append-assets',
       'history-remove-append',
-      'rail-flatten',
       'skill-citation-sweep',
     ];
     expect(invisibleToGit.length, 'the list went empty, so this guard asserts nothing').toBeGreaterThan(0);
