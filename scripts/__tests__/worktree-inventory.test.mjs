@@ -35,6 +35,9 @@ import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../li
 
 const NOW = 1_790_000_000_000;
 
+/** The curated table's SOURCE, for the checks that a JS object cannot answer. */
+const CURATED_PATH = resolve(import.meta.dirname, '../lib/worktree-inventory/curated.mjs');
+
 /**
  * A throwaway git repository with a known ahead/behind shape.
  *
@@ -1702,6 +1705,49 @@ describe('the curated table', () => {
     for (const name of invisibleToGit) {
       expect(CURATED[name]?.mustNotPrune, `${name} holds work on no ref and is not protected`).toBe(true);
     }
+  });
+
+  it('declares no key twice, because a duplicate key silently discards a curation change', () => {
+    // Five keys were declared twice: a rich entry written deliberately near the
+    // top, and a terse one-liner appended near the bottom. `Object.keys()` cannot
+    // see the first — a JS object literal is last-wins, so the detailed summary
+    // and its `note` were unreachable dead code, and every test that checked the
+    // table still passed because the entry EXISTED. A committed curation change
+    // was a no-op.
+    //
+    // So this reads the SOURCE rather than the imported object: the duplicate
+    // exists only in the text. Keys are read at the top level of `CURATED` —
+    // one entry's indentation — so a key-shaped string inside a summary or a
+    // nested `issues` array is not mistaken for a declaration.
+    const source = readFileSync(CURATED_PATH, 'utf8');
+    const declared = [];
+    for (const line of source.split('\n')) {
+      const m = /^ {2}(?:'([^']+)'|([A-Za-z_$][\w$]*))\s*:\s*\{/.exec(line);
+      if (m) declared.push(m[1] ?? m[2]);
+    }
+
+    // The parse must find exactly the keys the imported object has — as a SET,
+    // not as a length, because a duplicate is precisely the case where the length
+    // differs and the length assertion would report "the parse is broken" about
+    // the very defect it is here to name. A guard that fires on the duplicate for
+    // the wrong reason teaches the next agent to ignore it.
+    const seen0 = new Set(declared);
+    expect([...seen0].sort()).toEqual([...Object.keys(CURATED)].sort());
+    expect(seen0.size).toBeGreaterThan(50);
+
+    const seen = new Set();
+    const duplicates = [];
+    for (const name of declared) {
+      if (seen.has(name)) duplicates.push(`'${name}'`);
+      else seen.add(name);
+    }
+
+    expect(
+      duplicates,
+      `curated.mjs declares these keys more than once, so the last declaration silently ` +
+        `replaces the first and the earlier curation is dead code: ${duplicates.join('; ')}. ` +
+        'Object.keys() cannot see this — the check has to read the source.'
+    ).toEqual([]);
   });
 
   it('gives every issue a ref and a title, because a ref with no title is unreadable', () => {

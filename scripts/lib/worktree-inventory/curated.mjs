@@ -631,6 +631,12 @@ export const CURATED = {
     summary:
       'Pins the test harness invariants themselves, including the context factory that a prior audit showed returns a different object per call.',
   },
+  'integration-test-pins': {
+    summary:
+      'Integration branch merging the eight test-pin branches for a single cross-branch gate run; held no work of its own, and the handoff section numbering collision was resolved here.',
+    mustNotPrune: true,
+    note: 'The flood-fill scaling-ramp test carries an uncommitted change raising its own timeout, because the assertion it makes is a ratio rather than a deadline and the default was killing it on a loaded machine. The branch is well ahead of main and that edit is on no ref.',
+  },
   'hooks-pins': {
     summary: 'Pins the commit-gate hooks, which were the subject of the silent-no-gate bug in 89 of 118 worktrees.',
   },
@@ -660,21 +666,6 @@ export const CURATED = {
   'swarm-units': {
     summary:
       'The board worktree on health units: a hold is one event per command while a release is one per file, so the previous health summed incompatible units and reported the encoding as if it were behaviour.',
-  },
-  'test-review-harness': {
-    summary: 'A review of the test harness itself, branched from main while the inventory work was in flight.',
-  },
-  'test-review-leaks': {
-    summary: 'A review looking for leaks between test and production state.',
-  },
-  'test-review-parser': {
-    summary: 'A review of parser behaviour under test.',
-  },
-  'test-review-titles': {
-    summary: 'A review of how tests are titled and grouped.',
-  },
-  'test-review-vacuous': {
-    summary: 'A review hunting assertions that cannot fail — the same class this repository has been bitten by twice.',
   },
   'chat-audit': {
     summary:
@@ -732,6 +723,175 @@ export const CURATED = {
     summary:
       'Test-comment accuracy for the flyout specs: two false explanations corrected, a duplicated assertion dropped, the expanded-wait timeout pinned as a floor rather than a literal, and the line citations this diff moved re-derived.',
     landed: true,
+  },
+
+  /* ----------------- tool-description revalidation: one worktree per family */
+  // Eight parallel audits, each re-checking its slice of the tool descriptions
+  // against Adobe's own documentation and against the running code. They are
+  // siblings of `tool-descriptions`, not replacements for it: that branch wrote
+  // the descriptions, these check them.
+  //
+  // These entries are HISTORY. The integration branch merged all eight onto
+  // main, a follow-up commit fixed the four blocking findings an independent
+  // review of the merge found, and the worktrees and their branches were then
+  // removed — all of it while the duplicate-key defect below was still being
+  // fixed. The branches are gone, so there is nothing here for the `landed`
+  // test to re-derive, and the entries are kept for the same reason
+  // `board-entrypoint` is: a landed-and-removed worktree says what the work was
+  // for, and the next agent who wonders where the per-family notes came from
+  // gets an answer.
+  'desc-eyedropper-draw': {
+    summary:
+      'The eyedropper and draw half of the tool-description revalidation: the descriptions and the notes beside them, re-derived from Adobe’s pages rather than from the name of the tool.',
+  },
+  'desc-focus': {
+    summary:
+      'The focus family’s half of the tool-description revalidation, including the finding its own review raised.',
+  },
+  'desc-paint': {
+    summary:
+      'The paint family’s half of the tool-description revalidation, over both the descriptions and the notes beside them.',
+  },
+  'desc-pen': {
+    summary: 'The pen family’s half of the tool-description revalidation, including the finding its own review raised.',
+  },
+  'desc-selection': {
+    summary:
+      'The selection family’s half of the tool-description revalidation, including the finding its own review raised.',
+  },
+  'desc-shape': {
+    summary:
+      'The shape family’s half of the tool-description revalidation, including the finding its own review raised.',
+  },
+  'desc-transform': {
+    summary:
+      'The transform family’s half of the tool-description revalidation, over both the descriptions and the notes beside them.',
+  },
+  'desc-type-crop': {
+    summary:
+      'The type and crop families’ half of the tool-description revalidation, over both the descriptions and the notes beside them.',
+  },
+  'tool-desc-integration': {
+    summary:
+      'The integration branch for the tool-description revalidation: every family branch merged, then what the corrected record implies elsewhere — the generated tooltips and TOOLS table regenerated, the AGENTS.md rail claim corrected against Adobe’s page, and the shortcut collisions filed as handoff items. Landed on main and the worktree and branch removed.',
+    note: 'No `landed` claim: the branch was deleted after the merge, so nothing re-derives it. The uncommitted AGENTS.md and docs/TOOLS.md edits it held at the last reading are the open question here — the merge reached main without them.',
+  },
+
+  /* ------------------------------------------------- Photoshop-gap branches */
+  'eyedropper-crop': {
+    summary:
+      'Four small Photoshop gaps across the eyedropper, the text tool and crop, each pinned by a test that fails without it. It does not close its handoff entry, which needs a render pipeline it does not attempt.',
+  },
+  'paint-easy': {
+    summary:
+      'Three paint defects with three tests: the eraser opening on a hard edge instead of a soft tip, Photoshop’s paint keyboard shortcuts, and the locked-layer guard.',
+    issues: [{ ref: 'HANDOFF.md#48', title: 'eraser is hard-edged; Flow and Airbrush are dead controls' }],
+  },
+  'selection-easy': {
+    summary:
+      'Four Photoshop-fidelity defects across the selection tools: the marquee’s modifiers doing nothing on a fresh drag, the wand’s Contiguous option, and the lasso’s Frequency option.',
+    issues: [
+      { ref: 'HANDOFF.md#31', title: 'the selection baseline lookup must stay unbounded over the whole timeline' },
+    ],
+  },
+
+  /* ------------------------------------------------- e2e truth and guards */
+  'e2e-findings-tail': {
+    summary:
+      'The review tail an earlier e2e session died before addressing: two of its four findings were real, including a stroke threshold that spent one axis’s capture scale on a measurement from the other axis.',
+  },
+  'e2e-shell': {
+    summary: 'The responsive-shell assertions, with the review findings applied and the branch merged onto main.',
+    landed: true,
+  },
+  'e2e-truth': {
+    summary:
+      'Corrects e2e documentation that a review found false against the tree: a spec list that named a file which does not exist and omitted several that do, and a browser-spec total that left out what Playwright actually collects.',
+  },
+  'e2e-vacuous': {
+    summary:
+      'Six e2e assertions that could not fail, each replaced with one that can and each proven by a product mutation the previous version passed.',
+  },
+  'e2e-warmup': {
+    summary:
+      'A dev-server warm-up in global setup, with the blockers and the honesty fixes a review raised and the failure modes written down.',
+    landed: true,
+  },
+  'fix-harness-guard-holes': {
+    summary:
+      'Closes the holes in the test-harness guard: the AGENTS.md test traps that the first version did not enforce, including the two collection keys that each independently decide what a project runs.',
+    mustNotPrune: true,
+    note: 'The guard’s expansion is uncommitted and on no ref, while the branch tip is a main commit — so git reports this as merged and clean and the only copy of the work is the working tree.',
+  },
+  'fix-lying-pins': {
+    summary:
+      'Repairs pins that could not fail: test titles and assertions whose bodies did the opposite of what they claimed.',
+    mustNotPrune: true,
+    note: 'The repaired pins are uncommitted and on no ref, while the branch tip is a main commit, so git reports this as merged and clean and removing the worktree destroys the only copy.',
+  },
+  'fix-parser-truth': {
+    summary:
+      'The handoff importer’s dead-heading handling, made true against the tree: the end-anchored separator forms and the prose-substring direction, with the regression tests.',
+    mustNotPrune: true,
+    note: 'Both the importer change and its tests are uncommitted and on no ref while the branch tip is a main commit, so git reports this as merged and clean.',
+  },
+  'tools-too-hard': {
+    summary:
+      'The TOO HARD register: each Photoshop capability too hard for this architecture recorded with what Adobe does, what the app does, why the gap is out of reach here, and what it offers instead — plus the gaps that are the operator’s call rather than an engineering one.',
+  },
+
+  /* ---------------- merged branches whose working tree still holds the work */
+  // Each of these sits on a main commit with nothing ahead of it, so git reports
+  // each as disposable. Each also holds uncommitted work that exists on no ref,
+  // which is the exact shape this table exists for.
+  'no-scrollbars': {
+    summary:
+      'Hides the scrollbar chrome while keeping the left rail and the mobile bar genuinely scrollable: a shared class that removes the scrollbar and nothing else, with the measured overflow heights that make it necessary.',
+    mustNotPrune: true,
+    note: 'The change is uncommitted and on no ref, while the branch tip is a main commit, so git reports this as merged and clean and the only copy of the rule and its comment is the working tree.',
+  },
+  'rail-drop-draw': {
+    summary:
+      'The invented Draw tool removed from the rail and the registry, together with the description and settings work that removal forces across the tool areas, the e2e specs that switched away from it, and the pen spec it deletes.',
+    mustNotPrune: true,
+    note: 'The whole deletion and everything it touches is uncommitted, including the staged removal of the tool’s files, while the branch tip is a main commit — so git reports this as merged and clean and the only copy of the removal is the working tree.',
+  },
+  'shape-truth': {
+    summary:
+      'The shape tools against Adobe’s own behaviour: the Polygon tool’s Sides field normalized for the draw loop and the figures’ options bars, with tests for each.',
+    mustNotPrune: true,
+    note: 'The shape settings, the draw loop and their tests are uncommitted and on no ref, while the branch tip is a main commit, so git reports this as merged and clean.',
+  },
+  'toolbar-overflow': {
+    summary:
+      'A left rail that collapses its tool tiles into the three-dots tile rather than demanding vertical room: the pure fit arithmetic split from the DOM measuring so the boundary can be pinned in jsdom.',
+    mustNotPrune: true,
+    note: 'The fit module is an untracked file and the hook beside it is uncommitted, on a branch tip that is a main commit — so git reports this as merged and clean and removing the worktree loses the module entirely.',
+  },
+  'fix-curated-table': {
+    summary:
+      'The curated table’s own duplicate-key defect: five keys declared twice, so the detailed entries were unreachable dead code and a committed curation change was a no-op. Removes the terse declarations and adds a source-level test, because a duplicate key is invisible to Object.keys().',
+    note: 'This entry describes the worktree that wrote it; it should be deleted with the worktree.',
+  },
+  'panel-docks': {
+    summary:
+      'Photoshop-style draggable panel docks: the right dock resizable by dragging, a History/Layers splitter with drag-reorder between them, the tools rail relocatable, and the layout persisted. Board issue ph-72. No commits of its own yet.',
+  },
+  'retina-dpr': {
+    summary:
+      'A canvas-resolution investigation, carried in a plan document rather than in code: what the report called a paint-algorithm bug is answered as already correct, with the geometry pipeline shown to have no step that could introduce a device-pixel count.',
+    mustNotPrune: true,
+    note: 'The plan is an untracked file and the curated entry describing it is uncommitted, on a branch tip that is a main commit — so git reports this as merged and clean and the only copy of the investigation is the working tree. Note that this entry may duplicate one its own owner is writing in the same file.',
+  },
+  'chat-damage-audit': {
+    summary:
+      'An audit of what the agent transcripts say about damaged work, reading the chats rather than inferring it from their shape. Sits on a main commit with nothing of its own.',
+  },
+  'swarm-watch-tail': {
+    summary:
+      'Makes `swarm watch` mean what a reader expects from a log: an unnamed call tails the last page and says which page it printed, and an explicit --since reads forward to the end of the log instead of stopping after one page.',
+    mustNotPrune: true,
+    note: 'The change to the board script is uncommitted and on no ref, while the branch tip is a main commit, so git reports this as merged and clean and the only copy of the two-invocation rule is the working tree.',
   },
 };
 
