@@ -154,19 +154,55 @@ export const drawPen = ({ args, ctx }: DrawStrokeParams) => {
   ctx.stroke();
 };
 
+/**
+ * Peak alpha of one dab, as a fraction of the tool's Opacity setting.
+ *
+ * This used to be a bare `alpha / 4`, which put the spray preset's own default (Opacity 0.5)
+ * at a peak of 0.125. Measured on the default 800x600 white document, Size 100 / Opacity 50%:
+ * a single dab reached rgb(223,223,223) — 32 levels of darkening out of 255 — while a 20-step
+ * 250px drag already reached luminance 69. The stroke was therefore dark and the tap invisible,
+ * which is the opposite of the order an airbrush is used in.
+ *
+ * 0.4 puts the default peak at 0.2, so one dab deposits rgb(204,204,204) (measured): clearly
+ * visible, still a soft deposit, and no single dab can ever be a flat fill even at Opacity 100%
+ * (peak 0.4). Repeated passes still build towards saturation — the same drag measures 67 — instead
+ * of arriving flattened, which is what an airbrush is for; that is why the peak is not `alpha`.
+ */
+const SPRAY_PEAK_ALPHA = 0.4;
+
+/**
+ * The Size slider is a diameter on every other pen — `lineWidth` is the stroked width — but the
+ * spray path spent all of it as the gradient RADIUS, so Size 100 painted a 200px-wide blot
+ * (measured ink bounding box: 395x196 for a 250px drag, i.e. the full 2x radius). Halving it
+ * makes Size mean the same thing across pens and keeps the dab inside the `lineWidth` padding
+ * `pointsBoundingPos` reserves for the layer crop, which a larger radius would overflow.
+ */
+const SPRAY_RADIUS_SCALE = 0.5;
+
+/**
+ * Fraction of the radius held at the peak. A ramp that starts at the centre spends the whole
+ * dab as falloff, which is a blur with no core and no density; holding the peak over the inner
+ * quarter gives the dab a body and leaves the outer three quarters as the soft rim that makes
+ * consecutive dabs merge into a stroke.
+ */
+const SPRAY_CORE_FRACTION = 0.25;
+
 export const drawSpray = ({ args, ctx }: DrawStrokeParams) => {
   const points = args.points ?? [];
   if (points.length === 0) return;
 
-  const alpha = args.alpha;
   const color = hexToRgb(args.color);
-  const colorStart = `rgba(${color}, ${alpha / 4})`;
+  // Rounded because the product carries binary-float noise into the colour string
+  // (`0.8 * 0.4` is 0.32000000000000006); 8-bit output cannot resolve the difference.
+  const peak = Math.round(args.alpha * SPRAY_PEAK_ALPHA * 1e4) / 1e4;
+  const colorStart = `rgba(${color}, ${peak})`;
   const colorStop = `rgba(${color}, 0)`;
-  const radius = args.lineWidth;
+  const radius = args.lineWidth * SPRAY_RADIUS_SCALE;
 
   for (let i = 0; i < points.length; i++) {
     const g = ctx.createRadialGradient(points[i].x, points[i].y, 0, points[i].x, points[i].y, radius);
     g.addColorStop(0, colorStart);
+    g.addColorStop(SPRAY_CORE_FRACTION, colorStart);
     g.addColorStop(1, colorStop);
 
     ctx.fillStyle = g;

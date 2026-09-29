@@ -13,6 +13,13 @@
 # a real SVG or PNG source asset to `src/` later keeps normal text handling.
 e2e/export/visual-regression.spec.ts-snapshots/** binary
 
+# Same reasoning, for the other committed image corpus: the fixture
+# e2e/file-roundtrip.spec.ts opens has exact RGB values asserted on the pixels that
+# reach the canvas, so a line-ending rewrite of the file would change what the spec
+# claims to have read. Named by extension rather than by directory because the fixture
+# directory also holds the generator script and its README, which are text.
+e2e/fixtures/*.png binary
+
 # Playwright HTML reports embed large base64 blobs on few lines; normalizing them is
 # pure churn. They are gitignored, so this only affects locally generated files.
 playwright-report/** -text

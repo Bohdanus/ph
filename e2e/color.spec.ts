@@ -24,12 +24,34 @@ test('screenshot of canvas area contains line of selected red color', async ({ p
 
   const canvas = getWorkspaceCanvas(page);
   await expect(canvas).toBeVisible();
-  const box = await canvas.boundingBox();
-  expect(box, 'Canvas should have visible coordinates').not.toBeNull();
+
+  // `draw` is the app's default tool, so `tool-button-draw` already carries
+  // `aria-pressed="true"` before anything is clicked, and asserting that after the
+  // click was satisfied by the state the test started in - it could not fail.
+  // `clickToolButton` asserts nothing about activation either, so this is the test's
+  // only tool-state check, and it has to be the one that can go red. Select a
+  // DIFFERENT tool first: that is the only state in which the attribute can still
+  // change, which turns the second assertion into a check that the click did
+  // something rather than a check that the app booted.
+  await clickToolButton(page, 'reposition');
+  await expect(page.getByTestId('tool-button-draw'), 'draw is not active while another tool is').toHaveAttribute(
+    'aria-pressed',
+    'false'
+  );
 
   await clickToolButton(page, 'draw');
   // The draw tool only strokes with the active foreground color once it is the active tool.
-  await expect(page.getByTestId('tool-button-draw')).toHaveAttribute('aria-pressed', 'true');
+  await expect(
+    page.getByTestId('tool-button-draw'),
+    'clicking the Draw tile must make draw the active tool'
+  ).toHaveAttribute('aria-pressed', 'true');
+
+  // Measured AFTER the tool switches, not before: a tool change swaps the options
+  // bar, which can move the canvas, and `drawLine` takes box-relative offsets. A box
+  // measured before would stroke - and then sample - somewhere the geometry no longer
+  // describes. The two clicks above are what makes this ordering load-bearing.
+  const box = await canvas.boundingBox();
+  expect(box, 'Canvas should have visible coordinates').not.toBeNull();
 
   // SET COLOR via native setter (triggers React onChange)
   // This bypasses React's "value unchanged" check and reaches delegated listeners
