@@ -1,9 +1,9 @@
 import { afterEach, describe, it, expect, vi, type Mock } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { BrowserContext, CDPSession, Page } from '@playwright/test';
-import { captureCanvasScreenshot, getDevicePixelRatio } from '../cdp-helpers';
+import { captureCanvasScreenshot } from '../cdp-helpers';
 import {
   cleanupTempDirs,
   createPageMock,
@@ -93,81 +93,69 @@ function createCdpHarness(outputDir: string, options: HarnessOptions = {}): CdpH
   };
 }
 
-/**
- * Runs the page function the helper hands to `page.evaluate`, against a stubbed
- * global `window`. The assertions below are therefore made on the helper's own
- * callback, not on a value the double chose to return — a helper that read a
- * hardcoded ratio, or a different global, fails these tests.
- */
-function createRunningEvaluate(devicePixelRatio: unknown): Mock<Page['evaluate']> {
-  vi.stubGlobal('window', { devicePixelRatio });
-  return vi.fn(async (pageFunction: () => number) => pageFunction()) as unknown as Mock<Page['evaluate']>;
-}
-
 describe('CDP Helpers', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  describe('getDevicePixelRatio', () => {
-    it('returns the ratio the page reports, read from window inside a page function', async () => {
-      const evaluate = createRunningEvaluate(2);
+  /**
+   * PINS for the module's own contract. Two of the three transferred findings in this
+   * file group are a comment and a deletion, so neither is visible to any assertion made
+   * *through* the helper: a wrong comment and a re-added export both pass the whole
+   * `captureCanvasScreenshot` suite. These read the module the way the next agent will —
+   * its text and its exported surface — so a regression fails as a named test instead of
+   * as a silently wrong file.
+   */
+  describe('the capture scale contract as written down', () => {
+    const SOURCE = readFileSync(new URL('../cdp-helpers.ts', import.meta.url), 'utf8');
+    const COMMENTS = SOURCE.split('\n')
+      .filter((line) => /^\s*\/\//.test(line))
+      .join('\n');
 
-      await expect(getDevicePixelRatio(createPageMock({ evaluate }))).resolves.toBe(2);
-
-      expect(evaluate).toHaveBeenCalledTimes(1);
-      expect(evaluate.mock.calls[0][0]).toBeTypeOf('function');
+    it('does not restate the deviceScaleFactor multiplication the sibling spec disproved', () => {
+      // FINDING, pinned: the comment used to assert that a capture comes back at the clip
+      // extent x clip scale x deviceScaleFactor, that this is "the same as
+      // `page.screenshot()`", and that a 120x80 CSS clip decodes to 240x160 at
+      // deviceScaleFactor 2. `cdp-helpers.spec.ts` measured all three false: CDP captures
+      // at Chrome's surface scale, which the emulated ratio does not change, while
+      // `page.screenshot({clip})` does scale with it. None of the three is reproduced in
+      // the corrected comment even in order to refute it, so a re-introduction cannot hide
+      // inside its own negation.
+      expect(SOURCE).not.toMatch(/clip[ _]size\s*[x×]\s*clip\.scale\s*[x×]\s*deviceScaleFactor/i);
+      expect(SOURCE).not.toMatch(/same as\s+`?page\.screenshot\(\)`?/i);
+      expect(SOURCE).not.toMatch(/120x80[\s\S]{0,120}240x160/);
     });
 
-    it('falls back to 1 when the page reports no devicePixelRatio at all', async () => {
-      // The missing-field case: the page function runs for real, so the `|| 1`
-      // fallback is exercised rather than a hardcoded 1 in the double.
-      const evaluate = createRunningEvaluate(undefined);
-
-      await expect(getDevicePixelRatio(createPageMock({ evaluate }))).resolves.toBe(1);
+    it('states the mechanism the sibling spec measured instead', () => {
+      // The replacement has to be assertable too, or the test above only forbids the old
+      // wording and says nothing about the new. `surface scale` is Chrome's own capture
+      // scale; the second assertion is the part a reword is most likely to drop — that the
+      // emulated ratio is not what determines the capture.
+      expect(COMMENTS).toMatch(/surface scale/i);
+      expect(COMMENTS).toMatch(/deviceScaleFactor` does not change it/i);
     });
 
-    it('treats a falsy ratio as missing, so 0 and NaN both become 1', async () => {
-      // PIN: the fallback is `||`, not `??`, so a reported 0 reads as "no ratio" and
-      // is reported as 1. Real browsers never report 0, so this is harmless — but a
-      // fix that switches the guard to `??` breaks this test, which is the point.
-      await expect(getDevicePixelRatio(createPageMock({ evaluate: createRunningEvaluate(0) }))).resolves.toBe(1);
-      await expect(getDevicePixelRatio(createPageMock({ evaluate: createRunningEvaluate(Number.NaN) }))).resolves.toBe(
-        1
-      );
+    it('does not export getDevicePixelRatio', async () => {
+      // FINDING, pinned: the export had no caller outside this file and its spec, and
+      // existed only to keep "divide by devicePixelRatio" one import away — the strategy
+      // `screenshot-scale.ts` rejects by design. Asserted on the runtime surface rather
+      // than on the text, so a re-export under any spelling of the source fails.
+      const exported = await import('../cdp-helpers');
+      expect(Object.keys(exported).sort()).toEqual(['captureCanvasScreenshot']);
+      expect(exported).not.toHaveProperty('getDevicePixelRatio');
     });
 
-    it('returns a fractional ratio verbatim, without rounding or truncating it', async () => {
-      // A DPR of 1.5 or 2.75 is legal. Rounding it here would corrupt every
-      // pixel-to-CSS conversion downstream.
-      await expect(getDevicePixelRatio(createPageMock({ evaluate: createRunningEvaluate(1.5) }))).resolves.toBe(1.5);
-      await expect(getDevicePixelRatio(createPageMock({ evaluate: createRunningEvaluate(2.75) }))).resolves.toBe(2.75);
-    });
-
-    it('returns a negative ratio verbatim instead of clamping it to the 1 fallback', async () => {
-      // The `|| 1` fallback is a floor for a *missing* value only. A helper that
-      // clamped to `Math.max(1, ratio)` would hide a nonsense ratio behind a
-      // plausible one, and every caller would treat it as real.
-      await expect(getDevicePixelRatio(createPageMock({ evaluate: createRunningEvaluate(-2) }))).resolves.toBe(-2);
-    });
-
-    it('propagates an evaluate failure instead of reporting the 1 fallback', async () => {
-      // The fallback belongs to a page that answered `undefined`. A failed evaluate
-      // means the page is gone or the context destroyed, and reporting 1 there would
-      // turn a hard error into a plausible-looking number.
-      const evaluate = vi.fn<Page['evaluate']>().mockRejectedValue(new Error('Execution context was destroyed'));
-      const page = createPageMock({ evaluate });
-
-      await expect(getDevicePixelRatio(page)).rejects.toThrow('Execution context was destroyed');
-      expect(evaluate).toHaveBeenCalledTimes(1);
-    });
-
-    it('propagates a non-Error rejection from evaluate unchanged', async () => {
-      const rejection = { reason: 'cdp target gone' };
-      const evaluate = vi.fn<Page['evaluate']>().mockRejectedValue(rejection);
-
-      await expect(getDevicePixelRatio(createPageMock({ evaluate }))).rejects.toBe(rejection);
+    it('does not name getDevicePixelRatio in the helper or its spec', () => {
+      // Complements the surface check, and catches the other half of a re-invitation:
+      // re-declaring the identifier in the helper (unexported, or exported by re-export),
+      // or importing it into the spec again. Deliberately scoped to the two files this
+      // finding names — `canvas-helpers.ts` and `.skills/photoshop-tool-creation.md` also
+      // mention the identifier in prose under other owners, and widening the scope would
+      // make this test permanently red for something it cannot fix.
+      for (const file of ['../cdp-helpers.ts', '../cdp-helpers.spec.ts']) {
+        expect(readFileSync(new URL(file, import.meta.url), 'utf8'), file).not.toMatch(/getDevicePixelRatio/);
+      }
     });
   });
 

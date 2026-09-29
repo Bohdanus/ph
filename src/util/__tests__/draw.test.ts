@@ -157,7 +157,7 @@ describe('drawPen', () => {
 });
 
 describe('drawSpray', () => {
-  it('draws a radial gradient circle at every point', () => {
+  it('stamps a cored radial-gradient dab at every point, sized as a radius off the Size slider', () => {
     const ctx = makeMockCtx();
     const gradient = { addColorStop: vi.fn() };
     vi.spyOn(ctx, 'createRadialGradient').mockReturnValue(gradient);
@@ -173,9 +173,28 @@ describe('drawSpray', () => {
       penType: 'spray' as const,
     };
     drawSpray({ args, ctx });
+    const rgb = hexToRgb('#ff0000');
     expect(ctx.createRadialGradient).toHaveBeenCalledTimes(2);
-    expect(gradient.addColorStop).toHaveBeenCalledWith(0, `rgba(${hexToRgb('#ff0000')}, ${0.8 / 4})`);
-    expect(gradient.addColorStop).toHaveBeenCalledWith(1, `rgba(${hexToRgb('#ff0000')}, 0)`);
+
+    // 0.4 of the Opacity, not a quarter of it: a quarter peaked at 0.2, which measured
+    // rgb(223,223,223) for a single tap on white and read as haze rather than paint.
+    expect(gradient.addColorStop).toHaveBeenCalledWith(0, `rgba(${rgb}, 0.32)`);
+    // The peak is HELD over the inner quarter and only then falls to nothing, so a dab has
+    // a body and a rim. The pre-fix two-stop ramp spent the whole dab as falloff, which is a
+    // blur, and repeated passes accumulated haze instead of building a stroke.
+    expect(gradient.addColorStop).toHaveBeenCalledWith(0.25, `rgba(${rgb}, 0.32)`);
+    expect(gradient.addColorStop).toHaveBeenCalledWith(1, `rgba(${rgb}, 0)`);
+    // 0.8 * 0.4 rounds to 0.32; the unrounded product is 0.32000000000000006 and the colour
+    // string is compared literally, so the rounding is load-bearing rather than cosmetic.
+    expect(gradient.addColorStop).not.toHaveBeenCalledWith(0, `rgba(${rgb}, 0.32000000000000006)`);
+
+    // HALF the lineWidth, because Size is a diameter on every other pen. The pre-fix radius
+    // was the whole `lineWidth`, so a 200px blot was painted at Size 100 and overflowed the
+    // padding `pointsBoundingPos` reserves for the layer crop.
+    expect(ctx.createRadialGradient).toHaveBeenCalledWith(5, 5, 0, 5, 5, 5);
+    // The dab is a filled circle, not a path: the radius is the same 5 the gradient was
+    // built with, so a mismatch between the two would stamp paint the gradient never covers.
+    expect(ctx.arc).toHaveBeenCalledWith(5, 5, 5, 0, Math.PI * 2);
     expect(ctx.arc).toHaveBeenCalledTimes(2);
     expect(ctx.fill).toHaveBeenCalledTimes(2);
   });

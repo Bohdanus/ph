@@ -104,7 +104,7 @@ const Text: React.FC<{}> = () => {
             id="text-input"
             value={text}
             onChange={handleTextChange}
-            placeholder="Enter text..."
+            placeholder={rect ? 'Enter text...' : 'Drag on the canvas to place text...'}
             rows={2}
             className="rounded border border-gray-400 bg-white px-1 py-0.5 text-xs text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-300 dark:bg-white dark:text-gray-900 w-52"
           />

@@ -69,11 +69,47 @@ export function useRect({
     }
   }, [aspectRatio, initialRect]);
 
+  /**
+   * The overlay canvas outlives this hook: `Main.tsx:239-284` renders both overlay canvases
+   * unconditionally and only toggles `display`, and toggling `display` never touches a backing
+   * store. The effect above is the only other thing that clears it, and it cannot cover the AREA
+   * going away — `goToTool` (`src/hooks/useApp.ts:167-196`) appends the selection clear and
+   * dispatches `SET_TOOL_NAME` from one function body, React batches them, and the marquee's
+   * component unmounts in the same commit that nulls the selection. An unmounted component's
+   * effects do not run, so `initialRect` is never observed going null and the `#007bff` outline,
+   * the four `#007bff` handles and the `rgba(0, 0, 0, 0.7)` blend all survive the tool switch
+   * that deselected them, sitting on the overlay the next tool previews into.
+   *
+   * The shape is `MagicWandToolArea.tsx:105-113`'s, and each of the three constraints below is one
+   * a naive version of it gets wrong:
+   *   - the frame is cancelled FIRST. A request still queued by `handlePointerMove` would
+   *     otherwise repaint after this clear and resurrect the marquee.
+   *   - the size is read off `ctx.canvas` at CALL time, not off `imageSize`. `imageSize` is a
+   *     render-scope binding, so a cleanup closing over it freezes the first render's value and
+   *     under-clears after a document resize. `getCanvasSize(overlayRef)` is not usable either:
+   *     React detaches refs in the mutation phase, before passive destroys run, so
+   *     `overlayRef.current` is already null here — which is also why the ctx is captured in the
+   *     effect BODY.
+   *   - `dimensionsRef` is deliberately NOT referenced. It is destructured below this effect, so a
+   *     closure over it is built in TDZ: a runtime ReferenceError `tsc` cannot see and that no
+   *     test which does not unmount would reach.
+   *
+   * The clear is guarded because a canvas with no 2d context is a supported state
+   * (`useRect.drag.test.ts` pins it), and unconditional because a conditional one keyed on what
+   * this instance painted is a landmine: the abandoned-drag case is exactly the case where the
+   * content was painted by a frame that never became `initialRect`.
+   */
   useEffect(() => {
+    const ctx = overlayRef.current?.getContext('2d');
+
     return () => {
       cancelAnimationFrame(frameRequested.current!);
+
+      if (ctx) {
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      }
     };
-  }, []);
+  }, [overlayRef]);
 
   const pointerPositionData = usePointerPosition({
     ref: containerRef,
