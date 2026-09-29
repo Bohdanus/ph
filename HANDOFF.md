@@ -2418,3 +2418,71 @@ for this incident, `'toolbar-overflow':`, which the merged tree then holds once 
 **Files.** `.skills/hard-merge.md`, the `hard-merge-skill` entry in
 `scripts/lib/worktree-inventory/curated.mjs`, and the skill registry rows in `AGENTS.md`. The
 loader lives at `.kilo/skills/hard-merge/SKILL.md` and is gitignored, so it is not a durable copy.
+
+---
+
+## 86. No `useRect` border animates, so the crop, move, text and rectangular-selection rects all sit still
+
+**Problem.** `useRect` strokes its border with a fixed dash pattern and never advances it:
+`ctx.setLineDash([5 / scale, 5 / scale]); ctx.strokeRect(x, y, width, height);`
+(`src/hooks/useRect.ts:235-236`). No `lineDashOffset` is ever assigned, and the file's one
+`requestAnimationFrame` (`:483-488`) throttles the DRAG, not the border: it recomputes the rect and
+calls `drawMask(true)`, which redraws the same fixed dash. It looks alive during a drag only because
+the drag is RAF-throttled, so the line is redrawn at pointer rate — the dashes never move.
+
+**`useRect` is the one border in the app that redraws without advancing, and THREE selection
+borders are drawn that way — not one.** `useMarchingAnts`
+(`src/hooks/useAnts.ts:24,48-70`) is the real marching-ants loop, and its only production consumer is
+`MoveToolArea.tsx:6`, which paints the outline of a **hovered layer** in `reposition` mode. So
+"marching ants on a rectangle" is the Move tool's layer outline.
+
+**Three selection borders still sit still, not one.** A polygon selection animates
+(`useSelectionMarchingAnts`), but only for the three modes in `Main.tsx:40`'s
+`POLYGON_SELECTION_MODES`. The elliptical and quick selection tools are deliberately absent from it
+and map to their own `interactionMode`s (`Main.tsx:104,106`), so their borders stay the static
+`drawSelectionOutline` stroke — and they commit `geometry: 'polygon'` selections
+(`createCommittedPolygonSelection`, `src/util/selection.ts:29`, whose `geometry: 'polygon'` is at `:51`), so nothing about the selection's
+own shape marks them as un-animated. That leaves THREE static selection borders: the rectangle
+(`useRect`), the elliptical marquee and quick selection. Fixing only the rectangle — the cheap half
+of the choice below — would leave two behind, which is why they are named here together.
+
+**The rectangle and the polygon no longer match each other** in colour or weight (`#007bff` at 2px,
+plus four square handles, versus black/white ants at 1px), and the two marquee tools match neither.
+
+**It affects four tools, not one.** `useRect` is shared by `MoveToolArea.tsx:117`, `CropToolArea.tsx:61`,
+`RectangularSelectionToolArea.tsx:65` and `TextToolArea.tsx:24`, so the crop rectangle, the move
+rectangle, the text frame and the rectangular selection all have the same still border.
+
+**Fix.** Three shapes, and the choice is a recording decision rather than a mechanical one. Fixing
+the rectangle alone is a real option, but it is not the same task as fixing all three still
+borders, and the entry above says which is which — pick the scope deliberately.
+
+- Animate inside `useRect` — advance a `lineDashOffset` ref by a few pixels per frame inside the
+  existing draw path, keeping the current colour and the four handles. Cheapest, and the only option
+  that covers all four callers at once. It needs its own loop, because `drawMask` is only called while
+  something is changing. Fixes the rectangle and the crop, move and text frames with it; leaves the
+  two marquee tools static.
+- Or give the rect the ants treatment the polygon got: stop `useRect` stroking the border, drop
+  `rectangular-selection` from `Main.tsx`'s `POLYGON_SELECTION_MODES` exclusion
+  (`useSelectionAnts.ts:69` currently skips rectangles on the assumption that `useRect` still paints
+  one), and let the ants canvas own the rect. Note the constraint this has to respect: `useRect` also
+  draws the dim-out scrim (`:226`) and, in the same pass, the border and the corner handles (`:233-246`), so the border and the handles have to
+  end up on different canvases or the scrim will wipe the ants mid-drag.
+- Or extend the ants to the two marquee tools as well, which is the only shape that reaches all
+  three: add `'elliptical-selection'` and `'quick-selection'` to `POLYGON_SELECTION_MODES`
+  (`Main.tsx:40`) and stop those two tool areas calling `drawSelectionOutline`
+  (`EllipticalSelectionToolArea.tsx:112`, `QuickSelectionToolArea.tsx:104`). This one is not only a
+  mode list, because both commit `sourceTool: 'magic-wand'`
+  (`ellipticalSelection.ts:48`, `quickSelection.ts:43`) — the constant each borrows from the wand —
+  and `drawSelectionAnchors` skips that source, so the anchors have to be taught the difference
+  between a wand selection and a marquee selection or the two tools lose their handles as well as
+  their border. `EllipticalSelectionToolArea.test.tsx`'s 'strokes a committed selection border' pins
+  the current ownership and will fail until this is done on purpose.
+
+Whichever is chosen, `useRect.drag.test.ts:136,252` pins the current `setLineDash` values and has to be
+updated in the same change.
+
+**Files.** `src/hooks/useRect.ts:233-246,483-488`, `src/hooks/useAnts.ts:24,48-70`,
+`src/components/Main/MoveToolArea.tsx:6,117`, `src/components/Main/CropToolArea.tsx:61`,
+`src/components/Main/RectangularSelectionToolArea.tsx:65`, `src/components/Main/TextToolArea.tsx:24`,
+`src/hooks/useSelectionAnts.ts:69-70`, `src/hooks/__tests__/useRect.drag.test.ts:136,252`
