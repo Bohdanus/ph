@@ -169,12 +169,14 @@ export const WARMUP_TIMEOUT_MS = 5_000;
  * that fixes it, but the cap only earns its keep if it is SMALLER than the budget —
  * with the two equal, the minimum is a no-op and the hang still takes everything.
  *
- * 2500ms against a 5000ms budget leaves a second attempt to run in, and is about
- * five times what a cold entry actually costs on this checkout: measured against a
- * live Vite 8.3.0 on `main`, the first request for `/src/main.tsx` on a server with
- * no dep cache took 0.35-0.52s and a warm one 0.02-0.05s. Aborting early is not
- * destructive anyway — Vite does not cancel an in-flight transform when the client
- * goes away, so a re-request finds the work already done.
+ * 2500ms against a 5000ms budget leaves a second attempt to run in. Measured against
+ * a live Vite 8.3.0 in this worktree with the dep cache cleared before each start,
+ * the first request for `/src/main.tsx` on a cold server took 0.47-1.32s over five
+ * runs, so 2500ms is about twice the slowest of them — and the failure mode of
+ * cutting it closer than that is benign anyway. Vite does not cancel an in-flight
+ * transform when the client goes away, so an attempt that is aborted at 2500ms has
+ * still left the work done, and the retry finds it. A hang is the only thing the cap
+ * is for, and a hang is unbounded by definition.
  */
 export const PER_ATTEMPT_TIMEOUT_MS = 2_500;
 

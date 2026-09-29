@@ -12,15 +12,20 @@ import globalSetup, {
 } from '../../global-setup';
 
 /**
- * This file lives under `e2e/helpers/__tests__/` because of WHO IMPORTS WHAT, not
- * because of where the code lives: `vitest.e2e.config.ts` (the node-environment
- * project behind `npm run test:e2e:unit`) collects `e2e/helpers/**`, and
- * `playwright.config.ts` imports `e2e/global-setup.ts`, so a second collector would
- * be needed to test it from anywhere else. An earlier version of this note claimed
- * the location was because a module that existed only to be tested would break
- * `e2e/README.md`'s statement that every helper module appears in the coverage
- * report. That was a non-sequitur — a new `e2e/helpers/warmup.ts` would simply have
- * appeared in the report — and the real reason is the one above.
+ * This file tests `e2e/global-setup.ts`, which is NOT a helper module, and it lives
+ * here anyway. The reason is the collector plus the convention:
+ * `vitest.e2e.config.ts` includes every `*.unit.test.ts` under a `__tests__` directory
+ * anywhere in `e2e/`, and `playwright.config.ts` `testIgnore`s every `__tests__`
+ * directory, so any such directory under `e2e/` would be collected by the
+ * node-environment project and skipped by Playwright — and this is where every other
+ * e2e unit test already lives, so it runs under the same command, the same CI job and
+ * the same coverage report as the rest.
+ *
+ * An earlier version of this note gave a different reason: that a module existing only
+ * to be tested would break `e2e/README.md`'s statement that every helper module appears
+ * in the coverage report. That was a non-sequitur — a new `e2e/helpers/warmup.ts`
+ * would simply have appeared in the report — and it was the reason the location went
+ * unexamined, so it is recorded here as wrong rather than quietly replaced.
  *
  * Every case below runs against injected `fetch` / `now` / `sleep` /
  * `abortSignal`. Nothing in this file opens a socket or a browser. The one real
