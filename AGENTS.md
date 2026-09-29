@@ -70,12 +70,14 @@ to every task:
   the operator explicitly asked for on `main`, are the only exceptions — a
   doc-only change is not one. If you are already in a worktree, do not nest
   another.
-- **Only one root-level agent writes any worktree.** A root-level agent is one a
-  human started as a Kilo chat; two of them never work in the same worktree, and
-  one does not take over a worktree another is inside. This one the board cannot
-  enforce — identity is the branch, so two root agents in one worktree are the
-  same agent to it. Subagents of one root agent do share that agent's worktree
-  and must split by file.
+- **One writer per worktree; readers may share it.** A root-level agent is one a
+  human started as a Kilo chat. Two of them never _write_ the same worktree, and
+  one does not take over a worktree another is writing in. **Read-only agents may
+  share a worktree freely** — inspecting, reviewing and auditing are the common
+  case and are safe; a reader must still mutate nothing: no commit, checkout,
+  reset, install, or worktree removal. Subagents of one root agent share that
+  agent's worktree and must split by file. The board cannot enforce any of this —
+  identity is the branch, so two agents in one worktree are the same agent to it.
 - **Claim what you touch before the first edit:** `npm run swarm -- claim <id>
 --files <paths>`, or `swarm hold <path>` with no issue. A refused hold names the
   holder; take their lock first, never `--force` it. Announce a branch you are
