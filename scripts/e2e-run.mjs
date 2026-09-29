@@ -2,87 +2,102 @@
 /**
  * The single entry point for a Playwright run in this repository.
  *
- * ## Why this exists
+ * There are two independent mechanisms here, and the difference between them is the
+ * whole design.
  *
- * `playwright.config.ts` was written for a machine that runs one suite at a time.
- * Under a swarm it is not one machine running one suite: several agents, each in
- * its own worktree, each firing `npm run test:e2e` before merging. Three separate
- * things go wrong, and all three of them look like something else:
+ * ## 1. The guarantee: this run starts its own server
  *
- * 1. **Two runs share one port.** Every worktree wants :5173, and Vite's default
- *    is to hop to the next free port rather than fail. A run that silently ends up
- *    on a server a *different* checkout started tests that checkout's code, which
- *    reads exactly like "my change did nothing". `TEST-FLAKES.md` §10 is a whole
- *    mutation campaign that reported seven mutations green for this reason.
- * 2. **Two runs share one output directory.** Playwright DELETES `outputDir` at the
- *    start of every run (`playwright/lib/runner/index.js:6398-6417`). Serialized or
- *    not, the second run erases the first run's failure screenshots before anybody
- *    has read them. Each run gets its own `test-results/runs/<id>/` for exactly that
- *    reason. The HTML report is left alone, because `npm run test:e2e:report` is a
- *    bare `playwright show-report` and a per-run folder would leave it with nothing
- *    to open.
- * 3. **Two runs fight over the same dev server.** `reuseExistingServer` used to
- *    default to ON locally, so a second run attached to whatever got there first,
- *    and a stale Vite process from a dead agent outlived the run that started it.
+ * **A run tests the checkout it was started in, or it does not run.**
  *
- * The fix is not "be careful". It is a lock: one run at a time, each with its own
- * port and its own output directory, so the collisions above are impossible rather
- * than discouraged. The lock is a **swarm file hold** on a sentinel path, which
- * means every agent in every worktree can see who has it (`npm run swarm status`)
- * and the ordinary `doctor` sweep reclaims it if a holder dies.
+ * A dev server started by somebody else is the worst failure mode this repository
+ * has, because it is invisible. Every worktree under `.kilo/worktrees/` serves its
+ * own checkout, so two worktrees on one port is two different applications on one
+ * address; a run that attaches to the wrong one tests code it never touched, reports
+ * green, and reads exactly like "my change did nothing". `TEST-FLAKES.md` §10 is a
+ * mutation campaign that reported seven product mutations as green for precisely
+ * that reason.
  *
- * ## What the lock is and is not
+ * So this does not depend on anything cooperating. It is true by construction:
  *
- * `e2e/.swarm-e2e-runner` is a VIRTUAL path. It is never created on disk, and no
- * agent should ever create it. That is legitimate: the board's path normalization
- * is lexical on purpose and a relative path never reaches the filesystem
- * (`scripts/lib/agent-board/db.mjs:1410`), which is the same property that lets an
- * agent hold a file it is about to create. The sentinel is a mutex, not a claim on
- * anything in that directory, and an agent editing `e2e/*.spec.ts` holds those
- * files separately.
+ * 1. **The run picks its own port** and exports it as `PLAYWRIGHT_PORT`, so the dev
+ *    server, the `baseURL` the tests navigate to, and the port Playwright probes are
+ *    one number belonging to this run.
+ * 2. **The port is verified bindable** immediately before the suite starts, and
+ *    re-picked if it is not.
+ * 3. **Server reuse is switched off in the config with no way to turn it on.**
+ *    `playwright.config.ts` reads `reuseExistingServer: false` unconditionally.
+ * 4. **The dev server is started with `--strictPort`**, so a port taken in the moment
+ *    between (2) and Vite's own `bind` is a startup FAILURE rather than Vite's
+ *    default silent hop to the next free port.
  *
- * **The holder is a RUN, not a branch.** Board identity is the branch by default,
- * and its conflict test is `lock.agent_id !== who` (`db.mjs:1130`), so a branch
- * never conflicts with itself: two runs on one branch would both acquire, and the
- * second one's `unlock` would release the row the first still believes it holds.
- * The mutex is over a machine resource, so this run passes its own identity
- * (`e2e-run/<branch>/<pid>`) to every board call. `swarm status` therefore shows
- * one `e2e-run/…` agent per live suite, which is the useful reading: the branch
- * says which checkout, the pid says which process.
+ * The outcome is binary: you get a server this run started, or you get a red run.
+ * There is no third outcome in which the suite quietly tests a neighbour. Steps (2)
+ * and (3) are belt and braces around the real guarantee, which is (3) plus (4).
  *
- * ## Every run still happens, including the ones that "already passed"
+ * ## 2. The optimisation: the swarm lock, which is only a queue
  *
- * A lock that agents skip under pressure is worse than no lock, because it makes
- * the skip invisible. Nothing here can tell whether a change is "heavy UI work",
- * and the Definition of Done already requires `test:e2e` for a user-visible change
- * before it merges. This wrapper does not weaken that: it queues the run, names the
- * run ahead of you, and exits 4 — the board's own "file held by another agent" code
- * — rather than letting a second suite start on top of a live one. (`swarm check`
- * uses 1 for a held path; the wrapper uses 4 because that is the code the board
- * itself returns for a refused `hold`, and the two answer different questions.)
+ * The lock on `e2e/.swarm-e2e-runner` serializes suites so two agents rarely run at
+ * once — less port pressure, less CPU contention, and one readable log at a time. It
+ * is **advisory**, and everything above works without it:
  *
- * ## Knobs (all optional, all in the environment)
+ * - Two runs may proceed simultaneously. That is survivable and needs no
+ *   coordination, because each has its own port and its own output directory.
+ * - If the board cannot be reached, a run says so and starts anyway.
+ * - If the wait times out, a run says so and starts anyway.
  *
- * - `E2E_LOCK_TIMEOUT` — how long to wait for the sentinel, in ms. Default 10
- *   minutes. `0` fails immediately instead of queueing.
- * - `E2E_LOCK_POLL` — how often to re-check while waiting, in ms. Default 3000.
- * - `E2E_LOCK_LEASE` — the board lease for the hold, as `swarm` spells it (`30m`,
- *   `2h`, or a bare number of minutes). Default `30m`. It is validated here, in the
- *   board's own grammar, and a malformed value stops the run: `parseDuration` exits
- *   1 on `30min`, which is indistinguishable from "no board", and a typo in one
- *   variable must not silently turn the lock off.
- * - `E2E_SKIP_LOCK=1` — run without taking the sentinel, loudly. The operator's
- *   escape hatch; `--no-lock` is the same thing as a flag.
+ * **No run ever refuses to run because of the lock.** A queue that can block a
+ * merge gate is a gate, and a gate that is not 100% enforceable is worse than no
+ * gate: it looks like a guarantee and is not one. This is why the lock is allowed to
+ * be approximate — its value is entirely in the scheduling, and its absence costs
+ * only scheduling.
  *
- * `PLAYWRIGHT_PORT`, `PLAYWRIGHT_BASE_URL`, `PLAYWRIGHT_REUSE_EXISTING_SERVER` and
- * `PLAYWRIGHT_ALLOW_HEADED` keep their meanings in `playwright.config.ts`; this
- * wrapper only fills in a port when you have not chosen one.
+ * It is held as a RUN rather than as a branch, for a reason that is a property of the
+ * board and not a matter of taste: board identity is the git branch and the conflict
+ * test is `lock.agent_id !== who` (`scripts/lib/agent-board/db.mjs:1130`), so a
+ * branch never conflicts with itself. Two runs in one worktree would both "acquire",
+ * and the second one's `unlock` would release the row the first still believes it
+ * holds. The holder is therefore `e2e-run/<branch>/<pid>`.
+ *
+ * ## What else this file does
+ *
+ * - **`test` is the Playwright subcommand, and npm appends arguments after the
+ *   script.** `npm run test:e2e -- e2e/foo.spec.ts` has to become
+ *   `playwright test e2e/foo.spec.ts`; without this line it becomes
+ *   `playwright e2e/foo.spec.ts`, which Playwright reads as an unknown command.
+ * - **Each run gets its own `outputDir`.** Playwright DELETES `outputDir` at the
+ *   start of every run (`playwright/lib/runner/index.js:6398-6417`), so two
+ *   concurrent runs sharing one would erase each other's failure screenshots. This
+ *   is a real reason to isolate output and it has nothing to do with locking.
+ * - **The HTML report is NOT isolated.** `npm run test:e2e:report` is a bare
+ *   `playwright show-report` and resolves `playwright-report`; a per-run folder
+ *   would leave it with nothing to open.
+ * - **The port is recorded**, not only printed, so a run that fails an hour later is
+ *   diagnosed from the port that actually served it.
+ *
+ * ## Environment
+ *
+ * - `PLAYWRIGHT_PORT` — use this port instead of picking one. Still this run's own
+ *   server: reuse is off, so a busy port fails rather than attaches.
+ * - `PLAYWRIGHT_BASE_URL` — **refused by default.** It points the tests at a server
+ *   this run did not start, which is the one rule here. It works with
+ *   `E2E_ALLOW_REMOTE=1`, which is logged at the top of the run so a report can
+ *   never claim the branch was verified against its own checkout when it was not.
+ * - `PLAYWRIGHT_REUSE_EXISTING_SERVER` — **refused, always.** The config no longer
+ *   reads it; setting it now means expecting a behaviour that no longer exists, so it
+ *   is an error rather than a silent no-op.
+ * - `E2E_LOCK_TIMEOUT`, `E2E_LOCK_POLL`, `E2E_LOCK_LEASE` — how long to queue for
+ *   the lock, how often to re-check, and how long a dead holder blocks the queue.
+ * - `E2E_SKIP_LOCK=1` (or `--no-lock`) — skip the queue entirely, loudly. Since the
+ *   lock is only a queue, this costs scheduling and nothing else.
+ * - `CI` — keeps the default port and the default output directory. A CI job owns
+ *   its runner outright, and the `e2e` job's artifacts are collected from the shared
+ *   `test-results/`.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { constants } from 'node:os';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import path from 'node:path';
 
@@ -90,9 +105,11 @@ const REPO_ROOT = path.resolve(import.meta.dirname, '..');
 const BOARD_CLI = path.join(import.meta.dirname, 'agent-board.mjs');
 
 /**
- * The mutex. Virtual, repo-relative, and under `e2e/` only because that is where a
- * reader looks for an e2e concern — it claims nothing in that directory, and an
- * agent editing `e2e/*.spec.ts` holds those files separately.
+ * The queue's key. Virtual, repo-relative, and under `e2e/` only because that is
+ * where a reader looks for an e2e concern — it claims nothing in that directory, and
+ * an agent editing `e2e/*.spec.ts` holds those files separately. A relative path
+ * never reaches the filesystem, which is the same property that lets an agent hold a
+ * file it is about to create (`scripts/lib/agent-board/db.mjs:1410`).
  */
 export const E2E_SENTINEL = 'e2e/.swarm-e2e-runner';
 
@@ -100,13 +117,10 @@ const DEFAULT_LOCK_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_LOCK_POLL_MS = 3_000;
 
 /**
- * The lease, and the reason it is not the board's 45-minute default: a FILE lock
- * is never renewed. `renewOwnClaims` touches only the `claims` table
- * (`scripts/lib/agent-board/db.mjs:1762-1780`), so a long suite would watch its own
- * lock expire under it, `doctor` would reclaim it on the next board command from
- * anybody, and a second suite would start on top of a live one. The lease below is
- * therefore the CRASH window — how long a dead holder blocks everyone else — and
- * the renewal timer is what stops it firing under a live holder.
+ * How long a DEAD holder blocks the queue. A file lock is never renewed by the board
+ * itself — `renewOwnClaims` touches only the `claims` table
+ * (`db.mjs:1762-1780`) — so this is the crash window, and the renewal timer is what
+ * stops it firing under a live holder.
  */
 const DEFAULT_LOCK_LEASE = '30m';
 
@@ -115,10 +129,9 @@ const MAX_RENEW_EVERY_MS = 5 * 60_000;
 
 /**
  * The board's own duration grammar, read off `parseDuration`
- * (`scripts/lib/agent-board/db.mjs:267-280`): `45m`, `90s`, `2h`, `500ms`, or a bare
- * number of minutes. Copied rather than imported because the board is reached
- * through its CLI, and a lease this wrapper cannot parse is a lock it would
- * silently not take — see `assertLease`.
+ * (`db.mjs:267-280`): `45m`, `90s`, `2h`, `500ms`, or a bare number of minutes.
+ * Copied rather than imported because the board is reached through its CLI, and a
+ * lease this wrapper cannot parse is a queue it would silently never join.
  */
 const DURATION = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?$/i;
 const DURATION_SCALE = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
@@ -132,7 +145,7 @@ function parseDurationMs(input) {
 const PREFIX = '[e2e-run]';
 
 /* -------------------------------------------------------------------------- */
-/* Ports                                                                       */
+/* The guarantee: this run's own server                                         */
 /* -------------------------------------------------------------------------- */
 
 /** Ask the OS for a port nothing is listening on, then let it go. */
@@ -153,36 +166,82 @@ export function findFreePort() {
   });
 }
 
+/** Can this process still take the port? The check that shrinks the race window. */
+export function isPortFree(port) {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.once('error', () => resolve(false));
+    server.listen(port, '127.0.0.1', () => server.close(() => resolve(true)));
+  });
+}
+
 /**
- * The port this run should use, or `null` to leave `playwright.config.ts`'s own
- * default in place.
+ * A port that was still free a moment ago, checked as late as possible.
  *
- * The rules, in order, and each exists because of a way the run can end up testing
- * somebody else's code:
+ * The check cannot close the gap between this returning and Vite calling `bind` —
+ * nothing outside a single `listen` can — and that is fine. The guarantee does not
+ * come from this function: it comes from `reuseExistingServer: false` plus
+ * `--strictPort`, which turn the race into a startup failure. Re-picking on a lost
+ * race just makes that rare enough that nobody waits for it.
+ */
+export async function reservePort() {
+  for (let attempt = 1; ; attempt += 1) {
+    const port = await findFreePort();
+    if (await isPortFree(port)) return { port, attempt };
+    if (attempt >= 5) {
+      throw new Error(
+        'picked a free port five times in a row and lost it every time. Something on this machine is ' +
+          'claiming ports as fast as they are released.'
+      );
+    }
+  }
+}
+
+/**
+ * The port this run uses, or `null` to leave `playwright.config.ts`'s own default.
  *
- * - `PLAYWRIGHT_BASE_URL` set: the tests navigate somewhere this wrapper did not
- *   start, so a local port is not the subject of the run. Leave it alone.
- * - `PLAYWRIGHT_PORT` set: the caller chose, out loud. Respect it.
- * - `PLAYWRIGHT_REUSE_EXISTING_SERVER=1`: the operator asked to attach to a dev
- *   server they started, so the run belongs on the default port where it is.
- * - CI: one job, one checkout, one runner. The port is in the job log and the
- *   workflow documents :5173, so keep it predictable.
- * - otherwise: allocate. This is the case that used to collide.
+ * - `CI`: one job, one checkout, one runner, and the workflow documents :5173.
+ * - `PLAYWRIGHT_PORT`: the caller chose, out loud. Still this run's own server —
+ *   reuse is off, so a busy port fails rather than attaches.
+ * - otherwise: pick one. This is the case that used to collide.
  */
 export function resolvePort(env, ci) {
-  if (env.PLAYWRIGHT_BASE_URL) return { port: null, reason: 'PLAYWRIGHT_BASE_URL is set, leaving the port alone' };
+  if (ci) return { port: null, reason: 'CI runs one checkout on one runner' };
   if (env.PLAYWRIGHT_PORT) {
     return { port: null, reason: `PLAYWRIGHT_PORT=${env.PLAYWRIGHT_PORT} was chosen by the caller` };
   }
-  if (env.PLAYWRIGHT_REUSE_EXISTING_SERVER === '1') {
-    return { port: null, reason: 'server reuse was requested, so the run belongs on the default port' };
+  return { port: 'allocate', reason: 'no port was chosen, so this run picks its own' };
+}
+
+/**
+ * The settings that would break the one rule, refused before a browser exists.
+ *
+ * Both are errors rather than warnings. A run that quietly tested a server it did
+ * not start is the failure this whole file is for, so the request is answered where
+ * the operator or agent is still reading.
+ */
+export function assertOwnServer(env) {
+  if (env.PLAYWRIGHT_REUSE_EXISTING_SERVER) {
+    throw new Error(
+      `PLAYWRIGHT_REUSE_EXISTING_SERVER=${JSON.stringify(env.PLAYWRIGHT_REUSE_EXISTING_SERVER)} is no longer ` +
+        'supported. playwright.config.ts now sets reuseExistingServer: false with no way to turn it on, because a ' +
+        'run that attaches to a server it did not start tests the wrong checkout and reports green. Unset the ' +
+        'variable; this run will start its own server on a port of its own.'
+    );
   }
-  if (ci) return { port: null, reason: 'CI runs one checkout on one runner' };
-  return { port: 'allocate', reason: 'no port was chosen and reuse was not requested' };
+  if (env.PLAYWRIGHT_BASE_URL && env.E2E_ALLOW_REMOTE !== '1') {
+    throw new Error(
+      `PLAYWRIGHT_BASE_URL=${env.PLAYWRIGHT_BASE_URL} points the tests at a server this run did not start, which ` +
+        'is the one thing that must never happen here. If you mean to test a deployed build, say so explicitly ' +
+        'with E2E_ALLOW_REMOTE=1 — the run logs that it did, so a report can never claim the branch was verified ' +
+        'against its own checkout when it was not.'
+    );
+  }
+  return env.PLAYWRIGHT_BASE_URL ? 'E2E_ALLOW_REMOTE=1: this run tests a REMOTE build, not this checkout' : null;
 }
 
 /* -------------------------------------------------------------------------- */
-/* The swarm lock                                                              */
+/* The queue: the swarm lock, which is only a queue                             */
 /* -------------------------------------------------------------------------- */
 
 function defaultExec(command, options) {
@@ -190,26 +249,82 @@ function defaultExec(command, options) {
   return { status: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 }
 
+function readNumber(value, fallback) {
+  if (value === undefined || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 /**
- * A swarm file hold, driven through the CLI rather than the database.
+ * Reject a lease this wrapper cannot parse, loudly, and before any run.
+ *
+ * `parseDuration` throws `BoardError code 1` on `30min` and the CLI exits 1, which is
+ * also what a missing board looks like. An earlier version of this file let that
+ * through, so a typo in one environment variable quietly produced an unlocked run
+ * while the warning blamed `node:sqlite`. The lock is only a queue now, so the
+ * consequence is smaller — but a knob that does not do what it says is still a lie
+ * told to whoever set it.
+ */
+function assertLease(lease) {
+  const ms = parseDurationMs(lease);
+  if (ms === null || ms <= 0) {
+    throw new Error(
+      `E2E_LOCK_LEASE=${JSON.stringify(lease)} is not a duration the swarm board accepts. ` +
+        'Use 45m, 90s, 2h, 500ms, or a bare number of minutes.'
+    );
+  }
+  return ms;
+}
+
+/**
+ * This run's board identity: the branch, so `swarm status` says which checkout has
+ * the suite, plus the pid, so two runs on one branch are two holders rather than one
+ * holder and a race.
+ */
+function defaultIdentity() {
+  const branch = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8' });
+  const name = String(branch.stdout ?? '')
+    .trim()
+    .replace(/[^A-Za-z0-9._/@+-]/g, '-');
+  return `e2e-run/${name || 'detached'}/${process.pid}`;
+}
+
+/**
+ * The board identity ends in the holder's pid, and a pid is a liveness signal.
+ *
+ * This matters more than it looks. The identity is `e2e-run/<branch>/<pid>`, so a run
+ * that was killed — a terminal closed, a tool timeout, a crash — leaves a queue entry
+ * that looks exactly like a run in progress, and the board cannot tell the difference
+ * until the lease runs out. Measured here: a hard-killed holder made the next run wait
+ * the entire `E2E_LOCK_TIMEOUT` (10 minutes) for a process that no longer existed,
+ * before proceeding as designed. The queue is only scheduling, so ten minutes of dead
+ * air in front of a merge gate is pure loss — and the fix is not a shorter timer, it
+ * is positive evidence.
+ */
+function isHolderAlive(identity) {
+  const pid = Number.parseInt(String(identity).slice(String(identity).lastIndexOf('/') + 1), 10);
+  if (!Number.isInteger(pid) || pid <= 0) return true; // no pid to check: assume alive
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the process exists and belongs to somebody else, which is alive.
+    return error?.code === 'EPERM';
+  }
+}
+
+/**
+ * A swarm file hold used as a queue.
  *
  * The CLI is the interface on purpose: `scripts/agent-board.mjs` is the tested
- * surface, its exit codes are documented as the interface ("4 file held by another
- * agent"), and reading the SQLite file from a second script would put two places
- * that know the schema. Each call is one short-lived `node` process, which costs
- * nothing beside a suite and keeps this file free of board internals.
+ * surface and its exit codes are the documented vocabulary ("4 file held by another
+ * agent"). Reading the SQLite file from a second script would put two places that
+ * know the schema.
+ *
+ * Nothing here can fail a run. `acquire` resolves with what it managed, and the
+ * caller proceeds either way.
  */
 export class SwarmLock {
-  /**
-   * @param identity the board identity this run holds the sentinel AS. It must be
-   *   per-RUN, not per-branch: the board's conflict test is `lock.agent_id !== who`
-   *   (`db.mjs:1130`), so a branch never conflicts with itself. Two runs on one
-   *   branch — a session and its own subagent, a targeted spec beside the full
-   *   suite — would both "acquire", and the second one's `unlock` would release the
-   *   row the first still believes it holds, handing a third agent a free sentinel
-   *   while a suite is live. The mutex is over a machine resource, so its holder has
-   *   to be a process.
-   */
   constructor(options = {}) {
     this.env = options.env ?? process.env;
     this.log = options.log ?? ((line) => console.log(line));
@@ -221,31 +336,38 @@ export class SwarmLock {
     this.timeoutMs = options.timeoutMs ?? readNumber(this.env.E2E_LOCK_TIMEOUT, DEFAULT_LOCK_TIMEOUT_MS);
     this.pollMs = options.pollMs ?? readNumber(this.env.E2E_LOCK_POLL, DEFAULT_LOCK_POLL_MS);
     this.leaseMs = assertLease(this.lease);
-    // A third of the lease, capped: the interval has to be comfortably inside it,
-    // or `doctor` reclaims a live run's lock on the next board command from anybody
-    // and the run starts racing a second suite.
+    // A third of the lease, capped: the interval has to sit comfortably inside it, or
+    // `doctor` reclaims a live run's lock on the next board command from anybody.
     this.renewEveryMs = options.renewEveryMs ?? Math.min(MAX_RENEW_EVERY_MS, Math.floor(this.leaseMs / 3));
     this.held = false;
     this.renewal = null;
   }
 
-  /** `node scripts/agent-board.mjs <args>`, in the repository root, as this run. */
-  #board(args) {
-    return this.exec(['node', BOARD_CLI, ...args, '--agent', this.identity], { cwd: REPO_ROOT, env: this.env });
+  /**
+   * `node scripts/agent-board.mjs <args>`, in the repository root.
+   *
+   * `identity` defaults to this run's, and is a parameter because reclaiming the queue
+   * from a dead holder means acting AS that holder: passing `--agent` twice makes the
+   * board take the last one, so the reclaim ran as us, matched no row, and reported
+   * success — `unlock` exits 0 whether or not it released anything. That is what made
+   * the first version of the dead-holder reclaim look like it worked.
+   */
+  #board(args, identity = this.identity) {
+    return this.exec(['node', BOARD_CLI, ...args, '--agent', identity], { cwd: REPO_ROOT, env: this.env });
   }
 
   /**
-   * Take the sentinel, or give up once `timeoutMs` has passed.
+   * Wait for the sentinel, and report what happened either way.
    *
-   * The result distinguishes THREE outcomes, not two, and the caller needs all
-   * three: a held lock (run), contention that timed out (refuse, exit 4) and a
-   * board that cannot be reached at all (warn, then run unlocked — failing every
-   * suite on a machine whose `node:sqlite` is missing would be worse than the
-   * collision the lock prevents).
+   * Resolves `{ acquired, reason, holder }` with `reason` one of `free` (got it),
+   * `contended` (gave up waiting), `unavailable` (no board) or `skipped`. None of
+   * them is an error the caller has to handle: the run starts regardless, because
+   * the port guarantee does not depend on any of this.
    */
   async acquire() {
     const deadline = this.now() + this.timeoutMs;
     let announced = false;
+    let reclaimAttempted = false;
 
     for (;;) {
       const attempt = this.#board(['hold', E2E_SENTINEL, '--lease', this.lease]);
@@ -256,20 +378,48 @@ export class SwarmLock {
       }
 
       // Exit 4 is the board's documented "file held by another agent", and it is
-      // deliberately not collapsed into 1: an exit code tells a branching agent
-      // that another agent has the suite, not that this script is broken.
+      // deliberately not collapsed into 1: the code says the queue is busy, not that
+      // this script is broken.
       if (attempt.status === 4) {
-        const holder = this.#holderName();
+        const holders = this.#holders();
+
+        // A holder whose process is gone is not queueing, it is debris. Reclaim it
+        // rather than waiting out its lease: the board cannot check this itself (a
+        // file lock's holder is a string, and its own reclamation is a timer), and the
+        // queue is worth nothing to the next run while it is blocked behind a corpse.
+        // `unlock` only removes the named row, so a live holder is never touched.
+        //
+        // ONCE, and then only via the normal wait path. This loop calls the board
+        // synchronously, so a branch that `continue`s without awaiting is a tight
+        // synchronous loop that no timer can interrupt — an earlier version of this
+        // code could hang the whole test run that way when the unlock did not take.
+        if (!reclaimAttempted && holders.length > 0 && holders.every((id) => !isHolderAlive(id))) {
+          reclaimAttempted = true;
+          this.log(
+            `${PREFIX} the e2e queue is held by a process that no longer exists (${holders.join(', ')}); ` +
+              'reclaiming it rather than waiting for its lease to run out'
+          );
+          for (const identity of holders) {
+            const freed = this.#board(['unlock', E2E_SENTINEL], identity);
+            if (freed.status !== 0) {
+              this.log(`${PREFIX} could not release ${identity} (exit ${freed.status}); carrying on regardless`);
+            }
+          }
+          await this.sleep(0);
+          continue;
+        }
+
+        const holder = holders.join(', ') || null;
         if (!announced) {
           announced = true;
-          const how = this.timeoutMs === 0 ? 'E2E_LOCK_TIMEOUT=0, so this fails instead of waiting' : 'queueing';
-          this.log(`${PREFIX} another run has the e2e sentinel${holder ? ` (${holder})` : ''}; ${how}`);
+          const how = this.timeoutMs === 0 ? 'E2E_LOCK_TIMEOUT=0, so it will not wait' : 'queueing';
+          this.log(`${PREFIX} another run has the e2e queue${holder ? ` (${holder})` : ''}; ${how}`);
         }
         if (this.now() >= deadline) {
           this.log(
-            `${PREFIX} gave up after ${this.timeoutMs}ms waiting for ${E2E_SENTINEL}` +
-              `${holder ? `, still held by ${holder}` : ''}. Nothing ran. Do the other work, then run the ` +
-              'same command again — it queues exactly the same way.'
+            `${PREFIX} waited ${this.timeoutMs}ms for ${E2E_SENTINEL}` +
+              `${holder ? `, still held by ${holder}` : ''} and is going ahead anyway. That costs a concurrent run, ` +
+              'not correctness: this run still starts its own server on its own port.'
           );
           return { acquired: false, reason: 'contended', holder };
         }
@@ -278,41 +428,36 @@ export class SwarmLock {
       }
 
       // Anything else means the BOARD is unavailable: no git home, no `node:sqlite`,
-      // a database that will not open. The lease is validated in the constructor, so
-      // a bad argument cannot arrive here.
+      // a database that will not open.
       this.log(
-        `${PREFIX} WARNING: the swarm board is unavailable (exit ${attempt.status}: ` +
-          `${firstLine(attempt.stderr || attempt.stdout)}), so this run is NOT serialized against other ` +
-          "agents' suites. Run inside the repository on Node 24+ to get the lock."
+        `${PREFIX} the swarm board is unavailable (exit ${attempt.status}: ` +
+          `${firstLine(attempt.stderr || attempt.stdout)}). Running without the queue, which costs scheduling and ` +
+          'nothing else — this run still starts its own server on its own port.'
       );
       return { acquired: false, reason: 'unavailable', holder: null };
     }
   }
 
-  /** Who holds the sentinel right now, for a message somebody can act on. */
-  #holderName() {
+  /** Who holds the sentinel right now, as board identities. */
+  #holders() {
     const probe = this.#board(['check', E2E_SENTINEL, '--json']);
-    if (probe.status !== 1) return null;
+    if (probe.status !== 1) return [];
     try {
       const parsed = JSON.parse(probe.stdout);
       const entry = parsed?.report?.find((item) => item.path === E2E_SENTINEL);
-      const holders = entry?.holders ?? [];
-      return holders.length > 0 ? holders.map((holder) => holder.agent_id).join(', ') : null;
+      return (entry?.holders ?? []).map((holder) => holder.agent_id);
     } catch {
-      return null;
+      return [];
     }
   }
 
   /**
    * Keep the lease alive for as long as the suite runs.
    *
-   * A renewal that FAILS is not a warning. It means this run's lock is gone — most
-   * likely reaped by `doctor` on another agent's command — so a second suite is
-   * entitled to start and this one has to stop. `onLost` is what stops it.
-   *
-   * Measured on a full local suite: 5m23s, which is past `RENEW_EVERY_MS` and so
-   * exercises this path on an ordinary run. Without it the same suite on a slower
-   * machine, or a full one twice over, would sit on a lease that expires under it.
+   * A renewal that FAILS means the lock is gone, so a second run may be queueing. Since
+   * correctness does not depend on the lock, this is not fatal — it is worth saying out
+   * loud, because the thing it predicts is exactly the thing the operator would
+   * otherwise discover as a slow run.
    */
   startRenewal(onLost) {
     if (!this.held || this.renewal) return;
@@ -322,8 +467,8 @@ export class SwarmLock {
       this.held = false;
       this.stopRenewal();
       onLost(
-        `the ${E2E_SENTINEL} lock could not be renewed (exit ${renew.status}). Another agent may have taken it, ` +
-          'so this run is being stopped rather than left racing a second suite.'
+        `the ${E2E_SENTINEL} queue could not be renewed (exit ${renew.status}), so another run may start alongside ` +
+          'this one. The suite keeps going: both runs have their own ports.'
       );
     }, this.renewEveryMs);
     // Never the reason the process stays alive: the child process is.
@@ -341,52 +486,10 @@ export class SwarmLock {
     if (!this.held) return;
     this.held = false;
     // Only ever releases OUR OWN hold: `unlock` skips a row belonging to another
-    // agent unless given --force, so a late timer here cannot free a suite that
-    // has legitimately taken the sentinel since.
+    // agent unless given --force, so a late timer cannot free a run that has
+    // legitimately taken the sentinel since.
     this.#board(['unlock', E2E_SENTINEL]);
   }
-}
-
-function readNumber(value, fallback) {
-  if (value === undefined || value === '') return fallback;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
-/**
- * Reject a lease this wrapper cannot parse, loudly, and BEFORE any run.
- *
- * This is not defensive tidiness. `parseDuration` throws `BoardError code 1` on
- * `30min`, the CLI prints it and exits 1, and exit 1 is also what a missing board
- * looks like — so without this check a typo in one environment variable silently
- * took the run UNSERIALIZED while the warning blamed `node:sqlite`.
- */
-function assertLease(lease) {
-  const ms = parseDurationMs(lease);
-  if (ms === null || ms <= 0) {
-    throw new Error(
-      `E2E_LOCK_LEASE=${JSON.stringify(lease)} is not a duration the swarm board accepts. ` +
-        'Use 45m, 90s, 2h, 500ms, or a bare number of minutes. Refusing to run rather than ' +
-        'running without the lock.'
-    );
-  }
-  return ms;
-}
-
-/**
- * This run's board identity: the branch, so a human can read `swarm status` and
- * know which checkout has the suite, plus the pid, so two runs on one branch are
- * two holders rather than one holder and a race.
- */
-function defaultIdentity() {
-  const branch = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-    cwd: REPO_ROOT,
-    encoding: 'utf8',
-  });
-  const name = String(branch.stdout ?? '')
-    .trim()
-    .replace(/[^A-Za-z0-9._/@+-]/g, '-');
-  return `e2e-run/${name || 'detached'}/${process.pid}`;
 }
 
 function firstLine(value) {
@@ -402,26 +505,14 @@ function firstLine(value) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Where this run's output goes.
- *
- * `outputDir` is per-run, and it is the one that has to be: Playwright DELETES it
- * at the start of every run (`playwright/lib/runner/index.js:6398-6417`), so a
- * second run would otherwise erase the first run's failure screenshots before
- * anybody read them. It lives under `test-results`, which is gitignored wholesale,
- * so isolation costs one nested directory.
- *
- * The HTML report deliberately is NOT isolated. Playwright honours
- * `PLAYWRIGHT_HTML_OUTPUT_DIR` (`playwright/lib/runner/index.js:3506-3509`), and
- * moving it to `playwright-report/runs/<id>/` would have broken
- * `npm run test:e2e:report`, which is a bare `playwright show-report` and resolves
- * `playwright-report`. The report is a viewer over artifacts that live in
- * `outputDir`; the artifacts are the part worth keeping per-run.
+ * `outputDir` is per-run because Playwright deletes it at the start of every run
+ * (`playwright/lib/runner/index.js:6398-6417`), and because two runs are allowed to
+ * happen at once. The HTML report deliberately is not isolated: it is a viewer,
+ * `npm run test:e2e:report` is a bare `show-report` that resolves `playwright-report`,
+ * and the artifacts worth keeping are in `outputDir`.
  */
 export function runOutputPaths(repoRoot, runId) {
-  return {
-    outputDir: path.join(repoRoot, 'test-results', 'runs', runId),
-    htmlDir: null,
-  };
+  return { outputDir: path.join(repoRoot, 'test-results', 'runs', runId), htmlDir: null };
 }
 
 /** The Playwright CLI, resolved through Node so an ancestor `node_modules` works. */
@@ -437,14 +528,10 @@ export function resolvePlaywrightCli() {
 /**
  * Start the suite and resolve with the exit code it finished on.
  *
- * `stdio: 'inherit'` is the reason this is a wrapper and not `execSync`: an e2e
- * suite streams a `list` reporter for minutes, and a buffered child looks hung.
+ * `stdio: 'inherit'` is why this is a wrapper and not `execSync`: an e2e suite
+ * streams a `list` reporter for minutes, and a buffered child looks hung.
  * `process.execPath` plus a resolved path means no shell, no PATH lookup, and no
  * `playwright.cmd` on Windows.
- *
- * `onChild` hands the child back so the caller can stop it — the lock renewal in
- * `run()` is what needs that, because a run that has lost the sentinel must not
- * keep a browser and a dev server alive while a second suite starts.
  */
 export function runPlaywright(args, options = {}) {
   const env = options.env ?? process.env;
@@ -453,10 +540,7 @@ export function runPlaywright(args, options = {}) {
 
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cli, ...args], { cwd, env, stdio: 'inherit' });
-    if (typeof options.onChild === 'function') options.onChild(child);
 
-    // The same handlers are used to forward and to detach, so `off` below removes
-    // exactly what `on` registered.
     const onSigint = () => child.kill('SIGINT');
     const onSigterm = () => child.kill('SIGTERM');
     const cleanup = () => {
@@ -483,19 +567,32 @@ export function runPlaywright(args, options = {}) {
 /* The run                                                                     */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Where the run records its port, so a human or a later agent can find it after the
+ * fact. `.kilo/` is gitignored and machine-local, which is right for per-run state;
+ * the same numbers are printed, and stdout is what a run's log actually contains.
+ */
+const RUN_RECORD = path.join(REPO_ROOT, '.kilo', 'e2e-last-run.json');
+
 const HELP = [
   `${PREFIX} node scripts/e2e-run.mjs [playwright args...]`,
   '',
-  '  Every argument is forwarded to Playwright verbatim:',
+  '  Every argument is forwarded to Playwright verbatim, after the `test` subcommand:',
   '    npm run test:e2e -- e2e/sidebar-flyout.spec.ts',
   '    npm run test:e2e -- --retries=1 e2e/undo-redo.spec.ts',
   '',
-  '  The run takes the swarm lock e2e/.swarm-e2e-runner first, so one suite runs at a',
-  '  time across every worktree, and gives the run a port and an output directory of',
-  '  its own. Exit 4 means another run has the sentinel and nothing ran here.',
+  '  THE GUARANTEE: this run starts its own dev server, on a port it picks, and records',
+  '  that port. Server reuse is impossible - playwright.config.ts sets',
+  '  reuseExistingServer: false with no way to turn it on, and the server is started with',
+  '  --strictPort, so a busy port is a startup failure rather than a silent attach to',
+  '  another checkout. PLAYWRIGHT_BASE_URL and PLAYWRIGHT_REUSE_EXISTING_SERVER are refused.',
   '',
-  '  Environment: E2E_LOCK_TIMEOUT, E2E_LOCK_POLL, E2E_LOCK_LEASE, E2E_SKIP_LOCK=1.',
-  '  The header of scripts/e2e-run.mjs is the full contract.',
+  '  THE QUEUE: the run also takes the swarm lock e2e/.swarm-e2e-runner so two agents',
+  '  rarely run e2e at once. It is advisory - a run never refuses to start because of it,',
+  '  and a board that cannot be reached just means no queue. Two runs at once is fine.',
+  '',
+  '  Environment: E2E_LOCK_TIMEOUT, E2E_LOCK_POLL, E2E_LOCK_LEASE, E2E_SKIP_LOCK=1,',
+  '  E2E_ALLOW_REMOTE=1. The header of scripts/e2e-run.mjs is the full contract.',
 ].join('\n');
 
 export async function run(argv, options = {}) {
@@ -504,94 +601,96 @@ export async function run(argv, options = {}) {
   const ci = Boolean(env.CI);
   const spawnSuite = options.runPlaywright ?? runPlaywright;
 
-  const noLock = argv.includes('--no-lock') || env.E2E_SKIP_LOCK === '1';
-  const passthrough = argv.filter((arg) => arg !== '--no-lock');
-
   // `test` is the Playwright SUBCOMMAND, and npm appends a caller's arguments after
-  // the script rather than inside it: `npm run test:e2e -- e2e/foo.spec.ts` used
-  // to resolve to `playwright test e2e/foo.spec.ts`, and without this line it
-  // resolves to `playwright e2e/foo.spec.ts`, which Playwright reads as an unknown
-  // command. The scripts that call this wrapper (`test:e2e:headed`, `:ui`,
-  // `:debug`, `:update-baselines`) pass run arguments too, so every one of them
-  // needs the subcommand as well.
-  const playwrightArgv = ['test', ...passthrough];
+  // the script rather than inside it. The scripts that call this wrapper
+  // (`test:e2e:headed`, `:ui`, `:debug`, `:update-baselines`) pass run arguments
+  // too, so every one of them needs the subcommand as well.
+  const playwrightArgv = ['test', ...argv.filter((arg) => arg !== '--no-lock')];
 
   if (playwrightArgv.includes('--help') || playwrightArgv.includes('--version')) {
-    // Nothing runs, so there is nothing to serialize and nothing to isolate.
+    // Nothing runs, so there is nothing to prepare.
     return spawnSuite(playwrightArgv, { ...options, env });
   }
 
-  const lock = options.lock ?? new SwarmLock({ ...options, env, log });
-  let locked = false;
+  // The guarantee is settled first, because it is the one that must not be negotiable.
+  const remote = assertOwnServer(env);
+  if (remote) log(`${PREFIX} WARNING: ${remote}`);
 
-  if (noLock) {
-    log(`${PREFIX} --no-lock: running UNSERIALIZED against other agents' suites.`);
-  } else if (ci) {
-    log(`${PREFIX} CI: one checkout, one runner, so the swarm lock is not used.`);
-  } else {
-    const attempt = await lock.acquire();
-    if (attempt.reason === 'contended') {
-      // Exit 4 is the code the board's own `hold` returns for a path another agent
-      // holds, so a branching agent learns the same thing here as from `swarm hold`.
-      // It is deliberately not 1: `swarm check` uses 1 for "this path is busy",
-      // which is a different question and is what a shell gates on.
-      log(`${PREFIX} not running: another run holds the e2e sentinel.`);
-      return 4;
+  const childEnv = { ...env };
+
+  if (!ci) {
+    const { port, reason } = resolvePort(env, ci);
+    if (port === 'allocate') {
+      const reserved = await reservePort();
+      childEnv.PLAYWRIGHT_PORT = String(reserved.port);
+      log(
+        `${PREFIX} port ${reserved.port} (${reason}` +
+          `${reserved.attempt > 1 ? `, re-picked ${reserved.attempt} times` : ''})`
+      );
+    } else {
+      log(`${PREFIX} port: unchanged, ${reason}`);
     }
-    locked = attempt.acquired;
   }
 
-  const playwrightArgs = [...playwrightArgv];
-  const childEnv = { ...env };
-  let child = null;
+  // The queue, second, and best-effort. A run that cannot have it runs anyway.
+  const skipQueue = env.E2E_SKIP_LOCK === '1' || argv.includes('--no-lock') || ci;
+  const lock = options.lock ?? new SwarmLock({ ...options, env, log });
+  let queued = false;
 
-  /**
-   * A run that has lost the sentinel stops, and says why. Waiting for the suite to
-   * finish "naturally" here is the wrong trade: the next agent has been told the
-   * sentinel is free, and a second suite is entitled to be running against the same
-   * checkout while this one is still driving a browser at it.
-   */
-  const stopForLostLock = (why) => {
-    log(`${PREFIX} ${why}`);
-    child?.kill('SIGTERM');
-  };
+  if (ci) {
+    log(`${PREFIX} CI: one checkout, one runner, so the e2e queue is not used.`);
+  } else if (skipQueue) {
+    log(`${PREFIX} --no-lock: not queueing. Only scheduling is lost; this run still has its own port.`);
+  } else {
+    const attempt = await lock.acquire();
+    queued = attempt.acquired;
+    if (queued) log(`${PREFIX} running with the e2e queue held.`);
+  }
 
-  try {
-    if (locked) lock.startRenewal(stopForLostLock);
+  const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
+  const paths = runOutputPaths(REPO_ROOT, runId);
 
-    if (!ci) {
-      const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
-      const paths = runOutputPaths(REPO_ROOT, runId);
-      // A caller who passed their own `--output` has said where the run's output
-      // goes. Two `--output` flags is not an error to Playwright, it silently takes
-      // the last one, so the caller's wins by not being overridden.
-      if (!playwrightArgs.includes('--output')) {
-        playwrightArgs.push('--output', paths.outputDir);
-        log(`${PREFIX} output: ${path.relative(REPO_ROOT, paths.outputDir)}`);
-      } else {
-        log(`${PREFIX} output: as given on the command line`);
-      }
-
-      const { port, reason } = resolvePort(env, ci);
-      if (port === 'allocate') {
-        const free = await findFreePort();
-        childEnv.PLAYWRIGHT_PORT = String(free);
-        log(`${PREFIX} port ${free} (${reason})`);
-      } else {
-        log(`${PREFIX} port: unchanged, ${reason}`);
-      }
+  if (!ci) {
+    // A caller who passed their own `--output` has said where the run's output goes.
+    // Two `--output` flags is not an error to Playwright, it silently takes the last
+    // one, so the caller's wins by not being overridden.
+    if (!playwrightArgv.includes('--output')) {
+      playwrightArgv.push('--output', paths.outputDir);
+      log(`${PREFIX} output: ${path.relative(REPO_ROOT, paths.outputDir)}`);
+    } else {
+      log(`${PREFIX} output: as given on the command line`);
     }
 
-    if (locked) log(`${PREFIX} running with the e2e sentinel held.`);
-    return await spawnSuite(playwrightArgs, {
-      ...options,
-      env: childEnv,
-      onChild: (started) => {
-        child = started;
-      },
+    writeRunRecord({
+      runId,
+      pid: process.pid,
+      port: childEnv.PLAYWRIGHT_PORT ?? null,
+      baseUrl: childEnv.PLAYWRIGHT_PORT ? `http://localhost:${childEnv.PLAYWRIGHT_PORT}` : null,
+      outputDir: paths.outputDir,
+      queued,
+      remote: Boolean(remote),
+      startedAt: new Date().toISOString(),
     });
+    log(`${PREFIX} port recorded in ${path.relative(REPO_ROOT, RUN_RECORD)}`);
+  }
+
+  try {
+    if (queued) lock.startRenewal((why) => log(`${PREFIX} ${why}`));
+    return await spawnSuite(playwrightArgv, { ...options, env: childEnv });
   } finally {
     lock.release();
+  }
+}
+
+/** The last run's port and output directory, for whoever is diagnosing it later. */
+function writeRunRecord(record) {
+  try {
+    mkdirSync(path.dirname(RUN_RECORD), { recursive: true });
+    writeFileSync(RUN_RECORD, `${JSON.stringify(record, null, 2)}\n`);
+  } catch (error) {
+    // A record that could not be written must not stop the suite. The port is also
+    // on stdout, and stdout is what a run's log actually contains.
+    console.error(`${PREFIX} could not record the run: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

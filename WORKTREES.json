@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-29T12:24:43.910Z",
+  "generatedAt": "2026-09-29T16:10:55.513Z",
   "generator": "scripts/worktree-inventory.mjs",
   "base": "main",
-  "mainHead": "afabd35cc8581ce6847bcf2d508529e266fd1591",
+  "mainHead": "878a9861a23301eb95045ca0e7a991d20979552e",
   "chatWindowMs": 86400000,
   "dataSources": {
     "git": {
@@ -14,7 +14,7 @@
     "sessions": {
       "ok": true,
       "path": "/Users/bkalynovskyi/.local/share/kilo/kilo.db",
-      "sessions": 67
+      "sessions": 51
     },
     "board": {
       "ok": true,
@@ -23,13 +23,14 @@
     },
     "readAudit": {
       "ok": true,
-      "path": "/Users/bkalynovskyi/ph/scripts/lib/worktree-inventory/chat-audit.data.json",
+      "path": "/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-own-server/scripts/lib/worktree-inventory/chat-audit.data.json",
       "sessions": 105,
       "asOf": "2026-09-28T21:13:52Z",
       "windowHours": 30
     }
   },
   "readyToLand": [
+    "concise-agents-guidance",
     "eyedropper-crop",
     "fix-overlay-teardown",
     "fix-replay-coordinator-tests",
@@ -38,7 +39,6 @@
     "tools-too-hard"
   ],
   "disposalCandidates": [
-    "concise-agents-guidance",
     "durable-replay-pins",
     "e2e-campaign-int",
     "e2e-findings-tail",
@@ -59,6 +59,7 @@
     "test-review-titles",
     "test-review-vacuous",
     "tool-truth",
+    "toolbar-overflow",
     "tools-registry-pins",
     "ui-shell-pins",
     "worktree-inventory"
@@ -112,6 +113,7 @@
     "repair-dialogs-text",
     "repair-undo-redo",
     "responsive-design-plan",
+    "retina-dpr",
     "shape-truth",
     "swarm-file-index",
     "swarm-watch-tail",
@@ -480,36 +482,36 @@
   ],
   "readLostWorktreeHighRisk": 3,
   "totals": {
-    "worktrees": 85,
+    "worktrees": 86,
     "prunable": 24,
-    "readyToLand": 6,
+    "readyToLand": 7,
     "disposalCandidates": 24,
-    "atRisk": 52,
-    "salvage": 52,
-    "inUse": 3,
-    "holdingUncommittedWork": 5,
+    "atRisk": 53,
+    "salvage": 53,
+    "inUse": 2,
+    "holdingUncommittedWork": 7,
     "withoutSummary": 2,
     "byStatus": {
-      "unmerged-work": 55,
-      "uncommitted-only": 4,
-      "landed": 26
+      "unmerged-work": 56,
+      "uncommitted-only": 5,
+      "landed": 25
     },
     "byRecommendation": {
-      "salvage": 52,
-      "in-use": 3,
-      "ready-to-land": 6,
+      "salvage": 53,
+      "in-use": 2,
+      "ready-to-land": 7,
       "prune": 24
     },
     "byAction": {
-      "at-risk": 52,
-      "in-use": 3,
-      "land": 6,
+      "at-risk": 53,
+      "in-use": 2,
+      "land": 7,
       "dispose": 24
     },
     "byChatState": {
-      "active": 2,
-      "finished": 52,
-      "abandoned-midflight": 8
+      "active": 4,
+      "finished": 36,
+      "abandoned-midflight": 6
     }
   },
   "worktrees": [
@@ -535,7 +537,7 @@
         "merging into the base branch conflicts in scripts/__tests__/agent-board.test.mjs, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 359,
+      "behind": 362,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -612,7 +614,7 @@
         "merging into the base branch conflicts in AGENTS.md, scripts/agent-board.mjs, scripts/lib/agent-board/db.mjs, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 354,
+      "behind": 357,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -682,7 +684,7 @@
         "merging into the base branch conflicts in WORKTREES.json, scripts/lib/worktree-inventory/curated.mjs, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 89,
+      "behind": 92,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -764,7 +766,7 @@
         "merging into the base branch conflicts in e2e/export/helpers.ts, e2e/export/ico.spec.ts, e2e/export/visual-regression.spec.ts, e2e/helpers/__tests__/image-comparison.unit.test.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 467,
+      "behind": 470,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -844,7 +846,7 @@
         "merging into the base branch conflicts in e2e/check-dpr.spec.ts, e2e/helpers/__tests__/toolbar-helpers.unit.test.ts, e2e/helpers/canvas-helpers.ts, e2e/helpers/toolbar-helpers.ts, e2e/pen-types.spec.ts, e2e/sidebar-flyout.spec.ts, e2e/sidebar-keyboard.spec.ts, e2e/viewport-drawing.spec.ts, src/components/SidebarLeft/SidebarLeft.tsx, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 467,
+      "behind": 470,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -924,7 +926,7 @@
         "merging into the base branch conflicts in e2e/layers.spec.ts, e2e/levels.spec.ts, e2e/sidebar-layout.spec.ts, src/contexts/layer-renderer.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 467,
+      "behind": 470,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1004,7 +1006,7 @@
         "merging into the base branch conflicts in e2e/check-dpr.spec.ts, e2e/helpers/__tests__/toolbar-helpers.unit.test.ts, e2e/helpers/canvas-helpers.ts, e2e/helpers/toolbar-helpers.ts, e2e/pen-types.spec.ts, e2e/sidebar-flyout.spec.ts, e2e/sidebar-keyboard.spec.ts, e2e/viewport-drawing.spec.ts, src/components/SidebarLeft/SidebarLeft.tsx, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 467,
+      "behind": 470,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1074,7 +1076,7 @@
         "merging into the base branch conflicts in e2e/history-panel.spec.ts, e2e/undo-redo.spec.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 467,
+      "behind": 470,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1149,7 +1151,7 @@
         "merging into the base branch conflicts in TEST-FLAKES.md, e2e/OPEN_PROBLEMS.md, e2e/README.md, e2e/global-setup.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 208,
+      "behind": 211,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1227,7 +1229,7 @@
         "merging into the base branch conflicts in HANDOFF.md, e2e/OPEN_PROBLEMS.md, e2e/README.md, e2e/document-dialogs.spec.ts, e2e/paint-tools.spec.ts, e2e/selection-tools.spec.ts, src/components/NewImageDialog/NewImageDialog.tsx, so it needs a rebase first"
       ],
       "ahead": 17,
-      "behind": 393,
+      "behind": 396,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1381,7 +1383,7 @@
         "merging into the base branch conflicts in HANDOFF.md, e2e/document-dialogs.spec.ts, src/components/NewImageDialog/NewImageDialog.tsx, so it needs a rebase first"
       ],
       "ahead": 2,
-      "behind": 407,
+      "behind": 410,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1456,7 +1458,7 @@
         "merging into the base branch conflicts in e2e/OPEN_PROBLEMS.md, e2e/README.md, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 402,
+      "behind": 405,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1526,7 +1528,7 @@
         "merging into the base branch conflicts in e2e/OPEN_PROBLEMS.md, e2e/paint-tools.spec.ts, so it needs a rebase first"
       ],
       "ahead": 2,
-      "behind": 407,
+      "behind": 410,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1601,7 +1603,7 @@
         "merging into the base branch conflicts in e2e/selection-tools.spec.ts, so it needs a rebase first"
       ],
       "ahead": 2,
-      "behind": 407,
+      "behind": 410,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1683,7 +1685,7 @@
         "merging into the base branch conflicts in e2e/helpers/__tests__/canvas-helpers.fixtures.ts, e2e/helpers/__tests__/canvas-helpers.unit.test.ts, e2e/helpers/__tests__/image-comparison.unit.test.ts, e2e/helpers/canvas-helpers.ts, e2e/helpers/cdp-helpers.spec.ts, e2e/helpers/image-comparison.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 397,
+      "behind": 400,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1762,7 +1764,7 @@
         "merging into the base branch conflicts in e2e/flyout-longpress-race.spec.ts, e2e/helpers/__tests__/toolbar-helpers.unit.test.ts, e2e/helpers/toolbar-helpers.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 340,
+      "behind": 343,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1837,7 +1839,7 @@
         "merging into the base branch conflicts in src/contexts/__tests__/history-adapter.safety.test.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 565,
+      "behind": 568,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1912,7 +1914,7 @@
         "merging into the base branch conflicts in src/components/SidebarRight/__tests__/LayersTab.test.tsx, vitest.config.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 565,
+      "behind": 568,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -1991,7 +1993,7 @@
         "merging into the base branch conflicts in src/App.tsx, src/components/SidebarLeft/SidebarLeft.tsx, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 397,
+      "behind": 400,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2061,7 +2063,7 @@
         "merging into the base branch conflicts in e2e/export/helpers.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 386,
+      "behind": 389,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2136,7 +2138,7 @@
         "merging into the base branch conflicts in e2e/export/visual-regression.spec.ts, e2e/helpers/canvas-helpers.ts, so it needs a rebase first"
       ],
       "ahead": 5,
-      "behind": 336,
+      "behind": 339,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2246,7 +2248,7 @@
         "merging into the base branch conflicts in src/components/Main/DrawToolArea.tsx, src/components/Main/EraserToolArea.tsx, src/components/Main/ShapeToolArea.tsx, src/components/Main/__tests__/DrawToolArea.test.tsx, src/components/Main/__tests__/EraserToolArea.test.tsx, src/components/Main/__tests__/ShapeToolArea.test.tsx, src/hooks/useRect.ts, so it needs a rebase first"
       ],
       "ahead": 2,
-      "behind": 397,
+      "behind": 400,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2332,7 +2334,7 @@
         "merging into the base branch conflicts in HANDOFF.md, e2e/OPEN_PROBLEMS.md, src/tools/__tests__/paint-tools.test.ts, src/tools/__tests__/tool-processors.test.ts, src/util/__tests__/draw.test.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 397,
+      "behind": 400,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2419,7 +2421,7 @@
         "merging into the base branch conflicts in e2e/OPEN_PROBLEMS.md, e2e/README.md, src/contexts/StoreContext.tsx, src/contexts/__tests__/StoreContext.presentation.test.tsx, src/contexts/__tests__/history-adapter.branches.test.ts, src/contexts/__tests__/history-append.test.ts, src/contexts/__tests__/useHistory.test.tsx, src/contexts/history-adapter.ts, src/contexts/history-append.ts, src/contexts/layer-utils.ts, src/contexts/useLayer.ts, so it needs a rebase first"
       ],
       "ahead": 2,
-      "behind": 547,
+      "behind": 550,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2507,7 +2509,7 @@
         "merging into the base branch conflicts in src/hooks/__tests__/useApp.psd.test.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 565,
+      "behind": 568,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2592,7 +2594,7 @@
         "merging into the base branch conflicts in src/__tests__/fixtures/canvas.ts, src/__tests__/fixtures/store.ts, src/hooks/__tests__/useRect.test.ts, src/test/setup.ts, vite.config.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 565,
+      "behind": 568,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2677,7 +2679,7 @@
         "merging into the base branch conflicts in src/components/SidebarLeft/AnchoredOverlay.tsx, src/components/SidebarLeft/SidebarLeft.tsx, src/components/SidebarLeft/ToolTooltip.tsx, src/components/SidebarLeft/__tests__/AnchoredOverlay.test.tsx, src/components/SidebarLeft/__tests__/ToolTooltip.test.tsx, so it needs a rebase first"
       ],
       "ahead": 2,
-      "behind": 354,
+      "behind": 357,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2761,7 +2763,7 @@
         "merging into the base branch conflicts in src/contexts/history-adapter.ts, src/contexts/history-append.ts, src/contexts/useLayer.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 401,
+      "behind": 404,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2831,7 +2833,7 @@
         "merging into the base branch conflicts in src/contexts/StoreContext.tsx, src/contexts/__tests__/StoreContext.reducer.test.tsx, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 535,
+      "behind": 538,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2901,7 +2903,7 @@
         "merging into the base branch conflicts in HANDOFF.md, src/contexts/StoreContext.tsx, so it needs a rebase first"
       ],
       "ahead": 2,
-      "behind": 535,
+      "behind": 538,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -2981,7 +2983,7 @@
         "merging into the base branch conflicts in HANDOFF.md, src/contexts/history-adapter.ts, src/contexts/history-append.ts, so it needs a rebase first"
       ],
       "ahead": 2,
-      "behind": 535,
+      "behind": 538,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3061,7 +3063,7 @@
         "merging into the base branch conflicts in HANDOFF.md, src/contexts/history-adapter.ts, so it needs a rebase first"
       ],
       "ahead": 2,
-      "behind": 535,
+      "behind": 538,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3151,7 +3153,7 @@
         "merging into the base branch conflicts in src/components/Main/RectangularSelectionToolArea.tsx, src/components/ToolbarsRight/Lasso/__tests__/FeatherMagneticLasso.test.tsx, src/components/ToolbarsRight/Lasso/__tests__/FreehandLasso.test.tsx, src/components/ToolbarsRight/MagicWand/__tests__/MagicWand.test.tsx, src/components/ToolbarsRight/RectangularSelection/__tests__/RectangularSelection.test.tsx, src/contexts/history-adapter.ts, src/contexts/history-append.ts, src/contexts/history-replay.ts, src/contexts/useSelectionHistory.ts, so it needs a rebase first"
       ],
       "ahead": 2,
-      "behind": 535,
+      "behind": 538,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3245,7 +3247,7 @@
         "merging into the base branch conflicts in src/components/Main/MagicWandToolArea.tsx, src/components/Main/RectangularSelectionToolArea.tsx, src/components/ToolbarsRight/Lasso/__tests__/FeatherMagneticLasso.test.tsx, src/components/ToolbarsRight/Lasso/__tests__/FreehandLasso.test.tsx, src/components/ToolbarsRight/MagicWand/__tests__/MagicWand.test.tsx, src/components/ToolbarsRight/RectangularSelection/__tests__/RectangularSelection.test.tsx, src/contexts/history-adapter.ts, src/contexts/history-append.ts, src/contexts/useSelectionHistory.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 535,
+      "behind": 538,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3323,7 +3325,7 @@
         "merging into the base branch conflicts in src/components/ToolbarsRight/Lasso/__tests__/FeatherMagneticLasso.test.tsx, src/components/ToolbarsRight/Lasso/__tests__/FreehandLasso.test.tsx, src/components/ToolbarsRight/MagicWand/__tests__/MagicWand.test.tsx, src/components/ToolbarsRight/RectangularSelection/__tests__/RectangularSelection.test.tsx, src/contexts/history-adapter.ts, src/contexts/history-append.ts, src/contexts/useSelectionHistory.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 535,
+      "behind": 538,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3406,7 +3408,7 @@
         "merging into the base branch conflicts in src/components/Main/MagicWandToolArea.tsx, src/components/Main/RectangularSelectionToolArea.tsx, src/components/Main/__tests__/MagicWandToolArea.test.tsx, src/components/Main/__tests__/RectangularSelectionToolArea.test.tsx, src/components/ToolbarsRight/Lasso/__tests__/FeatherMagneticLasso.test.tsx, src/components/ToolbarsRight/Lasso/__tests__/FreehandLasso.test.tsx, src/components/ToolbarsRight/MagicWand/__tests__/MagicWand.test.tsx, src/components/ToolbarsRight/RectangularSelection/__tests__/RectangularSelection.test.tsx, src/contexts/__tests__/useSelectionHistory.test.tsx, src/contexts/history-adapter.ts, src/contexts/history-append.ts, src/contexts/useSelectionHistory.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 535,
+      "behind": 538,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3484,7 +3486,7 @@
         "merging into the base branch conflicts in src/__tests__/canvas-mock.ts, src/components/Main/ShapeToolArea.tsx, src/components/Main/__tests__/ShapeToolArea.test.tsx, src/contexts/history-replay.ts, src/contexts/useLayer.ts, src/test/setup.ts, src/tools/toolProcessors.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 556,
+      "behind": 559,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3569,7 +3571,7 @@
         "merging into the base branch conflicts in HANDOFF.md, src/components/Main/FeatherMagneticLassoToolArea.tsx, src/components/Main/Main.tsx, src/components/Main/PolygonClickToolArea.tsx, src/components/Main/__tests__/LassoToolArea.test.tsx, src/components/Main/__tests__/Main.toolAreas.test.tsx, src/components/Main/__tests__/PolygonClickToolArea.test.tsx, src/util/__tests__/selection.test.ts, src/util/selection.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 467,
+      "behind": 470,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3645,7 +3647,7 @@
         "merging into the base branch conflicts in HANDOFF.md, src/util/__tests__/brush-stroke.test.ts, src/util/__tests__/brush-tip.test.ts, src/util/brush-stroke.ts, src/util/brush-tip.ts, so it needs a rebase first"
       ],
       "ahead": 4,
-      "behind": 466,
+      "behind": 469,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3764,7 +3766,7 @@
         "merging into the base branch conflicts in .github/workflows/ci.yml, AGENTS.md, e2e/MIGRATION-TODO.md, e2e/OPEN_PROBLEMS.md, e2e/README.md, e2e/export/__tests__/helpers.unit.test.ts, e2e/export/helpers.ts, e2e/global-setup.ts, e2e/helpers/__tests__/canvas-helpers.fixtures.ts, e2e/helpers/__tests__/canvas-interaction.unit.test.ts, e2e/helpers/__tests__/canvas-pixel-analysis.unit.test.ts, e2e/helpers/__tests__/cdp-helpers.unit.test.ts, e2e/helpers/__tests__/color-helpers.unit.test.ts, e2e/helpers/__tests__/image-comparison.unit.test.ts, e2e/helpers/__tests__/toolbar-helpers.unit.test.ts, e2e/helpers/canvas-helpers.ts, e2e/helpers/cdp-helpers.spec.ts, e2e/helpers/cdp-helpers.ts, e2e/helpers/color-helpers.spec.ts, e2e/helpers/color-helpers.ts, e2e/helpers/image-comparison.ts, e2e/helpers/toolbar-helpers.ts, e2e/sidebar-keyboard.spec.ts, playwright.config.ts, src/components/Main/Main.tsx, src/components/SidebarLeft/SidebarLeft.tsx, src/components/SidebarLeft/__tests__/SidebarLeft.keyboard.test.tsx, src/components/ToolbarsRight/Move/Reposition.tsx, so it needs a rebase first"
       ],
       "ahead": 3,
-      "behind": 546,
+      "behind": 549,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3864,7 +3866,7 @@
         "merging into the base branch conflicts in HANDOFF.md, src/components/Main/CloneStampToolArea.tsx, src/components/Main/EraserToolArea.tsx, src/components/Main/__tests__/EraserToolArea.test.tsx, src/components/ToolbarsRight/CloneStamp/CloneStamp.tsx, src/components/ToolbarsRight/CloneStamp/__tests__/CloneStamp.test.tsx, src/components/ToolbarsRight/Eraser/Eraser.tsx, src/components/ToolbarsRight/Eraser/__tests__/Eraser.test.tsx, src/components/ToolbarsRight/MagicEraser/MagicEraser.tsx, src/components/ToolbarsRight/MagicEraser/__tests__/MagicEraser.test.tsx, src/tools/__tests__/clone-stamp.test.ts, src/tools/__tests__/eraser.test.ts, src/tools/eraser.ts, src/util/magicWand.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 467,
+      "behind": 470,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -3947,7 +3949,7 @@
         "merging into the base branch conflicts in HANDOFF.md, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 412,
+      "behind": 415,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4047,7 +4049,7 @@
         "merging into the base branch conflicts in HANDOFF.md, src/components/Main/GradientToolArea.tsx, src/components/Main/Main.tsx, src/components/Main/__tests__/Main.toolAreas.test.tsx, src/components/SidebarLeft/__tests__/SidebarLeft.keyboard.test.tsx, src/components/SidebarLeft/__tests__/SidebarLeft.rendering.test.tsx, src/components/SidebarLeft/icons/CloneStampIcon.tsx, src/components/SidebarLeft/icons/EraserIcon.tsx, src/components/SidebarLeft/icons/GradientIcon.tsx, src/components/SidebarLeft/icons/MagicEraserIcon.tsx, src/components/SidebarLeft/icons/PaintBucketIcon.tsx, src/components/SidebarLeft/toolIcons.tsx, src/components/ToolbarsRight/Figures/__tests__/Shape.test.tsx, src/components/ToolbarsRight/Gradient/Gradient.tsx, src/components/ToolbarsRight/Gradient/__tests__/Gradient.test.tsx, src/contexts/tool-types.ts, src/tools/__tests__/gradient.test.ts, src/tools/__tests__/tool-processors.test.ts, src/tools/gradient.ts, src/tools/settings.ts, src/tools/toolProcessors.ts, src/tools/toolsMap.ts, src/util/settings.ts, toolbar-mapping.ts, so it needs a rebase first"
       ],
       "ahead": 2,
-      "behind": 466,
+      "behind": 469,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4135,7 +4137,7 @@
         "merging into the base branch conflicts in src/components/SidebarLeft/SidebarLeft.tsx, src/components/SidebarRight/SidebarRight.tsx, src/components/ToolbarHorizontal/ToolbarHorizontal.tsx, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 556,
+      "behind": 559,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4212,7 +4214,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 143,
+      "behind": 146,
       "mergedIntoMain": true,
       "dirty": 80,
       "untracked": 0,
@@ -4364,7 +4366,7 @@
         "merging into the base branch conflicts in e2e/document-dialogs.spec.ts, e2e/text-tool.spec.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 335,
+      "behind": 338,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4434,7 +4436,7 @@
         "merging into the base branch conflicts in e2e/helpers/history-helpers.ts, e2e/undo-redo.spec.ts, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 349,
+      "behind": 352,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4524,7 +4526,7 @@
         "merging into the base branch conflicts in index.html, src/App.tsx, src/components/Main/Main.tsx, src/components/Mobile/MobileBottomBar.tsx, src/components/Mobile/MobileHeader.tsx, src/components/Mobile/MobileLayersDrawer.tsx, src/components/Mobile/MobileMenuDrawer.tsx, src/components/Mobile/MobileToolSheet.tsx, src/components/Mobile/__tests__/MobileBottomBar.test.tsx, src/components/Mobile/__tests__/MobileHeader.test.tsx, src/components/Mobile/__tests__/MobileLayersDrawer.test.tsx, src/components/Mobile/__tests__/MobileToolSheet.test.tsx, src/components/ToolbarHorizontal/ToolbarHorizontal.tsx, src/index.scss, so it needs a rebase first"
       ],
       "ahead": 1,
-      "behind": 467,
+      "behind": 470,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -4573,6 +4575,108 @@
       "read": []
     },
     {
+      "name": "retina-dpr",
+      "inRepo": true,
+      "path": ".kilo/worktrees/retina-dpr",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/retina-dpr",
+      "branch": "audit/retina-canvas-dpr",
+      "isPrimary": false,
+      "head": "7b89b25c73040c830ef9f3e833a08ccf6a1a4198",
+      "detached": false,
+      "status": "unmerged-work",
+      "recommendation": "salvage",
+      "action": "at-risk",
+      "prunable": false,
+      "mergeConflict": true,
+      "mergeConflictFiles": ["HANDOFF.md", "TEST-FLAKES.md", "WORKTREES.json"],
+      "mergeChecked": true,
+      "riskScore": 90,
+      "statusReasons": [
+        "6 commit(s) ahead of main",
+        "merging into the base branch conflicts in HANDOFF.md, TEST-FLAKES.md, WORKTREES.json, so it needs a rebase first"
+      ],
+      "ahead": 6,
+      "behind": 92,
+      "mergedIntoMain": false,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
+      "lastCommit": {
+        "sha": "7b89b25c73040c830ef9f3e833a08ccf6a1a4198",
+        "subject": "docs(flakes): the two AVIF export reds are pre-existing, with the measurement",
+        "date": "2026-09-29T14:01:13+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [
+        {
+          "sha": "7b89b25c",
+          "subject": "docs(flakes): the two AVIF export reds are pre-existing, with the measurement",
+          "date": "2026-09-29T14:01:13+02:00"
+        },
+        {
+          "sha": "50a39273",
+          "subject": "docs(handoff): record the canvas-resolution findings, and fix a citation that had rotted",
+          "date": "2026-09-29T13:50:18+02:00"
+        },
+        {
+          "sha": "f9eadd56",
+          "subject": "fix(toolbars): render the three option-bar thumbnails at device resolution",
+          "date": "2026-09-29T13:46:34+02:00"
+        },
+        {
+          "sha": "83e54672",
+          "subject": "fix(overlay): divide the ants and the selection outline by the contain fit",
+          "date": "2026-09-29T13:36:42+02:00"
+        },
+        {
+          "sha": "a9690b52",
+          "subject": "chore(inventory): refresh WORKTREES.json for the retina-dpr worktree",
+          "date": "2026-09-29T10:37:27+02:00"
+        },
+        {
+          "sha": "aae43566",
+          "subject": "docs(audit): canvas resolution — the paint tools are correct, the display is not",
+          "date": "2026-09-29T10:35:21+02:00"
+        }
+      ],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": "A canvas-resolution investigation, carried in a plan document rather than in code: what the report called a paint-algorithm bug is answered as already correct, with the geometry pipeline shown to have no step that could introduce a device-pixel count.",
+      "summarySource": "curated",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": "The investigation is committed and the tree is clean. An earlier version of this entry claimed the plan was an untracked file, and there is no untracked file here; the flag that claim carried is retracted with it.",
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "readUnfinished": [],
+        "read": [],
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [],
+        "agents": [
+          {
+            "agentId": "audit/retina-canvas-dpr",
+            "branch": "audit/retina-canvas-dpr",
+            "lastSeenMs": 1790683327910,
+            "live": false
+          }
+        ],
+        "held": false
+      },
+      "read": []
+    },
+    {
       "name": "shape-truth",
       "inRepo": true,
       "path": ".kilo/worktrees/shape-truth",
@@ -4596,7 +4700,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 143,
+      "behind": 146,
       "mergedIntoMain": true,
       "dirty": 8,
       "untracked": 0,
@@ -4671,7 +4775,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 229,
+      "behind": 232,
       "mergedIntoMain": true,
       "dirty": 1,
       "untracked": 0,
@@ -4736,7 +4840,7 @@
         "the working tree holds changes that are in no commit on this branch"
       ],
       "ahead": 2,
-      "behind": 79,
+      "behind": 82,
       "mergedIntoMain": false,
       "dirty": 2,
       "untracked": 0,
@@ -4832,7 +4936,7 @@
         "work here is not reachable from any commit on this branch"
       ],
       "ahead": 0,
-      "behind": 334,
+      "behind": 337,
       "mergedIntoMain": true,
       "dirty": 1,
       "untracked": 0,
@@ -4875,13 +4979,97 @@
       "read": []
     },
     {
+      "name": "e2e-own-server",
+      "inRepo": true,
+      "path": ".kilo/worktrees/e2e-own-server",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/e2e-own-server",
+      "branch": "fix/e2e-own-server",
+      "isPrimary": false,
+      "head": "878a9861a23301eb95045ca0e7a991d20979552e",
+      "detached": false,
+      "status": "uncommitted-only",
+      "recommendation": "in-use",
+      "action": "in-use",
+      "prunable": false,
+      "mergeConflict": null,
+      "mergeConflictFiles": [],
+      "mergeChecked": false,
+      "riskScore": 70,
+      "statusReasons": [
+        "the branch reports 0 commits ahead of main and is an ancestor of it",
+        "this is the shape that looks disposable and is not: 0 ahead is not a safety test",
+        "git cannot distinguish this from a branch that landed and was then edited",
+        "the board saw agent e2e-run/fix/e2e-own-server/18409 in this worktree inside the last 30 minutes"
+      ],
+      "ahead": 0,
+      "behind": 0,
+      "mergedIntoMain": true,
+      "dirty": 10,
+      "untracked": 0,
+      "dirtyPaths": [
+        ".skills/photoshop-tool-creation.md",
+        "TEST-FLAKES.md",
+        "docs/ORCHESTRATION.md",
+        "docs/TESTING.md",
+        "e2e/README.md",
+        "e2e/viewport-drawing.spec.ts",
+        "playwright.config.ts",
+        "scripts/__tests__/e2e-run.test.mjs",
+        "scripts/e2e-run.mjs",
+        "scripts/lib/worktree-inventory/curated.mjs"
+      ],
+      "lastCommit": {
+        "sha": "878a9861a23301eb95045ca0e7a991d20979552e",
+        "subject": "Merge branch 'main' into cleanup/concise-agents-guidance",
+        "date": "2026-09-29T17:47:13+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": "An e2e run starts its OWN dev server, and that is the guarantee: playwright.config.ts sets reuseExistingServer: false as a literal with --strictPort, and scripts/e2e-run.mjs allocates a port, verifies it is bindable, records it, and refuses PLAYWRIGHT_REUSE_EXISTING_SERVER and PLAYWRIGHT_BASE_URL. The swarm lock on e2e/.swarm-e2e-runner is demoted to an ADVISORY queue: it serializes when it can, and a run that cannot have it logs and starts anyway. Also skips e2e/viewport-drawing.spec.ts by operator decision (TEST-FLAKES 12, still open).",
+      "summarySource": "curated",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": "Rewrites the e2e contract in docs/TESTING.md, docs/ORCHESTRATION.md, e2e/README.md, TEST-FLAKES 10, and .skills/photoshop-tool-creation.md. Deliberately does not touch AGENTS.md: the operator is replacing it with a short root plus links, and edits there would be killed.",
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "readUnfinished": [],
+        "read": [],
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [],
+        "agents": [
+          {
+            "agentId": "e2e-run/fix/e2e-own-server/18409",
+            "branch": "fix/e2e-own-server",
+            "lastSeenMs": 1790698119491,
+            "live": true
+          }
+        ],
+        "held": false
+      },
+      "read": []
+    },
+    {
       "name": "ph",
       "inRepo": true,
       "path": ".",
       "absolutePath": "/Users/bkalynovskyi/ph",
       "branch": "main",
       "isPrimary": true,
-      "head": "afabd35cc8581ce6847bcf2d508529e266fd1591",
+      "head": "878a9861a23301eb95045ca0e7a991d20979552e",
       "detached": false,
       "status": "landed",
       "recommendation": "in-use",
@@ -4895,13 +5083,19 @@
       "ahead": 0,
       "behind": 0,
       "mergedIntoMain": true,
-      "dirty": 0,
+      "dirty": 5,
       "untracked": 0,
-      "dirtyPaths": [],
+      "dirtyPaths": [
+        ".copilot-instructions.md",
+        "AGENTS.md",
+        "docs/TESTING.md",
+        "docs/handoffs/ps-transform-geometry-review-and-merge.md",
+        "scripts/lint-tracked.js"
+      ],
       "lastCommit": {
-        "sha": "afabd35cc8581ce6847bcf2d508529e266fd1591",
-        "subject": "feat(toolbar): the rail fits its tiles and folds the rest into a three-dots tile",
-        "date": "2026-09-29T14:23:42+02:00",
+        "sha": "878a9861a23301eb95045ca0e7a991d20979552e",
+        "subject": "Merge branch 'main' into cleanup/concise-agents-guidance",
+        "date": "2026-09-29T17:47:13+02:00",
         "author": "Bohdan"
       },
       "commitsAhead": [],
@@ -4956,7 +5150,7 @@
         {
           "id": "ph-73",
           "title": "canvas tools are not retina aware",
-          "status": "claimed",
+          "status": "open",
           "inferred": true
         },
         {
@@ -4970,13 +5164,15 @@
       "liveNote": null,
       "mustNotPrune": false,
       "chats": {
-        "count": 62,
+        "count": 46,
         "chatIds": [
+          "ses_f134de2ceffe9ngj0vk6hAEI1g",
+          "ses_f12232eaeffeLCai72Xp4unL3A",
+          "ses_f13579e01ffe3DQGiOEJwBJwKZ",
+          "ses_f122ba1c5ffePd8Yd4496uLKQ5",
           "ses_f13f1cf59ffeM17cdcWgGDeHcj",
           "ses_f13bcead7ffefMaXyBxYIHvQ1r",
-          "ses_f134de2ceffe9ngj0vk6hAEI1g",
           "ses_f13c24c04ffewnVcXrpbr3bi5l",
-          "ses_f13579e01ffe3DQGiOEJwBJwKZ",
           "ses_f13f78b22ffeibSrHw4o1p4PtF",
           "ses_f1426d547ffe8oN74vIW7cUpCM",
           "ses_f13912566ffeZb3XJE8COrLikw",
@@ -5015,46 +5211,33 @@
           "ses_f176830acffeGHUHk4zTvjuZpS",
           "ses_f179166a9ffeXZ67RuGHySxSd4",
           "ses_f19255ffeffeoIHsBg83P5Ad2d",
-          "ses_f17ab7224ffeiL2s4m0SMavPvT",
-          "ses_f174eec52ffedigagDe7uAkRob",
-          "ses_f17706177ffeyNZDwR7gDyRRop",
-          "ses_f190b8410ffeL5LtNDypEnN4ta",
-          "ses_f19198b50ffeOEneL9LZDKmx3A",
-          "ses_f19079bddffeznUGVtqL6E25sn",
-          "ses_f19083a9cffeb60hHd1mbZe53L",
-          "ses_f1907b5aeffeY64jTbPUwGBxtW",
-          "ses_f19131b3bffewHIkf9etTBcDJj",
-          "ses_f17a1a002ffeZZ5ThA6HyJxSMX",
-          "ses_f183c1278ffeKasYccZfSRd2rk",
-          "ses_f17c4f7e2ffevV44uEqAYErWgv",
-          "ses_f17a83a74ffe3W1hKpk48bi0Vc",
-          "ses_f17cfd36bffeCpk9Ac0xqKkHgu",
-          "ses_f181a116cffetjn4phXC6usX2P",
-          "ses_f1809d5d8ffenV0KDFd0mtp088",
-          "ses_f18cb10c7ffeQyGIipjfTQJifF",
-          "ses_f180b0fd5ffeog2iFzrH7W0g8P",
-          "ses_f184d1a91ffewITcJ0CsWRg6oj"
+          "ses_f17ab7224ffeiL2s4m0SMavPvT"
         ],
         "subagentCount": 0,
         "byState": {
-          "active": 2,
-          "finished": 52,
-          "abandoned-midflight": 8
+          "active": 4,
+          "finished": 36,
+          "abandoned-midflight": 6
         },
-        "activeChatIds": ["ses_f13f1cf59ffeM17cdcWgGDeHcj", "ses_f13bcead7ffefMaXyBxYIHvQ1r"],
+        "activeChatIds": [
+          "ses_f134de2ceffe9ngj0vk6hAEI1g",
+          "ses_f12232eaeffeLCai72Xp4unL3A",
+          "ses_f13579e01ffe3DQGiOEJwBJwKZ",
+          "ses_f122ba1c5ffePd8Yd4496uLKQ5"
+        ],
         "unfinishedChatIds": [
-          "ses_f13f1cf59ffeM17cdcWgGDeHcj",
-          "ses_f13bcead7ffefMaXyBxYIHvQ1r",
+          "ses_f134de2ceffe9ngj0vk6hAEI1g",
+          "ses_f12232eaeffeLCai72Xp4unL3A",
+          "ses_f13579e01ffe3DQGiOEJwBJwKZ",
+          "ses_f122ba1c5ffePd8Yd4496uLKQ5",
           "ses_f13c35f3dffeNkDIgjkzwbywAu",
           "ses_f13d26707ffeb4oQY1wCrgb5ER",
           "ses_f1424b9d2fferoDADjvlLe03UH",
           "ses_f16147650ffe9C2zfklMCP473I",
           "ses_f17814e67ffeOru2rhgVgAb9a5",
-          "ses_f162b4452ffei0YUQf4OjQiJn7",
-          "ses_f174eec52ffedigagDe7uAkRob",
-          "ses_f18cb10c7ffeQyGIipjfTQJifF"
+          "ses_f162b4452ffei0YUQf4OjQiJn7"
         ],
-        "lastActivity": 1790684663337,
+        "lastActivity": 1790698251929,
         "readUnfinished": [
           {
             "id": "ses_f167d43ebffenKG4aRh8qnMKN5",
@@ -5090,51 +5273,11 @@
             "readRisk": "medium",
             "workOnNoRef": false,
             "note": null
-          },
-          {
-            "id": "ses_f174eec52ffedigagDe7uAkRob",
-            "readState": "abandoned",
-            "readRisk": "low",
-            "workOnNoRef": false,
-            "note": null
-          },
-          {
-            "id": "ses_f17706177ffeyNZDwR7gDyRRop",
-            "readState": "unknown",
-            "readRisk": "low",
-            "workOnNoRef": false,
-            "note": null
-          },
-          {
-            "id": "ses_f1907b5aeffeY64jTbPUwGBxtW",
-            "readState": "struggling",
-            "readRisk": "medium",
-            "workOnNoRef": false,
-            "note": "Found its own commit stranded and unmergeable, found the HANDOFF entry it filed collides with an existing number and describes an already-fixed defect, and retracted its own earlier \"Done\"."
-          },
-          {
-            "id": "ses_f17a83a74ffe3W1hKpk48bi0Vc",
-            "readState": "blocked",
-            "readRisk": "low",
-            "workOnNoRef": false,
-            "note": "Read-only review that found a COMPLETED-BUT-UNCOMMITTED 123-file merge abandoned in ps-tool-merge (MERGE_HEAD set, HEAD still ab5f53c), and escalated three decisions it said were not its call."
-          },
-          {
-            "id": "ses_f17cfd36bffeCpk9Ac0xqKkHgu",
-            "readState": "abandoned",
-            "readRisk": "medium",
-            "workOnNoRef": false,
-            "note": null
-          },
-          {
-            "id": "ses_f18cb10c7ffeQyGIipjfTQJifF",
-            "readState": "abandoned",
-            "readRisk": "high",
-            "workOnNoRef": false,
-            "note": "Ran a 62-subagent campaign, then ended on a dispatch rather than a report. The report file it was asked to produce does not exist, and campaign state outside main exists only in worktrees."
           }
         ],
         "read": [
+          null,
+          null,
           null,
           null,
           null,
@@ -5466,269 +5609,55 @@
             "workOnNoRef": false,
             "deadSubagents": 0,
             "toolErrors": 4
-          },
-          {
-            "id": "ses_f174eec52ffedigagDe7uAkRob",
-            "readState": "abandoned",
-            "readRisk": "low",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 2
-          },
-          {
-            "id": "ses_f17706177ffeyNZDwR7gDyRRop",
-            "readState": "unknown",
-            "readRisk": "low",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 0
-          },
-          {
-            "id": "ses_f190b8410ffeL5LtNDypEnN4ta",
-            "readState": "finished",
-            "readRisk": "low",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 0
-          },
-          {
-            "id": "ses_f19198b50ffeOEneL9LZDKmx3A",
-            "readState": "finished",
-            "readRisk": "low",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 0
-          },
-          {
-            "id": "ses_f19079bddffeznUGVtqL6E25sn",
-            "readState": "finished",
-            "readRisk": "low",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 2
-          },
-          {
-            "id": "ses_f19083a9cffeb60hHd1mbZe53L",
-            "readState": "finished",
-            "readRisk": "low",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 0
-          },
-          {
-            "id": "ses_f1907b5aeffeY64jTbPUwGBxtW",
-            "readState": "struggling",
-            "readRisk": "medium",
-            "note": "Found its own commit stranded and unmergeable, found the HANDOFF entry it filed collides with an existing number and describes an already-fixed defect, and retracted its own earlier \"Done\".",
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 0
-          },
-          {
-            "id": "ses_f19131b3bffewHIkf9etTBcDJj",
-            "readState": "finished",
-            "readRisk": "high",
-            "note": "Discovered two of its four worktrees had been deleted outright with their output lost, salvaged the survivors onto local main, and left both salvaged branches unmerged. local main was 37 commits ahead of origin and unpushed.",
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 4
-          },
-          {
-            "id": "ses_f17a1a002ffeZZ5ThA6HyJxSMX",
-            "readState": "finished",
-            "readRisk": "low",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 0
-          },
-          {
-            "id": "ses_f183c1278ffeKasYccZfSRd2rk",
-            "readState": "finished",
-            "readRisk": "low",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 2
-          },
-          {
-            "id": "ses_f17c4f7e2ffevV44uEqAYErWgv",
-            "readState": "finished",
-            "readRisk": "low",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 1
-          },
-          {
-            "id": "ses_f17a83a74ffe3W1hKpk48bi0Vc",
-            "readState": "blocked",
-            "readRisk": "low",
-            "note": "Read-only review that found a COMPLETED-BUT-UNCOMMITTED 123-file merge abandoned in ps-tool-merge (MERGE_HEAD set, HEAD still ab5f53c), and escalated three decisions it said were not its call.",
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 7
-          },
-          {
-            "id": "ses_f17cfd36bffeCpk9Ac0xqKkHgu",
-            "readState": "abandoned",
-            "readRisk": "medium",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 0
-          },
-          {
-            "id": "ses_f181a116cffetjn4phXC6usX2P",
-            "readState": "finished",
-            "readRisk": "low",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 1
-          },
-          {
-            "id": "ses_f1809d5d8ffenV0KDFd0mtp088",
-            "readState": "finished",
-            "readRisk": "low",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 0
-          },
-          {
-            "id": "ses_f18cb10c7ffeQyGIipjfTQJifF",
-            "readState": "abandoned",
-            "readRisk": "high",
-            "note": "Ran a 62-subagent campaign, then ended on a dispatch rather than a report. The report file it was asked to produce does not exist, and campaign state outside main exists only in worktrees.",
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 7
-          },
-          {
-            "id": "ses_f180b0fd5ffeog2iFzrH7W0g8P",
-            "readState": "finished",
-            "readRisk": "low",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 0
-          },
-          {
-            "id": "ses_f184d1a91ffewITcJ0CsWRg6oj",
-            "readState": "finished",
-            "readRisk": "low",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 0
           }
         ],
         "unfinished": [
           {
-            "id": "ses_f13f1cf59ffeM17cdcWgGDeHcj",
-            "title": "Implement collapsible left toolbar",
+            "id": "ses_f134de2ceffe9ngj0vk6hAEI1g",
+            "title": "Playwright e2e concurrency lock for agent swarms",
             "state": "active",
-            "idleMs": 20573,
+            "idleMs": 3584,
             "reasons": ["last message 0m ago"],
-            "toolErrors": 4,
-            "creditsFailures": 3,
+            "toolErrors": 8,
+            "creditsFailures": 2,
             "blockedOn": null
           },
           {
-            "id": "ses_f13bcead7ffefMaXyBxYIHvQ1r",
-            "title": "Retina awareness canvas tools investigation",
+            "id": "ses_f12232eaeffeLCai72Xp4unL3A",
+            "title": "Consolidate agent instructions and diagnose tsc",
             "state": "active",
-            "idleMs": 1341792,
-            "reasons": ["last message 22m ago"],
-            "toolErrors": 0,
+            "idleMs": 912940,
+            "reasons": ["last message 15m ago"],
+            "toolErrors": 1,
             "creditsFailures": 1,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f13579e01ffe3DQGiOEJwBJwKZ",
+            "title": "--- AGENTS.md",
+            "state": "active",
+            "idleMs": 1081011,
+            "reasons": ["last message 18m ago"],
+            "toolErrors": 6,
+            "creditsFailures": 11,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f122ba1c5ffePd8Yd4496uLKQ5",
+            "title": "Completing HANDOFF cleanup orchestration",
+            "state": "active",
+            "idleMs": 1207070,
+            "reasons": ["last message 20m ago"],
+            "toolErrors": 0,
+            "creditsFailures": 0,
             "blockedOn": null
           },
           {
             "id": "ses_f13c35f3dffeNkDIgjkzwbywAu",
             "title": "Investigating swarm watch ANSI codes breaking grep",
             "state": "abandoned-midflight",
-            "idleMs": 11693471,
-            "reasons": ["idle for 3h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 25265074,
+            "reasons": ["idle for 7h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 0,
             "creditsFailures": 1,
             "blockedOn": null
@@ -5737,8 +5666,8 @@
             "id": "ses_f13d26707ffeb4oQY1wCrgb5ER",
             "title": "-- swarm fix",
             "state": "abandoned-midflight",
-            "idleMs": 14185939,
-            "reasons": ["idle for 4h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 27757542,
+            "reasons": ["idle for 8h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 0,
             "creditsFailures": 1,
             "blockedOn": null
@@ -5747,8 +5676,8 @@
             "id": "ses_f1424b9d2fferoDADjvlLe03UH",
             "title": "<<< tool descriptions >>>",
             "state": "abandoned-midflight",
-            "idleMs": 20444200,
-            "reasons": ["idle for 6h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 34015803,
+            "reasons": ["idle for 9h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 1,
             "creditsFailures": 0,
             "blockedOn": null
@@ -5757,8 +5686,8 @@
             "id": "ses_f16147650ffe9C2zfklMCP473I",
             "title": "~~~ HANDOFF cleanup ~~~",
             "state": "abandoned-midflight",
-            "idleMs": 21234063,
-            "reasons": ["idle for 6h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 34805666,
+            "reasons": ["idle for 10h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 9,
             "creditsFailures": 0,
             "blockedOn": null
@@ -5767,40 +5696,20 @@
             "id": "ses_f17814e67ffeOru2rhgVgAb9a5",
             "title": "Fixing flyout panel not opening in sidebar",
             "state": "abandoned-midflight",
-            "idleMs": 48255960,
-            "reasons": ["idle for 13h and the last turn ended on \"tool-calls\", not a completed stop"],
-            "toolErrors": 8,
-            "creditsFailures": 2,
+            "idleMs": 61827563,
+            "reasons": ["idle for 17h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "toolErrors": 0,
+            "creditsFailures": 1,
             "blockedOn": null
           },
           {
             "id": "ses_f162b4452ffei0YUQf4OjQiJn7",
             "title": "*** PW tests fix & migration ***",
             "state": "abandoned-midflight",
-            "idleMs": 50337558,
-            "reasons": ["idle for 14h and the last turn ended on \"tool-calls\", not a completed stop"],
+            "idleMs": 63909161,
+            "reasons": ["idle for 18h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 7,
             "creditsFailures": 1,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f174eec52ffedigagDe7uAkRob",
-            "title": "-- del --",
-            "state": "abandoned-midflight",
-            "idleMs": 73203177,
-            "reasons": ["idle for 20h and the last turn ended on \"tool-calls\", not a completed stop"],
-            "toolErrors": 2,
-            "creditsFailures": 0,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f18cb10c7ffeQyGIipjfTQJifF",
-            "title": "-- e2e orchestrator",
-            "state": "abandoned-midflight",
-            "idleMs": 82120129,
-            "reasons": ["idle for 23h and the last turn ended on \"tool-calls\", not a completed stop"],
-            "toolErrors": 2,
-            "creditsFailures": 0,
             "blockedOn": null
           }
         ],
@@ -5813,8 +5722,8 @@
           {
             "agentId": "main",
             "branch": "main",
-            "lastSeenMs": 1790682222317,
-            "live": false
+            "lastSeenMs": 1790697795918,
+            "live": true
           },
           {
             "agentId": "integration/e2e-campaign-final",
@@ -5838,6 +5747,12 @@
             "agentId": "test-selfclose",
             "branch": "main",
             "lastSeenMs": 1790635837818,
+            "live": false
+          },
+          {
+            "agentId": "e2e-run/main/32962",
+            "branch": "main",
+            "lastSeenMs": 1790685100135,
             "live": false
           }
         ],
@@ -6059,321 +5974,56 @@
           "directoryExists": true,
           "deadSubagents": 0,
           "note": null
-        },
-        {
-          "id": "ses_f174eec52ffedigagDe7uAkRob",
-          "readState": "abandoned",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
-        },
-        {
-          "id": "ses_f17706177ffeyNZDwR7gDyRRop",
-          "readState": "unknown",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
-        },
-        {
-          "id": "ses_f190b8410ffeL5LtNDypEnN4ta",
-          "readState": "finished",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
-        },
-        {
-          "id": "ses_f19198b50ffeOEneL9LZDKmx3A",
-          "readState": "finished",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
-        },
-        {
-          "id": "ses_f19079bddffeznUGVtqL6E25sn",
-          "readState": "finished",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
-        },
-        {
-          "id": "ses_f19083a9cffeb60hHd1mbZe53L",
-          "readState": "finished",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
-        },
-        {
-          "id": "ses_f1907b5aeffeY64jTbPUwGBxtW",
-          "readState": "struggling",
-          "readRisk": "medium",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": "Found its own commit stranded and unmergeable, found the HANDOFF entry it filed collides with an existing number and describes an already-fixed defect, and retracted its own earlier \"Done\"."
-        },
-        {
-          "id": "ses_f19131b3bffewHIkf9etTBcDJj",
-          "readState": "finished",
-          "readRisk": "high",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": "Discovered two of its four worktrees had been deleted outright with their output lost, salvaged the survivors onto local main, and left both salvaged branches unmerged. local main was 37 commits ahead of origin and unpushed."
-        },
-        {
-          "id": "ses_f17a1a002ffeZZ5ThA6HyJxSMX",
-          "readState": "finished",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
-        },
-        {
-          "id": "ses_f183c1278ffeKasYccZfSRd2rk",
-          "readState": "finished",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
-        },
-        {
-          "id": "ses_f17c4f7e2ffevV44uEqAYErWgv",
-          "readState": "finished",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
-        },
-        {
-          "id": "ses_f17a83a74ffe3W1hKpk48bi0Vc",
-          "readState": "blocked",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": "Read-only review that found a COMPLETED-BUT-UNCOMMITTED 123-file merge abandoned in ps-tool-merge (MERGE_HEAD set, HEAD still ab5f53c), and escalated three decisions it said were not its call."
-        },
-        {
-          "id": "ses_f17cfd36bffeCpk9Ac0xqKkHgu",
-          "readState": "abandoned",
-          "readRisk": "medium",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
-        },
-        {
-          "id": "ses_f181a116cffetjn4phXC6usX2P",
-          "readState": "finished",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
-        },
-        {
-          "id": "ses_f1809d5d8ffenV0KDFd0mtp088",
-          "readState": "finished",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
-        },
-        {
-          "id": "ses_f18cb10c7ffeQyGIipjfTQJifF",
-          "readState": "abandoned",
-          "readRisk": "high",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": "Ran a 62-subagent campaign, then ended on a dispatch rather than a report. The report file it was asked to produce does not exist, and campaign state outside main exists only in worktrees."
-        },
-        {
-          "id": "ses_f180b0fd5ffeog2iFzrH7W0g8P",
-          "readState": "finished",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
-        },
-        {
-          "id": "ses_f184d1a91ffewITcJ0CsWRg6oj",
-          "readState": "finished",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
         }
       ]
     },
     {
-      "name": "retina-dpr",
+      "name": "concise-agents-guidance",
       "inRepo": true,
-      "path": ".kilo/worktrees/retina-dpr",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/retina-dpr",
-      "branch": "audit/retina-canvas-dpr",
+      "path": ".kilo/worktrees/concise-agents-guidance",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/concise-agents-guidance",
+      "branch": "cleanup/concise-agents-guidance",
       "isPrimary": false,
-      "head": "7b89b25c73040c830ef9f3e833a08ccf6a1a4198",
+      "head": "ef85d3ab5d09a3df9293055d30d84cd6c6c15c28",
       "detached": false,
       "status": "unmerged-work",
-      "recommendation": "in-use",
-      "action": "in-use",
+      "recommendation": "ready-to-land",
+      "action": "land",
       "prunable": false,
-      "mergeConflict": true,
-      "mergeConflictFiles": ["HANDOFF.md", "TEST-FLAKES.md", "WORKTREES.json"],
+      "mergeConflict": false,
+      "mergeConflictFiles": [],
       "mergeChecked": true,
-      "riskScore": 70,
+      "riskScore": 30,
       "statusReasons": [
-        "6 commit(s) ahead of main",
-        "the board saw agent audit/retina-canvas-dpr in this worktree inside the last 30 minutes"
+        "1 commit(s) ahead of main",
+        "the working tree is clean and the merge into the base branch applies with no conflict"
       ],
-      "ahead": 6,
-      "behind": 89,
+      "ahead": 1,
+      "behind": 0,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
       "dirtyPaths": [],
       "lastCommit": {
-        "sha": "7b89b25c73040c830ef9f3e833a08ccf6a1a4198",
-        "subject": "docs(flakes): the two AVIF export reds are pre-existing, with the measurement",
-        "date": "2026-09-29T14:01:13+02:00",
+        "sha": "ef85d3ab5d09a3df9293055d30d84cd6c6c15c28",
+        "subject": "docs(agents): repair a committed conflict in AGENTS.md, and shorten it",
+        "date": "2026-09-29T17:52:10+02:00",
         "author": "Bohdan"
       },
       "commitsAhead": [
         {
-          "sha": "7b89b25c",
-          "subject": "docs(flakes): the two AVIF export reds are pre-existing, with the measurement",
-          "date": "2026-09-29T14:01:13+02:00"
-        },
-        {
-          "sha": "50a39273",
-          "subject": "docs(handoff): record the canvas-resolution findings, and fix a citation that had rotted",
-          "date": "2026-09-29T13:50:18+02:00"
-        },
-        {
-          "sha": "f9eadd56",
-          "subject": "fix(toolbars): render the three option-bar thumbnails at device resolution",
-          "date": "2026-09-29T13:46:34+02:00"
-        },
-        {
-          "sha": "83e54672",
-          "subject": "fix(overlay): divide the ants and the selection outline by the contain fit",
-          "date": "2026-09-29T13:36:42+02:00"
-        },
-        {
-          "sha": "a9690b52",
-          "subject": "chore(inventory): refresh WORKTREES.json for the retina-dpr worktree",
-          "date": "2026-09-29T10:37:27+02:00"
-        },
-        {
-          "sha": "aae43566",
-          "subject": "docs(audit): canvas resolution — the paint tools are correct, the display is not",
-          "date": "2026-09-29T10:35:21+02:00"
+          "sha": "ef85d3ab",
+          "subject": "docs(agents): repair a committed conflict in AGENTS.md, and shorten it",
+          "date": "2026-09-29T17:52:10+02:00"
         }
       ],
       "commitsAheadTruncated": false,
       "claimedLanded": null,
-      "summary": "A canvas-resolution investigation, carried in a plan document rather than in code: what the report called a paint-algorithm bug is answered as already correct, with the geometry pipeline shown to have no step that could introduce a device-pixel count.",
+      "summary": "AGENTS.md restructured into a thin root plus three linked files: docs/TESTING.md (gates, tsc, test, lint, e2e, CI, headed-browser ban), docs/ORCHESTRATION.md (worktrees, the swarm board, the WORKTREES.json inventory, dead-agent recovery) and docs/PHOTOSHOP-UX.md (Tools-rail clone requirement and the five open violations). The worktree, merge, stash, claim, lease and disposal rules are preserved in the linked file, not deleted.",
       "summarySource": "curated",
       "issues": [],
       "inferredBoardIssues": [],
-      "note": "The investigation is committed and the tree is clean. An earlier version of this entry claimed the plan was an untracked file, and there is no untracked file here; the flag that claim carried is retracted with it.",
-      "liveNote": null,
-      "mustNotPrune": false,
-      "chats": {
-        "count": 0,
-        "chatIds": [],
-        "subagentCount": 0,
-        "byState": {},
-        "activeChatIds": [],
-        "unfinishedChatIds": [],
-        "lastActivity": null,
-        "readUnfinished": [],
-        "read": [],
-        "unfinished": [],
-        "dead": []
-      },
-      "board": {
-        "claims": [
-          {
-            "issueId": "ph-73",
-            "agentId": "audit/retina-canvas-dpr",
-            "branch": "audit/retina-canvas-dpr",
-            "leaseUntil": "2026-09-29T12:47:07.810Z"
-          }
-        ],
-        "fileLocks": [],
-        "agents": [
-          {
-            "agentId": "audit/retina-canvas-dpr",
-            "branch": "audit/retina-canvas-dpr",
-            "lastSeenMs": 1790683327910,
-            "live": true
-          }
-        ],
-        "held": true
-      },
-      "read": []
-    },
-    {
-      "name": "toolbar-overflow",
-      "inRepo": true,
-      "path": ".kilo/worktrees/toolbar-overflow",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/toolbar-overflow",
-      "branch": "feat/toolbar-overflow-collapse",
-      "isPrimary": false,
-      "head": "e473a45f8e7cd0836c57b55271652414ba931019",
-      "detached": false,
-      "status": "landed",
-      "recommendation": "in-use",
-      "action": "in-use",
-      "prunable": false,
-      "mergeConflict": null,
-      "mergeConflictFiles": [],
-      "mergeChecked": false,
-      "riskScore": 70,
-      "statusReasons": [
-        "the branch is an ancestor of main and the working tree is clean",
-        "the board saw agent e2e-run/feat/toolbar-overflow-collapse/94613 in this worktree inside the last 30 minutes"
-      ],
-      "ahead": 0,
-      "behind": 1,
-      "mergedIntoMain": true,
-      "dirty": 0,
-      "untracked": 0,
-      "dirtyPaths": [],
-      "lastCommit": {
-        "sha": "e473a45f8e7cd0836c57b55271652414ba931019",
-        "subject": "merge main into feat/toolbar-overflow-collapse; reconcile with the panel workspace",
-        "date": "2026-09-29T14:23:26+02:00",
-        "author": "Bohdan"
-      },
-      "commitsAhead": [],
-      "commitsAheadTruncated": false,
-      "claimedLanded": null,
-      "summary": "The left rail fits its tiles to the space it has and moves the ones that do not fit into a Photoshop-style three-dots tile, with one column as the default. A pure planner, a DOM-measuring fit store reached by ref callbacks, the tile itself, and the e2e specs it de-fragilised off hard-coded rail widths.",
-      "summarySource": "curated",
-      "issues": [],
-      "inferredBoardIssues": [],
-      "note": "Do NOT record a width or a viewport height here — that is the thing this branch removed. The three-dots menu needs a `max-h` and scrolls: `AnchoredOverlay` clamps a flyout's position and never its size, so a menu as tall as its contents in a `position: fixed` wrapper is unreachable below the fold.",
+      "note": "Documentation only, and the branch is ahead of main and not on it, so the inventory already refuses to prune it. No curated preservation flag is owed on top of that; add one only if the work turns out to exist on no ref.",
       "liveNote": null,
       "mustNotPrune": false,
       "chats": {
@@ -6392,32 +6042,7 @@
       "board": {
         "claims": [],
         "fileLocks": [],
-        "agents": [
-          {
-            "agentId": "feat/toolbar-overflow-collapse",
-            "branch": "feat/toolbar-overflow-collapse",
-            "lastSeenMs": 1790675813866,
-            "live": false
-          },
-          {
-            "agentId": "e2e-run/feat/toolbar-overflow-collapse/94613",
-            "branch": "feat/toolbar-overflow-collapse",
-            "lastSeenMs": 1790684133172,
-            "live": true
-          },
-          {
-            "agentId": "e2e-run/feat/toolbar-overflow-collapse/99355",
-            "branch": "feat/toolbar-overflow-collapse",
-            "lastSeenMs": 1790684199523,
-            "live": true
-          },
-          {
-            "agentId": "e2e-run/feat/toolbar-overflow-collapse/13822",
-            "branch": "feat/toolbar-overflow-collapse",
-            "lastSeenMs": 1790684580535,
-            "live": true
-          }
-        ],
+        "agents": [],
         "held": false
       },
       "read": []
@@ -6444,7 +6069,7 @@
         "the working tree is clean and the merge into the base branch applies with no conflict"
       ],
       "ahead": 1,
-      "behind": 143,
+      "behind": 146,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -6514,7 +6139,7 @@
         "the working tree is clean and the merge into the base branch applies with no conflict"
       ],
       "ahead": 1,
-      "behind": 363,
+      "behind": 366,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -6593,7 +6218,7 @@
         "the working tree is clean and the merge into the base branch applies with no conflict"
       ],
       "ahead": 2,
-      "behind": 274,
+      "behind": 277,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -6673,7 +6298,7 @@
         "the working tree is clean and the merge into the base branch applies with no conflict"
       ],
       "ahead": 1,
-      "behind": 143,
+      "behind": 146,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -6755,7 +6380,7 @@
         "the working tree is clean and the merge into the base branch applies with no conflict"
       ],
       "ahead": 1,
-      "behind": 143,
+      "behind": 146,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -6837,7 +6462,7 @@
         "the working tree is clean and the merge into the base branch applies with no conflict"
       ],
       "ahead": 1,
-      "behind": 143,
+      "behind": 146,
       "mergedIntoMain": false,
       "dirty": 0,
       "untracked": 0,
@@ -6893,67 +6518,6 @@
       "read": []
     },
     {
-      "name": "concise-agents-guidance",
-      "inRepo": true,
-      "path": ".kilo/worktrees/concise-agents-guidance",
-      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/concise-agents-guidance",
-      "branch": "cleanup/concise-agents-guidance",
-      "isPrimary": false,
-      "head": "ae4052b2e0f34da62e59924e305201849de78641",
-      "detached": false,
-      "status": "landed",
-      "recommendation": "prune",
-      "action": "dispose",
-      "prunable": true,
-      "mergeConflict": null,
-      "mergeConflictFiles": [],
-      "mergeChecked": false,
-      "riskScore": 10,
-      "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
-      "ahead": 0,
-      "behind": 22,
-      "mergedIntoMain": true,
-      "dirty": 0,
-      "untracked": 0,
-      "dirtyPaths": [],
-      "lastCommit": {
-        "sha": "ae4052b2e0f34da62e59924e305201849de78641",
-        "subject": "docs(agents): read-only agents may share a worktree; the rule is one writer",
-        "date": "2026-09-29T13:14:40+02:00",
-        "author": "Bohdan"
-      },
-      "commitsAhead": [],
-      "commitsAheadTruncated": false,
-      "claimedLanded": null,
-      "summary": "AGENTS.md restructured into a thin root plus three linked files: docs/TESTING.md (gates, tsc, test, lint, e2e, CI, headed-browser ban), docs/ORCHESTRATION.md (worktrees, the swarm board, the WORKTREES.json inventory, dead-agent recovery) and docs/PHOTOSHOP-UX.md (Tools-rail clone requirement and the five open violations). The worktree, merge, stash, claim, lease and disposal rules are preserved in the linked file, not deleted.",
-      "summarySource": "curated",
-      "issues": [],
-      "inferredBoardIssues": [],
-      "note": "Documentation only, and the branch is ahead of main and not on it, so the inventory already refuses to prune it. No curated preservation flag is owed on top of that; add one only if the work turns out to exist on no ref.",
-      "liveNote": null,
-      "mustNotPrune": false,
-      "chats": {
-        "count": 0,
-        "chatIds": [],
-        "subagentCount": 0,
-        "byState": {},
-        "activeChatIds": [],
-        "unfinishedChatIds": [],
-        "lastActivity": null,
-        "readUnfinished": [],
-        "read": [],
-        "unfinished": [],
-        "dead": []
-      },
-      "board": {
-        "claims": [],
-        "fileLocks": [],
-        "agents": [],
-        "held": false
-      },
-      "read": []
-    },
-    {
       "name": "durable-replay-pins",
       "inRepo": true,
       "path": ".kilo/worktrees/durable-replay-pins",
@@ -6972,7 +6536,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 141,
+      "behind": 144,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7033,7 +6597,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 151,
+      "behind": 154,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7094,7 +6658,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 85,
+      "behind": 88,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7167,7 +6731,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 8,
+      "behind": 11,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7283,7 +6847,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 406,
+      "behind": 409,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7344,7 +6908,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 406,
+      "behind": 409,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7405,7 +6969,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 143,
+      "behind": 146,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7471,7 +7035,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 140,
+      "behind": 143,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7532,7 +7096,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 140,
+      "behind": 143,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7593,7 +7157,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 47,
+      "behind": 50,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7654,7 +7218,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 140,
+      "behind": 143,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7722,7 +7286,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 44,
+      "behind": 47,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7783,7 +7347,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 141,
+      "behind": 144,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7844,7 +7408,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 141,
+      "behind": 144,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7905,7 +7469,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 141,
+      "behind": 144,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -7973,7 +7537,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 141,
+      "behind": 144,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -8041,7 +7605,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 141,
+      "behind": 144,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -8109,7 +7673,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 141,
+      "behind": 144,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -8177,7 +7741,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 141,
+      "behind": 144,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -8238,7 +7802,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 285,
+      "behind": 288,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -8281,6 +7845,92 @@
       "read": []
     },
     {
+      "name": "toolbar-overflow",
+      "inRepo": true,
+      "path": ".kilo/worktrees/toolbar-overflow",
+      "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/toolbar-overflow",
+      "branch": "feat/toolbar-overflow-collapse",
+      "isPrimary": false,
+      "head": "e473a45f8e7cd0836c57b55271652414ba931019",
+      "detached": false,
+      "status": "landed",
+      "recommendation": "prune",
+      "action": "dispose",
+      "prunable": true,
+      "mergeConflict": null,
+      "mergeConflictFiles": [],
+      "mergeChecked": false,
+      "riskScore": 10,
+      "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
+      "ahead": 0,
+      "behind": 4,
+      "mergedIntoMain": true,
+      "dirty": 0,
+      "untracked": 0,
+      "dirtyPaths": [],
+      "lastCommit": {
+        "sha": "e473a45f8e7cd0836c57b55271652414ba931019",
+        "subject": "merge main into feat/toolbar-overflow-collapse; reconcile with the panel workspace",
+        "date": "2026-09-29T14:23:26+02:00",
+        "author": "Bohdan"
+      },
+      "commitsAhead": [],
+      "commitsAheadTruncated": false,
+      "claimedLanded": null,
+      "summary": "The left rail fits its tiles to the space it has and moves the ones that do not fit into a Photoshop-style three-dots tile, with one column as the default. A pure planner, a DOM-measuring fit store reached by ref callbacks, the tile itself, and the e2e specs it de-fragilised off hard-coded rail widths.",
+      "summarySource": "curated",
+      "issues": [],
+      "inferredBoardIssues": [],
+      "note": "Do NOT record a width or a viewport height here — that is the thing this branch removed. The three-dots menu needs a `max-h` and scrolls: `AnchoredOverlay` clamps a flyout's position and never its size, so a menu as tall as its contents in a `position: fixed` wrapper is unreachable below the fold.",
+      "liveNote": null,
+      "mustNotPrune": false,
+      "chats": {
+        "count": 0,
+        "chatIds": [],
+        "subagentCount": 0,
+        "byState": {},
+        "activeChatIds": [],
+        "unfinishedChatIds": [],
+        "lastActivity": null,
+        "readUnfinished": [],
+        "read": [],
+        "unfinished": [],
+        "dead": []
+      },
+      "board": {
+        "claims": [],
+        "fileLocks": [],
+        "agents": [
+          {
+            "agentId": "feat/toolbar-overflow-collapse",
+            "branch": "feat/toolbar-overflow-collapse",
+            "lastSeenMs": 1790675813866,
+            "live": false
+          },
+          {
+            "agentId": "e2e-run/feat/toolbar-overflow-collapse/94613",
+            "branch": "feat/toolbar-overflow-collapse",
+            "lastSeenMs": 1790684133172,
+            "live": false
+          },
+          {
+            "agentId": "e2e-run/feat/toolbar-overflow-collapse/99355",
+            "branch": "feat/toolbar-overflow-collapse",
+            "lastSeenMs": 1790684199523,
+            "live": false
+          },
+          {
+            "agentId": "e2e-run/feat/toolbar-overflow-collapse/13822",
+            "branch": "feat/toolbar-overflow-collapse",
+            "lastSeenMs": 1790684580535,
+            "live": false
+          }
+        ],
+        "held": false
+      },
+      "read": []
+    },
+    {
       "name": "tools-registry-pins",
       "inRepo": true,
       "path": ".kilo/worktrees/tools-registry-pins",
@@ -8299,7 +7949,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 140,
+      "behind": 143,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -8360,7 +8010,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 141,
+      "behind": 144,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,
@@ -8421,7 +8071,7 @@
       "riskScore": 10,
       "statusReasons": ["the branch is an ancestor of main and the working tree is clean"],
       "ahead": 0,
-      "behind": 293,
+      "behind": 296,
       "mergedIntoMain": true,
       "dirty": 0,
       "untracked": 0,

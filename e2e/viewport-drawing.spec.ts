@@ -214,6 +214,46 @@ async function measureAtViewport(
 
 test.describe('Viewport Drawing', () => {
   /**
+   * SKIPPED BY DECISION, not because the assertion is wrong.
+   *
+   * This test is intermittently red — measured 1 failure in 4 full runs, and the
+   * failing case MOVES between `wide` and `narrow` (TEST-FLAKES.md §12). A
+   * deterministic defect does not move between cases, so the defect is in the
+   * test's own measurement chain and has never been located. Its three candidate
+   * places are `waitForCanvasRedraw` polling a CDP screenshot for ink,
+   * `getDarkPixelBounds` thresholding that screenshot, and the 25px-derived bound
+   * being applied through `expect.soft`; nothing in the chain records which one
+   * gave, so a failing run currently produces no evidence at all.
+   *
+   * Why skipping beats shipping it:
+   *
+   * - The suite's contract is that a default headless run has ZERO failures. A test
+   *   that is red one run in four makes every unrelated merge look broken roughly a
+   *   quarter of the time, and the response it trains is to ignore the gate — which
+   *   costs far more than the coverage this single test buys.
+   * - A flaky assertion is worse than no assertion, not better: it cannot be used to
+   *   justify a change either, because a green result from it carries no
+   *   information.
+   *
+   * This is NOT a "known failure" in the sense of a defect that is accepted. Nothing
+   * here is waived; the work is un-done and filed. It is also NOT the fix — do not
+   * widen `ANTIALIASED_FLANGE_CSS_PX`, loosen the bound, or add retries to make it
+   * green. Every one of those treats the symptom, and §12 says the mechanism is
+   * still unknown.
+   *
+   * Exact remaining verification, and the one-line un-skip: capture a failing run
+   * with `npm run test:e2e -- e2e/viewport-drawing.spec.ts --retries=1`, which
+   * yields a `trace: 'on-first-retry'` trace plus the failure PNG under
+   * `test-results/runs/<run-id>/`. The trace plus those artifacts is the only thing
+   * that can say whether the ink was absent, mis-thresholded or mislocated. Until a
+   * failing run is captured, a fix here would be a guess.
+   *
+   * Operator decision, 2026-09-29, after the skip was requested and the suite
+   * reported this test green locally.
+   */
+  test.skip(true, 'Intermittent: 1 failure in 4 runs, failing case moves between cases — TEST-FLAKES.md §12');
+
+  /**
    * ONE test over all three windows, where this was three tests in a `for` loop. The reason
    * is a property the loop cannot express: "these are three different windows" is a claim
    * about the SET. In a per-viewport loop each test is blind to the other two, so a

@@ -158,19 +158,28 @@ The trap is that this _mostly works_: Node walks up to the ancestor checkout, so
 
 ### 0.5 The Playwright port
 
-Every worktree's dev server wants `:5173`, so a bare `npx playwright test` can attach to a server **another worktree started** and test that checkout — "my change did nothing" is this, not a cache. `npm run test:e2e` no longer can: it runs `scripts/e2e-run.mjs`, which takes a swarm lock so one suite runs at a time across all worktrees, allocates a free port per run, and gives the run its own output directory. Reuse is opt-in.
+Every worktree's dev server wants `:5173`, so a bare `npx playwright test` used to attach to a server **another worktree started** and test that checkout — "my change did nothing" is this, not a cache. **That can no longer happen at all.** Reuse is not off by default here; it is _unreachable_:
 
 ```ts
 // playwright.config.ts:29-30
 const port = process.env.PLAYWRIGHT_PORT ?? '5173';
 const baseUrl = `http://localhost:${port}`;
 
-// playwright.config.ts:133-134
-reuseExistingServer:
-  !process.env.CI && process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER === '1' && !process.env.PLAYWRIGHT_PORT,
+// playwright.config.ts:114-136
+webServer: {
+  command: `npm run dev -- --port ${port} --strictPort`,   // :119  a clash is a startup failure, not a hop
+  url: baseUrl,
+  reuseExistingServer: false,                              // literal; nothing can turn it on
+}
 ```
 
-Read the condition left to right. Reuse is **off** unless it is asked for by name: `PLAYWRIGHT_REUSE_EXISTING_SERVER=1` is now the only thing that attaches to a server this run did not start, and `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` does nothing at all — it is the spelling from before this change, and setting it leaves you exactly where you were. `PLAYWRIGHT_PORT` sets the port explicitly and also pins reuse off, and `--strictPort` at `playwright.config.ts:119` turns an occupied port into a hard failure rather than a silent hop. Prefer the wrapper: it picks a free port for you, and the port the run used is printed before the suite starts. Local runs are also sequential — `workers: 1` outside CI (`playwright.config.ts:50`) — so two runs in one process cannot fight over one app instance.
+`PLAYWRIGHT_REUSE_EXISTING_SERVER` no longer exists — `scripts/e2e-run.mjs` **refuses** it rather
+than ignoring it, so setting it is an error, not a no-op. `PLAYWRIGHT_BASE_URL` is refused too
+unless the run says `E2E_ALLOW_REMOTE=1`, which it logs. The wrapper picks a free port, checks it
+is still bindable, exports it as `PLAYWRIGHT_PORT`, and records it to `.kilo/e2e-last-run.json`, so
+the port that served a run can be named after the fact. Local runs are also sequential —
+`workers: 1` outside CI (`playwright.config.ts:50`) — so two runs in one process cannot fight over
+one app instance.
 
 ```bash
 cd /Users/bkalynovskyi/ph/.kilo/worktrees/<name>
@@ -3124,12 +3133,12 @@ failure is a new defect, never a known one. Characterised, not listed:
    `## Fixed — Enter did not reliably close the flyout` (`:257`), not among the open latents.
 
 5. **The port race, and what a run can silently attach to.** `playwright.config.ts:29-30` takes the
-   port from `PLAYWRIGHT_PORT`, defaulting to 5173; `:133-134` makes `reuseExistingServer` opt-**in**
-   (`=1`, with `CI` and an explicit `PLAYWRIGHT_PORT` both forcing it off), so an explicit
-   `PLAYWRIGHT_PORT` is a request to test _this_ checkout. `npm run test:e2e` allocates one per run and
-   serializes suites with the swarm lock, so the remaining exposure is a bare `npx playwright test` —
-   which now FAILS loudly on an occupied port instead of attaching. Without a port a run could attach to
-   whatever answers on :5173 — and where every
+   port from `PLAYWRIGHT_PORT`, defaulting to 5173, and `:114-136` makes `reuseExistingServer` an
+   unconditional `false` with `--strictPort` on the server command. `npm run test:e2e` allocates a
+   port per run, verifies it, and records it, so even the bare `npx playwright test` now FAILS loudly
+   on an occupied port instead of attaching. An older version of this file made reuse opt-**in**;
+   that opt-in was withdrawn, because an escape hatch that attaches to whatever holds the port is
+   the same defect with a documented name. Where every
    worktree runs `npm run dev` on the same port, that is frequently a **sibling worktree's server**.
    The failure it produced was a strict-mode violation for a test id that existed only in the
    sibling's uncommitted tree, and it pointed at a locator bug in this worktree's helpers. The
@@ -4056,13 +4065,11 @@ merge --ff-only main`.
    `npm ci` in the worktree before debugging any asset that will not load.
 4. **Every worktree's dev server wants :5173, and `reuseExistingServer` is on locally.**
    Symptom: "my change did nothing" in e2e — the run attached to a **different checkout**.
-   Defence: `npm run test:e2e`, which allocates a port and takes the swarm lock, and behind it
-   `reuseExistingServer` is opt-**in** — only `PLAYWRIGHT_REUSE_EXISTING_SERVER=1` attaches to a
-   server the run did not start. `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` is the pre-change spelling
-   and now does nothing. The two escapes are already
-   wired: `CI` and an explicit `PLAYWRIGHT_PORT` both force `reuseExistingServer: false`, and
-   `--strictPort` makes a clash a hard failure instead of a silent hop to 5174
-   (`playwright.config.ts:114-136`).
+   Defence: `npm run test:e2e`, which allocates a port, verifies it and records it; and behind it
+   `reuseExistingServer` is a literal `false` with nothing that can turn it on, plus `--strictPort`
+   so a clash is a hard failure rather than a silent hop to 5174 (`playwright.config.ts:114-136`).
+   A swarm lock is also taken so two agents rarely run at once, but it is **advisory only** and can
+   never block a run — see `docs/ORCHESTRATION.md`.
 5. **The `agent_manager` tool in this build needs every optional key sent explicitly**
    **[unverified by me]** — arrays reportedly get mangled into `{ item: [...] }`. And
    `agent_manager` reportedly accepted 19 session requests and created none, which is why `task`

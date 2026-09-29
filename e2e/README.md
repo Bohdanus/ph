@@ -126,75 +126,63 @@ npm run test:e2e
 ```
 
 **That command is a wrapper, not `playwright test`.** It runs
-`scripts/e2e-run.mjs`, which does three things before Playwright starts, and every
-one of them exists because of a way concurrent runs get silently wrong:
+`scripts/e2e-run.mjs`, which does two independent things before Playwright starts.
 
-1. **It takes a swarm lock**, so only one suite runs at a time across every
-   worktree on this machine. See [One suite at a time](#one-suite-at-a-time).
-2. **It allocates a port of its own**, so two agents in two worktrees are never
-   asking for :5173.
-3. **It gives the run its own output directory**, because Playwright _deletes_
-   `outputDir` at the start of every run, so a second run otherwise erases the
-   first run's failure screenshots before anybody has read them.
+### The guarantee: this run tests this checkout
 
-Every argument is forwarded verbatim:
+**A run starts its own dev server, on a port it picks, and records that port.** Attaching to
+a server somebody else started is the worst failure mode this suite has, because it is
+invisible: every worktree serves its own checkout, so a run on the wrong one tests code it
+never touched, reports green, and reads exactly like "my change did nothing".
+`TEST-FLAKES.md` §10 is a mutation campaign that reported seven mutations green that way.
 
-```bash
-npm run test:e2e -- e2e/sidebar-flyout.spec.ts
-npm run test:e2e -- --retries=1 e2e/undo-redo.spec.ts
-```
+Three things make it impossible rather than discouraged:
 
-### One suite at a time
+- `playwright.config.ts` sets `reuseExistingServer: false` as a **literal** — no environment
+  variable, no argument, no field that turns it on.
+- The dev server is started with `--strictPort`, so a port taken in the moment between the
+  run picking one and Vite binding it is a **startup failure** rather than Vite's silent hop
+  to the next free port.
+- `PLAYWRIGHT_REUSE_EXISTING_SERVER` is **refused** by the wrapper, and `PLAYWRIGHT_BASE_URL`
+  is refused unless the run explicitly says `E2E_ALLOW_REMOTE=1` — which it logs, so a report
+  can never claim a branch was verified against its own checkout when it was not.
 
-`npm run test:e2e` asks the swarm board for a file lock on
-`e2e/.swarm-e2e-runner` before it starts, and gives it back when the run ends —
-including when the run fails or the wrapper is interrupted. That path is
-**virtual**: it is never created on disk, and `npm run swarm status` shows it as a
-live lock while a suite is in flight, so an agent can see who has it without
-asking.
+The outcome is binary: **you get a server this run started, or you get a red run.** There is no
+third state. Each run also writes its port to `.kilo/e2e-last-run.json` and prints it, so a run
+that fails an hour later is diagnosable from the port that actually served it.
 
-If another run has it, the run **queues** rather than starting on top of it. It
-prints the holder's name and waits; if the wait runs out, nothing runs and the
-command exits **4**. The two exit codes answer different questions and neither is a
-mistake: `swarm check <path>` exits **1** when the path is busy, which is what a
-shell gates on, while the board's own `hold` — and therefore this wrapper — exits
-**4** for "somebody else holds this file". Do the other work and run the same
-command again.
+### The queue: advisory, and never a gate
 
-| Variable           | Default | What it does                                            |
-| ------------------ | ------- | ------------------------------------------------------- |
-| `E2E_LOCK_TIMEOUT` | 10 min  | How long to queue. `0` fails immediately.               |
-| `E2E_LOCK_POLL`    | 3 s     | How often to re-check while queued.                     |
-| `E2E_LOCK_LEASE`   | `30m`   | How long a **dead** holder blocks the queue.            |
-| `E2E_SKIP_LOCK`    | unset   | `1` runs unsynchronized, loudly. Operator escape hatch. |
+The run also takes a swarm lock on `e2e/.swarm-e2e-runner` so two agents rarely run e2e at
+once — less port pressure, less CPU contention, one readable log at a time. **It is only a
+queue:**
 
-`--no-lock` is the same as `E2E_SKIP_LOCK=1`. The lock is skipped automatically
-under `CI`, where one job owns one checkout outright — the board would be a fresh
-one-run-per-job database that no other job could see. If the board cannot be
-reached at all — outside a git checkout, or a Node without `node:sqlite` — the
-wrapper prints a **warning and runs anyway**: failing every suite on that machine
-would be worse than the collision the lock prevents. A malformed `E2E_LOCK_LEASE`
-is the opposite case and **stops the run**, because the board rejects it with the
-same exit code as a missing board and a typo in one variable must not silently turn
-the lock off.
+- Two runs may proceed at the same time. That is survivable and needs no coordination — each
+  has its own port and its own output directory.
+- If the board cannot be reached, the run says so and starts.
+- If the wait times out, the run says so and starts.
 
-**The holder is a run, not a branch.** `swarm status` shows one `e2e-run/<branch>/<pid>`
-agent while a suite is in flight, and that is the useful reading: the branch says
-which checkout, the pid says which process. The board's identity is the branch and a
-branch never conflicts with itself, so two runs on one branch — a session and its own
-subagent — would otherwise both "acquire", and the second one's release would free
-the first.
+**No run ever refuses to start because of the lock.** A queue that can block a merge gate is a
+gate, and a gate that is not 100% enforceable is worse than no gate: it looks like a guarantee
+and is not one. An earlier version exited 4 when it could not have the lock, and that is exactly
+the trap this section exists to prevent.
 
-The lease is deliberately shorter than a full suite and renewed while the run
-lives. A file lock is never renewed by the board itself (`renewOwnClaims` only
-touches issue _claims_), so a long run would otherwise watch its own lock expire,
-have it reclaimed by the next `swarm` command from anybody, and start racing a
-second suite. A renewal that fails stops the run rather than risking that.
+`npm run swarm status` shows the holder as `e2e-run/<branch>/<pid>` while a suite is in flight:
+the branch says which checkout, the pid says which process. The holder is a **run** rather than a
+branch because board identity is the branch and a branch never conflicts with itself.
 
-**A lock is a queue, not a gate.** It never decides that a change does not need
-e2e: the Definition of Done still requires a run for a user-visible change, and
-this is what makes that requirement survivable when several agents are merging at
-once. Run the full suite before merging; use a targeted spec to iterate.
+| Variable           | Default | What it does                                          |
+| ------------------ | ------- | ----------------------------------------------------- |
+| `E2E_LOCK_TIMEOUT` | 10 min  | How long to queue before going ahead anyway.          |
+| `E2E_LOCK_POLL`    | 3 s     | How often to re-check while queued.                   |
+| `E2E_LOCK_LEASE`   | `30m`   | How long a **dead** holder blocks the queue.          |
+| `E2E_SKIP_LOCK`    | unset   | `1` skips the queue, loudly. Only scheduling is lost. |
+| `E2E_ALLOW_REMOTE` | unset   | `1` permits `PLAYWRIGHT_BASE_URL`, and is logged.     |
+
+`--no-lock` is the same as `E2E_SKIP_LOCK=1`. The queue is skipped automatically under `CI`,
+where one job owns one checkout outright. The lease is renewed while the suite runs, because the
+board never renews a file lock itself, and a renewal that fails is a message rather than a
+failure: both runs have their own ports.
 
 ### Ports and servers
 
@@ -453,8 +441,13 @@ Two more consequences of the same geometry, both of which have bitten a spec her
   cheap way to get a full-document layer (`GradientToolArea` also refuses to run
   on the bedrock layer at all).
 
-2 tests are declared `test.skip`: the Photopea PSD round-trip (needs the external
-photopea.com) and one right-click flyout case.
+3 tests are declared `test.skip`: the Photopea PSD round-trip (needs the external
+photopea.com), one right-click flyout case, and `viewport-drawing.spec.ts` — the last
+is skipped by the operator's decision of 2026-09-29 because it is intermittently red (1
+run in 4, failing case moving between cases). That is a **gate decision, not a fix and
+not a waiver**: the defect is open in `TEST-FLAKES.md` §12 with its exact remaining
+verification, and the skip is not permission to loosen the assertion, raise the bound
+or add retries.
 
 A local run uses `retries: 0`; only `CI` sets `retries: 2`, so a local failure is
 never retried away.
