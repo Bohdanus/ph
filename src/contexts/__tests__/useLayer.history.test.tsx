@@ -334,22 +334,51 @@ describe('useLayers removeLayer', () => {
     //
     // The discriminator is the registry: a publication never opens an asset
     // transaction, and every reconversion does (`convertLegacyHistorySafely`,
-    // `history-adapter.ts:728`, reached from `buildDurableDocument`). This test is
+    // `history-adapter.ts:830`, reached from `buildDurableDocument`). This test is
     // the one that fails if the writer stops passing `durableEntry`.
     const beginTransaction = vi.spyOn(getAssetRegistry(), 'beginDocumentAssetTransaction');
+    try {
+      const result = setupWithDocument();
+      // `setupWithDocument` replaces the document, which itself reconverts; only the
+      // removal is under test here.
+      beginTransaction.mockClear();
+      const id = Object.keys(result.current.store.layers)[0]!;
+
+      act(() => {
+        result.current.layers.removeLayer(id);
+      });
+
+      expect(beginTransaction).not.toHaveBeenCalled();
+      expect(result.current.store.durableStatus).toBe('current');
+    } finally {
+      beginTransaction.mockRestore();
+    }
+  });
+
+  it('still removes the layer when the boundary itself throws', () => {
     const result = setupWithDocument();
-    // `setupWithDocument` replaces the document, which itself reconverts; only the
-    // removal is under test here.
-    beginTransaction.mockClear();
     const id = Object.keys(result.current.store.layers)[0]!;
+    // A shadow projection that throws must not reject a valid removal, exactly as
+    // the selection writers' `catch` re-dispatch says. Nothing has been appended
+    // and no layer has left the record when the plan runs, so the catch path is
+    // the whole edit rather than a repair of it.
+    planHistoryAppend.mockImplementationOnce(() => {
+      throw new Error('the durable projection failed');
+    });
 
     act(() => {
       result.current.layers.removeLayer(id);
     });
 
-    expect(beginTransaction).not.toHaveBeenCalled();
-    expect(result.current.store.durableStatus).toBe('current');
-    beginTransaction.mockRestore();
+    const store = result.current.store;
+    expect(store.layers[id]).toBeUndefined();
+    expect(store.deletedLayers[id]).toMatchObject({ id });
+    expect(store.history).toHaveLength(2);
+    expect(store.history[1]).toMatchObject({ actionName: REMOVE_ACTION, layerId: id, args: {} });
+    // The fallback carries no plan, so the store reconverts and the removal is
+    // still in the shadow — the legacy timeline is the authority either way.
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDocument!.history.map((entry) => entry.operation.kind)).toEqual(['remove-layer']);
   });
 
   it('removes a layer the record does not hold without asking the boundary at all', () => {

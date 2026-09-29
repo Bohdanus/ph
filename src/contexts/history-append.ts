@@ -175,7 +175,15 @@ function translate(
   if (entry.actionName === REMOVE_ACTION) {
     // Layer presence is deliberately not a precondition here or in validation:
     // conversion and both replay models retain unknown removals as no-ops.
-    return { entry, durableEntry: deriveRemoveLayerEntry(entry)!, diagnostics: [] };
+    const durableEntry = deriveRemoveLayerEntry(entry);
+    if (!durableEntry) {
+      return unavailable(
+        entry,
+        'The layer removal does not name a layer, so no durable operation describes it.',
+        'invalid-history-entry'
+      );
+    }
+    return { entry, durableEntry, diagnostics: [] };
   }
 
   return unavailable(

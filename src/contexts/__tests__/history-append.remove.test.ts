@@ -431,6 +431,11 @@ describe('remove-layer append boundary', () => {
 
     it.each([
       { label: 'a third key', operation: { kind: 'remove-layer', layerId: 'layer-1', extra: true } },
+      // One key is the wrong count; `id` instead of `layerId` is the right count
+      // and the wrong name. Both are the shape check's refusals, not the id
+      // comparison's — which is why the reason is asserted rather than just its
+      // existence: the shape check could be deleted and the id comparison would
+      // still refuse all three, with these cases green either way.
       { label: 'a single key', operation: { kind: 'remove-layer' } },
       { label: 'the layer id renamed away', operation: { kind: 'remove-layer', id: 'layer-1' } },
     ] satisfies ReadonlyArray<{ label: string; operation: object }>)(
@@ -438,7 +443,7 @@ describe('remove-layer append boundary', () => {
       ({ operation }) => {
         const reason = validatePlannedDurableEntry(item, { ...correct, operation } as unknown as DurableHistoryEntry);
 
-        expect(reason).toEqual(expect.any(String));
+        expect(reason).toBe('the durable remove-layer operation does not have the canonical shape');
       }
     );
 
@@ -483,6 +488,10 @@ describe('remove-layer append boundary', () => {
       const registry = getAssetRegistry();
       const begin = vi.spyOn(registry, 'beginDocumentAssetTransaction');
       const reconcile = vi.spyOn(registry, 'reconcileDocumentAssets');
+      // The control conversion registers against the module singleton, so its
+      // document is disposed in the `finally` with the spies: a failed assertion
+      // must not leave baselines behind for the rest of the file.
+      const controlDocumentId = 'asset-work-control';
       try {
         const plan = planRemoval(removeItem('layer-1'));
         const base: DurableDocument = withRegistry(
@@ -508,13 +517,13 @@ describe('remove-layer append boundary', () => {
         // when a publication is refused, so the two assertions above are read from a
         // live path rather than from an inert mock.
         const fallback = convertLegacyHistorySafely([baselineItem(), plan.entry], {
-          documentId: 'asset-work-control',
+          documentId: controlDocumentId,
         });
         expect(fallback.status).toBe('current');
         expect(begin).toHaveBeenCalled();
         expect(reconcile).toHaveBeenCalled();
-        registry.disposeDocument('asset-work-control');
       } finally {
+        registry.disposeDocument(controlDocumentId);
         begin.mockRestore();
         reconcile.mockRestore();
       }
