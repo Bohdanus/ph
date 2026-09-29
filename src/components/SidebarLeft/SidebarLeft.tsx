@@ -60,12 +60,15 @@ const SidebarLeft = () => {
   const { dockOnLeft, setDockOnLeft } = usePanelLayout();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
-  // Two columns is the default. `min-h-0 overflow-y-auto` on the `<aside>` is what actually
-  // stops the toolbar from dictating the canvas: the aside's min-content height would otherwise
-  // become the grid row floor and drag the `h-full` canvas up (main's responsive work added that,
-  // and the page no longer outgrows a 720px viewport as a result). With the row bounded, the
-  // canvas keeps the same height in both layouts, so a single column only means the toolbar
-  // itself scrolls — which it now can, and which two columns mostly avoids.
+  // Two columns is the default. `overflow-y-auto` on the `<aside>` is what stops the toolbar
+  // from dictating the canvas: a scroll container's automatic minimum size is zero, so the
+  // rail's content cannot become the grid row floor and drag the `h-full` canvas up. With
+  // the row bounded the canvas keeps the same height in both layouts, so the choice is only
+  // about the rail's own width — and about how much it scrolls. Two columns needs a shorter
+  // window than one column to stop scrolling, not a taller one, which is the opposite of the
+  // intuition that halving the width makes the rail taller. The measured heights, the
+  // thresholds they imply, and the font metrics they depend on are recorded once, in the
+  // header of `e2e/no-document-overflow.spec.ts`.
   const [isSingleColumn, setIsSingleColumn] = useState(false);
   const isTablet = useIsTabletViewport();
   const isMobile = useIsMobileViewport();
@@ -561,7 +564,11 @@ const SidebarLeft = () => {
 
   return (
     <aside
-      className={`max-md:hidden min-h-0 overflow-y-auto overscroll-contain bg-gray-100 dark:bg-gray-800 ${
+      // `scrollbar-none` is main's, and the border is now CONDITIONAL because the rail can sit
+      // on either edge: `overflow-y: auto` computes `overflow-x` to `auto` and the border
+      // always sits outside the content box, so the border belongs on whichever side faces the
+      // canvas — and the grid area follows from the same fact.
+      className={`scrollbar-none max-md:hidden min-h-0 overflow-y-auto overscroll-contain bg-gray-100 dark:bg-gray-800 ${
         dockOnLeft
           ? 'border-l border-gray-300 dark:border-gray-700 [grid-area:right]'
           : 'border-r border-gray-300 dark:border-gray-700 [grid-area:left]'
@@ -584,7 +591,22 @@ const SidebarLeft = () => {
       )}
       {/* `min-h-full`, not `h-full`: the aside now scrolls, and `h-full` on a child of a
           scroll container resolves against the container's own height, which would leave
-          the colour swatches unpainted at the bottom of a long rail. */}
+          the colour swatches unpainted at the bottom of a long rail.
+
+          `scrollbar-none` is why the rail can be a scroll container and show no scrollbar.
+          The rail's content is a fixed 612px in two columns and 1014px in one, against an
+          available height of `viewportHeight - 137` (the shell's three `auto` rows), so it
+          genuinely overflows below 749px and 1151px respectively — measured, not estimated.
+          Two of those are ordinary iPad sizes (810×1080 portrait, 1133×744 landscape), so
+          "it only happens in a very short window" is not true. The scroll stays reachable
+          by wheel, trackpad and touch; only the chrome is gone, because `overflow: hidden`
+          would strand the colour swatches entirely.
+
+          It also overflows HORIZONTALLY by 1px, because `overflow-y: auto` computes
+          `overflow-x` to `auto` and the `border-r` sits outside the content box. That one
+          paints nothing today only because `scrollbar-width: none` is axis-agnostic. It is
+          not asserted anywhere and would become a scrollbar the day anyone narrows the
+          suppression, so do not narrow it to a vertical-only rule. */}
       <div className="flex min-h-full flex-col items-center px-3 py-4">
         <div className="mb-2 flex w-full items-center justify-between px-1">
           {!isTablet && (

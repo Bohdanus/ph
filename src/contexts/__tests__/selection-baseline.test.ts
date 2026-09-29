@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { AssetRegistry } from '../asset-registry.ts';
 import { legacyHistoryToDurable } from '../history-adapter.ts';
 import { replayHistory, type HistoryReplayDependencies } from '../history-replay.ts';
-import { deriveSelectionBaseline, type SelectionHistoryArgs } from '../selection-baseline.ts';
-import type { Selection } from '../general-types.ts';
+import { deriveSelectionBaseline, selectionSnapshot, type SelectionHistoryArgs } from '../selection-baseline.ts';
+import type { Selection, SelectionMetadata } from '../general-types.ts';
 import type { HistoryItem } from '../history-types.ts';
 import type { Layer, LayerSource } from '../layer-types.ts';
 import { NEW_LAYER_ACTION, OPEN_DOCUMENT_ACTION, RENAME_LAYER_ACTION, SELECTION_ACTION } from '../../util/constants.ts';
@@ -125,6 +125,82 @@ function convert(history: readonly HistoryItem[]) {
     registry.shutdown();
   }
 }
+
+/**
+ * A selection whose every field `cloneSelection` touches is populated and
+ * non-default, and whose `metadata` nests one level deep.
+ *
+ * A shallow copy of this fixture is value-identical to a deep one — every
+ * `toEqual` in this file passes either way. Only reference identity can tell
+ * them apart, which is why the assertions below are `not.toBe` and not `toEqual`.
+ */
+function snapshotFixture(id: string): Selection {
+  const metadata: SelectionMetadata = {
+    featherRadius: 4,
+    movedAtVersion: 3,
+    magneticLasso: {
+      width: 12,
+      contrast: 22,
+      frequency: 7,
+      snapStrength: 9,
+      smoothing: 5,
+      antiAlias: true,
+      pathPointCount: 4,
+    },
+  };
+
+  return {
+    id,
+    points: [
+      { x: 12, y: 7 },
+      { x: 48, y: 7 },
+      { x: 48, y: 33 },
+    ],
+    isActive: true,
+    pos: { x: 12, y: 7, width: 36, height: 26 },
+    lifecycle: 'committed',
+    geometry: 'polygon',
+    sourceTool: 'feather-magnetic-lasso',
+    metadata,
+  };
+}
+
+describe('selectionSnapshot', () => {
+  it('returns the empty snapshot when called with no arguments', () => {
+    expect(selectionSnapshot()).toEqual({ selections: [], activeSelectionId: null });
+  });
+
+  it('matches the source by value while sharing no object reference with it', () => {
+    const source = snapshotFixture('clone-me');
+    const snapshot = selectionSnapshot([source], source.id);
+
+    // The value half. A deep copy and a shallow copy are indistinguishable here,
+    // which is exactly why the reference half below is not optional.
+    expect(snapshot).toEqual({ selections: [source], activeSelectionId: source.id });
+    expect(snapshot.selections[0]).toEqual(source);
+
+    // The reference half, at every level the documented contract names:
+    // `points`, `pos` and `metadata` are deep-copied, and `metadata` is
+    // deep-copied through its nested `magneticLasso` too. Deleting any one of
+    // the three clone lines in `cloneSelection` (`selection-baseline.ts:20`,
+    // `:21`, `:22`) fails here; no other assertion in this file would notice.
+    const copied = snapshot.selections[0]!;
+    expect(copied.points).not.toBe(source.points);
+    expect(copied.points[0]).not.toBe(source.points[0]);
+    expect(copied.pos).not.toBe(source.pos);
+    expect(copied.metadata).not.toBe(source.metadata);
+    expect(copied.metadata?.magneticLasso).not.toBe(source.metadata?.magneticLasso);
+    // The wrapper element is rebuilt too, not carried over.
+    expect(copied).not.toBe(source);
+  });
+
+  it('freezes the snapshot and its selections array', () => {
+    const snapshot = selectionSnapshot([snapshotFixture('frozen')], 'frozen');
+
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.selections)).toBe(true);
+  });
+});
 
 describe('deriveSelectionBaseline', () => {
   it('seeds the baseline from a non-empty previousSelectionState on the first enabled selection action', () => {

@@ -26,9 +26,12 @@ test.describe('SidebarLeft - Layout Toggle (fast)', () => {
     await expect(page.locator('body')).toBeVisible();
   });
 
-  // Two columns is the default: a one-column toolbar is as tall as the whole tool list, and
-  // that min-content height becomes the grid row floor, dragging the `h-full` canvas up and
-  // overflowing a 720px viewport (e2e/OPEN_PROBLEMS.md P1).
+  // Two columns is the default: a one-column toolbar needs a much taller window before it
+  // stops scrolling, because its content is far taller. Neither layout can floor the grid
+  // row — the rail is a scroll container, so its automatic minimum size is already zero —
+  // and the page is pinned not to scroll at all. The measured heights are recorded once, in
+  // the header of `e2e/no-document-overflow.spec.ts`; they are deliberately not restated
+  // here, because they are font-metric dependent and a second copy is a second thing to rot.
   test('defaults to two-column layout', async ({ page }) => {
     const toolbar = page.getByTestId('left-toolbar-tools');
     const toggle = page.getByTestId('toolbar-layout-toggle');
@@ -49,10 +52,9 @@ test.describe('SidebarLeft - Layout Toggle (fast)', () => {
       scrollHeight: document.documentElement.scrollHeight,
     }));
 
-    expect(
-      scrollHeight,
-      'a toolbar taller than the viewport floors the grid row and drags the canvas up'
-    ).toBeLessThanOrEqual(pageHeight);
+    expect(scrollHeight, 'the shell must be exactly viewport-tall, so the page never scrolls').toBeLessThanOrEqual(
+      pageHeight
+    );
   });
 
   test('toggles to one-column layout', async ({ page }) => {

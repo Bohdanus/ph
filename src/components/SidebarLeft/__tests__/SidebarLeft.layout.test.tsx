@@ -137,8 +137,10 @@ describe('SidebarLeft layout toggle', () => {
     const twoColumnOrder = getPrimaryNames();
 
     // Two columns is the DEFAULT, and that is load-bearing rather than cosmetic: a one-column
-    // toolbar is as tall as the whole tool list, and that min-content height becomes the grid
-    // row floor, which drags the `h-full` canvas up and overflows a 720px viewport.
+    // toolbar needs a much taller window before it stops scrolling, because its content is
+    // far taller. Neither layout can floor the grid row, because the rail is a scroll
+    // container and a scroll container's automatic minimum size is zero. The measured
+    // heights live in the header of `e2e/no-document-overflow.spec.ts`.
     expect(toggle).toHaveAttribute('aria-label', 'Use one-column toolbar');
     expect(toggle).toHaveAttribute('aria-pressed', 'false');
     expect(firstSection).toHaveClass('grid-cols-2');

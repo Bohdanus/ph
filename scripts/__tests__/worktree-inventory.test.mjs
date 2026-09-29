@@ -35,6 +35,150 @@ import { loadChatAudit, auditVerdict, isReadUnfinished, READ_STATE } from '../li
 
 const NOW = 1_790_000_000_000;
 
+/** The curated table's SOURCE, for the checks that a JS object cannot answer. */
+const CURATED_PATH = resolve(import.meta.dirname, '../lib/worktree-inventory/curated.mjs');
+
+/**
+ * Remove JS comments from a source line, respecting string literals.
+ *
+ * A `line.split('//')[0]` is wrong in both directions here: it eats the rest of
+ * a summary that contains a URL, and — on the line it was written for — it does
+ * not fire at all, because a `//` comment after a key still matches a regex
+ * anchored at the start of the line only if the comment IS the line. Both
+ * failures are about the same thing: deciding what is code without knowing what
+ * is a comment.
+ *
+ * Returns the code with comments blanked to the same length, so column
+ * positions still mean what they did.
+ */
+function stripComments(line, inBlockComment) {
+  let out = '';
+  let quote = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    const next = line[i + 1];
+    if (inBlockComment) {
+      out += ' ';
+      if (c === '*' && next === '/') {
+        out += ' ';
+        i++;
+        inBlockComment = false;
+      }
+      continue;
+    }
+    if (quote) {
+      out += c;
+      if (c === '\\') out += next ?? '';
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '/' && next === '/') {
+      out += ' '.repeat(line.length - i);
+      break;
+    }
+    if (c === '/' && next === '*') {
+      out += '  ';
+      i++;
+      inBlockComment = true;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      quote = c;
+      out += c;
+      continue;
+    }
+    out += c;
+  }
+  return { code: out, inBlockComment };
+}
+
+/**
+ * Read the key declarations at the top level of the `CURATED` object literal,
+ * in source order. Fails CLOSED.
+ *
+ * Returns `{ keys, unreadable }`. `keys` is every declaration the reader
+ * positively recognised. `unreadable` names every line at an entry's
+ * indentation that was NOT a plain key declaration — a computed key, a spread,
+ * a property shorthand, a method, a getter. Those are reported rather than
+ * skipped, because they are precisely the shapes a duplicate can hide inside and
+ * a reader that skips what it does not understand reports green on a file it
+ * could not see.
+ *
+ * The entry indentation is MEASURED from the first declaration after the
+ * literal opens, not hard-coded to two spaces, and the key is read with any
+ * quote style. Both were fixed in the reader's first version, which matched one
+ * quote at one indent and so passed on a duplicate written in double quotes and
+ * on a duplicate indented four spaces.
+ */
+function readCuratedKeys(source) {
+  const keys = [];
+  const unreadable = [];
+  let inBlockComment = false;
+  let entryIndent = null;
+  let depth = null;
+
+  for (const [i, raw] of source.split('\n').entries()) {
+    const { code, inBlockComment: wasIn } = stripComments(raw, inBlockComment);
+    inBlockComment = wasIn;
+    const line = code.trim();
+    if (!line) continue;
+
+    if (depth === null) {
+      // Still looking for the literal. `export const CURATED = {` is the anchor;
+      // requiring the brace to end the line means an inline `{` cannot be
+      // mistaken for it.
+      const open = /^(?:export\s+)?const\s+CURATED\s*(?::[^=]+)?=\s*\{\s*$/.exec(line);
+      if (open) depth = 1;
+      continue;
+    }
+
+    // A closing brace, in every form a property or the literal itself can take.
+    // Checked BEFORE the opening-brace increment, or `},` and `};` would both be
+    // missed and the reader would walk straight out of the literal and start
+    // reporting the code after it.
+    if (/^\}[,;]?$/.test(line)) {
+      depth--;
+      if (depth === 0) break;
+      continue;
+    }
+    if (line.endsWith('{')) depth++;
+
+    const indent = code.length - code.trimStart().length;
+
+    // A key declaration is read at ANY indentation, because a duplicate
+    // indented four spaces is a duplicate: the previous reader matched exactly
+    // two spaces and reported green on it. Inside this object literal the only
+    // nested objects are the `issues` arrays, whose properties are scalars, so
+    // there is nothing for the wider match to pick up by accident — and the scan
+    // stops at the literal's closing brace regardless.
+    const plain = /^(?:'([^']+)'|"([^"]+)"|`([^`]+)`|([A-Za-z_$][\w$]*))\s*:\s*\{\s*$/.exec(line);
+    if (plain) {
+      // The entry indentation is MEASURED from the first declaration, not
+      // hard-coded and not taken from whatever line happens to come next: the
+      // first thing after a declaration is a `summary:` field, and measuring
+      // from that would make every field the thing being checked.
+      if (entryIndent === null && indent > 0) entryIndent = indent;
+      keys.push(plain[1] ?? plain[2] ?? plain[3] ?? plain[4]);
+      continue;
+    }
+
+    if (entryIndent === null) {
+      if (indent === 0) continue; // still in the header comment or the export
+      entryIndent = indent;
+    }
+    // Only the ENTRY indentation is checked for shapes this reader cannot
+    // interpret. Deeper lines are the fields of an entry — a summary, a note, an
+    // `issues` array — and are not declarations, so they are not reported.
+    if (indent !== entryIndent) continue;
+
+    unreadable.push(`line ${i + 1}: ${raw.trim()}`);
+  }
+
+  return { keys, unreadable };
+}
+
+const count = (list, value) => list.filter((x) => x === value).length;
+
 /**
  * A throwaway git repository with a known ahead/behind shape.
  *
@@ -1679,29 +1823,231 @@ describe('the curated table', () => {
   });
 
   it('sets mustNotPrune on every worktree whose danger is invisible to git', () => {
-    // These are the worktrees where `prunable` would be true on git's facts
-    // alone, or where the work is on no ref at all. Losing one is unrecoverable
-    // and no amount of rebasing brings it back, so the flag must be set.
-    const invisibleToGit = [
-      'fix-oracle',
-      'polygon-marching-ants',
-      'ps-pixel-tools',
-      'ps-tools-spine',
-      'responsive-design-plan',
-      'ps-tool-playbook',
-      'e2e-1-export-oracle',
-      'e2e-2-draw-specs',
-      'e2e-3-layers-levels',
-      'e2e-4-flyout-keyboard',
-      'e2e-5-history-undo',
-      'history-append-layer-ops-main',
-      'history-selection-creation-writer-2',
-      'history-selection-deselect-writer',
-      'history-selection-gesture-writer',
-    ];
+    // The names are a curator's list, and they are checked against GIT rather
+    // than against the table. The previous version asserted the flag on fifteen
+    // names without looking at any of them, and every one of those fifteen was
+    // a branch that git could already see: ahead of main, clean, not on main —
+    // so `prunable` was already false and the flag protected nothing. Six of
+    // their notes said so, in prose, on the same lines.
+    //
+    // So the claim is now what is asserted, not the membership. A flag is a
+    // claim that the work here exists on no ref, and the shape that makes it
+    // true is exactly the one the generator already names
+    // `STATUS.UNCOMMITTED_ONLY`: a branch git calls disposable, carrying edits
+    // that are in no commit on it. Anything else — a committed branch, a clean
+    // tree — is a flag about nothing.
+    //
+    // The list stays hand-written on purpose. A derived list would go stale in
+    // the other direction: the moment the owning agent commits, the shape
+    // disappears and a derived rule would drop the flag off work that is still
+    // uncommitted elsewhere. Re-derive these against
+    // `git -C <path> status --porcelain` and
+    // `git merge-base --is-ancestor <branch> main` before adding a name.
+    const invisibleToGit = ['rail-drop-draw', 'shape-truth', 'text-tool-requirements'];
+    expect(invisibleToGit.length, 'the list went empty, so this guard asserts nothing').toBeGreaterThan(0);
+
+    const live = listWorktrees(process.cwd());
     for (const name of invisibleToGit) {
+      const w = live.find((x) => x.name === name);
+      expect(w, `${name} is not a live worktree, so there is nothing to protect`).toBeTruthy();
+      // Only these three worktrees are asked about. `collectWorktrees` runs
+      // `git status` and `git merge-tree` in every worktree in the repository,
+      // which is the right cost for a generator that must print all of them and
+      // the wrong cost for a test that needs three facts.
+      const { ahead } = __testables.aheadBehind(w.path, 'main');
+      const held = __testables.workingTreeState(w.path);
+      const onMain = __testables.isMergedInto(w.path, 'main');
+      expect(
+        ahead === 0 && onMain === true && held.modified + held.untracked > 0,
+        `${name} is listed as holding work git cannot see, but git says ahead=${ahead} ` +
+          `onMain=${onMain} modified=${held.modified} untracked=${held.untracked}. Either the ` +
+          'work was committed — in which case drop the name and the flag — or the shape ' +
+          'changed and this entry has to say so.'
+      ).toBe(true);
       expect(CURATED[name]?.mustNotPrune, `${name} holds work on no ref and is not protected`).toBe(true);
     }
+  });
+
+  it('declares no key twice, because a duplicate key silently discards a curation change', () => {
+    // Five keys were declared twice: a rich entry written deliberately near the
+    // top, and a terse one-liner appended near the bottom. `Object.keys()`
+    // cannot see the first — a JS object literal is last-wins, so the detailed
+    // summary and its `note` were unreachable dead code, and every test that
+    // checked the table still passed because the entry EXISTED. A committed
+    // curation change was a no-op.
+    //
+    // So this reads the SOURCE rather than the imported object: the duplicate
+    // exists only in the text. `readCuratedKeys` is the reader, and it fails
+    // CLOSED — anything at the entry indentation it does not positively
+    // recognise is reported as unreadable rather than skipped, because a reader
+    // that skips what it does not understand reports green on a file it could
+    // not see. That was the defect in the first version of this test, whose
+    // regex matched exactly one quote style at exactly one indentation: a
+    // duplicate in double quotes, a duplicate at a deeper indent, and a computed
+    // key or a spread all slipped past it, while a key-shaped line in a `//`
+    // comment — which is what you write after "removed the terse declarations" —
+    // failed it.
+    const { keys, unreadable } = readCuratedKeys(readFileSync(CURATED_PATH, 'utf8'));
+
+    // The reader must have understood the file. This is the assertion that turns
+    // a parse failure from silence into a failure, and it comes FIRST so a green
+    // run can never mean "the regex matched nothing".
+    expect(
+      unreadable,
+      `curated.mjs contains declarations this reader does not understand, so the duplicate-key ` +
+        `check cannot see the file and would report green on it: ${unreadable.join('; ')}. A ` +
+        `computed key, a spread, a shorthand property or a method at an entry's indentation are ` +
+        `all shapes a duplicate can hide inside — teach the reader this one, or write the entry ` +
+        `as a plain key.`
+    ).toEqual([]);
+
+    const seen = new Set();
+    const duplicates = [];
+    for (const name of keys) {
+      if (seen.has(name)) duplicates.push(`'${name}'`);
+      else seen.add(name);
+    }
+
+    expect(
+      duplicates,
+      `curated.mjs declares these keys more than once, so the last declaration silently ` +
+        `replaces the first and the earlier curation is dead code: ${duplicates.join('; ')}. ` +
+        'Object.keys() cannot see this — the check has to read the source.'
+    ).toEqual([]);
+
+    // The parse must find exactly the keys the imported object has, and as MANY
+    // of them. The set comparison alone is what let four silent shapes through:
+    // when the declaration the reader could not see was a key `Object.keys()`
+    // already held, both sets stayed equal and the test passed. The duplicate
+    // assertion above is named first and is the one that should fire for a
+    // duplicate — a guard that reported "the parse is broken" about the very
+    // defect it exists to name teaches the next agent to ignore it — so this
+    // LENGTH comparison is a backstop for a reader that under-counted, not the
+    // primary signal.
+    expect([...new Set(keys)].sort()).toEqual([...Object.keys(CURATED)].sort());
+    expect(keys.length, 'the reader saw fewer declarations than the object has keys').toBe(Object.keys(CURATED).length);
+  });
+
+  describe('the duplicate-key reader, proven against injected shapes', () => {
+    const real = readFileSync(CURATED_PATH, 'utf8');
+    // Inject at the start of a known entry, which is the same place the original
+    // defect was: a declaration added near a declaration.
+    //
+    // Every injected block is BRACE-BALANCED and its comments are CLOSED. That
+    // is not tidiness: the reader counts braces to find where the object literal
+    // ends, so an unbalanced injection walks it out of the literal and it starts
+    // reporting the code after it — which fails the case for the wrong reason,
+    // exactly as a guard that fires for the wrong reason teaches people to
+    // ignore it.
+    const inject = (...lines) => real.replace(/^  'e2e-shell': \{$/m, `  'e2e-shell': {\n${lines.join('\n')}`);
+    const entry = (head) => [head, "    summary: 'injected.',", '  },'];
+
+    const DUPLICATE_CASES = [
+      ['the same quoting and indent as every other entry', entry("  'e2e-shell': {")],
+      ['double quotes', entry('  "e2e-shell": {')],
+      ['four-space indentation', entry("    'e2e-shell': {")],
+      ['eight-space indentation', entry("        'e2e-shell': {")],
+      ['a template-literal key', entry('  `e2e-shell`: {')],
+      ['no space before the colon', entry("  'e2e-shell':{")],
+      ['spaces around the colon', entry("  'e2e-shell'   :   {")],
+      ['a trailing comment on the same line', entry("  'e2e-shell': { // and this is not it")],
+    ];
+
+    for (const [what, lines] of DUPLICATE_CASES) {
+      it(`sees a duplicate declared with ${what}`, () => {
+        const { keys, unreadable } = readCuratedKeys(inject(...lines));
+        expect(unreadable).toEqual([]);
+        expect(count(keys, 'e2e-shell')).toBe(2);
+      });
+    }
+
+    it('sees the declaration behind a trailing comment, because the comment is not the line', () => {
+      // The complement of the comment cases below: stripping `// this is not it`
+      // must not also throw away the `e2e-shell` in front of it. The comment
+      // is discarded and the declaration survives, so this IS a duplicate.
+      const { keys, unreadable } = readCuratedKeys(inject("  'e2e-shell': {", "    summary: 'injected.',", '  },'));
+      expect(unreadable).toEqual([]);
+      expect(count(keys, 'e2e-shell')).toBe(2);
+    });
+
+    for (const [what, lines] of DUPLICATE_CASES) {
+      it(`sees a duplicate declared with ${what}`, () => {
+        const { keys, unreadable } = readCuratedKeys(inject(...lines));
+        expect(unreadable).toEqual([]);
+        expect(count(keys, 'e2e-shell')).toBe(2);
+      });
+    }
+
+    it('reads an entry declared with a bare identifier key', () => {
+      // `e2eShell` is a legal identifier and `e2e-shell` is not, so this cannot
+      // duplicate anything — it is here to prove the identifier form is still
+      // recognised rather than reported as unreadable.
+      const { keys, unreadable } = readCuratedKeys(inject(...entry('  e2eShell: {')));
+      expect(keys).toContain('e2eShell');
+      expect(unreadable).toEqual([]);
+    });
+
+    // [what to call it, the injected lines, a token the failure message must quote]
+    const UNREADABLE_CASES = [
+      ['a computed key', entry("  ['e2e-shell']: {"), "['e2e-shell']"],
+      ['a computed key built by a template', entry('  [`e2e-shell`]: {'), '[`e2e-shell`]'],
+      ['a spread of an object literal', ["  ...{ 'e2e-shell': { summary: 'injected.' } },", '  },'], '...{'],
+      ['a property shorthand', ['  e2eShell,'], 'e2eShell,'],
+      ['a method', entry('  e2eShell() {'), 'e2eShell()'],
+      ['a getter', entry('  get e2eShell() {'), 'get e2eShell()'],
+      ['a name that is not a legal identifier', entry('  e2e-shell: {'), 'e2e-shell:'],
+    ];
+
+    for (const [what, lines, token] of UNREADABLE_CASES) {
+      it(`refuses to guess at ${what}, rather than skipping it`, () => {
+        const { unreadable } = readCuratedKeys(inject(...lines));
+        expect(
+          unreadable.length,
+          `a reader that skipped this line would report green on a declaration it could not see`
+        ).toBeGreaterThan(0);
+        expect(unreadable.join('\\n')).toContain(token);
+      });
+    }
+
+    // Each comment here must CLOSE. An unterminated `/*` legitimately swallows
+    // the rest of the file, so a case built that way would pass for the wrong
+    // reason — the reader would be right to see nothing.
+    const COMMENT_CASES = [
+      ['a line comment', ["  // 'e2e-shell': {"]],
+      ['a single-line block comment', ["  /* 'e2e-shell': { */"]],
+      ['a multi-line block comment', ['  /*', "   'e2e-shell': {", '  */']],
+      ['a block comment holding a whole entry', ['  /*', "  'e2e-shell': {", '  },', '  */']],
+    ];
+
+    for (const [what, lines] of COMMENT_CASES) {
+      it(`ignores a key-shaped line inside ${what}, because a comment is not a declaration`, () => {
+        const { keys, unreadable } = readCuratedKeys(inject(...lines));
+        expect(unreadable).toEqual([]);
+        expect(count(keys, 'e2e-shell')).toBe(1);
+      });
+    }
+
+    it('ignores a key-shaped string inside an entry’s own prose', () => {
+      const { keys, unreadable } = readCuratedKeys(
+        inject("    note: 'see also: e2e-shell: { for the responsive shell, and https://example.com/x',")
+      );
+      expect(count(keys, 'e2e-shell')).toBe(1);
+      expect(unreadable).toEqual([]);
+    });
+
+    it('ignores a key-shaped line nested inside an entry', () => {
+      const { keys, unreadable } = readCuratedKeys(inject("    issues: [{ ref: 'HANDOFF.md#1', title: 't' }],"));
+      expect(keys).not.toContain('nested-thing');
+      expect(unreadable).toEqual([]);
+    });
+
+    it('reads the real file, and reads every key in it', () => {
+      const { keys, unreadable } = readCuratedKeys(real);
+      expect(unreadable).toEqual([]);
+      expect(new Set(keys)).toEqual(new Set(Object.keys(CURATED)));
+      expect(keys.length).toBe(Object.keys(CURATED).length);
+      expect(keys.length).toBeGreaterThan(50);
+    });
   });
 
   it('gives every issue a ref and a title, because a ref with no title is unreadable', () => {

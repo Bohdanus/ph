@@ -106,7 +106,7 @@ async function openSaveDialogAndWait(page: Page): Promise<void> {
  *   - There IS no fold. Measured at 1280x720: the element is 922x583 at page (108, 100)
  *     and `documentElement.scrollHeight` is 720, equal to `clientHeight` and to
  *     `innerHeight` — the page does not overflow at all. The left rail owns its own
- *     scrolling (`min-h-0 overflow-y-auto`, `src/components/SidebarLeft/SidebarLeft.tsx:335`),
+ *     scrolling (`min-h-0 overflow-y-auto`, `src/components/SidebarLeft/SidebarLeft.tsx:459`),
  *     so the shell is exactly viewport-tall.
  *   - So the element is not "840 tall with 220 below the fold"; it is 583 tall and
  *     entirely on screen.
