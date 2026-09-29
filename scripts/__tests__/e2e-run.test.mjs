@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -15,6 +15,46 @@ import {
   run,
   runOutputPaths,
 } from '../e2e-run.mjs';
+
+/**
+ * This file's budget, and the reason it is not Vitest's default 5s.
+ *
+ * These are not unit tests. Almost every one of them builds its state by
+ * `spawnSync`-ing `scripts/agent-board.mjs` and its assertions by reading the
+ * result back out of a child process, so what a test costs here is dominated by
+ * process spawns rather than by anything being computed. A cold board call is
+ * ~60-80ms from a shell, and this file's slowest test spends eight of them.
+ *
+ * The default is not merely tight for that, it is SMALLER THAN THE WORK ALREADY
+ * MEASURED IN THIS FILE. Across three isolated runs of the three `scripts/`
+ * suites on this machine, the slowest span here was 7.1s
+ * (`never reclaims a holder that this wrapper did not create`, which loops four
+ * identities and spends two board spawns on each) and the slowest in
+ * `agent-board.test.mjs` was 4.5s. A budget below a test's own measured cost is
+ * not a flake waiting to happen; it is a coin flip, and on a machine slower than
+ * this one, or on one also running a Playwright suite as this repository normally
+ * is, the same tests fail with no code change at all — which is exactly how
+ * `npm run test` reported five of them.
+ *
+ * What is deliberately NOT claimed here: any contention factor. A full 266-file
+ * run was measured against these same tests and came out FASTER per test than the
+ * three-file run (median 0.45x, max 1.1x), so "a full run is N times slower" is not
+ * a thing this suite can currently support, and a number of that shape would be a
+ * guess wearing a measurement's clothes. The headroom below is therefore stated
+ * for what it is: 30s is about four times this file's own worst measured case, so
+ * a machine several times slower than this one still runs the file, and nothing
+ * more is claimed on top of that.
+ *
+ * This is a BUDGET, not a threshold. It cannot turn a failing assertion green: it
+ * only decides how long a test may run before the harness reports it, and every
+ * assertion below is unchanged. Its cost is that a genuinely hung test now takes
+ * 30s to be reported instead of 5s, which is bounded and is the price of tests
+ * that are allowed to spawn processes.
+ *
+ * A per-test `it(name, fn, timeout)` argument still wins over this, and the two
+ * tests here that already declare one keep it.
+ */
+vi.setConfig({ testTimeout: 30_000 });
 
 /**
  * The sentinel is exported by the module rather than repeated here, so a rename in
