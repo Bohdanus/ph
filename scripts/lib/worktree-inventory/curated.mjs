@@ -1036,6 +1036,11 @@ export const CURATED = {
       'Makes a typecheck that checked nothing impossible to mistake for a pass: node_modules/.bin/tsc becomes scripts/tsc-guard.mjs, which refuses any invocation that is not build mode and names the two commands that do work. A tripwire test fails when npm has restored its plain symlink, and kilo.jsonc denies the command at the permission layer.',
     note: 'The guard itself is a symlink inside node_modules, which is gitignored and cannot be committed: the work that matters is the tracked guard, its installer, its tests and the prepare wiring, and npm regenerates the link from those. Losing this branch loses the refusal, and the trap it closes is a zero-file exit 0 that reads as a clean typecheck. It is not flagged: everything here is committed, so the branch is what protects it.',
   },
+  'untrack-inventory': {
+    summary:
+      'The worktree inventory declared machine-local: `WORKTREES.json` untracked and gitignored, a tripwire that fails if it is re-added or the ignore rule is deleted, and the three rules that told agents to commit a regeneration corrected. The generator and the curated table stay tracked; only the output does not.',
+    note: 'Nothing is owed a flag. While the change is in flight the tree holds uncommitted work, which the generator already refuses to prune, and once it lands the branch is ahead of main and not on it. The entry also records the cost honestly: a fresh clone has no inventory until something generates one, and `--check` can no longer catch a collaborator’s regeneration because there is no shared file left to regenerate.',
+  },
 };
 
 /** Curated entry for a worktree name, or `undefined` when none is written. */

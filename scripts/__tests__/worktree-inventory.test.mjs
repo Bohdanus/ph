@@ -2291,6 +2291,12 @@ describe('the generated file is already formatted', () => {
     // --fail-on-changes` refuses and un-stages, and the only ways out are a
     // .prettierignore or dropping .json from the linted set — both of which
     // weaken a gate to accommodate a generator.
+    //
+    // That gate no longer reaches this file: `lint:check` runs over
+    // `git ls-files`, and the inventory is untracked. This test is now the only
+    // thing keeping the output formatted, which is worth more than the check it
+    // replaced — an unformatted generated file is still read by a human deciding
+    // whether to delete a worktree.
     const board = { available: true, dbPath: 'b', claims: new Map(), fileLocks: new Map(), issues: [] };
     const inv = buildInventory({
       worktrees: [wt({ name: 'a', issues: [] })],
@@ -2307,5 +2313,55 @@ describe('the generated file is already formatted', () => {
     expect(formatted.endsWith('\n')).toBe(true);
     // Still valid JSON with every field intact after the reflow.
     expect(JSON.parse(formatted).worktrees).toHaveLength(1);
+  });
+});
+
+describe('the generated inventory is untracked, and stays that way', () => {
+  const INVENTORY = 'WORKTREES.json';
+
+  // One fact per `it`, and one gate per fact. `check-ignore` and `ls-files` can
+  // both be satisfied by a file that is tracked AND ignored, so asserting only
+  // the first would let a re-added inventory pass as a rule that still holds.
+  // The two injections that prove which gate is which are recorded with the
+  // change that introduced them.
+  const gitSucceeds = (args) => {
+    try {
+      execFileSync('git', args, { cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'] });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it('is not tracked, so a regeneration cannot become a commit', () => {
+    // Injection: `git add -f WORKTREES.json` turns this red and leaves the
+    // test below green — this is the gate that decides "untracked", and the
+    // other is not a redundant restatement of it.
+    expect(gitSucceeds(['ls-files', '--error-unmatch', INVENTORY])).toBe(false);
+  });
+
+  it('is ignored by a rule that is still in .gitignore', () => {
+    // `--no-index` or this assertion is worthless: without it git declines to
+    // report a rule for a path the index still tracks, so the same
+    // `git add -f` that reds the test above would decide this one too, and
+    // deleting the .gitignore line would be invisible here.
+    // Injection: removing the `/WORKTREES.json` line from .gitignore turns this
+    // red and leaves the test above green.
+    //
+    // This must not depend on the file existing. A fresh checkout has no
+    // inventory until something generates one, and `check-ignore` reads
+    // patterns rather than the filesystem, so the assertion holds there too.
+    expect(gitSucceeds(['check-ignore', '--no-index', INVENTORY])).toBe(true);
+  });
+
+  it('ignores the root copy alone, never a tracked source file', () => {
+    // The rule is anchored with a leading slash so it cannot reach a worktree's
+    // own copy, and this is the assertion that keeps a broadened pattern from
+    // swallowing the generator or the curated table — the curated table is
+    // hand-written source, and losing it to an ignore rule would delete the
+    // findings that stop a worktree being pruned.
+    for (const source of ['scripts/worktree-inventory.mjs', 'scripts/lib/worktree-inventory/curated.mjs']) {
+      expect(gitSucceeds(['check-ignore', '--no-index', source]), `${source} must stay tracked`).toBe(false);
+    }
   });
 });

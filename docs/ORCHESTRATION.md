@@ -43,8 +43,9 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
   Agent Manager worktree session, or any checkout under `.kilo/worktrees/`. Never
   nest a second worktree inside one.
 - **A doc-only change is not an exemption.** A comment correction, a stale
-  citation, a new `AGENTS.md` paragraph, a regenerated `WORKTREES.json` — every
-  one is a tracked-file change and takes a worktree.
+  citation, a new `AGENTS.md` paragraph — every one is a tracked-file change and
+  takes a worktree. Regenerating `WORKTREES.json` is the one exception, because
+  it is untracked.
 
 ### Landing
 
@@ -86,11 +87,10 @@ status` and `git diff` before staging.
     <(git diff --name-only main..HEAD | sort)
   ```
   Anything that set difference is main content the merge had no business
-  touching. The legitimate exceptions are the files the merge deliberately edits
-  and a regenerated `WORKTREES.json`; anything else gets restored from main with
-  `git checkout main -- <path>` before the merge lands. Run it _before_ the
-  review, because a reviewer only catches the files its brief happened to
-  mention.
+  touching. The legitimate exception is the files the merge deliberately edits;
+  anything else gets restored from main with `git checkout main -- <path>` before
+  the merge lands. Run it _before_ the review, because a reviewer only catches
+  the files its brief happened to mention.
 - **A red `tsc` in the main worktree may be someone else's work in progress, not
   a broken `main`.** The main worktree is shared, so it is routinely holding an
   agent's half-written change: tests that import a symbol their branch has not
@@ -188,6 +188,22 @@ sessions ran there, and which of those are unfinished, blocked or dead. **It is
 regenerated, never hand-edited**, and it is the first thing to read before
 deleting a worktree or starting one that may already exist. The list does not
 belong in prose; regenerate it.
+
+**It is UNTRACKED and gitignored, and that is a hard rule, not a convenience.**
+Everything in it describes the machine that generated it — session ids, chat
+ids, absolute worktree paths, swarm claims, a `generatedAt` timestamp — so a
+tracked copy was a diff nobody could review and a conflict two agents could not
+resolve: two regenerations five minutes apart collide, and neither side means
+anything. `/WORKTREES.json` in `.gitignore` is enforced by
+`worktree-inventory.test.mjs`, which fails if the file is tracked or if the rule
+is deleted. **Do not commit it and do not re-add it**; a regeneration is
+`node scripts/worktree-inventory.mjs` and nothing else. The generator, the
+curated table and every finding stay tracked — only the output does not.
+
+The consequence worth knowing: **a fresh clone has no inventory**, because
+nothing regenerates it for you. Generate one before you read a worktree list, and
+treat any `WORKTREES.json` you find as a claim about a moment rather than a
+shared source of truth.
 
 ```bash
 node scripts/worktree-inventory.mjs            # regenerate
@@ -304,10 +320,12 @@ turn always ends in a tool call.
 
 **Never put a count in a summary.** `dirty`, `untracked`, `ahead`, `behind` and
 `commitsAheadTruncated` are already on every record — describe WHAT a worktree
-holds and leave the arithmetic to the generator. **Regenerate and commit
-`WORKTREES.json` in the same change that adds or removes a worktree**; a stale
-inventory is worse than none, and `--check` names the per-worktree fields that
-drifted.
+holds and leave the arithmetic to the generator. **Regenerate `WORKTREES.json`
+when you add or remove a worktree**; a stale inventory is worse than none, and
+`--check` names the per-worktree fields that drifted. There is no commit step —
+the file is untracked — and that is the one thing `--check` no longer does for
+you: it can no longer catch a collaborator's regeneration, because there is no
+shared file left for a collaborator to regenerate.
 
 ## The swarm board
 
