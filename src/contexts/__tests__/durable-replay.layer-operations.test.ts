@@ -127,92 +127,71 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
     // The fixture is now a genuine create-then-remove, so the removal has
     // something to remove at the tip and something it reveals before it. The
     // shapes and the registry scope follow the create/remove pair below.
+    //
+    // This test replaces `remove-layer drops an existing layer when it was
+    // created earlier`, which built the same document and asserted only two of
+    // the reads below, at the tip, with no `activeLayerId` and no prior-cursor
+    // comparison. Every assertion it made is a subset of the ones here, and it
+    // never called `registry.shutdown()`.
     const registry = new AssetRegistry();
-    const document = legacyHistoryToDurable(
-      [
-        {
-          id: 'baseline',
-          actionName: OPEN_DOCUMENT_ACTION,
-          layerId,
-          documentSource: {
-            layers: { [layerId]: createBaselineLayer() },
-            size: initialSize,
-            frame: baselineFrame,
+    try {
+      const document = legacyHistoryToDurable(
+        [
+          {
+            id: 'baseline',
+            actionName: OPEN_DOCUMENT_ACTION,
+            layerId,
+            documentSource: {
+              layers: { [layerId]: createBaselineLayer() },
+              size: initialSize,
+              frame: baselineFrame,
+            },
           },
-        },
-        {
-          id: 'add-layer',
-          actionName: NEW_LAYER_ACTION,
-          layerId: layer2Id,
-          layerSource: blankLayerSource(layerPos),
-        },
-        {
-          id: 'remove-layer',
-          actionName: REMOVE_ACTION,
-          layerId: layer2Id,
-        },
-      ],
-      { documentId: 'rm-tip-test', registry }
-    ).document;
-
-    // Cursor 0: the create has run, so the layer exists — and it is the active
-    // one, because `create-layer` is what sets `activeLayerId` in the reducer.
-    const atCreate = replayDurableDocument(document, 0);
-    expect(atCreate.layers[layer2Id]).toBeDefined();
-    expect(atCreate.activeLayerId).toBe(layer2Id);
-
-    // Cursor 1, the tip: the remove has run, the layer is gone, and
-    // `activeLayerId` fell back to the remaining layer rather than dangling.
-    const atTip = replayDurableDocument(document, 1);
-    expect(atTip.layers[layer2Id]).toBeUndefined();
-    expect(atTip.layers[layerId]).toBeDefined();
-    expect(atTip.activeLayerId).toBe(layerId);
-
-    // Replaying BACK to cursor 0 brings the layer back, identical to the
-    // forward read: the tip replay above left no residue, so "retained at prior
-    // cursors" is a property of the reducer and not of call ordering.
-    const backToCreate = replayDurableDocument(document, 0);
-    expect(backToCreate.layers[layer2Id]).toBeDefined();
-    expect(backToCreate).toEqual(atCreate);
-
-    // And the tip still reads the same after the backward replay.
-    expect(replayDurableDocument(document, 1)).toEqual(atTip);
-
-    registry.shutdown();
-  });
-
-  it('remove-layer drops an existing layer when it was created earlier', () => {
-    const registry = new AssetRegistry();
-    const document = legacyHistoryToDurable(
-      [
-        {
-          id: 'baseline',
-          actionName: OPEN_DOCUMENT_ACTION,
-          layerId,
-          documentSource: {
-            layers: { [layerId]: createBaselineLayer() },
-            size: initialSize,
-            frame: baselineFrame,
+          {
+            id: 'add-layer',
+            actionName: NEW_LAYER_ACTION,
+            layerId: layer2Id,
+            layerSource: blankLayerSource(layerPos),
           },
-        },
-        {
-          id: 'add-layer',
-          actionName: NEW_LAYER_ACTION,
-          layerId: layer2Id,
-          layerSource: blankLayerSource(layerPos),
-        },
-        {
-          id: 'remove-layer',
-          actionName: REMOVE_ACTION,
-          layerId: layer2Id,
-        },
-      ],
-      { documentId: 'rm-test', registry }
-    ).document;
+          {
+            id: 'remove-layer',
+            actionName: REMOVE_ACTION,
+            layerId: layer2Id,
+          },
+        ],
+        { documentId: 'rm-tip-test', registry }
+      ).document;
 
-    const replay = replayDurableDocument(document);
-    expect(replay.layers[layer2Id]).toBeUndefined();
-    expect(replay.layers[layerId]).toBeDefined();
+      // Cursor 0: the create has run, so the layer exists — and it is the active
+      // one, because `create-layer` is what sets `activeLayerId` in the reducer.
+      const atCreate = replayDurableDocument(document, 0);
+      expect(atCreate.layers[layer2Id]).toBeDefined();
+      expect(atCreate.activeLayerId).toBe(layer2Id);
+
+      // Cursor 1, the tip: the remove has run, the layer is gone, and
+      // `activeLayerId` fell back to the remaining layer rather than dangling.
+      const atTip = replayDurableDocument(document, 1);
+      expect(atTip.layers[layer2Id]).toBeUndefined();
+      expect(atTip.layers[layerId]).toBeDefined();
+      expect(atTip.activeLayerId).toBe(layerId);
+
+      // Replaying BACK to cursor 0 brings the layer back, and it reads the same
+      // as the forward read did. Note what this does and does not show: these
+      // two comparisons are a purity check — `replayDurableDocument(document,
+      // cursor)` returns the same value for the same inputs regardless of what
+      // was replayed before it, which is what `replayDurableAtCursor` relies on
+      // being called on every render. They cannot detect a wrong removal, which
+      // the assertions above already pin; they only catch replay acquiring state
+      // between calls.
+      const backToCreate = replayDurableDocument(document, 0);
+      expect(backToCreate.layers[layer2Id]).toBeDefined();
+      expect(backToCreate).toEqual(atCreate);
+
+      // And the tip still reads the same after the backward replay.
+      expect(replayDurableDocument(document, 1)).toEqual(atTip);
+    } finally {
+      registry.shutdown();
+    }
   });
 
   it('set-layer-properties (show/hide) toggles visibility in replay', () => {

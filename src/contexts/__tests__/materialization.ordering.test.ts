@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { makeMockCtx } from '../../__tests__/canvas-mock.ts';
 import { AssetRegistry } from '../asset-registry.ts';
 import type { BitmapSource } from '../general-types.ts';
 import type { DurableReplayLayer, DurableReplayResult } from '../durable-replay.ts';
@@ -115,6 +116,86 @@ function makeRequest(registry: AssetRegistry, signal?: AbortSignal): Materializa
     assetRegistry: registry,
     ...(signal ? { signal } : {}),
   };
+}
+
+/** The calls `renderRetainedSegment` makes on its context, in the order it made them. */
+type RenderCall = { op: 'save' | 'restore' | 'filter' | 'translate' | 'transform' | 'drawImage'; args: unknown[] };
+
+/** One entry per context handed out by {@link CallRecordingOffscreenCanvas}, in creation order. */
+let recordedRenderCalls: RenderCall[][] = [];
+
+/**
+ * Records what the renderer does to a context, which is the only place the
+ * render's call ORDER is observable at all.
+ *
+ * `createCanvas` (`src/contexts/materialization.ts:52-63`) builds every surface
+ * through the global `OffscreenCanvas` at line 55 and only reaches
+ * `document.createElement('canvas')` at line 57, so a spy on
+ * `HTMLCanvasElement.prototype.getContext` never sees one — that is why the
+ * previous version of the ordering test recorded nothing at all. This stands in
+ * for the global, exactly as `materialization.assets.test.ts` does, and is built
+ * on the same shared `makeMockCtx`.
+ *
+ * `filter` is redefined as an accessor because `ctx.filter = …` is a property
+ * write, not a method call: no call spy can see it. The other five are wrapped
+ * rather than replaced so the log records the calls in order while the original
+ * `vi.fn()` bodies (and their `mock.calls`) still run underneath.
+ *
+ * Scoped to the one test that installs it rather than to the file: the other
+ * tests in this file run against the setup file's substrate, and a file-level
+ * stub would change what they observe.
+ */
+class CallRecordingOffscreenCanvas {
+  width: number;
+  height: number;
+  private context: CanvasRenderingContext2D | null = null;
+
+  constructor(width: number, height: number) {
+    this.width = width;
+    this.height = height;
+  }
+
+  getContext(): OffscreenCanvasRenderingContext2D | null {
+    if (!this.context) {
+      const calls: RenderCall[] = [];
+      const context = makeMockCtx({ canvas: this as unknown as HTMLCanvasElement });
+
+      let filterValue = '';
+      Object.defineProperty(context, 'filter', {
+        get: () => filterValue,
+        set: (value: string) => {
+          calls.push({ op: 'filter', args: [value] });
+          filterValue = value;
+        },
+        configurable: true,
+      });
+
+      for (const op of ['save', 'restore', 'translate', 'transform', 'drawImage'] as const) {
+        const original = context[op] as unknown as (...args: unknown[]) => unknown;
+        (context as unknown as Record<string, unknown>)[op] = (...args: unknown[]) => {
+          calls.push({ op, args });
+          return original(...args);
+        };
+      }
+
+      recordedRenderCalls.push(calls);
+      this.context = context;
+    }
+    return this.context as unknown as OffscreenCanvasRenderingContext2D;
+  }
+
+  resize(width: number, height: number) {
+    this.width = width;
+    this.height = height;
+  }
+
+  transferToImageBitmap() {
+    return { width: this.width, height: this.height, close: vi.fn() };
+  }
+
+  convertToBlob() {
+    return Promise.resolve(new Blob([]));
+  }
 }
 
 /**
@@ -424,82 +505,58 @@ describe('materialization cache key determinism (P0.6)', () => {
 });
 
 describe('materialization operation ordering (P1.10)', () => {
-  // A tripwire, kept releasable. The production defect is out of scope here, so the
-  // test stays `it.fails`; what this change fixes is that the pin could never be
-  // released, because the test could only ever have passed by accident:
+  // This test was `it.fails('applies interleaved affine and filter operations in
+  // original order, not grouped by type')` and it pinned nothing, twice over.
   //
-  // 1. The cleanup used to be a `.mockRestore()` on `HTMLCanvasElement.prototype.getContext`
-  //    captured BEFORE `vi.spyOn` replaced it. That captured value is not plain jsdom —
-  //    the setup file's own spy is already on the prototype — so the call does not
-  //    throw, and it silently restores plain jsdom over the global canvas stub for
-  //    everything after it. (Measured, not assumed: `_isMockFunction` is `true` on the
-  //    capture, the call returns normally, and afterwards the prototype's `getContext`
-  //    has neither `mockRestore` nor `_isMockFunction` and answers `null` for `('2d')`.)
-  //    Cleanup is now the file-level `afterEach` above.
-  // 2. A positive control now runs first, so a run in which the instrumentation is
-  //    still dead fails legibly on the instrumentation instead of on an ambiguous
-  //    transform count of zero. Fixing that is `createCanvas` reaching the DOM branch,
-  //    at which point the only thing left to do is delete `it.fails`.
-  it.fails('applies interleaved affine and filter operations in original order, not grouped by type', async () => {
-    // BUG: materializeLayer groups all apply-affine-transform operations into a
-    // single ctx.transform call and all apply-filter operations into a single
-    // ctx.filter assignment, rather than applying them in their original
-    // interleaved order. An [affine, filter, affine] sequence should produce
-    // two separate transform calls with the filter applied between them.
+  // The two ordering counts were unreachable code. The positive control on the
+  // recorded-context count threw first, because the test spied on
+  // `HTMLCanvasElement.prototype.getContext` while `createCanvas`
+  // (`src/contexts/materialization.ts:55`) returns the global `OffscreenCanvas`
+  // and never reaches the DOM branch at line 57 — so the spy fired zero times and
+  // the control was the first thing to fail. A reviewer measured the rest: with
+  // `it.fails` flipped to `it` the control fails with "the instrumented
+  // HTMLCanvasElement.getContext was never called", and reordering
+  // `ctx.filter`, `ctx.translate` and `ctx.transform` in `renderRetainedSegment`
+  // leaves the whole file green.
+  //
+  // Its cleanup was worse than dead — it never ran. `.mockRestore()` on
+  // `originalGetContext` sat AFTER `expect(transformSpy).toHaveBeenCalledTimes(2)`,
+  // which always threw, so the file's own `getContext` spy was never undone and
+  // leaked to every later test in the file. (Measured on `main`'s copy of this
+  // file: after it completes, `HTMLCanvasElement.prototype.getContext` is still
+  // a mock, `_isMockFunction === true`.) Cleanup is now the file-level
+  // `afterEach` above, which runs whatever the test body does.
+  //
+  // Separately, the cleanup it replaced was still wrong on its own terms:
+  // `originalGetContext` is captured BEFORE `vi.spyOn` replaces the method, so it
+  // is the setup file's own spy, not plain jsdom — calling `mockRestore` on it
+  // silently restores plain jsdom over the global canvas stub for everything
+  // after it. That is a real latent hazard, but it is not what leaked here.
+  //
+  // The old name is gone because the old claim is false, not because the test
+  // stopped being able to run. See the comment on the test below for why there
+  // is no interleave order to pin.
+  it('composes retained operations into one transform and one filter, and orders the render calls the result depends on', async () => {
+    // An [affine, filter, affine] sequence has no observable interleave order
+    // here, and that is a property of canvas rather than of this renderer.
+    // `ctx.filter` is drawing STATE that applies when a draw executes, and a
+    // retained segment draws its source exactly once
+    // (`materialization.ts:250`), so there is nothing for a filter to be set
+    // "between". Separating the affines would mean drawing the source once per
+    // operation — a different render, not a re-ordering of this one. Composing
+    // the affines into one `ctx.transform` and joining the filters into one
+    // `ctx.filter` is the product rule the renderer states in place
+    // (`materialization.ts:245-247`), and it is what `materialization.assets.test.ts:812`
+    // already pins for the matrix.
+    //
+    // So the interleave defect this test used to claim does not exist, and an
+    // `it.fails` for it was a tripwire against a fix nobody should make. What is
+    // real, and what this pins instead, is the order of the RENDER CALLS: of the
+    // four state writes a retained segment makes, only two of their relative
+    // orders change pixels, and the test says which.
     const registry = new AssetRegistry();
     const { bitmap } = createOwnedBitmap(100, 80);
     const assetId = registry.registerBaseline('document-a', bitmap, { ownership: 'adopt' });
-
-    // One record per context handed out, so the positive control below can count
-    // contexts and the ordering assertions can read the recorded calls.
-    const recordedContexts: Array<{
-      transforms: unknown[][];
-      drawImageCalls: Array<{ filter: string }>;
-    }> = [];
-
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (this: HTMLCanvasElement) {
-      const record: { transforms: unknown[][]; drawImageCalls: Array<{ filter: string }> } = {
-        transforms: [],
-        drawImageCalls: [],
-      };
-      recordedContexts.push(record);
-      return {
-        canvas: this,
-        save: vi.fn(),
-        restore: vi.fn(),
-        translate: vi.fn(),
-        transform: (...args: unknown[]) => {
-          record.transforms.push(args);
-        },
-        setLineDash: vi.fn(),
-        drawImage: vi.fn(() => {
-          record.drawImageCalls.push({ filter: '' });
-        }),
-        clip: vi.fn(),
-        createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
-        get filter() {
-          return '';
-        },
-        set filter(value: string) {
-          record.drawImageCalls.push({ filter: value });
-        },
-        strokeStyle: '',
-        fillStyle: '',
-        lineWidth: 1,
-        globalAlpha: 1,
-        globalCompositeOperation: 'source-over',
-        fillRect: vi.fn(),
-        stroke: vi.fn(),
-        beginPath: vi.fn(),
-        closePath: vi.fn(),
-        moveTo: vi.fn(),
-        lineTo: vi.fn(),
-        bezierCurveTo: vi.fn(),
-        quadraticCurveTo: vi.fn(),
-        arc: vi.fn(),
-        strokeRect: vi.fn(),
-      } as unknown as CanvasRenderingContext2D;
-    });
 
     const operations: DurableOperation[] = [
       Object.freeze({
@@ -524,31 +581,50 @@ describe('materialization operation ordering (P1.10)', () => {
     ];
 
     const layer = makeRasterLayer('layer-1', assetId, 100, 80, operations);
+    recordedRenderCalls = [];
 
     try {
-      await materializeLayer(layer, makeRequest(registry));
+      vi.stubGlobal('OffscreenCanvas', CallRecordingOffscreenCanvas);
+      const result = await materializeLayer(layer, makeRequest(registry));
 
-      // POSITIVE CONTROL, first on purpose. `createCanvas`
-      // (`src/contexts/materialization.ts:52-63`) returns the global `OffscreenCanvas`
-      // at line 55 and never reaches the `document.createElement('canvas')` branch at
-      // line 57, so the spy above fires zero times today. Asserting the count is
-      // non-zero BEFORE the ordering counts turns a bare "expected 2, got 0" into a
-      // statement about which half of the test is broken.
-      expect(
-        recordedContexts.length,
-        'the instrumented HTMLCanvasElement.getContext was never called, so every count ' +
-          'below is measuring nothing: createCanvas (src/contexts/materialization.ts:55) ' +
-          'returns the global OffscreenCanvas before the DOM branch is reached'
-      ).toBeGreaterThan(0);
+      // The request carries no frame, so the retained segment's surface is the
+      // only canvas the materialization creates. If this ever reads 0, the
+      // recorder is dead and every count below is measuring nothing.
+      expect(recordedRenderCalls).toHaveLength(1);
+      const calls = recordedRenderCalls[0]!;
+      const callsOf = (op: RenderCall['op']) => calls.filter((call) => call.op === op);
 
-      // If applied in original order, there would be 2 separate transform calls
-      // (one per affine) with a filter set between them.
-      // Current code: 1 combined transform call + 1 combined filter assignment.
-      expect(recordedContexts.flatMap((context) => context.transforms)).toHaveLength(2);
-      expect(
-        recordedContexts.flatMap((context) => context.drawImageCalls).filter((call) => call.filter !== '')
-      ).toHaveLength(2);
+      // The two affines compose into ONE transform: newest-premultiplied, so
+      // scale(2,2) lands left of translate(10,20). An oldest-first product would
+      // read [2, 0, 0, 2, 10, 20]. Splitting them into two calls fails here.
+      expect(callsOf('transform')).toEqual([{ op: 'transform', args: [2, 0, 0, 2, 20, 40] }]);
+
+      // ...and the one filter becomes ONE assignment carrying the joined string.
+      // A second filter operation would extend this string rather than add a call.
+      expect(callsOf('filter')).toEqual([{ op: 'filter', args: ['blur(3px)'] }]);
+
+      // The composed bounds, as the renderer offsets the source back into them.
+      expect(callsOf('translate')).toEqual([{ op: 'translate', args: [-20, -40] }]);
+      expect(callsOf('drawImage')).toEqual([{ op: 'drawImage', args: [expect.anything(), 0, 0, 100, 80] }]);
+
+      // ORDER, and only the two orders that change pixels. `transform` post-
+      // multiplies the CTM, so translating first composes T·A and translating
+      // after composes A·T — a different placement of the same source.
+      const order = calls.map((call) => call.op);
+      expect(order.indexOf('translate')).toBeLessThan(order.indexOf('transform'));
+
+      // `filter` is read when the draw executes, so setting it afterwards
+      // renders an unfiltered source.
+      expect(order.indexOf('filter')).toBeLessThan(order.indexOf('drawImage'));
+
+      // NOT pinned: swapping `filter` against `translate` or `transform`. Both
+      // are state writes that read nothing from each other, and both are still
+      // in effect at the `drawImage`, so no order between them is observable
+      // and this test deliberately says nothing about it. Moving `filter` past
+      // `drawImage` — the case above — is a real defect and does fail.
+      result.lease.release();
     } finally {
+      vi.unstubAllGlobals();
       registry.shutdown();
     }
   });

@@ -182,8 +182,8 @@ describe('selectionSnapshot', () => {
     // The reference half, at every level the documented contract names:
     // `points`, `pos` and `metadata` are deep-copied, and `metadata` is
     // deep-copied through its nested `magneticLasso` too. Deleting any one of
-    // the two clone lines in `cloneSelection` (`selection-baseline.ts:20` and
-    // `:22`) fails here; no other assertion in this file would notice.
+    // the three clone lines in `cloneSelection` (`selection-baseline.ts:20`,
+    // `:21`, `:22`) fails here; no other assertion in this file would notice.
     const copied = snapshot.selections[0]!;
     expect(copied.points).not.toBe(source.points);
     expect(copied.points[0]).not.toBe(source.points[0]);

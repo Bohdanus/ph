@@ -199,12 +199,14 @@ describe('replayDurableDocument invariants (P1.7)', () => {
     // body never exercised and `cloneDurableDocument` inside `replayDurableAtCursor`
     // (`durable-replay.ts:170`) was invisible to the suite.
     //
-    // The third assertion below is the one that pins the clone. The reducer pushes
-    // `entry.operation` BY REFERENCE (`durable-replay.ts:119`), so a direct
-    // `replayDurableDocument` hands back the source document's own operation object.
-    // `replayDurableAtCursor` only returns a different object because it cloned
-    // first. The `directOp` identity assertion makes that premise explicit: it
-    // proves the two replays differ because of the clone, and not because the
+    // Assertions (b) and (c) are both load-bearing for the clone, and (c) is the
+    // one that regresses if `replayDurableAtCursor` ever becomes a bare
+    // delegation. The reducer pushes `entry.operation` BY REFERENCE
+    // (`durable-replay.ts:119`), so a direct `replayDurableDocument` hands back
+    // the source document's own operation object. `replayDurableAtCursor` only
+    // returns a different object because it cloned first, and the
+    // `directOperation` identity assertion in (c) makes that premise explicit:
+    // it proves the two replays differ because of the clone, and not because the
     // reducer copies.
     const { document } = convert({
       id: 'op1',

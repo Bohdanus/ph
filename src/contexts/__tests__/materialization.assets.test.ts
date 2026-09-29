@@ -886,8 +886,20 @@ describe('staging before publication', () => {
 
     await expect(materializeDocument(replay, makeRequest(registry))).rejects.toThrow(/Unknown or disposed asset/);
 
-    // Nothing is left leased, so a retry of the good layer re-runs its producer
-    // instead of being served a cache entry from the failed attempt.
+    // The all-or-nothing part is what `materializeDocument` already pins in
+    // `materialization.ordering.test.ts:367` ("releases already-materialized
+    // layer leases when a later layer fails"): delete the rollback there and the
+    // contexts suite goes red. It is NOT pinned here, and this comment used to
+    // claim it was.
+    //
+    // What this test actually shows is narrower, and measured: the rollback in
+    // `materializeDocument` drops the good layer's cache entry to `retainCount`
+    // 0 after the rejection, and without the rollback the entry is still at
+    // `retainCount` 1. `producerRuns` is 1 either way, because
+    // `AssetRegistry.materialize` serves a cached entry whenever one exists
+    // (`asset-registry.ts:305-310`) and never consults `retainCount` — so the
+    // assertion below cannot detect the lease leak it was written to detect, and
+    // is kept only as a regression guard on the retry succeeding at all.
     const producerRuns = vi.fn();
     const originalMaterialize = registry.materialize.bind(registry);
     vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
