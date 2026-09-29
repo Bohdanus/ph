@@ -152,28 +152,95 @@ anti-aliasing on or off for the Elliptical Marquee tool." Modifiers: `Shift` for
 | Width and Height                              | decimal pair (ratio) / whole pixels (size) / units | `partial`  | `EllipticalSelection.tsx:130` |
 | Select and Mask                               | on every selection tool's bar                      | `missing`  | —                             |
 
-**App fidelity: `implemented`** — and this is the one verdict in the family that moved this pass,
-so the reasoning is recorded here. The tool is the only one in the family with any Photoshop
-control on its bar, and the geometry is right. `types.ts:86`-`:91` draws the line: `implemented` is
-"the tool's primary gesture behaves as Photoshop's, and nothing the app renders contradicts
-Photoshop", with gaps "recorded per control as `missing`; a missing control is a capability the
-app lacks, not a divergence"; `partial` is "not the same something: a wrong default, a wrong
-algorithm, a control welded to one of its states, a gesture that does something else. **Narrowness
-is not partiality; getting it wrong is.**" Every behaviour Photoshop defines is implemented —
-Shift → `constrainToCircle`, Alt → `fromCentre`, `fixed-size` ignoring the drag with the press
-point supplying only the centre, the same `resolveEllipseRect` the bar and the tool area share —
-and the one divergence is the **shape of the field**. So the side of the line this file takes is:
-a narrower field is a capability the app lacks, scored per control, and the tool verdict stays
-`implemented`.
+**App fidelity: `implemented`** — the one verdict in the family that moved this pass, and the one
+that now reaches the shipped tooltip, so it is recorded at more length than any other entry here.
+It was re-litigated by a second reader who argued for `partial` on the strength of the `partial`
+definition rather than the `implemented` one, and that argument is set out below in the form it
+was made, because the next reader should have to re-answer it rather than rediscover it.
 
-That is not a reading of the verdict as convenient. Two things were checked against the alternative
-and held: the committed outline is a sagitta-bounded polygon rather than a true ellipse, which is
-"a wrong algorithm" in the letter of the comment but is a quarter-pixel bound imposed by a data
-model that holds a point path and cannot hold a curve — the same class of bound as the polygonal
-lasso, which _is_ Photoshop's tool; and the ellipse commits under a borrowed `'magic-wand'`
-identifier, which is a data-model consequence with no user-visible effect on what the tool selects.
-If a reviewer disagrees, the flip is one line: `implementation: 'partial'` plus the two `partial`
-control verdicts, and the `appNotes` sentence that names the verdict.
+**The argument for `partial`, as it was put.** `types.ts:89`-`:91` defines `partial` at the tool
+level as doing something Photoshop's tool also does but "**not the same something**: a wrong
+default, **a wrong algorithm**, a control welded to one of its states, a gesture that does
+something else" — and it names the algorithm clause explicitly, which the `implemented` definition
+at `types.ts:86`-`:88` does not. The record's own `appNotes` concede the algorithm clause's subject
+matter: the committed outline is "a sagitta-bounded inscribed ring rather than a true ellipse". So
+the primary gesture — drag corner to corner, get an ellipse — does not produce the thing the primary
+gesture produces in Photoshop, which is all `partial` requires. The second reader added a
+counterweight: the polygonal lasso is _Photoshop's own tool_, holds a point path for the same
+reasons, and is scored `partial` in this same file, so the point-path bound cannot be what earns
+this tool its `implemented`.
+
+**Why the verdict stands.** The clause that bites is "a wrong algorithm", and this file already
+gives that phrase an operational meaning twice, in its own text. The Quick Selection entry says
+"the gap is the algorithm, not the bar" about a region grow that stops at a _colour_ boundary where
+Photoshop's stops at an image _edge_ (see the Quick Selection section below); the magnetic lasso's
+inverted `Frequency` is the same kind of finding. Both compute a different thing from the one
+Photoshop documents, and both are `partial` on that basis. The elliptical marquee does not:
+`applyRatio` (`src/tools/ellipticalSelection.ts:121`-`:131`) is the width-to-height ratio Adobe's
+own worked example states, `resolveEllipseRect` (`:155`-`:204`) makes `fixed-size` ignore the drag
+with the press point supplying only the centre, and `EllipticalSelectionToolArea.tsx:172`-`:173`
+passes `event.shiftKey` and `event.altKey` as `constrainToCircle` and `fromCentre`, which are
+Photoshop's two modifiers. The tessellation is a bounded _representation_ of the same computation,
+not a different computation, and the bound is derived from the radius rather than fixed
+(`ellipseVertexCount`, `:217`-`:225`), so the error does not grow with the shape the way a shortcut
+would.
+
+**The comparison that decided it.** This tool's own boundary fidelity is dominated by the
+`Anti-alias` row this table already scores `missing`. Photoshop's marquee edge is a coverage ramp
+about a pixel wide; this app's is a hard step — `copyPolygonSelectionToCanvas`
+(`src/util/selection.ts:447`-`:482`) clips the canvas to the polygon with no anti-aliasing. So the
+quarter-pixel inward chord bias and the missing anti-aliasing are two errors on the same boundary,
+and the second is several times the first. Scoring the polygon as "a wrong algorithm" while scoring
+the anti-aliasing as a missing capability would rank a quarter-pixel representation error above a
+full-pixel edge difference, which is the ranking no reading of the word "wrong" survives. The
+reviewer's own framing — that the committed geometry "is not the ellipse Photoshop commits" — is
+true, and it is also true of a hair's breadth of nothing at all; the clause is about which thing
+the tool computes, and this tool computes the thing.
+
+**The bound, measured rather than asserted.** `ELLIPSE_MAX_SAGITTA_PX` is `0.25`
+(`src/tools/ellipticalSelection.ts:77`). Evaluating `ellipseVertexCount` at r = 1, 5, 10, 13, 50,
+100, 500, 1000, 2000, 4000, 10000, 26265, 30000, 60000 and 100000 gives a realised chord sagitta
+of 0.019px to 0.250px, inside the 0.25px bound at every radius up to about 26,265px, which is where
+the 720-vertex cap (`ELLIPSE_MAX_VERTICES`, `:91`) begins to bind and the error starts growing
+linearly instead — 0.29px at r = 30,000, 0.95px at r = 100,000. **The comment at
+`src/tools/ellipticalSelection.ts:87` says the cap is reached "at a radius of roughly 5.7k px",
+which is wrong by about 4.6x; the real figure is about 26.3k.** It errs in the safe direction, so
+the code is better than its own comment claims, and this pass cannot edit that file — recorded here
+for whoever owns it. Nothing an editor can open comes near a 52,530px-wide ellipse, so the cap is
+not reachable in practice.
+
+**Two premises in the earlier version of this entry that do not survive, both load-bearing.** (1) The
+bound is "a quarter-pixel bound imposed by a data model that holds a point path and cannot hold a
+curve", and the summary of that was "a data-model limitation of a kind Photoshop shares". Photoshop
+shares no such limitation: its marquee commits a coverage mask, not a point path, so the bound is
+the app's own choice, sized so that it cannot be seen. The argument cannot stand on a shared
+limitation, because there is not one. (2) The bound is "the same class of bound as the polygonal
+lasso, which _is_ Photoshop's tool". The polygonal lasso has no bound at all: a polygon of straight
+segments between user-placed anchors _is_ what that tool draws, so `Selection.points` is its exact
+representation and its geometry diverges from Photoshop's in no respect whatsoever. It is `partial`
+for four other reasons — no modifier is read (`PolygonClickToolArea` reads none), no feather exists
+on any path, the bar's one control is an app-invented Outline/Fill toggle, and there are no
+Copy/Paste/Clear buttons — which is what its own entry says when it calls the tool "the most
+_gesturally_ faithful tool in the family" and scores it `partial` anyway. The reviewer leaned on
+that same fact and it does not survive either: the one thing that earns the polygonal lasso its
+`partial` is a _gesture_ that does something else, a category the elliptical marquee does not have.
+Read correctly, that entry is a precedent _for_ this verdict, not against it.
+
+**The cost, stated rather than waved.** At 400% zoom and above on a several-thousand-pixel ellipse,
+the chord facets are visible on the ants. A copy of an elliptical selection loses at most the
+boundary sliver — for a 1000px-radius circle, under 0.03% of the area, all of it inside a one-pixel
+ring — on a tool that draws no anti-aliased edge at all. And four of the six controls in the table
+above are `missing`, so `implemented` is a claim about what the tool does to the document, never
+about the bar: `types.ts:73`-`:77` says so, and the claim is exactly as wide as that.
+
+**What would flip it.** The verdict rests on the bound being bounded, so the moment the app commits
+the ellipse as a coverage mask or an analytic path — or the moment `ellipseVertexCount` stops
+being a function of the radius — the argument collapses and the verdict must go to `partial`: it
+would then be the same finding as the Quick Selection's, an algorithm that computes a different
+thing. The other way to flip it is a rule rather than a fact: a reader who holds that _any_ sub-pixel
+representation error is "a wrong algorithm" has made every correctly-implemented tool in this
+record `partial`, and should say so plainly, because that is an edit to `types.ts` and not to this
+file.
 
 **The two `partial` verdicts are both about the _shape of the fields_**:
 Fixed Ratio is a single `Ratio` number (floor `0.05`, ceiling `20`) where Photoshop's is a pair
@@ -198,7 +265,16 @@ gesture — and `EllipticalSelectionToolArea` passes `event.shiftKey` as `constr
 solves for the vertex count that keeps the chord's sagitta at or under a quarter of a pixel, so
 the outline is visually a circle and is not one in the data. Worth stating because a selection
 that is a point path cannot be a true curve without this, and because the app's own hit test and
-outline renderer agree on the polygon.
+outline renderer agree on the polygon. The bound, its measured reach and the cap that ends it are
+in the verdict section above, which is where the decision it drives is argued.
+
+**The shipped value is not this file's value yet.** `tooltips.ts:29` still projects
+`implementation: 'partial'` for this tool: that file is generated from all eight families and is
+regenerated once, after every family lands (the message of `5909f5f` says so explicitly), and this
+pass may not run `npm run docs:tools`. So the browser currently shows `partial` for a record that
+says `implemented`, and `scripts/__tests__/tool-descriptions.test.mjs:125` fails on the projection
+until that regeneration runs. Anyone landing this family must run it, or the flip will look
+unlanded.
 
 ## Lasso Tool — `freehand-lasso`
 
