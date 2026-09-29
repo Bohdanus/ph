@@ -240,9 +240,26 @@ describe('materializeLayer safety (P0.3)', () => {
     expect(badBitmap.close).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects cleanly when a raster processor produces no output', async () => {
+  // A raster processor that produces no output is a rejection, and it is covered where the
+  // processor is actually stubbed: `materialization.assets.test.ts:672-689`. That test pins
+  // only the throw at `materialization.ts:283`, on a blank source with a *stubbed* processor.
+  // It does not pin the other half of the body that was deleted here: a real, unmocked
+  // processor resolving over a blank source. `applies a real raster processor to a blank
+  // source and resolves` below carries exactly that half — nothing else moved with the
+  // deletion, and nothing else is claimed for it.
+
+  it('applies a real raster processor to a blank source and resolves', async () => {
     const registry = new AssetRegistry();
-    const operations: DurableOperation[] = [
+    const processorInputs: Array<{ size: { width: number; height: number } }> = [];
+    const originalImageProcessor = toolProcessors.blur.imageProcessor;
+    // Pass-through, so the real `blur` still runs. The recording exists only because the
+    // hand-off from a synthesised blank canvas into the processor is otherwise invisible.
+    vi.spyOn(toolProcessors.blur, 'imageProcessor').mockImplementation((params) => {
+      processorInputs.push({ size: { ...params.size } });
+      return originalImageProcessor(params);
+    });
+
+    const layer = makeBlankLayer('layer-1', 100, 80, [
       Object.freeze({
         kind: 'apply-raster-processor' as const,
         layerId: 'layer-1',
@@ -250,12 +267,24 @@ describe('materializeLayer safety (P0.3)', () => {
         version: 1,
         args: Object.freeze({ toolName: 'blur', radius: 3 }),
       }),
-    ];
+    ]);
 
-    const layer = makeBlankLayer('layer-1', 100, 80, operations);
-    const result = await materializeLayer(layer, makeRequest(registry));
-    expect(result.bitmap).toBeDefined();
-    result.lease.release();
+    try {
+      const materialized = await materializeLayer(layer, makeRequest(registry));
+
+      // The blank layer's own geometry is what reaches the processor, so the raster path is
+      // exercised from a synthesised source rather than from a registry asset.
+      expect(processorInputs).toEqual([{ size: { width: 100, height: 80 } }]);
+      expect(materialized.layerId).toBe('layer-1');
+      expect(materialized.bitmap).toBeDefined();
+      expect(materialized.bounds).toEqual({ x: 0, y: 0, width: 100, height: 80 });
+
+      materialized.lease.release();
+    } finally {
+      toolProcessors.blur.imageProcessor = originalImageProcessor;
+    }
+
+    registry.shutdown();
   });
 
   it('materializes a blank layer with no operations successfully', async () => {
@@ -274,34 +303,51 @@ describe('materializeDocument safety (P0.3)', () => {
   it('releases already-materialized layer leases when a later layer fails', async () => {
     const registry = new AssetRegistry();
     const { bitmap, close } = createOwnedBitmap(10, 10);
-    const validAssetId = registry.registerBaseline('document-a', bitmap, { ownership: 'adopt' });
+    // Registered under the request's OWN document id. Under a different id the two
+    // assertions near the bottom would hold for reasons that have nothing to do with
+    // cleanup: disposing `'document-a'` would leave this baseline untouched either way.
+    const validAssetId = registry.registerBaseline('test-doc', bitmap, { ownership: 'adopt' });
 
     const releaseSpy = vi.fn();
+    const releasedKeys: string[] = [];
     const originalMaterialize = registry.materialize.bind(registry);
     vi.spyOn(registry, 'materialize').mockImplementation(async (input) => {
       const lease = await originalMaterialize(input);
       const originalRelease = lease.release;
       const spyRelease = () => {
         releaseSpy();
+        releasedKeys.push(input.key);
         originalRelease();
       };
       return { ...lease, release: spyRelease };
     });
 
+    const request = makeRequest(registry);
+    const layerOk = makeBlankLayer('layer-ok', 50, 50);
+    // A third layer in the same document whose extent differs, so `createMaterializationKey`
+    // gives it a genuinely different key string. `createMaterializationKey` encodes no layer
+    // id, so two identically-shaped layers would share a key and the comparison below would
+    // be a tautology; this one exists to make the comparison discriminating.
+    const layerOther = makeBlankLayer('layer-other', 50, 60);
     const replay = makeReplay({
-      'layer-ok': makeBlankLayer('layer-ok', 50, 50),
+      'layer-ok': layerOk,
       'layer-bad': makeRasterLayer('layer-bad', 'unknown-asset', 50, 50),
+      'layer-other': layerOther,
     });
 
-    await expect(materializeDocument(replay, makeRequest(registry))).rejects.toThrow(/Unknown or disposed asset/);
+    await expect(materializeDocument(replay, request)).rejects.toThrow(/Unknown or disposed asset/);
 
-    // The first layer was materialized before the second failed;
-    // its lease must have been released during cleanup.
-    expect(releaseSpy).toHaveBeenCalled();
+    // `layer-bad` never got a lease, so cleanup must release exactly one — and the one it
+    // releases is `layer-ok`'s, not `layer-other`'s or `layer-bad`'s.
+    expect(releaseSpy).toHaveBeenCalledTimes(1);
+    expect(releasedKeys).toEqual([createMaterializationKey(layerOk, request)]);
 
-    void validAssetId;
-    void close;
+    // Cleanup releases leases, not this document's baseline assets.
+    expect(registry.getRecord(validAssetId)).toBeDefined();
+    expect(close).not.toHaveBeenCalled();
+
     registry.shutdown();
+    expect(close).toHaveBeenCalledTimes(1);
   });
 
   it('aborts early when the signal is aborted before processing layers', async () => {

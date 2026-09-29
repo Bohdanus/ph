@@ -766,14 +766,48 @@ describe('conversion entry points', () => {
     registry.shutdown();
   });
 
-  it('does not reconcile assets for a durable document that was handed in directly', () => {
+  it('reconciles assets once for a durable document that was handed in directly', () => {
     const registry = new AssetRegistry();
     const reconcile = vi.spyOn(registry, 'reconcileDocumentAssets');
     const document = legacyHistoryToDurable(baselineHistory(), { documentId: 'test-doc', registry }).document;
 
     convertLegacyHistorySafely(document, { registry });
 
+    // The pass-through branch reconciles exactly like the array branch: a document handed in
+    // directly is still the current reachable set for its document id, so skipping the
+    // reconcile would leave assets unreachable by a document that never lost them.
     expect(reconcile).toHaveBeenCalledOnce();
+    expect(reconcile).toHaveBeenCalledWith('test-doc', expect.any(Set));
+    registry.shutdown();
+  });
+
+  it('does not reconcile assets for a conversion that was rejected', () => {
+    const registry = new AssetRegistry();
+    const reconcile = vi.spyOn(registry, 'reconcileDocumentAssets');
+
+    const attempt = convertLegacyHistorySafely(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId: 'layer-1',
+          documentSource: {
+            layers: {
+              'layer-1': { ...blankLayer('layer-1'), source: undefined, bitmap: null },
+            },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+      ],
+      { documentId: 'test-doc', registry }
+    );
+
+    // This is the genuinely non-reconciling path. A rejected conversion never became the
+    // document, so its partial asset set is not the reachable set: reconciling against it
+    // would release assets the surviving legacy document still references.
+    expect(attempt.status).toBe('unavailable');
+    expect(reconcile).not.toHaveBeenCalled();
     registry.shutdown();
   });
 });

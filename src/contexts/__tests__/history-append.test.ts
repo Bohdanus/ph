@@ -610,16 +610,29 @@ describe('decideDurableAppend', () => {
   });
 
   it.each([
-    ['a foreign id', { ...cropEntry, id: 'elsewhere' }],
-    ['a different schema version', { ...planned, schemaVersion: 99 }],
-    ['a flipped enabled state', { ...planned, enabled: false }],
-    ['a different operation kind', { ...planned, operation: { kind: 'set-selection' } as never }],
+    [
+      'a foreign id',
+      { ...planned, id: 'elsewhere' },
+      'durable entry id elsewhere does not match the legacy entry id crop-1',
+    ],
+    ['a different schema version', { ...planned, schemaVersion: 99 }, 'durable schema version 99'],
+    [
+      'a flipped enabled state',
+      { ...planned, enabled: false },
+      'the durable enabled state does not match the legacy entry',
+    ],
+    [
+      'a different operation kind',
+      { ...planned, operation: { kind: 'set-selection' } as never },
+      'a document frame change produced a "set-selection" operation',
+    ],
     [
       'a rewritten next frame',
       {
         ...planned,
         operation: { kind: 'set-document-frame', previous: baselineFrame, next: { ...croppedFrame, width: 1 } },
       },
+      'the durable next frame does not match the legacy entry',
     ],
     [
       'a rewritten previous frame',
@@ -627,12 +640,15 @@ describe('decideDurableAppend', () => {
         ...planned,
         operation: { kind: 'set-document-frame', previous: { ...baselineFrame, x: 7 }, next: croppedFrame },
       },
+      'the durable previous frame does not match the legacy entry',
     ],
-  ])('reports a mismatch for %s', (_label, candidate) => {
+  ] as const)('reports a mismatch for %s', (_label, candidate, reason) => {
     const decision = decide({ planned: candidate as DurableHistoryEntry });
 
     expect(decision.outcome).toBe('mismatch');
-    if (decision.outcome === 'mismatch') expect(decision.reason).toBeTruthy();
+    // The reason is the reported contract, so each drift keeps its own string: a
+    // converter that answered all six alike would be reporting nothing.
+    if (decision.outcome === 'mismatch') expect(decision.reason).toBe(reason);
   });
 
   it('reports a mismatch for an action with no published translation', () => {
