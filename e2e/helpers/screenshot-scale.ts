@@ -67,12 +67,9 @@ export interface CssBox {
 }
 
 /**
- * A capture region, every axis optional: an omitted axis means "whatever the default
- * for this call site is", and `buildClip` in canvas-helpers.ts resolves one of these
- * against a `Required<ClipOptions>` default. Declared once here, imported everywhere.
- */
-/**
- * A screenshot clip, in VIEWPORT-relative CSS pixels.
+ * A screenshot clip, in VIEWPORT-relative CSS pixels. Every axis is optional: an omitted
+ * axis means "whatever the default for this call site is", and `buildClip` in
+ * canvas-helpers.ts resolves one of these against a `Required<ClipOptions>` default.
  *
  * THE ORIGIN IS THE POINT. `page.screenshot({ clip })` measures the clip against the
  * viewport and adds `window.scrollX/Y` itself, and it trims the clip to the viewport, so a
@@ -85,7 +82,8 @@ export interface CssBox {
  * mostly white — a plausible image of a document that is mostly white. Anything handed to
  * `captureCanvasScreenshot` must be converted with `viewportRectToPageRect` first, and
  * anything handed to `page.screenshot` must not be. `cdp-helpers.ts` imports this type and
- * the same sentence is repeated there, at the call site that could get it wrong.
+ * states the same asymmetry in its own longer comment, at the call site that could get it
+ * wrong.
  */
 export interface ClipOptions {
   x?: number;

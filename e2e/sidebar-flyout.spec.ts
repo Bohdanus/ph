@@ -170,13 +170,13 @@ test.describe('SidebarLeft - Flyout Interactions', () => {
 
   test.skip('right-click does not open flyout for single-tool groups', async ({ page }) => {
     // Draw is a single tool (no group)
-    // SKIPPED: Business value unclear - right-click on single-tool groups is not a user-facing feature.
-    // The test checks that right-click doesn't open a flyout, but there's no requirement or user story
-    // for this behavior. Introduced in dd774cd merge without clear rationale.
-    // FLAKINESS: Browser native context menu interferes with right-click detection.
-    // Right-click events are consumed by browser before reaching app logic in some environments.
-    // This makes the test unreliable across CI/browser configurations.
-    // Re-enable if a specific UX requirement for right-click handling on single tools emerges.
+    //
+    // KNOWN SKIP, recorded rather than justified here. The seven-line block this replaced
+    // argued from "business value unclear" and cited `dd774cd` — a commit that does not
+    // resolve in this checkout (`git cat-file -t dd774cd` is `Not a valid object name`), so
+    // the one thing it offered as evidence for why the skip exists pointed at nothing. The
+    // entry that does record it is `e2e/OPEN_PROBLEMS.md`, under `## Known-skip tests`, and
+    // this is the second of the two `test.skip` declarations it lists.
     const drawButton = page.getByTestId('tool-button-draw');
     await expect(drawButton).toBeVisible();
 
