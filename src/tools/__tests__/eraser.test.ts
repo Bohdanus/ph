@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildEraseArgs, eraser, type EraserToolArgs } from '../eraser.ts';
 import { setupDrawCtx } from '../draw.ts';
 import { defaultSettings } from '../settings.ts';
+import { toolProcessors } from '../toolProcessors.ts';
 import { drawLine } from '../../util/draw.ts';
 import { createMockCanvasContext, createMockImageBitmap } from '../../__tests__/fixtures/canvas.ts';
 import { createPixelCanvasContext } from '../../test/setup.ts';
@@ -160,3 +161,32 @@ describe('eraser processor', () => {
 function recordCommitCtx(): MockCtx {
   return RecordingOffscreenCanvas.instances.at(-1)!.ctx;
 }
+
+/**
+ * The registry's own delegation, observed through it.
+ *
+ * The `eraser` entry is an inline `(params) => (args) => eraser(params)(args)` adapter rather
+ * than a reference to the module export, so it is absent from the direct-processor-source list
+ * in `tool-processors.test.ts`, and the shared-processor-identity test cannot see it either:
+ * `eraser`, `magic-eraser` and `paint-bucket` are three distinct closures, so a swap between
+ * any two of them satisfies every identity assertion in the suite. `this` file calls the
+ * module directly, so without going through the registry nothing here observes the wiring.
+ */
+describe('eraser registry delegation', () => {
+  it('routes the eraser to the alpha-subtracting stroke, through the registry', () => {
+    RecordingOffscreenCanvas.instances = [];
+
+    toolProcessors.eraser.imageProcessor({ size: { width: 24, height: 18 } })(eraserArgs({ lineWidth: 7 }));
+
+    const ctx = recordCommitCtx();
+
+    // The two halves of the difference, and they are the whole difference. An eraser asks
+    // the canvas for `destination-out` and never reads or writes a pixel buffer; the magic
+    // eraser does exactly the opposite — it reads the layer, zeroes alpha in the buffer and
+    // `putImageData`s it back — and sets no composite operation at all. A misrouted magic
+    // eraser therefore fails both of these, and a misrouted eraser under a fill's name fails
+    // `fill.test.ts`'s registry pair.
+    expect(ctx.globalCompositeOperation).toBe('destination-out');
+    expect(ctx.putImageData).not.toHaveBeenCalled();
+  });
+});

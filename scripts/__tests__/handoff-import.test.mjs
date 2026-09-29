@@ -322,11 +322,31 @@ describe('planning the import', () => {
       ['## 69. An eraser gesture abandoned by switching tools leaves its preview on the layer, with no history entry'],
       ['## 77. `## 15a.` yields no item, and a suffixed retirement retires its PARENT'],
     ];
-    for (const [heading] of real) {
+    /**
+     * Origins, not a length. `toHaveLength(1)` passes for a one-item parse whose
+     * only item is `HANDOFF.md#NaN`, `HANDOFF.md#0`, or any other origin the
+     * numbering got wrong — and every other test in this file asserts origins
+     * precisely because that is the failure the board keys on. §77's own table
+     * names `#NaN` as what `makeItem` produces for a suffixed heading, so a
+     * length check here is checking the one thing this file exists to catch.
+     */
+    for (const [heading, origin] of [
+      [real[0][0], 'HANDOFF.md#69'],
+      [real[1][0], 'HANDOFF.md#77'],
+    ]) {
       const parsed = parseHandoffDoc({ file: 'HANDOFF.md', text: `${heading}\n\nIt is still open.\n` });
       expect(DEAD_WORD.test(heading), heading).toBe(false);
       expect(parsed.dead, heading).toEqual([]);
-      expect(parsed.items, heading).toHaveLength(1);
+      expect(
+        parsed.items.map((item) => item.origin),
+        heading
+      ).toEqual([origin]);
+      // And it is filed, not merely parsed: a live item the board would not
+      // create is the other half of the same claim.
+      expect(
+        planImport([parsed], []).create.map((item) => item.origin),
+        heading
+      ).toEqual([origin]);
     }
     for (const word of ['abandoned', 'understated', 'unresolvedly', 'supersededly', 'landowner']) {
       const parsed = parseHandoffDoc({
@@ -757,6 +777,52 @@ describe('the document shapes the parser has to survive', () => {
   });
 
   /**
+   * The WORSE half of §77, and the one that used to have no pin at all: the same
+   * missing word boundary in the same place makes a **suffixed retirement retire
+   * the parent section's number**.
+   *
+   * `deadNumbers` reaches the number through `NUMBER_OR_RANGE`, which has no
+   * `\b` at all, so `## 15a. An old thing — deleted` harvests `15` and files the
+   * live, open `HANDOFF.md#15` as **finished** by a heading that says `15a` is
+   * done. This is silent corruption rather than silent loss: nothing is lost, a
+   * still-open entry is suppressed, and the board says it is retired. The
+   * truncation test above is the half that loses a section; this is the half that
+   * closes one, and a fix that only widens `NUMBERED` to fix the loss does not
+   * address this at all — which is the sentence §77 makes.
+   *
+   * `it.fails`, same convention and same reason as the §82 pin: the body below
+   * asserts what a fixed parser returns, so it is red today and the `fails` is
+   * what a fixer deletes. §77's own projection is the reason this cannot be an
+   * ordinary test: no fix that gives `15a` its own origin can keep returning
+   * `[15]` from `deadNumbers`, because the dead set is `number[]` end to end.
+   */
+  it.fails('does not retire the PARENT section number from a letter-suffixed retirement', () => {
+    expect(deadNumbers('## 15a. An old thing — deleted\n')).toEqual([]);
+    expect(deadNumbers('## 15a, 16. Old things — deleted\n')).toEqual([]);
+  });
+
+  /**
+   * The same root cause read from the other side, and this one IS the current
+   * behaviour and stays true whichever way §77 is fixed: a suffixed heading is
+   * **never** a retirement, and the pinned table above proves the ungated form
+   * cannot express one. So the corpus can never retire `15a`, and it can only
+   * ever retire `15` — which is the corruption, isolated from the mechanism.
+   */
+  it('reads a suffixed retirement as retiring 15, never 15a, today', () => {
+    // `NUMBER_OR_RANGE` has no word boundary, so the `15` comes out of `15a`.
+    expect(deadNumbers('## 15a. An old thing — deleted\n')).toEqual([15]);
+    expect(deadNumbers('## 15a, 16. Old things — deleted\n')).toEqual([15, 16]);
+    // And the consequence is a SUPPRESSION, not a loss: a live item the board
+    // already knows is then never created again.
+    const parsed = parse('## 15. Still open\n\nBody.\n\n## 15a. An old thing — deleted\n\nGone.\n');
+    expect(parsed.dead).toEqual([15]);
+    expect(
+      planImport([parsed], [{ origin: 'HANDOFF.md#15' }]).create.map((item) => item.origin),
+      'the live 15 is suppressed by the document its own 15a says is deleted'
+    ).toEqual([]);
+  });
+
+  /**
    * A marker is still the last WORD of a heading when punctuation follows it.
    *
    * The one real retirement in the corpus is `— deleted`, and a hand-written
@@ -805,7 +871,8 @@ describe('the document shapes the parser has to survive', () => {
    * into main (`bd137d0`) removed it, on the reasoning that main's landed rule
    * correctly rejects that shape — which it does — and the merge was +146/-0, so
    * the removal left no trace. The judgement is sound: the corpus contains no
-   * such heading, and over all 92 real headings the two rules agree on every
+   * such heading, and over all 97 real headings on `main` at `0d64d75` the two
+   * rules agree on every
    * verdict. What was lost is the knowledge that the shape reads as LIVE.
    *
    * The tolerated trailing set is a fixed, named list in `DEAD_HEADING`, and a
@@ -895,6 +962,19 @@ describe('the document shapes the parser has to survive', () => {
   });
 
   /**
+   * PIN — KNOWN-BROKEN BEHAVIOUR. `it.fails` is the marker, not a convenience:
+   * the body below asserts the behaviour a FIXED parser would have, and it fails
+   * today. Per `AGENTS.md` a pin is a tripwire for broken behaviour and is
+   * **deleted in the same change that fixes `DEAD_HEADING`** — at which point this
+   * `it.fails` goes red, which is the intended signal, not a regression to chase.
+   *
+   * The earlier revision of this test asserted the CURRENT behaviour in an ordinary
+   * `it`, which is green today and red on any correct fix. That is the shape the
+   * repo's own conventions forbid: a red suite reads as a new defect, and a reviewer
+   * meeting it has to reverse-engineer whether the parser or the test is wrong. The
+   * 20-odd other `it.fails` pins in this repository (see `image-processors.test.ts:151`,
+   * `StoreContext.durable-boundary.test.tsx:441`) all take this shape instead.
+   *
    * THE RESIDUAL RISK IS TWO-SIDED, and this pins the direction that is silent.
    *
    * `a3f1dcc` carried a docstring arguing that under-matching a retirement is a
@@ -906,43 +986,62 @@ describe('the document shapes the parser has to survive', () => {
    * opens it as an item: for a NUMBERED heading, over-matching is silent in
    * exactly the way under-matching is not.
    *
-   * So the rule is not safe-by-one-sidedness, and this test exists to make that
+   * So the rule is not safe-by-one-sidedness, and this pin exists to make that
    * un-arguable rather than a comment nobody can check. A live numbered heading
-   * that happens to END in a status word is retired, and its prose leaves the
-   * import with nothing in the result saying so. The fix is not in this file: it
-   * is either a marker position that cannot be incidental, or a loud failure, and
-   * the first inverts the safety direction for a genuinely-spaced retirement
+   * that happens to END in a status word is retired today, and its prose leaves
+   * the import with nothing in the result saying so. The fix is not in this file:
+   * it is either a marker position that cannot be incidental, or a loud failure,
+   * and the first inverts the safety direction for a genuinely-spaced retirement
    * while the second needs a change to `ParseResult` and its caller. Filed in
-   * HANDOFF.md §78.
+   * HANDOFF.md §82.
    */
-  it('retires a LIVE numbered heading that ends in a status word, silently', () => {
+  it.fails('keeps a LIVE numbered heading that ends in a status word as an open, filed item', () => {
     for (const [number, heading] of [
       [31, '## 31. The dialog-closed assertion is fixed'],
       [32, '## 32. The only rename that would make it real is done'],
       [34, '## 34. A shape nobody has written yet, and the trap is closed'],
     ]) {
       const parsed = parse(`${heading}\n\nIt is still open work.\n`);
-      // The number comes out of `retiredNumbersIn` harvesting it from the
-      // heading, which is why this reads as a retirement at all.
-      expect(parsed.dead, heading).toEqual([number]);
-      // And the entry is gone: not skipped, not created — never opened.
-      expect(parsed.items, heading).toEqual([]);
-      expect(planImport([parsed], []).create, heading).toEqual([]);
-      expect(planImport([parsed], []).skip, heading).toEqual([]);
+      // The desired verdict: not a retirement, so not harvested out of the
+      // heading, so not consumed.
+      expect(parsed.dead, heading).toEqual([]);
+      // And filed, not merely parsed — `create` is what puts it on the board.
+      expect(
+        parsed.items.map((item) => item.origin),
+        heading
+      ).toEqual([`HANDOFF.md#${number}`]);
+      expect(
+        planImport([parsed], []).create.map((item) => item.origin),
+        heading
+      ).toEqual([`HANDOFF.md#${number}`]);
     }
+  });
+
+  /**
+   * The half of the same finding that is TRUE on both sides of a fix, held in an
+   * ordinary green test, and it is load-bearing for the pin above rather than
+   * incidental: an `it.fails` passes whenever its body throws, so a pin whose body
+   * fails for an unrelated reason — a bad import, a renamed export — reports green.
+   * These two loops and the contrast are what make that impossible here.
+   */
+  it('reads a status word that is NOT last as prose, and a spaced marker as a live row', () => {
     // The same status word NOT at the end is the live case, and it is the only
     // thing separating the two: no structural difference exists between a
     // numbered heading that ends in a marker and one that does not.
-    for (const heading of [
-      '## 32. The keyboard-flow test asserts the menu closed and nothing else',
-      '## 33. The rename is landed upstream and nothing here depends on it',
+    for (const [number, heading] of [
+      [32, '## 32. The keyboard-flow test asserts the menu closed and nothing else'],
+      [33, '## 33. The rename is landed upstream and nothing here depends on it'],
     ]) {
       const parsed = parse(`${heading}\n\nIt is still open work.\n`);
       expect(parsed.dead, heading).toEqual([]);
       expect(
         parsed.items.map((item) => item.origin),
         heading
-      ).toHaveLength(1);
+      ).toEqual([`HANDOFF.md#${number}`]);
+      expect(
+        planImport([parsed], []).create.map((item) => item.origin),
+        heading
+      ).toEqual([`HANDOFF.md#${number}`]);
     }
     // The contrast, side by side, because the asymmetry is the whole finding:
     // the SAME rule in the other direction produces a row a reader can see.

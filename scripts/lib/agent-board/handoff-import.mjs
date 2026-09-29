@@ -117,9 +117,14 @@ const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
  * `"3 FIXED"`, is not hyphenated at all.
  *
  * The three documents' own headings, as measured on the corpus rather than
- * remembered: the loose net matches five of today's 92, and the narrow one
- * matches exactly one of them — the genuine retirement,
- * `### Items 5, 7, 9, … — deleted`. The four live ones are
+ * remembered: **on `main` at `0d64d75` the corpus is 97 headings, the loose net
+ * matches five of them, and the narrow one matches exactly one** — the genuine
+ * retirement, `### Items 5, 7, 9, … — deleted`. The tree is named because the
+ * number is a property of a moment, not of this rule: the **92** an earlier
+ * revision of this comment quoted was the merge-base figure, and it is the whole
+ * defect the other counts here are dated to avoid. This branch's own new entry
+ * takes the corpus to 98 on the merged tree without moving a single verdict.
+ * The four live ones are
  * `### The self-anchored move: a converter defect, deliberately not fixed here`
  * (`HANDOFF.md:368`), `## 69. An eraser gesture abandoned by switching tools …`
  * (`HANDOFF.md:1508`), `## 76. A closure check reported "3 FIXED" …`
@@ -158,7 +163,8 @@ const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
  * Narrowing trades one silent class for a smaller one; it does not remove it.
  *
  * What anchoring does buy is the empirical half, which is the half that holds:
- * over all 92 real headings the narrow rule matches exactly the one heading the
+ * over all 97 real headings on `main` at `0d64d75` the narrow rule matches exactly
+ * the one heading the
  * loose one also reads as a retirement, so the loose rule's other four are the
  * wrong verdicts and none of them is a retirement this rule has lost. It is
  * also brittle at the punctuation boundary in a way worth knowing about — the
