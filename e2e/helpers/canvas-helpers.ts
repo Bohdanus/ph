@@ -790,13 +790,20 @@ export interface CaptureRegion {
  * different ones: `verticalSpread` counts ROWS and the gap between occupied columns counts
  * COLUMNS, so spending one scalar on both scales the row measurement by the column axis.
  *
- * On a faithful capture the axes are equal — `expectFaithfulCaptureOf` in
- * `cdp-helpers.spec.ts` pins that for the CDP path — so this cannot change a verdict today.
- * It is not equal in general: `page.screenshot({ clip })` rounds each axis of a fractional
- * clip independently, and the shorter axis is the one that absorbs the rounding, so a clip
- * 20 CSS px tall can come back a different number of image rows per CSS row than its width
- * does. Reading each axis from its own measurement is the rule; the equality is the
- * convenient case, not the assumption.
+ * On a faithful capture the axes are equal — `expectFaithfulCaptureOf` in `cdp-helpers.spec.ts`
+ * pins that, and only for captures taken through `captureCanvasScreenshot`. It does NOT pin
+ * the `page.screenshot({ clip })` path, whose two axes are equal only when the clip's CSS
+ * size is a whole number of device pixels.
+ *
+ * So "no current call site is affected" is a fact about the call sites, not a guarantee from
+ * the helper, and the two have to be checked separately. `adjustments.spec.ts` passes a
+ * 260x80 clip, whose axes stay equal at any integral scale. `shape-tools.spec.ts` passes a
+ * clip built from a `containFit` float, which is fractional in general: at a 974x583 canvas
+ * box its 20-CSS-px-tall capture comes back 2.2% short on the row axis, against a row
+ * measurement of one or two pixels and a threshold near 30 — real, and far too small to
+ * cross. That is a measurement of the present call sites, not a bound on future ones, and
+ * `__tests__/canvas-stroke-analysis.unit.test.ts` carries the rule at a divergence no real
+ * capture produces for exactly that reason.
  */
 function captureScale(imageWidth: number, imageHeight: number, region: CaptureRegion): { x: number; y: number } {
   if (
