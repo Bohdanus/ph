@@ -212,8 +212,19 @@ test.describe('Adjustment tools', () => {
       await grayscale.fill('100');
       await expect(grayscale, 'the store took the value, not just the input').toHaveAccessibleName('Grayscale 100%');
       await expect(reset, 'moving a control is what creates the preview to discard').toBeEnabled();
-      const liveBox = await canvasBox(page);
-      await waitForCanvasPixels(page, canvasRedrawClip(liveBox), hasPaintedPixel, { description: 'the grey stroke' });
+      // The poll keys on the STATE the assertion below reads, not on the stroke's existence:
+      // `hasPaintedPixel` is true of the violet stroke that is already there, so waiting for
+      // "something painted" returns on the first frame and the read races the repaint. The
+      // channel spread is 64 apart on the raw violet and 0 on its greyscale, so this is false
+      // before the fill and true after — the same shape as the sibling `adjustments.spec.ts`
+      // polls `isNot(hasRedPixels)`.
+      const greyscaleSpread = async () => {
+        const read = await sampleDocumentPoint(page, sample.x, sample.y);
+        return read ? channelSpread(read) : Number.POSITIVE_INFINITY;
+      };
+      await expect
+        .poll(greyscaleSpread, { message: 'the greyscale preview must reach the pixels' })
+        .toBeLessThanOrEqual(12);
       const greyed = await sampleDocumentPoint(page, sample.x, sample.y);
       expect(greyed, 'the greyscaled stroke must still be on the canvas').toBeTruthy();
       // `grayscale(100%)` is a greyscale, so the three channels have to converge. The raw
@@ -225,9 +236,16 @@ test.describe('Adjustment tools', () => {
       await reset.click();
       await expect(reset, 'there is no preview left to discard').toBeDisabled();
       await expect(grayscale, 'the sliders return to their defaults').toHaveAccessibleName('Grayscale 0%');
-      await waitForCanvasPixels(page, canvasRedrawClip(await canvasBox(page)), hasPaintedPixel, {
-        description: 'the restored stroke',
-      });
+      // The same keying for the discard: the greyed stroke already satisfies `hasPaintedPixel`,
+      // so waiting for "something painted" returns before the preview has been dropped, and
+      // the read below would be reading the greyscale it is meant to prove is gone.
+      const restoredSpread = async () => {
+        const read = await sampleDocumentPoint(page, sample.x, sample.y);
+        return read ? channelSpread(read) : 0;
+      };
+      await expect
+        .poll(restoredSpread, { message: 'discarding the preview must put the colour back' })
+        .toBeGreaterThan(12);
       const restored = await sampleDocumentPoint(page, sample.x, sample.y);
       expect(channelSpread(restored!), 'discarding the preview did not put the pixels back').toBeGreaterThan(12);
       // The same colour, not merely some colour: the panel restored the committed stroke
