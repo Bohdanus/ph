@@ -74,7 +74,20 @@ vi.mock('../../../../contexts/useSelectionClipboard.ts', () => ({
 
 const INFO_BUTTON_NAME = 'Feather Magnetic Lasso settings information';
 const SETTING_LABELS = ['Feather', 'Width', 'Contrast', 'Frequency', 'Snap', 'Smooth', 'Anti-alias', 'Preview feather'];
-// The toolbar keeps the info tooltip mounted for 120ms after focus/hover leaves the button.
+// The toolbar keeps the info tooltip mounted for 120ms after focus/hover leaves the button
+// — a bare `120` literal in `hideInfoTooltipSoon` (`FeatherMagneticLasso.tsx:91`), which is
+// the value this test depends on and NOT the value it waits for.
+//
+// The two used to be the same sentence in the wrong direction: the comment said 120 and the
+// constant said 200, with nothing tying either to the other, so the file read as a claim
+// about a 200ms delay and quietly tested a 120ms one. Waiting LONGER than production is
+// deliberate and is the safe direction — the assertion must not sit on the boundary, or it
+// fails on a machine where the 120ms timer has not quite landed. So 200 stays, and 200 is
+// headroom over 120 rather than a second claim about what the toolbar does.
+//
+// If the production literal changes, this still passes and stops testing the right window;
+// that is the accepted cost of not exporting a constant out of a component file, which is a
+// `react-refresh` lint warning for the sake of one test. Change both numbers together.
 const TOOLTIP_CLOSE_DELAY_MS = 200;
 
 const setClipboardState = (
