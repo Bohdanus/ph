@@ -951,8 +951,7 @@ export const CURATED = {
   'audit-falsehoods': {
     summary:
       'A pass correcting claims that no longer match the tree: the export helpers’ stated DPI and colour assumptions, and the tool-description/tooltip text that asserted them, against what `e2e/export/helpers.ts` and the tooltip sources actually do.',
-    mustNotPrune: true,
-    note: 'Uncommitted and on no ref — six files, `e2e/export/helpers.ts` and its unit test, `docs/TOOLS.md`, the tool-description test and two tooltip sources — while the branch tip is a main commit, so the branch looks disposable and the only copy of the correction is the working tree.',
+    note: 'Was uncommitted on a main commit, so the branch looked disposable; it is now two commits ahead of main (55894cac, ff50831c) and git protects it, so the flag is retracted. One file is still modified on top — `e2e/export/helpers.ts` — and that remainder is on no ref.',
   },
   'durable-followups': {
     summary:
@@ -963,6 +962,20 @@ export const CURATED = {
   'curated-round3': {
     summary:
       'A second curation pass over the curated table itself, after the worktrees it documents moved again: five worktrees added, and rail-flatten’s `mustNotPrune` retracted once its flatten was committed (92ce61cc).',
+  },
+  'fix-stale-architecture-gate': {
+    summary:
+      'A gate that fails when AGENTS.md’s architecture rules name a symbol `src/` does not contain, so a doc that points at code which was renamed or deleted cannot pass a doc check that only looks for the file.',
+  },
+  'curated-round4': {
+    summary:
+      'A third curation pass in one session: two more worktrees entered the table, two flags were retracted as their owners committed, and one name left the guard because its worktree was disposed.',
+  },
+  'skill-handoff-cites': {
+    summary:
+      'Re-deriving the tool-creation skill’s `file:line` citations against the tree, and the handoff entries’ citations into the same files.',
+    mustNotPrune: true,
+    note: 'Uncommitted and on no ref — `.skills/photoshop-tool-creation.md` alone — while the branch tip is a main commit, so the branch looks disposable and the working tree is the only copy of the re-derived citations.',
   },
   'abandoned-cleanup': {
     summary:
