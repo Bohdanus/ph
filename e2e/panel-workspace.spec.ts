@@ -15,9 +15,9 @@ import { openToolFlyout } from './helpers/toolbar-helpers';
  *  - **Overlap.** The tools rail is now movable to the right edge, where a flyout has to open
  *    the other way — and the flyout is PORTALLED to `document.body`, so it is never clipped by
  *    the rail and no `toBeVisible()` failure would ever report it. It can still land ON TOP of
- *    the rail, which is a real defect that only a geometry assertion sees: the rail's tiles sit
- *    on a 108px grid inside a narrower content box, so a second-column tile starts past the
- *    rail's own right edge. `elementFromPoint` is used to confirm the overlay is actually
+ *    the rail, which is a real defect that only a geometry assertion sees: on the two-column
+ *    rail a flyout can be anchored to the left-hand column, whose trailing edge is nowhere
+ *    near the panel's. `elementFromPoint` is used to confirm the overlay is actually
  *    painted rather than merely present, which is the one claim a box cannot support.
  *  - **Persistence.** A reload is the only way to prove the layout survives one, and it is the
  *    behaviour Photoshop documents ("workspaces display your last arrangement of panels").
@@ -291,9 +291,9 @@ test.describe('Panel workspace (fast)', () => {
     const menuBox = (await menu.boundingBox())!;
     // Opened to the LEFT of the rail, and clear of it. "Clear" is the whole assertion: an
     // overlay hung off a second-column tile instead of off the rail stays inside the viewport,
-    // so nothing else reports it, while covering the rail's own first column. The tiles sit on
-    // a 108px grid inside a narrower content box, so that tile really does start past the
-    // rail's right edge.
+    // so nothing else reports it, while covering the rail's own first column. The rail is
+    // what the overlay has to get clear of, and on the two-column rail a left-hand tile is
+    // nowhere near its trailing edge.
     expect(menuBox.x + menuBox.width).toBeLessThanOrEqual(railBox.x);
     expect(menuBox.x).toBeGreaterThanOrEqual(0);
     // The element has to be made hit-testable for the probe to mean anything, or it always

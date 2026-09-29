@@ -194,6 +194,63 @@ describe('SidebarLeft layout toggle', () => {
     expect(getPrimaryNames()).toEqual(oneColumnOrder);
   });
 
+  it('renders the rail as ONE flat panel, with no padding around the tools', () => {
+    render(<SidebarLeft />);
+
+    const sidebar = screen.getByTestId('left-sidebar');
+    // The slot's parent, NOT the aside's first child: a re-dock renders `rail-drop-line` as
+    // the first child of the aside, so a first-child read silently starts asserting the drop
+    // line's classes, which have neither `px-3` nor `py-4`, and the test passes on any rail.
+    // This test does not itself open a re-dock, so that state is not exercised here — the
+    // read is chosen because the drop line is a SIBLING of the column, not an ancestor of it,
+    // so it is the column either way.
+    const column = screen.getByTestId('left-toolbar-slot').parentElement as HTMLElement;
+    const tools = screen.getByTestId('left-toolbar-tools');
+
+    // THE THING THIS FILE EXISTS TO PROTECT. The rail used to draw a framed panel inside
+    // itself — a second fill, a border, a radius, an inset shadow and 6px of padding — so the
+    // tools read as a small card floating in a wider grey column rather than as tiles on a
+    // panel.
+    //
+    // This matches the SHAPE of a decoration, not the spellings that were there before. A list
+    // of the old class names would pass on a rail reframed with `ring-1 rounded-md p-1
+    // bg-gray-200/50` and looking exactly as card-like as it did before, which is the whole
+    // failure the assertion is for. A prefix match is what the claim actually is.
+    //
+    // Three holes a naive prefix match leaves open, all closed here: a VARIANT (`dark:`,
+    // `hover:`, `focus:`) is stripped first, because the old framing's dark half is exactly as
+    // card-like as its light half and would otherwise sail through; `bg-transparent` is not a
+    // second fill; and `inset-*` is a positioning utility, not an inner shadow, so flagging it
+    // would fail a test for positioning a child.
+    const frameTokens = (tools.getAttribute('class') ?? '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((token) => token.replace(/^(?:dark|hover|focus|active|group-hover|peer-focus):/, ''))
+      .filter((token) => token !== 'bg-transparent')
+      .filter((token) => /^(border|rounded|shadow|ring|outline|p-|ps-|pe-|px-|py-|pt-|pr-|pb-|pl-|bg-)/.test(token));
+    expect(frameTokens, 'the tools sit on the panel, not inside a second framed, filled or padded surface').toEqual([]);
+
+    // The width is the one thing the box must keep, because the box being exactly the rail's
+    // width is what puts its content flush to both edges — and a narrower box would re-open
+    // the gap this test is about. Read through the helper, which guards that the rail still
+    // declares rem: a bare `parseFloat` of a px width would pick the wrong class and fail on
+    // the class instead of on the reason.
+    expect(tools).toHaveClass(declaredRailWidthRem(sidebar) === 3.5 ? 'w-14' : 'w-[6.75rem]');
+
+    // No horizontal padding on the column, and half the vertical padding it used to have. The
+    // horizontal half was provably inert: the tools box is as wide as the rail, so a padded,
+    // centred child overflows symmetrically and the padding moves nothing — it only ever
+    // squeezed the header row. What is left is what it costs: `py-4` spent 32px of window on
+    // air above and below the rail's only content, and the slot is `flex-1`, so that padding
+    // is a direct term in the fit's `availableHeight`.
+    expect(column, 'the horizontal padding moved no box and only squeezed the header').not.toHaveClass('px-3');
+    expect(column, '32px of vertical air is a real cost on the axis the fit measures').not.toHaveClass('py-4');
+
+    // And the tiles are centred in what is left of the track, so removing the box's padding
+    // did not leave them hard against one edge.
+    expect(tools.querySelector('ul')).toHaveClass('justify-items-center');
+  });
+
   it('closes any open flyout when toggling layout', () => {
     vi.useFakeTimers();
     render(<SidebarLeft />);
