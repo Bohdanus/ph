@@ -119,8 +119,16 @@ MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
     a renewal that fails is a _message_. A lost queue costs a concurrent run, not correctness: both
     runs have their own ports.
   - **Nothing here can fail a run.** Queue full, board unreachable, malformed lease: each logs and
-    the run proceeds. An earlier version exited 4 when it could not have the lock, which made an
-    unenforceable mechanism into a hard block on a merge gate. `E2E_SKIP_LOCK=1` (or `--no-lock`)
+    the run proceeds. Two earlier versions broke that: one exited 4 when it could not have the
+    lock, which made an unenforceable mechanism into a hard block on a merge gate, and one threw
+    from the lock's constructor for a bad lease — before the run had decided it wanted a lock at
+    all, so `CI=true` with a typo in `E2E_LOCK_LEASE` died with no suite. The lock is now built
+    only on the path that uses it, and a bad lease is reported and replaced.
+  - **A holder this wrapper did not create is never reclaimed.** The reclaim unlocks AS the holder
+    it is reclaiming, so a wrong liveness answer releases a real agent's slot. Board identity is
+    the sanitized branch and `sanitize` preserves `/` (`scripts/lib/agent-board/identity.mjs:28`),
+    so a holder on `fix/1234` — or anyone who passed `--agent 2026` — has an identity whose last
+    segment parses as a pid. Only `e2e-run/<…>/<digits>` is probed. `E2E_SKIP_LOCK=1` (or `--no-lock`)
     skips the queue, and `E2E_LOCK_TIMEOUT`, `E2E_LOCK_POLL` and `E2E_LOCK_LEASE` tune the wait.
     **If a change ever makes an e2e run refuse to start because of this lock, the guarantee has
     been moved somewhere it cannot be kept.**

@@ -538,9 +538,9 @@ it never fails a run is not the place a malformed HTML file gets to fail one.
 
 **How this composes with sections 10 and 11.** Every run starts a fresh server, which is
 exactly the cold server this section is about: `npm run test:e2e` allocates a free port per run
-and reuse is opt-in, so a warm server is now something you have to ask for. Sections 9, 10 and 11
-are one family and three defects, not one defect three times: 9 is a server that is right and slow,
-10 is the wrong server, 11 is the right server serving code you did not write.
+and reuse is **unreachable**, so a warm server is now something you have to write yourself. Sections
+9, 10 and 11 are one family and three defects, not one defect three times: 9 is a server that is
+right and slow, 10 is the wrong server, 11 is the right server serving code you did not write.
 
 ## 10. An e2e mutation campaign run against someone else's dev server reported every mutation as green
 
@@ -615,7 +615,15 @@ module stops it testing the wrong code in the right tree.
 
 ## 12. `viewport-drawing.spec.ts` fails roughly one run in four, and not because of anything it asserts
 
-**Status: OPEN, and now SKIPPED by declaration (2026-09-29, operator decision). Reproduced — 1 failure in 4 runs, and the failing case moves between `wide` and `narrow`. Not fixed. Not a known-failing test; it is intermittent.**
+**Status: OPEN, and now SKIPPED by declaration (2026-09-29, operator decision). Reproduced more than once, and the failing window moves between `wide` and `narrow` between runs. Not fixed. Not a known-failing test; it is intermittent.**
+
+**No rate is stated here, on purpose.** The captured runs have not been reconciled into a
+per-case distribution — one test over three windows reports a single failure carrying three
+messages, so "the failing window moves" is read off a message rather than off separate results.
+A rate that cannot be reproduced is worse than an admission that the raw observations are
+unreconciled, and a wrong one here would be quoted as fact by whoever next picks this up. **What
+is established:** the test fails intermittently, and the window that fails moves between cases.
+**What is not:** how often.
 
 **The skip is a gate decision, not a fix, and it is not a waiver.** `e2e/viewport-drawing.spec.ts`
 carries a `test.skip(true, …)` with the reason in it. It was skipped because the suite's contract is
@@ -626,18 +634,36 @@ green result from it carries no information, so it cannot justify a change eithe
 the defect is waived; the work below is un-done and filed, and the skip is one line to remove.**
 
 **Do not "fix" this by loosening anything.** Widening `ANTIALIASED_FLANGE_CSS_PX`, raising the
-derived bound, or adding retries all treat a symptom whose mechanism is still unknown, and each of
-them removes the only thing this test is currently good for — saying something true about the
-viewport mapping when it passes.
+derived bound, raising the drift guard, or adding retries all treat a symptom whose second cause
+is still unknown, and each of them removes the only thing this test is currently good for — saying
+something true about the viewport mapping when it passes. Raising the drift guard is the worst of
+them: it deletes the one assertion that names the known cause, so the next red run becomes
+unreadable instead of self-describing.
 
-`e2e/viewport-drawing.spec.ts` generates three cases from a
-`{ name, width, height }` list (`normal` 1280×720, `wide` 1600×900, `narrow` 900×700). Each
-draws a line at box-relative coordinates, resizes the window, captures the canvas through
-CDP, and asserts with `expect.soft(...).toBeLessThan(25)` that the ink still sits under the
-cursor. Observed on 2026-09-29 while running the full suite after an unrelated change: the
-full run reported `2 skipped, 310 passed, 2 failed`, both failures in this file. Re-running
-the file alone three more times gave **1 failure in 4 runs**, and the failing case was
-`narrow` twice and `wide` once. A deterministic defect does not move between cases.
+`e2e/viewport-drawing.spec.ts:18-22` holds a `{ name, width, height }` list (`normal`
+1280×720, `wide` 1600×900, `narrow` 900×700) and runs **one** test over all three windows,
+asserting per window with `expect.soft(...).toBeLessThanOrEqual(toleranceFor(box))` at
+`e2e/viewport-drawing.spec.ts:342-346`. **Per-case attribution is a weaker signal than it
+looks**: one test over three windows reports at most one failure carrying three soft-assert
+messages, so "the failing window moves" is read off the message, not off separate test results.
+Before `ffb51607` this file ran three tests in a `for` loop and attribution was direct; anything
+recorded against the pre-`ffb51607` shape describes a file that no longer exists.
+
+What is established, and is the useful part: one cause is **measured**, not hypothesised, and
+lives 40 lines above the assertions in that file. `captureCanvasScreenshot` intermittently
+returns a page 87 CSS px SHORTER than the one that was measured, which re-projects the contain
+fit and makes a correctly committed stroke look like it missed the cursor by ~31px. The
+`expect` before the stroke assertion is a hard guard for exactly that, it is a filed defect
+(`e2e/OPEN-PROBLEMS.md`, the CDP-capture P2), and it prints both bounding boxes when it fires.
+A red run _without_ that message is therefore evidence of a **second** cause, and the three
+remaining candidates are `waitForCanvasRedraw` (polls a CDP screenshot for ink),
+`getDarkPixelBounds` (thresholds that screenshot), and the derived `toleranceFor(box)` — 6.7-8.4px
+across the three windows, **not** the 25px `LEGACY_FIXED_SLACK_CSS_PX`, which is a ceiling the
+derived bound is asserted against and never applied.
+
+**Do not instrument the 25px bound.** An earlier version of this entry and of the skip's comment
+named it as a candidate failure point, which sent a reader to a constant that is not on the
+assertion path at all.
 
 **It is not caused by the scrollbar change that was in the tree at the time, and that is
 measured rather than argued.** Removing `scrollbar-none` from the rail's `<aside>` and

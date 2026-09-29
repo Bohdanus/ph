@@ -34,20 +34,27 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
-  // local runs stay sequential so two runs cannot fight over the same app instance
-  // on :5173. The readability argument for `workers: 1` is gone with headed mode: the
-  // local report is the same `list` output either way.
+  // local runs stay sequential so a failure is readable one test at a time and the
+  // machine is not running two browsers per core. The port argument that used to sit
+  // here is gone with the old reuse default: each run owns its port, so two runs no
+  // longer fight over one app instance. The readability argument for `workers: 1` is
+  // gone with headed mode: the local report is the same `list` output either way.
   workers: process.env.CI ? undefined : 1,
-  // Refuses --headed, --debug and --ui before a window exists. This is the layer
-  // that makes the headless default below enforceable rather than advisory - the
-  // flags bypass `use.headless` entirely. See e2e/global-setup.ts.
+  // Two refusals, and both run for every `playwright test` invocation whatever started
+  // it: a visible browser, and a base URL this run's own dev server is not serving.
+  // The flags bypass `use.headless` entirely, and `PLAYWRIGHT_BASE_URL` is read here,
+  // so neither can be enforced from one caller. See e2e/global-setup.ts.
   globalSetup: './e2e/global-setup.ts',
   reporter: process.env.CI
     ? [['github'], ['html', { open: 'never' }], ['json', { outputFile: 'test-results/results.json' }]]
     : [['list'], ['html', { open: 'never' }]],
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
-    /* Override in another environment: PLAYWRIGHT_BASE_URL=https://example.com npm run test:e2e */
+    /* Testing a deployed build needs E2E_ALLOW_REMOTE=1, which
+     * `npm run test:e2e` refuses without and `e2e/global-setup.ts` refuses without
+     * for EVERY invocation, including a bare `npx playwright test`:
+     *   E2E_ALLOW_REMOTE=1 PLAYWRIGHT_BASE_URL=https://staging.example.com npx playwright test
+     * The run logs which origin it loaded. See e2e/README.md. */
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? baseUrl,
     // HEADLESS IS THE DEFAULT. Do not flip this to headed-on-local.
     //

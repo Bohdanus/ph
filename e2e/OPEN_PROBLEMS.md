@@ -657,6 +657,61 @@ does not do.
 
 ---
 
+## P1 — the Text commit-path spec drives the wrong colour control, and the app may be right
+
+**A real red gate, and the first question for whoever takes it is "is the test wrong or is the
+product?" — the evidence below points at the test.** A full headless run reports
+`331 passed, 3 failed, 3 skipped`. Two of the failures are the machine's AVIF encoder timeout
+(filed on `audit/retina-canvas-dpr`, a slow-encode infrastructure failure rather than a defect).
+This is the third:
+
+- `e2e/text-tool.spec.ts:367` — "committed text reaches the canvas as foreground pixels inside the
+  dragged rectangle" — `Error: Canvas did not render red text pixels within 10000ms`
+
+**What has been ruled out: the e2e harness.** The identical `playwright.config.ts` and
+`scripts/e2e-run.mjs` ran this spec green earlier the same day, and the delta between that run and
+the failing one is app code, not how the suite reaches it. The wrapper allocates a different port
+per run and nothing else about a run's shape changed.
+
+**What is very likely the cause.** Commit `a12e35c9` made the Text tool's colour the tool's own
+setting instead of a value mirrored out of the store — a behaviour change, not a type change. Its
+runtime hunk in `src/components/Main/TextToolArea.tsx` drops `color` from the store subscription and
+from the `renderText` call, and its commit message says so in words ("neither the tool area nor the
+bar writes the store colour over it"). The tool's colour is seeded at `src/tools/settings.ts:87` and
+is what gets committed. Meanwhile `e2e/text-tool.spec.ts:375` sets the **store's** swatch through
+`e2e/helpers/color-helpers.ts:209` (`data-testid="foreground-color-input"`), and the Text bar's own
+control is `<input id="text-color" type="color">` in `src/components/ToolbarsRight/Text/Text.tsx`,
+which carries **no `data-testid`**. A spec that sets the sidebar swatch and expects it to reach a
+committed Text layer can no longer do so, and it fails with no red pixels on the canvas.
+
+**That is the hypothesis, not a conclusion**, and the distinction decides who fixes it: if the app
+is right, the spec is stale, and Photoshop's Type tool having its own colour is the correct
+behaviour. Read `a12e35c9` in full before changing anything.
+
+**The cheap discriminators, in order — none of them is a bisect.**
+
+1. **Zero runs: read the failure PNG already on disk** under
+   `test-results/runs/<run-id>/text-tool-*/test-failed-1.png` (`screenshot: 'only-on-failure'` in
+   `playwright.config.ts`). Black glyphs where red is expected confirms the colour-path hypothesis
+   and refutes a rendering failure outright.
+2. **Zero runs: three reads.** The spec sets `foreground-color-input`
+   (`src/components/SidebarLeft/SidebarLeft.tsx:1050`); the Text tool's own control is `text-color`,
+   with no testid; the tool's colour is seeded at `src/tools/settings.ts:87` and consumed at
+   `src/components/Main/TextToolArea.tsx:58`.
+3. **One run, about a minute:** `npm run test:e2e -- e2e/text-tool.spec.ts`, which also answers
+   whether the failure is deterministic. One observation is not, and `TEST-FLAKES.md` §1 exists
+   because that inference has already been made in this file.
+4. **One run that settles it:** point the spec at `#text-color` instead of the store swatch. If it
+   passes, the cause is confirmed and the spec is what needed fixing.
+
+**Do not bisect.** The cause landed in `a12e35c9`, which predates the recent e2e-harness work, so
+the range a bisect would search is not where the defect is. **Do not close it by widening the 10s
+wait**: a committed text layer that has not painted in 10s is not a marginal budget.
+
+**Do not fix the product to satisfy the test.** If discriminator 4 passes, the change belongs in the
+spec, and its premise — that the sidebar's foreground swatch is what a Text tool commits — should be
+re-examined on its own terms rather than restored by making the renderer read the store again.
+
 # Transferred findings — external review of the pre-migration tree
 
 This section recorded 33 findings from a read-only review of the pre-migration tree at
@@ -825,42 +880,6 @@ touch emulation and a reachability assertion — not a device width, which it al
 reachability test that scrolls the bar to its last tile and asserts that tile is inside
 the viewport — the same shape as the rail's swatch test in
 `e2e/no-document-overflow.spec.ts`.
-
-## P1 — a committed Text layer draws no foreground pixels, and the commit path is where to look
-
-**Deterministic, and it is on `main`, not on the branch that found it.** A full headless run
-reports `331 passed, 3 failed, 3 skipped`, and this is the one failure that is not the machine's
-AVIF encoder timeout (that one is filed on `audit/retina-canvas-dpr` and is a slow-encode
-infrastructure failure, not a defect):
-
-- `e2e/text-tool.spec.ts:367` — "committed text reaches the canvas as foreground pixels inside the
-  dragged rectangle" — `Error: Canvas did not render red text pixels within 10000ms`
-
-**What has been ruled out, so the next agent does not repeat it.** It is not the e2e harness. The
-identical `playwright.config.ts` and `scripts/e2e-run.mjs` ran this spec **green** at 16:41 on
-2026-09-29; the only difference between that run and the failing one is that `main` advanced
-through the eyedropper/text/crop fixes, the selection and overlay fixes, and the feather lasso
-work. The wrapper allocates a different port each run and nothing else about the run's shape
-changed, so the regression is in the app, not in how the suite reaches it.
-
-It is also not the type change in `src/tools/text.ts` from `a12e35c9` — that hunk only stops
-omitting `color` from `TextToolSettings`, and a type has no effect on what reaches the canvas.
-
-**The two candidate shapes, and neither is confirmed.** Either the commit path stopped writing
-foreground pixels for a colour that comes from the tool's own swatch (the same commit made `color`
-the tool's setting rather than a value mirrored out of the store, so a commit can now be issued
-with a colour the bar never showed), or the text layer still commits but the pixels land outside
-the dragged rectangle the test measures — which would be a geometry change rather than a rendering
-one. `waitForCanvasRedraw` reports a timeout rather than a wrong colour, so the screenshot in the
-run's output directory is the evidence that separates them, and it is worth looking at before
-reading any source.
-
-**Exact remaining verification:** bisect `main` between the last run where this spec passed
-(16:41 on 2026-09-29) and the first run where it failed, and read the failure PNG from
-`test-results/runs/<run-id>/text-tool-*/test-failed-1.png` to establish whether the text is absent
-or merely displaced. Do not close it by widening the timeout: a 10s wait for a committed text
-layer to appear is not a marginal budget, and the spec was green on the same machine minutes
-earlier.
 
 ## Checked here and rejected
 

@@ -87,8 +87,8 @@ changed which tests fail, independently of any human:
 
 | formerly failing tests                        | headed | headless |
 | --------------------------------------------- | ------ | -------- |
-| `cdp-helpers.spec.ts:113 :129 :146 :163 :195` | 5 fail | pass     |
-| `cdp-helpers.spec.ts:220, 239`                | pass   | 2 fail   |
+| `cdp-helpers.spec.ts:132 :146 :161 :193 :210` | 5 fail | pass     |
+| `cdp-helpers.spec.ts:281, 301`                | pass   | 2 fail   |
 
 The two groups were disjoint and each mode's set reproduced identically across
 repeats. Both are now fixed — the assertions no longer name a capture scale, so they
@@ -171,18 +171,28 @@ the trap this section exists to prevent.
 the branch says which checkout, the pid says which process. The holder is a **run** rather than a
 branch because board identity is the branch and a branch never conflicts with itself.
 
-| Variable           | Default | What it does                                          |
-| ------------------ | ------- | ----------------------------------------------------- |
-| `E2E_LOCK_TIMEOUT` | 10 min  | How long to queue before going ahead anyway.          |
-| `E2E_LOCK_POLL`    | 3 s     | How often to re-check while queued.                   |
-| `E2E_LOCK_LEASE`   | `30m`   | How long a **dead** holder blocks the queue.          |
-| `E2E_SKIP_LOCK`    | unset   | `1` skips the queue, loudly. Only scheduling is lost. |
-| `E2E_ALLOW_REMOTE` | unset   | `1` permits `PLAYWRIGHT_BASE_URL`, and is logged.     |
+| Variable           | Default  | What it does                                          |
+| ------------------ | -------- | ----------------------------------------------------- |
+| `E2E_LOCK_TIMEOUT` | `600000` | Milliseconds to queue before going ahead anyway.      |
+| `E2E_LOCK_POLL`    | `3000`   | Milliseconds between queue re-checks.                 |
+| `E2E_LOCK_LEASE`   | `30m`    | A DURATION, not milliseconds. See below.              |
+| `E2E_SKIP_LOCK`    | unset    | `1` skips the queue, loudly. Only scheduling is lost. |
+| `E2E_ALLOW_REMOTE` | unset    | `1` permits `PLAYWRIGHT_BASE_URL`, and is logged.     |
+
+The units are mixed and that is a trap worth naming: **`E2E_LOCK_TIMEOUT` and
+`E2E_LOCK_POLL` are plain millisecond counts** (`E2E_LOCK_TIMEOUT=5000`), while
+**`E2E_LOCK_LEASE` is a duration** (`30m`, `90s`, `2h`, or a bare number of
+minutes). They are not interchangeable, and they fail in opposite ways —
+`E2E_LOCK_TIMEOUT=5m` is `NaN`, so it is silently ignored and you get the
+10-minute default, while a malformed lease is reported and replaced. A typo in
+either costs scheduling and nothing else.
 
 `--no-lock` is the same as `E2E_SKIP_LOCK=1`. The queue is skipped automatically under `CI`,
 where one job owns one checkout outright. The lease is renewed while the suite runs, because the
 board never renews a file lock itself, and a renewal that fails is a message rather than a
-failure: both runs have their own ports.
+failure: both runs have their own ports. A holder whose process is gone is reclaimed rather than
+waited out, which is why a killed run does not cost the next one its full timeout — the holder
+identity carries the pid, and only identities this wrapper created are probed.
 
 ### Ports and servers
 
@@ -199,25 +209,33 @@ It leaves the port alone when you have already chosen one:
 PLAYWRIGHT_PORT=5391 npm run test:e2e
 ```
 
-**Server reuse is opt-in now, and the flag was renamed to say so.** A run used to
-attach to any server already on :5173, which in a worktree is _another
-checkout's_ code — a mutation campaign in `TEST-FLAKES.md` §10 reported every
-mutation green that way. To attach to a dev server you started yourself:
+### There is no way to reuse a server, and that is deliberate
+
+A run used to attach to any server already on :5173, which in a worktree is
+_another checkout's_ code — a mutation campaign in `TEST-FLAKES.md` §10 reported
+every mutation green that way. `playwright.config.ts` now sets
+`reuseExistingServer: false` as a bare **literal**, with no environment variable
+and no field that can turn it on, and the server is started with `--strictPort` so
+a port that got taken in the moment between picking it and binding it is a startup
+failure rather than Vite's silent hop to the next free port.
+
+The opt-in that briefly existed (`PLAYWRIGHT_REUSE_EXISTING_SERVER=1`) was
+withdrawn rather than kept as a convenience: an escape hatch that attaches to
+whatever holds the port is the same defect with a documented name, and the only
+thing it reliably does is let an agent under time pressure choose it. Setting the
+variable now is an **error**, not a no-op.
+
+To test a deployed build, say so explicitly, and note that the run logs which
+origin it loaded:
 
 ```bash
-PLAYWRIGHT_REUSE_EXISTING_SERVER=1 npm run test:e2e
+E2E_ALLOW_REMOTE=1 PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e
 ```
 
-That is the only way to reuse, `PLAYWRIGHT_PORT` disables it, and with the port
-occupied the dev server is started with `--strictPort` so it fails loudly instead
-of silently hopping to the next free port.
-
-Point the suite at a server you did not start with `PLAYWRIGHT_BASE_URL`. It wins
-navigation, so keep it and `PLAYWRIGHT_PORT` consistent:
-
-```bash
-PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e
-```
+Both refusals are enforced twice, in the only two places that can see every
+invocation: `scripts/e2e-run.mjs` (the friendly error, before anything starts)
+and `e2e/global-setup.ts` (the load-bearing one, because `npm run test:e2e:raw`
+and the CI job's bare `npx playwright test` never load the wrapper at all).
 
 ### Output
 
@@ -226,7 +244,20 @@ directory before the suite starts. `test-results/` is gitignored wholesale, and
 `npm run test:e2e:clean` removes it. A bare `npx playwright test` (or
 `npm run test:e2e:raw`) skips the wrapper and writes to the shared `test-results/`
 — that is the same as CI, where the JSON reporter's output is collected as an
-artifact, and it is why CI calls Playwright directly.
+artifact, and it is why CI calls Playwright directly. A bare run still starts its
+OWN server, on :5173; only the port choice and the output directory come from the
+wrapper.
+
+`--last-failed` works across runs: the wrapper pins Playwright's failure list to
+the shared `test-results/.last-run.json`, because that flag silently runs the whole
+suite when it cannot find the file and a per-run directory would move it every run.
+
+The wrapper also writes one record of the last run to `.kilo/e2e-last-run.json` —
+the port, the base URL actually under test, the output directory, and the exit
+code. It is **gitignored and machine-local by design** (`.kilo/` holds nothing
+durable), it is a single overwritten slot rather than an archive, and
+`npm run test:e2e:clean` deliberately leaves it, because it must outlive the
+`test-results/` it points at. The same numbers are on stdout.
 
 The HTML report is **not** isolated, deliberately: `npm run test:e2e:report` is a
 bare `playwright show-report`, which resolves `playwright-report`, and a per-run
@@ -365,8 +396,8 @@ Paths come from `testInfo.snapshotDir`, not `snapshotPath()` — the latter appe
 the project name and the OS, which would make a baseline committed on one machine
 read as missing on another.
 
-The directory holds 17 files. These 7 are the ones `visual-regression.spec.ts`
-actually reads, one per format with `comparePixels: true`:
+Of the files in the directory, the ones `visual-regression.spec.ts` actually reads are
+one per format with `comparePixels: true`:
 
 ```
 e2e/export/visual-regression.spec.ts-snapshots/
@@ -380,7 +411,7 @@ e2e/export/visual-regression.spec.ts-snapshots/
     └── drawing.avif.png           # AVIF export baseline
 ```
 
-The other 10 committed files are orphans — the 8 raw `drawing.<ext>` exports
+The remaining committed files are orphans — the raw `drawing.<ext>` exports
 (including `drawing.bmp`, the bulk of the 2.1 MB), plus `drawing-icon.ico.png` and
 `source-baseline.png`. Nothing reads them; the ICO spec compares in-browser against
 the source canvas instead. They are still tracked, pending authorisation to delete
@@ -542,7 +573,7 @@ concern configurations this job does not run in:
 - whether the visual-regression baselines should be regenerated from a production
   build rather than a dev server, since the job runs against `npm run dev`.
 
-The job reports the true state including the 2 declared skips. It runs the full
+The job reports the true state including the 3 declared skips. It runs the full
 suite with no `--grep-invert`, so the report is unfiltered — but note that
 `playwright.config.ts` sets `retries: 2` when `CI` is set, so a green run here is a
 green run _after_ retries. A flake that only shows on the first attempt is

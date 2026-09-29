@@ -161,13 +161,13 @@ The trap is that this _mostly works_: Node walks up to the ancestor checkout, so
 Every worktree's dev server wants `:5173`, so a bare `npx playwright test` used to attach to a server **another worktree started** and test that checkout — "my change did nothing" is this, not a cache. **That can no longer happen at all.** Reuse is not off by default here; it is _unreachable_:
 
 ```ts
-// playwright.config.ts:29-30
+// playwright.config.ts:19-20
 const port = process.env.PLAYWRIGHT_PORT ?? '5173';
 const baseUrl = `http://localhost:${port}`;
 
-// playwright.config.ts:114-136
+// playwright.config.ts:111-137
 webServer: {
-  command: `npm run dev -- --port ${port} --strictPort`,   // :119  a clash is a startup failure, not a hop
+  command: `npm run dev -- --port ${port} --strictPort`,   // :116  a clash is a startup failure, not a hop
   url: baseUrl,
   reuseExistingServer: false,                              // literal; nothing can turn it on
 }
@@ -178,7 +178,7 @@ than ignoring it, so setting it is an error, not a no-op. `PLAYWRIGHT_BASE_URL` 
 unless the run says `E2E_ALLOW_REMOTE=1`, which it logs. The wrapper picks a free port, checks it
 is still bindable, exports it as `PLAYWRIGHT_PORT`, and records it to `.kilo/e2e-last-run.json`, so
 the port that served a run can be named after the fact. Local runs are also sequential —
-`workers: 1` outside CI (`playwright.config.ts:50`) — so two runs in one process cannot fight over
+`workers: 1` outside CI (`playwright.config.ts:42`) — so two runs in one process cannot fight over
 one app instance.
 
 ```bash
@@ -2910,8 +2910,10 @@ files; do not touch any other file. Do not commit.
 
 - **NEVER open a browser window** — no `--headed`, `--ui`, `--debug`, `show-report`, `show-trace`,
   `codegen`, or the headed opt-in variable. `npm run test:e2e` only, which is headless.
-- You MUST set a distinct port so the run cannot attach to another checkout's :5173:
-  `PLAYWRIGHT_PORT=<PORT> npx playwright test e2e/<file>.spec.ts`. Run it from the worktree root.
+- You do NOT need to pick a port to avoid a collision: `npm run test:e2e` finds a free one per run
+  and it is impossible to attach to another checkout's server. Pin one only to run two suites on
+  this machine at once — `PLAYWRIGHT_PORT=<PORT> npx playwright test e2e/<file>.spec.ts` — and run
+  it from the worktree root.
 - Do NOT weaken a gate: no `test.skip`, no raised thresholds, no `expect.soft` in place of a hard
   assert, no deleting an assertion to make something pass. If a test genuinely cannot pass, report
   that back instead of skipping it.
@@ -3132,8 +3134,8 @@ failure is a new defect, never a known one. Characterised, not listed:
    single `.first()` assertion is simply wrong for that key. This entry is filed under
    `## Fixed — Enter did not reliably close the flyout` (`:257`), not among the open latents.
 
-5. **The port race, and what a run can silently attach to.** `playwright.config.ts:29-30` takes the
-   port from `PLAYWRIGHT_PORT`, defaulting to 5173, and `:114-136` makes `reuseExistingServer` an
+5. **The port race, and what a run can silently attach to.** `playwright.config.ts:19-20` takes the
+   port from `PLAYWRIGHT_PORT`, defaulting to 5173, and `:111-137` makes `reuseExistingServer` an
    unconditional `false` with `--strictPort` on the server command. `npm run test:e2e` allocates a
    port per run, verifies it, and records it, so even the bare `npx playwright test` now FAILS loudly
    on an occupied port instead of attaching. An older version of this file made reuse opt-**in**;
@@ -3142,8 +3144,10 @@ failure is a new defect, never a known one. Characterised, not listed:
    worktree runs `npm run dev` on the same port, that is frequently a **sibling worktree's server**.
    The failure it produced was a strict-mode violation for a test id that existed only in the
    sibling's uncommitted tree, and it pointed at a locator bug in this worktree's helpers. The
-   three-layer fix (`served-app.ts` proving which checkout answers, `--strictPort`, opt-in reuse)
-   lives on an unmerged branch — `ps-integration:e2e/OPEN_PROBLEMS.md` §"P1 — a run could test a
+   fix landed without the `served-app.ts` layer it originally proposed — that file does not exist.
+   What replaced "prove which checkout answered" is that there is nothing left to prove: every run
+   starts its own server on a port it picks. The original note is on the unmerged
+   `ps-integration:e2e/OPEN_PROBLEMS.md` §"P1 — a run could test a
    different checkout's application", a **not-yet-merged reference**. **Set `PLAYWRIGHT_PORT` in
    every worktree**, and put it in the brief so a subagent cannot forget.
 
@@ -4063,13 +4067,14 @@ merge --ff-only main`.
    typecheck and unit tests pass (Node walks up to the parent checkout), but Vite serves nothing
    and fonts/images/AVIF assets 404 — so the app looks broken in e2e and fine in vitest. Defence:
    `npm ci` in the worktree before debugging any asset that will not load.
-4. **Every worktree's dev server wants :5173, and `reuseExistingServer` is on locally.**
+4. **Every worktree's dev server wants :5173, and `reuseExistingServer` used to be on locally.**
    Symptom: "my change did nothing" in e2e — the run attached to a **different checkout**.
    Defence: `npm run test:e2e`, which allocates a port, verifies it and records it; and behind it
    `reuseExistingServer` is a literal `false` with nothing that can turn it on, plus `--strictPort`
-   so a clash is a hard failure rather than a silent hop to 5174 (`playwright.config.ts:114-136`).
-   A swarm lock is also taken so two agents rarely run at once, but it is **advisory only** and can
-   never block a run — see `docs/ORCHESTRATION.md`.
+   so a clash is a hard failure rather than a silent hop to 5174 (`playwright.config.ts:111-137`).
+   Both refusals are enforced in `e2e/global-setup.ts` as well as the wrapper, so a raw
+   `npx playwright test` cannot bypass them either. A swarm lock is also taken so two agents rarely
+   run at once, but it is **advisory only** and can never block a run — see `docs/ORCHESTRATION.md`.
 5. **The `agent_manager` tool in this build needs every optional key sent explicitly**
    **[unverified by me]** — arrays reportedly get mangled into `{ item: [...] }`. And
    `agent_manager` reportedly accepted 19 session requests and created none, which is why `task`

@@ -31,8 +31,8 @@
  *    default silent hop to the next free port.
  *
  * The outcome is binary: you get a server this run started, or you get a red run.
- * There is no third outcome in which the suite quietly tests a neighbour. Steps (2)
- * and (3) are belt and braces around the real guarantee, which is (3) plus (4).
+ * There is no third outcome in which the suite quietly tests a neighbour. Step (2) is
+ * belt and braces around the real guarantee, which is (3) plus (4).
  *
  * ## 2. The optimisation: the swarm lock, which is only a queue
  *
@@ -78,10 +78,12 @@
  *
  * - `PLAYWRIGHT_PORT` — use this port instead of picking one. Still this run's own
  *   server: reuse is off, so a busy port fails rather than attaches.
- * - `PLAYWRIGHT_BASE_URL` — **refused by default.** It points the tests at a server
- *   this run did not start, which is the one rule here. It works with
- *   `E2E_ALLOW_REMOTE=1`, which is logged at the top of the run so a report can
- *   never claim the branch was verified against its own checkout when it was not.
+ * - `PLAYWRIGHT_BASE_URL` — **refused by default**, here AND in
+ *   `e2e/global-setup.ts`. The second one is the load-bearing one: this file is not
+ *   loaded by `npm run test:e2e:raw` or by the CI job's bare `npx playwright test`,
+ *   and `playwright.config.ts` resolves `use.baseURL` from the variable itself, so a
+ *   refusal that lived only here was one command away from being false. It works with
+ *   `E2E_ALLOW_REMOTE=1`, and both layers log the target on every permitted run.
  * - `PLAYWRIGHT_REUSE_EXISTING_SERVER` — **refused, always.** The config no longer
  *   reads it; setting it now means expecting a behaviour that no longer exists, so it
  *   is an error rather than a silent no-op.
@@ -97,7 +99,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { constants } from 'node:os';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import path from 'node:path';
 
@@ -124,8 +126,19 @@ const DEFAULT_LOCK_POLL_MS = 3_000;
  */
 const DEFAULT_LOCK_LEASE = '30m';
 
-/** The renewal ceiling. The real interval is a third of the lease, never more. */
+/**
+ * The renewal ceiling. The real interval is a third of the lease, never more.
+ */
 const MAX_RENEW_EVERY_MS = 5 * 60_000;
+
+/**
+ * The renewal floor, and why it is not optional. The renewal body is a synchronous
+ * `spawnSync` of the board CLI, so an interval short enough to derive from a
+ * sub-minute lease would spawn a node process many times a second and block the
+ * event loop that Playwright's inherited stdout depends on. `E2E_LOCK_LEASE=500ms`
+ * is a duration the board accepts; it must not become a 166ms spawn loop.
+ */
+const MIN_RENEW_EVERY_MS = 30_000;
 
 /**
  * The board's own duration grammar, read off `parseDuration`
@@ -219,6 +232,12 @@ export function resolvePort(env, ci) {
  * Both are errors rather than warnings. A run that quietly tested a server it did
  * not start is the failure this whole file is for, so the request is answered where
  * the operator or agent is still reading.
+ *
+ * This is the FRIENDLY copy, not the load-bearing one. `e2e/global-setup.ts` enforces
+ * the same rule for every invocation, including `npm run test:e2e:raw` and the CI
+ * job's bare `npx playwright test`, which never load this file. An earlier version of
+ * this branch had the guarantee here alone, and it was one command away from being
+ * false.
  */
 export function assertOwnServer(env) {
   if (env.PLAYWRIGHT_REUSE_EXISTING_SERVER) {
@@ -256,24 +275,30 @@ function readNumber(value, fallback) {
 }
 
 /**
- * Reject a lease this wrapper cannot parse, loudly, and before any run.
+ * A lease this wrapper cannot parse is reported and replaced, not fatal.
  *
- * `parseDuration` throws `BoardError code 1` on `30min` and the CLI exits 1, which is
- * also what a missing board looks like. An earlier version of this file let that
- * through, so a typo in one environment variable quietly produced an unlocked run
- * while the warning blamed `node:sqlite`. The lock is only a queue now, so the
- * consequence is smaller — but a knob that does not do what it says is still a lie
- * told to whoever set it.
+ * `parseDuration` in the board throws `BoardError code 1` on `30min` and its CLI
+ * exits 1, which is also what a missing board looks like. An earlier version of this
+ * file let that distinction decide the run, so a typo in one environment variable
+ * killed a suite — and worse, it killed it even under `--no-lock`, `E2E_SKIP_LOCK=1`
+ * and `CI=true`, because the lock was constructed before those were considered. That
+ * made a scheduling knob into a hard block on a merge gate, which is the exact thing
+ * the advisory-queue design exists to prevent, and three documents stated the
+ * forgiving behaviour the code did not have.
+ *
+ * So it forgives, like its two siblings `readNumber` handles: say what was ignored,
+ * use the default, and let the run go. The alternative is to amend three documents
+ * instead, and the documents are right.
  */
-function assertLease(lease) {
+function resolveLease(lease, log) {
   const ms = parseDurationMs(lease);
-  if (ms === null || ms <= 0) {
-    throw new Error(
-      `E2E_LOCK_LEASE=${JSON.stringify(lease)} is not a duration the swarm board accepts. ` +
-        'Use 45m, 90s, 2h, 500ms, or a bare number of minutes.'
-    );
-  }
-  return ms;
+  if (ms !== null && ms > 0) return ms;
+  log(
+    `${PREFIX} E2E_LOCK_LEASE=${JSON.stringify(lease)} is not a duration the board accepts, so this run is using ` +
+      `the default of ${DEFAULT_LOCK_LEASE}. Use 45m, 90s, 2h, or a bare number of minutes. This is a queue, ` +
+      'so nothing about the run itself depends on it.'
+  );
+  return parseDurationMs(DEFAULT_LOCK_LEASE);
 }
 
 /**
@@ -289,6 +314,9 @@ function defaultIdentity() {
   return `e2e-run/${name || 'detached'}/${process.pid}`;
 }
 
+/** The prefix this file owns. Anything else on the sentinel is not ours to judge. */
+const RUN_IDENTITY_PREFIX = 'e2e-run/';
+
 /**
  * The board identity ends in the holder's pid, and a pid is a liveness signal.
  *
@@ -300,10 +328,28 @@ function defaultIdentity() {
  * before proceeding as designed. The queue is only scheduling, so ten minutes of dead
  * air in front of a merge gate is pure loss — and the fix is not a shorter timer, it
  * is positive evidence.
+ *
+ * ## Why it only answers for identities this file created
+ *
+ * The reclaim path UNLOCKS as the holder it is reclaiming, so a wrong answer here is
+ * not a wrong log line: it releases a real agent's queue slot. The board's default
+ * identity is the sanitized git branch and `sanitize` preserves `/`
+ * (`scripts/lib/agent-board/identity.mjs:28`), so a holder on a branch called
+ * `fix/1234`, or anyone who passed `--agent 2026`, has an identity whose last segment
+ * parses as a pid. Probing pid 1234, finding nothing, and unlocking that agent's row
+ * is the failure this guard exists to prevent — an earlier version of this function
+ * did precisely that, while the comment above it claimed it could not happen.
+ *
+ * Hence: the prefix is required, and the segment must be ALL digits. `Number.parseInt`
+ * alone is not enough, because it accepts `1234abc` and returns 1234.
  */
 function isHolderAlive(identity) {
-  const pid = Number.parseInt(String(identity).slice(String(identity).lastIndexOf('/') + 1), 10);
-  if (!Number.isInteger(pid) || pid <= 0) return true; // no pid to check: assume alive
+  const name = String(identity);
+  if (!name.startsWith(RUN_IDENTITY_PREFIX)) return true; // not ours to judge
+  const segment = name.slice(name.lastIndexOf('/') + 1);
+  if (!/^\d+$/.test(segment)) return true;
+  const pid = Number(segment);
+  if (!Number.isInteger(pid) || pid <= 0) return true;
   try {
     process.kill(pid, 0);
     return true;
@@ -335,10 +381,18 @@ export class SwarmLock {
     this.lease = options.lease ?? this.env.E2E_LOCK_LEASE ?? DEFAULT_LOCK_LEASE;
     this.timeoutMs = options.timeoutMs ?? readNumber(this.env.E2E_LOCK_TIMEOUT, DEFAULT_LOCK_TIMEOUT_MS);
     this.pollMs = options.pollMs ?? readNumber(this.env.E2E_LOCK_POLL, DEFAULT_LOCK_POLL_MS);
-    this.leaseMs = assertLease(this.lease);
-    // A third of the lease, capped: the interval has to sit comfortably inside it, or
-    // `doctor` reclaims a live run's lock on the next board command from anybody.
-    this.renewEveryMs = options.renewEveryMs ?? Math.min(MAX_RENEW_EVERY_MS, Math.floor(this.leaseMs / 3));
+    this.leaseMs = resolveLease(this.lease, this.log);
+    // A third of the lease, capped ABOVE and floored below.
+    //
+    // The cap is 5 minutes because a suite is minutes long and a renewal is cheap.
+    // The floor matters more than it looks: the renewal body is a synchronous
+    // `spawnSync` of the board CLI, so a lease short enough to derive a sub-second
+    // interval turns the wrapper into the bottleneck and stalls the stdout it exists
+    // to keep streaming. `E2E_LOCK_LEASE=500ms` is a value the board accepts and an
+    // earlier version of this file's own error message used to advertise; it derived
+    // a 166ms spawn loop. Sub-minute leases are honoured, floored, and said to be.
+    this.renewEveryMs =
+      options.renewEveryMs ?? Math.max(MIN_RENEW_EVERY_MS, Math.min(MAX_RENEW_EVERY_MS, Math.floor(this.leaseMs / 3)));
     this.held = false;
     this.renewal = null;
   }
@@ -351,9 +405,15 @@ export class SwarmLock {
    * board take the last one, so the reclaim ran as us, matched no row, and reported
    * success — `unlock` exits 0 whether or not it released anything. That is what made
    * the first version of the dead-holder reclaim look like it worked.
+   *
+   * `process.execPath`, not a bare `node`: the rest of this file deliberately avoids
+   * PATH lookup, and a `node` on PATH that is a different interpreter — an nvm shim
+   * on another major, anything without `node:sqlite` — turns every board call into
+   * exit 1, which the caller reports as "the board is unavailable" and proceeds. The
+   * queue would then be permanently and silently gone and look like a healthy run.
    */
   #board(args, identity = this.identity) {
-    return this.exec(['node', BOARD_CLI, ...args, '--agent', identity], { cwd: REPO_ROOT, env: this.env });
+    return this.exec([process.execPath, BOARD_CLI, ...args, '--agent', identity], { cwd: REPO_ROOT, env: this.env });
   }
 
   /**
@@ -368,6 +428,14 @@ export class SwarmLock {
     const deadline = this.now() + this.timeoutMs;
     let announced = false;
     let reclaimAttempted = false;
+    // One flag rather than a log per degraded probe, so a long wait does not
+    // produce a line per poll.
+    let warnedAboutHolders = false;
+    const warnOnce = (line) => {
+      if (warnedAboutHolders) return;
+      warnedAboutHolders = true;
+      this.log(line);
+    };
 
     for (;;) {
       const attempt = this.#board(['hold', E2E_SENTINEL, '--lease', this.lease]);
@@ -381,7 +449,7 @@ export class SwarmLock {
       // deliberately not collapsed into 1: the code says the queue is busy, not that
       // this script is broken.
       if (attempt.status === 4) {
-        const holders = this.#holders();
+        const holders = this.#holders(warnOnce);
 
         // A holder whose process is gone is not queueing, it is debris. Reclaim it
         // rather than waiting out its lease: the board cannot check this itself (a
@@ -438,15 +506,34 @@ export class SwarmLock {
     }
   }
 
-  /** Who holds the sentinel right now, as board identities. */
-  #holders() {
+  /**
+   * Who holds the sentinel right now, as board identities.
+   *
+   * Every degraded path here LOGS. An earlier version returned `[]` silently on both
+   * a wrong exit code and a parse failure, and an empty list is the one value that
+   * disables the dead-holder reclaim — so a board that changed its `check` output
+   * shape would cost the next run the full `E2E_LOCK_TIMEOUT` waiting behind a
+   * corpse, with nothing in the log to say why. It is reported once per `acquire`.
+   */
+  #holders(warn) {
     const probe = this.#board(['check', E2E_SENTINEL, '--json']);
-    if (probe.status !== 1) return [];
+    if (probe.status !== 1) {
+      warn(
+        `could not read the queue's holders (check exited ${probe.status}: ` +
+          `${firstLine(probe.stderr || probe.stdout)}), so a dead holder cannot be reclaimed and this run may ` +
+          'wait its full timeout. Only scheduling is at stake.'
+      );
+      return [];
+    }
     try {
       const parsed = JSON.parse(probe.stdout);
       const entry = parsed?.report?.find((item) => item.path === E2E_SENTINEL);
       return (entry?.holders ?? []).map((holder) => holder.agent_id);
-    } catch {
+    } catch (error) {
+      warn(
+        `could not parse the queue's holders (${error instanceof Error ? error.message : String(error)}), so a ` +
+          'dead holder cannot be reclaimed and this run may wait its full timeout. Only scheduling is at stake.'
+      );
       return [];
     }
   }
@@ -532,6 +619,20 @@ export function resolvePlaywrightCli() {
  * streams a `list` reporter for minutes, and a buffered child looks hung.
  * `process.execPath` plus a resolved path means no shell, no PATH lookup, and no
  * `playwright.cmd` on Windows.
+ *
+ * ## Why there are signal handlers at all, and what they cost
+ *
+ * The child shares this process's process group, so Ctrl-C in the terminal reaches
+ * Playwright directly. Registering a handler is still necessary for one case the
+ * group does not cover — `kill <wrapper-pid>`, which an agent or a script does, and
+ * which would otherwise leave the suite running with nobody waiting for it.
+ *
+ * The cost is real, though: a registered handler REPLACES Node's default exit, so
+ * every later signal is also forwarded and the wrapper keeps waiting. A suite wedged
+ * in a browser teardown would then be un-interruptible from the terminal, and the
+ * only way out would be `kill -9` on the wrapper pid. So the second signal stops
+ * waiting: it says so and exits with the shell's own 128+SIGINT. The first is
+ * forwarded and the child decides when it is done.
  */
 export function runPlaywright(args, options = {}) {
   const env = options.env ?? process.env;
@@ -541,8 +642,19 @@ export function runPlaywright(args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cli, ...args], { cwd, env, stdio: 'inherit' });
 
-    const onSigint = () => child.kill('SIGINT');
-    const onSigterm = () => child.kill('SIGTERM');
+    let signalled = 0;
+    const forward = (signal, name) => () => {
+      signalled += 1;
+      if (signalled === 1) {
+        child.kill(signal);
+        return;
+      }
+      console.error(`${PREFIX} ${name} again: the suite is not stopping, so this wrapper is giving up on it.`);
+      cleanup();
+      process.exit(128 + (constants.signals[signal] ?? 0));
+    };
+    const onSigint = forward('SIGINT', 'interrupted');
+    const onSigterm = forward('SIGTERM', 'terminated');
     const cleanup = () => {
       process.off('SIGINT', onSigint);
       process.off('SIGTERM', onSigterm);
@@ -607,8 +719,12 @@ export async function run(argv, options = {}) {
   // too, so every one of them needs the subcommand as well.
   const playwrightArgv = ['test', ...argv.filter((arg) => arg !== '--no-lock')];
 
-  if (playwrightArgv.includes('--help') || playwrightArgv.includes('--version')) {
-    // Nothing runs, so there is nothing to prepare.
+  if (isHelpRequest(playwrightArgv)) {
+    // Nothing runs, so there is nothing to prepare — but the refusals still run
+    // first (below the port), because `PLAYWRIGHT_REUSE_EXISTING_SERVER` is documented
+    // as refused unconditionally and "unconditionally" should not have a help-shaped
+    // exception. They are cheap and they throw before anything is started.
+    assertOwnServer(env);
     return spawnSuite(playwrightArgv, { ...options, env });
   }
 
@@ -630,17 +746,37 @@ export async function run(argv, options = {}) {
     } else {
       log(`${PREFIX} port: unchanged, ${reason}`);
     }
+
+    // `--last-failed` reads `<outputDir>/.last-run.json` and silently runs the WHOLE
+    // suite when that file is not where it expects it
+    // (playwright/lib/runner/index.js:6608-6625 swallows the read error and applies no
+    // filter). A per-run `outputDir` moves that file every run, so without this the
+    // flag quietly stops meaning anything — an agent that ran it to re-check a fix
+    // would be told everything passed. Pinned to the SHARED path, which is also where
+    // `npm run test:e2e:clean` already looks for it.
+    childEnv.PLAYWRIGHT_LAST_RUN_OUTPUT_FILE = path.join(REPO_ROOT, 'test-results', '.last-run.json');
   }
 
   // The queue, second, and best-effort. A run that cannot have it runs anyway.
-  const skipQueue = env.E2E_SKIP_LOCK === '1' || argv.includes('--no-lock') || ci;
-  const lock = options.lock ?? new SwarmLock({ ...options, env, log });
+  //
+  // The lock is constructed ONLY on the branch that uses it. An earlier version built
+  // it unconditionally, before this decision, so a run that had already declared it
+  // would not queue still paid for `git rev-parse` and for lease validation — and a
+  // bad lease killed it outright (see `resolveLease`).
+  const skipReason = ci
+    ? 'CI'
+    : env.E2E_SKIP_LOCK === '1'
+      ? 'E2E_SKIP_LOCK=1'
+      : argv.includes('--no-lock')
+        ? '--no-lock'
+        : null;
+  const lock = skipReason ? null : (options.lock ?? new SwarmLock({ ...options, env, log }));
   let queued = false;
 
-  if (ci) {
+  if (skipReason === 'CI') {
     log(`${PREFIX} CI: one checkout, one runner, so the e2e queue is not used.`);
-  } else if (skipQueue) {
-    log(`${PREFIX} --no-lock: not queueing. Only scheduling is lost; this run still has its own port.`);
+  } else if (skipReason) {
+    log(`${PREFIX} ${skipReason}: not queueing. Only scheduling is lost; this run still has a port of its own.`);
   } else {
     const attempt = await lock.acquire();
     queued = attempt.acquired;
@@ -649,37 +785,75 @@ export async function run(argv, options = {}) {
 
   const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
   const paths = runOutputPaths(REPO_ROOT, runId);
+  let runRecord = null;
 
   if (!ci) {
     // A caller who passed their own `--output` has said where the run's output goes.
     // Two `--output` flags is not an error to Playwright, it silently takes the last
-    // one, so the caller's wins by not being overridden.
-    if (!playwrightArgv.includes('--output')) {
+    // one, so the caller's wins by not being overridden. BOTH spellings: the bundled
+    // commander accepts `--output=dir` as well as `--output dir`, and `includes` on
+    // the bare token missed the equals form — so a caller who used it had their
+    // choice discarded with a log line that still looked correct.
+    if (!hasOutputFlag(playwrightArgv)) {
       playwrightArgv.push('--output', paths.outputDir);
       log(`${PREFIX} output: ${path.relative(REPO_ROOT, paths.outputDir)}`);
     } else {
       log(`${PREFIX} output: as given on the command line`);
     }
 
-    writeRunRecord({
+    // What the tests will actually load. On the sanctioned remote path the port is
+    // still allocated and still served by this run's own dev server, so deriving
+    // `baseUrl` from it unconditionally recorded a localhost URL as the thing under
+    // test — in the one file whose stated job is to stop a report implying a local
+    // verification. The remote target is recorded too, and `remote` is true.
+    runRecord = {
       runId,
       pid: process.pid,
       port: childEnv.PLAYWRIGHT_PORT ?? null,
-      baseUrl: childEnv.PLAYWRIGHT_PORT ? `http://localhost:${childEnv.PLAYWRIGHT_PORT}` : null,
+      baseUrl:
+        env.PLAYWRIGHT_BASE_URL ?? (childEnv.PLAYWRIGHT_PORT ? `http://localhost:${childEnv.PLAYWRIGHT_PORT}` : null),
+      remote: Boolean(remote),
       outputDir: paths.outputDir,
       queued,
-      remote: Boolean(remote),
       startedAt: new Date().toISOString(),
-    });
+    };
+    writeRunRecord(runRecord);
     log(`${PREFIX} port recorded in ${path.relative(REPO_ROOT, RUN_RECORD)}`);
   }
 
   try {
     if (queued) lock.startRenewal((why) => log(`${PREFIX} ${why}`));
-    return await spawnSuite(playwrightArgv, { ...options, env: childEnv });
+    const code = await spawnSuite(playwrightArgv, { ...options, env: childEnv });
+    // Close the record. Without this, a run that died before Playwright started and a
+    // run that served an hour of tests leave byte-identical evidence except for the
+    // wall-clock stamp, and the file exists to be read by someone debugging a failure
+    // an hour later.
+    if (!ci) writeRunRecord({ ...runRecord, exitCode: code, finishedAt: new Date().toISOString() });
+    return code;
   } finally {
-    lock.release();
+    lock?.release();
   }
+}
+
+/** Did the caller already choose an output directory, in either spelling? */
+function hasOutputFlag(args) {
+  return args.some((arg) => arg === '--output' || arg.startsWith('--output='));
+}
+
+/**
+ * Is this a request for Playwright's own help or version, rather than a run?
+ *
+ * Only tokens BEFORE the first bare `--` count. Playwright treats everything after
+ * `--` as a grep pattern, so `e2e/foo.spec.ts -- --help` is a filtered run whose
+ * pattern is the string `--help`; short-circuiting on it would print help instead of
+ * running the suite. `-h` and `-v` are Playwright's own aliases
+ * (playwright/lib/program.js) and an earlier version matched neither, so `-h` fell
+ * through the whole path: it allocated a port, took the queue, wrote a run record,
+ * and then printed help.
+ */
+function isHelpRequest(args) {
+  const positional = args.slice(0, args.indexOf('--') === -1 ? undefined : args.indexOf('--'));
+  return ['--help', '-h', '--version', '-v'].some((flag) => positional.includes(flag));
 }
 
 /** The last run's port and output directory, for whoever is diagnosing it later. */
@@ -709,9 +883,26 @@ export async function main(argv) {
  * `scripts/__tests__/e2e-run.test.mjs`, and under Vitest `import.meta.url` is an
  * `http://localhost/…` URL, which `fileURLToPath` cannot resolve. `import.meta.dirname`
  * is what the sibling board test uses for the same reason.
+ *
+ * Both sides are `realpath`ed. Comparing a resolved path to an unresolved one is a
+ * mismatch for an ordinary symlink, and the result of that mismatch is the worst
+ * shape this file can produce: the module imports, does nothing, and the process
+ * exits 0 — an "e2e run" that ran no tests and reported success. `realpathSync` on a
+ * path that does not exist throws, so it is applied only to paths that resolve.
  */
-const INVOKED_AS = process.argv[1] ? path.resolve(process.argv[1]) : null;
-if (INVOKED_AS === path.join(import.meta.dirname, 'e2e-run.mjs')) {
+function invokedAsThisFile() {
+  if (!process.argv[1]) return false;
+  const resolve = (value) => {
+    try {
+      return realpathSync(value);
+    } catch {
+      return path.resolve(value);
+    }
+  };
+  return resolve(process.argv[1]) === resolve(path.join(import.meta.dirname, 'e2e-run.mjs'));
+}
+
+if (invokedAsThisFile()) {
   const argv = process.argv.slice(2);
   if (argv.includes('--e2e-run-help')) {
     console.log(HELP);
