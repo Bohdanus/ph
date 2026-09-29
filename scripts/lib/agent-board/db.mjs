@@ -43,6 +43,15 @@ const SCHEMA_VERSION = 2;
  */
 export const DEFAULT_LEASE_MS = 45 * 60 * 1000;
 
+/**
+ * How long a live finding can go untouched before `health` calls it idle.
+ *
+ * Long enough to span an overnight gap in a swarm that is genuinely paused, and
+ * short enough that a finding nobody came back for is visible before it is
+ * forgotten. It only ever REPORTS such a finding.
+ */
+export const IDLE_LIVE_MS = 6 * 60 * 60 * 1000;
+
 /** "No cap" for an internal aggregation, as opposed to a displayed page. */
 export const NO_LIMIT = Number.MAX_SAFE_INTEGER;
 
@@ -1689,7 +1698,7 @@ export class Board {
    * release is recorded — so `doctor` is safe to run at any time and explains
    * itself in the log rather than mutating the board silently.
    */
-  doctor({ at = this.now(), dryRun = false } = {}) {
+  doctor({ at = this.now(), dryRun = false, record = true } = {}) {
     const findings = [];
     const claims = this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL').all();
     for (const claim of claims) {
@@ -1710,6 +1719,19 @@ export class Board {
       if (Date.parse(lock.expires_at) > at2) continue;
       findings.push({ kind: 'expired-lock', path: lock.path, agent: lock.agent_id, releaseable: true });
     }
+    // A sweep is a fact about the swarm and the log is the only place it can be
+    // seen from another session. But it is recorded ONLY when it released
+    // something, because the sweep now runs on every command: an event per
+    // invocation turned a six-event board into one that was two-thirds sweep
+    // noise, which is the same flood the tailing fix was written for, and it
+    // made `health` inflate the very number it was reporting.
+    if (record && findings.length > 0) {
+      this.addEvent('doctor.run', {
+        message: findings.length
+          ? `${findings.length} stale holding(s) ${dryRun ? 'would be released' : 'released'}`
+          : 'nothing stale',
+      });
+    }
     if (!dryRun) {
       for (const finding of findings) {
         if (finding.issue) this.releaseClaim(finding.issue, { agent: finding.agent, force: true });
@@ -1717,6 +1739,160 @@ export class Board {
       }
     }
     return findings;
+  }
+
+  /**
+   * Keeps this agent's own claims alive, using the only liveness signal nobody
+   * has to remember to send.
+   *
+   * The lease was a promise the holder had to keep by hand: `claim.renew` fired
+   * ONCE in 238 events, and 4 of 5 unreleased claims ended up expired while
+   * their holders were very likely still working. A heartbeat nobody sends is
+   * not a liveness signal, it is a countdown that always runs out.
+   *
+   * What an agent cannot forget is existing: it has a worktree on disk, and
+   * that directory is here long after the session that made it has stopped
+   * caring. So the worktree IS the heartbeat, and this renews while it stands.
+   *
+   * The event is written only when the lease actually needed it — otherwise
+   * every command an agent runs writes a `claim.renew`, which turns the log
+   * into the thing `watch` already had to be fixed for once: a few hundred
+   * events re-printed on every poll.
+   */
+  renewOwnClaims({ at = this.now(), leaseMs = DEFAULT_LEASE_MS } = {}) {
+    const agentId = this.identity?.agentId;
+    if (!agentId) return [];
+    // An agent with no worktree has no way to prove it is alive, so it keeps
+    // the manual contract. That is the outside-a-worktree case, and it is the
+    // one where `claim.renew` still means something.
+    const worktree = this.identity?.worktree;
+    if (!worktree || !existsDir(worktree)) return [];
+    const until = new Date(at + leaseMs).toISOString();
+    const mine = this.db
+      .prepare('SELECT * FROM claims WHERE released_at IS NULL AND agent_id = ?')
+      .all(agentId)
+      .filter((claim) => Date.parse(claim.lease_until) - at < leaseMs / 2);
+    for (const claim of mine) {
+      this.db.prepare('UPDATE claims SET lease_until = ? WHERE issue_id = ?').run(until, claim.issue_id);
+      this.addEvent('claim.renew', { issue: claim.issue_id, message: 'lease extended by presence' });
+    }
+    return mine.map((claim) => claim.issue_id);
+  }
+
+  /**
+   * The maintenance a board should never need a human to run: keep my own
+   * claims alive because I exist, then release the ones whose holder does not.
+   *
+   * Order matters and is the whole reason this is safe. Renewing first means a
+   * working agent's lease is never the thing that gets swept, so the sweep can
+   * only ever reclaim a claim whose worktree is gone — which is precisely when
+   * reclaiming it is correct. Sweeping first, as a bare `doctor` on every open
+   * would, hands a 45-minute timer the power to strip a lock off an agent in
+   * the middle of an edit.
+   */
+  autoSweep({ at = this.now(), dryRun = false } = {}) {
+    const renewed = dryRun ? [] : this.renewOwnClaims({ at });
+    const released = this.doctor({ at, dryRun, record: !dryRun });
+    return { renewed, released };
+  }
+
+  /**
+   * Is this board being used, or only carried? One command, because the
+   * question was previously answered by hand-writing SQL against a schema, and
+   * an instrument nobody can read is the same as no instrument.
+   */
+  health({ at = this.now() } = {}) {
+    const byKind = new Map();
+    for (const event of this.db.prepare('SELECT kind, COUNT(*) n FROM events GROUP BY kind').all()) {
+      byKind.set(event.kind, event.n);
+    }
+    const total = [...byKind.values()].reduce((a, b) => a + b, 0);
+    const count = (kind) => byKind.get(kind) ?? 0;
+    /**
+     * The unit of a row, read off the row rather than off a list kept beside it.
+     *
+     * Summing these into one total is what produced a published, wrong number.
+     * `lock.hold` is ONE event for a command that took any number of files (its
+     * message says so: "14 file(s)"), `lock.release` is ONE event PER FILE, and
+     * a good share of the holds took no files at all ("filed about 2 file(s),
+     * no locks taken" — the filer was refused). So an agent that holds fourteen
+     * files and later releases them writes 1 row and 14, and a share computed
+     * over the sum describes the ENCODING rather than the swarm: it reported
+     * that 66% of locking traffic was `lock.release`, which was an artifact, and
+     * that number reached AGENTS.md before anyone noticed.
+     *
+     * A row that names a path is about one file; a row that does not is about
+     * one command. That is derivable from the data, so it is derived, and the
+     * two are reported as two numbers rather than added into a third.
+     */
+    const perFile = new Map();
+    const perCommand = new Map();
+    for (const row of this.db
+      .prepare(
+        `SELECT kind, CASE WHEN path IS NULL THEN 0 ELSE 1 END AS is_file, COUNT(*) n
+         FROM events GROUP BY kind, is_file`
+      )
+      .all()) {
+      (row.is_file ? perFile : perCommand).set(row.kind, row.n);
+    }
+    const summed = (map) => [...map.values()].reduce((a, b) => a + b, 0);
+
+    /**
+     * The lock truth, from the table rather than from the log: one row per lock
+     * actually taken, which is the only count that answers "how much of this
+     * repository is under a lock right now".
+     */
+    const lockRows = this.db
+      .prepare('SELECT COUNT(*) taken, SUM(CASE WHEN released_at IS NULL THEN 1 ELSE 0 END) live FROM file_locks')
+      .get();
+    const taken = lockRows.taken ?? 0;
+    const liveLocks = lockRows.live ?? 0;
+    const unreleased = this.db.prepare('SELECT * FROM claims WHERE released_at IS NULL').all();
+    const live = unreleased.filter((claim) => Date.parse(claim.lease_until) > at);
+    const open = this.listIssues({ status: ['open', 'deferred'], limit: NO_LIMIT });
+    const liveIssues = open.filter((issue) => !isImportedOrigin(issue.origin));
+    return {
+      total,
+      byKind: Object.fromEntries([...byKind].sort((a, b) => b[1] - a[1])),
+      /**
+       * Split by unit, because the two are not additive and never were. Read
+       * these as two separate measures of activity, never as two halves of one
+       * number.
+       */
+      activity: {
+        perCommand: Object.fromEntries([...perCommand].sort((a, b) => b[1] - a[1])),
+        perFile: Object.fromEntries([...perFile].sort((a, b) => b[1] - a[1])),
+        perCommandTotal: summed(perCommand),
+        perFileTotal: summed(perFile),
+      },
+      locks: { taken, live: liveLocks, released: taken - liveLocks },
+      claims: { total: unreleased.length, live: live.length, expired: unreleased.length - live.length },
+      // Reclaims the board has made by itself, which is the number that says
+      // whether maintenance is running — and it stays 0 on a healthy board,
+      // because a sweep that found nothing is not an event.
+      sweeps: count('doctor.run'),
+      deps: this.db.prepare('SELECT COUNT(*) n FROM deps').get().n,
+      issues: { open: open.length, live: liveIssues.length, imported: open.length - liveIssues.length },
+      /**
+       * Live findings nobody has touched, because a finding with no activity is
+       * a finding whose reader has gone away.
+       *
+       * REPORTED, never expired. The durable record for a defect is
+       * HANDOFF.md, and this board says so itself: a finding that goes idle
+       * here is one that has not been moved somewhere it will still be read.
+       * Deleting it would destroy a real observation because nobody happened to
+       * be looking, which is the opposite of what a coordination tool is for.
+       * What this number is for is telling a human which findings are about to
+       * fall out of the conversation.
+       */
+      idleLive: liveIssues
+        .filter((issue) => at - Date.parse(issue.created_at) > IDLE_LIVE_MS)
+        .map((issue) => ({
+          id: issue.id,
+          title: issue.title,
+          idleMs: at - Date.parse(issue.created_at),
+        })),
+    };
   }
 }
 

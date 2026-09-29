@@ -121,7 +121,7 @@ a real window, because that is what they are for. The rule applies to
 
 ## P2 — `drawLine` applies no contain scale, so its arguments are not document coordinates
 
-`e2e/helpers/canvas-helpers.ts:458-475`
+`e2e/helpers/canvas-helpers.ts:505-522`
 
 A spec must not drift into the assumption that `drawLine`'s arguments are
 document coordinates. They are not. `drawLine` computes
@@ -159,7 +159,7 @@ breaks all of them at once.
 
 ## P2 — `boundingBox()` is viewport-relative and a CDP capture clip is page-relative
 
-`e2e/helpers/screenshot-scale.ts:87-109`, `e2e/helpers/cdp-helpers.ts:45-64`
+`e2e/helpers/screenshot-scale.ts:103-125`, `e2e/helpers/cdp-helpers.ts:45-64`
 
 The hazard, for whoever refactors this next. The app is taller than Playwright's
 720px window, so the window scrolls. `Locator.boundingBox()` measures against the
@@ -178,9 +178,9 @@ capture bug rather than a coordinate bug.
 
 **The helper-level fix is done, and it is recorded here so a refactor does not
 undo it.** The conversion is the pure function `viewportRectToPageRect`
-(`screenshot-scale.ts:110-117`), it is applied **at the CDP site only**
+(`screenshot-scale.ts:126-133`), it is applied **at the CDP site only**
 (`cdp-helpers.ts:56-64`) and not in the callers, the scroll offset is read per
-capture rather than cached (`getPageScroll`, `canvas-helpers.ts:309`, because
+capture rather than cached (`getPageScroll`, `canvas-helpers.ts:356`, because
 the window scrolls between captures — `clickToolButton` alone scrolls 440px, which
 is what `preservingScroll` exists to undo, `toolbar-helpers.ts:117-121,128,161`),
 and the rule is unit-tested for a non-zero offset at
@@ -243,7 +243,7 @@ type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like
 Object. Received undefined` (Node 24). The message names neither CDP, nor this
 helper, nor the test, so the reader has to find the call site before they can tell
 what failed. The sibling helper in the same directory checks its inputs and names
-itself (`canvas-helpers.ts:345-348`); this one does not.
+itself (`canvas-helpers.ts:392-395`); this one does not.
 
 Fix: validate the response before decoding — `typeof data === 'string'`, and
 non-empty — with an error that names `captureCanvasScreenshot` and the CDP request
@@ -253,86 +253,6 @@ guard on the same two lines.
 Pinned by `rejects with a raw TypeError when the CDP response omits data, and
 detaches` in `e2e/helpers/__tests__/cdp-helpers.unit.test.ts:385`. A fix removes that
 pin in the same change.
-
-## P2 — the Text toolbar supplies the rectangle Apply's gate asks for, so text typed without a drag commits at the document origin
-
-`src/components/ToolbarsRight/Text/Text.tsx:37-42`, `:83`, `:210` and
-`src/util/rect.ts:116-173`
-
-**The premise this entry rests on is no longer in the tree, and the citations below
-have been re-derived against the current file.** `calculateNewRect` no longer
-substitutes a placeholder when `args.rect` is null — it returns `null`
-(`rect.ts:129`), and the comment above that line (`rect.ts:122-128`) records the old
-`newArgs.rect ?? { x1: 0, y1: 0, x2: 0, y2: 0 }` and says why it went. So the
-measurement further down is the record of the defect as it was, not a claim about
-today's `src/`, and the one citation that named the placeholder line now names the
-comment that replaced it. The entry is kept rather than deleted: this file's own
-lifecycle rule is that a fixer does not delete its own finding — verification is
-another agent's, a reviewer's, or a test's.
-
-`Apply` is gated on `disabled={!text || !rect}` (`Text.tsx:210`) and `applyText`
-re-checks `if (text && rect)` (`:83`), so the control states that a rectangle is a
-precondition for committing a text layer. The toolbar's own text input satisfies that
-precondition by itself: `handleTextChange` passes every keystroke through
-`calculateNewRect`, which manufactures a rectangle from the `{ x1: 0, y1: 0, x2: 0,
-y2: 0 }` placeholder it substitutes when `args.rect` is null (`rect.ts:122-129`, where
-the substitution now survives only as a comment), then widens it to the measured text
-(`rect.ts:139-172`). Typing the first character
-therefore produces a real rectangle, `!rect` is false, and Apply enables with no canvas
-interaction at all — so the `!rect` half of the gate is unreachable from the toolbar.
-
-Measured headless, foreground set to `#ff0000`, starting document 800x600, no canvas
-drag at any point. Every row was read on `main` at `aea55d3` except the overlay read,
-which was taken on `e2e/text-tool` at `c7b268f` — a tree whose `src/` is byte-identical
-to `aea55d3` — where it also reproduced the `Apply` enabled row:
-
-| step                                                            | observed                                                      |
-| --------------------------------------------------------------- | ------------------------------------------------------------- |
-| select the Type tool                                            | `Apply` disabled                                              |
-| type `Hi` into `#text-input`                                    | `Apply` **enabled**, and `Clear` enabled too                  |
-| read the tool overlay's own backing store, still before `Apply` | 867 fully opaque foreground-red pixels, 943 at >=50% coverage |
-| click `Apply`                                                   | layer row `text 2` added                                      |
-| where those pixels are                                          | document (9,8)-(61,54) — a 52x46 block in the top-left corner |
-
-(9,8) and (61,54) are read out of the overlay canvas's `ImageData`, so they are
-document pixels with no scaling involved. `renderText` does not start there: it
-starts at `x1 + TEXT_PADDING` / `y1 + TEXT_PADDING` (`text.ts:32`, `:49`,
-`constants.ts:3`), which with the substituted placeholder rect is document
-(5,5) — the _start_ of the layout, not the first painted pixel. The 4px of
-horizontal and 3px of vertical offset from (5,5) are the glyph's side bearing and
-ascent, and they are why an entry that says the pixels land "onward from document
-(5,5)" is measuring the wrong pixel.
-
-The drag-then-type path instead commits inside the dragged rectangle
-(`e2e/text-tool.spec.ts` measures 11 / 20 / 328 / 45 CSS px of ink inset on left
-/ top / right / bottom), so the two ways of enabling Apply place the text in
-different places. What the UI does about it is the part an earlier version of this
-entry got wrong: **the placement is visible before the commit.** The tool overlay
-repaints the draft on every keystroke (`TextToolArea.tsx:45-49` -> `redrawText` ->
-`renderText`), and the row above is that read taken _before_ `Apply` is clicked, so
-a user who types without dragging watches the glyphs appear in the document's
-top-left corner and can see that this is not where their other work is. The defect
-is the gate and the default origin, not a placement the user cannot see: nothing
-tells them a rectangle was supposed to be a precondition, and the origin is a poor
-default for a document being worked on elsewhere, but it is on screen before the
-click rather than after it.
-
-Fix is a product decision, not a test change. Either commit at the origin deliberately
-and drop `!rect` from the gate so the control stops implying otherwise, or keep the
-gate and stop `calculateNewRect` from inventing a rectangle when `args.rect` is null:
-return `null` in that branch and have `handleTextChange` leave the existing rectangle
-alone. Whichever is chosen, `Text.tsx:210` and `handleTextChange` have to agree about
-it.
-
-**A fix to the gate would be completely unpinned, and that is deliberate.**
-`e2e/text-tool.spec.ts` is the only spec in the tree that drives `#text-input`, and
-all four of its tests drag a rectangle before typing — including the Clear test's
-re-apply. So neither making `!rect` reachable nor dropping it from
-`disabled={!text || !rect}` turns any test red, and nothing in the suite would notice
-either way. A fix should land with a test that types without dragging: the observable
-consequences are `Apply` staying disabled until a rectangle exists, and the committed
-ink landing where the user dragged. Until then the behaviour is recorded here and
-nowhere else.
 
 ## P3 — zero-sized image yields `NaN` edges
 
@@ -345,16 +265,16 @@ opaque. Callers must reject empty images first.
 
 ## P3 — transparent pixels weighted as fully opaque (low confidence)
 
-`e2e/helpers/canvas-helpers.ts:362` and `:659` **[pinned]**
+`e2e/helpers/canvas-helpers.ts:409` and `:706` **[pinned]**
 
 `dominantRed` and `getColorAtPoint` skip only `alpha === 0`, so a nearly
 invisible pixel counts at full weight. A weighting concern rather than a
 correctness bug, and the only helper that reports the colour back to the caller.
 They are the two places the distinction bites hardest, because the other two
-`alpha === 0` filters, in `hasDarkPixels` (`:387`) and `hasRedPixels` (`:407`),
+`alpha === 0` filters, in `hasDarkPixels` (`:434`) and `hasRedPixels` (`:454`),
 answer a yes/no question where one nearly-invisible pixel is the same as one
-opaque one. The other half of the file, `getDarkPixelBounds` (`:555`) and
-`getSelectionBounds` (`:614`), filters on `a !== 0` instead — a different question
+opaque one. The other half of the file, `getDarkPixelBounds` (`:602`) and
+`getSelectionBounds` (`:661`), filters on `a !== 0` instead — a different question
 asked with a boolean rather than a weight.
 
 ## P3 — 10 orphaned committed baselines (2.1 MB)
@@ -403,7 +323,7 @@ shape a fix must not take.
 
 `e2e/helpers/cdp-helpers.ts:15-18`
 
-The guard exists and is the same shape as `canvas-helpers.ts:345-348`, but it is
+The guard exists and is the same shape as `canvas-helpers.ts:392-395`, but it is
 the module's only uncovered statement: `npm run test:e2e:unit:coverage` reports
 `cdp-helpers.ts` at 93.75% statements and 93.33% lines with the `throw` — now line
 17 — uncovered, against 100% of its functions. The sibling guard is pinned
@@ -441,7 +361,7 @@ cannot render, would still be reported as correct. It is also invisible in jsdom
 because that matcher reads the DOM property directly and has no retarget step. A
 jsdom pass is therefore not evidence that the browser assertion works.
 
-Workaround used in `e2e/erase-fill-eyedropper.spec.ts:327`: assert the attribute and
+Workaround used in `e2e/erase-fill-eyedropper.spec.ts:376`: assert the attribute and
 the enabled set, both read straight off the DOM.
 
 ```ts
@@ -492,7 +412,7 @@ Two specs are `test.skip` by declaration:
 - `e2e/export/photopea.spec.ts:12` — `exports to PSD and verifies in Photopea`.
   Round-trips through the external photopea.com, so it cannot run offline or in
   a sandboxed CI.
-- `e2e/sidebar-flyout.spec.ts:162` — `right-click does not open flyout for
+- `e2e/sidebar-flyout.spec.ts:171` — `right-click does not open flyout for
 single-tool groups`.
 
 ## Verified and still unverified
@@ -588,6 +508,92 @@ loudly, which is the better of the two outcomes and is not guaranteed.
 values. Worth knowing before passing a custom clip anywhere in this suite: the two forms
 differ by the box origin and nothing in the types distinguishes them.
 
+## P1 — the document-space oracle reached a handful of call sites, so most of the suite still moves when the frame does
+
+`e2e/helpers/canvas-helpers.ts:48-52`
+
+**What exists.** `documentToCanvasOffset` maps a DOCUMENT point into the canvas box by reproducing
+the app's contain fit, and the export fixture uses it, so `e2e/export/visual-regression.spec.ts` no
+longer depends on where the app put the letterbox. That is the right idea and it works.
+
+**What does not.** The idea reached exactly one caller. `LINE_START_X`/`LINE_START_Y`/`LINE_END_X`/
+`LINE_END_Y` at `e2e/helpers/canvas-helpers.ts:48-52` are still "relative to the canvas box", and nine
+specs import them: `adjustments`, `color`, `document-dialogs`, `erase-fill-eyedropper`, `example`,
+`file-roundtrip`, `levels`, `paint-tool-pixels`, `select-move`. Beyond those, the suite writes its
+gestures as `box.x + <something>` throughout, and **none of them invert the mapping back to document
+space**. Counted, with the counting command, because a number here without one is worse than none
+and an earlier draft of this entry got it wrong twice — once by 7x:
+
+```
+grep -rEo "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[0-9]+" e2e            # 25  canvas-relative LITERALS
+grep -roE "[A-Za-z_]*[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]*" e2e   # 63  any box-relative offset
+grep -roE "[Bb]ox\.[xy] *\+ *[A-Za-z_][A-Za-z0-9_]* *\*" e2e      #  0  the fraction form, which is correct
+```
+
+So: 25 gestures add a bare number to the box origin, and 63 add something box-relative. The 63 is
+the larger number because it includes sites like `box.x + LINE_Y`, which reach the same place
+through a named constant rather than a literal — those are the ones the first pattern misses
+entirely, and a count that only looked for literals is how the first draft of this entry said
+"twelve" and the second said "eighty-three". Both were wrong; the zero on the third line is the
+part that matters, because `e2e/viewport-drawing.spec.ts` gestures at `box.x + box.width * 0.25`
+and that is the one form that survives a layout change by construction.
+
+The ICO export path is still canvas-relative as well: `ICON_STROKE` at `e2e/export/helpers.ts:512`
+is a set of box offsets, used at `:541` and `:543`.
+
+**Why it matters, stated as a measurement rather than a worry.** These are not merely fragile, they
+are wrong in a specific direction. A `box.x + 150` gesture is a _window_-relative point: change the
+window and the point the mouse visits is a different point in the document. The document-space
+mapping has to be inverted before such a literal is meaningful, and it is not. So the suite still
+asserts against whatever geometry the current layout happens to produce, and a layout change
+silently changes what is being tested rather than failing.
+
+**Five assertions that fail outright on a 1px rail change**, all in `e2e/responsive-shell.spec.ts`:
+`:186` expects the collapsed rail at 56, `:207` and `:281` expect the right panel at 250, `:221`
+expects the panel's own width delta at 250, and `:296` expects the two-column rail at 108. Those are
+`toBeCloseTo(x, 0)`, so a single pixel fails them. They are the sharp end of the same defect: a
+number written into a test is a pin on the layout, and the layout is not the subject.
+
+**The pattern to copy is already in the tree.** `e2e/viewport-drawing.spec.ts:26-27` gestures at
+`box.x + box.width * 0.25` and `box.y + box.height * 0.35` — a fraction of the box, so it tracks the
+box instead of the window. That is the shape every one of the eighty-three should take, via
+`documentToCanvasOffset`.
+
+**Do not fix this by re-recording anything.** A re-record would bless the new layout, which is
+exactly the failure this campaign already made once: the seven export baselines were re-derived from
+a moving letterbox before `e8f17ba` specified the line in document space.
+
+## P2 — the dialog spec's `documentSize` pins a read that no longer proves the resize happens
+
+`e2e/document-dialogs.spec.ts`
+
+The spec's claim is that the dialog's dimensions are the thing under test, and it pins the
+document size to prove the app resized its canvas to it. The read is real: the size comes
+off the canvas backing store rather than being assumed, and asserting it is what makes that
+read observable. But the resize it is taken to prove is not, and it is not close.
+
+Neighbouring `src/hooks/useApp.ts` resizes the same element at **two** sites — `:63` and
+`:113` — and `src/contexts/layer-renderer.ts:136` resizes it again. Neutering the call the
+spec's comment names, and leaving the other two live, turns all four dialog tests green.
+So a build in which `useApp`'s resize is dead still passes every one of them.
+
+The draft-outline wait in the same file has the same shape, one level up: it proves the
+DRAG happened, not that the commit did. The pixel containment assertion is what proves the
+commit, and it is the one that would fail if a resize were wrong.
+
+**Fix.** Pin the resize where it happens rather than at a distance: assert that the
+document canvas's backing store equals the size the dialog committed, after the resize path
+that owns it has run, and name which of the three sites the test is covering. Until then,
+`documentSize` proves the READ and the word "resized" in its comment is doing work the test
+does not do.
+
+> **Re-verification baseline, restated.** Every line-numbered citation in this file —
+> above and below this line — was re-derived against this tree as it stands after the
+> e2e campaign branch merged into main, by content match and not by offset arithmetic,
+> and the ones the merge moved were corrected. That is the whole authority behind the
+> numbers here: they describe one tree, and the next merge moves them again, so
+> re-derive a `file:NNN` from the claim before acting on it.
+
 ---
 
 # Transferred findings — external review of the pre-migration tree
@@ -659,15 +665,57 @@ skipped.** The failures are
   this is that block.
 - `e2e/helpers/color-helpers.spec.ts:18` — the swatch `toHaveCSS` is compared against a
   literal CSS colour on a 2x surface.
-- `e2e/erase-fill-eyedropper.spec.ts:604` — an eyedropper block average over a fixed-size
+- `e2e/erase-fill-eyedropper.spec.ts:653` — an eyedropper block average over a fixed-size
   sample, in image pixels.
-- `e2e/keyboard-shortcuts.spec.ts:164` and `e2e/responsive-shell.spec.ts:232` (two tests).
+- `e2e/keyboard-shortcuts.spec.ts:164` and `e2e/responsive-shell.spec.ts:239` (two tests).
 
 So the honest statement is: the classifier and the specs this change touched are now
 resolution-independent, and four other specs are not. What remains is a coverage decision
 rather than a single defect, which is why it is still open: adding a project multiplies
 every run's cost, and the mobile/HiDPI specs this would exercise do not exist yet. It is
 not a one-line change to `playwright.config.ts`.
+
+## P3 — re-verification: the tablet band's option-row floor is no longer the panel's measured width
+
+`e2e/responsive-shell.spec.ts:238-256`
+
+**The 4 px shortfall this entry used to record is no longer asserted by the suite, and
+the derivation the old entry named as "the next step" has since been done.** The two
+"makes the … option panel horizontally scrollable rather than unreachable" tests no
+longer pin each panel to its own measured width. They share one derived floor:
+
+```
+const MIN_PANEL_WIDTH = TABLET.width + 100;   // :237 — 1000 at the 900px tablet band
+…
+expect(metrics.overflowX, 'the tablet band must scroll the option row').toBe('auto');
+expect(
+  metrics.scrollWidth,
+  'the option row must be wider than the window, with room to spare'
+).toBeGreaterThanOrEqual(MIN_PANEL_WIDTH);   // :255
+```
+
+The per-panel floors this replaced were 1089 (Shape) and 1036 (Horizontal Type), and
+both panels landed 4 px short of them deterministically — 2/2 in isolation, not only in
+a full run, so it was never the `vmThreads` pool flake the two suites under
+`scripts/__tests__/` usually are. The reasoning is now written out at
+`e2e/responsive-shell.spec.ts:224-236`: two floors moving by the same 4 px together is
+a shared-chrome signal rather than a lost control, because a lost control takes a whole
+widget with it. The panels are measured there at 1085 and 1032 against a 900px window,
+both clearing the 1000px floor.
+
+**The two tests pass on this host** (`npx playwright test e2e/responsive-shell.spec.ts`,
+21 passed), so the assertion is no longer red. That is NOT the same as the defect being
+fixed, and the reason matters: the required width was LOWERED, not the row widened. The
+panels still measure 1085 and 1032; what changed is the number they are compared against.
+So the 4 px the original entry recorded is still missing, and whether it was missing in a
+way a user can see is the open question — a derived floor that the current layout happens
+to clear will keep clearing it until the layout changes again, and then the test fails for
+a reason nobody will read as "the row got narrower".
+
+Nothing else it raised is in question: the row still has to overflow its own box (`:256`)
+and still has to scroll to its end (`:266-267`), and both are asserted. The decision
+between "widen the row" and "the floor was derived correctly all along" needs someone who
+can say which, so this entry stays open rather than being deleted on a green run.
 
 ---
 
@@ -682,7 +730,7 @@ and **is not a defect here**:
   case-insensitive. A case-sensitive `grep` for the capitalised form is what produced
   the false report.
 - **The workspace-canvas helper resolves a union and detonates the suite when the
-  testid lands.** `canvas-helpers.ts:326` is testid-only, no `.or()`, and
+  testid lands.** `canvas-helpers.ts:373` is testid-only, no `.or()`, and
   `resolveFakeMatches` returns the whole match list so the fake can model a union.
   All three parts landed together.
 - **CI-parallelism has no per-test isolation against a shared app.** Playwright's

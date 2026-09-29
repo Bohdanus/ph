@@ -52,10 +52,53 @@ export const LINE_END_X = 350;
 export const LINE_END_Y = 150;
 
 /**
- * The document the app opens by default, and the size the export baselines describe.
+ * The document the app seeds on boot, and the size the export baselines describe.
+ *
+ * This is a DEFAULT, not a fact about the app. `documentToCanvasOffset` used to hardcode
+ * it, which made the document size an assumption every document-space gesture inherited
+ * silently; a caller that knows the real size — the export fixture reads it off the canvas
+ * backing store — passes it, and the `e2e/export` suite asserts the two agree before it
+ * draws anything. `DEFAULT_DOCUMENT_*` remain exported for callers that genuinely mean
+ * "the seeded document".
  */
 export const DEFAULT_DOCUMENT_WIDTH = 800;
 export const DEFAULT_DOCUMENT_HEIGHT = 600;
+export const DEFAULT_DOCUMENT_SIZE = { width: DEFAULT_DOCUMENT_WIDTH, height: DEFAULT_DOCUMENT_HEIGHT } as const;
+
+export interface DocumentSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * The contain fit, in ONE place.
+ *
+ * `documentToCanvasOffset` and `canvasOffsetToDocument` used to each carry their own copy
+ * of these three lines, and the docstring above the second claimed it was "read off the
+ * live app". It never was: it was the first function's algebra inverted. The consequence
+ * was a round-trip test (`document-mapping.unit.test.ts`) asserting `f^-1(f(x)) = x` for
+ * one formula and its own inverse, which cannot fail and says nothing about the app. There
+ * is now a single `scale` / `offsetX` / `offsetY` derivation, so a change to the fit rule is
+ * a change in one place, and the only remaining question — whether this agrees with
+ * `usePointerPosition` — is answered against the app, not against this file.
+ *
+ * Mirrors `src/hooks/usePointerPosition.ts`: `scale = min(outerW/imageW, outerH/imageH)`,
+ * then the leftover split evenly as the offset. The app publishes its own computed values
+ * on the container as `data-fit-*` (see `publishFit` there), and
+ * `visual-regression.spec.ts` asserts these three numbers equal the app's, at more than
+ * one rect size including one that differs only in width.
+ */
+export function containFit(
+  box: { width: number; height: number },
+  documentSize: DocumentSize = DEFAULT_DOCUMENT_SIZE
+): { scale: number; offsetX: number; offsetY: number } {
+  const scale = Math.min(box.width / documentSize.width, box.height / documentSize.height);
+  return {
+    scale,
+    offsetX: (box.width - documentSize.width * scale) / 2,
+    offsetY: (box.height - documentSize.height * scale) / 2,
+  };
+}
 
 /**
  * Map a point in DOCUMENT space to an offset within the canvas box.
@@ -68,41 +111,44 @@ export const DEFAULT_DOCUMENT_HEIGHT = 600;
  * layout. Fixing a desktop overflow that changed the canvas from 974x890 to 974x583 moved
  * the export by 459 pixels with no change to the export path.
  *
- * This mirrors the app's own mapping exactly (`src/hooks/usePointerPosition.ts:72-89`:
- * `scale = min(outerW/imageW, outerH/imageH)`, then the leftover split evenly as the
- * offset), so a caller can name a document point and get the same pixel whatever the
- * viewport.
+ * `box` is the app's CONTAINER rect, and the helper is the forward direction only: the
+ * caller adds the box origin to reach a client coordinate, exactly as the app then maps
+ * that back through `getLocalCoords`. `visual-regression.spec.ts` asserts the box it passes
+ * is the container's own rect rather than the `<canvas>`'s, and that the two coincide here
+ * only because `<main>` has no padding or border and the canvas is `h-full w-full` of it.
+ *
+ * `documentSize` defaults to the seeded document; pass the measured size when you have it.
  */
 export function documentToCanvasOffset(
   box: { width: number; height: number },
   documentX: number,
-  documentY: number
+  documentY: number,
+  documentSize: DocumentSize = DEFAULT_DOCUMENT_SIZE
 ): { x: number; y: number } {
-  const scale = Math.min(box.width / DEFAULT_DOCUMENT_WIDTH, box.height / DEFAULT_DOCUMENT_HEIGHT);
-  const offsetX = (box.width - DEFAULT_DOCUMENT_WIDTH * scale) / 2;
-  const offsetY = (box.height - DEFAULT_DOCUMENT_HEIGHT * scale) / 2;
-
+  const { scale, offsetX, offsetY } = containFit(box, documentSize);
   return { x: offsetX + documentX * scale, y: offsetY + documentY * scale };
 }
 
 /**
- * The same mapping read off the live app, for asserting that `documentToCanvasOffset`
- * still agrees with it.
+ * The inverse of `documentToCanvasOffset`: the document point a canvas offset names.
  *
- * Returns the document point the app believes a given canvas offset refers to, which is
- * `usePointerPosition`'s own inverse. If these two ever disagree, a document-space gesture
- * is landing somewhere other than where the helper said, and every document-space spec is
- * silently measuring the wrong pixel.
+ * This is the app's `getLocalCoords` with the box origin dropped — `(clientX - offsetX -
+ * rect.x) / scale` — and it shares `containFit` with the forward direction, so the two
+ * cannot drift apart inside this file.
+ *
+ * It is NOT read off the live app, and it is not claimed to be. What the app actually
+ * computed is read at runtime, from the `data-fit-*` attributes `usePointerPosition`
+ * publishes on the container, and compared against the numbers above: see the
+ * "agrees with the app's own contain fit" test in `e2e/export/visual-regression.spec.ts`.
+ * That is the only assertion here that can fail if the app's mapping changes.
  */
 export function canvasOffsetToDocument(
   box: { width: number; height: number },
   canvasX: number,
-  canvasY: number
+  canvasY: number,
+  documentSize: DocumentSize = DEFAULT_DOCUMENT_SIZE
 ): { x: number; y: number } {
-  const scale = Math.min(box.width / DEFAULT_DOCUMENT_WIDTH, box.height / DEFAULT_DOCUMENT_HEIGHT);
-  const offsetX = (box.width - DEFAULT_DOCUMENT_WIDTH * scale) / 2;
-  const offsetY = (box.height - DEFAULT_DOCUMENT_HEIGHT * scale) / 2;
-
+  const { scale, offsetX, offsetY } = containFit(box, documentSize);
   return { x: (canvasX - offsetX) / scale, y: (canvasY - offsetY) / scale };
 }
 
@@ -262,6 +308,11 @@ function clamp(value: number, min: number, max: number): number {
  * `page.screenshot({ clip })` can only photograph what is on screen: Playwright trims the
  * clip against the viewport, and a region that is entirely above or below it collapses to
  * zero height and throws `Clipped area is either empty or outside the resulting image`.
+ * The clip this takes and returns is VIEWPORT-relative (see `ClipOptions`); the scroll is
+ * undone afterwards rather than left in place, because a caller's later `page.mouse`
+ * coordinates are viewport-relative and were built against the window it expects to still
+ * be in. A `Page.captureScreenshot` clip is document-relative and needs the opposite
+ * treatment — see `cdp-helpers.ts`.
  *
  * This is a SAFETY NET, not a workaround for a bug that is present. The rail now declares
  * `min-h-0 overflow-y-auto`, so the page no longer outgrows a 720px viewport and no region
@@ -270,10 +321,6 @@ function clamp(value: number, min: number, max: number): number {
  * reports success — and because "the page does not scroll" is a property of the current
  * layout rather than of the helper's contract. If a future change reintroduces an
  * overflowing page, the read below degrades to working instead of to a false negative.
- *
- * The scroll is restored rather than left in place because a caller's later
- * `page.mouse` coordinates are viewport-relative and were built against the window it
- * expects to still be in.
  */
 async function onScreenClip(page: Page, clip: Required<ClipOptions>): Promise<OnScreenClip> {
   const viewport = await readPageViewport(page);
@@ -847,4 +894,140 @@ export async function getStrokeAnalysis(
   const type = isSpray ? 'spray' : segments > 1 ? 'dashed' : 'solid';
 
   return { type, segments, verticalSpread: bottom - top + 1, pixelCount: darkCount + sprayCount };
+}
+
+/**
+ * Where a mark's ink sits, and how much of it there is.
+ *
+ * Every field is in IMAGE pixels, using the pixel-centre convention: the centre of the
+ * pixel at index `i` is `i + 0.5`, so an ink centroid of `78.5` means half the ink above
+ * the 78th row's midpoint. Every field is ink-WEIGHTED, so anti-aliased edge pixels
+ * contribute in proportion to how much ink they carry and the centroid moves
+ * sub-pixel-accurately with the mark.
+ */
+export interface InkProfile {
+  imageWidth: number;
+  imageHeight: number;
+  /** Total ink: the sum of the per-pixel weights. Zero means "no ink at all". */
+  ink: number;
+  /** Number of pixels carrying any ink. */
+  pixelCount: number;
+  /** Ink-weighted mean column and row, in image pixels. */
+  centroidX: number;
+  centroidY: number;
+  /** Ink-weighted standard deviation per axis: the mark's spread, independent of where it sits. */
+  spreadX: number;
+  spreadY: number;
+  /** Inclusive bounds of the columns and rows carrying any ink. */
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/**
+ * Luma below which a pixel is paper rather than ink.
+ *
+ * Eight of 255, and the reason is measured, not chosen: on the committed export baselines
+ * the paper is EXACTLY 255.0 in every format, so a floor of 0 would admit no background at
+ * all — but the lossy formats ring around a black-on-white edge, and a floor of 0 lets
+ * JPEG's ringing widen the ink's column bounds from the `118..292` that every format
+ * agrees on to `112..295`. A floor of 8 trims that and nothing else: on `drawing.png` it
+ * moves the centroid by 0.013 document pixels, well inside every tolerance below.
+ */
+export const INK_LUMA_FLOOR = 8;
+
+/**
+ * Measure a mark's ink geometry, sub-pixel.
+ *
+ * THE POINT. `compareScreenshots` counts differing pixels against a budget, and for a long
+ * horizontal stroke that budget is wildly asymmetric: shifting a 174x11 band one pixel
+ * sideways relights only the two round caps, so on the committed baseline a 1.0-document-pixel
+ * horizontal shift produces 88 diff pixels and PASSES the 100-pixel budget, while the same
+ * shift vertically produces 741 and fails. The oracle was therefore about 110x looser on the
+ * one axis a sidebar-width change, a DPR change or a rounding difference actually moves —
+ * the horizontal one. A measured centroid has no such blind spot: it tracks a horizontal
+ * shift of 1.0 document pixels to within 1e-6, and it costs no committed baseline.
+ *
+ * The weight is `INK_LUMA_FLOOR`-relative darkness against the 255 paper, which is the right
+ * model for ink on paper: it needs no knowledge of what colour the mark is, it is immune to
+ * a background that drifts off pure white, and it stays continuous, so it does not quantise
+ * the centroid the way a hard threshold would.
+ *
+ * Returns `null` when the image carries no ink at all, which is a legitimate answer (a blank
+ * export) and must not be read as "the mark was not found".
+ */
+export async function measureInk(
+  image: Buffer | ImageDataResult,
+  options: { floor?: number } = {}
+): Promise<InkProfile | null> {
+  const imageData = isBuffer(image) ? await loadImageData(image) : image;
+  const { width, height, data } = imageData;
+  const floor = options.floor ?? INK_LUMA_FLOOR;
+  const paper = 255 - floor;
+
+  let ink = 0;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXX = 0;
+  let sumYY = 0;
+  let pixelCount = 0;
+  let left = width;
+  let top = height;
+  let right = -1;
+  let bottom = -1;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = (y * width + x) * 4;
+      const alpha = data[index + 3];
+      if (alpha === 0) continue;
+      const luma = 0.299 * data[index] + 0.587 * data[index + 1] + 0.114 * data[index + 2];
+      // Scaled by alpha so a mark on a transparent background weighs the same as on paper.
+      const weight = ((paper - luma) * alpha) / 255;
+      if (weight <= 0) continue;
+
+      const centerX = x + 0.5;
+      const centerY = y + 0.5;
+      ink += weight;
+      sumX += weight * centerX;
+      sumY += weight * centerY;
+      sumXX += weight * centerX * centerX;
+      sumYY += weight * centerY * centerY;
+      pixelCount += 1;
+      if (x < left) left = x;
+      if (x > right) right = x;
+      if (y < top) top = y;
+      if (y > bottom) bottom = y;
+    }
+  }
+
+  if (ink === 0) return null;
+
+  const centroidX = sumX / ink;
+  const centroidY = sumY / ink;
+  return {
+    imageWidth: width,
+    imageHeight: height,
+    ink,
+    pixelCount,
+    centroidX,
+    centroidY,
+    spreadX: Math.sqrt(Math.max(0, sumXX / ink - centroidX * centroidX)),
+    spreadY: Math.sqrt(Math.max(0, sumYY / ink - centroidY * centroidY)),
+    left,
+    top,
+    right,
+    bottom,
+  };
+}
+
+/** `right - left + 1`: the width of the ink's column span, in whole image pixels. */
+export function inkWidth(profile: InkProfile): number {
+  return profile.right - profile.left + 1;
+}
+
+/** `bottom - top + 1`: the height of the ink's row span, in whole image pixels. */
+export function inkHeight(profile: InkProfile): number {
+  return profile.bottom - profile.top + 1;
 }

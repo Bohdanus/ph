@@ -164,9 +164,9 @@ test.describe('Keyboard shortcuts', () => {
     test('B selects the brush, and Shift+B cycles the whole brush family and wraps', async ({ page }) => {
       // The cycle is `brush -> pencil -> color-replacement -> eraser -> brush`
       // (`brushGroup` in AppKeyboardShortcuts). The paint bar mints its control ids from
-      // the tool name (`${toolName}-size`), and the placeholder and the eraser each render
-      // a different bar again, so every step of the cycle has its own observable and the
-      // wrap is proved rather than assumed.
+      // the tool name (`${toolName}-size`), and Color Replacement and the Eraser each render
+      // a real bar of their own (`color-replacement-*` / `eraser-*` ids), so every step of the
+      // cycle has its own observable and the wrap is proved rather than assumed.
       await page.keyboard.press('b');
       await expect(page.locator('#brush-size')).toBeVisible();
 
@@ -175,10 +175,13 @@ test.describe('Keyboard shortcuts', () => {
       await expect(page.locator('#brush-size')).toHaveCount(0);
 
       await page.keyboard.press('Shift+b');
-      await expect(
-        page.getByText('Color Replacement Tool', { exact: true }),
-        'pencil -> color replacement'
-      ).toBeVisible();
+      await expect(page.locator('#color-replacement-limits'), 'pencil -> color replacement').toBeVisible();
+      // It is a real bar, not a `PlaceholderTool` card: `toolsMap` wires it to
+      // `ToolbarsRight/ColorReplacement/ColorReplacement.tsx`, so no TODO card is on screen.
+      // This assertion is what the old title-text match stood in for, and it is the one that
+      // fails if the tool is ever re-wired to the placeholder — a title match would still
+      // pass, because the placeholder renders that exact title.
+      await expect(page.locator('div.border-dashed'), 'no placeholder card on the active bar').toHaveCount(0);
       await expect(page.locator('#pencil-size')).toHaveCount(0);
 
       await page.keyboard.press('Shift+b');

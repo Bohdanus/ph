@@ -71,6 +71,22 @@ export interface CssBox {
  * for this call site is", and `buildClip` in canvas-helpers.ts resolves one of these
  * against a `Required<ClipOptions>` default. Declared once here, imported everywhere.
  */
+/**
+ * A screenshot clip, in VIEWPORT-relative CSS pixels.
+ *
+ * THE ORIGIN IS THE POINT. `page.screenshot({ clip })` measures the clip against the
+ * viewport and adds `window.scrollX/Y` itself, and it trims the clip to the viewport, so a
+ * region entirely above or below the fold collapses to zero height and throws.
+ *
+ * A same-named type once sat in `e2e/helpers/cdp-helpers.ts` and meant a DIFFERENT space.
+ * `Page.captureScreenshot` reads its clip against the DOCUMENT origin, so the identical
+ * numbers named a region `scrollY` pixels away. Passing a viewport-relative number to CDP
+ * does not throw; it photographs the wrong pixels, which is how a capture came back as
+ * mostly white — a plausible image of a document that is mostly white. Anything handed to
+ * `captureCanvasScreenshot` must be converted with `viewportRectToPageRect` first, and
+ * anything handed to `page.screenshot` must not be. `cdp-helpers.ts` imports this type and
+ * the same sentence is repeated there, at the call site that could get it wrong.
+ */
 export interface ClipOptions {
   x?: number;
   y?: number;
