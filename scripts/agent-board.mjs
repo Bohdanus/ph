@@ -84,6 +84,7 @@ const USAGE = `swarm — live coordination for a swarm of agents on one reposito
   dep <id> <depends-on>  record a dependency
   status                 counts, your claims, live locks, expiring leases
   watch                  the event log          --follow --since --kind
+  health                 is this board being USED, or only carried?
   doctor                 release claims from dead worktrees and expired leases  --dry-run
   import                 the handoff documents into the board     --dry-run --file
   export                 dump the board as JSON
@@ -322,6 +323,22 @@ export async function run(
   try {
     board.open();
     board.touchAgent();
+    /**
+     * Maintenance nobody has to remember, on every command.
+     *
+     * This is safe only because it renews BEFORE it sweeps, so the thing it
+     * reclaims is always a claim whose worktree is gone. Running `doctor`
+     * itself here instead would hand a 45-minute timer the power to strip a
+     * lock off an agent in the middle of an edit, and `doctor` had been run
+     * zero times in 238 events — not because nobody needed it, but because
+     * remembering to run it is exactly the discipline a lease cannot depend on.
+     *
+     * `doctor` is EXEMPT, and has to be. A sweep before `doctor` would mean the
+     * real one had already run, so `doctor --dry-run` — the command whose whole
+     * job is to answer "what is stale right now", and the one a loop reads —
+     * would report nothing, and the command would be decorative.
+     */
+    if (command !== 'doctor') board.autoSweep();
 
     switch (command) {
       case 'init': {
@@ -783,6 +800,55 @@ export async function run(
           // back; an empty one means the swarm is quiet, so do not spin on it.
           await new Promise((resolve) => setTimeout(resolve, events.length > 0 ? 50 : 1500));
         }
+        return 0;
+      }
+
+      case 'health': {
+        const report = board.health();
+        const rows = (map) =>
+          Object.entries(map)
+            .slice(0, 6)
+            .map(([kind, n]) => [kind, n]);
+        emit(
+          report,
+          [
+            `${report.total} events in the log, in two units that must not be added together:`,
+            '',
+            `  per COMMAND (one event each) — ${report.activity.perCommandTotal}:`,
+            ...(rows(report.activity.perCommand).length
+              ? [columns(rows(report.activity.perCommand), ['KIND', 'N'])]
+              : ['    (none)']),
+            `  per FILE (one event each) — ${report.activity.perFileTotal}:`,
+            ...(rows(report.activity.perFile).length
+              ? [columns(rows(report.activity.perFile), ['KIND', 'N'])]
+              : ['    (none)']),
+            '',
+            // The lock number comes from the table, not the log, because it is
+            // the only one of the three that counts the same thing twice.
+            `locks: ${report.locks.taken} taken · ${report.locks.live} still live · ${report.locks.released} released`,
+            `claims: ${report.claims.live} live · ${report.claims.expired} expired of ${report.claims.total} unreleased`,
+            `sweeps run: ${report.sweeps} (reclaims the board made by itself)`,
+            `dependencies recorded: ${report.deps}`,
+            `open issues: ${report.issues.live} live · ${report.issues.imported} imported`,
+            // Each of these is a measurement, not a nag: the point of the
+            // command is that a reader does not have to hand-write the SQL, and
+            // a number that is merely printed is one nobody compares.
+            report.claims.expired > 0 ? `${report.claims.expired} claim(s) expired — run: swarm doctor` : null,
+            report.idleLive.length > 0
+              ? `${report.idleLive.length} live finding(s) idle over 6h, needing a home in the handoff docs:`
+              : null,
+            ...report.idleLive.map((issue) => `  ${issue.id} ${truncate(issue.title, 60)}`),
+            // Stated as a question, because it is one. "Unused" has two very
+            // different causes — the feature is bad, or the swarm never needs
+            // it — and they call for opposite responses, so the number is
+            // reported and the reading is left to whoever runs it.
+            report.deps === 0
+              ? 'note: 0 dependencies recorded. Either they are not needed, or nobody is choosing between issues — this swarm is dispatched, not self-directing.'
+              : null,
+          ]
+            .filter((line) => line !== null)
+            .join('\n')
+        );
         return 0;
       }
 
