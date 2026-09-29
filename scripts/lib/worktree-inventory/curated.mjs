@@ -492,6 +492,16 @@ export const CURATED = {
     ],
   },
 
+  'durable-diag': {
+    summary:
+      'Makes two conversion losses observable that main dropped silently — a repeated durable entry id, and a document-frame action carrying no usable next frame.',
+    note: 'Not a port, although `archive/fix-unit-tests` already implemented both diagnostics: that branch is the origin of the idea, and this branch re-derives it against current main. It could not be merged or cherry-picked because those commits predate main’s `selection-baseline` extraction, and they carry a weaker id-set bitmap retirement (`retireDepartedLayers(before, after)`) that main replaced with a scope-owned liveness veto. Severity was also changed deliberately: the branch used `error` for a repeated id, but an error diagnostic withholds the whole shadow, and the two id-keyed resolvers — not replay — are what a duplicate actually puts at risk.',
+    issues: [
+      { ref: 'ph-9', title: 'Duplicate durable entry id has no second line of defence' },
+      { ref: 'ph-8', title: 'An invalid document frame converts with no diagnostic' },
+    ],
+  },
+
   /* ------------------------------------------------------------ history */
   'history-append-layer-ops-main': {
     summary: 'A re-creation of the layer-property append-boundary slice against main.',

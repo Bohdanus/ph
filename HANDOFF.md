@@ -94,10 +94,15 @@ Two questions the plan answers, recorded so they are not re-litigated:
   the replay surface is still absent. Any recommendation to delete those pins is wrong for that
   reason.
 
-**`fix/unit-tests` (`b027de3`) is still 2 commits unmerged** and is not an ancestor of `main`. It
-claimed items 16, 17, 18 and 19; 18 and 19 landed here instead, and 16 and 17 were re-verified as
-still open (`history-adapter.ts` has no `else` on the `SET_DOCUMENT_FRAME_ACTION` branch, and
-`publishedEntryIds` appears nowhere in the file).
+**`fix/unit-tests` (`b027de3`) is preserved as the tag `archive/fix-unit-tests` and is deliberately
+NOT merged — it is not a merge candidate.** Merging it deletes test blocks `main` now owns: across
+the 8 test files it touches the block count falls by 17, and `history-append.test.ts` alone goes
+from 43 blocks and 16 `it.each` tables to 21 and 3. It also carries 11 `it.fails` pins `main` has
+since retired, and it predates the `selection-baseline.ts` extraction, so a merge reverts that
+refactor too. Its two diagnostics were re-implemented here against current `main` rather than
+ported. Of the four items it claimed, 18 and 19 landed elsewhere and are deleted; the two it still
+owed are **§16** and **§17**, whose conversion halves are done and whose append-boundary halves are
+the remaining work in each.
 
 ### Two efforts, one set of files
 
@@ -436,72 +441,116 @@ exists to avoid choosing between. Two tripwires, because either can fail silentl
 
 ---
 
-## 16. An invalid document frame converts with no diagnostic
+## 16. An invalid document frame: conversion reports the loss, the append boundary does not
 
-> **Fixed on `fix/unit-tests` (`b027de3`).** Open on `main`; delete after the merge. See §0.
+> **Conversion half fixed and verified. The append-boundary half below is untouched by that change
+> and is the remaining work.** Not deleted.
 
-**Problem.** `deriveSetDocumentFrameEntry` (`history-adapter.ts:255`) returns `null` when
-`!isValidDocumentFrame(args?.nextFrame)`. In `legacyHistoryToDurable` the frame branch
-(`:625-630`) cannot throw, and `diagnostics.push` exists only in the `catch`, so no entry is
-pushed and no diagnostic is recorded. `convertLegacyHistorySafely` then commits and returns
-`status: 'current'` — the shadow asserts a faithful conversion while silently omitting a
-document-frame change.
+**Done, and how it was verified.** `legacyHistoryToDurable` now pushes a `warning` diagnostic
+naming the entry when a `SET_DOCUMENT_FRAME_ACTION` entry derives no durable operation
+(`history-adapter.ts:675-681`), so the conversion no longer reports `status: 'current'` while
+silently omitting a document-frame change. The severity is the decision, and it is not a detail:
+`convertLegacyHistorySafely` returns `unavailable` and withholds the **whole** shadow on the first
+`error` diagnostic (`history-adapter.ts:816`), so an error here would punish every unrelated entry
+for a defect the legacy timeline tolerates. The archived branch's copy used `error`; that is one of
+the two reasons it could not simply be ported. Verified by
+`history-adapter.branches.test.ts:322` — the diagnostic, its severity and its message body — plus
+that file's coverage of every falsifying branch of `isValidDocumentFrame` and three valid frames
+that must still convert silently. It replaced an assertion that pinned the SILENCE
+(`expect(diagnostics).toEqual([])`), which was a tripwire for this defect rather than a contract.
 
-On the append path the omission is also undiagnosed: a null planned entry yields
-`outcome: 'preconditions'` (`history-append.ts:590`), not `'mismatch'`, so no
-`durable-append-mismatch` is appended either. `unavailable` (`history-append.ts:81`) records a
-`warning`-severity diagnostic for a refused translation — the module has no `console.warn`, and
-"the boundary warns" was never true; but `useLayer.ts:622` destructures only `entry` and
-`durableEntry` and discards the rest.
+**Still open: the append path records nothing.** The boundary's own refusal is real and typed —
+`unavailable` (`history-append.ts:81-95`) returns a `warning`-severity diagnostic (`:89`) — and
+`decideDurableAppend` never re-checks the plan it is handed (`history-append.ts:641-642`). Two
+things then lose it:
 
-Two clarifications that bound the severity, both verified: the tightening is **correct**
-(`history-replay.ts:91-97` has always used the identical predicate; `durable-replay.ts:129-131`
-has no validation at all, so the change removes a shadow/legacy divergence rather than creating
-one), and the repeated cursor index is **not** a defect (`-1` is a defined baseline sentinel).
+- A refused plan is `null`, and `if (!planned)` is the **first** precondition
+  (`history-append.ts:590`), so a null planned entry yields `outcome: 'preconditions'` — never
+  `'mismatch'`. `durableAppendDiagnostic` (`:663-671`) and its `durable-append-mismatch` code
+  (`:668`) are produced only on the `mismatch` branch, at `StoreContext.tsx:990-994` for
+  `COMMIT_DOCUMENT_EDIT` and `:922-924` for a reorder.
+- The diagnostic the boundary **did** compute never leaves the boundary. All four production call
+  sites destructure only two of the three result fields — `useLayer.ts:478`, `useLayer.ts:648`,
+  `useSelectionHistory.ts:133` and `useSelectionHistory.ts:289` each read `entry` and `durableEntry`
+  — and `diagnostics` (`history-append.ts:78`) has no slot on the `COMMIT_DOCUMENT_EDIT` payload
+  (`StoreContext.tsx:235`), so it is discarded at the call site.
 
-Not reachable from production: the only writer, `applyDocumentCrop`, rejects `width/height <= 0`
-(`useLayer.ts:614`) and `!isValidDocumentFrame` (`:617`) before dispatching. There is no history
-persistence and document load creates a single `OPEN_DOCUMENT_ACTION` (`useApp.ts:120-126`). This
-is a latent robustness gap, not a live bug. Coverage is thin: `history-adapter.branches.test.ts:320`
-covers only a
-_missing_ `nextFrame`.
+**User-visible failure: none today.** The only writer of this action, `applyDocumentCrop`, rejects
+`width/height <= 0` (`useLayer.ts:640`) and any frame that fails `isValidDocumentFrame`
+(`useLayer.ts:643`) before it plans, and a document load creates a single `OPEN_DOCUMENT_ACTION`
+(`useApp.ts:122`). This is a latent observability gap, not a live bug: the day a second
+`SET_DOCUMENT_FRAME_ACTION` writer appears, its refusals are as silent as these were. The far end
+stays unvalidated too — `durable-replay.ts:129-131` applies `next` with no check — so the shadow
+can still _hold_ an invalid frame; what changed is that conversion no longer produces one silently.
 
-**Fix.** Push a `warning` diagnostic when a `SET_DOCUMENT_FRAME_ACTION` entry yields no durable
-operation, so the shadow reports the omission instead of claiming `current`.
+**Fix.** Two independent halves. Report the boundary's own `diagnostics`: either dispatch them on
+`COMMIT_DOCUMENT_EDIT`, or fold them into `durableDiagnostics` at the point the store already
+handles `mismatch`, so a refused plan is not indistinguishable from a clean one. And decide
+deliberately whether a null planned entry on a translated action should be `preconditions` or
+`mismatch` — today `preconditions` is **right**, because the store falls back to a full conversion
+that already handles the case, and grading it a mismatch would report a writer defect for a refusal
+the legacy timeline also makes.
 
-**Files.** `src/contexts/history-adapter.ts`, `src/contexts/__tests__/branches.test.ts`
+**Files.** `src/contexts/history-append.ts`, `src/contexts/useLayer.ts`,
+`src/contexts/useSelectionHistory.ts`, `src/contexts/StoreContext.tsx`
 
 ---
 
-## 17. Duplicate durable entry id has no second line of defence
+## 17. Duplicate durable entry id: conversion guards it, the append boundary does not
 
-> **Fixed on `fix/unit-tests` (`b027de3`).** Open on `main`; delete after the merge. See §0.
+> **Conversion half fixed and verified. `decideDurableAppend` still has no uniqueness check of its
+> own, and that is the remaining work.** Not deleted.
 
-**Problem.** `planHistoryAppend` (`history-append.ts:300`) runs `translate()` before
-`validateTimeline()`, so an `error`-severity duplicate-id diagnostic coexists with a non-null
-`durableEntry`. That is intentional. The gap is downstream: `decideDurableAppend` never re-checks
-uniqueness. `validatePlannedDurableEntry` (`history-append.ts:483`) compares `planned.id` to
-`entry.id` (planned-versus-
-legacy agreement, **not** timeline uniqueness); `next.entries[next.entries.length - 1] !== entry`
-(`history-append.ts:608`) is a reference check on the same object. The conversion loop has no
-uniqueness check,
-`freezeDurableDocument` only clones and freezes, and `history-timeline.ts:31-32` appends
-unconditionally.
+**Done, and how it was verified.** Conversion now withholds a repeated id from publication and says
+so. `publishedEntryIds` (`history-adapter.ts:581`) is consulted at the publication guard (`:752`)
+and a skip pushes a `warning` naming the id (`:772-778`). `warning` is the only severity the
+conversion can afford, for §16's reason: `convertLegacyHistorySafely` withholds the whole shadow on
+the first `error` (`history-adapter.ts:816`), and the archived branch's copy used `error`. Only ids
+that actually reached `entries` consume the id (`:779-781`), so an entry that derived nothing does
+not shadow a later one. Verified by the `durable entry id uniqueness` block in
+`history-adapter.diagnostics.test.ts`: the conversion stays `current` (`:576`), the entries after a
+repeat still convert (`:602`), the id-keyed lookup still resolves exactly one entry (`:797`), there
+is one durable cursor per legacy entry (`:727`), and the frame and layer folds stay advanced
+(`:742`, `:764`).
 
-So a duplicate id on the published path yields a durable document with two same-id entries, and
-since the id is a lookup key (`history-adapter.ts:796`, `history-timeline.ts:24`) a later toggle
-hits the wrong entry. The invariant rests entirely on a diagnostic that is computed and discarded.
+**Still open: the boundary has no uniqueness check, and the one diagnostic it can produce names the
+wrong list.** `decideDurableAppend` never re-checks uniqueness. `validatePlannedDurableEntry`
+(`history-append.ts:477`) compares `planned.id` to `entry.id` (`:483`) — planned-versus-**legacy**
+agreement, not timeline uniqueness — and `next.entries[next.entries.length - 1] !== entry` (`:608`)
+is a reference check on the same object. `freezeDurableDocument` only clones and freezes, and
+`history-timeline.ts:31-32` appends unconditionally. So a duplicate id on the published path yields
+a durable document with two same-id entries, and since the id is a lookup key
+(`history-adapter.ts:880`, `history-timeline.ts:24`) a later toggle hits the wrong entry. The
+invariant rests entirely on a diagnostic that is computed and discarded.
 
-The cursor branch is largely redundant: `decideDurableAppend` (`history-append.ts:599`) requires
-`prior.cursor === prior.entries.length - 1`, so any out-of-range cursor already falls back.
+`validateTimeline` (`history-append.ts:278`) does check uniqueness, at `:279`, and returns an
+`error`-severity diagnostic — but it reads the **LEGACY** timeline only, so it cannot see the
+durable base, which is the only list the durable entries live in. It also runs after `translate`
+(`:307-315`), so the diagnostic coexists with a non-null `durableEntry` by construction.
 
-Both branches are unreachable from production — `planHistoryAppend` is called with no `id`, so
-`createHistoryItem` mints a fresh `uuidv4()` (`history-utils.ts:81`), and every production
+**Reachability, stated accurately.** This section previously said `planHistoryAppend` is called with
+no `id`. That is **wrong**, and would not survive a check: **two of the four production call sites
+do pass one.** `useSelectionHistory.ts:133` passes the `uuidv4()` minted at `:124`, and
+`useSelectionHistory.ts:289` the one minted at `:277`; the other two — `useLayer.ts:478` and
+`useLayer.ts:648` — pass none, so `createHistoryItem` mints one (`history-utils.ts:81`). The
+conclusion is unchanged and the reason is narrower: **all four ids are a fresh `uuidv4()`**, so a
+collision requires a uuid that repeats. The base's own ids are those same minted ids, carried in by
+the rebuild, which is what makes `validateTimeline`'s check fire at all. Every production
 `REPLACE_DOCUMENT` supplies a non-empty history.
 
+The cursor branch is largely redundant: `decideDurableAppend` (`history-append.ts:599`) requires
+`prior.cursor === prior.entries.length - 1`, so any out-of-range cursor already falls back first.
+
 **Fix.** Return `durableEntry: null` when `validateTimeline` produces an `error`-severity
-diagnostic, so the store takes the reconversion fallback. Adjust
-`history-append.test.ts:490-503`, which currently pins the opposite.
+diagnostic, so the store takes the reconversion fallback. **This breaks two tests, not one.** The
+plan-level case at `history-append.test.ts:504` asserts `result.durableEntry` is non-null on exactly
+this collision, under the comment "reporting never blocks the append" — that is the assertion the
+fix deletes. And the boundary-level block at `history-append.test.ts:1300` pins the same blindness
+from the other side: it asserts `decision.outcome === 'published'` for a base whose history already
+holds the id, and its own last block pins the coexistence (`expect(collidingPlan.durableEntry)
+.not.toBeNull()`). Both must be re-pointed in the same change as the fix; neither may be relaxed.
+Note the two are near-duplicates on purpose: the first is a statement about the plan, the second is
+the alarm the fix has to trip.
 
 **Files.** `src/contexts/history-append.ts`, `src/contexts/__tests__/history-append.test.ts`
 
@@ -526,6 +575,17 @@ One more pin is **not** an `it.fails` and is listed here so it is not mistaken f
 `StoreContext.durable-boundary.test.tsx:573` is a plain `it` that asserts the durable cutover surface
 is **absent** (item 1). It is a pin in the same sense — it fails the moment the cutover lands — but
 it is an ordinary passing test, so it must be rewritten rather than removed when item 1 is done.
+
+Three more are plain `it` blocks in one `describe`, and they are **KNOWN-GAP** pins: each asserts
+the CURRENT behaviour of a publication precondition the boundary does not have, so each goes **red
+the moment its defect is fixed**. The fix must re-point or delete its pin in the same change, and
+the pin must never be relaxed to keep the suite green.
+
+| Location                      | What it pins                                                      |
+| ----------------------------- | ----------------------------------------------------------------- |
+| `history-append.test.ts:1182` | §86 — publication onto a base that is not at its own tip          |
+| `history-append.test.ts:1221` | §87 — a planned frame's `next` is never re-validated              |
+| `history-append.test.ts:1300` | §17 — uniqueness is checked against the legacy list, not the base |
 
 The e2e suite pins nothing. `grep -rn 'it.fails(' e2e` returns 0, there is no `test.fixme` and no
 `describe.skip`, and the only skips are the two `test.skip` declarations
@@ -1192,7 +1252,7 @@ drawer had one that was removed rather than shipped broken.
 
 **Why the obvious implementation is wrong.** A slider would reach for
 `updateLayer(id, { opacity }, TOOL_ACTION)`, because that is the signature every
-other layer property write uses (`src/contexts/useLayer.ts:453`). It fails three
+other layer property write uses (`src/contexts/useLayer.ts:473`). It fails three
 times, all silently. `updateLayer` only plans a durable append when
 `isSetLayerPropertiesAction(actionName)` is true, and `TOOL_ACTION` is not in that
 whitelist, so the entry never gets a durable translation. `history-replay.ts:146`
@@ -1237,7 +1297,7 @@ There is no longer an `UPDATE_LAYERS` shortcut to avoid: it was removed as an un
 second writer surface, so `updateLayer` with a whitelisted action is the only way to set a
 layer property.
 
-**Files.** `src/contexts/layer-types.ts:58`, `src/contexts/useLayer.ts:453`,
+**Files.** `src/contexts/layer-types.ts:58`, `src/contexts/useLayer.ts:473`,
 `src/contexts/history-model.ts:80`, `src/contexts/history-adapter.ts:355,387`,
 `src/contexts/history-replay.ts:112,146`, `src/contexts/useHistory.ts:14,22`,
 `src/contexts/psd-utils.ts:159,229`
@@ -1830,13 +1890,13 @@ namespace and left an unguarded regex in the test. Half-finished is worse than f
 **The loss, measured.** `NUMBERED = /^(?:item\s+)?#?(\d+)\b/i` cannot match a letter suffix —
 there is no word boundary between `5` and `a`, so `NUMBERED.exec('15a. A self-anchored reorder …')`
 is `null`. `assemble` then falls through to the `SEVERITY` test (also false) and reaches
-`if (open && record.level <= open.level) close(...)`. `HANDOFF.md:424` is a **level-2**
+`if (open && record.level <= open.level) close(...)`. `HANDOFF.md:429` is a **level-2**
 `## 15a. A self-anchored reorder is refused, and the refusal is load-bearing`, a sibling of
 `## 15.` — so it **closes item 15's body there** and opens nothing itself. The span
-`HANDOFF.md:425-438` is **872 raw characters**, or **870** once the span's leading and
+`HANDOFF.md:430-443` is **872 raw characters**, or **870** once the span's leading and
 trailing blank lines are trimmed — 870 is the trimmed count, and the raw count is the one
-that includes them. Line 437 is a `---` rule, which `bodyOf` drops as layout, so the prose the
-parser actually strands is lines 425-436. All of it is unreachable from any item title or body.
+that includes them. Line 442 is a `---` rule, which `bodyOf` drops as layout, so the prose the
+parser actually strands is lines 430-441. All of it is unreachable from any item title or body.
 Item 15's stored body is 3994 chars and ends mid-sentence; the 15a prose is not in it. The
 entry is a load-bearing tripwire, so this is live work loss, not latent.
 
@@ -2106,10 +2166,10 @@ patching the separator class and re-running the real parser over the merged corp
 | Heading                                                                                    | Now                | Separator required |
 | ------------------------------------------------------------------------------------------ | ------------------ | ------------------ |
 | `## 13. Landed, superseded and deleted` (pinned fixture, `handoff-import.test.mjs:654`)    | `dead=[13]`        | `dead=[]`          |
-| `### Items 5, 7, 9, … — deleted` (`HANDOFF.md:114`, the corpus's **only** real retirement) | `dead=` 26 numbers | `dead=[]`          |
+| `### Items 5, 7, 9, … — deleted` (`HANDOFF.md:119`, the corpus's **only** real retirement) | `dead=` 26 numbers | `dead=[]`          |
 | Whole `HANDOFF.md` — `planImport(...).create`                                              | 49                 | **51**             |
 
-The second row is the one that decides it. `HANDOFF.md:114` is the heading the `DEAD_HEADING`
+The second row is the one that decides it. `HANDOFF.md:119` is the heading the `DEAD_HEADING`
 docstring names as "the only retirement marker any of the three documents actually uses", and the
 separator requirement re-reads it as live prose: `dead` goes from 26 numbers to **none**, and two
 already-retired items — `HANDOFF.md#7` and `HANDOFF.md#18` — come back to the board as open work.
@@ -2486,3 +2546,252 @@ updated in the same change.
 `src/components/Main/MoveToolArea.tsx:6,117`, `src/components/Main/CropToolArea.tsx:61`,
 `src/components/Main/RectangularSelectionToolArea.tsx:65`, `src/components/Main/TextToolArea.tsx:24`,
 `src/hooks/useSelectionAnts.ts:69-70`, `src/hooks/__tests__/useRect.drag.test.ts:136,252`
+
+## 87. The append boundary never checks that its base is at its own tip
+
+**Problem.** `decideDurableAppend` (`history-append.ts:579`) proves `documentId`, both revisions,
+the legacy tip, the length delta, the legacy cursor and the appended entry's identity
+(`:590-610`) — and never proves `base.cursor === base.history.length - 1`. The published cursor is
+`base.history.length` (`:644`), not `base.cursor + 1`, so a base sitting below its own history
+publishes a cursor **past** the entries it had not reached. The one cursor guard that looks related
+runs the other way: `cursor > next.cursor` (`:647`) catches a base with too MANY entries, and a base
+with too few slips straight through.
+
+**User-visible failure.** An edit the user undid comes back as applied. The entries between the
+base's cursor and its tip are below the published cursor, so the shadow now replays a crop the user
+undid, and the redo-only state the base described is gone — with no diagnostic, because the base
+satisfies every precondition.
+
+**Reachable only by accident today.** A mid-timeline base is produced by a rebuild, and
+`buildDurableDocument` derives the shadow cursor from the **legacy** cursor
+(`StoreContext.tsx:674-677`, `converted.legacyCursorToDurableCursor[historyCursor] ?? -1`) — so the
+same rebuild also hands the boundary a `prior` that is not at its tip, which `:599` refuses before
+this gap is reachable. Nothing in the boundary enforces the invariant; only that coupling does, and
+it is one refactor away from not holding.
+
+**Fix.** Add `if (base.cursor !== base.history.length - 1)` to the precondition list, next to the
+legacy tip check at `:599`, with the same `preconditions` outcome. Pinned as a KNOWN-GAP pin at
+`history-append.test.ts:1182`; the fix must re-point it in the same change.
+
+**Files.** `src/contexts/history-append.ts`, `src/contexts/__tests__/history-append.test.ts`
+
+---
+
+## 88. The append boundary never re-validates a planned frame's `next`
+
+**Problem.** `validatePlannedDurableEntry`'s frame branch (`history-append.ts:486-498`) proves only
+that `planned.operation.next` equals the legacy `args.nextFrame` structurally (`sameFrame`, `:492`)
+and that `nextFrame` is present (`:491`). It never asks whether either is a **document frame** —
+`isValidDocumentFrame` is not called anywhere in the boundary. The shared derivation the boundary
+relies on does call it (`history-adapter.ts:260`, reached from `history-append.ts:133`), so the two
+routes disagree about one legacy item by construction.
+
+**User-visible failure.** A published `0x0` crop. Durable replay applies `next` with no validation
+at all (`durable-replay.ts:129-131`) and `documentFrameSize` clamps to a 1×1 minimum
+(`document-frame.ts:9-14`), so the shadow comes to describe a **one-pixel-square document** rather
+than a zero — the loss is invisible as a degenerate size. The conversion route for the same item
+publishes nothing and names the loss (`history-adapter.ts:675-681`), so of the two routes only one
+says anything.
+
+**Latent.** Only a **supplied** entry reaches it: every production `durableEntry` is
+`planHistoryAppend`'s output, which refuses the frame at `history-append.ts:134-136`, or
+`deriveReorderLayersEntry`, which is not a frame action (`StoreContext.tsx:913`).
+
+**Fix.** In the frame branch, reject a `planned.operation.next` that fails `isValidDocumentFrame`
+before comparing it to the legacy arg, and treat the refusal as a `mismatch` so the store records
+it. Pinned as a KNOWN-GAP pin at `history-append.test.ts:1221`; the fix must re-point it.
+
+**Files.** `src/contexts/history-append.ts`, `src/contexts/__tests__/history-append.test.ts`
+
+---
+
+## 89. The baseline document source's id is not in the duplicate-id set
+
+**Problem.** The duplicate-id guard records an id only when an entry is actually published
+(`history-adapter.ts:779-782`). The baseline document source is adopted, not published: its branch
+`continue`s at `:586-589` — pushing cursor `-1` at `:587` — long before the publication guard at
+`:752`, so the baseline's id never reaches `publishedEntryIds` (`:581`) and a later entry reusing it
+is published as a first occurrence. No diagnostic is raised, and the two id-based resolvers now
+disagree: `updateHistoryTimeline` finds the **first** match in the legacy timeline
+(`history-timeline.ts:24`) while `toggleDurableEntry` finds the first in the durable document
+(`history-adapter.ts:880`), so one History-panel eye click disables a different edit in each model.
+
+**User-visible failure.** A click that toggles the wrong row, and a durable document whose entries
+carry an id the legacy timeline already used. Silent: `status` stays `current` and no diagnostic
+names the id.
+
+**Reachable only by accident today.** Production mints a fresh `uuidv4()` per commit
+(`history-utils.ts:81`), so the baseline id and a later entry's id are unrelated values. Note that
+this is the one hole where the "does not consume its id" rule is **not** a safe answer, unlike the
+refused replacement and the entry that threw: the baseline id is not a durable entry, so this set
+structurally cannot see it, while the legacy timeline still holds it.
+
+**Fix.** Add the baseline's id to `publishedEntryIds` when it is adopted, or widen the guard to
+compare against the legacy timeline as well. Pinned as a KNOWN LIMIT pin at
+`history-adapter.diagnostics.test.ts:873`; the fix must delete or re-point it.
+
+**Files.** `src/contexts/history-adapter.ts`, `src/contexts/__tests__/history-adapter.diagnostics.test.ts`
+
+---
+
+## 90. A disabled FIRST history entry is adopted as the durable baseline
+
+**Problem.** `replayHistory` skips a disabled item before it does anything else
+(`history-replay.ts:74`), so the document it produces for a timeline whose first entry is disabled
+is empty. The converter takes that **same entry** as the durable baseline
+(`history-adapter.ts:584-589`) without ever consulting `isEntryEnabled` (`:422-425`), and maps it to
+cursor `-1` as though it were the pre-history state.
+
+**User-visible failure, and this one is REACHABLE.** Disable the first History row and the canvas
+blanks while the durable shadow still describes a full document — the layers, the frame and the
+selection of an edit the user just turned off. The two models disagree about the same timeline with
+no diagnostic, and nothing downstream reconciles them.
+
+**How the toggle is exposed.** The History tab renders one eye button per row, including the first:
+`HistoryTab.tsx:88-98` calls `handleToggleDisabled` (`:90`, titled "Disable history item" at `:95`)
+→ `toggleDisabled(itemId)` (`:56`) → `useHistory.ts:148` → `updateHistoryTimeline`'s
+`toggle-disabled` command, which flips `disabled` on the addressed entry
+(`history-timeline.ts:23-28`). `sortedHistory` is `[...history].reverse()` (`HistoryTab.tsx:12`),
+so the first entry is the **last** row — the one closest to the panel's footer, not a row anyone
+treats as special. The mobile drawer exposes the same control
+(`MobileLayersDrawer.tsx:106-110`).
+
+**Fix.** Make the baseline branch adopt an entry only when `isEntryEnabled` agrees that the entry
+would have applied — and say what a timeline whose baseline is disabled should convert to, because
+"an empty baseline" and "a baseline derived from the first **enabled** entry" are two different
+answers and only one of them is the document `replayHistory` produces. Pinned as a KNOWN-DIVERGENCE
+pin at `history-adapter.branches.test.ts:704`; the fix must re-point it.
+
+**Files.** `src/contexts/history-adapter.ts`, `src/contexts/__tests__/history-adapter.branches.test.ts`
+
+---
+
+## 91. A bedrock layer added mid-history never resizes the durable frame
+
+**Problem.** `replayHistory` rewrites the document frame from **any** bedrock source before it
+reaches the action switch (`history-replay.ts:85-89`), so adding a bedrock layer resizes the
+document. The converter's create-layer arm (`history-adapter.ts:604-608`) never touches
+`currentFrame`, and durable replay's create-layer case ignores `isBedrock`
+(`durable-replay.ts:69-75`). The layer IS published — `currentLayers.set` at `:607` and the
+`create-layer` operation at `:608` — so the divergence is the frame alone, at every cursor.
+
+**User-visible failure.** A canvas resized by a background layer, and a durable shadow that still
+describes the pre-add size. Silent: the conversion records no diagnostic, and a frame that does not
+match the canvas is the only evidence.
+
+**Fix.** Two halves, and they belong together. The converter must rewrite `currentFrame` from a
+bedrock source in the create-layer arm, and durable replay must do the same in its `create-layer`
+case — fixing only the converter would leave the shadow correct at conversion and wrong after
+replay, which is the same defect one layer further along. Pinned as a KNOWN-DIVERGENCE pin at
+`history-adapter.branches.test.ts:738`; the fix must re-point it.
+
+**Files.** `src/contexts/history-adapter.ts`, `src/contexts/durable-replay.ts`
+
+---
+
+## 92. The converter re-derives a created or merged layer's snapshot, and disagrees with the runtime rule
+
+**Problem.** The runtime builds a layer through one rule, `createLayerSource` (`layer-utils.ts:166`),
+which `replayHistory` reaches through its `createLayer` dependency (`:108` and `:134`, wired at
+`useHistory.ts:88`). The converter builds the same layer through a **second, re-derived** rule,
+`sourceToRuntimeLayer` (`history-adapter.ts:842-860`), called from the create-layer arm (`:605`) and
+the merge arm (`:728`). The two disagree on three fields, on the first layer of any document:
+
+| field     | runtime (`createLayerSource`)                                         | shadow (`sourceToRuntimeLayer`)                          |
+| --------- | --------------------------------------------------------------------- | -------------------------------------------------------- |
+| `name`    | `` `${getNameFromSource(source)} ${maxOrder}` `` (`:181`)             | the bare kind, with no order suffix (`:847`)             |
+| `opacity` | `1`, always (`:189`)                                                  | `source.opacity` for a blank (`:850`)                    |
+| `order`   | `maxLayerOrder(layers) + 1` (`:169`), `0` for an empty record (`:41`) | `Math.max(-1, …) + 1` (`:853`), so `0` for an empty fold |
+
+Executed against the real converter on a blank source with `opacity: 0.5` added to an empty
+document: the runtime layer is `{ name: 'Blank 1', opacity: 1, order: 1 }` and the durable snapshot
+is `{ name: 'Blank', opacity: 0.5, order: 0 }`. A second disagreement rides along in the same line:
+`getNameFromSource` applies `ellipsify` (`layer-utils.ts:158`), so a long image name is truncated in
+the document and not in the shadow.
+
+**User-visible failure.** The shadow describes a differently **named** and differently **transparent**
+layer than the document for the same edit. The `opacity` half is the dangerous one and it is not
+merely a wrong number: the runtime bakes a blank's `source.opacity` into the canvas pixels
+(`layer-utils.ts:205-215`, `ctx.globalAlpha` at `:212`) and leaves `layer.opacity` at `1`, so the
+shadow's `opacity: 0.5` is a **layer-level** claim about an alpha the document holds in the bitmap.
+A materialization that applied it would double-apply the transparency. The `order` half is quieter
+but not free: it puts the first layer of a document at order `0` in one model and `1` in the other.
+
+**Two existing tests pin the two answers, which is why neither side is accidental.**
+`layer-utils.createLayerSource.test.ts:107-108` pins the runtime (`'Blank 1'`, `'shape 1'`) and
+`durable-replay.layer-operations.test.ts:113` pins the shadow (`'Blank'`). **A fix has to flip the
+second one.**
+
+**Fix — this is a decision, not an edit, and the decision comes first.** The obvious move is to have
+the converter call the runtime rule rather than re-implement it, and that is what should happen; but
+it cannot be done until the durable model says what a layer's `opacity` **means**. Today the field is
+a runtime `Layer` field the runtime never sets from a source, so "copy the runtime layer" and "record
+the source's alpha" are different contracts and only one of them can become the durable snapshot's.
+Decide that, then make the converter derive through the shared rule and update both pins above in
+the same change. Do not "fix" the name and order without it: a partial fix leaves the converter
+deriving one field from the runtime rule and another from the source, which is a third rule rather
+than one of the two.
+
+**Files.** `src/contexts/history-adapter.ts`, `src/contexts/layer-utils.ts`
+
+---
+
+## 93. `plainValue` drops `undefined` from an object and throws on it inside an array
+
+**Problem.** The two arms of `plainValue` (`history-adapter.ts:101-120`) disagree about one value.
+The object arm filters it out — `.filter(([, item]) => item !== undefined)` (`:116`) — so an
+`undefined` property is silently dropped. The array arm (`:106-111`) has no filter, so an `undefined`
+element falls through both guards to `:112` and throws `Non-plain value at <path>[i]`.
+
+**User-visible failure.** One sparse tool-arg array voids the **entire** durable document. The throw
+is raised inside the per-item `try` (`history-adapter.ts:602`), caught at `:748-750`, and recorded by
+`diagnosticFromError` at `severity: 'error'` (`:411`) — which is precisely the condition
+`convertLegacyHistorySafely` turns into `status: 'unavailable'` with `document: null` (`:816`). The
+object arm's `undefined` proves the value is not a contract violation; the array arm treats it as
+one, and pays for it with every other entry in the timeline. Executed: a tool source whose args hold
+`composite: [1, undefined, 3]` produces `Non-plain value at layer:L1.source.args.composite[1]` and
+`status: 'unavailable'`, while the same args with a top-level `undefined` property convert with no
+diagnostic at all.
+
+**Latent today.** No `ToolArgs` field is an array, so nothing in production builds the shape that
+trips it. It matters for the **next** array-valued arg, which is why the asymmetry is a defect now
+rather than a cleanup later: the array arm is the only place in the file where an ordinary
+un-populated field is fatal, and the call sites are the ones that carry whole tool args —
+`convertSource:165` and `operationForTool:449`, `:470` and `:500`.
+
+**Fix.** Drop `undefined` elements in the array arm the way the object arm drops `undefined`
+properties, and document that a sparse tool arg is normalised rather than rejected. If a future arg
+genuinely must not be sparse, that is a per-arg rule with a named error, not a property of the
+value copier.
+
+**Files.** `src/contexts/history-adapter.ts`
+
+---
+
+## 94. A skipped duplicate leaves the fold advanced, so a later `set-document-frame` can carry a `previous` the durable history never reached
+
+**Problem.** When a duplicate id is skipped, the publication is withheld and the **fold state is
+deliberately left advanced** (`history-adapter.ts:752-782`). That breaks the invariant the frame
+derivation states in its own docstring — `currentFrame` is the last enabled **durable** frame
+(`:253`) — so a later `set-document-frame` that supplies no `previousFrame` takes its `previous`
+from `currentFrame` (`:263`) and publishes a frame the durable history never reached.
+
+**User-visible failure, today: none.** Nothing reads `previous`. Durable replay applies `next` only
+(`durable-replay.ts:129-131`), exactly as `set-selection` applies `after` only
+(`durable-replay.ts:140-142`). This is a latent hazard for the day something does read it, not a live
+wrong answer — recorded here so the day it stops being latent is not also the day the advance is
+"fixed" by someone who has not read this.
+
+**The advance is deliberate and must not be undone.** `replayHistory` addresses entries by position
+(`history-replay.ts:73`) and has no id check, so it **applies both** repeats and ends in the same
+fold state the converter holds. Not advancing would add a second, independent way for a later
+derivation to disagree with the legacy timeline — the converter would then differ from both the
+document and itself. Parity is the reason; the stale `previous` is the price, and it is a price
+worth paying while `previous` is unread.
+
+**Fix.** Not a fix to the advance. When something starts reading `previous`, the invariant has to be
+restored then — most likely by recording the durable-reachable frame separately from the fold — and
+that change must re-point the pins at `history-adapter.diagnostics.test.ts:742` and `:764`, which
+assert the advanced fold on purpose.
+
+**Files.** `src/contexts/history-adapter.ts`, `src/contexts/durable-replay.ts`
