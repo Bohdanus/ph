@@ -229,8 +229,14 @@ describe('placeholder tool wiring in toolsMap', () => {
     storeState.toolName = 'not-a-real-tool';
     render(<ToolbarHorizontal />);
 
+    // The full fallback string is the whole assertion. The negative that used to sit here was
+    // `expect(screen.queryByText('TODO')).toBeNull()`, and it did not mean what it read as: this
+    // branch renders a bare `<span>` (`ToolbarHorizontal.tsx:19`), never a `PlaceholderTool`, so
+    // there is no badge node for it to find — and Testing Library's string matcher is an exact
+    // match after whitespace normalisation, so the query could never have matched the longer
+    // 'TODO: unregistered tool placeholder' either. The correct negative form is the full-string
+    // one in the next test.
     expect(screen.getByText('TODO: unregistered tool placeholder')).toBeInTheDocument();
-    expect(screen.queryByText('TODO')).toBeNull();
   });
 
   it('renders the registered placeholder bar, not the fallback, for a tool in the real toolsMap', () => {

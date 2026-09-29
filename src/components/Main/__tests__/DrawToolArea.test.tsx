@@ -310,16 +310,22 @@ describe('DrawToolArea', () => {
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
       fireEvent.pointerMove(toolArea, { button: 0, clientX: 60, clientY: 40 });
       vi.mocked(drawLine).mockClear();
+      // The restore has to run whatever the assertions do: this file has no `afterEach`, so a red
+      // assertion below would leave `cancelAnimationFrame` spied for every test that follows.
+      // Same shape as `FreehandLasso.test.tsx:226-239`.
       const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame');
 
-      unmount();
-      act(() => {
-        vi.advanceTimersByTime(20);
-      });
+      try {
+        unmount();
+        act(() => {
+          vi.advanceTimersByTime(20);
+        });
 
-      expect(cancelSpy).toHaveBeenCalled();
-      expect(drawLine).not.toHaveBeenCalled();
-      cancelSpy.mockRestore();
+        expect(cancelSpy).toHaveBeenCalled();
+        expect(drawLine).not.toHaveBeenCalled();
+      } finally {
+        cancelSpy.mockRestore();
+      }
     });
 
     it('leaves the frame slot released, so a later mount previews on the shared overlay again', () => {

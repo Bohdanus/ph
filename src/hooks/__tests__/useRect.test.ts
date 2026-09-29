@@ -5,6 +5,12 @@ import { createPointerEvent } from '@/__tests__/fixtures/pointer.ts';
 import { createMockCanvas, createMockCanvasContext } from '@/__tests__/fixtures/canvas.ts';
 import { refitRectWidthToAspect } from '@/util/rect-aspect.ts';
 import type { Point } from '@/contexts/general-types.ts';
+// `util/constants` is deliberately NOT mocked, and it used to be — with a `CURSOR_MAP` whose eight
+// of nine entries disagreed with the real one and a `HANDLE_SIZE` of 8 against the real 12. That
+// made the cursor assertion below a claim about the mock's `nw-resize`, a string no user ever sees
+// (the real top-left cursor is `nwse-resize`), and falsifiable only against the mock. `useRect.drag.test.ts`
+// already asserts `CURSOR_MAP[edge]` against this same real import; this file is the hover half.
+import { CURSOR_MAP } from '../../util/constants.ts';
 
 const usePointerPositionMock = vi.hoisted(() => {
   const mockData = {
@@ -39,26 +45,7 @@ const rectUtilsMock = vi.hoisted(() => ({
 // outside the repo, so the mock never applied and the real rect helpers ran.
 vi.mock('../../util/rect.ts', () => rectUtilsMock);
 
-const constantsMock = vi.hoisted(() => {
-  const CURSOR_MAP = {
-    'top-left': 'nw-resize',
-    'top-right': 'ne-resize',
-    'bottom-left': 'sw-resize',
-    'bottom-right': 'se-resize',
-    top: 'n-resize',
-    right: 'e-resize',
-    bottom: 's-resize',
-    left: 'w-resize',
-    inside: 'move',
-  } as const;
-
-  return {
-    CURSOR_MAP,
-    HANDLE_SIZE: 8,
-  };
-});
-
-vi.mock('../../util/constants.ts', () => constantsMock);
+// No `vi.mock('../../util/constants.ts', ...)` here, and that is the point — see the import above.
 
 function createMockLayer(pos = { x: 100, y: 100, width: 200, height: 150 }) {
   return {
@@ -169,13 +156,17 @@ describe('useRect', () => {
       expect(result.current.onPointerDown(onCorner)).toBe(true);
     });
 
-    // The mount effect published the incoming rect once; clearing it draws no rect, so it
-    // publishes nothing further.
+    // Both counts are absolute. The relative form below only says the clear published nothing MORE,
+    // which any starting count satisfies — including zero, on a hook that never published at all.
+    // The mount effect does publish the incoming rect, exactly once, and that is stated here rather
+    // than left to be inferred from a number the test reads back off the mock it is asserting on.
+    expect(onRepaint).toHaveBeenCalledTimes(1);
     const publishedBeforeClear = onRepaint.mock.calls.length;
     act(() => {
       result.current.clearSelection();
     });
     expect(onRepaint).toHaveBeenCalledTimes(publishedBeforeClear);
+    expect(onRepaint).toHaveBeenCalledExactlyOnceWith({ x1: 100, y1: 100, x2: 300, y2: 250 });
 
     // The selection is gone, so the corner that was a handle no longer reports one.
     act(() => {
@@ -257,7 +248,8 @@ describe('useRect', () => {
       const committed = onChangeEnd.mock.lastCall?.[0] as { x1: number; y1: number; x2: number; y2: number };
       const width = Math.abs(committed.x2 - committed.x1);
       const height = Math.abs(committed.y2 - committed.y1);
-      // 200x150 is the rect's own ratio, not the 4:3 the drag to (200, 200) would have produced.
+      // 200x150 is the rect's own ratio. A top-left handle drag anchors at the opposite corner
+      // (300, 250), so the free drag to (200, 200) would have committed 100x50 = 2:1.
       expect(width / height).toBeCloseTo(200 / 150, 10);
     });
   });
@@ -270,7 +262,8 @@ describe('useRect', () => {
       const { result } = renderUseRect({ initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 } });
 
       // The four corner centres and the four edge midpoints of (100,100)-(300,250) each sit inside
-      // their own hit region at HANDLE_SIZE 8 / scale 1, and (400, 400) is off the rect entirely.
+      // their own hit region — the real HANDLE_SIZE is 12, so `HANDLE_SIZE / scale / 2` is 6 here —
+      // and (400, 400) is off the rect entirely.
       const hits: Array<[number, number]> = [
         [100, 100],
         [300, 100],
@@ -344,7 +337,9 @@ describe('useRect', () => {
         const res = result.current.onPointerMove(createPointerEvent({ clientX: 100, clientY: 100, target }));
         expect(res).toBe(true);
       });
-      expect(target.style.cursor).toBe('nw-resize');
+      // The real `CURSOR_MAP`, so this is the cursor a user gets hovering the top-left handle, not
+      // a string this file's own mock invented.
+      expect(target.style.cursor).toBe(CURSOR_MAP['top-left']);
 
       // Off the rect there is no edge and the hover reports none, so the SAME target — which is
       // carrying the handle cursor the hover above just set — has to lose it. A fresh element would
