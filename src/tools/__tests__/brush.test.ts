@@ -41,10 +41,11 @@ import type { Point } from '../../contexts/general-types.ts';
  *   has to be rejected there rather than reaching the canvas, which ignores unknown
  *   `globalCompositeOperation` values silently.
  *
- * The blend-mode list itself is pinned exhaustively by the e2e suite, which copies all
- * sixteen entries and asserts the rendered `<option>` list equals the copy
- * (e2e/paint-options.spec.ts:41-58,304-310). What is pinned here is the properties the
- * copy cannot see: distinctness, the leading Normal, and rejection of everything else.
+ * The blend-mode list itself is pinned exhaustively below, from the source of truth rather
+ * than from memory, because the browser copy is not always run: the e2e suite also copies
+ * all sixteen entries and asserts the rendered `<option>` list equals its own
+ * (e2e/paint-options.spec.ts). What is pinned here beyond that copy is the set of properties
+ * it cannot see: distinctness, the leading Normal, and rejection of everything else.
  */
 
 /** The four values the bar carries a preset snapshot of, plus the `Custom` bar's identity. */
@@ -269,6 +270,33 @@ describe('isPaintBlendMode', () => {
 });
 
 describe('PAINT_BLEND_MODES', () => {
+  it('declares exactly the sixteen canvas modes, in the order the Mode dropdown lists them', () => {
+    // The exhaustive copy of this list used to live only in a Playwright spec, which the
+    // jsdom suite never runs, so every property assertion below survives a substitution: a
+    // value the canvas silently ignores still has a distinct string and still pairs with a
+    // distinct label, and one entry swapped for another is still sixteen distinct entries.
+    // `layer-utils.ts` reads one of these values back off stored history, so the values are
+    // data, not presentation, and they are pinned here rather than in a browser.
+    expect(PAINT_BLEND_MODES).toEqual([
+      { label: 'Normal', value: 'source-over' },
+      { label: 'Darken', value: 'darken' },
+      { label: 'Multiply', value: 'multiply' },
+      { label: 'Color Burn', value: 'color-burn' },
+      { label: 'Lighten', value: 'lighten' },
+      { label: 'Screen', value: 'screen' },
+      { label: 'Color Dodge', value: 'color-dodge' },
+      { label: 'Overlay', value: 'overlay' },
+      { label: 'Soft Light', value: 'soft-light' },
+      { label: 'Hard Light', value: 'hard-light' },
+      { label: 'Difference', value: 'difference' },
+      { label: 'Exclusion', value: 'exclusion' },
+      { label: 'Hue', value: 'hue' },
+      { label: 'Saturation', value: 'saturation' },
+      { label: 'Color', value: 'color' },
+      { label: 'Luminosity', value: 'luminosity' },
+    ]);
+  });
+
   it('declares every value as a distinct non-empty string', () => {
     const values = PAINT_BLEND_MODES.map((mode) => mode.value);
 

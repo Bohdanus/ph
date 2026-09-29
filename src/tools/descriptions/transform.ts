@@ -30,20 +30,26 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       {
         control: 'Show Transform Controls',
         detail:
-          'Checkbox that puts the transform bounding box and its handles on the currently selected layer without putting the tool into transform mode — the handles simply appear. Dragging one of them is what starts the transform, and it is the same handle-driven state Cmd+T opens; the bar swaps to the numeric transform fields while a handle is held. A layer with no pixels, an artboard or a text layer are the cases where Photoshop shows the box anyway.',
+          'Checkbox that puts the transform bounding box and its handles on the currently selected layer without putting the tool into transform mode — the handles simply appear. Dragging one of them is what starts the transform, and it is the same handle-driven state Cmd+T opens; the bar swaps to the numeric transform fields while a handle is held.',
         status: 'partial',
         appRef: 'src/components/Main/MoveToolArea.tsx:117',
       },
       {
         control: 'Align',
         detail:
-          'Six buttons, enabled once two or more layers or groups are selected: Top Edges, Vertical Centers, Bottom Edges, Left Edges, Horizontal Centers and Right Edges. Each moves the selected layers so the named edge or center coincides with the extreme of the selection, or with the selection border. Photoshop expresses that choice as two menu targets rather than a bar control — Layer > Align against the selected layers, Layer > Align Layers To Selection against the selection border — and no Adobe page names a bar control for making it.',
+          'Six buttons, enabled once two or more layers or groups are selected: Top Edges, Vertical Centers, Bottom Edges, Left Edges, Horizontal Centers and Right Edges. Each moves the selected layers so the named edge or center coincides with the extreme of the selection, or with the selection border. Adobe also states the target as two menu commands — Layer > Align against the selected layers, Layer > Align Layers To Selection against the selection border — and the bar control reaches the same two targets through the `Align to` row below.',
         status: 'missing',
       },
       {
         control: 'Distribute',
         detail:
           'The distribute row, enabled only at three or more selected layers: the same six edge and center commands to space the layers evenly between the outermost two, plus the Horizontally and Vertically spacing buttons. The two outermost layers are treated as fixed and only the ones between them move.',
+        status: 'missing',
+      },
+      {
+        control: 'Align to',
+        detail:
+          "The control that chooses what the align and distribute commands align to: Selection, the default, against the border of the current selection, or Canvas, the whole document. It sits at the right of the alignment group, reached through the three-dot More control, and it changes what the same six buttons do rather than adding a command. Adobe's own account of it is the Canvas route — \"To align layers based on the canvas, click the More icon (the three dots) to choose Canvas\" — and the Selection default is the state users report as \"the alignment is set to 'Selection' and not 'Canvas'\".",
         status: 'missing',
       },
       {
@@ -89,7 +95,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       {
         keys: 'V',
         action:
-          'Select the Move tool. Tapping the key selects it; holding it springs the Move tool onto the currently active tool for as long as the key is down, and releasing returns to the tool you were on. Spring-loaded switching is a preference (Preferences > Tools > Spring-loaded Tool Shortcuts) and is on by default. The exception list is the Hand, Slice, Slice Select, Pen and Path Selection tools, which never spring-load.',
+          'Select the Move tool. Tapping the key selects it; holding it springs the Move tool onto the currently active tool for as long as the key is down, and releasing returns to the tool you were on. Spring-loaded switching is a preference (Preferences > Tools > Spring-loaded Tool Shortcuts) and is on by default.',
       },
     ],
     implementation: 'partial',
@@ -99,7 +105,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'src/components/Main/MoveToolArea.tsx:176',
       'src/components/Main/MoveToolArea.tsx:197',
       'src/tools/reposition.ts:12',
-      'src/tools/toolProcessors.ts:113',
+      'src/tools/toolProcessors.ts:114',
       'src/components/ToolbarsRight/Move/Reposition.tsx:12',
       'src/components/Common/AppKeyboardShortcuts.tsx:216',
       'src/components/SidebarLeft/SidebarLeft.tsx:258',
@@ -107,7 +113,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'toolbar-mapping.ts:39',
     ],
     appNotes:
-      "The app's Move tool moves and resizes, and the whole gesture is one committed history entry, but almost nothing of Photoshop's bar survives, and what does survive is not merely narrower than Photoshop's: the one canvas overlay the app draws is a resize rectangle where Photoshop draws a transform box, and two of Photoshop's controls are behaviours this app has with nothing on screen to turn them off. That overlay is a divergence rather than a gap, and it is why the verdict is `partial` and not `implemented`. The two rows whose behaviour is welded on are `partial` on exactly that basis, and their `appRef`s point at the behaviour the app performs rather than at a control, because there is no control in the bar to point at. Neither the Auto-Select checkbox nor the Group/Layer menu beside it is rendered, and a search of `src/` and `e2e/` finds no control for either: the tool always resolves the layer under the pointer by hit test and always makes it active, which is Auto-Select: Layer with that state permanently on and the group mode removed — so a grouped child cannot be dragged out of its group, and a click that lands on a transparent part of a layer finds whatever is underneath instead of nothing. There is no Show Transform Controls checkbox either, and the difference is more than cosmetic, because the overlay that does render is a plain resize rectangle drawn by the shared useRect hook — four painted corner handles sitting on eight draggable edges, no rotation zone at all outside the box, no numeric W/H, no reference point — so the geometric half of the tool, which is where Free Transform normally lives, is absent from the Move tool entirely. The align and distribute rows, the Alt-drag duplicate, the Shift axis constraint, the Shift-click-to-extend and the arrow-key nudge are all missing, which together mean the app can place one layer but cannot line several up. A third divergence is the refusal, which is not a missing feature: the app refuses a press on a bedrock layer, and it does not consult the locked flag that its own layer model carries, so a layer marked locked is still draggable. The keyboard is a divergence too, and it is a strange one because the badge looks right. The Move tile declares V in the toolbar mapping, and the app does bind V — but the badge is not what binds it, and the letter-key layer is a separate hand-written table rather than anything derived from the toolbar. Spring-loaded switching does not exist here at all: the handler switches the tool on keydown and nothing listens for the keyup, so holding V cannot borrow the Move tool for one gesture and hand it back. Auto-Align is a different matter, because it is not this tool's control to lose: in Photoshop it is the Edit > Auto-Align Layers command, a dialog with a Projection choice, and the app has no equivalent of it at all. The panel the app does render is its own: the active layer's name, a Merge all button and a hint, none of which Photoshop's Move bar has.",
+      "The app's Move tool moves and resizes, and the whole gesture is one committed history entry, but almost nothing of Photoshop's bar survives, and what does survive is not merely narrower than Photoshop's: the one canvas overlay the app draws is a resize rectangle where Photoshop draws a transform box, and two of Photoshop's controls are behaviours this app has with nothing on screen to turn them off. That overlay is a divergence rather than a gap, and it is why the verdict is `partial` and not `implemented`. The two rows whose behaviour is welded on are `partial` on exactly that basis, and their `appRef`s point at the behaviour the app performs rather than at a control, because there is no control in the bar to point at. Neither the Auto-Select checkbox nor the Group/Layer menu beside it is rendered, and a search of `src/` and `e2e/` finds no control for either: the tool always resolves the layer under the pointer by hit test and always makes it active, which is Auto-Select: Layer with that state permanently on and the group mode removed — so a grouped child cannot be dragged out of its group, and a click that lands on a transparent part of a layer finds whatever is underneath instead of nothing. There is no Show Transform Controls checkbox either, and the difference is more than cosmetic, because the overlay that does render is a plain resize rectangle drawn by the shared useRect hook — four painted corner handles sitting on eight draggable edges, no rotation zone at all outside the box, no numeric W/H, no reference point — so the geometric half of the tool, which is where Free Transform normally lives, is absent from the Move tool entirely. The align, distribute and align-target rows, the Alt-drag duplicate, the Shift axis constraint, the Shift-click-to-extend and the arrow-key nudge are all missing, which together mean the app can place one layer but cannot line several up. A third divergence is the refusal, which is not a missing feature: the app refuses a press on a bedrock layer, and it does not consult the locked flag that its own layer model carries, so a layer marked locked is still draggable. The keyboard is a divergence too, and it is a strange one because the badge looks right. The Move tile declares V in the toolbar mapping, and the app does bind V — but the badge is not what binds it, and the letter-key layer is a separate hand-written table rather than anything derived from the toolbar. Spring-loaded switching does not exist here at all: the handler switches the tool on keydown and nothing listens for the keyup, so holding V cannot borrow the Move tool for one gesture and hand it back. Auto-Align is a different matter, because it is not this tool's control to lose: in Photoshop it is the Edit > Auto-Align Layers command, a dialog with a Projection choice, and the app has no equivalent of it at all. The panel the app does render is its own: the active layer's name, a Merge all button and a hint, none of which Photoshop's Move bar has.",
     sources: [
       'https://helpx.adobe.com/photoshop/using/tool-techniques/move-tool.html',
       'https://helpx.adobe.com/photoshop/using/moving-stacking-locking-layers.html',
@@ -123,6 +129,9 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'https://helpx.adobe.com/ie/photoshop/using/aligning-layers.html',
       'http://www.photoshopforphotographers.com/3101-1901/Help_guide/tp/Move_tool.html',
       'https://jkost.com/blog/2023/01/10-little-known-tips-for-working-with-tools-in-photoshop.html',
+      'https://jkost.com/blog/2021/10/align-and-distribute-layers-in-photoshop.html',
+      'https://www.bwillcreative.com/the-move-tool-in-photoshop/',
+      'https://community.adobe.com/questions-712/move-tool-align-to-canvas-by-default-1171406',
     ],
   },
 
@@ -166,14 +175,15 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
         appRef: 'src/components/ToolbarsRight/Transform/Transform.tsx:182',
       },
       {
-        control: 'Skew H',
-        detail: 'Numeric text box, in degrees, for horizontal skew.',
+        control: 'H',
+        detail:
+          'Numeric text box, in degrees, for horizontal skew. Adobe names the field H: "To skew numerically, enter degrees in the H (horizontal skew) and V (vertical skew) text boxes in the options bar." The pair is absent from the bar when a Smart Object is the thing being transformed.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Transform/Transform.tsx:202',
       },
       {
-        control: 'Skew V',
-        detail: 'Numeric text box, in degrees, for vertical skew.',
+        control: 'V',
+        detail: "Numeric text box, in degrees, for vertical skew — Adobe's V, the other half of the H/V pair above.",
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Transform/Transform.tsx:218',
       },
@@ -181,6 +191,24 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
         control: 'Switch Between Free Transform And Warp Modes',
         detail:
           'Button that swaps the box for a warp mesh, after which a Warp pop-up menu offers the predefined warp styles and a square handle adjusts the chosen one.',
+        status: 'missing',
+      },
+      {
+        control: 'X',
+        detail:
+          'Numeric text box for the horizontal position of the transform reference point. It is the numeric form of dragging the item inside its own bounding box, and Adobe describes it as taking "values for the new location of the reference".',
+        status: 'missing',
+      },
+      {
+        control: 'Y',
+        detail:
+          "Numeric text box for the vertical position of that same reference point, paired with X; which of the two positionings they express is the Relative Positioning button's state.",
+        status: 'missing',
+      },
+      {
+        control: 'Relative Positioning',
+        detail:
+          'Button that switches what the X and Y values mean: click it "to specify the new position in relation to the current position", so the pair becomes a measured displacement from where the item already is rather than a coordinate.',
         status: 'missing',
       },
       {
@@ -248,7 +276,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'src/contexts/affine-transform.ts:216',
       'src/tools/transform.ts:119',
       'src/tools/transform.ts:153',
-      'src/tools/toolProcessors.ts:140',
+      'src/tools/toolProcessors.ts:141',
       'src/contexts/useLayer.ts:345',
       'toolbar-mapping.ts:64',
     ],
@@ -266,6 +294,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'https://morris-photographics.com/photoshop/shortcuts/downloads/PSCS3_Keyboard_Shortcuts_Mac.pdf',
       'https://glensmith.co.uk/photoshop/tools',
       'https://www.adobe.com/products/photoshop/resize-image.html',
+      'https://community.adobe.com/questions-712/horizontal-h-and-vertical-v-skew-fields-are-missing-in-the-options-bar-on-photoshop-cc-2019-1078402',
     ],
   },
 
@@ -279,7 +308,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       {
         control: 'Preset',
         detail:
-          'Menu of saved settings, with Save Preset alongside it. Levels is one of the seven adjustments that can be stored and re-applied.',
+          'Menu of saved settings, with Save Preset alongside it. Adobe states the round trip in one sentence and counts nothing: "You can save Levels settings as a preset, then apply them to other images."',
         status: 'missing',
       },
       {
@@ -370,8 +399,8 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'src/components/ToolbarsRight/Levels/Levels.tsx:86',
       'src/tools/levels.ts:12',
       'src/tools/functions.ts:66',
-      'src/tools/settings.ts:49',
-      'src/tools/toolProcessors.ts:131',
+      'src/tools/settings.ts:54',
+      'src/tools/toolProcessors.ts:132',
       'src/contexts/useLayer.ts:536',
       'src/contexts/useLayer.ts:345',
       'src/contexts/history-replay.ts:152',
@@ -410,6 +439,12 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
         status: 'missing',
       },
       {
+        control: 'On-image adjustment icon',
+        detail:
+          'The Targeted Adjustment tool, sitting directly under the Preset option at the top of the panel. Selecting it and dragging on the image moves the sextant slider for whichever family of hues dominates the pixels under the cursor, and that one slider moves every area containing those hues rather than a mark you place.',
+        status: 'missing',
+      },
+      {
         control: 'Auto',
         detail: 'Sets a grayscale mix based on the values in the image itself.',
         status: 'missing',
@@ -429,7 +464,7 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       {
         control: 'Color sliders',
         detail:
-          'Six sliders, one per sextant of the color wheel, in the order Reds, Yellows, Greens, Cyans, Blues, Magentas. Each sets how bright that family of hues renders in the monochrome. Adobe ships them at 40, 60, 40, 60, 20 and 80.',
+          'Six sliders, one per sextant of the color wheel, in the order Reds, Yellows, Greens, Cyans, Blues, Magentas. Each sets how bright that family of hues renders in the monochrome. Adobe\'s Black and White page does not print their resting values; the default of 40, 60, 40, 60, 20 and 80 is third-party, and the pages that give it print only the first three — "Reds set to 40%, Yellows set to 60%, and so on".',
         status: 'missing',
       },
       {
@@ -438,12 +473,6 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
           'The reset icon that returns the sliders to their default values, and more generally the panel control that returns the adjustment to its original settings.',
         status: 'partial',
         appRef: 'src/components/ToolbarsRight/Colors/Color.tsx:183',
-      },
-      {
-        control: 'On-image adjustment icon',
-        detail:
-          'The icon that can be dragged off the panel and onto the image, dropping a target marker so a single sextant can be adjusted on the picture itself and the change re-evaluated under the cursor.',
-        status: 'missing',
       },
     ],
     modifiers: [],
@@ -454,8 +483,8 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'src/components/ToolbarsRight/Colors/Color.tsx:110',
       'src/tools/colors.ts:12',
       'src/tools/functions.ts:60',
-      'src/tools/settings.ts:48',
-      'src/tools/toolProcessors.ts:125',
+      'src/tools/settings.ts:53',
+      'src/tools/toolProcessors.ts:126',
       'src/contexts/useLayer.ts:536',
       'src/contexts/useLayer.ts:345',
       'src/contexts/history-replay.ts:152',
@@ -471,7 +500,9 @@ export const transformDescriptions: Record<'reposition' | 'transform' | 'levels'
       'https://helpx.adobe.com/photoshop/using/color-adjustments.html',
       'https://helpx.adobe.com/photoshop/using/color-monochrome-adjustments-using-channels.html',
       'https://www.photoshopessentials.com/photo-editing/black-and-white-cs3',
+      'https://www.photoshopessentials.com/photo-editing/converting-color-photos-to-black-and-white-in-photoshop',
       'https://www.photoshopessentials.com/photo-effects/easy-selective-color-effect-with-photoshop',
+      'https://photoshoptrainingchannel.com/black-white-photos-photoshop/',
       'https://glensmith.co.uk/photoshop/tools',
       'https://www.photoshopessentials.com/basics/photoshop-tools-toolbar-overview',
     ],

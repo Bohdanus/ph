@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 import { toolbarMap } from '../toolbar-mapping.ts';
 
 /**
@@ -118,17 +119,33 @@ const aTileWithAFlyout = async (page: Page) => {
 };
 
 test.describe('SidebarLeft - Layout Toggle (fast)', () => {
+  // The 720px viewport the fit test below names, declared on the describe rather than set
+  // inside the test. `devices['Desktop Chrome']` is 1280x720 today, so a `setViewportSize`
+  // to that same size is a no-op against this config that still fires a real resize at a
+  // mounted app — and none of the file's other four tests do that. A `test.use` here makes
+  // the size true by construction and fires nothing.
+  test.use({ viewport: { width: 1280, height: 720 } });
+
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    // Don't wait for canvas - just verify page loads
+    // Navigation, not the app: `body` is visible on a blank document and on a Vite error
+    // overlay too. The guard that needs a mounted app is each test's own locator.
     await expect(page.locator('body')).toBeVisible();
   });
 
-  // ONE COLUMN IS THE DEFAULT, because that is Photoshop's default: the double-chevron at the
-  // top of the Tools panel switches to two columns to save vertical room, which only means
-  // anything if one column is where you start. It is also the layout that can overflow, which
-  // is what the three-dots tile is for — the two-column rail simply does not need one as
-  // often, so making it the default would have made the overflow feature a corner case.
+  // ONE COLUMN IS THE DEFAULT, which REVERSES main's two-column default and the operator's
+  // standing instruction: "left toolbar must start with one column by default". The chevron
+  // exists to switch to two columns to save vertical room, which only means anything if one
+  // column is where you start — and Adobe says the same ("Tools by default are in a single
+  // column").
+  //
+  // Main's reason for two columns is answered rather than overruled, because it was a real
+  // observation at the time: a one-column rail is taller, so it needed a taller window before
+  // it stopped SCROLLING. The rail no longer scrolls — the tiles are fitted to the space they
+  // have and the rest move into the three-dots tile — so the axis main was trading along is
+  // gone. The measured heights and thresholds live once, in `e2e/toolbar-fit.spec.ts`, which
+  // prints them on every run; they are font-metric dependent and a second copy is a second
+  // thing to rot.
   test('starts in one column, and the toggle offers the two-column rail', async ({ page }) => {
     const toggle = layoutToggle(page);
 
@@ -147,24 +164,27 @@ test.describe('SidebarLeft - Layout Toggle (fast)', () => {
 
   test('the default toolbar does not make the page outgrow the viewport', async ({ page }) => {
     // Playwright's own default viewport is 1280x720, so this runs at the height the
-    // regression was reported at. It was P1 in e2e/OPEN_PROBLEMS.md: a toolbar taller than
-    // the window has a min-content height, a `1fr` grid track is `minmax(auto, 1fr)`, and the
+    // regression was reported at. It was P1 in e2e/OPEN_PROBLEMS.md: a toolbar taller than the
+    // window has a min-content height, a `1fr` grid track is `minmax(auto, 1fr)`, and the
     // rail therefore became the row's floor and dragged the `h-full` canvas up.
     //
     // Two things hold this now and either could stop holding it: `min-h-0 overflow-y-auto` on
     // the aside, so the rail cannot floor the row, and the fit, which gives the tiles a budget
-    // of the slot instead of letting them claim it. The assertion is one `evaluate` and it is
-    // currently satisfied with nothing to spare, so it is cheap to keep as the tripwire for
-    // exactly the failure the class exists for.
+    // of the slot instead of letting them claim it. It matters MORE under the one-column
+    // default, because a one-column rail is the taller of the two, and before the fit a
+    // 1280x720 window was not tall enough for it — so this is the assertion that has to keep
+    // holding for the default layout to be the right one. The metrics below are page-level, so
+    // a blank page would satisfy them without a toolbar having been laid out at all, hence the
+    // canvas guard.
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
     const { height: pageHeight, scrollHeight } = await page.evaluate(() => ({
       height: document.documentElement.clientHeight,
       scrollHeight: document.documentElement.scrollHeight,
     }));
 
-    expect(
-      scrollHeight,
-      'a toolbar taller than the viewport floors the grid row and drags the canvas up'
-    ).toBeLessThanOrEqual(pageHeight);
+    expect(scrollHeight, 'the shell must be exactly viewport-tall, so the page never scrolls').toBeLessThanOrEqual(
+      pageHeight
+    );
   });
 
   // Replaces two tests that read `w-14` and `w-[6.75rem]` off the class list. What they were

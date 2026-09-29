@@ -70,6 +70,18 @@ body {
   cursor: grabbing !important;
 }
 
+// Scroll a container without painting a scrollbar on it: the `scrollbar-none` utility
+// ships with Tailwind (`scrollbar-width: none`), and is applied to the left tool rail and
+// the mobile bottom bar.
+//
+// That is the only way to reconcile the two requirements the shell carries at once: a
+// region that must stay reachable when it does not fit, and a chrome that shows no
+// scrollbars. `overflow: hidden` satisfies the second and breaks the first — see the note
+// below on why that rule is not on `html`/`body`/`#root`. `scrollbar-none` keeps the
+// container a real scroll container (wheel, trackpad, arrow keys once a control inside it
+// has focus, touch panning and `scrollIntoViewIfNeeded` all still work) and removes only
+// the scrollbar *chrome*.
+
 // Dynamic viewport units, and only below the mobile boundary.
 //
 // `100dvh` tracks mobile browser chrome as it collapses and expands; on desktop it is
@@ -79,11 +91,11 @@ body {
 // Deliberately NOT set here: `overflow: hidden` and `touch-action: none`.
 //
 // `overflow: hidden` at any width converts the left toolbar's overflow from
-// page-scrollable to permanently clipped, because the toolbar has no height or overflow
-// of its own and its min-content height (12 tool groups plus the colour swatches, ~840px)
-// floors the `1fr` grid row it sits in. Every desktop window shorter than that loses the
-// bottom of its tool rail with no scrollbar and no way to reach it. The grid items that
-// need to own their scrolling now do (`min-h-0 overflow-y-auto`).
+// page-scrollable to permanently clipped, because the toolbar's min-content height
+// floors the `1fr` grid row it sits in. Every desktop window shorter than that loses
+// the bottom of its tool rail with no scrollbar and no way to reach it. The grid items
+// that need to own their scrolling now do (`min-h-0 overflow-y-auto`), and the rail
+// additionally carries `.scrollbar-none` so that owning the scroll never paints one.
 //
 // `touch-action: none` is the intersection of every ancestor's value, so putting it on
 // `body` silently disabled touch panning in the layers list, the history list, the new
@@ -101,9 +113,11 @@ body {
   }
 
   // The mobile bar and tool sheet are `position: fixed`, so they overlay the canvas instead
-  // of occupying the grid's `bottom` area — that row resolves to zero, and `<main>` has
-  // `overflow: hidden`. Without a reservation the bottom 64px of the image sits under the
-  // bar with no way to pan it into view on a phone.
+  // of occupying the grid's `bottom` area — that row resolves to zero because an
+  // out-of-flow element is removed from its grid area entirely. `<main>` is `overflow-y-auto`
+  // (a scroll container, so its automatic minimum size is zero) and the rule below reserves
+  // the bar's height as padding. Without that reservation the bottom 64px of the image sits
+  // under the bar with no way to pan it into view on a phone.
   //
   // Selected by class, and deliberately not by `[grid-area='main']`. The grid area is a
   // Tailwind *class* on the element, not an HTML attribute, so an attribute selector for it

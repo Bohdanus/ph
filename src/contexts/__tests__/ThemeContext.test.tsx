@@ -248,11 +248,18 @@ describe('ThemeContext', () => {
       return null;
     };
 
+    // The restore has to run whatever `render` does, including the throw this test is asserting —
+    // which is the only throw in this file. The `afterEach` above also calls `vi.restoreAllMocks()`,
+    // but that is a coincidence of this file's setup, not the guard: a mock restored by a
+    // `restore()` on the line after a failed assertion stays installed for every test below.
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(() => {
-      render(<TestComponent />);
-    }).toThrow('useTheme must be used within a ThemeProvider');
-    consoleError.mockRestore();
+    try {
+      expect(() => {
+        render(<TestComponent />);
+      }).toThrow('useTheme must be used within a ThemeProvider');
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it('handles multiple toggle calls', () => {

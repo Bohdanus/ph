@@ -11,7 +11,7 @@ import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
  * all of them are about layout: clipping, scroll ownership, and what survives a resize.
  * The two that motivated the change were both invisible to the whole suite — a one-class
  * `overflow` edit rendered the text tool's font list as an 8px sliver, and a global
- * `overflow: hidden` made 177–377px of the left tool rail unreachable with no scrollbar.
+ * `overflow: hidden` made the bottom of the left tool rail unreachable with no scrollbar.
  * Neither showed up in `npm run test`, and no spec opened the dropdown.
  */
 
@@ -78,11 +78,16 @@ const prefersTwoColumns = async (page: Page) => {
 };
 
 test.describe('Left tool rail reachability', () => {
-  // The rail holds 12 tool groups plus the colour swatches: ~840px of min-content inside a
-  // `1fr` grid row in a `height: 100%` container. A `1fr` track is `minmax(auto, 1fr)`, so
-  // the rail floors that row and the grid outgrows the viewport. The page used to scroll, so
-  // the overflow was reachable; a global `overflow: hidden` removed the scroll and turned it
-  // into content nobody could get to. The rail now owns its scrolling via `min-h-0`.
+  // The rail's content is a fixed height per layout and the available height is
+  // `viewportHeight - 137` — the shell's three `auto` grid rows — so it overflows below a
+  // threshold rather than never, and two of the overflowing sizes are ordinary iPads rather
+  // than only very short desktop windows. The numbers, and the font metrics they depend on,
+  // are recorded once in the header of `e2e/no-document-overflow.spec.ts`.
+  //
+  // `overflow-y-auto` is what bounds the grid row: a `1fr` track is `minmax(auto, 1fr)`,
+  // and a scroll container's automatic minimum size is already zero, so the rail no longer
+  // dictates the row's height. The page itself is pinned to be exactly viewport-sized at
+  // every size in that spec's matrix.
   for (const size of [DESKTOP, SHORT_DESKTOP, WIDE_DESKTOP]) {
     test(`every control in the rail is reachable at ${size.width}x${size.height}`, async ({ page }) => {
       test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
@@ -211,14 +216,36 @@ test.describe('No global scroll lock', () => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, DESKTOP);
 
-    // A global `overflow: hidden` on html/body/#root converts every overflowing region in
-    // the app into unreachable content. The grid's items own their scrolling instead.
+    // A global `overflow` on html/body/#root that does not scroll converts every
+    // overflowing region in the app into unreachable content. The grid's items own their
+    // scrolling instead. Allowlist rather than a denylist of `hidden`, because `clip`
+    // reaches the same permanently-unreachable state and only declines to offer a
+    // scrollbar — the grid items that own scrolling are `auto`, which is on the list.
+    //
+    // The two LONGSHANDS, not the `overflow` shorthand: the shorthand serializes BOTH of
+    // them, so `overflow-x: hidden; overflow-y: visible` comes back as the two-token
+    // string `"hidden auto"`. That string is in no allowlist, so the test would go red on a
+    // document that scrolls vertically perfectly well — and the message would then name
+    // the horizontal lock on an element whose only fault is the one axis. Reading them
+    // separately says which axis is locked and nothing more.
+    //
+    // `scroll` is deliberately NOT on the list: it is a global lock too, in the form this
+    // pin exists to catch — a scrollbar on the document at every width, whether or not
+    // anything overflows. `overlay` cannot appear at all: Chrome computes it to `auto`.
+    const mayOwnScrolling = ['visible', 'auto'];
     for (const selector of ['html', 'body', '#root']) {
       const overflow = await page
         .locator(selector)
         .first()
-        .evaluate((el) => getComputedStyle(el).overflow);
-      expect(overflow, `${selector} must not lock document scrolling`).not.toBe('hidden');
+        .evaluate((el) => ({ x: getComputedStyle(el).overflowX, y: getComputedStyle(el).overflowY }));
+      expect(
+        mayOwnScrolling.includes(overflow.x),
+        `${selector} must not lock horizontal document scrolling, and overflow-x is "${overflow.x}"`
+      ).toBe(true);
+      expect(
+        mayOwnScrolling.includes(overflow.y),
+        `${selector} must not lock vertical document scrolling, and overflow-y is "${overflow.y}"`
+      ).toBe(true);
     }
   });
 
@@ -461,21 +488,21 @@ test.describe('Crossing the mobile boundary', () => {
     test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await open(page, DESKTOP);
 
-    const markCanvas = () =>
-      page.evaluate(() => {
-        const canvas = document.querySelector('[data-testid="workspace-canvas"]');
-        if (!canvas) return null;
-        const element = canvas as HTMLElement;
-        if (!element.dataset.probe) element.dataset.probe = 'stable-identity';
-        return element.dataset.probe;
-      });
-
-    expect(await markCanvas()).toBe('stable-identity');
+    // The node is held here, not in the DOM: a marker attribute is re-stamped on whatever
+    // the selector resolves to next, so a canvas destroyed and rebuilt reads the same.
+    // `elementHandle()` THROWS rather than returning null — on no match it waits out the
+    // timeout, and on several it raises a strict-mode violation. Its throw is the
+    // diagnosis, so there is nothing here for a null check to add.
+    const canvas = await getWorkspaceCanvas(page).elementHandle();
 
     for (const size of [{ width: 500, height: 800 }, TABLET, DESKTOP]) {
       await page.setViewportSize(size);
-      // The same node still carries the marker, so it was never unmounted.
-      expect(await markCanvas(), `canvas must survive ${size.width}px`).toBe('stable-identity');
+      expect(await canvas!.evaluate((el) => el.isConnected), `canvas must survive ${size.width}px`).toBe(true);
+      const current = await getWorkspaceCanvas(page).elementHandle();
+      expect(
+        await canvas!.evaluate((el, node) => el === node, current),
+        `the canvas at ${size.width}px must be the same node, not a rebuilt one`
+      ).toBe(true);
     }
   });
 

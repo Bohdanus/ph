@@ -116,17 +116,28 @@ describe('SidebarLeft owns its scrolling', () => {
   afterEach(() => setViewportWidth(DESKTOP_WIDTH, 800));
 
   /**
-   * The rail holds 12 tool groups plus the colour swatches, roughly 840px of min-content,
-   * inside the `1fr` row of a grid whose container is `height: 100%`. A `1fr` track is
-   * `minmax(auto, 1fr)`, so the rail floors that row: the grid outgrows the viewport and
-   * the bottom of the rail — the foreground/background swatches, and at shorter windows
-   * the Text, Draw, Pen and Shape groups — lands below the fold.
+   * The rail holds 16 tool groups in 5 sections plus the colour swatches: 612px of content
+   * in the two-column layout and 1014px in the one-column layout, inside the `1fr` row of a
+   * grid whose container is `height: 100%`. Those numbers are measured, font-metric
+   * dependent, and deliberately restated nowhere else — see the header of
+   * `e2e/no-document-overflow.spec.ts` for them and for what asserts what.
+   *
+   * A `1fr` track is `minmax(auto, 1fr)`, and an element that is a scroll container has an
+   * automatic minimum size of zero, so the rail cannot floor that row. The bottom of the
+   * rail — the foreground/background swatches, and at shorter windows the Text, Draw, Pen
+   * and Shape groups — sits below the fold, and the rail owns the scroll to reach it.
    *
    * The page used to scroll, so it was reachable. Adding a global `overflow: hidden` to
    * `html, body, #root` removed that scroll and turned the overflow into unreachable
    * content with no scrollbar. The fix is not a global exception but the grid's own
-   * contract: `min-h-0` lets the track shrink below min-content, and `overflow-y-auto`
-   * gives the rail the scroll it now needs.
+   * contract: `overflow-y-auto` bounds the track, and the rail scrolls.
+   *
+   * `min-h-0` is redundant with `overflow-y-auto`, and that is a measurement rather than an
+   * argument: deleting the class and re-running `e2e/no-document-overflow.spec.ts` leaves
+   * all thirteen viewport cases green, because the overflow value alone already zeroes the
+   * automatic minimum size. It is asserted here because it is the explicit form of a
+   * contract that is otherwise implicit, and because removing it should be a decision
+   * somebody makes on purpose. It is NOT the class doing the work — `overflow-y-auto` is.
    */
   it('lets the rail shrink and scroll instead of flooring the grid row', () => {
     render(<SidebarLeft />);

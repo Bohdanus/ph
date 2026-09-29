@@ -2,6 +2,16 @@
 
 Photoshop-inspired, production-grade photo editor. Instructions for coding agents.
 
+**The detail lives in linked files.** Read the root file for the rules that apply
+to every task; open the linked file when the task is that kind of work.
+
+| File                                                   | Read it when                                                                                           |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| [`docs/TESTING.md`](docs/TESTING.md)                   | running or changing any check: `tsc`, `test`, `lint`, `e2e`, build, CI                                 |
+| [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md)       | working alongside other agents: worktrees, the swarm board, the worktree list, recovering a dead agent |
+| [`docs/PHOTOSHOP-UX.md`](docs/PHOTOSHOP-UX.md)         | touching the Tools rail, tool names, or panel behaviour                                                |
+| `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN_PROBLEMS.md` | filing or checking a known defect — see "Handoff documents"                                            |
+
 ## Subagents: THE DEFAULT, NOT THE FALLBACK
 
 **LAUNCH AS MANY SUBAGENTS AS THE TASK WARRANTS. COMPUTE COSTS ZERO; QUALITY IS THE POINT.** 40 sequential tool calls in one context = 8 parallel subagents + a 6-call synthesis. Sequential tool calls are the defect, not the token count.
@@ -32,7 +42,7 @@ task({
 - Omitting those three fields inherits the current turn's model. Passing them explicitly is what keeps a subagent free when the main turn is not.
 - **DO NOT ESCALATE TO A PAID MODEL ON YOUR OWN** for "hard" or "risky" work. Override only when the user named a GPT model in that request, and say so when you do.
 - `agent_manager` (visible sessions, git worktrees) is a different tool: only when the user wants visible sessions or worktrees. `task` for everything else — it creates no sessions.
-- Audit before spawning a fleet, not after: `sqlite3 ~/.local/share/kilo/kilo.db "SELECT json_extract(model,'\$.id') m, json_extract(model,'\$.providerID') p, count(*) FROM session GROUP BY 1,2 ORDER BY 3 DESC"` — `session.model` is a TEXT column holding JSON; there is no `data` column on `session`. On 2026-09-28 a free orchestrator (`ses_f1b1bccb…`) sent two subagents with a bare model name, the resolver fell through to the Kilo Gateway onto `~openai/gpt-luna-latest`, and both died in under a second on `APIError: Add credits to continue, or switch to a free model` at zero tokens — rule 1 breached by an agent that was itself free.
+- Audit before spawning a fleet, not after: `sqlite3 ~/.local/share/kilo/kilo.db "SELECT json_extract(model,'\$.id') m, json_extract(model,'\$.providerID') p, count(*) FROM session GROUP BY 1,2 ORDER BY 3 DESC"` — `session.model` is a TEXT column holding JSON; there is no `data` column on `session`.
 
 ### Rules of delegation
 
@@ -44,6 +54,7 @@ task({
 
 ## NEVER OPEN A BROWSER WINDOW
 
+<<<<<<< HEAD
 The e2e suite is headless by default and must stay that way. A headed browser puts a live, clickable window on the operator's screen for the whole run; their clicks, keystrokes, mouse movement and focus changes reach the page as real input, indistinguishable from the suite's own `page.mouse` / `page.keyboard` calls, so the run fails for reasons that are not in the code and look exactly like real races.
 
 | Blocked                         | Why                                                        |
@@ -745,52 +756,88 @@ It is worth knowing for what it is good: cost tracks blast radius, and so does r
 - **Dependency licences are not a gate.** The allow/deny list and the high-severity threshold are in `DEPENDENCIES.md`, enforced by nothing; `npm audit --audit-level=high` in `ci` is the vulnerability half and it does run.
 
 **DO NOT WEAKEN A GATE TO GET GREEN: no skips, raised thresholds, deleted assertions, or re-recorded baselines.** Fix the defect or leave the recording decision to the operator.
+=======
+
+**A headed browser takes over the operator's screen and their input reaches the page as real test input, so a headed run fails for reasons that are not in the code. `test:e2e` is headless and stays that way** — never pass `--headed`, `--ui`, `--debug`, `show-report`, `show-trace`, `codegen`, or `PLAYWRIGHT_ALLOW_HEADED=1`, and do not "fix" a failure by flipping the mode. If something only reproduces visually, ask the operator to run `npm run test:e2e:headed` themselves. Blocked-command table and the two holes in enforcement: [`docs/TESTING.md`](docs/TESTING.md).
+
+## Working with other agents
+
+Orchestration detail — the board's commands, leases, `doctor`, and the worktree
+inventory — is in [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md). What applies
+to every task:
+
+- **Every change to a tracked file happens in its own worktree under
+  `.kilo/worktrees/`, on its own branch.** `main` is for reading and merging.
+  Before the first edit, `git rev-parse --show-toplevel` must resolve under
+  `.kilo/worktrees/`. Create it first, e.g.
+  `git worktree add -b fix/task .kilo/worktrees/task`. Read-only work, and changes
+  the operator explicitly asked for on `main`, are the only exceptions — a
+  doc-only change is not one. If you are already in a worktree, do not nest
+  another.
+- **One writer per worktree; readers may share it.** A root-level agent is one a
+  human started as a Kilo chat. Two of them never _write_ the same worktree, and
+  one does not take over a worktree another is writing in. **Read-only agents may
+  share a worktree freely** — inspecting, reviewing and auditing are the common
+  case and are safe; a reader must still mutate nothing: no commit, checkout,
+  reset, install, or worktree removal. Subagents of one root agent share that
+  agent's worktree and must split by file. The board cannot enforce any of this —
+  identity is the branch, so two agents in one worktree are the same agent to it.
+- **Claim what you touch before the first edit:** `npm run swarm -- claim <id>
+--files <paths>`, or `swarm hold <path>` with no issue. A refused hold names the
+  holder; take their lock first, never `--force` it. Announce a branch you are
+  about to land with `swarm note` before you start resolving it.
+- **Merge order:** `main` into the branch **in the worktree**, resolve and run
+  gates there, then merge the clean branch into `main`. Never resolve conflicts or
+  repair the index in `main`. Never `git stash` — it is a shared unordered stack.
+- **A quiet agent is not a dead agent.** If a session died, preserve its worktree
+  before reclaiming anything: inspect with `git status`/`git diff`/`git log -1`,
+  preview with `npm run swarm -- doctor --dry-run`, then `npm run swarm -- doctor`.
+  Force-release only a session confirmed dead, and never because a network-lost
+  one stopped talking.
+- **The list of worktrees is not written down anywhere by hand.** Run
+  `node scripts/worktree-inventory.mjs` to regenerate `WORKTREES.json`, and read
+  it before deleting a worktree. `0 commits ahead of main` is **not** evidence a
+  worktree is disposable — it can hold uncommitted work that exists on no ref.
+
+## Architecture status
+
+`PaintToolName` is `'brush' | 'pencil'` and that narrowing is load-bearing, not
+tidiness. A tool that SUBSTITUTES pixels cannot share a processor, an args type or
+an options bar with one that STAMPS them: sharing the union is exactly what let a
+forced `'spray'` `penType` masquerade as a tool setting, and a tool that has left
+the paint panel must not be widened back into it to accommodate a new bar. The
+corollary for persistence is `HANDOFF.md` 70 — a group that persists one key may
+not absorb a tool that has more than one.
+
+`HistoryItem[]` is the **PRODUCTION REPLAY AUTHORITY**: history,
+`history-replay.ts`, runtime `Layer`s, and export. The durable document is
+shadow-only. Re-read code and plans before crossing the boundary. **DO NOT start
+single-writer cutover while `saveLayerCanvas()` promotes cached canvases outside
+reducer publication.**
+
+> > > > > > > main
 
 ## Definition of Done
 
 **A TASK IS NOT DONE UNTIL THE WORK IS MERGED INTO `main` AFTER A THOROUGH CODE REVIEW. NOT "IMPLEMENTED", "COMMITTED", "PUSHED", "PR OPEN", OR "THE TESTS PASS".**
 
 1. **Isolated**, in its own worktree on its own branch.
-2. **Green locally**: `lint:check`, `tsc`, `build`, `test`; `test:e2e` when the change is user-visible, `test:e2e:unit` when it touches an e2e helper. "It was already failing" is a fact to report, not a reason to stop.
+2. **Green locally**: `lint:check`, `tsc`, `build`, `test`; `test:e2e` when the change is user-visible, `test:e2e:unit` when it touches an e2e helper. See [`docs/TESTING.md`](docs/TESTING.md). "It was already failing" is a fact to report, not a reason to stop.
 3. **Covered** by a test that fails without the change. A fix that cannot be pinned by a test is a fix that comes back.
 4. **Documented**: handoff docs updated, and any new gate, test trap, or architecture boundary written down where the next agent looks.
 5. **Reviewed by someone else**, thoroughly: the diff, the surrounding code, the tests, and its own load-bearing claim re-run. Not the author. A finding sends the task back.
-6. **Merged into `main`**: `main` first merged or rebased into the branch **in the
-   worktree**, conflicts resolved there, gates re-run there, and only then the merge
-   into `main` — which has nothing left to decide. Pushed, `main` green afterwards.
+6. **Merged into `main`** after review and passing gates.
 7. **Reported as done**: what changed, what validation ran, what the review said.
 
-- **A green gate is the floor, not the review.** `gate:commit` and `gate:push` are mechanical, and a review that was not performed is not a review that found nothing.
-- **Never weaken a gate to reach "done"** — no skipped tests, raised thresholds, deleted assertions, or re-recorded baselines.
 - **A blocked merge is not done.** Operator decision pending, a defect the operator wants kept, a conflict that needs judgement: say so and name what is outstanding. Reporting "done" with an unmerged branch is the failure mode this section exists to prevent.
-- Only step 6 writes to `main` (plus a hotfix the operator asked for on main).
-
-## E2E failures
-
-- Read `e2e/OPEN_PROBLEMS.md` first. A new failure is a new defect.
-- A pin/`expected-fail` is a tripwire for broken behavior; remove it in the same change that fixes the defect.
-- Visual baselines re-record only with `npm run test:e2e:update-baselines`, which runs
-  `playwright test e2e/export/visual-regression.spec.ts --update-snapshots=all`. The `=all` is
-  load-bearing: Playwright declares the flag with `preset: 'changed'`, so a bare
-  `--update-snapshots` resolves to `'changed'`, and `'changed'` is inert against a spec that
-  reads its baseline with `readFile` and compares with `compareScreenshots`. Green means pixels
-  matched.
-- The 100-pixel budget in `visual-regression.spec.ts` is a tripwire, not a tolerance. Do not
-  widen `threshold` or `maxDiffPixels` to make a red go green — the argument for the numbers and
-  for NOT pinning a Chrome version in CI is written out at that call site.
-- `npm run test:e2e:clean` deletes the per-test output directories under `test-results/` and
-  keeps `test-results/results.json`, so a run's machine-readable result survives it.
-- Read failures from `test-results/`; `trace.zip` needs a window, so ask the operator.
 
 ## Handoff documents
 
 `HANDOFF.md`, `TEST-FLAKES.md`, and `e2e/OPEN_PROBLEMS.md`: validated, actionable problems only. **NO changelog, completion notes, or status summaries.** Verify against the tree.
 
 - **Route by scope.** `HANDOFF.md` is for history/replay and document-state defects. `TEST-FLAKES.md` is for test-infrastructure defects — flakiness, the pool, the runner, the gates themselves. `e2e/OPEN_PROBLEMS.md` is for Playwright. Do not file a gate or pool defect in `HANDOFF.md`; it is scoped, and a cross-scope entry is the one nobody reads.
-- **Nothing durable goes in `.kilo/`.** It is gitignored (`.gitignore:34`), so a finding recorded there dies with the machine and with the worktree. `HANDOFF.md` used to name `.kilo/plans/` as a handoff location; that was wrong, and it is why `TEST-FLAKES.md` exists.
-- **Growing a file silently invalidates every `file.ts:NNN` in the handoffs that points into it.** The citations are load-bearing: an agent follows one, lands in a similar-looking function, and patches the wrong thing — §54's asset-transaction pointer once landed in the middle of `operationForTool`. A `grep` sweep does not catch it, because the text at the stale line still looks plausible. On a diff that inserts lines into a cited file, re-derive each citation from the prose's claim, not from the old number: **if your diff adds or removes lines above a cited line, every citation below it moved.** Measured on one branch: adding ~112 lines to `StoreContext.tsx` left 38 of 39 line-numbered citations into it and `history-adapter.ts` wrong, with exactly one still resolving. A correction applied from an audit is as load-bearing as the original and needs the same check.
-- **The board is not a handoff location either.** Its database is machine-local
-  for the same reason. Close an issue there, and delete the entry here.
+- **Nothing durable goes in `.kilo/` or the swarm database.** Both are machine-local; findings belong in the scoped handoff documents. Close the swarm entry when its verified finding is deleted from the handoff.
+- **Line-numbered handoff citations move with the file.** If a diff adds or removes lines above `file.ts:NNN`, re-derive every citation below it from the prose's claim.
 
 **WRITE OR UPDATE THE HANDOFF WITHOUT ASKING** for every validated issue, strong recommendation, or durable finding. Ship it with the work.
 
@@ -798,6 +845,7 @@ It is worth knowing for what it is good: cost tracks blast radius, and so does r
 
 - **Verified fix: DELETE the entry.** Verification is another agent, review, or test, not the fixer's claim.
 - **Never rewrite an open problem as closed.** Keep unverified work as the exact remaining verification; keep only test tripwires after a fix.
+  <<<<<<< HEAD
 
 ## Architecture status
 
@@ -950,3 +998,6 @@ lists", which understated the work about fourfold. `toolIcons.test.tsx` carries 
 hand (46 = the 41 tool ids plus 5 `shape-*` figure icons), byte-identical to `ToolIconName` in
 `SidebarLeft/types.ts`; keep it that way. Add a tool and every one of them has to change. Count the
 lists before estimating an edit, and do not trust a number written here — every one has gone stale.
+=======
+
+> > > > > > > main

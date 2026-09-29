@@ -407,7 +407,8 @@ describe('defaultSettings value sanity', () => {
 
 describe('defaultSettings assumptions baked into the registry', () => {
   it('seeds each paint tool with the penType its registry adapter forces', () => {
-    // toolProcessors.ts forces `pen` for brush (:166) and pencil (:174). If a default disagreed,
+    // `buildDrawArgs` in src/tools/toolProcessors.ts forces `pen` for the brush and the
+    // pencil. If a default disagreed,
     // the forced value would silently override the user's own setting instead of confirming it.
     // `color-replacement` is no longer a paint tool and has no `penType` at all: it used to be
     // pinned to `'spray'` here, and that pin is what a paint-over could never satisfy.
@@ -418,7 +419,8 @@ describe('defaultSettings assumptions baked into the registry', () => {
 
   it('seeds the Color Replacement controls with Adobe’s own defaults', () => {
     // The controls that used to exist only as prose on a TODO card
-    // (`toolbarPlaceholderConfig.ts:4`). Tolerance 30 and Smoothness 10 are Adobe's, on 0-100 and
+    // (`placeholderToolGroups` in src/components/ToolbarsRight/toolbarPlaceholderConfig.ts).
+    // Tolerance 30 and Smoothness 10 are Adobe's, on 0-100 and
     // 0-50 scales respectively, and Limits opens on Contiguous.
     expect(defaultSettings['color-replacement']).toMatchObject({
       tolerance: 30,
@@ -432,7 +434,8 @@ describe('defaultSettings assumptions baked into the registry', () => {
   });
 
   it('seeds the pencil width with the same fallback the adapter applies when it is absent', () => {
-    // toolProcessors.ts:175 does `Math.max(1, Number(lineWidth ?? 3))`; a default other
+    // The `pencil` adapter in src/tools/toolProcessors.ts clamps a finite width up to 1 and
+    // falls back to its `DEFAULT_PENCIL_LINE_WIDTH` of 3 otherwise; a default other
     // than 3 would make the fallback reachable only for hand-built args.
     expect(defaultSettings.pencil.lineWidth).toBe(3);
     expect(defaultSettings.brush.lineWidth).toBe(10);
@@ -451,7 +454,7 @@ describe('defaultSettings assumptions baked into the registry', () => {
     expect(result[0].height).toBe(size.height);
   });
 
-  it('is the one default set the crop processor cannot consume as-is (src/tools/crop.ts:17)', () => {
+  it('is the one default set the crop processor cannot consume as-is (the crop processor in src/tools/crop.ts)', () => {
     // Every other tool runs on its seeded defaults; crop destructures `rect!` and the
     // seeded rect is null, so the document-operation commit needs a real rect first.
     expect(defaultSettings.crop.rect).toBeNull();

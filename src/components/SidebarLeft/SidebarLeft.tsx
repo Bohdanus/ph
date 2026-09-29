@@ -17,6 +17,8 @@ import { slugifyToolLabel, toolbarMap, type ToolbarTool, type ToolbarToolGroup }
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { descriptionKeyFor } from '../../tools/descriptions/tooltips.ts';
 import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
+import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
+import { useDockDrag } from '../../hooks/useDockDrag.ts';
 import { useToolbarOverflow } from './use-toolbar-overflow.ts';
 import type { ToolbarSlot } from './toolbar-overflow.ts';
 
@@ -93,6 +95,38 @@ const OVERFLOW_GROUP_KEY = 'overflow';
  */
 const OVERFLOW_IDENTITY: ToolGroupIdentity = { label: MORE_TOOLS_LABEL, Icon: MoreToolsIcon };
 
+/** How far toward the opposite edge the rail has to travel before the dock will swap with it. */
+const RE_DOCK_ZONE = 0.25;
+
+/**
+ * The grip that drags the rail to the other edge.
+ *
+ * Adobe's Photoshop training material describes exactly this control: "the Tool bar can be
+ * relocated and even 'docked' to the panels on the right side of the screen. Simply drag it by
+ * the grabber handle — when you see the solid blue line next to your panels on the right,
+ * release the cursor to 'dock' the panel." (Adobe, Photoshop training: re-locating the tool
+ * bar.) So the grip is not an invention, and an earlier version of this comment saying
+ * Photoshop has no such control was simply wrong.
+ *
+ * What the app lacks is the TITLE BAR the gesture starts from — a rail of forty tool tiles with
+ * no panel header to drag. Inventing one would put a row of chrome above the tools, which is a
+ * different rail from Photoshop's. So the grip goes in the row that already exists for the
+ * one/two-column toggle: that is where a user already goes to change the rail's shape, the row
+ * keeps its height either way, and the blue drop line is the one the quote describes.
+ */
+const RailGripIcon = () => (
+  <span aria-hidden="true" className="flex flex-col gap-[2px]">
+    <span className="flex gap-[2px]">
+      <span className="h-[2px] w-[10px] rounded-full bg-current" />
+      <span className="h-[2px] w-[10px] rounded-full bg-current" />
+    </span>
+    <span className="flex gap-[2px]">
+      <span className="h-[2px] w-[10px] rounded-full bg-current" />
+      <span className="h-[2px] w-[10px] rounded-full bg-current" />
+    </span>
+  </span>
+);
+
 const toolbarGroups = toolbarMap.flat();
 
 /**
@@ -126,19 +160,26 @@ const SidebarLeft = () => {
   const [{ hasImage, toolName, color, backgroundColor }, dispatch] = useStore();
   const { goToTool } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
+  const { dockOnLeft, setDockOnLeft } = usePanelLayout();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
-  // One column is the DEFAULT, because that is Photoshop's default: the double-chevron at the
-  // top of the Tools panel switches to two columns to save vertical room, which is only
-  // coherent if one column is where you start. It is also the layout that makes overflow
-  // possible, which is what the three-dots tile below is for.
+  // ONE column is the default, and that is Photoshop's default: "Tools by default are in a
+  // single column" — the double-chevron at the top of the Tools panel switches to two columns
+  // to save vertical room, which is only coherent if one column is where you start. It is also
+  // the layout that makes overflow possible, which is what the three-dots tile is for.
   //
-  // `min-h-0 overflow-y-auto` on the `<aside>` is what stops the toolbar from dictating the
-  // canvas: the aside's min-content height would otherwise become the grid row floor and drag
-  // the `h-full` canvas up (main's responsive work added that, and the page no longer outgrows a
-  // 720px viewport as a result). The rail still owns a scrollbar as a backstop, but the tiles
-  // themselves are fitted to the space they have rather than being cut off, so in practice
-  // nothing in the rail scrolls any more.
+  // This REVERSES main's default, and the reason main gave for two columns is now gone rather
+  // than overridden: main picked it because a one-column rail was taller than the window and
+  // therefore scrolled. The rail no longer scrolls — the tiles are fitted to the space they
+  // have and the rest move into the three-dots tile — so the axis main was trading along no
+  // longer exists, and one column costs height only where the three-dots tile makes up for
+  // it. The measured heights and thresholds are in `e2e/toolbar-fit.spec.ts`, which prints
+  // them on every run.
+  //
+  // `min-h-0 overflow-y-auto` on the `<aside>` is still what stops the toolbar from dictating
+  // the canvas: a scroll container's automatic minimum size is zero, so the rail's content
+  // cannot become the grid row floor and drag the `h-full` canvas up. The scrollbar survives
+  // as a backstop for a rail whose chrome alone is taller than the window.
   const [isSingleColumn, setIsSingleColumn] = useState(true);
   const isTablet = useIsTabletViewport();
   const isMobile = useIsMobileViewport();
@@ -152,6 +193,13 @@ const SidebarLeft = () => {
   const colorSquareRef = useRef<HTMLDivElement>(null);
   const bgColorSquareRef = useRef<HTMLDivElement>(null);
   const toolGroupRefs = useRef<Record<string, HTMLLIElement | null>>({});
+  /**
+   * The rail itself, for horizontal overlay placement. The tiles sit on a 108px grid inside a
+   * narrower content box, so a second-column tile can start PAST the rail's own right edge;
+   * hanging a flyout off such a tile puts it back over the rail's first column. The rail is
+   * what an overlay has to get clear of, and this is how Photoshop hangs a tool flyout too.
+   */
+  const [railElement, setRailElement] = useState<HTMLElement | null>(null);
   // The tile a flyout is anchored to. Only the OPEN tile publishes one, and only for
   // itself, so a flyout that switches groups can never be measured against the tile it
   // replaced. Keyed by group because the anchor is published by a ref callback, which
@@ -360,6 +408,80 @@ const SidebarLeft = () => {
     [flyoutAnchor]
   );
 
+  // Re-docking the rail. "You can dock the Tools panel to either the right or left sides of
+  // the application window" (teachucomp; the CC-era Adobe book says the same by its title bar).
+  // The drop target is a blue line at the edge being thrown at, drawn before the release, which
+  // is the affordance Adobe documents for every panel move.
+  //
+  // `overlaySide` is the same fact as `dockOnLeft` seen from the rail: a rail on the right edge
+  // opens its flyout to the left, because "the anchor's trailing edge" is off-screen there.
+  const overlaySide: 'left' | 'right' = dockOnLeft ? 'left' : 'right';
+  const [reDockTarget, setReDockTarget] = useState<'left' | 'right' | null>(null);
+  const reDockOriginXRef = useRef(0);
+  const reDockTargetRef = useRef<'left' | 'right' | null>(null);
+  /** Whether the last press turned into a drag, so its synthesised click is not also a swap. */
+  const railDragMovedRef = useRef(false);
+
+  const onRailDragStart = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      reDockOriginXRef.current = event.clientX;
+      railDragMovedRef.current = false;
+      reDockTargetRef.current = null;
+      setReDockTarget(null);
+      // A rail that moves with a flyout open takes the portal's anchor with it, and the
+      // overlay re-measures against a tile that is no longer where the user aimed.
+      closeFlyout();
+    },
+    [closeFlyout]
+  );
+
+  // The current target is ALSO held in a ref, because the commit below reads it. A
+  // `setReDockTarget` updater is the wrong place to put a side effect: React may call it more
+  // than once for the same update, and a `setDockOnLeft` inside one commits the workspace move
+  // an unpredictable number of times — or, in the case that was actually observed, not at all,
+  // because the updater's return value is the only thing React is guaranteed to use.
+  const onRailDrag = useCallback(
+    ({ dx }: { dx: number }) => {
+      // 3px, the same threshold `PanelGroup` uses for its own drag. Below it the press is a
+      // click, and a click here is a swap, so the flag has to be set before the drop target is
+      // or a twitch at the origin reads as a completed re-dock.
+      if (Math.abs(dx) > 3) railDragMovedRef.current = true;
+      const viewportWidth = document.documentElement.clientWidth;
+      const pointerX = reDockOriginXRef.current + dx;
+      // Toward the edge the rail is NOT on. A rail in the left column swaps by going RIGHT,
+      // which is the mirror of the dock's own test in `SidebarRight` — that one is a dock in
+      // the right column swapping by going LEFT. Reading either as "the low edge" is how this
+      // shipped inverted once and passed a unit test written to match it: a rail dragged left
+      // would have reported a drop target for the edge it was already against.
+      const wantsSwap = dockOnLeft
+        ? pointerX < viewportWidth * RE_DOCK_ZONE
+        : pointerX > viewportWidth * (1 - RE_DOCK_ZONE);
+      const target = wantsSwap ? (dockOnLeft ? 'left' : 'right') : null;
+      reDockTargetRef.current = target;
+      setReDockTarget(target);
+    },
+    [dockOnLeft]
+  );
+
+  // Honouring the cancel is the point of having one: the rail moves to the OPPOSITE edge, and a
+  // user who presses Escape has said something. Committing anyway is the one result Escape must
+  // never produce.
+  const onRailDragEnd = useCallback(
+    (cancelled: boolean) => {
+      const target = reDockTargetRef.current;
+      reDockTargetRef.current = null;
+      setReDockTarget(null);
+      // The rail and the dock SWAP, so the flag is the rail's destination INVERTED: a rail
+      // going right puts the dock on the left, which is what `dockOnLeft` means. Mapping it
+      // straight through (`target === 'left'`) sends the rail to the edge it was thrown away
+      // from, and two inversions cancelling each other is exactly how this was wrong once.
+      if (target !== null && !cancelled) setDockOnLeft(target === 'right');
+    },
+    [setDockOnLeft]
+  );
+
+  const railDrag = useDockDrag({ onStart: onRailDragStart, onMove: onRailDrag, onEnd: onRailDragEnd });
+
   const scheduleFlyoutOpen = (groupIndex: string) => {
     clearLongPressFlyout();
     longPressOpenedRef.current = false;
@@ -466,6 +588,7 @@ const SidebarLeft = () => {
         <ToolTooltip
           label={tileLabel}
           shortcut={identity === undefined ? primaryTool.shortcut : undefined}
+          side={overlaySide}
           toolName={identity === undefined ? descriptionKeyFor(primaryTool.name, primaryTool.figure) : null}
         >
           <button
@@ -564,7 +687,13 @@ const SidebarLeft = () => {
         </ToolTooltip>
 
         {hasFlyout && isOpen && flyoutAnchor?.groupIndex === groupIndex && (
-          <AnchoredOverlay align="start" anchor={flyoutAnchor.element} measureKey={groupIndex}>
+          <AnchoredOverlay
+            align="start"
+            anchor={flyoutAnchor.element}
+            measureKey={groupIndex}
+            side={overlaySide}
+            xAnchor={railElement}
+          >
             <ul
               aria-label={
                 identity !== undefined
@@ -736,33 +865,93 @@ const SidebarLeft = () => {
 
   return (
     <aside
-      className="max-md:hidden min-h-0 overflow-y-auto overscroll-contain border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]"
+      // The other `complementary` landmark. Unnamed, a screen reader announces two
+      // indistinguishable regions, and one of them holds every tool in the app.
+      aria-label="Tools"
+      // `scrollbar-none` is main's, and the border is now CONDITIONAL because the rail can sit
+      // on either edge: `overflow-y: auto` computes `overflow-x` to `auto` and the border
+      // always sits outside the content box, so the border belongs on whichever side faces the
+      // canvas — and the grid area follows from the same fact.
+      className={`scrollbar-none max-md:hidden min-h-0 overflow-y-auto overscroll-contain bg-gray-100 dark:bg-gray-800 ${
+        dockOnLeft
+          ? 'border-l border-gray-300 dark:border-gray-700 [grid-area:right]'
+          : 'border-r border-gray-300 dark:border-gray-700 [grid-area:left]'
+      }`}
       data-testid="left-sidebar"
+      ref={setRailElement}
       style={{ width: toolbarWidth }}
     >
-      {/* `h-full`, and that is the change that makes the fit possible. A flex column sized
-          by its CONTENT has no height for `flex-1` to divide: the tools slot would be handed
+      {/* The drop target for a rail re-dock, drawn before the release. `position: fixed` puts
+          its containing block at the viewport, so the rail's `overflow-y: auto` does not clip
+          it — the same reason the flyout has to be portalled but this does not, and the
+          difference is absolute vs fixed. Rendered as a second child of the `<aside>` rather
+          than a sibling in the grid, so the shell's region list stays what it has always been. */}
+      {reDockTarget !== null && (
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none fixed inset-y-0 z-[60] w-1 bg-blue-500 ${reDockTarget === 'left' ? 'left-0' : 'right-0'}`}
+          data-testid="rail-drop-line"
+        />
+      )}
+      {/* `h-full`, and that is the change that makes the fit possible. A flex column sized by
+          its CONTENT has no height for `flex-1` to divide: the tools slot would be handed
           whatever the tools happened to need, so the fit would measure its own output and
-          agree with it. Giving the column the rail's own height makes the slot the leftover
-          after the chrome, which is a number nothing inside the slot can influence.
+          agree with it, and nothing would ever collapse. Giving the column the rail's own
+          height makes the slot the leftover after the chrome, which is a number nothing inside
+          the slot can influence.
 
-          THE ONE ASSUMPTION A MOVABLE PANEL WOULD CHANGE, and the seam for it. This says the
-          rail is a grid cell that fills its row, which is true of a docked rail and false of
-          a panel the user has dragged off the left edge. Everything the overflow rule does
-          is already written against `left-toolbar-slot` — its height, and nothing else — and
-          never against `innerHeight` or the rail's own box, so a floating panel with a height
-          of its own needs exactly one change: the column stops being `h-full` and the slot
-          stops being `flex-1`, and gets that height instead. Nothing in `toolbar-overflow.ts`
-          or `use-toolbar-fit.ts` moves, and `SidebarLeft.overflow.test.tsx` already asserts
-          the property that makes this true — a different window at the same slot height does
-          not change the fit.
+          This reverses main's `min-h-full` deliberately, and main's reason for it is answered
+          rather than overruled. `min-h-full` was right while the rail SCROLLED: `h-full` on a
+          child of a scroll container resolves against the container's own height, which left
+          the colour swatches unpainted at the bottom of a long rail. The rail no longer scrolls
+          — the tiles are fitted to the space they have and the rest move into the three-dots
+          tile — so there is no long rail left to paint the bottom of. `scrollbar-none` and
+          `overflow-y-auto` both survive on the `<aside>` as the backstop they are now: a rail
+          whose chrome alone is taller than the window, which is the only case the scrollbar can
+          still answer.
 
-          The rail keeps `overflow-y-auto`, but the tiles are now fitted to the slot rather
-          than cut off, so nothing in it scrolls: the one case the scrollbar still answers is
-          a window so short that the colour swatches alone do not fit, which no layout of
-          this rail can serve anyway. */}
+          THE SEAM FOR A PANEL WITH A HEIGHT OF ITS OWN, which the panel workspace on main has
+          not reached because Adobe's Tools panel cannot be resized ("You cannot resize the
+          Tools panel or options bar") and is only draggable between edges. Everything the
+          overflow rule does is written against `left-toolbar-slot` — its height, and nothing
+          else — and never against `innerHeight` or the rail's own box, so giving the rail a
+          height of its own needs exactly this one change: the column stops being `h-full` and
+          the slot stops being `flex-1`, and takes that height instead. Nothing in
+          `toolbar-overflow.ts` or `toolbar-fit-store.ts` moves, and
+          `SidebarLeft.overflow.test.tsx` asserts the property that makes it so — a different
+          window at the same slot height does not change the fit. */}
       <div className="flex h-full flex-col items-center px-3 py-4">
-        <div className="mb-2 flex w-full shrink-0 justify-end px-1">
+        <div className="mb-2 flex w-full shrink-0 items-center justify-between px-1">
+          {!isTablet && (
+            <button
+              {...railDrag.handleProps}
+              aria-label="Move the toolbar to the other side"
+              className="cursor-grab rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 active:cursor-grabbing dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
+              // The keyboard path, and the reason this is a `<button>` at all rather than a
+              // decorative `<div>`. Dragging needs a pointer; this control is announced, sits in
+              // the tab order, and is next to a sibling that works on click — so a button with no
+              // activation is a promise it does not keep. It was dead for a MOUSE user too, not
+              // only a keyboard one: `onRailDragEnd` only commits once the pointer has moved, so a
+              // plain click on the grip did nothing.
+              //
+              // `railDragMovedRef` keeps a drag from also counting as a click. A `<button>`
+              // synthesises a click from any pointerdown+pointerup on it, including one that
+              // travelled to the opposite edge, so without this a completed drag swapped on the
+              // release and then swapped again on the click — landing the rail where it started.
+              onClick={() => {
+                if (railDragMovedRef.current) {
+                  railDragMovedRef.current = false;
+                  return;
+                }
+                setDockOnLeft(!dockOnLeft);
+              }}
+              title="Drag to the other side, or press Enter"
+              type="button"
+              data-testid="rail-re-dock-handle"
+            >
+              <RailGripIcon />
+            </button>
+          )}
           {!isTablet && (
             <button
               aria-label={isSingleColumn ? 'Use two-column toolbar' : 'Use one-column toolbar'}
@@ -788,7 +977,15 @@ const SidebarLeft = () => {
           // here so that IF the arithmetic is ever wrong, the tools it misjudged are still
           // reachable by scrolling rather than clipped out of existence. A rail that could
           // hide a tool is a worse failure than a rail that scrolls.
-          className="flex min-h-0 w-full flex-1 justify-center overflow-y-auto"
+          //
+          // `scrollbar-none` is main's, and it MOVED with the scroll container rather than
+          // staying put on the `<aside>`. The aside is no longer the thing that scrolls: with
+          // the tiles fitted, the rail fits its row and `e2e/no-document-overflow.spec.ts`
+          // measures its overflow at 0, so a suppression left on the aside would be suppressing
+          // nothing while the element that can actually overflow paints a bar. The slot is
+          // narrow — 56px — and the degenerate band is where it goes, so the window is small,
+          // but "the last tile is unreachable" is not a trade worth a pixel-wide bar.
+          className="scrollbar-none flex min-h-0 w-full flex-1 justify-center overflow-y-auto"
           data-testid="left-toolbar-slot"
           ref={attachSlot}
         >

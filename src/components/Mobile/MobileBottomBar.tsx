@@ -28,7 +28,7 @@ export const MobileBottomBar: React.FC<MobileBottomBarProps> = ({
       aria-label="Mobile Bottom Toolbar"
       aria-orientation="horizontal"
       data-testid="mobile-bottom-bar"
-      className="[grid-area:bottom] md:hidden safe-area-bottom fixed bottom-0 left-0 right-0 z-30 flex h-16 items-stretch gap-1 overflow-x-auto overscroll-x-contain touch-pan-x border-t border-gray-200 bg-white/95 px-1 backdrop-blur-md select-none dark:border-gray-800 dark:bg-gray-900/95"
+      className="[grid-area:bottom] md:hidden safe-area-bottom fixed bottom-0 left-0 right-0 z-30 flex h-16 items-stretch gap-1 overflow-x-auto overscroll-x-contain scrollbar-none touch-pan-x border-t border-gray-200 bg-white/95 px-1 backdrop-blur-md select-none dark:border-gray-800 dark:bg-gray-900/95"
     >
       {mobileToolGroups.map((group, index) => {
         const isActive = group.matchingTools.includes(toolName as ToolName);

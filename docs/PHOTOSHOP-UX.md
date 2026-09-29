@@ -1,0 +1,96 @@
+# Photoshop UX: the rail, the panels, and the names
+
+This app is a Photoshop clone, not a "Photoshop-inspired" surface. The Tools rail
+in particular must be an exact clone of Adobe Photoshop's Tools panel: same tool,
+same group, same name, same spot, same letter. A user switching from Photoshop
+must find the same tool where their hand expects it.
+
+`docs/TOOLS.md` is the generated per-tool specification, built from
+`src/tools/descriptions/*.ts` and `.notes.md`. This file is the requirement and
+the open violations.
+
+## The requirement
+
+**A tool Photoshop does not have must be deleted and replaced by the Photoshop
+tool it stands in for.** This is a product requirement, not a preference, and it
+is not subject to local judgement.
+
+The rail's groups, flyouts and rendered labels are all defined in
+**`toolbar-mapping.ts` at the repository root** — not under `src/components/` —
+so that is the first file to read. Concretely, all of the following are currently
+violations on `main`.
+
+## Open violations
+
+- **No invented tools.** `draw` ("Draw Tool") is the clearest case, and it is **one
+  of five** tool ids the app declares that Photoshop has no counterpart for:
+  `draw`, `color`, `levels`, `transform` and `shape`, which are the five bullets
+  that follow. Do not scope the work to `draw` and declare the requirement met.
+  `draw` itself is a freehand-annotation layer tool; Photoshop's nearest is the
+  Brush, and the app already has a Brush. **It is to be deleted**, not relabelled.
+- **Adjustments are not tools.** `color` (labelled "Colors"), `levels` ("Levels")
+  and `transform` ("Transform") are `Image ▸ Adjustments` and `Edit ▸ Transform`
+  commands, and Photoshop's Tools panel contains no such entries. Photoshop's name
+  for `color` is "Black and White", which is not a tool either. These three are to
+  leave the rail and become menu commands. They have **no replacement tool** —
+  Photoshop puts nothing there. `toolbar-mapping.ts` already exports
+  `extraTools = ['color', 'levels', 'transform']`, so the extraction is half-staged:
+  the flag exists, the rail entries do not.
+- **No pseudo-tool.** `shape` is a grouping container carrying a `figure`, and
+  Adobe has no tool by that name. It is not uniquely undisplayed, which is the
+  trap in deleting it: `rectangle`, `ellipse`, `triangle`, `polygon` and `line`
+  are **also** registry ids the rail never names, so "the one `ToolName` the rail
+  never displays" points at the wrong target. `shape` is the only id the flyout
+  routes every figure through. Photoshop's shapes are Rectangle, Ellipse, Triangle,
+  Polygon, Line, Star and Custom Shape as **seven separate entries in one flyout**;
+  the flyout has **six** today (`toolbar-mapping.ts:108-115`) and `Star` is the
+  missing one.
+- **Names are Adobe's, spelled Adobe's.** "Move Tool", "Rectangular Marquee Tool",
+  "Ellipse Tool" (not "Ellipse"). The registry identifier is free — `reposition`
+  for the Move tool is acceptable — but the **rendered label** is not and must end
+  in `" Tool"`. The only labels that do not are the three this section already
+  flags (`Colors`, `Levels`, `Transform`). "Content-Aware Move tool" is hyphenated
+  in Adobe's tables but **no such tool exists in the app yet**, so there is nothing
+  to rename — when it lands, render it that way.
+- **A tool the app cannot actually do still belongs in the rail**, rendering
+  Photoshop's real options bar, because that is the contract. **Seven** tools
+  currently render a `PlaceholderTool` chip bar instead — the six Pen-family tools
+  and Custom Shape. Photoshop's grouping and naming are the specification; the stub
+  bar is the debt.
+  - **The placeholder roster is seven, not eight.** Re-derive it with
+    `grep -c "placeholderTool(" src/tools/toolsMap.ts` and the `placeholderNames`
+    membership in `tool-processors.test.ts`.
+
+## What is not a tool
+
+- **A tool named by a panel's title is not a tool.** Adobe's Clone Source is
+  `Window ▸ Clone Source`, a panel, not a Tools-panel entry.
+- **Not tools, and not to be implemented as tools:** the foreground/background
+  swatches, "Edit in Quick Mask Mode", the three screen-mode toggles, the `…` Edit
+  Toolbar caret, the toolbar grip, and the Extra Tools container.
+
+## Confidence and provenance
+
+**Membership is Adobe-confirmed; group order and separator placement are not.**
+Adobe publishes no page that enumerates the Tools panel top-to-bottom, so the
+group order is a reconstruction from third-party diagrams cross-checked against
+Adobe for membership. Treat it as a good hypothesis and prefer a grouping a user
+recognises over one a source asserts. `docs/TOOLS.md` and the `.notes.md` files
+carry the per-tool sources; a description without a source is a rumour.
+
+Two 2026 candidates are **not** Adobe-confirmed and must not ship as tools: Clone
+Source (a gap in one diagram's icon numbering, name never printed) and Generate
+Image (a real feature, unconfirmed panel placement).
+
+Selection Brush (Lasso group) and Adjustment Brush (Brush flyout sibling, a large
+feature involving an adjustment layer plus a painted mask) are desktop Photoshop
+and Adobe-confirmed. `HANDOFF.md` §74 records the corrections that brought them
+into the list.
+
+## What it costs
+
+Adding a tool means updating every hand-written registry list, including
+`dispatchTable`, `icons`, and `toolIcons.test.tsx`'s union. HANDOFF §68 has the
+file-by-file blast radius and the tests that pin tool names. Count the lists
+yourself before estimating an edit rather than trusting a number written
+anywhere.

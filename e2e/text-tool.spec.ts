@@ -22,7 +22,7 @@ import { imageBoundsToCss } from './helpers/screenshot-scale';
  */
 
 /**
- * The suite default is 30s (`playwright.config.ts:31`). Every test here is a page load,
+ * The suite default is 30s (`playwright.config.ts:39`). Every test here is a page load,
  * a tool click, a drag and at most one redraw poll, which measures at 1-2s on this
  * host, so 30s was never the binding constraint. 60s is what the two sibling specs that
  * drive the canvas already ask for (`viewport-drawing.spec.ts:17`, `select-move.spec.ts:31`)

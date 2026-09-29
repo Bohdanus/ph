@@ -1036,7 +1036,7 @@ ring and the Color Sampler are overlay work and belong with the navigation clust
 ## 52. Hand, Zoom and Rotate View are absent because the view transform is commented out
 
 **Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and
-the placeholder is a commented-out JSX line: `src/components/SidebarLeft/SidebarLeft.tsx:553`
+the placeholder is a commented-out JSX line: `src/components/SidebarLeft/SidebarLeft.tsx:690`
 is `{/*<Zoom />*/}`.
 
 **Why it is not a wiring bug.** There is no view transform to wire. The store's
@@ -1055,7 +1055,7 @@ owning `{ dx, dy, zoom }`, with `usePointerPosition` and every pointer-to-image
 conversion reading from it, is the shape the commented-out code was reaching for.
 Do not start with a Hand tool; start with the scope, and the three tools fall out.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:553`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:690`,
 `src/contexts/StoreContext.tsx:1166-1172`, `src/hooks/usePointerPosition.ts`,
 `src/components/Main/Main.tsx:61`
 
@@ -1245,7 +1245,7 @@ layer property.
 ## 57. The mobile shell has no colour control at all
 
 **Problem.** The desktop rail carries the foreground and background swatches, a swap
-and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:507-539,542-549`).
+and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:661-668,669-676`).
 The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
 no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
 use whatever colour the document happened to be created with, and the foreground colour
@@ -1265,7 +1265,7 @@ decision. Note the swatches are 32px in the desktop rail; on a touch surface the
 the same 44px floor as the other mobile controls, which is why they should be built
 for mobile rather than copied across.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:507-539,542-549`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:661-668,669-676`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
 
 ---
@@ -1695,7 +1695,7 @@ default panel or sitting in Extra Tools.
 
 **`toolbar-mapping.ts:30-36` says "Unsupported Photoshop tools are intentionally omitted rather
 than represented by placeholder values." That sentence IS the requirement, and it has to be
-deleted, not kept.** Separately: `SidebarLeft.tsx:27` does `toolbarMap.flat()`, which discards the
+deleted, not kept.** Separately: `SidebarLeft.tsx:54` does `toolbarMap.flat()`, which discards the
 map's section boundaries entirely, so the five current sections are not Photoshop's separators and
 the new layout has to decide deliberately whether a section concept survives at all.
 
@@ -1832,10 +1832,13 @@ there is no word boundary between `5` and `a`, so `NUMBERED.exec('15a. A self-an
 is `null`. `assemble` then falls through to the `SEVERITY` test (also false) and reaches
 `if (open && record.level <= open.level) close(...)`. `HANDOFF.md:424` is a **level-2**
 `## 15a. A self-anchored reorder is refused, and the refusal is load-bearing`, a sibling of
-`## 15.` — so it **closes item 15's body there** and opens nothing itself. **870 raw characters**
-of prose from `HANDOFF.md:425-438` are unreachable from any item title or body. Item 15's stored
-body is 3994 chars and ends mid-sentence; the 15a prose is not in it. The entry is a load-bearing
-tripwire, so this is live work loss, not latent.
+`## 15.` — so it **closes item 15's body there** and opens nothing itself. The span
+`HANDOFF.md:425-438` is **872 raw characters**, or **870** once the span's leading and
+trailing blank lines are trimmed — 870 is the trimmed count, and the raw count is the one
+that includes them. Line 437 is a `---` rule, which `bodyOf` drops as layout, so the prose the
+parser actually strands is lines 425-436. All of it is unreachable from any item title or body.
+Item 15's stored body is 3994 chars and ends mid-sentence; the 15a prose is not in it. The
+entry is a load-bearing tripwire, so this is live work loss, not latent.
 
 **The same root cause, opposite direction, and worse: a suffixed retirement retires the parent.**
 `deadNumbers('## 15a. An old thing — deleted')` returns `[15]` — `NUMBER_OR_RANGE` harvests the
@@ -1843,21 +1846,33 @@ tripwire, so this is live work loss, not latent.
 `## 15a, 16. Old things — deleted` returns `[15,16]`. This is silent corruption, not silent loss,
 and a fix that only widens `NUMBERED` does not address it.
 
-**Why the test suite cannot see either.** `handoff-import.test.mjs:196`'s own heading-count regex
-carries the **identical** `\d+\b` blind spot, so `items === headings` holds for `## 15a.`, `## 15b.`
-and `## 16a.` simultaneously. Both sides miss it; the equality stays green. Proven: with `NUMBERED`
-fixed and the count regex left alone, the count test fails `HANDOFF.md: expected 38 to be 37`.
+**Why the test suite cannot see either.** `handoff-import.test.mjs:205`'s own heading-count regex
+carries the **identical** `\d+\b` blind spot, so `items === headings` holds for `## 15a.`,
+`## 15b.` and `## 16a.` simultaneously. Both sides miss it; the equality stays green. The corpus
+has exactly one such heading today, `## 15a`. Proven: with `NUMBERED` fixed and the count regex
+left alone, the count test fails. **The quoted output `expected 38 to be 37` was measured at
+`a3f1dcc`**, the campaign branch tip, against that branch's `HANDOFF.md` — 37 headings under the
+count regex, 38 items once the suffix is accepted. On `main` the same projection reads
+**`expected 49 to be 48`** — 48 headings under the count regex, 49 once the suffix is accepted —
+re-measured at **`0d64d75`**, the tip of `main` this branch merges. Neither number reproduces
+unless the tree is named, and the assertion itself is `handoff-import.test.mjs:207`. Note that a
+_naive_ `NUMBERED` patch does not produce 49: it maps
+`15a` to `Number('15a') === NaN`, and folding it to `15` instead collides with the live
+`HANDOFF.md#15` and loses it to first-occurrence-wins — the same collision the `makeItem` row
+below describes. The projection only holds for a fix that gives the suffix its own origin, which
+is the open design question under this table.
 
 **A real fix must change all of these together:**
 
-| Where                              | What                                                                                                                                                                            |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `handoff-import.mjs` `NUMBERED`    | the suffix, and its case rule                                                                                                                                                   |
-| `handoff-import.test.mjs:196`      | the count regex, same blind spot. Hoist both to module constants so they cannot drift apart again                                                                               |
-| `handoff-import.mjs` `makeItem`    | `` `${base}#${number}` `` — `Number('15a')` is `NaN`, so every suffixed entry gets a literal `#NaN` origin                                                                      |
-| `handoff-import.mjs` `planImport`  | the `/#(\d+)$/` dead-set filter cannot match `#15a`, so a suffixed item can never be suppressed by the document's own dead list                                                 |
-| `handoff-import.test.mjs:126`      | `Number(/#(\d+)$/.exec(item.origin)[1])` is **unguarded** and throws `TypeError` on any suffixed origin. `:93` in `liveItems` already uses the guarded `?.[1]` form — copy that |
-| `handoff-import.mjs` `deadNumbers` | the dead set is `number[]` end to end — typedef, both `Set`s, and `planImport`'s `.map(Number).filter(Number.isInteger)`. It cannot represent a non-integer at all              |
+| Where                              | What                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `handoff-import.mjs` `NUMBERED`    | the suffix, and its case rule                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `handoff-import.test.mjs:205`      | the count regex, same blind spot. `:137`'s `HEADING_NUMBER` has it too, so there are **three** grammars to keep in step, not two. **"Hoist all three to module constants" is wrong as it stands**, and wrong on all three rows: `:205` is an inline regex literal handed straight to `countHeadings`, and `:137` is a `const` declared **inside an `it()` body** — already named, but test-local, so it agrees with nothing and hoisting it changes only where it sits. The one grammar that _is_ a module constant is `NUMBERED`, in the other file. The fix is therefore one shared constant for the two test-side grammars, declared once at module scope |
+| `handoff-import.mjs` `makeItem`    | `` `${base}#${number}` `` — `Number('15a')` is `NaN`, so every suffixed entry gets a literal `#NaN` origin                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `handoff-import.mjs` `planImport`  | the `/#(\d+)$/` dead-set filter cannot match `#15a`, so a suffixed item can never be suppressed by the document's own dead list                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `handoff-import.test.mjs:256`      | and `:265`. The **unguarded** `Number(/#(\d+)$/.exec(item.origin)[1])` this entry used to cite is **gone from `main`** — `a14d728` ("close the eight findings from the board's review") replaced it with the guarded `?.[1]` at those two lines. There is no unguarded form left to fix here; the obligation moves to whoever writes the `## 15a.` assertion                                                                                                                                                                                                                                                                                                 |
+| `handoff-import.test.mjs:67`       | `liveItems`, which the same row used to point at as the place to copy. It is at **67**, and it does **not** use `?.[1]`: it is `!number \|\| !parsed.dead.includes(Number(number[1]))` at `:70`, guarding on a separate statement. The guarded form to copy is at `:256`/`:265`                                                                                                                                                                                                                                                                                                                                                                              |
+| `handoff-import.mjs` `deadNumbers` | the dead set is `number[]` end to end — typedef, both `Set`s, and `planImport`'s `.map(Number).filter(Number.isInteger)`. It cannot represent a non-integer at all                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 **Open design question, for a human.** What origin shape should a suffixed entry get? `#15a` is
 the label the document actually wrote and is the natural key, but it is grammatically
@@ -1871,3 +1886,442 @@ because the current failure is silent, with nothing anywhere reporting that an e
 
 `## 15A.`, `## 15ab.` are the same silent content-loss path: no item, no origin, and a level-2
 one closes its parent exactly as `## 15a.` does.
+
+## 78. Three rail defects §74 does not name, and no test can catch any of them
+
+**Validated by an independent audit pass over `toolbar-mapping.ts` against Adobe's own
+documentation, 2026-09-29.** §74 carries the inventory; these are the _mechanical_ consequences,
+and each is a one-line fix.
+
+**1. Two tools render the letter `B`, and the real `B` handler never reaches one of them.**
+`toolbar-mapping.ts:96` gives the non-Photoshop `draw` entry `shortcut: 'B'`, the same letter
+`toolbar-mapping.ts:72` gives the Brush. The badge is rendered from the map
+(`SidebarLeft.tsx:539`), so the user is told the Draw Tool answers to `B`; and
+`AppKeyboardShortcuts.tsx:18` puts `b` on `brushGroup = ['brush','pencil','color-replacement','eraser']`,
+so pressing it can never select `draw`. The same pass found `Shift+B` cycling into `eraser`, which
+is wrong twice: `B` cycles only within the brush group, and the Eraser's own letter is `E`.
+
+**2. Three Photoshop groups are collapsed into one flyout, and the evidence for the split is
+Adobe's own shortcut table, not a third-party diagram.** The app has one six-entry flyout —
+Brush, Pencil, Color Replacement, Eraser, Magic Eraser, Paint Bucket. Adobe's table binds
+`B` to Brush, `E` to Eraser and `G` to Paint bucket, with `Shift+G` for "Switch between Paint
+bucket and Gradient tool": distinct letters are how Adobe proves the three groups are three. The
+app's own `G` handler already cycles a Gradient/Paint-Bucket pair, and the Gradient sits in its
+**own single-tool tile** rather than sharing `G` — so the one grouping fact Adobe states outright
+is the one the rail contradicts. This matters independently of §74's unresolved order questions:
+group membership is settled, only position is not.
+
+**3. Nothing asserts that two tools cannot share a letter.** `toolbar-mapping.test.ts:126-131`
+checks the `U` group and nothing else, so a `B`/`B` collision is invisible to the suite. One
+`expect` over the flattened map's `shortcut` values would have found defect 1 on the day it
+shipped. Note the trap it must not fall into: `draw` and `pen` variants legitimately share a
+letter with their group leader, so the assertion is "no letter is claimed by two _different_
+groups", not "no letter repeats".
+
+**These are filed, not fixed.** Deleting `draw` and re-grouping the flyout are §74's work, and
+doing them here would land the deletion without the replacement rail.
+
+## 79. A move drag that goes out and back releases the selection where it was never taken
+
+`src/components/Main/EllipticalSelectionToolArea.tsx:200-204`, and the two accumulators
+disagree about which frame of the drag they are tracking. `delta` is measured from `drag.origin`,
+which line 203 then **advances** to the current pointer position, and it is applied to
+`drag.baseline`, which **never** advances. The running displacement is therefore the last frame's
+delta alone, and every earlier frame is discarded. Take a selection 60px right and 40px down,
+retract the pointer to the point you pressed from, and release: the commit lands the selection at
+`(-60, -40)` on a document that starts at the origin. One frame's worth of history, applied twice,
+in opposite directions — and the preview overlay shows the same wrong position for the whole
+gesture, because `drag.preview` feeds `redrawOverlay` at `:205-207`.
+
+The fix is already written elsewhere in the same directory. `PolygonClickToolArea.tsx:817-819`
+applies the same delta to `selectionDrag.selection` and advances **both** accumulators into the
+next ref record in one statement; that is the correct shape and it is what line 202 should be.
+`moveSelectionByDelta(drag.preview, delta)` puts this arm on the same footing, and the first
+frame needs no special case because `drag.preview` is already seeded with `activeSelection` at
+`:161`. The release gate at `:222` then does the rest for free: a net displacement of zero lands
+the preview back on the baseline's own geometry, `hasSameSelectionGeometry` reports them equal,
+and the gesture commits nothing.
+
+**Why nothing saw it, and why that is a gap rather than a blessing.** Every move-drag case in
+`EllipticalSelectionToolArea.test.tsx` issued exactly one `pointerMove`, and with a single frame
+the last delta _is_ the whole delta — so `moveSelectionByDelta(baseline, delta)` and
+`moveSelectionByDelta(preview, delta)` return the same selection. The suite was blind to the
+difference by construction rather than by accident. Verified by mutation: changing line 202 to
+`drag.preview` leaves all five pre-existing cases green.
+
+The half of that which was sound: no assertion in the file pins the drifted position, so nothing
+enshrines the bug. It was uncovered, not endorsed — and it was recorded in no handoff entry while
+a suite named for this component sat beside it, so the next reader of that file would reasonably
+conclude the move arm was covered.
+
+Pinned as `it.fails` in `EllipticalSelectionToolArea.test.tsx`, "commits nothing for a move drag
+that went out and came back to the press point". A zero net displacement is observed through the
+absence of a commit rather than through a committed position, which is the same observable the
+neighbouring zero-delta case pins for the one-frame shape of the same gesture; the case carries
+its own control — a second, single-frame drag on the same mount, which is independent of the
+defect — so the empty assertion cannot pass by the arm never having run. **Delete the `it.fails`
+in the same change that fixes line 202**, per `AGENTS.md`: it is a tripwire for broken behaviour,
+and left behind it turns the fix into a red suite.
+
+## 80. Five components fold `!isBedrock` into `usePaintStroke`; four of them gained a test, and `CloneStampToolArea` is the one that did not
+
+A correction, because a wrong claim in this repository's own history is read by every future agent
+that runs `git log`. `b001d7d` states that five components fold `!isBedrock` into the flag they
+hand `usePaintStroke` — Dodge, Burn, Smudge, CloneStamp and Gradient — "and not one had a test".
+Both halves need narrowing, and the error in the second one is about coverage rather than about
+the flag.
+
+The list of five is **correct**: `DodgeToolArea.tsx:59`, `BurnToolArea.tsx:65`, `SmudgeToolArea.tsx:79`,
+`CloneStampToolArea.tsx:210` and `GradientToolArea.tsx:85` each compute an `enabled` /
+`isEnabled` from `activeLayer && !activeLayer.isBedrock` and pass it to `usePaintStroke`. What is
+wrong is "not one had a test" as a description of the finished branch: `b001d7d` added suites for
+four of the five, and **`CloneStampToolArea` still has no test file** — `git ls-tree main --
+src/components/Main/__tests__/` answers none. The fifth area the commit covers is
+`EllipticalSelectionToolArea`, which is **not** one of the five: it imports no `usePaintStroke`
+and reads no `isBedrock`. It is a selection tool, and the rule it shares with the four is nothing
+more than "the suite mounts a store fixture and drives real pointer events".
+
+Two components read `isBedrock` without `usePaintStroke` and must not be counted into that set
+either: `CloneStampToolArea` folds it into `isEnabled` **and** uses `usePaintStroke`, so it is
+in; `MoveToolArea.tsx:35`, `EraserToolArea.tsx:56-63` and `FillToolArea` read the flag directly
+and are out of it. **The cheapest thing that settles whether `CloneStampToolArea` is actually
+covered is a test, not a sentence** — and until one exists, treat the "not one had a test" claim
+as four, not five.
+
+## 81. The two `it.fails` on the polyline animation loop were mock artefacts, and the production comment that justified them is stale
+
+`src/hooks/usePolylineAnts.ts:134-136` — pending animation-frame handle
+
+Two `it.fails` tests in `src/hooks/__tests__/usePolylineAnts.animation.test.tsx` were **deleted
+and the behaviour pinned as working**, because both were pinned to a defect that a rAF mock
+manufactured rather than to a real one. That conclusion is right. What is left behind is not:
+**the production comment those two tripwires were written against still asserts the opposite, and
+the test suite now contradicts it.**
+
+**(a) The handles were an artefact of the mock, not a defect.** The mock counted frame handles
+from `0`. HTML Standard §8.12 (Animation frames) defines the handle as a pre-increment: the target
+object has "an animation frame callback identifier, which is a number that **must initially be
+zero**", and the `requestAnimationFrame(callback)` steps say to "**increment target's animation
+frame callback identifier by one, and let handle be the result**". Handles are therefore `1, 2, 3,
+…` and `0` is unreachable. The first `it.fails` reported that pausing with frame 0 pending did not
+stop the loop, and the second that a second loop ran in parallel at double speed — both inputs a
+browser cannot produce. **The mock now starts at `1` and both are ordinary passing tests.** An
+earlier version of the comment justified this with the spec defining a frame handle as a "new
+POSITIVE long"; that phrase is in no version of the spec and the IDL return type is
+`unsigned long`, so the claim was unciteable even though the conclusion held. The mechanism is
+the pre-increment above.
+
+**(b) The production guard is a truthiness guard where its sibling uses `!== null`.**
+`usePolylineAnts.ts` guards a pending frame three times — `:80` (the `clear` cancel), `:124` (the
+`draw` cancel before rescheduling) and `:148` (the `isPaused` effect cleanup) — and all three are
+`if (animationIdRef.current)`. `useAnts.ts:40` and `:82` do the identical job for the identical
+"pending animation handle" and use `if (animationIdRef.current !== null)` and
+`=== null`. `useAnts` nulls the ref immediately after cancelling, so `0` and `null` are genuinely
+distinguishable there; `usePolylineAnts` never produces `0` either way, which is why the
+truthiness form is currently correct. **It is correct by the spec argument in (a), not by
+construction**, and the sibling in the same directory is the standing counterexample to "0 cannot
+happen" — which is a local property of one file's mocks, not of the platform.
+
+**(c) The comment at `:134-136` is stale and asserts the branch removed.** It reads:
+
+> A pending handle of 0 is the one case the cleanup's own truthy guard skips, but 0 is falsy here
+> too, so cancelling here never had anything to do. That falsy-0 path is why pausing with frame 0
+> pending does not stop the loop.
+
+The last sentence is the claim `usePolylineAnts.animation.test.tsx:145` now **falsifies**: the
+test at that line asserts that pausing before the first frame has run _does_ stop the loop, and
+cites `:148` — the very line this comment describes. The repo currently holds a production comment
+saying the loop does not stop and a test saying it does, and only one of them can be right.
+
+**When production is next touched, `usePolylineAnts.ts:134-136` must be corrected or deleted**, and
+the two sibling counters that still start at `0` — `usePolylineAnts.test.tsx:9`,
+`useAnts.test.tsx:9`, `useAnts.transform.test.tsx:20` — should move to `1` in the same change, so
+the four rAF mocks in `src/hooks/__tests__/` stop disagreeing about a value the platform fixes.
+Switching the three guards to `!== null` to match `useAnts` is the durable fix and makes the whole
+question disappear; it is deliberately **not** done here, because this branch is tests and handoff
+only and may not edit production.
+
+**No defect is claimed here.** Nothing user-visible is broken today, the truthiness guards do the
+right thing in a browser, and the two `it.fails` were correctly removed. The finding is that the
+justification for that removal is still in production prose in the opposite form, and a reader who
+trusts it would re-add the tripwires.
+
+## 82. The parser retires a LIVE numbered heading that ends in a status word, silently
+
+`scripts/lib/agent-board/handoff-import.mjs` — `DEAD_HEADING`, consumed by `assemble`
+
+**The defect.** `DEAD_HEADING` requires the status word to be last, which is right, and
+`assemble` consumes a matching heading with `continue` without ever opening it as an item. Those
+two facts compose into a silent loss: a **live** numbered heading that happens to end in a status
+word is retired, and its prose leaves the import with nothing anywhere in the parse result saying
+so. Measured through the real parser, both directions, side by side (indented deliberately: the
+heading-count assertion at `scripts/__tests__/handoff-import.test.mjs:205` matches
+`^#{1,6}[ \t]+\d+` **without skipping fenced code**, so an example of this shape written at column
+zero inside any fenced block fails that test against the parser being _right_ — a blind spot in the
+assertion, pre-existing, and the reason for the indentation):
+
+```
+  ## 31. The dialog-closed assertion is fixed   ->  dead=[31]  items=[]
+  ## 9.  — deleted .                           ->  dead=[]   items=[#9]
+```
+
+The first is a live entry retired. The second is the **visible** false row — a title printed on
+`swarm ready` that a reader can clear. A numbered heading that genuinely ends in a status word
+(`## 5. Whatever — resolved`) is not _structurally_ distinguishable from one that merely does, so
+anchoring the word does not separate the two cases; it only decides which one the corpus has not
+produced yet. Latent, not live: over the 97 real headings on `main` at `0d64d75` the narrow rule
+and the loose one give the same verdict for every heading except the five the loose one gets
+wrong, and the one genuine retirement is still read as a retirement. The narrowness is a
+judgement about the corpus, not a proof, which is why the paragraph on the obvious fix below
+measures what the alternative actually does rather than assuming it does nothing.
+
+**Why this is a filed defect and not a documentation nit.** The `DEAD_HEADING` docstring carried
+an argument that this risk was one-sided and loud — under-matching a retirement gives a visible
+row, over-matching is always a silent loss. That argument was **false for numbered headings**, for
+the reason `DEAD_HEADING`'s own separator class gives, measured in the table at the end of this
+entry. It is now corrected in place to state that the residual risk is two-sided, with both
+measured rows quoted.
+
+**Provenance, because the false claim is not on `main` and the question was lost with it.** The
+claim was written in `a3f1dcc` (the campaign branch) under a heading reading "THE TWO FAILURE
+MODES ARE NOT SYMMETRIC, AND THAT IS THE ARGUMENT FOR THE RULE". `bd137d0` merged that branch
+after pointing its parser change at `eba42f8`'s implementation and keeping the tests; the
++146/-0 merge dropped the whole argument block. Dropping a false claim was right. Dropping the
+question it was an answer to was not, and `eba42f8`'s shorter docstring argues the rule
+empirically without ever addressing the over-match direction.
+
+**Why the obvious fix is worse than the defect — and the first version of that paragraph was
+itself wrong.** Requiring a separator before the marker (`— resolved`, `(done)`, `…: fixed`) was
+written off here as "does not distinguish the two cases either", on the grounds that a title may
+legitimately end in a separator character. **That reason is false, and it was the reason the
+paragraph below it was already making correctly.** Dropping `\s` from `DEAD_HEADING`'s separator
+class `(?:^|[\s\-–—(\[])` to `(?:^|[\-–—(\[])` does separate the cases: it keys on _no space before
+the marker_, and the ordinary English shape of a retirement — `… — deleted`, `… — resolved` — has
+one. `## 5. Whatever — resolved` goes from `DEAD` to `live`, and so does `## 31. The
+dialog-closed assertion is fixed`.
+
+What it buys that is real; what it costs is larger, and the cost is measurable. Re-derived by
+patching the separator class and re-running the real parser over the merged corpus:
+
+| Heading                                                                                    | Now                | Separator required |
+| ------------------------------------------------------------------------------------------ | ------------------ | ------------------ |
+| `## 13. Landed, superseded and deleted` (pinned fixture, `handoff-import.test.mjs:654`)    | `dead=[13]`        | `dead=[]`          |
+| `### Items 5, 7, 9, … — deleted` (`HANDOFF.md:114`, the corpus's **only** real retirement) | `dead=` 26 numbers | `dead=[]`          |
+| Whole `HANDOFF.md` — `planImport(...).create`                                              | 49                 | **51**             |
+
+The second row is the one that decides it. `HANDOFF.md:114` is the heading the `DEAD_HEADING`
+docstring names as "the only retirement marker any of the three documents actually uses", and the
+separator requirement re-reads it as live prose: `dead` goes from 26 numbers to **none**, and two
+already-retired items — `HANDOFF.md#7` and `HANDOFF.md#18` — come back to the board as open work.
+So the fix does not trade a silent loss for one false row; it trades it for **26** un-retirements
+and two live ones, on a heading the corpus really contains, and it breaks the pinned fixture while
+doing it. Adopting it is a corpus change, not a parser change, and it is the operator's to make.
+
+**What a fix needs, and why it is not one line.** Either a marker position that cannot be
+incidental, or a **loud** failure when a `NUMBERED` heading is retired without the document having
+listed retired items. The loud option is the only one that preserves both directions, and it is
+not local: it needs a field on `ParseResult` (whose exact shape
+`handoff-import.test.mjs` asserts on an empty document), and a caller in `agent-board.mjs` that
+actually reports it. Both are outside what a comment-level correction can reach, and the operator
+should choose which of the two behaviours a mistyped heading should have.
+
+**Pinned while unfixed, as an `it.fails` tripwire.** `scripts/__tests__/handoff-import.test.mjs`
+holds the shape in `it.fails('keeps a LIVE numbered heading that ends in a status word as an open,
+filed item')`: the body asserts what a **fixed** parser returns, so it is red today and the `fails`
+is what makes the suite green. It is the marker the repo already uses in ~20 places
+(`image-processors.test.ts:151`, `StoreContext.durable-boundary.test.tsx:441`) and the one
+`AGENTS.md` describes. **Delete the `it.fails` in the same change that fixes `DEAD_HEADING`** — the
+moment the body goes green, the `fails` goes red, which is the intended signal and not a
+regression to chase. The live side of the same rule, and the visible false row it contrasts with,
+are held in an ordinary green test beside it, so a pin that starts failing for an unrelated reason
+cannot hide behind `it.fails` passing.
+
+## 83. The panel workspace: seven documented Photoshop behaviours are NOT built, and the list matters more than the feature
+
+`feat/panel-docks` made the tools rail and the History/Layers dock draggable and resizable. The
+behaviours it ships are transcribed from Adobe's own help pages, and the citations are in the
+header of `src/contexts/PanelLayout.tsx` — read that before crossing this boundary, because the
+two scope decisions below were made against sources rather than against taste.
+
+**1. Panels cannot float.** "Dragging a panel out of its dock creates a floating panel that you
+can position anywhere in the workspace"
+(<https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/stack-floating-panels.html>).
+Not implemented. It needs its own window layer, a z-order above the canvas, and persistence for
+panels dragged off-screen — none of which exists. **This is the one real gap.** A user who
+wants a panel out of the way has no gesture for it, and `Window` has no panel list to remove one
+from, which Adobe does document and which is also missing.
+
+**2. `Tab` and `Shift+Tab` do not hide panels.** "Press Tab to hide all panels... Press Shift +
+Tab to hide all panels except the Tools panel and Options bar."
+(<https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/hide-show-panels.html>).
+Not implemented, because `Tab` is already bound to leave an open tool flyout
+(`SidebarLeft.tsx`), and a global hide is a different feature from a drag one. `Window > Collapse
+Panels` is a reasonable way in; the keyboard shortcut needs the flyout binding resolved first.
+
+**3. `PanelGroup` is draggable but not groupable.** Photoshop lets Layers/Channels/Paths be tab
+GROUPS sharing one body. The hook does the vertical case of it and not the horizontal one, and
+the group model only pays off once a third panel exists. The drag that would extend it is the
+same `PanelGroup` header.
+
+**4. A dock cannot be shorter than the workspace.** "You can prevent panels from filling all the
+space in a dock. Drag the bottom edge of the dock up so it is separated from the workspace's
+edge." The column is always `h-full`. A `useDockDrag` comment here also claimed "the divider
+itself is not a Photoshop-documented gesture", which is false — Adobe's wording is "Drag any
+side of the panel" and "drag the dock's bottom border" — and that comment is corrected.
+
+**5. Panel icons in the icon strip are not draggable.** "To move a panel icon (or panel icon
+group), drag the icon. You can drag panel icons up and down in the dock… or outside the dock."
+They are click-only buttons.
+
+**6. A panel GROUP cannot be moved as a unit by its title bar.** "To move a panel group, drag
+its title bar (the solid empty bar above the tabs)." This branch has no title bar: `PanelGroup`'s
+header _is_ the tab, so there is no separate bar to grab. Item 3 is a different axis — grouping
+several panels into one body, not moving a group.
+
+**7. There are no workspaces.** Adobe documents saving, switching, deleting and restoring them
+as four separate operations, and a workspace "remembers the size and position of panels". This
+app has one unnamed workspace persisted under one key, with a single hard-coded
+`Window > Reset Workspace` and no panel list to remove a panel from — "Select Window from the
+menu bar. Select the panel name to remove it from the workspace", and the per-tab
+**Close / Close Tab Group** context menu, are both absent.
+
+**An earlier version of this entry listed three of these and called it complete.** It was not, and
+the count was the problem rather than the omissions: a list that claims to be the full set of what
+is missing reads as a finished audit, and the four above were each a page of Adobe's own
+documentation.
+
+**Two rules in the shipped work are worth keeping, because both were found by a test failing and
+neither is obvious from the code:**
+
+**A dock's resize handle must be on its CANVAS side, and the border must follow the dock.**
+`SidebarRight.tsx` picks `left-0` or `right-0` from `dockOnLeft`. Inverted, the handle lands
+against the window border — unreachable, and it reads as a resize grip for nothing. The unit test
+that pinned it asserted `right-0` for the default because that was what the code did, and it
+stayed green through the inversion; only `e2e/panel-workspace.spec.ts` caught it, by measuring
+the handle's real box.
+
+**The rail's re-dock target is the edge the rail is NOT on, and `dockOnLeft` is the inverse of
+the rail's destination edge.** Both halves were wrong at once, in ways that cancelled: dragging
+the rail LEFT reported a drop target at the left edge and swapped, so the rail ended up on the
+right and every outcome assertion passed. The unit test now asserts the drop target's side, and
+`e2e/panel-workspace.spec.ts` asserts the rail's `boundingBox().x` — an outcome-only assertion
+cannot see this class of bug at all.
+
+**One locator trap, because five e2e specs and three unit tests depend on it.** A layer row's
+`title` is `"Drag to reorder"`, and `page.getByTitle` matches on substring. A panel tab whose
+tooltip contained that phrase resolved to the tab header instead, and every one of those
+locators silently began pointing at the wrong element — five specs failed with
+`Received string: "History«"`. `PanelGroup`'s header `title` must stay clear of it.
+
+**One overlap that `toBeVisible()` cannot see, and its stated mechanism was wrong.** The rail is
+108px wide and its tiles sit on a 108px grid inside a ~83px content box, so a second-column tile
+starts at x≈1229 on a rail that begins at x≈1172. A flyout hung off that tile is at 1020..1221:
+inside the viewport, so nothing complains, and painted over the rail's own first column.
+`AnchoredOverlay` now takes an `xAnchor` — the rail's horizontal edges, with the tile still
+driving vertical — which is what Photoshop does by hanging a tool flyout off the panel edge.
+
+The mechanism is **overlap, not clipping**, and the first version of this entry said clipping. The
+overlay is portalled to `document.body` and positioned `fixed`, so the rail's `overflow-y: auto`
+cannot clip it at all and no `toBeVisible()` failure would ever have reported it. The assertion in
+`e2e/panel-workspace.spec.ts` is a geometry one — clear of the rail's left edge — and that is what
+fails if `xAnchor` is removed.
+
+## 84. A review of §83 found four defects, and three of them are the same shape: a test that could not fail
+
+A hostile review of `feat/panel-docks` found four blockers. Each is a trap worth writing down
+because the tests either pinned the defect or could not see it.
+
+**1. A stored dock width below the label floor is a one-way door, and the persistence guard let it
+through.** `readStoredLayout` clamped `dockWidth` to `[40, 640]` and never reconciled it with
+`isCollapsed`, so a stored `{"dockWidth":45,"isCollapsed":false}` produced a 45px column with both
+panel groups, their labels, and a control reading "Collapse panels to icons" — on a dock already
+under the floor. With `isCollapsed: true` it was worse: the icon strip's only expand control calls
+`setDockWidth(layout.dockWidth)`, which re-collapses on a width that is still under the floor, and
+the double-arrow is not rendered while collapsed, so `Window > Reset Workspace` was the only way out.
+Only a hand-edited, stale or cross-version record reaches it — which is exactly the threat model
+`readStoredLayout` documents itself as defending against, and the test that "covered" it only used
+`99_999`, which `[40, 640]` happens to catch. The read path now collapses on the same rule
+`setDockWidth` uses, and remembers the label floor so the dock is recoverable. **The general
+shape: a clamp and an invariant are different things, and a guard that only clamps has not
+enforced the invariant.**
+
+**2. Two of the half-parts of the width state were measured, and the drag read the wrong one.** The
+resize handle is rendered on the collapsed 40px strip too, and `onColumnResizeStart` recorded
+`layout.dockWidth` — the width to come _back_ to (250) — rather than `effectiveDockWidth`, the 40
+on screen. One pixel of movement opened a 250px dock and overwrote the 250 with 251: a 211px jump,
+and the user's chosen width gone. Cancelling that drag called `setDockWidth(250)`, which
+_un-collapses_, so Escape changed the value rather than restoring it. Neither the e2e nor the unit
+test dragged the handle while collapsed. **A drag has to be measured from what is on screen.**
+
+**3. The cancel flag was dropped one layer down, so Escape committed the gesture.** `useDockDrag`
+reports `onEnd(cancelled)`, and `PanelGroup` passed it through as `onDragEnd()` with the argument
+discarded — so an Escape on a tab drag reordered the panels anyway, and a cancelled resize left the
+column wherever the last `pointermove` put it. The flag is now plumbed through, a cancelled drag
+clears its preview state without committing, and a cancelled resize is restored to where the
+divider started.
+
+**4. The cursor lock was shared and unguarded.** The grabbing cursor and the selection lock live on
+`document.body`, because they have to survive the pointer leaving the handle. The guard against two
+gestures at once is _per hook instance_, so a second finger on a second handle started a second
+gesture that had not taken the lock — and the first one to end took it away from the one still
+running. Counting is now at module scope.
+
+**Three tests in the same change could not fail, and each is a shape worth recognising:**
+
+- `expect(Number.isNaN(parseFloat(style.flex))).toBe(false)` — true of every string `flex` can
+  hold, and of a divider drag that did nothing. The replacement reads the grow factor back and
+  asserts the share moved by the dragged fraction.
+- `expect(top + (1 - top)).toBeCloseTo(1)` for a loop of ratios — an arithmetic identity. It holds
+  for a no-op setter, an inverted one, and a clamp to the wrong bound.
+- The flyout test asserted `left` to name which tile a menu belonged to. Horizontal placement
+  became the rail's when `xAnchor` landed, so `left` is now identical for every group and the
+  assertion passed for the _previous_ group as readily as the current one. It asserts `top` now.
+
+**One claim in the code was false and a test was pinning it.** The module header said the resize
+handle sat "half outside the column" at `left: -4px`, and the test asserted the aside's
+`overflow: hidden` was therefore load-bearing. No rule ever set a negative offset: the handle is
+`absolute` with `left-0`/`right-0` and lies wholly within the padding box, which the e2e
+measurement says directly — 1px inside the 1px border. The clipping moved inward anyway, for a
+different reason, and both the comment and the test now say what is actually true.
+
+**`role="separator"` with `tabIndex={0}` and no `aria-value*` is a promise the control does not
+keep.** A focusable separator is the window-splitter widget and must carry `aria-valuenow`/`min`/
+`max` and answer arrow keys; these carried none and had no key handler, so a keyboard user could
+Tab onto them and do nothing. Photoshop offers no keyboard path for resizing a dock either. The
+handles are `aria-hidden` and not focusable, and the re-dock grip — a real `<button>` that
+announced a button and activated nothing on Enter — got the one non-pointer action it can offer,
+a swap. **A focus stop with no behaviour is worse than no focus stop: it costs a keyboard user a
+tab press to learn nothing.**
+
+That grip was dead for a MOUSE user too, and the reason is the one to remember: `onRailDragEnd`
+only commits once `reDockTargetRef` is set, and that happens in `onRailDrag` — so a press with no
+movement produced no drop target and no swap. "It needs a drag, so it is a drag control" is not
+the same as "it is a control", and a `<button>` beside a sibling that works on click is read by
+every user as clickable. A movement guard is also required in the other direction: a `<button>`
+synthesises a click from any pointerdown+pointerup, including one that travelled to the opposite
+edge, so an unguarded `onClick` swaps on the release and then swaps again on the click.
+
+**`aria-controls` has to name an element that holds something.** It named an empty
+`display: contents` div beside the real body, and while the group was rolled up the guarded render
+removed the id and left the reference dangling — the same "a promise the control does not keep"
+argument used to justify `aria-hidden` on the handles, applied to a control that was left
+focusable. The body moved inside `PanelGroup` so the id and the element cannot drift apart.
+
+**A module-scope counter is only correct if every writer shares it.** The first fix reference-
+counted the grabbing cursor inside `useDockDrag` alone, while `LayersTab` — the layer-row
+reorder, which predates it — still added and removed the same `document.body` class itself. A
+layer drag that ended while a dock divider was still being dragged took the cursor and the
+selection lock away from it, which is the defect the counter existed to fix, reintroduced through
+the other door. The lock now lives in `src/hooks/dragCursorLock.ts` and both writers call it.
+
+**And a counter can still leak, because an effect that never ran has no cleanup.** The lock was
+released only from inside the listener effect, which is gated on `isDragging`. If the hook's owner
+unmounted in the SAME batch that set `isDragging(true)` — which is what a gesture whose `onStart`
+drops its own subtree does — that effect never registered, no cleanup existed, and the lock was
+held for the rest of the session: a grabbing cursor, no text selection, and a count left one high
+so every later gesture's lock short-circuited. A `[]`-deps effect whose cleanup finishes a live
+gesture always has an unmount cleanup, which is the point of using one.
+
+**The two docks are not keyboard-reachable at all**, and that is a real gap rather than a
+non-issue: a rail or a dock cannot be moved with the keyboard, and nothing in `Window` lists the
+panels. The honest cost of that is recorded here rather than hidden behind `aria-hidden`.
