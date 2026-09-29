@@ -44,7 +44,7 @@ forgotten it. Two rows have weaker coverage than the table implies:
 ```bash
 npm run test            # vitest, jsdom - app unit tests
 npm run test:e2e:unit   # vitest, node - unit tests for the e2e helpers
-npm run test:e2e        # playwright, HEADLESS, LOCKED - one e2e run at a time, own port + output
+npm run test:e2e        # playwright, HEADLESS - starts its OWN server on a port it picks
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
@@ -55,14 +55,34 @@ baselines. This file is the gate contract; that one is the e2e suite's own
 documentation.
 
 **`npm run test:e2e` is a WRAPPER (`scripts/e2e-run.mjs`), not `playwright test`.**
-It takes the swarm lock `e2e/.swarm-e2e-runner` so one suite runs at a time across
-every worktree, gives the run a free port and a private output directory, and
-forwards every argument after `--` verbatim. It queues with the holder's name and
-exits **4** if the wait runs out; `swarm check` exits **1** for a busy path, which
-is a different question. The holder is a **run**, not a branch, so two runs in one
-worktree are two holders rather than a race. Server reuse is opt-in
-(`PLAYWRIGHT_REUSE_EXISTING_SERVER=1`). Orchestration detail and the board
-commands: [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md).
+It does two independent things, and telling them apart is the whole design.
+
+**The guarantee: the run starts its own server.** It picks a port, verifies it is
+still bindable immediately before starting, and exports it as `PLAYWRIGHT_PORT` so
+the dev server, the `baseURL` the tests navigate to and the port Playwright probes
+are one number belonging to that run. `playwright.config.ts` sets
+`reuseExistingServer: false` as a literal, with no environment variable and no
+field that can turn it on, and the server is started with `--strictPort`. The
+outcome is binary: a run gets a server it started, or it is red. **There is no
+third state in which the suite quietly tests another worktree's checkout** — the
+failure `TEST-FLAKES.md` §10 is a whole mutation campaign about.
+`PLAYWRIGHT_REUSE_EXISTING_SERVER` is refused outright, and `PLAYWRIGHT_BASE_URL`
+is refused unless the run says `E2E_ALLOW_REMOTE=1`, which it logs.
+
+**The optimisation: a queue, which is only a queue.** The run also takes the swarm
+lock `e2e/.swarm-e2e-runner` so two agents rarely run e2e at once. **No run ever
+refuses to start because of it** — a full queue, an unreachable board and a
+malformed lease all produce a message and then a normal run, because the port
+guarantee does not depend on any of it. Two runs at once is survivable: each has
+its own port and its own output directory. Do not "fix" a slow run by making the
+lock load-bearing; that is the change that put an unenforceable mechanism in front
+of a merge gate once already. Board detail: [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md).
+
+Each run also writes to its own `test-results/runs/<run-id>/`, because Playwright
+**deletes** `outputDir` at the start of every run, and records its port to
+`.kilo/e2e-last-run.json` so a run that fails later is diagnosable. Every argument
+after `--` is forwarded verbatim, after the `test` subcommand npm would otherwise
+drop.
 
 ## Running commands
 
@@ -78,14 +98,14 @@ commands: [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md).
 - `npm run test` is `pool: 'vmThreads'`, `maxWorkers: 4` — a timing-sensitive
   test that only fails in a full run is usually the pool, not the code.
 - `npm run test:e2e` is a WRAPPER (`scripts/e2e-run.mjs`), not `playwright test`:
-  it takes the swarm lock `e2e/.swarm-e2e-runner` (one suite at a time, queued
-  with the holder's name, exit 4 if the wait runs out), gives the run a free port
-  and a private output dir, and forwards every argument after `--` verbatim. Pass
+  it starts its **own** dev server on a port it picks, makes attaching to any other
+  server impossible, writes the run's output to its own directory, records its
+  port, and forwards every argument after `--` verbatim. It also takes a swarm lock
+  as an advisory queue — see "The Commands" section above for the guarantee and the
+  queue, and why the second must never be allowed to block a run. Pass
   `--retries=1` for a trace; `trace: 'on-first-retry'` yields nothing at the local
-  `retries: 0`. **The lock is a queue, not a gate: a user-visible change still runs
-  the full suite before it merges** — the lock is what makes that survivable when
-  several agents merge at once, not a reason to skip it. See `e2e/README.md` and the
-  header of `scripts/e2e-run.mjs`.
+  `retries: 0`. **A user-visible change still runs the full suite before it
+  merges.** See `e2e/README.md` and the header of `scripts/e2e-run.mjs`.
 
 ## Test traps
 
@@ -245,5 +265,13 @@ decision to the operator.
   `test-results/` and `playwright-report/`, and keeps `test-results/results.json`,
   so a run's machine-readable result survives it. A run through the wrapper writes
   under `test-results/runs/<run-id>/` and prints that path before the suite starts.
+- **The default headless run has zero failures, and three tests are `test.skip` by
+  declaration.** Two need an external service or a manual gesture; the third is
+  `e2e/viewport-drawing.spec.ts`, skipped on the operator's decision of 2026-09-29
+  because it is intermittently red — 1 run in 4, with the failing case moving
+  between cases — and a suite that is randomly red trains agents to ignore the
+  gate. **It is a gate decision, not a fix and not a waiver:** the defect is still
+  open in `TEST-FLAKES.md` §12 with its exact remaining verification, and a skip is
+  not permission to loosen the assertion, raise the bound or add retries.
 - Read failures from `test-results/`; `trace.zip` needs a window, so ask the
   operator.

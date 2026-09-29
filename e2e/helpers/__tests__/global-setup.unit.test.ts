@@ -2,6 +2,7 @@ import type { FullConfig } from '@playwright/test';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import globalSetup, {
+  checkOwnServer,
   PER_ATTEMPT_TIMEOUT_MS,
   planWarmup,
   resolvedBaseUrl,
@@ -499,10 +500,86 @@ describe('runWarmup', () => {
   });
 });
 
+describe('checkOwnServer', () => {
+  // This is the load-bearing half of the guarantee, and it lives here rather than in
+  // `scripts/e2e-run.mjs` because THIS module runs for every `playwright test`
+  // invocation whatever started it. The wrapper refuses the same thing, but
+  // `npm run test:e2e:raw` and the CI job's bare `npx playwright test` never load it,
+  // and `playwright.config.ts` resolves `use.baseURL` from `PLAYWRIGHT_BASE_URL`
+  // itself — so a refusal that lived only in the wrapper was one command away from
+  // being false, and the guarantee was a convention.
+  it('permits a run whose tests load the dev server it started', () => {
+    expect(
+      checkOwnServer({
+        baseUrl: 'http://localhost:5391',
+        webServerUrl: 'http://localhost:5391',
+        allowRemote: undefined,
+      })
+    ).toMatchObject({ permitted: true });
+  });
+
+  it('permits an explicit base URL that NAMES the same server', () => {
+    // Origins, not strings: `PLAYWRIGHT_BASE_URL=http://localhost:5173` with a dev
+    // server on 5173 is the same server. A string comparison would refuse it, which
+    // is how a guard becomes something agents learn to route around.
+    expect(
+      checkOwnServer({
+        baseUrl: 'http://localhost:5173',
+        webServerUrl: 'http://localhost:5173',
+        allowRemote: undefined,
+      })
+    ).toMatchObject({ permitted: true });
+  });
+
+  it('refuses a run pointed at another origin', () => {
+    const check = checkOwnServer({
+      baseUrl: 'https://staging.example.com',
+      webServerUrl: 'http://localhost:5391',
+      allowRemote: undefined,
+    });
+    expect(check.permitted).toBe(false);
+    expect(check.reason).toMatch(/staging\.example\.com/);
+    expect(check.reason, 'and says which server this run did start').toMatch(/5391/);
+  });
+
+  it('refuses a different PORT on the same host, which is a different server', () => {
+    expect(
+      checkOwnServer({
+        baseUrl: 'http://localhost:5174',
+        webServerUrl: 'http://localhost:5173',
+        allowRemote: undefined,
+      }).permitted
+    ).toBe(false);
+  });
+
+  it('permits it when the run says it means a remote build, and says so in the reason', () => {
+    const check = checkOwnServer({
+      baseUrl: 'https://staging.example.com',
+      webServerUrl: 'http://localhost:5391',
+      allowRemote: '1',
+    });
+    expect(check.permitted).toBe(true);
+    // The reason is logged on every permitted run, so a report can never imply a
+    // local verification of a remote run.
+    expect(check.reason).toMatch(/E2E_ALLOW_REMOTE=1/);
+    expect(check.reason).toMatch(/NOT this checkout/);
+  });
+
+  it('does not claim a guarantee it could not check', () => {
+    // No `webServer` block means nothing was started, so there is no origin to
+    // compare against. Saying so beats reporting a verification that never happened.
+    expect(
+      checkOwnServer({ baseUrl: 'https://staging.example.com', webServerUrl: undefined, allowRemote: undefined })
+    ).toMatchObject({ permitted: true, reason: expect.stringMatching(/could not verify/) });
+  });
+});
+
 describe('globalSetup', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     delete process.env.PLAYWRIGHT_ALLOW_HEADED;
+    delete process.env.PLAYWRIGHT_BASE_URL;
+    delete process.env.E2E_ALLOW_REMOTE;
   });
 
   const config = (overrides: Record<string, unknown> = {}) =>
@@ -536,6 +613,85 @@ describe('globalSetup', () => {
     });
     await expect(globalSetup(headed)).rejects.toThrow(/headless: false/);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a foreign origin BEFORE spending anything on the warm-up', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    // The PROJECT's `use.baseURL` is what moves, not the environment: the real
+    // config resolves `baseURL: process.env.PLAYWRIGHT_BASE_URL ?? baseUrl`, so the
+    // variable arrives here already merged into every project. Stubbing the variable
+    // against this fixture, whose project base URL is hardcoded, would test nothing.
+    const foreign = config({
+      projects: [{ name: 'Google Chrome', use: { baseURL: 'https://staging.example.com', headless: true } }],
+    });
+
+    await expect(globalSetup(foreign)).rejects.toThrow(/Refusing to start a run against a server it did not start/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses a foreign origin even with E2E_ALLOW_REMOTE unset in the environment', async () => {
+    // The default must be refusal, and the refusal must not depend on a variable
+    // being absent — `delete process.env.E2E_ALLOW_REMOTE` in `afterEach` is what
+    // makes the default the thing under test rather than a leftover.
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    expect(process.env.E2E_ALLOW_REMOTE).toBeUndefined();
+    const foreign = config({
+      projects: [{ name: 'Google Chrome', use: { baseURL: 'http://localhost:5174', headless: true } }],
+    });
+
+    await expect(globalSetup(foreign)).rejects.toThrow(/Refusing to start a run against a server it did not start/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('permits a remote run that asked for it, and says so in the log', async () => {
+    const fetchSpy = vi.fn<typeof globalThis.fetch>(async () => {
+      return new Response('export {}', { status: 200, headers: { 'content-type': 'text/javascript' } });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.stubEnv('E2E_ALLOW_REMOTE', '1');
+    const lines: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      lines.push(args.join(' '));
+    });
+
+    try {
+      await globalSetup(
+        config({
+          projects: [{ name: 'Google Chrome', use: { baseURL: 'https://staging.example.com', headless: true } }],
+        })
+      );
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(
+      lines.some((line) => line.includes('NOT this checkout')),
+      'a permitted remote run announces itself in the log, so no report can imply a local verification'
+    ).toBe(true);
+  });
+
+  it('lets a run through when the origin matches, and logs which one it checked', async () => {
+    const fetchSpy = vi.fn<typeof globalThis.fetch>(async () => {
+      return new Response('export {}', { status: 200, headers: { 'content-type': 'text/javascript' } });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const lines: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      lines.push(args.join(' '));
+    });
+
+    try {
+      await globalSetup(config());
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(
+      lines.some((line) => line.includes('the dev server this run started')),
+      'the origin under test is in the log for every run'
+    ).toBe(true);
   });
 
   it('warms when nothing refuses the run', async () => {

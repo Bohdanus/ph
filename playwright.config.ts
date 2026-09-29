@@ -10,21 +10,11 @@ import { defineConfig, devices } from '@playwright/test';
 /**
  * The port the dev server and the tests agree on.
  *
- * This is a DEFAULT, and the interesting caller is `scripts/e2e-run.mjs`, which
- * every npm script routes through: it sets `PLAYWRIGHT_PORT` to a port it found
- * free, so two agents in two worktrees never ask for the same one. It leaves this
- * value alone when the caller has already chosen one.
- *
- * Every worktree under `.kilo/worktrees/` serves its OWN checkout, so two
- * worktrees defaulting to 5173 are two different applications on one port. That is
- * why `reuseExistingServer` below is opt-in: a run that attaches to a server it
- * did not start tests the OTHER checkout's code, which reads exactly like "my
- * change did nothing". TEST-FLAKES.md §10 is a mutation campaign that reported
- * every mutation green for precisely this reason.
- *
- * `--strictPort` turns the remaining case — a stale server this run did not start
- * still holding the port — into a startup failure instead of Vite's silent hop to
- * 5174.
+ * This is a default, and the interesting caller is `scripts/e2e-run.mjs`, which
+ * every `test:e2e*` run script routes through: it sets `PLAYWRIGHT_PORT` to a port
+ * it found free, so the dev server, the `baseURL` the tests navigate to, and the
+ * port probed below are one number belonging to that run. It leaves this value
+ * alone when the caller has already chosen one, and under `CI`.
  */
 const port = process.env.PLAYWRIGHT_PORT ?? '5173';
 const baseUrl = `http://localhost:${port}`;
@@ -44,20 +34,27 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   // CI keeps the default (CPU-percentage) parallelism that `fullyParallel` expects;
-  // local runs stay sequential so two runs cannot fight over the same app instance
-  // on :5173. The readability argument for `workers: 1` is gone with headed mode: the
-  // local report is the same `list` output either way.
+  // local runs stay sequential so a failure is readable one test at a time and the
+  // machine is not running two browsers per core. The port argument that used to sit
+  // here is gone with the old reuse default: each run owns its port, so two runs no
+  // longer fight over one app instance. The readability argument for `workers: 1` is
+  // gone with headed mode: the local report is the same `list` output either way.
   workers: process.env.CI ? undefined : 1,
-  // Refuses --headed, --debug and --ui before a window exists. This is the layer
-  // that makes the headless default below enforceable rather than advisory - the
-  // flags bypass `use.headless` entirely. See e2e/global-setup.ts.
+  // Two refusals, and both run for every `playwright test` invocation whatever started
+  // it: a visible browser, and a base URL this run's own dev server is not serving.
+  // The flags bypass `use.headless` entirely, and `PLAYWRIGHT_BASE_URL` is read here,
+  // so neither can be enforced from one caller. See e2e/global-setup.ts.
   globalSetup: './e2e/global-setup.ts',
   reporter: process.env.CI
     ? [['github'], ['html', { open: 'never' }], ['json', { outputFile: 'test-results/results.json' }]]
     : [['list'], ['html', { open: 'never' }]],
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
-    /* Override in another environment: PLAYWRIGHT_BASE_URL=https://example.com npm run test:e2e */
+    /* Testing a deployed build needs E2E_ALLOW_REMOTE=1, which
+     * `npm run test:e2e` refuses without and `e2e/global-setup.ts` refuses without
+     * for EVERY invocation, including a bare `npx playwright test`:
+     *   E2E_ALLOW_REMOTE=1 PLAYWRIGHT_BASE_URL=https://staging.example.com npx playwright test
+     * The run logs which origin it loaded. See e2e/README.md. */
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? baseUrl,
     // HEADLESS IS THE DEFAULT. Do not flip this to headed-on-local.
     //
@@ -112,26 +109,30 @@ export default defineConfig({
 
   /* Run the dev server before starting the tests */
   webServer: {
-    // `npm run dev` is this repository's Vite dev server, serving `src/` on the
-    // port above. `--strictPort` makes a port clash a hard failure rather than
-    // Vite's default silent hop to 5174, which would leave the tests pointed at
-    // a server this run never started.
+    // `npm run dev` is this repository's Vite dev server, serving `src/` on the port
+    // above. `--strictPort` makes a port clash a hard failure rather than Vite's
+    // default silent hop to 5174, which would leave the tests pointed at a server
+    // this run never started.
     command: `npm run dev -- --port ${port} --strictPort`,
     url: baseUrl,
-    // OFF UNLESS ASKED FOR. This used to be on locally, which made a bare
-    // `npx playwright test` in a worktree attach to whichever dev server got to
-    // :5173 first — another checkout — and pass for the wrong reason. The two
-    // callers that genuinely want an existing server now say so:
+    // NEVER TRUE, AND NOT CONFIGURABLE. There is no environment variable, no
+    // argument and no field to turn this on, and that is the point.
     //
-    //   PLAYWRIGHT_REUSE_EXISTING_SERVER=1   the operator is running `npm run dev`
-    //                                         and wants the suite to attach to it.
-    //   (nothing)                           every other run starts its own server,
-    //                                         and a clash fails loudly.
+    // Every worktree under `.kilo/worktrees/` serves its OWN checkout, so two
+    // worktrees on one port are two different applications on one address. A run
+    // that attaches to a server it did not start tests the other checkout's code
+    // and reports green, which reads exactly like "my change did nothing".
+    // TEST-FLAKES.md §10 is a mutation campaign that reported seven product
+    // mutations as green for precisely this reason.
     //
-    // `scripts/e2e-run.mjs` allocates a free port for each run, so this default
-    // costs a normal run nothing; it is what makes the *unusual* run safe.
-    reuseExistingServer:
-      !process.env.CI && process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER === '1' && !process.env.PLAYWRIGHT_PORT,
+    // An earlier version of this file had an opt-in here
+    // (`PLAYWRIGHT_REUSE_EXISTING_SERVER=1`) on the reasoning that an operator
+    // might want to attach to a `npm run dev` they started. It was withdrawn: an
+    // escape hatch that attaches to whatever holds the port is the same defect
+    // with a documented name, and the only thing it reliably does is let an agent
+    // under time pressure choose it. `scripts/e2e-run.mjs` now refuses the variable
+    // outright, so setting it is an error rather than a silent no-op.
+    reuseExistingServer: false,
     timeout: 120_000,
   },
 });
