@@ -411,59 +411,68 @@ describe('large images', () => {
     ['the global scan', { contiguous: false }],
   ];
 
-  it.each(SCALE_CASES)('scales with pixel count, not with pixel count squared, for %s', (_label, options) => {
-    // A wall-clock bound cannot see the regression it claims to guard. A quadratic fill and a
-    // linear one differ by an order of magnitude only when two SIZES are compared on the same
-    // run, where the machine's own speed cancels out; against a fixed 20s ceiling both pass on a
-    // fast runner and both fail on a loaded one. So the comparison is between two sizes.
-    //
-    // 3000x3000 is 9x the pixels of 1000x1000: linear costs ~9x, quadratic costs ~81x. The
-    // bound is 24x, which splits that space roughly 2.7:3.4 between the two.
-    //
-    // The RAMP WIDTH is the load-bearing choice, and it was widened after this test failed
-    // under CPU contention rather than after anything changing in the algorithm. The first
-    // version compared 1000x1000 against 2000x2000 with a bound of 8x, which leaves only about
-    // 2x of headroom on EACH side: linear measures ~4x and quadratic ~16x. That is narrow
-    // enough for scheduler noise alone to push a correct implementation over the line — a run
-    // at load average 20 measured 13.6x and failed, while the same commit passed 3/3 at load 7.8
-    // and the per-size minima at both loads show the algorithm is linear throughout
-    // (2000/1000 = 4.00x and 3.93x; 3000/1000 = 9.91x and 8.89x, against 4x and 9x predicted).
-    // Doubling the ramp doubles the headroom on both sides, so a noisy sample can no longer
-    // decide the verdict: the margin to linear is now ~2.4x and the margin that keeps a
-    // quadratic implementation red is ~3.4x.
-    //
-    // The ramp starts at 1000 rather than 500 because of what the small step actually measures.
-    // With a 500x500 small step the measured time is the same order as any floor worth setting,
-    // and a quadratic BIG would land only ~1.1x over the bound — a tripwire with no teeth. At
-    // 1000x1000 the small step clears the floor. Re-measure before changing these two
-    // constants; do not trust the figures above on a different machine.
-    const SMALL = 1000;
-    const BIG = 3000;
-    // The floor only exists so a fast machine cannot fail the comparison by dividing by a small
-    // run that measured at or near zero.
-    const FLOOR_MS = 4;
-    const LIMIT = 24;
-    const SAMPLES = 5;
+  it.each(SCALE_CASES)(
+    'scales with pixel count, not with pixel count squared, for %s',
+    (_label, options) => {
+      // A wall-clock bound cannot see the regression it claims to guard. A quadratic fill and a
+      // linear one differ by an order of magnitude only when two SIZES are compared on the same
+      // run, where the machine's own speed cancels out; against a fixed 20s ceiling both pass on a
+      // fast runner and both fail on a loaded one. So the comparison is between two sizes.
+      //
+      // 3000x3000 is 9x the pixels of 1000x1000: linear costs ~9x, quadratic costs ~81x. The
+      // bound is 24x, which splits that space roughly 2.7:3.4 between the two.
+      //
+      // The RAMP WIDTH is the load-bearing choice, and it was widened after this test failed
+      // under CPU contention rather than after anything changing in the algorithm. The first
+      // version compared 1000x1000 against 2000x2000 with a bound of 8x, which leaves only about
+      // 2x of headroom on EACH side: linear measures ~4x and quadratic ~16x. That is narrow
+      // enough for scheduler noise alone to push a correct implementation over the line — a run
+      // at load average 20 measured 13.6x and failed, while the same commit passed 3/3 at load 7.8
+      // and the per-size minima at both loads show the algorithm is linear throughout
+      // (2000/1000 = 4.00x and 3.93x; 3000/1000 = 9.91x and 8.89x, against 4x and 9x predicted).
+      // Doubling the ramp doubles the headroom on both sides, so a noisy sample can no longer
+      // decide the verdict: the margin to linear is now ~2.4x and the margin that keeps a
+      // quadratic implementation red is ~3.4x.
+      //
+      // The ramp starts at 1000 rather than 500 because of what the small step actually measures.
+      // With a 500x500 small step the measured time is the same order as any floor worth setting,
+      // and a quadratic BIG would land only ~1.1x over the bound — a tripwire with no teeth. At
+      // 1000x1000 the small step clears the floor. Re-measure before changing these two
+      // constants; do not trust the figures above on a different machine.
+      const SMALL = 1000;
+      const BIG = 3000;
+      // The floor only exists so a fast machine cannot fail the comparison by dividing by a small
+      // run that measured at or near zero.
+      const FLOOR_MS = 4;
+      const LIMIT = 24;
+      const SAMPLES = 5;
 
-    // Warm-up, excluded from the samples: the first call pays for the JIT and for the queue
-    // allocation, and a cold small run would make the ratio look worse than the algorithm is.
-    timeFill(256, options);
-    timeFill(256, options);
+      // Warm-up, excluded from the samples: the first call pays for the JIT and for the queue
+      // allocation, and a cold small run would make the ratio look worse than the algorithm is.
+      timeFill(256, options);
+      timeFill(256, options);
 
-    // Interleaved, so a CPU spike from a neighbouring test run lands on both sizes instead of
-    // inflating one of them, and each size is reduced by its FASTEST sample rather than its mean.
-    const small: number[] = [];
-    const large: number[] = [];
-    for (let i = 0; i < SAMPLES; i++) {
-      small.push(timeFill(SMALL, options));
-      large.push(timeFill(BIG, options));
-    }
+      // Interleaved, so a CPU spike from a neighbouring test run lands on both sizes instead of
+      // inflating one of them, and each size is reduced by its FASTEST sample rather than its mean.
+      const small: number[] = [];
+      const large: number[] = [];
+      for (let i = 0; i < SAMPLES; i++) {
+        small.push(timeFill(SMALL, options));
+        large.push(timeFill(BIG, options));
+      }
 
-    const smallMs = Math.min(...small);
-    const largeMs = Math.min(...large);
+      const smallMs = Math.min(...small);
+      const largeMs = Math.min(...large);
 
-    expect(largeMs).toBeLessThan(Math.max(smallMs, FLOOR_MS) * LIMIT);
-  });
+      expect(largeMs).toBeLessThan(Math.max(smallMs, FLOOR_MS) * LIMIT);
+      // The budget is explicit, and generously so, because this asserts a RATIO and not a deadline:
+      // a slow run under CPU contention should finish and pass on its merits rather than be killed
+      // for taking too long. At the default 5s the widened ramp times out on a loaded machine — the
+      // exact failure the widened ramp exists to remove. The 4-connected case is the expensive one
+      // (five 3000x3000 fills, ~133ms each at load 8).
+    },
+    60_000
+  );
 
   it('fills all four million pixels of a 2000x2000 image contiguously', () => {
     // No wall-clock assertion: the cost guard above is the scaling comparison, and duplicating it
