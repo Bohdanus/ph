@@ -80,12 +80,18 @@ type AnchoredOverlayProps = {
    * anchor. `anchor` still decides the vertical alignment, so a flyout still opens beside the
    * tile that was pressed.
    *
-   * This exists because the rail is 108px wide and its tiles are laid out on a 108px grid
-   * inside a narrower content box, so a tile in the second column starts at x≈1229 on a
-   * right-docked rail that begins at x≈1172. Hanging the flyout off that tile puts it at
-   * 1020..1221 — inside the viewport, so nothing reports a problem, and painted over the rail's
-   * own first column. Photoshop hangs a tool flyout off the PANEL's edge for the same reason:
-   * the panel is what the overlay has to get out from under.
+   * This exists because the tile a flyout opens from is not the panel. On the two-column rail
+   * that tile can be one in the LEFT-hand column, whose trailing edge is nowhere near the
+   * panel's, and a flyout hung there comes back over the rail's own first column — inside the
+   * viewport, so nothing reports a problem, and painted over the panel. Photoshop hangs a tool
+   * flyout off the PANEL's edge for the same reason: the panel is what the overlay has to get
+   * out from under.
+   *
+   * (The mechanism this replaced — a "108px grid inside a narrower content box", so a
+   * second-column tile started past the rail's own right edge — was never true of this layout.
+   * The second column starts well inside the panel. The overlap was real; the arithmetic was
+   * not, and it is not restated here because a number in this comment is a number a layout
+   * change moves.)
    *
    * Omitted, the anchor's own edges are used, which is the previous and default behaviour.
    */

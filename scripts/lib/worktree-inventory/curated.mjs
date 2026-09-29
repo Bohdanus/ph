@@ -837,6 +837,11 @@ export const CURATED = {
     summary:
       'The TOO HARD register: each Photoshop capability too hard for this architecture recorded with what Adobe does, what the app does, why the gap is out of reach here, and what it offers instead — plus the gaps that are the operator’s call rather than an engineering one.',
   },
+  'rail-flatten': {
+    summary:
+      'The tools rail as one flat panel: the dead horizontal padding, the inner framed surface, and a rule across the bottom of the rail that divided nothing — with the e2e assertion that hardcoded a window height as proof the degenerate band exists replaced by one that finds the band.',
+    note: 'The band moves whenever the rail’s chrome changes height, so no window height can be its address. This worktree was `mustNotPrune` while the flatten was uncommitted; the flatten is now committed (92ce61cc) and the branch tip is not a main commit, so the flag is retracted — a committed branch is not work git cannot see.',
+  },
 
   /* ---------------- worktrees that really do hold work git cannot see ----- */
   // The one shape this table exists for, and the only one that earns
@@ -880,12 +885,6 @@ export const CURATED = {
       'Layer removal published through the append boundary: a `REMOVE_ACTION` translation to `remove-layer`, a validation arm pinning the canonical operation shape, and a `removeLayer` that plans its history entry and durable entry instead of building the history item by hand.',
     mustNotPrune: true,
     note: 'The whole slice is uncommitted and on no ref — the append translation, the store-side adapter and the `removeLayer` caller together — while the branch tip is a main commit, so the branch looks disposable and none of the slice is on any ref.',
-  },
-  'rail-flatten': {
-    summary:
-      'The tools rail as one flat panel: the dead horizontal padding, the inner framed surface and the rule across the rail’s bottom that divided nothing, with the e2e assertion that hardcoded a window height as proof the degenerate band exists replaced by one that finds the band.',
-    mustNotPrune: true,
-    note: 'The flatten is uncommitted and on no ref — the rail component, its layout and workspace tests, two e2e specs and the documentation beside them — while the branch tip is a main commit, so the branch looks disposable while the only copy is the working tree. The rule across the rail’s bottom moves whenever the rail’s chrome changes height, so no window height can be its address.',
   },
   'skill-citation-sweep': {
     summary:
@@ -949,6 +948,47 @@ export const CURATED = {
   // The same rule governs the new entries under this heading: a branch git can
   // see is protected by being a branch, and a flag on top of that is a claim
   // about nothing.
+  'audit-falsehoods': {
+    summary:
+      'A pass correcting claims that no longer match the tree: the export helpers’ stated DPI and colour assumptions, and the tool-description/tooltip text that asserted them, against what `e2e/export/helpers.ts` and the tooltip sources actually do.',
+    note: 'Was uncommitted on a main commit, so the branch looked disposable; it is now two commits ahead of main (55894cac, ff50831c) and git protects it, so the flag is retracted. One file is still modified on top — `e2e/export/helpers.ts` — and that remainder is on no ref.',
+  },
+  'durable-followups': {
+    summary:
+      'Follow-ups to the durable legacy-history conversion: `history-adapter.ts` plus the two adapter test suites that pin the branches it gained, on the diagnostics and safety the conversion can now emit.',
+    mustNotPrune: true,
+    note: 'Uncommitted and on no ref — `history-adapter.ts` and `history-adapter.branches.test.ts` / `history-adapter.safety.test.ts` — while the branch tip is a main commit. The files are the same ones the landed §95 entry and the durable-diag work touch, so this is the history core, not an isolated change.',
+  },
+  'curated-round3': {
+    summary:
+      'A second curation pass over the curated table itself, after the worktrees it documents moved again: five worktrees added, and rail-flatten’s `mustNotPrune` retracted once its flatten was committed (92ce61cc).',
+  },
+  'fix-stale-architecture-gate': {
+    summary:
+      'A gate that fails when AGENTS.md’s architecture rules name a symbol `src/` does not contain, so a doc that points at code which was renamed or deleted cannot pass a doc check that only looks for the file.',
+  },
+  'curated-round4': {
+    summary:
+      'A third curation pass in one session: two more worktrees entered the table, two flags were retracted as their owners committed, and one name left the guard because its worktree was disposed.',
+  },
+  'skill-handoff-cites': {
+    summary:
+      'Re-deriving the tool-creation skill’s `file:line` citations against the tree, and the handoff entries’ citations into the same files.',
+    mustNotPrune: true,
+    note: 'Uncommitted and on no ref — `.skills/photoshop-tool-creation.md` alone — while the branch tip is a main commit, so the branch looks disposable and the working tree is the only copy of the re-derived citations.',
+  },
+  'abandoned-cleanup': {
+    summary:
+      'Scratch space for triaging abandoned worktrees: no work of its own yet, the branch tip a main commit and the working tree clean.',
+  },
+  'chat-damage-followup': {
+    summary:
+      'Scratch space for following up on the chat-damage findings: no work of its own yet, the branch tip a main commit and the working tree clean.',
+  },
+  'layers-panel-spec': {
+    summary:
+      'Scratch space for the Layers panel spec: no work of its own yet, the branch tip a main commit and the working tree clean.',
+  },
   'stale-reclaim-skill': {
     summary:
       'The stale-worktree-reclaim skill: the reclaim family’s walk made actually transitive, the claim it made corrected, and the hole closed where the guard could pass while asserting nothing — with a tracked copy of the skill, since `.kilo/` is gitignored and the durable copy is the document it points at.',

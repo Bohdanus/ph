@@ -1855,11 +1855,11 @@ describe('the curated table', () => {
     // it failed.
     const invisibleToGit = [
       'agents-audit',
+      'durable-followups',
       'handoff-remove-layer-assets',
+      'skill-handoff-cites',
       'history-append-assets',
       'history-remove-append',
-      'rail-flatten',
-      'skill-citation-sweep',
     ];
     expect(invisibleToGit.length, 'the list went empty, so this guard asserts nothing').toBeGreaterThan(0);
 
