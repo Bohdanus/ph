@@ -43,7 +43,7 @@ forgotten it. Two rows have weaker coverage than the table implies:
 ```bash
 npm run test            # vitest, jsdom - app unit tests
 npm run test:e2e:unit   # vitest, node - unit tests for the e2e helpers
-npm run test:e2e        # playwright, HEADLESS - starts the dev server itself
+npm run test:e2e        # playwright, HEADLESS, LOCKED - one e2e run at a time, own port + output
 npm run tsc             # tsc -b - AUTHORITATIVE typecheck
 npm run lint:check      # eslint + prettier --check
 npm run build           # production bundle, and a real CI step
@@ -52,6 +52,16 @@ npm run build           # production bundle, and a real CI step
 `e2e/README.md` is the depth behind `test:e2e`, `test:e2e:unit`, and visual
 baselines. This file is the gate contract; that one is the e2e suite's own
 documentation.
+
+**`npm run test:e2e` is a WRAPPER (`scripts/e2e-run.mjs`), not `playwright test`.**
+It takes the swarm lock `e2e/.swarm-e2e-runner` so one suite runs at a time across
+every worktree, gives the run a free port and a private output directory, and
+forwards every argument after `--` verbatim. It queues with the holder's name and
+exits **4** if the wait runs out; `swarm check` exits **1** for a busy path, which
+is a different question. The holder is a **run**, not a branch, so two runs in one
+worktree are two holders rather than a race. Server reuse is opt-in
+(`PLAYWRIGHT_REUSE_EXISTING_SERVER=1`). Orchestration detail and the board
+commands: [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md).
 
 ## Running commands
 
@@ -63,8 +73,15 @@ documentation.
   also checks the Playwright specs and the test files.
 - `npm run test` is `pool: 'vmThreads'`, `maxWorkers: 4` — a timing-sensitive
   test that only fails in a full run is usually the pool, not the code.
-- `npm run test:e2e` starts Vite on :5173 itself. Pass `--retries=1` for a trace;
-  `trace: 'on-first-retry'` yields nothing at the local `retries: 0`.
+- `npm run test:e2e` is a WRAPPER (`scripts/e2e-run.mjs`), not `playwright test`:
+  it takes the swarm lock `e2e/.swarm-e2e-runner` (one suite at a time, queued
+  with the holder's name, exit 4 if the wait runs out), gives the run a free port
+  and a private output dir, and forwards every argument after `--` verbatim. Pass
+  `--retries=1` for a trace; `trace: 'on-first-retry'` yields nothing at the local
+  `retries: 0`. **The lock is a queue, not a gate: a user-visible change still runs
+  the full suite before it merges** — the lock is what makes that survivable when
+  several agents merge at once, not a reason to skip it. See `e2e/README.md` and the
+  header of `scripts/e2e-run.mjs`.
 
 ## Test traps
 
@@ -191,7 +208,8 @@ decision to the operator.
   the argument for the numbers and for NOT pinning a Chrome version in CI is
   written out at that call site.
 - `npm run test:e2e:clean` deletes the per-test output directories under
-  `test-results/` and keeps `test-results/results.json`, so a run's
-  machine-readable result survives it.
+  `test-results/` and `playwright-report/`, and keeps `test-results/results.json`,
+  so a run's machine-readable result survives it. A run through the wrapper writes
+  under `test-results/runs/<run-id>/` and prints that path before the suite starts.
 - Read failures from `test-results/`; `trace.zip` needs a window, so ask the
   operator.
