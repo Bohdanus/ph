@@ -1,6 +1,8 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
+import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SidebarRight from '../SidebarRight.tsx';
+import { PanelLayoutProvider } from '../../../contexts/PanelLayout.tsx';
 import { createMockStoreState, type MockStoreState } from '@/__tests__/fixtures/store.ts';
 import type { ToolName } from '@/contexts/tool-types.ts';
 
@@ -49,9 +51,59 @@ function seed(overrides: Partial<MockStoreState> = {}) {
   useStore.mockReturnValue([createMockStoreState({ hasImage: true, toolName: 'draw', ...overrides }), storeDispatch]);
 }
 
+/**
+ * Renders the dock inside a real `PanelLayoutProvider`, optionally seeded from a stored record.
+ *
+ * Without a provider the context hands out the opening layout and no-op setters (see
+ * `PanelLayout.tsx`), so a gesture in an unwrapped render would move nothing and prove nothing.
+ * The seed goes through `localStorage` rather than through props because that is the only way a
+ * stored layout reaches a fresh mount, and it is the path a reload takes.
+ */
+const renderWithLayout = (children: ReactNode, stored: Record<string, unknown> = {}) => {
+  localStorage.setItem(
+    'panelLayout',
+    JSON.stringify({
+      dockWidth: 250,
+      splitRatio: 0.2,
+      panelOrder: ['history', 'layers'],
+      rolledUp: { history: false, layers: false },
+      dockOnLeft: false,
+      ...stored,
+    })
+  );
+  return render(<PanelLayoutProvider>{children}</PanelLayoutProvider>);
+};
+
+/**
+ * jsdom lays nothing out, so the dock reports 0px tall and the document 0px wide. Two gestures
+ * genuinely need those numbers — the reorder threshold is the column's middle, and the re-dock
+ * zone is a fraction of the viewport — and both are right to refuse on a zero measurement. The
+ * numbers are stubbed rather than the branches weakened, which is the same split AGENTS.md
+ * draws for `AnchoredOverlay`: geometry by stub, arithmetic pinned here.
+ */
+const withLayout = ({ dockHeight = 600, viewportWidth = 1024 } = {}) => {
+  const rect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+    x: 0,
+    y: 0,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: dockHeight,
+    width: viewportWidth,
+    height: dockHeight,
+    toJSON: () => ({}),
+  } as DOMRect);
+  const width = vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(viewportWidth);
+  return () => {
+    rect.mockRestore();
+    width.mockRestore();
+  };
+};
+
 describe('SidebarRight', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
   });
 
   it('renders History and Layers tabs when image and tool are active', () => {
@@ -113,13 +165,231 @@ describe('SidebarRight', () => {
     expect(headings).toEqual(['History', 'Layers']);
   });
 
-  it('gives the History and Layers sections complementary heights', () => {
+  it('gives the History and Layers groups complementary shares of the column', () => {
     seed();
     const { container } = render(<SidebarRight />);
 
-    const [historySection, layersSection] = Array.from(container.querySelectorAll('aside > div'));
-    expect(historySection).toHaveClass('h-[20%]');
-    expect(layersSection).toHaveClass('h-[80%]');
+    // 0.2 / 0.8 is the `h-[20%]` / `h-[80%]` these two sections used to carry, expressed as
+    // flex shares of the column instead. The equivalence is the point: `flex: 0.2 1 0%` over
+    // two zero-basis siblings splits free space 20/80, which is exactly what the percentages
+    // did, at every column height. A pixel height would have been the tempting rewrite and
+    // would have silently rescaled the default with the viewport.
+    const [top, bottom] = ['history', 'layers'].map((id) =>
+      container.querySelector<HTMLElement>(`[data-testid="panel-group-${id}"]`)
+    );
+    expect(top?.style.flex).toBe('0.2 1 0%');
+    expect(bottom?.style.flex).toBe('0.8 1 0%');
+  });
+
+  it('puts the resize divider between the two groups, on the canvas-side edge of the column', () => {
+    seed();
+    const { container } = render(<SidebarRight />);
+
+    // Both are the two gestures that make the column a dock rather than a fixed panel: the
+    // column's own edge, and the boundary between the two groups. "When you drag these icons,
+    // all groups that share the divider are resized."
+    const edge = container.querySelector('[data-testid="dock-resize-handle"]');
+    const splitter = container.querySelector('[data-testid="dock-splitter"]');
+    expect(edge).toHaveAttribute('aria-orientation', 'vertical');
+    expect(splitter).toHaveAttribute('aria-orientation', 'horizontal');
+
+    // The edge handle is half outside the column, because that is the only place the pointer
+    // is unambiguously on the divider. It is a child of the aside, whose `overflow` had to
+    // stop being `hidden` for that to be visible at all.
+    const aside = container.querySelector('aside')!;
+    expect(edge?.parentElement).toBe(aside);
+    expect(edge).toHaveClass('right-0', 'border-r-2');
+    expect(aside.className).not.toContain('overflow-hidden');
+  });
+
+  it('drags the tab to reorder, and draws the drop target before the release', async () => {
+    seed();
+    const restoreLayout = withLayout();
+    try {
+      const { container } = renderWithLayout(<SidebarRight />);
+
+      const historyTab = container.querySelector('[data-testid="panel-header-history"]') as HTMLElement;
+      // "Drag a panel on to a blue zone to dock it" / "Release the tab when a blue highlight
+      // appears" — the affordance is shown DURING the drag, never after it.
+      // Started well inside the viewport: from the left edge the same gesture would be a
+      // re-dock instead, and the vertical drag would be measured against nothing.
+      fireEvent.pointerDown(historyTab, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 100 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: 500 });
+
+      // Past the column's middle, so the tab would land second.
+      const line = container.querySelector('[data-testid="panel-drop-line"]');
+      expect(line).toBeInTheDocument();
+      expect(line).toHaveClass('bottom-0');
+
+      fireEvent.pointerUp(document, { pointerId: 1 });
+      expect(screen.getAllByText(/^(History|Layers)$/).map((n) => n.textContent)).toEqual(['Layers', 'History']);
+    } finally {
+      restoreLayout();
+    }
+  });
+
+  it('cancels a tab drag on Escape and leaves the order alone', () => {
+    seed();
+    const { container } = renderWithLayout(<SidebarRight />);
+
+    const historyTab = container.querySelector('[data-testid="panel-header-history"]') as HTMLElement;
+    const restoreLayout = withLayout();
+    try {
+      fireEvent.pointerDown(historyTab, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 100 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: 500 });
+      fireEvent.keyDown(document, { key: 'Escape' });
+      fireEvent.pointerUp(document, { pointerId: 1 });
+
+      expect(screen.getAllByText(/^(History|Layers)$/).map((n) => n.textContent)).toEqual(['History', 'Layers']);
+    } finally {
+      restoreLayout();
+    }
+  });
+
+  it('drags a tab at the opposite workspace edge to move the whole dock', () => {
+    seed();
+    const restoreLayout = withLayout();
+    try {
+      const { container } = renderWithLayout(<SidebarRight />);
+
+      const historyTab = container.querySelector('[data-testid="panel-header-history"]') as HTMLElement;
+      // The document is 1024px wide in jsdom, so 25% of it is 256. Past that is the drop zone
+      // "To create a dock, move panels to the right edge of the workspace until a drop zone
+      // appears."
+      fireEvent.pointerDown(historyTab, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 100 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 40, clientY: 100 });
+
+      expect(container.querySelector('[data-testid="dock-edge-line"]')).toHaveClass('left-0');
+      // The reorder indicator is suppressed while the dock is being thrown at the other edge:
+      // showing both would be a lie about what the release will do.
+      expect(container.querySelector('[data-testid="panel-drop-line"]')).toBeNull();
+
+      fireEvent.pointerUp(document, { pointerId: 1 });
+
+      const aside = container.querySelector('aside')!;
+      expect(aside).toHaveClass('[grid-area:left]');
+      expect(aside).toHaveClass('border-r');
+    } finally {
+      restoreLayout();
+    }
+  });
+
+  it('opens at 250px, on the element rather than on a track', () => {
+    seed();
+    const { container } = renderWithLayout(<SidebarRight />);
+
+    // The half of `App.tsx`'s `auto`-track rule this component is the other half of. If this
+    // number were a class here instead of an inline width, the tablet collapse — which is a
+    // `display: none` item — would stop reclaiming the column.
+    const aside = container.querySelector('aside') as HTMLElement;
+    expect(aside.style.width).toBe('250px');
+    expect(aside.className).not.toContain('250');
+  });
+
+  it('resizes the column from its canvas-side edge, and narrows towards the canvas', () => {
+    seed();
+    const { container } = renderWithLayout(<SidebarRight />);
+
+    const edge = container.querySelector('[data-testid="dock-resize-handle"]') as HTMLElement;
+    // The dock is to the canvas's right, so dragging the divider LEFT widens it.
+    fireEvent.pointerDown(edge, { button: 0, buttons: 1, pointerId: 1, clientX: 774, clientY: 300 });
+    fireEvent.pointerMove(document, { pointerId: 1, clientX: 674, clientY: 300 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+
+    expect((container.querySelector('aside') as HTMLElement).style.width).toBe('350px');
+  });
+
+  it('reverses the drag direction once the dock is on the left edge', () => {
+    seed();
+    const { container } = renderWithLayout(<SidebarRight />, { dockOnLeft: true });
+
+    const edge = container.querySelector('[data-testid="dock-resize-handle"]') as HTMLElement;
+    // The divider is on the dock's other side now, so the same gesture widens in the other
+    // direction. Without the sign flip, dragging right would narrow a dock on the left edge,
+    // which is backwards.
+    fireEvent.pointerDown(edge, { button: 0, buttons: 1, pointerId: 1, clientX: 250, clientY: 300 });
+    fireEvent.pointerMove(document, { pointerId: 1, clientX: 350, clientY: 300 });
+    fireEvent.pointerUp(document, { pointerId: 1 });
+
+    expect((container.querySelector('aside') as HTMLElement).style.width).toBe('350px');
+  });
+
+  it('resizes both groups when the shared divider is dragged', () => {
+    seed();
+    const restoreLayout = withLayout();
+    try {
+      const { container } = renderWithLayout(<SidebarRight />);
+
+      const splitter = container.querySelector('[data-testid="dock-splitter"]') as HTMLElement;
+      // The column reports 0px tall in jsdom, so this pins the arithmetic and its guard
+      // together: a zero-height column must not divide, and must not write a NaN ratio.
+      fireEvent.pointerDown(splitter, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 100 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: -100 });
+      fireEvent.pointerUp(document, { pointerId: 1 });
+
+      const top = container.querySelector('[data-testid="panel-group-history"]') as HTMLElement;
+      expect(Number.isNaN(parseFloat(top.style.flex))).toBe(false);
+    } finally {
+      restoreLayout();
+    }
+  });
+
+  it('collapses to icons on the double-arrow, and offers a way back', () => {
+    seed();
+    const { container } = renderWithLayout(<SidebarRight />);
+
+    fireEvent.click(container.querySelector('[data-testid="dock-collapse-toggle"]')!);
+
+    // "To show only the icons, adjust the dock width until the labels disappear."
+    const aside = container.querySelector('aside') as HTMLElement;
+    expect(aside.style.width).toBe('40px');
+    expect(container.querySelector('[data-testid="dock-icon-strip"]')).toBeInTheDocument();
+    expect(screen.queryByText('History')).toBeNull();
+
+    // An icon strip with no way out is a one-way trip, so the double-arrow comes with it.
+    fireEvent.click(container.querySelector('[data-testid="dock-icon-strip"] [data-testid="dock-collapse-toggle"]')!);
+    expect(aside.style.width).toBe('250px');
+  });
+
+  it('expands one panel from the icon strip and keeps the other rolled up', () => {
+    seed();
+    const { container } = renderWithLayout(<SidebarRight />);
+
+    fireEvent.click(container.querySelector('[data-testid="dock-collapse-toggle"]')!);
+    // "Select a single panel icon to expand only that panel."
+    fireEvent.click(container.querySelector('[data-testid="dock-icon-layers"]')!);
+
+    // The one that was selected is the one that came back, at the full dock width, with the
+    // other group left as a bare tab bar — which is the whole of what "only that panel" means.
+    expect((container.querySelector('aside') as HTMLElement).style.width).toBe('250px');
+    const layers = container.querySelector('[data-testid="panel-group-layers"]') as HTMLElement;
+    const history = container.querySelector('[data-testid="panel-group-history"]') as HTMLElement;
+    expect(layers.style.flex).toBe('0.8 1 0%');
+    expect(history.style.flex).toBe('0 0 auto');
+    // The rolled-up group has its tab and nothing else — the assertion that is actually about
+    // the roll-up, since its heading is meant to still be there.
+    expect(history.querySelector('.overflow-y-auto')).toBeNull();
+    expect(layers.querySelector('.overflow-y-auto')).not.toBeNull();
+  });
+
+  it('rolls a group up to its tab bar on a double-click, and back down', () => {
+    seed();
+    const { container } = renderWithLayout(<SidebarRight />);
+
+    const historyTab = container.querySelector('[data-testid="panel-header-history"]') as HTMLElement;
+    // "To collapse a panel group so that only the dock header bar and tabs are visible,
+    // double-click a panel tab or panel title bar. Double-click again to restore it."
+    fireEvent.doubleClick(historyTab);
+
+    const group = container.querySelector('[data-testid="panel-group-history"]') as HTMLElement;
+    expect(group.style.flex).toBe('0 0 auto');
+    expect(historyTab).toHaveAttribute('aria-expanded', 'false');
+    // The tab is the only thing left of it. Its HEADING is meant to still be there — a
+    // roll-up leaves the tab bar, not an empty box — so the assertion is about the body.
+    expect(group.querySelector('.overflow-y-auto')).toBeNull();
+
+    fireEvent.doubleClick(historyTab);
+    expect((container.querySelector('[data-testid="panel-group-history"]') as HTMLElement).style.flex).toBe('0.2 1 0%');
   });
 
   it('shows the panel once both an image and a tool become available again', () => {

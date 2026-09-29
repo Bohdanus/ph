@@ -176,6 +176,11 @@ export const CURATED = {
       'Corrections to AGENTS.md and the worktree-inventory comments, from a code review of AGENTS.md against the tree. The structural orphan under "The board is cross-session" and the board-to-swarm regression it introduced; the toolbar section, which listed a shipped Color Replacement options bar as a PlaceholderTool and understated the hand-copied tool lists by fourfold; the mergeChecked semantics, which the document and the code comment both got wrong; the npx tsc --noEmit explanation, which named a missing exclude that does not exist; and the drifted enumerations (orphaned, the curated code sample, the at-risk third source). Adds mergeChecked to the --check watched list.',
     note: 'Short-lived documentation work. Safe to drop once the branch is an ancestor of main; the only non-AGENTS.md change that outlives the prose is the mergeChecked entry in scripts/worktree-inventory.mjs.',
   },
+  'panel-docks': {
+    summary:
+      'Photoshop-style draggable panel workspace: a new PanelLayout context owning the dock width, the History/Layers split, panel order, roll-up and which edge the dock is on; a shared useDockDrag pointer primitive; a resizable, reorderable, roll-up-able right dock; and a tools rail that re-docks to the opposite edge by drag.',
+    note: 'Defaults are chosen so the first render is pixel-identical to the fixed layout it replaces (250px dock, 20/80 split, History above Layers, dock on the right), which is what keeps the e2e shell arithmetic valid.',
+  },
   'polygon-marching-ants': {
     summary:
       'Polygon-selection marching ants: the ants component, the selection-ants hook, a new usePolylineAnts module and its tests, and edits to the lasso, magic wand and click tool areas. The branch has no commits of its own.',

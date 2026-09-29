@@ -15,6 +15,12 @@ type ToolTooltipProps = {
    */
   toolName: ToolName;
   shortcut?: string;
+  /**
+   * Which side of the tile the tooltip hangs off. The rail can be re-docked to either edge, and
+   * a tooltip placed on the wrong one is clipped by the viewport. Passed through to
+   * `AnchoredOverlay`; see its `side` prop.
+   */
+  side?: 'left' | 'right';
 };
 
 /**
@@ -30,7 +36,7 @@ const IMPLEMENTATION_NOTE: Partial<Record<ToolTooltipProjection['implementation'
   placeholder: 'Not implemented — the options bar below is a placeholder',
 };
 
-const ToolTooltip = ({ children, label, toolName, shortcut }: ToolTooltipProps) => {
+const ToolTooltip = ({ children, label, toolName, shortcut, side = 'right' }: ToolTooltipProps) => {
   const [isVisible, setIsVisible] = useState(false);
   const showTimerRef = useRef<number | null>(null);
   // The tooltip is portalled out of the rail, which scrolls and clips, so it is positioned
@@ -74,7 +80,7 @@ const ToolTooltip = ({ children, label, toolName, shortcut }: ToolTooltipProps) 
     >
       {cloneElement(children, { 'aria-describedby': isVisible ? tooltipId : undefined })}
       {isVisible && (
-        <AnchoredOverlay align="center" anchor={anchor} gap={12} measureKey={tooltipId}>
+        <AnchoredOverlay align="center" anchor={anchor} gap={12} measureKey={tooltipId} side={side}>
           <span
             // The label line is `whitespace-nowrap` and the summary below it wraps: a
             // tool's name is never worth a second line, but its description is. The cap is

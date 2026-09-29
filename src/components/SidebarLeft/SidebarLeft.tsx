@@ -8,6 +8,8 @@ import { slugifyToolLabel, toolbarMap, type ToolbarTool, type ToolbarToolGroup }
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { descriptionKeyFor } from '../../tools/descriptions/tooltips.ts';
 import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
+import { usePanelLayout } from '../../contexts/PanelLayout.tsx';
+import { useDockDrag } from '../../hooks/useDockDrag.ts';
 
 const TOOL_BUTTON_BASE_CLASS =
   'group relative flex h-11 w-11 items-center justify-center rounded-md border text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 focus:ring-offset-gray-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:focus:ring-offset-gray-800';
@@ -24,12 +26,38 @@ const LayoutIcon = ({ singleColumn }: { singleColumn: boolean }) => (
   </span>
 );
 
+/** How far toward the opposite edge the rail has to travel before the dock will swap with it. */
+const RE_DOCK_ZONE = 0.25;
+
+/**
+ * The grip that drags the rail to the other edge.
+ *
+ * Photoshop's Tools panel has no such control of its own — you drag the panel itself, by its
+ * grab area. This rail has no title bar to grab, and inventing one would put a row of chrome
+ * above the tools that Photoshop does not have. So the grip goes in the row that already exists
+ * for the one/two-column toggle, which is the same place the user already goes to change the
+ * rail's shape, and the row keeps its height either way.
+ */
+const RailGripIcon = () => (
+  <span aria-hidden="true" className="flex flex-col gap-[2px]">
+    <span className="flex gap-[2px]">
+      <span className="h-[2px] w-[10px] rounded-full bg-current" />
+      <span className="h-[2px] w-[10px] rounded-full bg-current" />
+    </span>
+    <span className="flex gap-[2px]">
+      <span className="h-[2px] w-[10px] rounded-full bg-current" />
+      <span className="h-[2px] w-[10px] rounded-full bg-current" />
+    </span>
+  </span>
+);
+
 const toolbarGroups = toolbarMap.flat();
 
 const SidebarLeft = () => {
   const [{ hasImage, toolName, color, backgroundColor }, dispatch] = useStore();
   const { goToTool } = useApp();
   const { toolArgs, patchToolArgs } = useCurrentTool();
+  const { dockOnLeft, setDockOnLeft } = usePanelLayout();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
   // Two columns is the default. `min-h-0 overflow-y-auto` on the `<aside>` is what actually
@@ -157,6 +185,55 @@ const SidebarLeft = () => {
     [flyoutAnchor]
   );
 
+  // Re-docking the rail. "You can dock the Tools panel to either the right or left sides of
+  // the application window" (teachucomp; the CC-era Adobe book says the same by its title bar).
+  // The drop target is a blue line at the edge being thrown at, drawn before the release, which
+  // is the affordance Adobe documents for every panel move.
+  //
+  // `overlaySide` is the same fact as `dockOnLeft` seen from the rail: a rail on the right edge
+  // opens its flyout to the left, because "the anchor's trailing edge" is off-screen there.
+  const overlaySide: 'left' | 'right' = dockOnLeft ? 'left' : 'right';
+  const [reDockTarget, setReDockTarget] = useState<'left' | 'right' | null>(null);
+  const reDockOriginXRef = useRef(0);
+
+  const onRailDragStart = useCallback(
+    (event: React.PointerEvent<HTMLElement>) => {
+      reDockOriginXRef.current = event.clientX;
+      setReDockTarget(null);
+      // A rail that moves with a flyout open takes the portal's anchor with it, and the
+      // overlay re-measures against a tile that is no longer where the user aimed.
+      closeFlyout();
+    },
+    [closeFlyout]
+  );
+
+  const onRailDrag = useCallback(
+    ({ dx }: { dx: number }) => {
+      const viewportWidth = document.documentElement.clientWidth;
+      const pointerX = reDockOriginXRef.current + dx;
+      const wantsSwap = dockOnLeft
+        ? pointerX > viewportWidth * (1 - RE_DOCK_ZONE)
+        : pointerX < viewportWidth * RE_DOCK_ZONE;
+      setReDockTarget(wantsSwap ? (dockOnLeft ? 'right' : 'left') : null);
+    },
+    [dockOnLeft]
+  );
+
+  // Honouring the cancel is the point of having one: the rail moves to the OPPOSITE edge, and a
+  // user who presses Escape has said something. Committing anyway is the one result Escape must
+  // never produce.
+  const onRailDragEnd = useCallback(
+    (cancelled: boolean) => {
+      setReDockTarget((target) => {
+        if (target !== null && !cancelled) setDockOnLeft(target === 'left');
+        return null;
+      });
+    },
+    [setDockOnLeft]
+  );
+
+  const railDrag = useDockDrag({ onStart: onRailDragStart, onMove: onRailDrag, onEnd: onRailDragEnd });
+
   const scheduleFlyoutOpen = (groupIndex: string) => {
     clearLongPressFlyout();
     longPressOpenedRef.current = false;
@@ -256,6 +333,7 @@ const SidebarLeft = () => {
         <ToolTooltip
           label={primaryTool.label}
           shortcut={primaryTool.shortcut}
+          side={overlaySide}
           toolName={descriptionKeyFor(primaryTool.name, primaryTool.figure)}
         >
           <button
@@ -350,7 +428,7 @@ const SidebarLeft = () => {
         </ToolTooltip>
 
         {hasFlyout && isOpen && flyoutAnchor?.groupIndex === groupIndex && (
-          <AnchoredOverlay align="start" anchor={flyoutAnchor.element} measureKey={groupIndex}>
+          <AnchoredOverlay align="start" anchor={flyoutAnchor.element} measureKey={groupIndex} side={overlaySide}>
             <ul
               aria-label={group.some((tool) => tool.figure) ? 'Shape tools' : `${primaryTool.label} tools`}
               className="pointer-events-auto min-w-48 list-none rounded-lg border border-gray-300 bg-gray-100 p-1.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
@@ -453,15 +531,43 @@ const SidebarLeft = () => {
 
   return (
     <aside
-      className="max-md:hidden min-h-0 overflow-y-auto overscroll-contain border-r border-gray-300 bg-gray-100 dark:border-gray-700 dark:bg-gray-800 [grid-area:left]"
+      className={`max-md:hidden min-h-0 overflow-y-auto overscroll-contain bg-gray-100 dark:bg-gray-800 ${
+        dockOnLeft
+          ? 'border-l border-gray-300 dark:border-gray-700 [grid-area:right]'
+          : 'border-r border-gray-300 dark:border-gray-700 [grid-area:left]'
+      }`}
       data-testid="left-sidebar"
       style={{ width: toolbarWidth }}
     >
+      {/* The drop target for a rail re-dock, drawn before the release. `position: fixed` puts
+          its containing block at the viewport, so the rail's `overflow-y: auto` does not clip
+          it — the same reason the flyout has to be portalled but this does not, and the
+          difference is absolute vs fixed. Rendered as a second child of the `<aside>` rather
+          than a sibling in the grid, so the shell's region list stays what it has always been. */}
+      {reDockTarget !== null && (
+        <div
+          aria-hidden="true"
+          className={`pointer-events-none fixed inset-y-0 z-[60] w-1 bg-blue-500 ${reDockTarget === 'left' ? 'left-0' : 'right-0'}`}
+          data-testid="rail-drop-line"
+        />
+      )}
       {/* `min-h-full`, not `h-full`: the aside now scrolls, and `h-full` on a child of a
           scroll container resolves against the container's own height, which would leave
           the colour swatches unpainted at the bottom of a long rail. */}
       <div className="flex min-h-full flex-col items-center px-3 py-4">
-        <div className="mb-2 flex w-full justify-end px-1">
+        <div className="mb-2 flex w-full items-center justify-between px-1">
+          {!isTablet && (
+            <button
+              {...railDrag.handleProps}
+              aria-label="Drag the toolbar to the other side"
+              className="cursor-grab rounded p-1 text-gray-500 transition-colors hover:bg-gray-200 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-400 active:cursor-grabbing dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100"
+              title="Drag to the other side"
+              type="button"
+              data-testid="rail-re-dock-handle"
+            >
+              <RailGripIcon />
+            </button>
+          )}
           {!isTablet && (
             <button
               aria-label={isSingleColumn ? 'Use two-column toolbar' : 'Use one-column toolbar'}

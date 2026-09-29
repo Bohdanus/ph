@@ -63,6 +63,19 @@ type AnchoredOverlayProps = {
   /** Margin kept clear against every viewport edge, in px. */
   viewportPadding?: number;
   /**
+   * Which side of the anchor the overlay prefers, before it considers whether it fits.
+   *
+   * The rail can be re-docked to either edge (`PanelLayout.dockOnLeft`), so this cannot be
+   * inferred from the anchor's own geometry: a flyout opened from a rail on the right edge
+   * hangs off the anchor's LEFT, and reading "the trailing edge" off a right-hand rail puts it
+   * off-screen. The caller knows which edge it is on, so it says.
+   *
+   * This is the PREFERRED side, not a constraint. The fit test below still flips to the other
+   * edge when the preferred one cannot hold the whole overlay, which is the behaviour that has
+   * always been here.
+   */
+  side?: 'left' | 'right';
+  /**
    * Re-measures the overlay when this changes, and only then. The effect re-runs on its own
    * whenever the anchor or a placement option changes, so this is only needed by a caller
    * whose overlay keeps its identity while its CONTENT changes size — a tooltip whose label
@@ -88,6 +101,7 @@ const AnchoredOverlay = ({
   children,
   gap = 8,
   align = 'start',
+  side = 'right',
   viewportPadding = VIEWPORT_PADDING,
   measureKey,
 }: AnchoredOverlayProps) => {
@@ -117,16 +131,17 @@ const AnchoredOverlay = ({
     const viewportWidth = document.documentElement.clientWidth;
     const viewportHeight = document.documentElement.clientHeight;
 
-    // Preferred side is the anchor's trailing edge, which for a left-hand rail is the
-    // right. Flip to the leading edge only when the trailing one cannot hold the whole
-    // overlay; if neither side fits, clamp the preferred side rather than choosing.
+    // The preferred side is whichever edge the caller's rail faces: a rail on the left opens to
+    // the right, a rail on the right opens to the left. Fall back to the OTHER edge only when
+    // the preferred one cannot hold the whole overlay; if neither fits, clamp the preferred
+    // side rather than choosing, so a flyout stays attached to the tile it came from.
     const fitsTrailing = anchorRect.right + gap + width <= viewportWidth - viewportPadding;
     const fitsLeading = anchorRect.left - gap - width >= viewportPadding;
-    const unclampedLeft = fitsTrailing
-      ? anchorRect.right + gap
-      : fitsLeading
-        ? anchorRect.left - gap - width
-        : anchorRect.right + gap;
+    const preferred = side === 'right' ? fitsTrailing : fitsLeading;
+    const fallback = side === 'right' ? fitsLeading : fitsTrailing;
+    const atPreferred = side === 'right' ? anchorRect.right + gap : anchorRect.left - gap - width;
+    const atFallback = side === 'right' ? anchorRect.left - gap - width : anchorRect.right + gap;
+    const unclampedLeft = preferred ? atPreferred : fallback ? atFallback : atPreferred;
 
     const unclampedTop = align === 'center' ? anchorRect.top + (anchorRect.height - height) / 2 : anchorRect.top;
 
@@ -138,7 +153,7 @@ const AnchoredOverlay = ({
     setPosition((current) =>
       current !== null && current.top === top && current.left === left ? current : { top, left }
     );
-  }, [align, anchor, gap, viewportPadding]);
+  }, [align, anchor, gap, side, viewportPadding]);
 
   useLayoutEffect(() => {
     reposition();
