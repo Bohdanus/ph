@@ -197,7 +197,7 @@ export const CURATED = {
   'no-scrollbars': {
     summary:
       'The app must paint no scrollbar on its outer chrome or the left tool rail, across a mac-desktop and iPad viewport matrix. Adds e2e/no-document-overflow.spec.ts, a `scrollbar-none` utility, and corrections to the measured rail geometry written into comments and handoff prose.',
-    note: 'The load-bearing finding is that a scrollbar cannot be asserted in this headless Chrome at all: scrollbars are zero-width overlays there, so a gutter or edge-screenshot assertion would pass forever. The spec asserts content overflow instead, and pins the detector with a deliberate 4000px overflow first.',
+    note: 'The load-bearing finding is that a scrollbar cannot be asserted in this headless Chrome at all: scrollbars are zero-width overlays there, so a gutter or edge-screenshot assertion would pass forever. The spec asserts content overflow instead, and pins the detector with a deliberate 4000px overflow first. An earlier version of this entry claimed the change was uncommitted and on no ref; it was not — the branch is on main and the tree is clean, so the rule and its comment are in commits and no flag is owed.',
   },
   'ps-brush-engine': {
     summary:
@@ -881,11 +881,6 @@ export const CURATED = {
   // refuses to prune, and a flag on top of that protects nothing while
   // asserting something untrue. The entry stays: it still says what the
   // worktree is for.
-  'no-scrollbars': {
-    summary:
-      'Hides the scrollbar chrome while keeping the left rail and the mobile bar genuinely scrollable: a shared class that removes the scrollbar and nothing else, with the measured overflow heights that make it necessary.',
-    note: 'The branch is on main and the working tree is clean, so the rule and its comment are in commits and no flag is owed. An earlier version of this entry claimed the change was uncommitted and on no ref; it was not.',
-  },
   'retina-dpr': {
     summary:
       'A canvas-resolution investigation, carried in a plan document rather than in code: what the report called a paint-algorithm bug is answered as already correct, with the geometry pipeline shown to have no step that could introduce a device-pixel count.',

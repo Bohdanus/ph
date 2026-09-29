@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-29T09:58:42.996Z",
+  "generatedAt": "2026-09-29T10:00:23.968Z",
   "generator": "scripts/worktree-inventory.mjs",
   "base": "main",
   "mainHead": "553ec34f990bb0424b7312bb1609ce41d0712167",
@@ -14,7 +14,7 @@
     "sessions": {
       "ok": true,
       "path": "/Users/bkalynovskyi/.local/share/kilo/kilo.db",
-      "sessions": 72
+      "sessions": 71
     },
     "board": {
       "ok": true,
@@ -512,7 +512,7 @@
     },
     "byChatState": {
       "active": 4,
-      "finished": 52,
+      "finished": 51,
       "abandoned-midflight": 9
     }
   },
@@ -1747,64 +1747,39 @@
       "absolutePath": "/Users/bkalynovskyi/ph/.kilo/worktrees/fix-curated-table",
       "branch": "fix/fix-curated-table",
       "isPrimary": false,
-      "head": "cf66282c640b0502c42cf6a467b9c982c2519609",
+      "head": "8fa720085b4cb40739dec6f661b1b7857c911ebe",
       "detached": false,
       "status": "unmerged-work",
       "recommendation": "salvage",
       "action": "at-risk",
       "prunable": false,
-      "mergeConflict": true,
-      "mergeConflictFiles": ["WORKTREES.json"],
+      "mergeConflict": false,
+      "mergeConflictFiles": [],
       "mergeChecked": true,
       "riskScore": 90,
       "statusReasons": [
-        "3 commit(s) ahead of main",
+        "4 commit(s) ahead of main",
         "the working tree holds uncommitted changes",
-        "merging into the base branch conflicts in WORKTREES.json, so it needs a rebase first"
+        "the working tree holds changes that are in no commit on this branch"
       ],
-      "ahead": 3,
-      "behind": 12,
+      "ahead": 4,
+      "behind": 0,
       "mergedIntoMain": false,
-      "dirty": 29,
+      "dirty": 1,
       "untracked": 0,
-      "dirtyPaths": [
-        "AGENTS.md",
-        "HANDOFF.md",
-        "TEST-FLAKES.md",
-        "WORKTREES.json",
-        "e2e/OPEN_PROBLEMS.md",
-        "e2e/document-dialogs.spec.ts",
-        "e2e/helpers/history-helpers.ts",
-        "e2e/no-document-overflow.spec.ts",
-        "e2e/responsive-shell.spec.ts",
-        "e2e/sidebar-layout.spec.ts",
-        "e2e/text-tool.spec.ts",
-        "e2e/undo-redo.spec.ts",
-        "scripts/__tests__/handoff-import.test.mjs",
-        "scripts/lib/agent-board/handoff-import.mjs",
-        "scripts/lib/worktree-inventory/curated.mjs",
-        "src/__tests__/harness-integrity.test.ts",
-        "src/components/Main/__tests__/DrawToolArea.test.tsx",
-        "src/components/Mobile/MobileBottomBar.tsx",
-        "src/components/Mobile/MobileToolSheet.tsx",
-        "src/components/SidebarLeft/SidebarLeft.tsx",
-        "src/components/SidebarLeft/__tests__/SidebarLeft.layout.test.tsx",
-        "src/components/SidebarLeft/__tests__/SidebarLeft.tablet.test.tsx",
-        "src/components/ToolbarsRight/Lasso/__tests__/FreehandLasso.test.tsx",
-        "src/components/ToolbarsRight/__tests__/ToolbarPlaceholder.test.tsx",
-        "src/contexts/__tests__/ThemeContext.test.tsx",
-        "src/contexts/__tests__/useLayer.text.test.tsx",
-        "src/contexts/__tests__/useSelectionClipboard.layerViaCopy.test.tsx",
-        "src/hooks/__tests__/useRect.test.ts",
-        "src/index.scss"
-      ],
+      "dirtyPaths": ["scripts/lib/worktree-inventory/curated.mjs"],
       "lastCommit": {
-        "sha": "cf66282c640b0502c42cf6a467b9c982c2519609",
-        "subject": "chore(inventory): regenerate WORKTREES.json for the merge commit that moved this branch",
-        "date": "2026-09-29T11:56:38+02:00",
+        "sha": "8fa720085b4cb40739dec6f661b1b7857c911ebe",
+        "subject": "Merge branch 'main' into fix/fix-curated-table",
+        "date": "2026-09-29T11:59:22+02:00",
         "author": "Bohdan"
       },
       "commitsAhead": [
+        {
+          "sha": "8fa7200",
+          "subject": "Merge branch 'main' into fix/fix-curated-table",
+          "date": "2026-09-29T11:59:22+02:00"
+        },
         {
           "sha": "cf66282",
           "subject": "chore(inventory): regenerate WORKTREES.json for the merge commit that moved this branch",
@@ -3593,7 +3568,7 @@
       "ahead": 1,
       "behind": 55,
       "mergedIntoMain": false,
-      "dirty": 8,
+      "dirty": 9,
       "untracked": 1,
       "dirtyPaths": [
         "src/components/SidebarLeft/AnchoredOverlay.tsx",
@@ -3601,6 +3576,7 @@
         "src/components/SidebarLeft/ToolTooltip.tsx",
         "src/components/SidebarLeft/__tests__/SidebarLeft.flyout-hardening.test.tsx",
         "src/components/SidebarLeft/__tests__/SidebarLeft.workspace.test.tsx",
+        "src/components/SidebarRight/PanelGroup.tsx",
         "src/components/SidebarRight/SidebarRight.tsx",
         "src/components/SidebarRight/__tests__/SidebarRight.test.tsx",
         "src/contexts/PanelLayout.tsx",
@@ -5254,11 +5230,11 @@
       "liveNote": null,
       "mustNotPrune": false,
       "chats": {
-        "count": 65,
+        "count": 64,
         "chatIds": [
+          "ses_f13c24c04ffewnVcXrpbr3bi5l",
           "ses_f13f78b22ffeibSrHw4o1p4PtF",
           "ses_f13f1cf59ffeM17cdcWgGDeHcj",
-          "ses_f13c24c04ffewnVcXrpbr3bi5l",
           "ses_f1426d547ffe8oN74vIW7cUpCM",
           "ses_f13912566ffeZb3XJE8COrLikw",
           "ses_f1417ec8dffeXWLLligjufoJKz",
@@ -5319,25 +5295,24 @@
           "ses_f183ab42cffeVdFwk5GNadKyhe",
           "ses_f1836b1c9ffe7WvTOINtNpqYXL",
           "ses_f192bace7ffey3pRuSit8WG2aA",
-          "ses_f18832af5ffeXbCemD94rM0jHP",
-          "ses_f188e4a9cffeInu3BgEOVA4f8p"
+          "ses_f18832af5ffeXbCemD94rM0jHP"
         ],
         "subagentCount": 0,
         "byState": {
           "active": 4,
-          "finished": 52,
+          "finished": 51,
           "abandoned-midflight": 9
         },
         "activeChatIds": [
+          "ses_f13c24c04ffewnVcXrpbr3bi5l",
           "ses_f13f78b22ffeibSrHw4o1p4PtF",
           "ses_f13f1cf59ffeM17cdcWgGDeHcj",
-          "ses_f13c24c04ffewnVcXrpbr3bi5l",
           "ses_f1426d547ffe8oN74vIW7cUpCM"
         ],
         "unfinishedChatIds": [
+          "ses_f13c24c04ffewnVcXrpbr3bi5l",
           "ses_f13f78b22ffeibSrHw4o1p4PtF",
           "ses_f13f1cf59ffeM17cdcWgGDeHcj",
-          "ses_f13c24c04ffewnVcXrpbr3bi5l",
           "ses_f1426d547ffe8oN74vIW7cUpCM",
           "ses_f13c35f3dffeNkDIgjkzwbywAu",
           "ses_f13d26707ffeb4oQY1wCrgb5ER",
@@ -5349,7 +5324,7 @@
           "ses_f18cb10c7ffeQyGIipjfTQJifF",
           "ses_f183ab42cffeVdFwk5GNadKyhe"
         ],
-        "lastActivity": 1790675918684,
+        "lastActivity": 1790676023968,
         "readUnfinished": [
           {
             "id": "ses_f167d43ebffenKG4aRh8qnMKN5",
@@ -6052,58 +6027,45 @@
             "workOnNoRef": false,
             "deadSubagents": 0,
             "toolErrors": 1
-          },
-          {
-            "id": "ses_f188e4a9cffeInu3BgEOVA4f8p",
-            "readState": "finished",
-            "readRisk": "low",
-            "note": null,
-            "worktreeGone": false,
-            "untrackedFiles": 0,
-            "modifiedFiles": 0,
-            "commitsAheadOfMain": 0,
-            "workOnNoRef": false,
-            "deadSubagents": 0,
-            "toolErrors": 0
           }
         ],
         "unfinished": [
           {
-            "id": "ses_f13f78b22ffeibSrHw4o1p4PtF",
-            "title": "New session - 2026-09-29T07:19:32.317Z",
-            "state": "active",
-            "idleMs": 4312,
-            "reasons": ["last message 0m ago"],
-            "toolErrors": 3,
-            "creditsFailures": 0,
-            "blockedOn": null
-          },
-          {
-            "id": "ses_f13f1cf59ffeM17cdcWgGDeHcj",
-            "title": "Implement collapsible left toolbar",
-            "state": "active",
-            "idleMs": 16063,
-            "reasons": ["last message 0m ago"],
-            "toolErrors": 3,
-            "creditsFailures": 2,
-            "blockedOn": null
-          },
-          {
             "id": "ses_f13c24c04ffewnVcXrpbr3bi5l",
             "title": "Implement draggable Photoshop-like panels",
             "state": "active",
-            "idleMs": 26378,
+            "idleMs": 0,
             "reasons": ["last message 0m ago"],
             "toolErrors": 7,
             "creditsFailures": 1,
             "blockedOn": null
           },
           {
+            "id": "ses_f13f78b22ffeibSrHw4o1p4PtF",
+            "title": "New session - 2026-09-29T07:19:32.317Z",
+            "state": "active",
+            "idleMs": 12403,
+            "reasons": ["last message 0m ago"],
+            "toolErrors": 3,
+            "creditsFailures": 1,
+            "blockedOn": null
+          },
+          {
+            "id": "ses_f13f1cf59ffeM17cdcWgGDeHcj",
+            "title": "Implement collapsible left toolbar",
+            "state": "active",
+            "idleMs": 117035,
+            "reasons": ["last message 2m ago"],
+            "toolErrors": 3,
+            "creditsFailures": 2,
+            "blockedOn": null
+          },
+          {
             "id": "ses_f1426d547ffe8oN74vIW7cUpCM",
             "title": "New session - 2026-09-29T06:27:53.144Z",
             "state": "active",
-            "idleMs": 1220183,
-            "reasons": ["last message 20m ago"],
+            "idleMs": 1321155,
+            "reasons": ["last message 22m ago"],
             "toolErrors": 3,
             "creditsFailures": 1,
             "blockedOn": null
@@ -6112,7 +6074,7 @@
             "id": "ses_f13c35f3dffeNkDIgjkzwbywAu",
             "title": "Investigating swarm watch ANSI codes breaking grep",
             "state": "abandoned-midflight",
-            "idleMs": 2932557,
+            "idleMs": 3033529,
             "reasons": ["idle for 1h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 0,
             "creditsFailures": 1,
@@ -6122,7 +6084,7 @@
             "id": "ses_f13d26707ffeb4oQY1wCrgb5ER",
             "title": "-- swarm fix",
             "state": "abandoned-midflight",
-            "idleMs": 5425025,
+            "idleMs": 5525997,
             "reasons": ["idle for 2h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 0,
             "creditsFailures": 1,
@@ -6132,7 +6094,7 @@
             "id": "ses_f1424b9d2fferoDADjvlLe03UH",
             "title": "<<< tool descriptions >>>",
             "state": "abandoned-midflight",
-            "idleMs": 11683286,
+            "idleMs": 11784258,
             "reasons": ["idle for 3h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 1,
             "creditsFailures": 0,
@@ -6142,7 +6104,7 @@
             "id": "ses_f16147650ffe9C2zfklMCP473I",
             "title": "~~~ HANDOFF cleanup ~~~",
             "state": "abandoned-midflight",
-            "idleMs": 12473149,
+            "idleMs": 12574121,
             "reasons": ["idle for 3h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 9,
             "creditsFailures": 0,
@@ -6152,7 +6114,7 @@
             "id": "ses_f17814e67ffeOru2rhgVgAb9a5",
             "title": "Fixing flyout panel not opening in sidebar",
             "state": "abandoned-midflight",
-            "idleMs": 39495046,
+            "idleMs": 39596018,
             "reasons": ["idle for 11h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 8,
             "creditsFailures": 2,
@@ -6162,7 +6124,7 @@
             "id": "ses_f162b4452ffei0YUQf4OjQiJn7",
             "title": "*** PW tests fix & migration ***",
             "state": "abandoned-midflight",
-            "idleMs": 41576644,
+            "idleMs": 41677616,
             "reasons": ["idle for 12h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 7,
             "creditsFailures": 1,
@@ -6172,7 +6134,7 @@
             "id": "ses_f174eec52ffedigagDe7uAkRob",
             "title": "-- del --",
             "state": "abandoned-midflight",
-            "idleMs": 64442263,
+            "idleMs": 64543235,
             "reasons": ["idle for 18h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 2,
             "creditsFailures": 0,
@@ -6182,7 +6144,7 @@
             "id": "ses_f18cb10c7ffeQyGIipjfTQJifF",
             "title": "-- e2e orchestrator",
             "state": "abandoned-midflight",
-            "idleMs": 73359215,
+            "idleMs": 73460187,
             "reasons": ["idle for 20h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 4,
             "creditsFailures": 0,
@@ -6192,7 +6154,7 @@
             "id": "ses_f183ab42cffeVdFwk5GNadKyhe",
             "title": "-- PNG todo --",
             "state": "abandoned-midflight",
-            "idleMs": 80629363,
+            "idleMs": 80730335,
             "reasons": ["idle for 22h and the last turn ended on \"tool-calls\", not a completed stop"],
             "toolErrors": 2,
             "creditsFailures": 1,
@@ -6672,15 +6634,6 @@
         },
         {
           "id": "ses_f18832af5ffeXbCemD94rM0jHP",
-          "readState": "finished",
-          "readRisk": "low",
-          "workOnNoRef": false,
-          "directoryExists": true,
-          "deadSubagents": 0,
-          "note": null
-        },
-        {
-          "id": "ses_f188e4a9cffeInu3BgEOVA4f8p",
           "readState": "finished",
           "readRisk": "low",
           "workOnNoRef": false,
@@ -8108,11 +8061,11 @@
       "commitsAhead": [],
       "commitsAheadTruncated": false,
       "claimedLanded": null,
-      "summary": "Hides the scrollbar chrome while keeping the left rail and the mobile bar genuinely scrollable: a shared class that removes the scrollbar and nothing else, with the measured overflow heights that make it necessary.",
+      "summary": "The app must paint no scrollbar on its outer chrome or the left tool rail, across a mac-desktop and iPad viewport matrix. Adds e2e/no-document-overflow.spec.ts, a `scrollbar-none` utility, and corrections to the measured rail geometry written into comments and handoff prose.",
       "summarySource": "curated",
       "issues": [],
       "inferredBoardIssues": [],
-      "note": "The branch is on main and the working tree is clean, so the rule and its comment are in commits and no flag is owed. An earlier version of this entry claimed the change was uncommitted and on no ref; it was not.",
+      "note": "The load-bearing finding is that a scrollbar cannot be asserted in this headless Chrome at all: scrollbars are zero-width overlays there, so a gutter or edge-screenshot assertion would pass forever. The spec asserts content overflow instead, and pins the detector with a deliberate 4000px overflow first. An earlier version of this entry claimed the change was uncommitted and on no ref; it was not — the branch is on main and the tree is clean, so the rule and its comment are in commits and no flag is owed.",
       "liveNote": null,
       "mustNotPrune": false,
       "chats": {
