@@ -97,7 +97,7 @@ const SELECTION_COLOR_THRESHOLDS = { redMax: 80, greenMin: 80, blueMin: 180 };
  *   (`src/hooks/useRect.ts:172-178`) and strokes a 2px line, so its blue reaches ~7px past the
  *   rect;
  * - `drawSelectionOutline` paints a 5px-radius anchor circle with a 2px stroke at each vertex
- *   (`src/util/selection.ts:157-165`), so its blue reaches ~6px past the geometry;
+ *   (`src/util/selection.ts:176-184`), so its blue reaches ~6px past the geometry;
  * - the magic wand's `simplifyClosedPath` can move a vertex by the smoothing tolerance
  *   (1.5 by default) either way, and its flood fill drops the outermost anti-aliased ring.
  *
@@ -247,9 +247,10 @@ const committedAntsOutline = async (
     const rect = element.getBoundingClientRect();
     // The canvas is `object-contain` inside a box that is not its aspect ratio, so the backing
     // store is letterboxed in both axes and document pixels map to page pixels through a scale AND
-    // a centring offset. `containFit` is the repo's own rule for that mapping; the only reason it
-    // is applied to this element's rect rather than to `workspaceBox()` is that the element being
-    // measured is the one being mapped, so the two cannot drift apart.
+    // a centring offset. The scale-plus-offset arithmetic is `containFit`'s rule
+    // (`e2e/helpers/canvas-helpers.ts:91`), written out here so the whole read stays one round trip.
+    // It is applied to this element's own rect rather than to `workspaceBox()` because the element
+    // being measured is the one being mapped, so the two cannot drift apart.
     const scale = Math.min(rect.width / element.width, rect.height / element.height);
     const offsetX = (rect.width - element.width * scale) / 2;
     const offsetY = (rect.height - element.height * scale) / 2;
@@ -368,9 +369,6 @@ const toPage = (box: BoundingBox, rect: Rect): Required<ClipOptions> => ({
 });
 
 /**
- * Asserts that the selection blue found in `clip` outlines `expected`, both in page coordinates.
- */
-/**
  * `expectOutlineAround` adds a clip origin to the bounds it is given. A screenshot read is
  * clip-relative, so it passes the clip it captured; the ants read is already in page coordinates,
  * so it passes a zero origin. Saying that explicitly keeps the two coordinate spaces from being
@@ -378,6 +376,13 @@ const toPage = (box: BoundingBox, rect: Rect): Required<ClipOptions> => ({
  */
 const ORIGIN_CLIP: Required<ClipOptions> = { x: 0, y: 0, width: 0, height: 0 };
 
+/**
+ * Asserts that the selection border found in `clip` outlines `expected`, both in page coordinates.
+ *
+ * "Selection border" rather than "selection blue": a committed polygon's border is the ants on
+ * their own canvas, and those two readings arrive by different routes, so the name says what is
+ * being compared rather than which colour happened to be on the surface that carried it.
+ */
 const expectOutlineAround = (
   // Only the four edges are read here, so this asks for only the four edges: the ants read has no
   // `imageWidth`/`centerX` to offer, and a parameter that required fields it never uses would be
@@ -391,7 +396,7 @@ const expectOutlineAround = (
     expected,
     found: found && { ...found, left: found.left + clip.x, top: found.top + clip.y },
   };
-  expect(found, `no selection-blue pixels found (${JSON.stringify(report)})`).not.toBeNull();
+  expect(found, `no selection border pixels found (${JSON.stringify(report)})`).not.toBeNull();
   const outline = found!;
   const edges = {
     left: outline.left + clip.x,

@@ -140,6 +140,28 @@ describe('useSelectionMarchingAnts', () => {
     expect(rafMocks.frames.size).toBe(1);
   });
 
+  it('paints at full opacity, whatever globalAlpha the context was left holding', () => {
+    // The merge added `resetOverlayAlpha` to this loop, and this is what holds it. Without the
+    // reset the ants inherit whatever the context's current alpha is, and two 1px strokes are
+    // the first thing that would show it: the layer-outline loop this one sits beside resets for
+    // the same reason (`useAnts.ts:57`).
+    //
+    // The precondition is the load-bearing half. `createMockCanvasContext` initialises
+    // `globalAlpha` to 1, so asserting 1 afterwards would pass whether or not the reset exists —
+    // the context has to be handed a value to lose.
+    const { ctx } = setup();
+    ctx.globalAlpha = 0.2;
+    const alphaAtStroke: number[] = [];
+    vi.mocked(ctx.stroke).mockImplementation(() => {
+      alphaAtStroke.push(ctx.globalAlpha);
+    });
+
+    frame();
+
+    expect(alphaAtStroke.length).toBeGreaterThan(0);
+    expect(alphaAtStroke.every((alpha) => alpha === 1)).toBe(true);
+  });
+
   it('marches every active selection, and a boundary traced by the magic wand included', () => {
     const { ctx } = setup({ selections: [polygon(), polygon({ id: 'sel-2', sourceTool: 'magic-wand' })] });
     frame();
