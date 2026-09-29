@@ -490,9 +490,51 @@ Two things follow, and they are different:
    red tests are the first N in file order, suspect the server before the
    application.
 
-Not yet done. The warm-up in (1) is a one-request change to a file nothing else
-touches, and it is left alone here so it does not ride in on a toolbar fix that
-does not need it.
+Implemented, but not as (1) was written — see below. It was left alone for a while
+so it would not ride in on a toolbar fix that did not need it.
+
+**Implemented, against a different request than (1) describes.** `e2e/global-setup.ts`
+now fetches the **module entry** (`index.html`'s `type="module"` `src`, read from the
+file), not the base URL. A `GET /` would have been a no-op twice over: Playwright's
+own `webServer` plugin has already made that request before `globalSetup` runs, and
+Vite's transform middleware declines it anyway, so it walks none of the module graph.
+It uses Node `fetch` rather than a browser — this file exists to stop an agent opening
+a window, and a launch here would be invisible to the guard above — never throws, and
+logs one line saying whether the warm-up happened.
+
+**A wrong entry does not 404, and that shaped the whole implementation.** Verified
+against a live Vite 8.3.0: a path no module lives at gets the SPA fallback, which
+answers `200` with `content-type: text/html`, not a 404. So a success check on
+`response.ok` alone reports "warmed the dev server" having transformed nothing, and
+the log line is the misleading part. Success therefore requires an ok status **and** a
+non-HTML content type, and the fallback answer ends the loop rather than being
+retried into the same response. `404` and `410` are terminal on the same logic.
+
+**The retry budget is a failure budget, not a work budget.** The server has already
+answered `webServer.url` — that is what `playwright.config.ts`'s `webServer.timeout`
+is for — so everything that reaches the loop is permanent: a wrong entry, a wrong
+origin, or a connection that is not being made. At 250ms, a 5000ms budget is about
+twenty attempts, enough to outlast a dependency pre-bundle, and a permanently wrong
+entry cannot cost a minute of every run. The per-attempt abort is capped strictly
+below that budget for the same reason: `AbortSignal.timeout(remaining)` hands attempt
+1 the whole remainder, and a server that accepts the connection and then hangs
+spends all of it there, after which the loop's own deadline check ends it without
+ever retrying.
+
+**It skips the documented remote workflow entirely.** `e2e/README.md` documents
+`PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e`, which moves the
+project `use.baseURL` and leaves `webServer.url` on localhost. A warm-up aimed at
+the base URL would ask staging for `/src/main.tsx`, which it does not serve. It
+skips when the two origins differ rather than retargeting the web server, because in
+a remote run the dev server is started and then ignored by every test, so retargeting
+would pay a full cold transform to warm a server nothing requests.
+
+**The failure the second half of this section warns about has a tripwire of its
+own.** A module entry that resolved outside the base path — a sub-path `baseURL`, or
+a `base` on the Vite config, of which there is none today — is a skip with a reason
+rather than a request to the wrong origin, and an `index.html` whose `src` is not a
+URL is a skip rather than a throw, because the one component whose contract is that
+it never fails a run is not the place a malformed HTML file gets to fail one.
 
 **How this composes with sections 10 and 11.** Pinning `PLAYWRIGHT_PORT` is what makes section 10's
 reuse trap go away, and it does so by starting a fresh server every run — which is exactly the cold
@@ -599,7 +641,15 @@ or mislocated. Until a failing run is captured, a fix here would be a guess.
   server reuse
 - `e2e/document-dialogs.spec.ts` — the spec whose mutation method section 11 validates
 - `e2e/undo-redo.spec.ts` — the spec whose mutation campaign section 10 invalidated
-- `e2e/global-setup.ts` — where the warm-up in section 9 belongs
+- `e2e/global-setup.ts` — where the warm-up in section 9 belongs; the budget and the
+  per-attempt cap, the terminal statuses and the content-type gate, and the refusal
+  that has to run before any of it
+- `e2e/helpers/__tests__/global-setup.unit.test.ts` — the warm-up's only coverage. It
+  sits under `e2e/helpers/` testing a module that is not a helper, because
+  `vitest.e2e.config.ts` collects `e2e/**/__tests__/**/*.unit.test.ts` and this is
+  where the project's other unit files already are; an earlier version of that file's
+  own note justified the location by a coverage-report claim that was a
+  non-sequitur, and it is recorded there as wrong rather than quietly replaced
 - `e2e/sidebar-flyout.spec.ts:136-139` — the `beforeEach` that loses the race
 - `e2e/flyout-longpress-race.spec.ts` — the committed tripwire for the long-press flyout race section 8 names as a CPU-contention flake, and for the misdiagnosis section 9 recounts
 - `e2e/helpers/screenshot-scale.ts:53`, `e2e/helpers/cdp-helpers.ts:60` — the stale 1177px/440px

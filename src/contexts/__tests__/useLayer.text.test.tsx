@@ -15,11 +15,17 @@ import { createLayerSource } from '../layer-utils.ts';
 // text tool clears `text` and `rect` synchronously on Apply, and `commitDirtyTool`
 // short-circuits on the cleared draft. The layer factory is stubbed so both commit
 // paths can be counted without rasterising anything.
+//
+// The counter is hoisted so `beforeEach` can rewind it. A `let` inside the factory lives
+// in a closure no mock API can reach — `clearAllMocks` clears call history, not a plain
+// variable — so the ids grew monotonically for the whole file and every test's first layer
+// was named after how many tests ran before it.
+const mockLayerId = vi.hoisted(() => ({ counter: 0 }));
+
 vi.mock('../layer-utils.ts', async (importActual) => {
   const actual = await importActual<typeof import('../layer-utils.ts')>();
-  let counter = 0;
   const mockCreateLayerSource = vi.fn((params: { source: unknown }): Layer => ({
-    id: `mock-layer-${++counter}`,
+    id: `mock-layer-${++mockLayerId.counter}`,
     name: 'Mock',
     isBedrock: false,
     tmpCanvas: null,
@@ -114,6 +120,9 @@ function setupSharedDraft() {
 describe('useLayers text commit idempotency boundary', () => {
   beforeEach(() => {
     vi.mocked(createLayerSource).mockClear();
+    // Rewind the id factory so the first layer of every test is `mock-layer-1`; without
+    // this the exact-id assertion below would only hold for whichever test runs first.
+    mockLayerId.counter = 0;
   });
 
   it('creates only one layer when Apply fires after commitDirtyTool on the same args', () => {
@@ -142,6 +151,9 @@ describe('useLayers text commit idempotency boundary', () => {
     expect(vi.mocked(createLayerSource)).toHaveBeenCalledTimes(1);
     expect(Object.keys(result.current.store.layers)).toHaveLength(1);
     expect(result.current.store.history.filter((h) => h.actionName === NEW_LAYER_ACTION)).toHaveLength(1);
+    // The exact id, not just the count: it is derived from the hoisted counter, so this
+    // fails the moment the per-test rewind goes away and the counter goes monotonic again.
+    expect(Object.values(result.current.store.layers)[0].id).toBe('mock-layer-1');
   });
 
   it('leaves the shared draft in the one cleared state the Apply button produces', () => {
@@ -286,6 +298,8 @@ describe('useLayers text commit idempotency boundary', () => {
 describe('useLayers text commit publishes the cleared draft', () => {
   beforeEach(() => {
     vi.mocked(createLayerSource).mockClear();
+    // Same rewind as the suite above, for the same reason.
+    mockLayerId.counter = 0;
   });
 
   it('clears the draft the Apply button reads when commitDirtyTool commits it', () => {

@@ -529,6 +529,28 @@ describe('blendPixel', () => {
     expect(Array.from(data)).toEqual([200, 100, 50, 255]);
   });
 
+  it.each([
+    ['NaN', Number.NaN],
+    ['a negative whole number', -1],
+    ['a negative fraction', -0.5],
+  ])('leaves the buffer byte-for-byte unchanged at an opacity of %s', (_label, opacity) => {
+    // The guard is `!(opacity > 0)` (`src/util/pixels.ts:259`) and NOT `opacity <= 0`, and the
+    // difference is load-bearing: every comparison against NaN is false, so `NaN <= 0` would
+    // NOT return and `Math.min(1, NaN)` would poison every channel of the pixel. The negative
+    // cases ride the same branch — `Math.min(1, -1)` is a negative effective alpha, which drives
+    // `outAlpha` somewhere the equation was never derived for.
+    //
+    // What an unguarded NaN actually writes is worth being precise about: a `Uint8ClampedArray`
+    // stores a NaN assignment as 0, so the damage is a black, fully transparent pixel stamped
+    // across the whole stroke rather than a literal NaN in the buffer. Both are corruption; only
+    // the guard prevents either.
+    const data = solidBuffer(1, 1, { r: 200, g: 100, b: 50, a: 255 });
+
+    blendPixel(data, 0, { r: 0, g: 0, b: 0, a: 255 }, opacity);
+
+    expect(Array.from(data)).toEqual([200, 100, 50, 255]);
+  });
+
   it('is idempotent at an opacity of one, so a full-coverage stroke is a copy', () => {
     const data = solidBuffer(1, 1, { r: 200, g: 100, b: 50, a: 255 });
     const src: Rgba = { r: 200, g: 100, b: 50, a: 255 };

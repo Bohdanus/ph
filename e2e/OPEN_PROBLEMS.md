@@ -612,8 +612,15 @@ This section recorded 33 findings from a read-only review of the pre-migration t
 written down. **Thirty-one are fixed and their entries deleted**, which is the only thing
 worth reading here: if you are looking for one of them, it is gone, and the code is the
 record of what it was. The commit that carried them in is `4d47904`; the one that fixed
-them is on `fix/e2e-transferred-findings`. Two were not fully closable and are re-recorded
+them is `bfce8f3`, and it is on `main`. Two were not fully closable and are re-recorded
 below.
+
+**Three `## P…` entries appear below this line, and only two of them are those two.** The
+third, `P3 — re-verification: the tablet band's option-row floor…`, was filed by a later
+pass against this tree and is not one of the 33. It is here rather than above the section
+because it was raised while auditing the fixes, and moving it would break the audit trail
+for no gain — but a reader counting the entries to work out which findings survived will
+count three, and the two-line arithmetic above is the one to trust.
 
 The source repository is frozen at `78be956` and its own ledger is not maintained, so that
 review has no other home. The list of what it claimed and what turned out to be already
@@ -790,3 +797,37 @@ and **is not a defect here**:
   baselines.** The first two are fixed (`noUnusedLocals` and `noUnusedParameters` are
   on, the count is 0); the CDP assertions now derive their scale; the orphans are
   recorded in the P3 entry above.
+- **Four review findings about `getStrokeAnalysis` and the Photopea oracle, left
+  unaddressed when the orchestrator session died.** All four were re-derived against
+  this tree; one was real and is fixed, and three were not defects here:
+  - _The capture scale is read off the width axis and spent on a row measurement._ Real,
+    and fixed — but **not reachable from any current call site**, so the fix is a rule
+    rather than a repair. `canvas-helpers.ts` scales `verticalSpread` (rows) by the row
+    scale and the column gap by the column scale. What a later reader must not do is
+    re-file this as a live bug: it is pinned by two tests whose capture is DELIBERATELY
+    exaggerated, because a real fractional clip diverges by ~2% and that cannot cross a
+    threshold against a one-or-two-pixel measurement. The exaggeration is stated at the
+    test, and the per-call-site arithmetic is in the `CaptureRegion` JSDoc.
+  - _`captureScale` never validates `imageWidth`, so scale 0 is reachable._ Not
+    reachable, and the stated mechanism was wrong. The defence is `bottom < 0`, not the
+    length of `data` — with `width === 0` the coordinate arithmetic yields `NaN`, a
+    `NaN` never compares less than the initial `top`, and the function reports "nothing
+    here" before any threshold is consulted. The pre-existing zero-sized test passes an
+    EMPTY buffer, so it could not tell the two defences apart; a test carrying real ink
+    now does.
+  - _A rejection inside a `waitForCanvasPixels` poll aborts the poll instead of
+    retrying._ True in mechanism, unreachable at the only poll call site —
+    `pen-types.spec.ts` builds its clip's width and height from module constants. The
+    JSDoc now states which of `null` and a rejection is which.
+  - _The Photopea oracle's JSDoc claimed neither check is reachable without the file
+    opening._ The comment was wrong, not the code, and it is corrected in place:
+    `getByText` matches regardless of visibility and `not.toHaveCount(0)` is a count,
+    so a HIDDEN recent-files row satisfies the name check exactly as a visible one
+    would. The canvas-backing-store check is the load-bearing one. Both share the blind
+    spot, and the spec is `test.skip`ped, so neither is a proof.
+
+  What makes this worth recording rather than deleting: **four of five defects found in
+  that review were defects in the CLAIMS, and a green suite could not tell.** The code was
+  correct and every gate was passing in every one of them. A test suite that only fails
+  on behaviour will not find this class, and a comment that over-credits what an
+  assertion proves is invisible to `tsc`, to `eslint` and to a passing run.

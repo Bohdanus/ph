@@ -54,6 +54,32 @@ export const CURATED = {
     summary:
       'One-commit board fix: a file named by an open issue now counts as held, so two agents cannot edit the same file.',
   },
+  /* ------------------------------------------------- unit-test review 2026-09-28 */
+  'test-review-vacuous': {
+    summary:
+      'Unit tests that could not fail: zero-assertion tests in useRect and Transform, a type-only test in layer-presentation, a status-union tautology in StoreContext.durable-boundary, an invented-key test in ToolbarPlaceholder, and a title that promised a name assertion LayersTab.store never made. The four empty tests are deleted and the rest now assert production behaviour.',
+    note: 'The branch that removed tests that asserted nothing added three assertions that also asserted nothing, which its own review caught; those were then made falsifiable. Every strengthening was proven by breaking the expected value and pasting the red output.',
+  },
+  'test-review-harness': {
+    summary:
+      'A guard for the four AGENTS.md test traps — one setup file, e2e/** out of the root project, e2e/** out of app coverage, and scripts/**/*.test.mjs on the vmThreads pool — none of which any test enforced. harness-integrity.test.ts had no filesystem access at all, so editing vitest.config.ts failed nothing in the repo.',
+    note: 'harness-integrity.test.ts itself shipped three expect() calls with no matcher chained, so the guard written to catch dead assertions had three; a review found them by AST scan and by breaking the config, and they are now asserted. `environment: jsdom` cannot be asserted from inside the root project because breaking it stops the file loading — the omission is a real limit, not an oversight.',
+  },
+  'test-review-leaks': {
+    summary:
+      'Test-isolation leaks: module-scope state restored on the line after the assertion rather than in a hook, global spies that outlived a failing assertion, jsdom prototype accessors deleted instead of restored, a shared documentElement classList, and a counter inside a vi.mock factory. Also the missing drawImage geometry assertion in clipboard, and an explicit clearMocks in vitest.config.ts.',
+    note: 'The suite already depended on Vitest 5 defaulting clearMocks to true — 10 tests fail without it — but vitest.config.ts never said so, and the ~40 vi.clearAllMocks() call sites in the repo were no-ops. Stating the default makes the convention true by declaration rather than by an unstated framework version.',
+  },
+  'test-review-titles': {
+    summary:
+      'Tests whose title stated the opposite of their assertion: a reconcile test named "does not reconcile", three document-frame titles asserting the opposite of their bodies, and six durable-append mismatch cases collapsed to toBeTruthy(). Also a hollow materialization test, an unbounded release assertion, and the untested RightPanelVisibility default context.',
+    note: 'The old toBeTruthy() had hidden a real gap: the "a foreign id" case was never a foreign id, so the id guard at history-append.ts:483 had zero coverage because the schema-version guard fired first. Fixing the fixture was what exposed the guard.',
+  },
+  'test-review-parser': {
+    summary:
+      "Regression tests for the handoff importer's end-anchored DEAD_HEADING, which main already landed: the separator forms, the prose-substring-is-live direction, trailing punctuation after a marker, and the inline **Item N** marker case.",
+    note: "main fixed this defect independently in eba42f8 while this branch was in review, so only the additive test coverage landed — main's own two tests cover the §70 shape and nothing else. The letter-suffix half (`## 15a.` producing no item, and a suffixed retirement retiring its PARENT) was reverted as half-finished and is filed in HANDOFF.md instead: it introduces an origin shape that collides with the board's slug namespace and leaves an unguarded /#(\\d+)$/ in the test.",
+  },
   'board-signal': {
     summary:
       'Two-commit board improvement: `ready` reports priority and the files at issue, and locking moves from a column into an object.',
@@ -149,6 +175,12 @@ export const CURATED = {
     summary:
       'Corrections to AGENTS.md and the worktree-inventory comments, from a code review of AGENTS.md against the tree. The structural orphan under "The board is cross-session" and the board-to-swarm regression it introduced; the toolbar section, which listed a shipped Color Replacement options bar as a PlaceholderTool and understated the hand-copied tool lists by fourfold; the mergeChecked semantics, which the document and the code comment both got wrong; the npx tsc --noEmit explanation, which named a missing exclude that does not exist; and the drifted enumerations (orphaned, the curated code sample, the at-risk third source). Adds mergeChecked to the --check watched list.',
     note: 'Short-lived documentation work. Safe to drop once the branch is an ancestor of main; the only non-AGENTS.md change that outlives the prose is the mergeChecked entry in scripts/worktree-inventory.mjs.',
+  },
+  'e2e-truth': {
+    summary:
+      'A documentation-truth pass over e2e/README.md, e2e/OPEN_PROBLEMS.md, e2e/global-setup.ts and TEST-FLAKES section 8, correcting claims a review found false against the tree: the spec and helper counts in the README tree block, two README bullets that attributed a pattern to a spec that does not follow it, the per-spec count in the headless guard comment, a deleted-entry check, and a cluster of drifted file:line citations. Its distinct value was largely taken by main while the branch was in review: main deleted the same stale Text-toolbar entry, cut OPEN_PROBLEMS by more than half its entries, and replaced the README count block with an explicit "keep no counts here" decision. NOT LANDED, and landing it now would re-introduce counts main deliberately removed.',
+    mustNotPrune: true,
+    note: "Superseded, not wrong. The three findings that were still unique at review time were the rotted cdp-helpers and canvas-helpers citation clusters (main re-derived its own against a larger tree, so neither side's line numbers can be taken verbatim across the merge) and one citation that moved rather than resolved. A reviewer wanting the residual must re-derive every number against current main; there is nothing here that contradicts the tree.",
   },
   'polygon-marching-ants': {
     summary:
@@ -610,6 +642,10 @@ export const CURATED = {
     summary:
       'Pins the test harness invariants themselves, including the context factory that a prior audit showed returns a different object per call.',
   },
+  'integration-test-pins': {
+    summary:
+      'Integration branch merging the eight test-pin branches for a single cross-branch gate run; held no work of its own, and the handoff section numbering collision was resolved here.',
+  },
   'hooks-pins': {
     summary: 'Pins the commit-gate hooks, which were the subject of the silent-no-gate bug in 89 of 118 worktrees.',
   },
@@ -684,6 +720,21 @@ export const CURATED = {
       },
     ],
   },
+  'e2e-findings-tail': {
+    // The tail of the work `fix-e2e-findings` already landed: the four findings its
+    // adversarial review produced after the fixes merged, which the orchestrator session
+    // died before acting on. All four were comment/precision defects rather than behaviour
+    // regressions, so the tree was green and only the claims about it were wrong.
+    summary:
+      'Finishes the transferred e2e findings: the per-axis capture scale in getStrokeAnalysis, the throw its JSDoc never stated, the zero-width defence pinned by a test that carries ink, the Photopea oracle’s load-bearing check, and the ledger’s own arithmetic.',
+    issues: [
+      {
+        ref: 'e2e/OPEN_PROBLEMS.md#transferred-findings--external-review-of-the-pre-migration-tree',
+        title:
+          'the review tail left four unaddressed findings and a section header that counted two entries below it and found three',
+      },
+    ],
+  },
   'handoff-citation-rotation': {
     summary:
       'Rotates the line-numbered citations in the handoff documents after they were invalidated by file growth, and corrects one false claim in section 1.',
@@ -711,6 +762,40 @@ export const CURATED = {
     summary:
       'Test-comment accuracy for the flyout specs: two false explanations corrected, a duplicated assertion dropped, the expanded-wait timeout pinned as a floor rather than a literal, and the line citations this diff moved re-derived.',
     landed: true,
+  },
+  'desc-selection': {
+    summary:
+      'One of eight disjoint per-family branches revalidating the tool descriptions against Adobe docs and this app. Holds the selection family only; lands via audit/tool-desc-revalidation.',
+  },
+  'desc-paint': {
+    summary:
+      'Paint-family branch of the tool-description revalidation: brush, pencil, color-replacement, eraser, magic-eraser, paint-bucket, clone-stamp. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-focus': {
+    summary:
+      'Focus-family branch of the tool-description revalidation: blur, sharpen, smudge, dodge, burn, gradient. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-shape': {
+    summary:
+      'Shape-family branch of the tool-description revalidation: the shape group and its six figures. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-pen': {
+    summary:
+      'Pen-family branch of the tool-description revalidation: pen, freeform, curvature and the three anchor-point tools. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-type-crop': {
+    summary: 'Type-and-crop branch of the tool-description revalidation. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-transform': {
+    summary:
+      'Transform-family branch of the tool-description revalidation: reposition, transform, levels, color. Lands via audit/tool-desc-revalidation.',
+  },
+  'desc-eyedropper-draw': {
+    summary: 'Eyedropper-and-draw branch of the tool-description revalidation. Lands via audit/tool-desc-revalidation.',
+  },
+  'tool-desc-integration': {
+    summary:
+      'Integration branch for the tool-description revalidation: merges the eight disjoint per-family branches, regenerates tooltips.ts and docs/TOOLS.md from them, and runs the gates once over all eight.',
   },
 };
 

@@ -129,12 +129,22 @@ test.describe('History panel', () => {
   });
 
   test('a new document starts a fresh timeline, not the previous one', async ({ page }) => {
+    const box = await canvasBox(page);
+    const strokeClip = canvasRedrawClip(box);
+
     // The panel only renders once the store has a document, and a document's own opening
     // entry is already on its timeline — so the count here is 1, never 0, and
     // `HistoryTab`'s "No history yet." branch is unreachable for a real document. What is
     // worth pinning is that a second document does not inherit the first one's entries,
-    // which only a count of exactly 1 can say.
+    // which says nothing until the first document HAS an entry that the second cannot.
     await expect(historyRows(page)).not.toHaveCount(0);
+
+    await clickToolButton(page, 'draw');
+    await setForegroundColor(page, '#000000', true);
+    await drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_START_Y);
+    await waitForCanvasPixels(page, strokeClip, hasDarkPixels, { description: "the first document's stroke" });
+    await expect(drawRows(page), 'the first document has an entry for the second to lose').toHaveCount(1);
+    await expect(page.getByTestId('undo-button')).toBeEnabled();
 
     page.on('dialog', (dialog) => void dialog.accept());
     await page.getByTestId('header-file-menu-button').click();
@@ -142,8 +152,10 @@ test.describe('History panel', () => {
     await page.getByTestId('new-image-dialog-submit-button').click();
 
     await expect(page.getByTestId('new-image-dialog')).toHaveCount(0);
+    await expect(drawRows(page), "the new document must not inherit the first one's entries").toHaveCount(0);
     await expect(historyRows(page)).toHaveCount(1);
     await expect(page.getByTestId('undo-button'), 'a new document starts with nothing to undo').toBeDisabled();
     await expect(page.getByTestId('redo-button')).toBeDisabled();
+    await waitForCanvasPixels(page, strokeClip, hasNoDarkPixels, { description: "the first document's stroke" });
   });
 });
