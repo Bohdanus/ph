@@ -34,9 +34,6 @@ const GUARD = join(import.meta.dirname, '..', 'tsc-guard.mjs');
 const INSTALLER = join(import.meta.dirname, '..', 'install-tsc-guard.mjs');
 const REPO_ROOT = resolve(import.meta.dirname, '..', '..');
 
-/** The real compiler, reached past the guard on purpose, by two tests. */
-const REAL_COMPILER = resolve(REPO_ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
-
 /**
  * The bin directory that would actually answer `tsc` from inside this checkout.
  *
@@ -59,6 +56,23 @@ function resolveBinDir() {
 
 const BIN_DIR = resolveBinDir();
 const TSC_BIN = BIN_DIR ? join(BIN_DIR, 'tsc') : null;
+
+/**
+ * The checkout that OWNS the resolved bin directory.
+ *
+ * Not always this one. When a worktree has no `node_modules` of its own the
+ * ancestor walk lands in the parent checkout, and then the guard that will
+ * actually run, the compiler it delegates to, and the file `npx` resolves are
+ * all the PARENT's. Comparing this checkout's guard against the parent's bin
+ * entry fails on two files that are both correct — a review found exactly that,
+ * red in 36 of this repository's 59 worktrees, every one of which has a working
+ * guard. So expectations are derived from the OWNER, not from here.
+ */
+const OWNER_ROOT = BIN_DIR ? resolve(BIN_DIR, '..', '..') : null;
+const OWNER_GUARD = OWNER_ROOT ? join(OWNER_ROOT, 'scripts', 'tsc-guard.mjs') : null;
+
+/** The real compiler, reached past the guard on purpose, by two tests. */
+const REAL_COMPILER = OWNER_ROOT ? join(OWNER_ROOT, 'node_modules', 'typescript', 'bin', 'tsc') : null;
 
 /**
  * Whether the resolved bin directory belongs to THIS checkout.
@@ -107,7 +121,19 @@ describe('the tsc guard: which invocations it refuses', () => {
     }
   });
 
-  it('allows the flags that print something, so the documented evidence still reproduces', async () => {
+  it('allows build mode however TypeScript spells it, which is case-insensitively', async () => {
+    const { decide, isBuildMode } = await import(GUARD);
+    // A review found `-b`/`--build` asserted as "the only two spellings", which
+    // is false: TypeScript matches its own options case-insensitively, and the
+    // real compiler exits 0 on `tsc -B` and on `--Build`. The guard was refusing
+    // real build commands - the opposite failure, but a failure.
+    for (const flag of ['-b', '-B', '--build', '--Build', '--BUILD']) {
+      expect(isBuildMode([flag, 'tsconfig.node.json']), `tsc ${flag} is a real build`).toBe(true);
+      expect(decide([flag, 'tsconfig.node.json']).action).toBe('delegate');
+    }
+  });
+
+  it('still allows the flags that print something, so the documented evidence still reproduces', async () => {
     const { decide } = await import(GUARD);
     // `docs/TESTING.md` quotes `--showConfig` as the proof that the root project
     // is empty. A guard that blocked it would make that evidence unreproducible
@@ -115,6 +141,21 @@ describe('the tsc guard: which invocations it refuses', () => {
     // them print, so none can be mistaken for a green result.
     for (const argv of [['--showConfig', '-p', 'tsconfig.json'], ['--help'], ['--version'], ['-v']]) {
       expect(decide(argv).action, `tsc ${argv.join(' ')} prints, it does not check`).toBe('delegate');
+    }
+  });
+
+  it('refuses --noCheck, which is a build that type-checks nothing', async () => {
+    const { decide } = await import(GUARD);
+    // Found by a review, and the same shape as the `--all` hole one level down:
+    // `--noCheck` is a BUILD-mode flag, so it can never reach the inspection
+    // whitelist, and `tsc -b --noCheck` exits 0 having checked nothing. The
+    // real-compiler control for it is the test below.
+    for (const argv of [
+      ['-b', '--noCheck'],
+      ['--build', '--noCheck'],
+      ['-b', '--force', '--noCheck'],
+    ]) {
+      expect(decide(argv).action, `tsc ${argv.join(' ')} must not report a pass it never checked`).toBe('reject');
     }
   });
 
@@ -158,8 +199,12 @@ describe('the tsc guard: it is actually installed', () => {
   it('is the file npx tsc resolves to, not the plain npm symlink', () => {
     // THE tripwire. This is the assertion that turns "the guard was silently
     // removed by npm rebuild" from a red herring into a red test.
+    //
+    // Compared against the OWNER's guard, not this checkout's: in a worktree
+    // with no `node_modules` those are two different, both-correct files, and
+    // comparing them made this red in 36 of 59 worktrees.
     expect(lstatSync(TSC_BIN).isSymbolicLink(), 'the guard is a link into scripts/, not a generated copy').toBe(true);
-    expect(realpathSync(TSC_BIN), 'and it points at the reviewed guard, byte for byte').toBe(realpathSync(GUARD));
+    expect(realpathSync(TSC_BIN), 'and it points at the reviewed guard, byte for byte').toBe(realpathSync(OWNER_GUARD));
   });
 
   it('exits non-zero and says why, so a zero-file check cannot read as a pass', () => {
@@ -201,6 +246,35 @@ describe('the tsc guard: it is actually installed', () => {
     }
   });
 
+  it('refuses --noCheck through the real bin, proven against a planted type error', () => {
+    // The end-to-end control for the decision-table rule above, and the reason
+    // that rule exists: `-b --noCheck` is a REAL build-mode invocation, so the
+    // decision table is the only thing standing between it and a caller. Without
+    // a real error to check, "it refuses" and "it checked nothing anyway" look
+    // identical, which is the whole failure being guarded against.
+    const dir = mkdtempSync(join(tmpdir(), 'tsc-nocheck-probe-'));
+    try {
+      writeFileSync(
+        join(dir, 'tsconfig.json'),
+        JSON.stringify({ compilerOptions: { noEmit: true, strict: true }, include: ['bad.ts'] })
+      );
+      writeFileSync(join(dir, 'bad.ts'), 'export const bad: number = "not a number";\n');
+
+      const real = spawnSync(process.execPath, [REAL_COMPILER, '-b', '--noCheck', dir], { encoding: 'utf8' });
+      expect(real.status, 'the real compiler exits 0 on a broken project, which is the hole').toBe(0);
+      expect(real.stdout + real.stderr, 'and never mentions the error, so it checked nothing').not.toMatch(/TS\d+/);
+
+      // The same project, asked properly, does fail - so the error is real.
+      const honest = spawnSync(process.execPath, [REAL_COMPILER, '-b', dir], { encoding: 'utf8' });
+      expect(honest.status, 'and the same build without --noCheck catches it').not.toBe(0);
+
+      // And the guard, asked the --noCheck question, says no.
+      expect(runBin(['-b', '--noCheck']).status).not.toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('still reaches the real compiler in build mode', () => {
     // Delegation is the half that must not regress: a guard that refused
     // everything would pass every test above while making the repository
@@ -236,12 +310,59 @@ describe('the tsc guard: it is actually installed', () => {
 });
 
 describe('the tsc guard installer', () => {
+  /**
+   * The precondition every writing test shares.
+   *
+   * A test that plants a link at an ancestor's `.bin/tsc` edits a checkout this
+   * session does not own, and the repair cannot follow: `install()` resolves its
+   * own REPO_ROOT. Asserted rather than assumed, so a checkout that loses its own
+   * link fails loudly instead of quietly taking a branch that would edit
+   * somebody else's.
+   */
+  function requireOwnership() {
+    if (OWNS_BIN_DIR) return true;
+    expect(
+      existsSync(join(REPO_ROOT, 'node_modules', '.bin', 'tsc')),
+      'this checkout does not own its bin entry, so there is nothing here it may write'
+    ).toBe(false);
+    return false;
+  }
+
   it('is idempotent, so `npm install` can be run any number of times', async () => {
+    if (!requireOwnership()) return;
     const { install } = await import(INSTALLER);
     const first = install();
     expect(first.installed, 'the guard must install in a checkout that has TypeScript').toBe(true);
     const second = install();
     expect(second).toEqual({ installed: true, changed: false });
+  });
+
+  it('repairs npm plain symlink, which is the whole documented recovery path', async () => {
+    // The review's blocking finding. `alreadyGuarded()` is the only predicate
+    // between "npm clobbered the link" and "`npm install` repairs it", and a
+    // mutation that made it answer `true` unconditionally left every test in
+    // this file green while the installer silently refused to fix anything. A
+    // green suite over a broken recovery path is worse than no test at all: it
+    // tells an agent the repair works when it does not.
+    //
+    // The planted link RESOLVES and is npm's own - the exact state `npm rebuild`
+    // leaves. The dangling test below covers a different link that
+    // `alreadyGuarded` rejects for a different reason, which is why it never
+    // reached this branch.
+    if (!requireOwnership()) return;
+    const { install } = await import(INSTALLER);
+    try {
+      rmSync(TSC_BIN, { force: true });
+      symlinkSync('../typescript/bin/tsc', TSC_BIN);
+
+      expect(realpathSync(TSC_BIN), 'the planted link is a real, working, plain npm symlink').toBe(
+        realpathSync(REAL_COMPILER)
+      );
+      expect(install(), 'so the installer must not report nothing to do').toEqual({ installed: true, changed: true });
+      expect(realpathSync(TSC_BIN), 'and it must actually put the guard back').toBe(realpathSync(GUARD));
+    } finally {
+      install();
+    }
   });
 
   it('replaces a dangling link rather than leaving one npm would skip', async () => {
@@ -257,18 +378,7 @@ describe('the tsc guard installer', () => {
     // `!resolvesToAFile()` branch, which fires when a link IT just wrote fails
     // to resolve. A correct relative target cannot produce that, so it is a
     // defensive last resort with no reachable trigger from a test.
-    if (!OWNS_BIN_DIR) {
-      // Not a skip dressed as a pass: writing here would edit a bin directory in
-      // a checkout this session does not own, and the assertion below would be
-      // measuring a real side effect somewhere else. See OWNS_BIN_DIR. The
-      // precondition is asserted rather than assumed, so a checkout that loses
-      // its own link cannot quietly take this branch.
-      expect(
-        existsSync(join(REPO_ROOT, 'node_modules', '.bin', 'tsc')),
-        'this checkout does not own its bin entry, so there is nothing here it may plant'
-      ).toBe(false);
-      return;
-    }
+    if (!requireOwnership()) return;
     const { install } = await import(INSTALLER);
     try {
       rmSync(TSC_BIN, { force: true });
