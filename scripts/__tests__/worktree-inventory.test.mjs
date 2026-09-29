@@ -1847,17 +1847,46 @@ describe('the curated table', () => {
     const inRepo = live.filter((w) => w.path === repoRoot || w.path.startsWith(`${repoRoot}/`));
     expect(inRepo.length, 'no worktrees matched the repository prefix').toBeGreaterThan(10);
 
+    // A worktree that holds NOTHING is not what this rule is for. Its own comment said
+    // what the rule protects: "an uncurated worktree is one nobody has written down
+    // what it is for, which is how a preservation branch gets mistaken for a
+    // disposable one." A worktree that is clean, 0 ahead of main and already on
+    // main has no work to mistake for anything — it is a scratch space, and it
+    // cannot be lost.
+    //
+    // Demanding a summary for those is what made this the recurring red: the
+    // table was re-derived by hand FOUR times in one session, every time only
+    // because an agent had created a worktree that held nothing yet, and main
+    // went red within minutes of the derived guard landing. The shape is the same
+    // one `mustNotPrune` was just removed for — the risk is derivable from git,
+    // and only the risk deserves a hand-written claim.
+    //
+    // So the rule is the risk, not the existence: a worktree is required to be
+    // documented exactly when it has commits git cannot find on main, or edits
+    // that are in no commit at all, or a branch that is not on main. That is
+    // every way a worktree can hold work, and the three facts are read with the
+    // same helpers the sibling guard uses, so the two cannot drift apart.
+    const { worktrees: withFacts } = liveWorktreeFacts();
+    const holdsSomething = (w) => {
+      const f = withFacts.find((x) => x.name === w.name);
+      if (!f) return true; // git could not be asked: demand a summary rather than wave it through
+      return f.ahead > 0 || f.mergedIntoBase === false || f.workingTree.modified + f.workingTree.untracked > 0;
+    };
+
     // Worktrees created after the table was written, plus the two that are
-    // documented elsewhere by construction. Everything else must be curated.
+    // documented elsewhere by construction.
     const allowed = new Set(['worktree-inventory', 'land-and-dispose']);
     const uncategorised = inRepo
+      .filter(holdsSomething)
       .map((w) => w.name)
       .filter((name) => name !== 'ph' && !allowed.has(name) && !CURATED[name]);
 
     expect(
       uncategorised,
-      `worktrees with no curated entry: ${uncategorised.join(', ')}. ` +
-        'Add each to scripts/lib/worktree-inventory/curated.mjs with a summary.'
+      `these worktrees hold work — commits git cannot find on main, edits in no commit, or a ` +
+        `branch that is not on main — and none is described in ` +
+        `scripts/lib/worktree-inventory/curated.mjs: ${uncategorised.join(', ')}. ` +
+        'Add each with a summary. A worktree holding nothing needs no entry.'
     ).toEqual([]);
   });
 

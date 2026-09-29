@@ -990,6 +990,19 @@ export const CURATED = {
     summary:
       'Reviewing the append-boundary validation guard over the remove-append work, on a branch six commits ahead of main with one test file still modified on top of it. The branch is a ref git can see, so it is protected by being a branch and owes no flag.',
   },
+  'untrack-inventory': {
+    summary:
+      'Untracking `WORKTREES.json` — the generated inventory is a machine-local snapshot that goes stale the moment it lands, so it leaves the index along with the ignore rules, the docs and the test that assert on it, and the merge skill that told the reader to consult it.',
+    note: 'Held on no ref: six paths including a staged deletion of `WORKTREES.json`, on a branch whose tip is a main commit, so git calls the branch disposable while the only copy of the change is the working tree.',
+  },
+  'narrow-uncategorised': {
+    summary:
+      'Narrowing the curated-summary rule to the worktrees that actually hold work, so creating a scratch worktree stops turning main red — the same derivation the `mustNotPrune` guard was given, one layer up.',
+  },
+  'fix-handoff-95': {
+    summary:
+      'The corrected HANDOFF §95: the refused-publication entry re-derived after a review found five false claims in it, including that no test pins the console.error text when two do.',
+  },
   'skill-handoff-cites': {
     summary:
       'Re-deriving the tool-creation skill’s `file:line` citations against the tree, and the handoff entries’ citations into the same files.',
