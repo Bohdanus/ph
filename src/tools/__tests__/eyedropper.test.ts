@@ -17,14 +17,22 @@ describe('eyedropper args', () => {
     });
   });
 
-  it('names only the three sizes the options bar offers', () => {
+  it('names all seven Sample Sizes Photoshop offers, in Photoshop order', () => {
     const values: readonly EyedropperSampleSize[] = EYEDROPPER_SAMPLE_SIZE_OPTIONS.map(({ value }) => value);
 
-    expect(values).toEqual([1, 3, 5]);
+    // Point Sample plus the 3, 5, 11, 31, 51 and 101 averages
+    // (https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html). Three of the
+    // seven were here; the union carried no value for the other four, so the bar could not offer a
+    // setting the args type could not hold.
+    expect(values).toEqual([1, 3, 5, 11, 31, 51, 101]);
     expect(EYEDROPPER_SAMPLE_SIZE_OPTIONS.map(({ label }) => label)).toEqual([
       'Point Sample',
       '3 by 3 Average',
       '5 by 5 Average',
+      '11 by 11 Average',
+      '31 by 31 Average',
+      '51 by 51 Average',
+      '101 by 101 Average',
     ]);
   });
 });

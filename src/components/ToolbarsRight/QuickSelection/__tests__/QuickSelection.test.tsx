@@ -55,7 +55,6 @@ vi.mock('../../../../contexts/useCurrentTool.tsx', async () => {
           publish({ ...(toolState.initial as Record<string, unknown>), ...patch, toolName });
         },
         isToolDirty: false,
-        resetToLastSavedArgs: () => {},
       };
     },
   };
@@ -336,11 +335,7 @@ describe('QuickSelection toolbar', () => {
     it('describes a growing stroke for the add mode', () => {
       render(<QuickSelection />);
 
-      expect(
-        screen.getByText(
-          'Drag over an object to grow the selection along the stroke. Shift and Alt drag on the canvas.'
-        )
-      ).toBeInTheDocument();
+      expect(screen.getByText('Drag over an object to grow the selection along the stroke.')).toBeInTheDocument();
     });
 
     it('describes a shrinking stroke for the subtract mode', () => {
@@ -350,9 +345,17 @@ describe('QuickSelection toolbar', () => {
 
       // The hint is derived from the PUBLISHED mode, so a spy that did not publish would leave
       // the add-mode text on screen and this assertion could never fail.
-      expect(
-        screen.getByText('Drag over what to remove from the selection. Shift and Alt drag on the canvas.')
-      ).toBeInTheDocument();
+      expect(screen.getByText('Drag over what to remove from the selection.')).toBeInTheDocument();
+    });
+
+    it('promises no canvas gesture the tool area does not read', () => {
+      // Adobe's Alt-drag resizes the brush tip and Shift-drag constrains it to a circle. Neither
+      // is implemented here, and a modifier named on screen that does nothing is a defect of its
+      // own: a user who presses Alt expects the tip to change and cannot tell it did not.
+      render(<QuickSelection />);
+
+      const hint = screen.getByText(/^Drag over/);
+      expect(hint.textContent).not.toMatch(/Shift|Alt|Option|\bdrag on the canvas\b/i);
     });
   });
 

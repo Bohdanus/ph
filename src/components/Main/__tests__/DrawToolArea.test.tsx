@@ -294,6 +294,99 @@ describe('DrawToolArea', () => {
     );
   });
 
+  describe('a frame pending across an unmount', () => {
+    // The overlay is ONE 2D context for the whole session, handed to whichever tool is active, and
+    // it stays mounted while only its `display` is toggled. So a repaint that survives this
+    // component's unmount does not draw into a dead canvas — it draws into the one the NEXT tool is
+    // about to paint into, with a stroke this component has not finished.
+    it('cancels the pending frame on unmount, so no stroke is painted afterwards', () => {
+      vi.useFakeTimers();
+      const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+      const { container, unmount } = render(
+        <DrawToolArea className="test-draw-area" overlayCtxRef={{ current: overlayCtx }} />
+      );
+      const toolArea = container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
+      fireEvent.pointerMove(toolArea, { button: 0, clientX: 60, clientY: 40 });
+      vi.mocked(drawLine).mockClear();
+      // The restore has to run whatever the assertions do: a red assertion above the `finally`
+      // would otherwise skip `mockRestore()` entirely, and that is the shape that matters — it is
+      // exactly what a future edit to these assertions would do. This is the right shape on its
+      // own terms, not because this file leaks without it.
+      //
+      // An earlier version of this comment claimed the opposite: that this file has no `afterEach`,
+      // so the leak would persist for every following test. That was wrong, and it was worth
+      // checking rather than restating. The global `afterEach` in `src/test/setup.ts:6` calls
+      // `vi.useRealTimers()`, which re-installs a real `cancelAnimationFrame` and drops the spy.
+      // Measured with a probe pair of tests here — install the spy, do not restore it, then observe
+      // from the next test — `vi.isMockFunction(globalThis.cancelAnimationFrame)` is `false` and
+      // the function is not the pre-spy reference either. So the leak IS currently masked here,
+      // which is exactly why a comment asserting it was worth correcting: a false rationale is
+      // worse than no rationale, because the next reader trusts it and stops checking.
+      //
+      // Same shape as `FreehandLasso.test.tsx:226-239`.
+      const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame');
+
+      try {
+        unmount();
+        act(() => {
+          vi.advanceTimersByTime(20);
+        });
+
+        expect(cancelSpy).toHaveBeenCalled();
+        expect(drawLine).not.toHaveBeenCalled();
+      } finally {
+        cancelSpy.mockRestore();
+      }
+    });
+
+    it('leaves the frame slot released, so a later mount previews on the shared overlay again', () => {
+      // The same shape as the "frozen for the component's lifetime" bug this file already pins for
+      // pointer up: a slot that is left non-null makes every later move short-circuit. Here the
+      // consequence is visible on the OTHER side of the unmount, because the queue is shared.
+      vi.useFakeTimers();
+      const overlayCtx = makeMockContext() as unknown as CanvasRenderingContext2D;
+      const overlayCtxRef = { current: overlayCtx };
+      const first = render(<DrawToolArea className="test-draw-area" overlayCtxRef={overlayCtxRef} />);
+      const firstArea = first.container.firstElementChild as HTMLDivElement;
+
+      fireEvent.pointerDown(firstArea, { button: 0, clientX: 10, clientY: 20 });
+      fireEvent.pointerMove(firstArea, { button: 0, clientX: 60, clientY: 40 });
+      first.unmount();
+      // The pointer double is module-level and only a release the validator accepts clears it,
+      // which an unmount is not: switching tools mid-drag aborts the gesture, and the next press has
+      // to be a first press or the second area's stroke is never started.
+      pointerState.activePointer = null;
+      pointerState.isMouseDown.current = false;
+
+      // A fresh area over the same context: what switching tools mid-drag actually is.
+      const second = render(<DrawToolArea className="test-draw-area" overlayCtxRef={overlayCtxRef} />);
+      const secondArea = second.container.firstElementChild as HTMLDivElement;
+      fireEvent.pointerDown(secondArea, { button: 0, clientX: 100, clientY: 100 });
+      fireEvent.pointerMove(secondArea, { button: 0, clientX: 140, clientY: 130 });
+      vi.mocked(drawLine).mockClear();
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+
+      // One paint, and it is the new stroke's. A repaint carried over from the unmounted area
+      // lands on the same context and reads here as a second, wrong repaint.
+      expect(vi.mocked(drawLine)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(drawLine).mock.lastCall?.[0]).toEqual(
+        expect.objectContaining({
+          args: expect.objectContaining({
+            points: [
+              { x: 100, y: 100 },
+              { x: 140, y: 130 },
+            ],
+          }),
+        })
+      );
+      second.unmount();
+    });
+  });
+
   it('brackets the stroke so setupDrawCtx cannot leave its alpha on the shared overlay', () => {
     // The overlay is ONE 2D context for the whole session and every tool area is handed the same
     // object, so a writer that leaves `globalAlpha` behind dictates the alpha of the next tool. The

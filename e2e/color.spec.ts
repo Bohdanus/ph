@@ -12,7 +12,7 @@ import {
 } from './helpers/canvas-helpers';
 import { canvasRedrawClip, waitForCanvasPixels } from './helpers/canvas-redraw';
 import { setForegroundColor } from './helpers/color-helpers';
-import { clickToolButton } from './helpers/toolbar-helpers';
+import { clickToolButton, resolveToolTile } from './helpers/toolbar-helpers';
 
 async function waitForRedStroke(page: Page, box: BoundingBox): Promise<void> {
   await waitForCanvasPixels(page, canvasRedrawClip(box), hasRedPixels, { description: 'red pixels' });
@@ -24,12 +24,42 @@ test('screenshot of canvas area contains line of selected red color', async ({ p
 
   const canvas = getWorkspaceCanvas(page);
   await expect(canvas).toBeVisible();
-  const box = await canvas.boundingBox();
-  expect(box, 'Canvas should have visible coordinates').not.toBeNull();
+
+  // `draw` is the app's default tool, so `tool-button-draw` already carries
+  // `aria-pressed="true"` before anything is clicked, and asserting that after the
+  // click was satisfied by the state the test started in - it could not fail.
+  // `clickToolButton` asserts nothing about activation either, so this is the test's
+  // only tool-state check, and it has to be the one that can go red. Select a
+  // DIFFERENT tool first: that is the only state in which the attribute can still
+  // change, which turns the second assertion into a check that the click did
+  // something rather than a check that the app booted.
+  await clickToolButton(page, 'reposition');
+  // Resolved, not addressed: `draw` is the seventeenth group, so at this viewport it has been
+  // folded into the three-dots tile and there is no `tool-button-draw` element at all. The
+  // three-dots tile computes `aria-pressed` with the same `group.some(...)` the real tiles do,
+  // so this says the same thing whether the tool has a tile or not.
+  await expect(await resolveToolTile(page, 'draw'), 'draw is not active while another tool is').toHaveAttribute(
+    'aria-pressed',
+    'false'
+  );
 
   await clickToolButton(page, 'draw');
   // The draw tool only strokes with the active foreground color once it is the active tool.
-  await expect(page.getByTestId('tool-button-draw')).toHaveAttribute('aria-pressed', 'true');
+  // Resolved for the same reason as the assertion above it: `draw` is the seventeenth group,
+  // so at this viewport it has been folded into the three-dots tile and there is no
+  // `tool-button-draw` element. Two assertions in one test, and only one of them was
+  // converted — which is the usual way a half-finished migration reaches the gate.
+  await expect(
+    await resolveToolTile(page, 'draw'),
+    'clicking the Draw tile must make draw the active tool'
+  ).toHaveAttribute('aria-pressed', 'true');
+
+  // Measured AFTER the tool switches, not before: a tool change swaps the options
+  // bar, which can move the canvas, and `drawLine` takes box-relative offsets. A box
+  // measured before would stroke - and then sample - somewhere the geometry no longer
+  // describes. The two clicks above are what makes this ordering load-bearing.
+  const box = await canvas.boundingBox();
+  expect(box, 'Canvas should have visible coordinates').not.toBeNull();
 
   // SET COLOR via native setter (triggers React onChange)
   // This bypasses React's "value unchanged" check and reaches delegated listeners

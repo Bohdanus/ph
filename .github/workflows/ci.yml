@@ -221,31 +221,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Cache the Chrome build
-        # `playwright install` downloads a browser onto every fresh runner, which is
-        # the slowest thing in this job and is pure network wait. Keyed on the
-        # lockfile so a dependency bump misses the cache rather than restoring a
-        # browser the new Playwright does not want, and on the OS because the
-        # download is platform-specific.
-        #
-        # `--with-deps` still runs on every build: it installs OS packages through
-        # apt, which is not cacheable, and skipping it would break the browser.
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-
-
       - name: Install Chrome
         # playwright.config.ts defaults to `channel: 'chrome'` (the system browser),
         # so install that rather than Playwright's bundled Chromium.
+        #
+        # No `actions/cache` step on purpose. That directory is where Playwright
+        # unpacks the browsers IT downloads, and this job installs none: the
+        # `chrome` channel goes through the OS package manager. A cache keyed on
+        # `~/.cache/ms-playwright` here would carry an absent directory, hit on
+        # every run, and save nothing. The install below is apt, which is not
+        # cacheable.
         run: npx playwright install --with-deps chrome
 
       - name: Run Playwright specs
-        # playwright.config.ts declares a `webServer` running `npm run dev` on :5173.
-        # `CI` is set by the runner, so `reuseExistingServer` is false and the job
-        # always starts its own server instead of trusting the port.
+        # `npx playwright test` directly, NOT `npm run test:e2e`. That script is
+        # `scripts/e2e-run.mjs`, which serializes e2e runs against a swarm board
+        # and gives each run a private port and output directory — correct for a
+        # machine where several agents run suites at once, and wrong here: this
+        # job owns its checkout outright, and the wrapper's per-run output
+        # directory is not where this job's artifacts are collected from.
+        #
+        # playwright.config.ts declares a `webServer` running `npm run dev`, and
+        # server reuse is opt-in, so the job always starts its own server on
+        # :5173 instead of trusting the port.
         #
         # No --grep-invert: this job reports the true state of the suite. A failure
         # here is a new defect unless e2e/OPEN_PROBLEMS.md says otherwise, and

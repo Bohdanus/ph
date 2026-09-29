@@ -8,24 +8,67 @@ spec helpers themselves. The application under test is `src/` in this repository
   [Current status](#current-status).
 - [`MIGRATION-TODO.md`](MIGRATION-TODO.md) — what the move into this repository left
   undone: open fixes, pipeline gaps, and carried-over debt.
+- [`../docs/TESTING.md`](../docs/TESTING.md) — the gate contract: which checks run at
+  commit, at push, and in CI, the blocked headed commands, and the test traps. This
+  file is the e2e suite's own depth; the gate itself is stated there, once.
 
-```
+The tree, at the level of shape rather than of inventory. New spec files land here
+constantly, so read the directory instead of a list, and keep no counts in this
+comment — a count here is only correct until the next merge.
+
+````
 e2e/
-├── *.spec.ts            # 13 top-level specs: canvas redraw, colour, layers,
-│                        #   levels, pen types, eraser / fill / eyedropper,
-│                        #   select/move, sidebar flyout / keyboard / layout,
-│                        #   responsive shell, viewport drawing, DPR
-├── export/              # 6 export-format specs + committed visual-regression baselines
-├── global-setup.ts      # refuses --headed / --ui / --debug before a window exists
-└── helpers/             # 7 shared helper modules
-    └── __tests__/       # Node-environment unit tests for those helpers
+├── *.spec.ts            # top-level app specs
+├── export/              # export-format specs + committed visual-regression baselines
+├── helpers/             # shared helper modules, each with a unit file in
+│   │                    #   __tests__/ and a Playwright spec beside the
+│   │                    #   browser-facing ones
+│   └── __tests__/       # Node-environment unit tests for the helper modules
+└── global-setup.ts      # refuses --headed / --ui / --debug before a window exists
 ```
+
+Counts are deliberately absent, and an earlier version of this block carried them
+(22 specs / 8 helpers, then 26 / 9). Each was correct on the day it was written and
+wrong within a merge, because a spec that lands or is deleted in any branch rewrites
+the number without touching this file. The counts were wrong in both directions at
+once — a stale total beside a table that named specs the total omitted. Derive one when
+you need it: `ls e2e/*.spec.ts | wc -l`, and
+`ls e2e/helpers/*.ts | grep -v '\.spec\.ts$' | wc -l`.
+
+### What the top-level specs are organised by
+
+`ls e2e/*.spec.ts` is alphabetical because that is how the directory is. What is not
+alphabetical is what each one is responsible for, and several of them overlap on
+purpose:
+
+| Concern                       | Specs                                                                                               |
+| ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| Keyboard                      | `keyboard-shortcuts`, `sidebar-keyboard`                                                            |
+| The left rail and its flyouts | `sidebar-flyout`, `sidebar-keyboard`, `sidebar-layout`                                              |
+| Layers and the panel          | `layers`, `layers-panel`, `undo-redo`                                                               |
+| History and its panel         | `keyboard-shortcuts`, `history-panel`, `undo-redo`                                                  |
+| Dialogs and the document      | `document-dialogs`, `select-move` (crop), `file-roundtrip`                                          |
+| Adjustments and filters       | `adjustments`, `filter-tools`, `levels`                                                             |
+| Pixel-affecting tools         | `paint-tools`, `paint-options`, `pen-types`, `shape-tools`, `filter-tools`, `erase-fill-eyedropper` |
+| Selections                    | `selection-tools`, `select-move`                                                                    |
+| Text                          | `text-tool`                                                                                         |
+| Shell and viewport            | `responsive-shell`, `mobile-shell`, `viewport-drawing`                                              |
+| Device pixel ratio            | `check-dpr`                                                                                          |
+
+The table is a map of overlaps, not an index: a spec with no second entry here is
+simply one nothing else contends with. Several of the top-level specs are not listed,
+and the list is not maintained as one — read the directory for the current inventory,
+per the note at the top.
+
+`layers.spec.ts` and `layers-panel.spec.ts` overlap deliberately: the first is
+about the stack a tool sees, the second about the panel that edits it. Splitting
+them by file would have hidden that they describe one feature from two sides.
 
 ## Run it headless
 
 ```bash
 npm run test:e2e
-```
+````
 
 `npm run test:e2e` is **headless by default. Keep it that way.**
 
@@ -82,35 +125,104 @@ authorised. `AGENTS.md` states the rule for coding agents.
 npm run test:e2e
 ```
 
+**That command is a wrapper, not `playwright test`.** It runs
+`scripts/e2e-run.mjs`, which does three things before Playwright starts, and every
+one of them exists because of a way concurrent runs get silently wrong:
+
+1. **It takes a swarm lock**, so only one suite runs at a time across every
+   worktree on this machine. See [One suite at a time](#one-suite-at-a-time).
+2. **It allocates a port of its own**, so two agents in two worktrees are never
+   asking for :5173.
+3. **It gives the run its own output directory**, because Playwright _deletes_
+   `outputDir` at the start of every run, so a second run otherwise erases the
+   first run's failure screenshots before anybody has read them.
+
+Every argument is forwarded verbatim:
+
+```bash
+npm run test:e2e -- e2e/sidebar-flyout.spec.ts
+npm run test:e2e -- --retries=1 e2e/undo-redo.spec.ts
+```
+
+### One suite at a time
+
+`npm run test:e2e` asks the swarm board for a file lock on
+`e2e/.swarm-e2e-runner` before it starts, and gives it back when the run ends —
+including when the run fails or the wrapper is interrupted. That path is
+**virtual**: it is never created on disk, and `npm run swarm status` shows it as a
+live lock while a suite is in flight, so an agent can see who has it without
+asking.
+
+If another run has it, the run **queues** rather than starting on top of it. It
+prints the holder's name and waits; if the wait runs out, nothing runs and the
+command exits **4**. The two exit codes answer different questions and neither is a
+mistake: `swarm check <path>` exits **1** when the path is busy, which is what a
+shell gates on, while the board's own `hold` — and therefore this wrapper — exits
+**4** for "somebody else holds this file". Do the other work and run the same
+command again.
+
+| Variable           | Default | What it does                                            |
+| ------------------ | ------- | ------------------------------------------------------- |
+| `E2E_LOCK_TIMEOUT` | 10 min  | How long to queue. `0` fails immediately.               |
+| `E2E_LOCK_POLL`    | 3 s     | How often to re-check while queued.                     |
+| `E2E_LOCK_LEASE`   | `30m`   | How long a **dead** holder blocks the queue.            |
+| `E2E_SKIP_LOCK`    | unset   | `1` runs unsynchronized, loudly. Operator escape hatch. |
+
+`--no-lock` is the same as `E2E_SKIP_LOCK=1`. The lock is skipped automatically
+under `CI`, where one job owns one checkout outright — the board would be a fresh
+one-run-per-job database that no other job could see. If the board cannot be
+reached at all — outside a git checkout, or a Node without `node:sqlite` — the
+wrapper prints a **warning and runs anyway**: failing every suite on that machine
+would be worse than the collision the lock prevents. A malformed `E2E_LOCK_LEASE`
+is the opposite case and **stops the run**, because the board rejects it with the
+same exit code as a missing board and a typo in one variable must not silently turn
+the lock off.
+
+**The holder is a run, not a branch.** `swarm status` shows one `e2e-run/<branch>/<pid>`
+agent while a suite is in flight, and that is the useful reading: the branch says
+which checkout, the pid says which process. The board's identity is the branch and a
+branch never conflicts with itself, so two runs on one branch — a session and its own
+subagent — would otherwise both "acquire", and the second one's release would free
+the first.
+
+The lease is deliberately shorter than a full suite and renewed while the run
+lives. A file lock is never renewed by the board itself (`renewOwnClaims` only
+touches issue _claims_), so a long run would otherwise watch its own lock expire,
+have it reclaimed by the next `swarm` command from anybody, and start racing a
+second suite. A renewal that fails stops the run rather than risking that.
+
+**A lock is a queue, not a gate.** It never decides that a change does not need
+e2e: the Definition of Done still requires a run for a user-visible change, and
+this is what makes that requirement survivable when several agents are merging at
+once. Run the full suite before merging; use a targeted spec to iterate.
+
+### Ports and servers
+
 Nothing needs to be started by hand. `playwright.config.ts` declares a
-`webServer` running `npm run dev`, so Playwright starts the Vite dev server on
-<http://localhost:5173> and tears it down afterwards. 5173 is a default, not a
-constant: `PLAYWRIGHT_PORT` moves the dev server, the `baseURL` the tests use, and
-the port that is probed, in one step.
+`webServer` running `npm run dev`, so Playwright starts the Vite dev server and
+tears it down afterwards. 5173 is a default, not a constant, and the wrapper
+usually replaces it: it asks the OS for a free port and sets `PLAYWRIGHT_PORT`,
+which moves the dev server, the `baseURL` the tests use, and the port that is
+probed, in one step.
+
+It leaves the port alone when you have already chosen one:
 
 ```bash
 PLAYWRIGHT_PORT=5391 npm run test:e2e
 ```
 
-Set it in a second worktree. Every worktree serves its own checkout, so a run that
-attaches to a :5173 server it did not start is testing the other checkout's code,
-which reads exactly like "my change did nothing". An explicit `PLAYWRIGHT_PORT`
-also turns server reuse off by itself — it is a request to test _this_ checkout, so
-a server already on that port is this run's own stale process rather than someone
-else's to share.
-
-With nothing set, a dev server you already have on :5173 is reused, which is
-convenient when it is the only thing on the port. `PLAYWRIGHT_REUSE_EXISTING_SERVER=false`
-turns that off and forces Playwright to start its own server:
+**Server reuse is opt-in now, and the flag was renamed to say so.** A run used to
+attach to any server already on :5173, which in a worktree is _another
+checkout's_ code — a mutation campaign in `TEST-FLAKES.md` §10 reported every
+mutation green that way. To attach to a dev server you started yourself:
 
 ```bash
-PLAYWRIGHT_REUSE_EXISTING_SERVER=false npm run test:e2e
+PLAYWRIGHT_REUSE_EXISTING_SERVER=1 npm run test:e2e
 ```
 
-That is now a loud failure rather than a workaround: with the port occupied, the
-reuse check refuses before it would launch anything, and the dev server is started
-with `--strictPort` so it cannot silently hop to the next free port. On a port
-somebody else is serving, reach for `PLAYWRIGHT_PORT` instead.
+That is the only way to reuse, `PLAYWRIGHT_PORT` disables it, and with the port
+occupied the dev server is started with `--strictPort` so it fails loudly instead
+of silently hopping to the next free port.
 
 Point the suite at a server you did not start with `PLAYWRIGHT_BASE_URL`. It wins
 navigation, so keep it and `PLAYWRIGHT_PORT` consistent:
@@ -118,6 +230,20 @@ navigation, so keep it and `PLAYWRIGHT_PORT` consistent:
 ```bash
 PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e
 ```
+
+### Output
+
+Each run writes to `test-results/runs/<run-id>/`, and the wrapper prints that
+directory before the suite starts. `test-results/` is gitignored wholesale, and
+`npm run test:e2e:clean` removes it. A bare `npx playwright test` (or
+`npm run test:e2e:raw`) skips the wrapper and writes to the shared `test-results/`
+— that is the same as CI, where the JSON reporter's output is collected as an
+artifact, and it is why CI calls Playwright directly.
+
+The HTML report is **not** isolated, deliberately: `npm run test:e2e:report` is a
+bare `playwright show-report`, which resolves `playwright-report`, and a per-run
+folder would leave it with nothing to open. The report is a viewer; the failure
+PNGs and traces it draws from are the ones under `test-results/runs/<run-id>/`.
 
 The project defaults to the system Chrome channel (`channel: 'chrome'`), so
 install it once with:
@@ -132,8 +258,9 @@ a container.
 ## Helper unit tests
 
 Fast, browser-free tests for the modules in `e2e/helpers/`. They run in Node via
-Vitest and need no application instance, so they are the only part of this suite
-that CI gates on — see the `e2e-unit` job in `.github/workflows/ci.yml`.
+Vitest and need no application instance, so they get their own CI job rather than
+sharing one with the browser run — see the `e2e-unit` job in
+`.github/workflows/ci.yml`. The specs themselves are gated too, by the `e2e` job.
 
 ```bash
 npm run test:e2e:unit              # single run
@@ -175,14 +302,11 @@ at runtime.
 
 `e2e/` is a TypeScript project reference off the root `tsconfig.json`, so
 `npm run tsc` (`tsc -b`) type-checks the specs, the helpers and the unit tests
-alongside the app and node projects. It is green. `.husky/pre-commit` runs
-`lint-staged`, `npm run tsc` and `npm run build`, so a change under `e2e/` is
-type-checked and built before it is committed. It does **not** run the helper
-unit tests: `test:e2e:unit` is not in the commit gate. It is the only coverage
-these helpers have — `vitest.config.ts` excludes `e2e/**` — and it is not
-optional, because the `e2e-unit` CI job runs it as its own blocking step,
-separately from `ci`, so a break in the app pipeline cannot remove the only gate
-on `e2e/`. Run `npm run test:e2e:unit` by hand when you change anything here.
+alongside the app and node projects. Which gate runs it, and what is not in that
+gate, is [`../docs/TESTING.md`](../docs/TESTING.md) — the e2e-specific consequence
+is only that `test:e2e:unit` is the **only** coverage these helpers have
+(`vitest.config.ts` excludes `e2e/**`), which is why it is a blocking CI job
+separate from `ci`, and why you run it by hand when you change anything here.
 
 Settings that differ from `tsconfig.app.json`, and why:
 
@@ -239,8 +363,12 @@ npm run test:e2e:update-baselines
   `CHANGED_CHANNEL_THRESHOLD_ICO` (20,000) colour channels to drift by more than
   `CHANNEL_DELTA_TOLERANCE` (40) from the source canvas.
 - A **missing** baseline attaches the export and then throws, pointing at
-  `--update-snapshots`. That fails the run on purpose: a missing baseline means
-  the comparison was never made.
+  `npm run test:e2e:update-baselines`. That fails the run on purpose: a missing
+  baseline means the comparison was never made. The npm script, not a bare
+  `--update-snapshots`, is the recovery: the flag's own preset is `'changed'`,
+  the record branch requires `'all'`, and `'changed'` rewrites nothing here
+  because this spec reads its baseline with `readFile` rather than through a
+  Playwright snapshot assertion.
 
 ### Baseline layout
 
@@ -274,8 +402,11 @@ Per-run generated output — the actual exported files — is disposable and lan
 under the test's own output dir in `test-results/`, which is gitignored. Clear it
 with `npm run test:e2e:clean`.
 
-`.gitattributes` marks `visual-regression.spec.ts-snapshots/**` as `binary` so the
-committed pixels can never be rewritten by line-ending normalisation.
+`.gitattributes` marks every committed image corpus under `e2e/` `binary`, by path
+rather than by a `*.png`-style pattern, so committed pixels can never be rewritten by
+line-ending normalisation. Read the file for the current list rather than trusting a
+copy of it here — each new corpus needs its own rule, and the file is the only place
+that stays right.
 
 ## Current status
 
@@ -289,36 +420,38 @@ where to read them.
 | Helper unit tests | `npm run test:e2e:unit` |
 | E2E tests         | `npm run test:e2e`      |
 
-Three groups used to; all three are fixed, and each was fixed by changing
-an assertion or a wait rather than by loosening a threshold:
-
-| formerly failing tests            | was                                     | now                                                               |
-| --------------------------------- | --------------------------------------- | ----------------------------------------------------------------- |
-| `cdp-helpers.spec.ts`             | 2 headless, 5 headed, disjoint per mode | capture scale is no longer asserted; mode-independent             |
-| `sidebar-keyboard.spec.ts:76, 88` | 0–2, 5 of 12 measured headless runs     | root-caused to a `requestAnimationFrame` focus race, then awaited |
-| `levels.spec.ts:64, 109`          | 2, both modes                           | canvas located by test id, not document order                     |
-
-- The CDP group derived its expected capture size from `window.devicePixelRatio`, but
-  the capture scale is neither a function of that value nor of the emulated ratio.
-  The contract was removed rather than re-derived — the scale belongs to Chrome, not
-  to this code — and replaced with assertions that hold everywhere: exact rect, one
-  integral scale on both axes, correct pixels, and no rescaling of the helper's own.
-  Each was mutation-tested. See `OPEN_PROBLEMS.md` for the measurements.
-- `sidebar-keyboard.spec.ts` was a real race, and not the one it looked like: the app
-  focuses the flyout's first item in a `requestAnimationFrame`, so a keypress landing
-  in that one-frame gap is handled by the tool button again and re-opens the flyout
-  instead of activating an item. The opener now waits for the focus to land.
-- The visual-regression baselines are genuinely compared. They were not before:
-  `if (testInfo.config.updateSnapshots)` was always truthy, because Playwright's
-  default for that option is the string `'missing'`, so every run re-recorded the
-  baseline and returned before `compareScreenshots`. A green run now means the pixels
-  matched.
-
 The workspace canvas is located by `data-testid="workspace-canvas"`, published on the
 primary `<canvas>` in `src/components/Main/Main.tsx`. There is no positional fallback:
 a document index put the locator on the Draw preview canvas, or on a hidden overlay
 once a tool change unmounted it. `getWorkspaceCanvas` is a single-selector locator
 precisely so it can only ever match one element.
+
+### Name every coordinate in document space
+
+An 800x600 document is contained into the canvas element with a uniform scale and a
+centred letterbox, so one CSS pixel on the canvas is not one document pixel and the
+canvas box has no fixed size. `drawLine` takes **box-relative** offsets, and
+`documentToCanvasOffset` / `canvasOffsetToDocument` convert between the two spaces.
+
+Everything a test _asserts_ on has to be named in document space, and any
+spec that both places a gesture and reads a pixel back has to convert in the
+right direction at each end. Getting it backwards is silent: a sample 200 units
+"beyond" a drag that started 131 units into the document lands off the document
+entirely, and the checkerboard behind it reads as a plausible value. The failure
+is a wrong number, not an error.
+
+Two more consequences of the same geometry, both of which have bitten a spec here:
+
+- **Measure the box per sample, not once per test.** A tool change swaps the
+  options bar, the toolbar row changes height, the canvas box moves, and every
+  cached coordinate is now pointing somewhere else. `filter-tools.spec.ts` and
+  `shape-tools.spec.ts` re-measure inside their sampling helper for this reason.
+- **A layer's own bounds are not the document's.** A stroke commits a layer the
+  size of the stroke, so an adjustment that spreads, fills or blurs is only
+  observable from outside the shape if the layer is bigger than the gesture. Both
+  of those specs draw a corner-to-corner stroke first, because that is the only
+  cheap way to get a full-document layer (`GradientToolArea` also refuses to run
+  on the bedrock layer at all).
 
 2 tests are declared `test.skip`: the Photopea PSD round-trip (needs the external
 photopea.com) and one right-click flyout case.
@@ -330,8 +463,9 @@ never retried away.
 
 ```bash
 # e2e specs  (headless by default - see "Run it headless" above)
-npm run test:e2e                     # plain `playwright test`; CI=true is set by the workflow
-npm run test:e2e:headed               # opt in to a visible window; warns first, do not touch it
+npm run test:e2e                     # locked, own port, own output dir; forwards args after `--`
+npm run test:e2e:raw                 # bare `playwright test`, no lock, shared output dir (what CI runs)
+npm run test:e2e:headed              # opt in to a visible window; warns first, do not touch it
 npm run test:e2e:ui                  # Playwright UI mode
 npm run test:e2e:debug               # Playwright inspector
 npm run test:e2e:install             # one-time browser install
@@ -342,37 +476,39 @@ npm run test:e2e:unit:coverage
 
 # output
 npm run test:e2e:report              # open the last HTML report (opens a window, and blocks)
-npm run test:e2e:clean               # delete generated run output (test-results/)
+npm run test:e2e:clean               # delete generated run output (test-results/, playwright-report/)
 npm run test:e2e:update-baselines    # rewrite the visual-regression baselines
 ```
 
 `test:e2e:headed`, `test:e2e:ui` and `test:e2e:debug` all put a window on your screen,
 and `test:e2e:report` does too — it also serves until you close the tab, so an agent
 that runs it blocks. They are not interchangeable ways of reading a result: the
-`list` reporter on stdout, the screenshot under `test-results/` and the
-`test-results/results.json` written in CI are all readable without a window.
+`list` reporter on stdout, the screenshot under `test-results/runs/<run-id>/` and
+the `test-results/results.json` written in CI are all readable without a window.
 
 ### Local vs CI behaviour
 
-`npm run test:e2e` is deliberately a plain `playwright test` with **no** `CI=true`
-prefix. Setting `CI` locally would flip `forbidOnly` on (a stray `test.only`
-becomes a hard error), enable `retries: 2`, switch the reporter to `github`, and
-default `workers` to full parallelism. Locally you get `workers: 1` and a
-`list`/`html` reporter, which keeps a debug run readable.
+`npm run test:e2e` sets **no** `CI=true`. Setting it would flip `forbidOnly` on (a
+stray `test.only` becomes a hard error), enable `retries: 2`, switch the reporter
+to `github`, and default `workers` to full parallelism. Locally you get
+`workers: 1` and a `list`/`html` reporter, which keeps a debug run readable.
 
-**Both local and CI runs are headless.** The old `headless: !!process.env.CI` meant a
-local run was _headed_ — the trap this file opens on. It is now
+The one thing `CI` does change in the wrapper is that it skips the swarm lock and
+keeps the default :5173 and the shared `test-results/`, because a CI job owns its
+checkout outright. That is also why the `e2e` job in the workflow calls
+`npx playwright test` directly rather than going through `npm run test:e2e`.
+
+**Both local and CI runs are headless.** `playwright.config.ts` resolves
 `headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1'`, so the only way to get a
 window is to ask for one explicitly. `PLAYWRIGHT_ALLOW_HEADED=1` is that switch, and
-`test:e2e:headed` is the script wrapping it. The previous `PLAYWRIGHT_HEADLESS`
-variable is gone and setting it now does nothing, and so is `PLAYWRIGHT_HEADED` —
-renamed, because it is the name a model reaches for first when it wants a window, and
-that must not be sufficient on its own.
+`test:e2e:headed` is the script wrapping it. `PLAYWRIGHT_HEADLESS` is not read, and
+neither is `PLAYWRIGHT_HEADED` — the latter is the name a model reaches for first
+when it wants a window, and that must not be sufficient on its own.
 
 To use a browser other than Chrome, set `PLAYWRIGHT_CHANNEL` yourself:
 
 ```bash
-PLAYWRIGHT_CHANNEL=msedge npx playwright test
+PLAYWRIGHT_CHANNEL=msedge npm run test:e2e
 ```
 
 ## CI
@@ -401,21 +537,20 @@ every tracked `.ts`/`.tsx` is inside some project's `include`, unit tests, and t
 production build. `tsc -b` is what also builds `tsconfig.e2e.json`.
 
 `e2e` installs Chrome and runs the browser tests against the dev server started by
-`playwright.config.ts`. It is still marked `continue-on-error: true`, and that
-justification no longer holds: it was there because 2–4 of the 97 tests failed for
-documented reasons, and **all of them are now fixed**. The suite is green locally,
-headless, across repeated full runs.
+`playwright.config.ts`. It is a **blocking** gate. It was `continue-on-error`, on the
+stated grounds that a handful of specs failed for documented reasons; those are all
+fixed and the job went on reporting a state the suite no longer had.
 
-It is left as-is because making the job blocking is a workflow decision that belongs
-to the operator, not a consequence of this work. It is also the one thing left to do
-to make the job a real gate: flipping `continue-on-error` to `false`. Two things
-should be settled first, because a blocking job is only as good as what it compares
-against:
+Two things are still unmeasured, and neither is a reason to unblock the job — both
+concern configurations this job does not run in:
 
 - a headed run, to confirm the CDP fix is green outside the headless configuration
   this host can produce (see `AGENTS.md` — the operator runs it, not an agent);
 - whether the visual-regression baselines should be regenerated from a production
   build rather than a dev server, since the job runs against `npm run dev`.
 
-Until then the job reports the true state including the 2 declared skips. It runs
-the full suite with no `--grep-invert`, so the report is unfiltered.
+The job reports the true state including the 2 declared skips. It runs the full
+suite with no `--grep-invert`, so the report is unfiltered — but note that
+`playwright.config.ts` sets `retries: 2` when `CI` is set, so a green run here is a
+green run _after_ retries. A flake that only shows on the first attempt is
+invisible in this job by design.

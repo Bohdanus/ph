@@ -15,8 +15,9 @@ import {
 import { waitForCanvasPixels } from './helpers/canvas-redraw';
 import { hexToRgb, setForegroundColor } from './helpers/color-helpers';
 import { cssPointToImage, imagePointToCss } from './helpers/screenshot-scale';
-import { clickToolButton, openToolFlyout, selectFromFlyout, verifyPrimaryTool } from './helpers/toolbar-helpers';
+import { clickToolButton, openToolFlyout, resolveToolTile, selectFromFlyout } from './helpers/toolbar-helpers';
 
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 /**
  * CONTROL CONTRACT for every bar this spec drives. There are no `data-testid`s in these
  * options bars, by repo convention: each control is a `<label htmlFor>` wrapping its own input,
@@ -106,17 +107,43 @@ async function slabClip(page: Page): Promise<Required<ClipOptions>> {
   return { x: box.x + 120, y: box.y + LINE_Y - 70, width: 360, height: 140 };
 }
 
+/** The name the seeded base layer carries in the Layers panel: `layer-utils.ts:160,181`. */
+const SEEDED_LAYER = 'Blank 1';
+
 /**
- * Opens the app and waits for the seeded blank document to be composed.
+ * Opens the app and waits for the seeded blank document to exist AND to be composed.
  *
  * `toBeVisible()` alone is not readiness: the base layer is created from an effect, so the canvas
  * element is on screen before it holds a pixel. The poll reads the composited canvas instead, and
  * it succeeds only once an opaque pixel is there to read.
+ *
+ * **The pixel poll alone is not readiness either, and this is the defect it hid.** The store
+ * starts with `documentId: 'uninitialized'`, `activeLayerId: null` and an empty history
+ * (`StoreContext.tsx:307,315,317`); the document only exists once the seed's `REPLACE_DOCUMENT`
+ * lands (`useApp.ts:77-80` -> `useLayer.ts:214-230` -> `useLayer.ts:174-199`). `readPixel` cannot
+ * tell that state from a ready one: it calls `getColorAtPoint(image, x, y, 0)` with no
+ * `ignoreNearWhite`, and that function returns `null` only for a point outside the capture or for
+ * a fully transparent one (`canvas-helpers.ts:718`). A WHITE pixel therefore satisfies it, so
+ * the poll is a test that a screenshot is non-empty. Measured on this spec, it was satisfied on its
+ * FIRST attempt on 20 of 20 runs, 42-154 ms after `goto` resolved.
+ *
+ * So the wait named the seeded base layer and never looked at it. The seeded layer is read by name
+ * out of the Layers panel instead, which is a fact about the document rather than about a capture:
+ * a layer row that is in the panel is a layer the store published. The locator is the one
+ * `e2e/layers.spec.ts:27-28` already uses, because this panel publishes no `data-testid`.
+ *
+ * The pixel poll is KEPT, not replaced. The row proves the document exists; the capture proves it
+ * is painted. Two waits for two facts, and the second still cannot be satisfied by a page that has
+ * not composited.
  */
 async function openWorkspace(page: Page): Promise<void> {
   await page.goto('/');
   const canvas = getWorkspaceCanvas(page);
   await expect(canvas).toBeVisible();
+  await expect(
+    page.getByTitle('Drag to reorder').filter({ hasText: SEEDED_LAYER }),
+    'the seeded Blank 1 base layer to be in the document'
+  ).toBeVisible();
   await expect
     .poll(async () => readPixel(page, { x: 400, y: 300 }), { message: 'the blank base layer to be composed' })
     .not.toBeNull();
@@ -201,13 +228,24 @@ async function swatchDelta(page: Page, expected: Rgb): Promise<number> {
  * `from` is the tile that currently owns the group, because the tile's `data-testid` follows its
  * CURRENT primary tool (`SidebarLeft.tsx:238`). It is `brush` until one of the family is chosen,
  * and that chosen tool's own name afterwards: the flyout is only reachable again from whichever
- * tile currently leads it. The assertion is made against the tool just selected for the same
- * reason.
+ * tile currently leads it.
+ *
+ * At 1280x720 there is no such tile: the rail folds a SUFFIX, so the whole brush group — the
+ * fifth of sixteen — is in the three-dots tile, and this helper's `openToolFlyout` reaches it
+ * through the collapse branch rather than through the long press. The selection is then proved on
+ * the tile that REPRESENTS the tool, which for a collapsed tool is the three-dots tile and nothing
+ * else. That is also why `verifyPrimaryTool` cannot be used here: it asserts a tile's ACCESSIBLE
+ * NAME, and the tile standing for a collapsed tool is the three-dots tile, whose name is
+ * "More Tools" and never the tool's label. `verifyPrimaryTool` now says exactly that when a tool
+ * has no tile of its own, instead of failing on an empty text content. The eyedropper tests below
+ * confirm selection through the eyedropper's own options bar for the same reason: it is the fifth
+ * of sixteen rows, so the 1280x720 suite viewport folds it away too.
  */
 async function selectBrushFamilyTool(page: Page, from: string, toolName: string, label: string): Promise<void> {
   await openToolFlyout(page, from);
   await selectFromFlyout(page, { toolName, label });
-  await verifyPrimaryTool(page, toolName, label);
+  const tile = await resolveToolTile(page, toolName);
+  await expect(tile, `${label} must be the tool the rail reports as selected`).toHaveAttribute('aria-pressed', 'true');
 }
 
 /**
@@ -230,6 +268,29 @@ async function drawSlab(
   await expect(sizeSlider).toHaveValue(String(size));
   await page.getByRole('slider', { name: /^Opacity/ }).fill('1');
   await drawLine(page, await canvasBox(page), LINE_START_X, LINE_Y, LINE_END_X, LINE_Y, { steps: 8 });
+
+  // The commit is asserted BEFORE the pixels, and that order is the whole point of it.
+  //
+  // The gesture commits from `handlePointerUp` and nothing else: `DrawToolArea.tsx:110-143` is the
+  // only writer, and it is reached only when `isPointerUpValid` agrees, which refuses on a
+  // non-primary button or a foreign pointer id (`usePointerPosition.ts:149,151`). Every earlier
+  // action in this function reports success either way — the sliders hold the values that were
+  // asked for, the mouse moved, the release was dispatched — so a refused gesture is
+  // indistinguishable from a slow one, and it surfaces as the bare
+  // `Canvas did not render the #cc0000 line within 10000ms` from `canvas-helpers.ts:536` after
+  // polling for ten seconds against a canvas that was never going to change.
+  //
+  // A committed stroke is a history entry, and a seeded document has exactly one entry at cursor 0,
+  // so `undo` is disabled before the draw and enabled after it. The eyedropper test below already
+  // reads that same button to prove the INVERSE — that a click added no entry (`:643-645`) — so this
+  // is the repo's own instrument, used for the other half of the fact. With this assertion first, a
+  // dropped commit names itself in the default expect timeout; with only the pixel poll, it can
+  // only ever report that nothing appeared.
+  await expect(
+    page.getByTestId('undo-button'),
+    `the ${color} stroke to commit one history entry; a gesture the pointer validators refused leaves no entry and no pixels`
+  ).toBeEnabled();
+
   await waitForCanvasPixels(page, await slabClip(page), wait, { description: `the ${color} line` });
 }
 
@@ -270,7 +331,7 @@ async function measureErasedWidth(page: Page, centreX: number): Promise<number |
 test.describe('Eraser, fill tools and eyedropper', () => {
   // eraser: a stroke must actually cut the pixels out of the layer it is editing
   test('the eraser cuts transparency out of the active layer', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, BLACK, SLIM, hasDarkPixels);
 
@@ -292,7 +353,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // eraser: one history state per stroke, not per pointer event
   test('the eraser stroke is one history entry', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, BLACK, SLIM, hasDarkPixels);
 
@@ -364,7 +425,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // eraser: Size must change the rendered tip, not only the readout
   test('the eraser size control changes the width of the erased region', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, BLACK, SLAB, hasDarkPixels);
 
@@ -402,7 +463,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // eraser: Opacity must reach the composited pixels, not only the readout
   test('the eraser opacity control reaches the pixels', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, BLACK, SLAB, hasDarkPixels);
 
@@ -436,7 +497,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // paint bucket: Contiguous must bound the fill to the clicked region
   test('the paint bucket fills a contiguous region and not its neighbour', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, RED, SLIM, hasRedPixels);
 
@@ -485,7 +546,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // paint bucket: Tolerance must decide which pixels are inside the region
   test('the paint bucket tolerance control changes which pixels are filled', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     // A 100px slab: `pointsBoundingPos` pads the layer by a full lineWidth on every side, so the
     // layer's corners stay transparent where the round cap never reached.
@@ -528,7 +589,7 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // magic eraser: same gesture and same region as the bucket, opposite output
   test('the magic eraser erases the clicked region and leaves a neighbour alone', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, RED, SLIM, hasRedPixels);
 
@@ -558,13 +619,21 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // eyedropper: sets the foreground and records no history state at all
   test('the eyedropper sets the foreground colour and records no history state', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, RED, SLAB, hasRedPixels);
 
-    // Its own single-tool tile, so no flyout is involved.
+    // The eyedropper is a single-tool group, so there is no flyout to open — but at the suite's
+    // 1280x720 it is also the FIFTH row, and the collapse is a suffix, so it has no tile of its
+    // own either. The comment that used to claim otherwise was written when the rail defaulted to
+    // two columns and showed seven groups. Selection is therefore confirmed through the tool's own
+    // options bar, which is the one thing in the document driven by `toolName` itself; the tile
+    // that stands for the eyedropper is the three-dots tile, and its own identity is "More Tools".
     await clickToolButton(page, 'eyedropper');
-    await verifyPrimaryTool(page, 'eyedropper', 'Eyedropper Tool');
+    await expect(
+      page.getByRole('combobox', { name: 'Sample Size' }),
+      'the eyedropper is the active tool'
+    ).toBeVisible();
 
     const target = (await readPixel(page, { x: 300, y: LINE_Y }))!;
     expect(target.red, 'the sample target must be the red the Draw tool laid down').toBeGreaterThan(180);
@@ -601,13 +670,15 @@ test.describe('Eraser, fill tools and eyedropper', () => {
 
   // eyedropper: Sample Size must average the block, not copy the centre pixel
   test('the eyedropper sample size averages the clicked block', async ({ page }) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
     await openWorkspace(page);
     await drawSlab(page, RED, SLAB, hasRedPixels);
 
+    // Selection is confirmed by the combobox below, which is the eyedropper's own bar; the tile
+    // it stands on is the three-dots tile at this window, for the reason given in the sibling test.
     await clickToolButton(page, 'eyedropper');
-    await verifyPrimaryTool(page, 'eyedropper', 'Eyedropper Tool');
     const sampleSize = page.getByRole('combobox', { name: 'Sample Size' });
+    await expect(sampleSize, 'the eyedropper is the active tool').toBeVisible();
     await expect(sampleSize).toHaveValue('1');
 
     // Find the slab's top edge from the capture itself rather than assuming where the line

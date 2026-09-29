@@ -38,6 +38,7 @@ const storeStateMock = vi.hoisted(() => ({
   activeSelectionId: null as string | null,
   branchRevision: 0,
   hasUnsavedChanges: false,
+  clearPreviewLayers: vi.fn(),
 }));
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -408,8 +409,24 @@ describe('useHistory undo replay', () => {
       const visibleContext = contextFor(state.canvasRef.current);
       expect(visibleContext?.clearRect).toHaveBeenCalledWith(0, 0, 40, 20);
       expect(visibleContext?.drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0);
-      expect(vi.mocked(createImageBitmap).mock.calls.every(([source]) => source != null)).toBe(true);
-      if (actionName === MERGE_ACTION) expect(Object.keys(state.layers)).toEqual(['image']);
+      // An image source is replayed BY REFERENCE: `createLayerSource` assigns
+      // `layer.bitmap = source.bitmap` and never builds a canvas for it
+      // (`layer-utils.ts:203-204`), and no replay path materializes one. So the
+      // replayed raster layer carries the imported bitmap and no `tmpCanvas` at all,
+      // which is what "without saving null canvases" claims. The bedrock blank layer
+      // is the control that makes it a real assertion rather than a vacuous one: it
+      // DOES get a cache, sized from its own source's 128x64.
+      expect(state.layers.image.tmpCanvas).toBeNull();
+      if (actionName === MERGE_ACTION) {
+        expect(Object.keys(state.layers)).toEqual(['image']);
+      } else {
+        const bedrockCache = state.layers['layer-1'].tmpCanvas;
+        expect(bedrockCache).not.toBeNull();
+        expect(bedrockCache && { width: bedrockCache.width, height: bedrockCache.height }).toEqual({
+          width: 128,
+          height: 64,
+        });
+      }
     }
   );
 
@@ -440,6 +457,28 @@ describe('useHistory undo replay', () => {
     expect(state.layers.image.pos.x).toBe(12);
   });
 
+  it('leaves the store completely untouched when toggleDisabled names an entry the timeline does not hold', () => {
+    const { state } = setup();
+    const entries = state.history;
+    const branchRevision = state.branchRevision;
+    const historyIndex = state.historyIndex;
+    const layers = state.layers;
+
+    useHistory().toggleDisabled('not-in-the-timeline');
+
+    // `updateHistoryTimeline` returns the SAME timeline object when no entry matches
+    // (`history-timeline.ts:25`), and `useHistory.ts:154` short-circuits on that
+    // reference identity. A deep compare there would look equivalent while letting
+    // an unknown id fall through to `resetHistoryTo`, which replays the document and
+    // repaints the canvas in response to a request that names nothing.
+    expect(dispatchMock).not.toHaveBeenCalled();
+    expect(rendererControl.drawCalls).toEqual([]);
+    expect(state.history).toBe(entries);
+    expect(state.branchRevision).toBe(branchRevision);
+    expect(state.historyIndex).toBe(historyIndex);
+    expect(state.layers).toBe(layers);
+  });
+
   it('skips dependent edits when creation is disabled and restores them when re-enabled', () => {
     const history = createHistory('layerSource');
     history.push(
@@ -456,8 +495,12 @@ describe('useHistory undo replay', () => {
     expect(state.activeLayerId).toBeNull();
     expect(state.historyIndex).toBe(4);
     expect(dispatchMock).toHaveBeenCalledTimes(1);
+    expect(state.history[0]).toMatchObject({ id: 'h-1', actionName: NEW_LAYER_ACTION, disabled: true });
+    expect(state.branchRevision).toBe(1);
     useHistory().toggleDisabled('h-1');
     expect(state.layers['layer-1']).toMatchObject({ name: 'Layer 1', visible: true });
+    expect(state.history[0].disabled).toBe(false);
+    expect(state.branchRevision).toBe(2);
   });
 
   it('selects a surviving layer when redoing deletion', () => {
@@ -527,12 +570,12 @@ describe('useHistory undo replay', () => {
     expect(dispatchMock).not.toHaveBeenCalled();
   });
 
-  it('marks navigation dirty without mutating the old deleted-layer record', () => {
+  it('publishes navigation without mutating the old deleted-layer record', () => {
     const { state } = setup();
     const deletedLayers = state.deletedLayers;
     useHistory().undo();
+    expect(state.deletedLayers).not.toBe(deletedLayers);
     expect(deletedLayers).toEqual({});
-    expect(state.hasUnsavedChanges).toBe(true);
   });
 
   it('preserves PSD baseline metadata through tool edits and removal undo/redo', async () => {
@@ -669,7 +712,6 @@ describe('useHistory undo replay', () => {
       expect(state.activeLayerId).toBeNull();
       expect(state.totalSize).toEqual({ width: 128, height: 64 });
       expect(state.documentFrame).toBe(currentFrame);
-      expect(state.hasUnsavedChanges).toBe(false);
     });
 
     it('fails closed on redo as well when the staged presentation cannot be published', () => {
@@ -699,7 +741,6 @@ describe('useHistory undo replay', () => {
       expect(dispatchMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'SET_DURABLE_STATUS' }));
       expect(state.layers['layer-1']).toMatchObject({ id: 'layer-1', visible: true });
       expect(state.historyIndex).toBe(0);
-      expect(state.hasUnsavedChanges).toBe(true);
     });
 
     it('treats a missing mounted canvas as nothing to publish and still applies the replay', () => {
@@ -772,7 +813,6 @@ describe('useHistory undo replay', () => {
       expect(consoleError).toHaveBeenCalledWith('History replay is unavailable', failure);
       expect(state.layers).toEqual({});
       expect(state.historyIndex).toBe(1);
-      expect(state.hasUnsavedChanges).toBe(false);
     });
 
     it('stringifies a non-Error replay failure into the diagnostic message', () => {
@@ -815,6 +855,42 @@ describe('useHistory undo replay', () => {
       });
       expect(String(diagnostic?.message)).toContain('actionName');
       expect(consoleError).toHaveBeenCalledWith('History replay is unavailable', expect.any(TypeError));
+    });
+  });
+
+  describe('preview clearing on navigation', () => {
+    const clearPreviewLayers = () => storeStateMock.clearPreviewLayers;
+
+    it('drops the preview exactly once per undo and once per redo', () => {
+      setup();
+
+      useHistory().undo();
+      expect(clearPreviewLayers()).toHaveBeenCalledTimes(1);
+
+      useHistory().redo();
+      expect(clearPreviewLayers()).toHaveBeenCalledTimes(2);
+    });
+
+    it('drops the preview even when the navigation goes on to fail closed', () => {
+      setup();
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      rendererControl.result = false;
+
+      useHistory().undo();
+
+      // The clear sits ahead of the replay, so an unpublished replay cannot leave a
+      // stale preview standing in for the document it failed to draw.
+      expect(dispatchedTypes()).toEqual(['SET_DURABLE_STATUS']);
+      expect(clearPreviewLayers()).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not drop the preview for a navigation it refuses', () => {
+      setup();
+      const historyApi = useHistory();
+
+      for (const index of [-1, 2, 0.5, NaN]) historyApi.resetHistoryTo(index);
+
+      expect(clearPreviewLayers()).not.toHaveBeenCalled();
     });
   });
 });

@@ -158,19 +158,19 @@ The trap is that this _mostly works_: Node walks up to the ancestor checkout, so
 
 ### 0.5 The Playwright port
 
-Every worktree's dev server wants `:5173`, so `npm run test:e2e` can attach to a server **another worktree started** and test that checkout — "my change did nothing" is this, not a cache.
+Every worktree's dev server wants `:5173`, so a bare `npx playwright test` can attach to a server **another worktree started** and test that checkout — "my change did nothing" is this, not a cache. `npm run test:e2e` no longer can: it runs `scripts/e2e-run.mjs`, which takes a swarm lock so one suite runs at a time across all worktrees, allocates a free port per run, and gives the run its own output directory. Reuse is opt-in.
 
 ```ts
-// playwright.config.ts:21-22
+// playwright.config.ts:29-30
 const port = process.env.PLAYWRIGHT_PORT ?? '5173';
 const baseUrl = `http://localhost:${port}`;
 
-// playwright.config.ts:118-119
+// playwright.config.ts:133-134
 reuseExistingServer:
-  process.env.CI || process.env.PLAYWRIGHT_PORT ? false : process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER !== 'false',
+  !process.env.CI && process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER === '1' && !process.env.PLAYWRIGHT_PORT,
 ```
 
-Read the condition left to right. `PLAYWRIGHT_PORT` does **two** things: it moves the port, and because it is set it also forces `reuseExistingServer: false`. `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` does only the second, leaving the port at 5173, where a stale server turns the `--strictPort` at `playwright.config.ts:111` into a startup failure. **Prefer `PLAYWRIGHT_PORT`** — one variable, both effects. Local runs are also sequential — `workers: 1` outside CI (`playwright.config.ts:42`) — so two local runs cannot fight over one app instance.
+Read the condition left to right. Reuse is **off** unless it is asked for by name: `PLAYWRIGHT_REUSE_EXISTING_SERVER=1` is now the only thing that attaches to a server this run did not start, and `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` does nothing at all — it is the spelling from before this change, and setting it leaves you exactly where you were. `PLAYWRIGHT_PORT` sets the port explicitly and also pins reuse off, and `--strictPort` at `playwright.config.ts:119` turns an occupied port into a hard failure rather than a silent hop. Prefer the wrapper: it picks a free port for you, and the port the run used is printed before the suite starts. Local runs are also sequential — `workers: 1` outside CI (`playwright.config.ts:50`) — so two runs in one process cannot fight over one app instance.
 
 ```bash
 cd /Users/bkalynovskyi/ph/.kilo/worktrees/<name>
@@ -1160,7 +1160,7 @@ a `<select>` with no suffix is just `Mode`. Three consequences:
 
 - **Exact-name locators are brittle.** A spec asking for `'Size 10px'` passes until
   someone moves the slider. Every in-repo spec uses a prefix regex or a bare label for
-  this reason: `e2e/levels.spec.ts:88` is
+  this reason: `e2e/levels.spec.ts:103` is
   `page.getByRole('slider', { name: /Brightness/ })`, `e2e/pen-types.spec.ts:85` is
   `page.getByRole('combobox', { name: 'Pen Type' })` — bare, because that select has no
   suffix. Unit tests do the same: `MagicWand.test.tsx:153-154` is
@@ -1178,21 +1178,21 @@ Photoshop's display label, the control type, Photoshop's default and range, and 
 verdict for **this** app. This table is the one to read before promising a control to
 anyone.
 
-| Control             | Type                    | PS default  | PS range                          | Status here                                                                     | Evidence                                                                                                                                                                                                                                    |
-| ------------------- | ----------------------- | ----------- | --------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Brush Preset picker | thumbnail popup         | last used   | n/a                               | `absent-in-ph`                                                                  | named as a placeholder string only, `toolbarPlaceholderConfig.ts:2`; no preset registry in `src/tools/`                                                                                                                                     |
-| Size                | slider, integer px      | 30 px       | 1-5000                            | `plumbed` (ceiling 500)                                                         | `src/tools/draw.ts:54` `ctx.lineWidth = lineWidth`; spray radius `src/util/draw.ts:155`; bar `Draw.tsx:134-152` uses 0.5-500                                                                                                                |
-| Mode                | dropdown of blend modes | Normal      | 27 modes                          | `needs-engine`                                                                  | `Layer.blendMode` exists and is honoured at `src/contexts/layer-renderer.ts:101`, but `createLayerSource` hardcodes `'source-over'` (`src/contexts/layer-utils.ts:173`) and no tool arg carries a blend field                               |
-| Opacity             | slider, percent         | 100%        | 0-100                             | `plumbed`                                                                       | `src/tools/draw.ts:57` `ctx.globalAlpha = alpha`; spray stop `src/util/draw.ts:153`; bars `Draw.tsx:196-214`, `Levels.tsx:100-117`                                                                                                          |
-| Flow                | slider, percent         | 100%        | 1-100                             | `needs-engine`                                                                  | `setupDrawCtx` sets `globalAlpha` once per stroke (`src/tools/draw.ts:42-63`, called at `:71`); per-dab accumulation needs a stamp loop                                                                                                     |
-| Feather             | slider, px              | 0 px        | 0-250                             | `plumbed` for `feather-magnetic-lasso`                                          | `featherRadius` default 12 (`src/tools/settings.ts:100`) → `src/util/selection.ts:633-635` `featheredBoundsPadding(antiAlias, featherRadius)`                                                                                               |
-| Tolerance           | slider, integer         | 32          | 0-255                             | `plumbed` for `magic-wand`                                                      | `src/components/Main/MagicWandToolArea.tsx:57,75` → `src/util/magicWand.ts:332` `getToleranceDistance(options.tolerance ?? 0)`                                                                                                              |
-| Anti-alias          | checkbox                | on          | on/off                            | `plumbed` for `feather-magnetic-lasso`                                          | `antiAlias: true` (`src/tools/settings.ts:106`) → `src/util/selection.ts:581,612`                                                                                                                                                           |
-| Smoothing           | slider, percent         | 10% (brush) | 0-100                             | `plumbed` for `magic-wand` / `feather-magnetic-lasso`; `absent-in-ph` for brush | magic-wand as `Smooth` px (`MagicWand.tsx:71-86` → `src/util/magicWand.ts:350` `simplifyClosedPath`); lasso as px (`src/components/Main/FeatherMagneticLassoToolArea.tsx:380`); `DrawToolArgs` has no such field (`src/tools/draw.ts:7-32`) |
-| Style / Ratio       | dropdown + W/H fields   | Normal      | Normal / Fixed Ratio / Fixed Size | `plumbed` for `crop` only                                                       | `CropToolArgs.aspectRatio` default `null` (`src/tools/settings.ts:54`); `RectangularSelectionToolArgs` is `{ rect?, toolName }` only (`src/tools/rectangularSelection.ts:4-7`) and its bar has no style control                             |
-| Dodge / Exposure    | slider, stops           | 0.00        | ±20.00                            | `absent-in-ph`                                                                  | no dodge tool is registered; `toolbar-mapping.ts:37-95` has no slot for Photoshop's 14 (Dodge/Burn/Sponge)                                                                                                                                  |
-| Spacing             | slider, percent         | 25%         | 1-200                             | `needs-engine`                                                                  | `drawPen` issues one `beginPath` + one `stroke()` per stroke (`src/util/draw.ts:132-145`); point density along a single path is not a spacing interval                                                                                      |
-| Hardness            | slider, percent         | 100%        | 0-100                             | `needs-engine`                                                                  | the edge is whatever `ctx.stroke()` produces; `setupDrawCtx` sets no gradient or shadow (`src/tools/draw.ts:42-63`)                                                                                                                         |
+| Control             | Type                    | PS default  | PS range                          | Status here                                                                     | Evidence                                                                                                                                                                                                                                                                                                    |
+| ------------------- | ----------------------- | ----------- | --------------------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Brush Preset picker | thumbnail popup         | last used   | n/a                               | `absent-in-ph`                                                                  | named as a placeholder string only, `toolbarPlaceholderConfig.ts:2`; no preset registry in `src/tools/`                                                                                                                                                                                                     |
+| Size                | slider, integer px      | 30 px       | 1-5000                            | `plumbed` (ceiling 500)                                                         | `src/tools/draw.ts:54` `ctx.lineWidth = lineWidth`; spray radius `src/util/draw.ts:155`; bar `Draw.tsx:134-152` uses 0.5-500                                                                                                                                                                                |
+| Mode                | dropdown of blend modes | Normal      | 27 modes                          | `needs-engine`                                                                  | `Layer.blendMode` exists and is honoured at `src/contexts/layer-renderer.ts:101`, but `createLayerSource` hardcodes `'source-over'` (`src/contexts/layer-utils.ts:173`) and no tool arg carries a blend field                                                                                               |
+| Opacity             | slider, percent         | 100%        | 0-100                             | `plumbed`                                                                       | `src/tools/draw.ts:57` `ctx.globalAlpha = alpha`; spray stop `src/util/draw.ts:153`; bars `Draw.tsx:196-214`, `Levels.tsx:100-117`                                                                                                                                                                          |
+| Flow                | slider, percent         | 100%        | 1-100                             | `needs-engine`                                                                  | `setupDrawCtx` sets `globalAlpha` once per stroke (`src/tools/draw.ts:42-63`, called at `:71`); per-dab accumulation needs a stamp loop                                                                                                                                                                     |
+| Feather             | slider, px              | 0 px        | 0-250                             | `plumbed` for `feather-magnetic-lasso`                                          | `featherRadius` default 12 (`src/tools/settings.ts:100`) → `src/util/selection.ts:633-635` `featheredBoundsPadding(antiAlias, featherRadius)`                                                                                                                                                               |
+| Tolerance           | slider, integer         | 32          | 0-255                             | `plumbed` for `magic-wand`                                                      | `src/components/Main/MagicWandToolArea.tsx:57,75` → `src/util/magicWand.ts:332` `getToleranceDistance(options.tolerance ?? 0)`                                                                                                                                                                              |
+| Anti-alias          | checkbox                | on          | on/off                            | `plumbed` for `feather-magnetic-lasso`                                          | `antiAlias: true` (`src/tools/settings.ts:106`) → `src/util/selection.ts:581,612`                                                                                                                                                                                                                           |
+| Smoothing           | slider, percent         | 10% (brush) | 0-100                             | `plumbed` for `magic-wand` / `feather-magnetic-lasso`; `absent-in-ph` for brush | magic-wand as `Smooth` px (`MagicWand.tsx:71-86` → `src/util/magicWand.ts:350` `simplifyClosedPath`); lasso as px (`src/components/Main/FeatherMagneticLassoToolArea.tsx:380`); `DrawToolArgs` has no such field (`src/tools/draw.ts:7-32`)                                                                 |
+| Style / Ratio       | dropdown + W/H fields   | Normal      | Normal / Fixed Ratio / Fixed Size | `plumbed` for `crop` only                                                       | `CropToolArgs.aspectRatio` default `null` (`src/tools/settings.ts:54`); `RectangularSelectionToolArgs` is `{ rect?, toolName }` only (`src/tools/rectangularSelection.ts:4-7`) and its bar has no style control                                                                                             |
+| Dodge / Exposure    | slider, stops           | 0.00        | ±20.00                            | `plumbed`                                                                       | `dodge` and `burn` are registered (`src/contexts/tool-types.ts:47-48`) and share one `Tonal` options panel (`src/tools/toolsMap.ts:104-105`); the `exposure` bounds come from the tool module (`src/tools/dodgeBurn.ts`) and the tip bounds from the brush engine, per `Tonal/__tests__/Tonal.test.tsx:174` |
+| Spacing             | slider, percent         | 25%         | 1-200                             | `needs-engine`                                                                  | `drawPen` issues one `beginPath` + one `stroke()` per stroke (`src/util/draw.ts:132-145`); point density along a single path is not a spacing interval                                                                                                                                                      |
+| Hardness            | slider, percent         | 100%        | 0-100                             | `needs-engine`                                                                  | the edge is whatever `ctx.stroke()` produces; `setupDrawCtx` sets no gradient or shadow (`src/tools/draw.ts:42-63`)                                                                                                                                                                                         |
 
 Read the `needs-engine` rows as work, not as blockers. `Mode` is the cheapest of the
 three: the field, the renderer and the guard all exist, and only the plumbing from a
@@ -2011,8 +2011,8 @@ recorded **through the legacy `draw` tool**: `e2e/export/helpers.ts:108-109` in
 `drawLine(page, box, LINE_START_X, LINE_START_Y, LINE_END_X, LINE_END_Y)`, and that is the
 fixture for every export baseline. Seventeen committed PNGs live in
 `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/`. They are compared, not
-regenerated: `e2e/export/visual-regression.spec.ts:73-78` re-records **only** under an
-explicit `--update-snapshots`, and the comment at `:67-72` documents that a bare truthiness
+regenerated: `e2e/export/visual-regression.spec.ts:88-99` re-records **only** under
+`--update-snapshots=all`, and the comment at `:88-93` documents that a bare truthiness
 check used to rewrite the baseline on every run and make the oracle disposable.
 
 So **any change to the legacy raster path invalidates a committed oracle**, and `AGENTS.md`
@@ -2348,7 +2348,7 @@ cached anywhere else makes a second replay disagree with the first.
 
 **3. The legacy `draw` raster path must render byte-for-byte unchanged.** The export baselines in
 `e2e/export/visual-regression.spec.ts-snapshots/export-baselines/` were recorded against the current single-path call pattern, and
-re-recording is gated on `testInfo.config.updateSnapshots === 'all'` (`e2e/export/visual-regression.spec.ts:73`). `drawPen` is the pattern
+re-recording is gated on `testInfo.config.updateSnapshots === 'all'` (`e2e/export/visual-regression.spec.ts:94`). `drawPen` is the pattern
 they encode:
 
 ```ts
@@ -2928,7 +2928,7 @@ and it is `max-md:hidden`, so the default 1280x720 viewport is fine. The workspa
 ONLY by `getWorkspaceCanvas(page)` — never `page.locator('canvas')`, **because the options bar
 mounts its own preview canvas and a positional lookup would grab that one.** The repo's convention
 for options-bar controls is a role + accessible-name locator, exactly as
-`e2e/levels.spec.ts:55-57,88-91` does: **match the LABEL PART ONLY with a regex, because the
+`e2e/levels.spec.ts:71-75,103-104` does: **match the LABEL PART ONLY with a regex, because the
 accessible name carries a live value suffix that changes as you drag.** So use
 `page.getByRole('slider', { name: /^<Label>/ })` and `page.getByRole('combobox', { name: '<Label>' })`.
 
@@ -3061,8 +3061,10 @@ timeout error prints `Canvas did not render <description> within 10000ms`. `wait
 light stroke is **invisible to `hasDarkPixels`**, which times out on a stroke that landed — write a
 `CanvasPixelPredicate` polling for "no longer near-white" at the clip centre via
 `getColorAtPoint(..., { ignoreNearWhite: true })`; and **re-measure the canvas box after the panel
-opens**, because opening an options bar reflows the workspace and a box measured before the switch
-can clip empty canvas (`e2e/levels.spec.ts:93-96`).
+opens, and re-take the pre-change reading through that same rect**, because opening an options bar
+reflows the workspace and a box measured before the switch describes a different region of the
+page — so two readings through two rects are not a comparison at all
+(`e2e/levels.spec.ts:106-124`).
 
 **Clip and coordinate helpers.** `takeLineScreenshot(page, box, name, testInfo, clip?)`
 (`canvas-helpers.ts:191`) is the `page.screenshot` path; `captureCanvasScreenshot(page, box,
@@ -3098,7 +3100,7 @@ failure is a new defect, never a known one. Characterised, not listed:
    `boundingBox()` raised a strict-mode violation; and the index was wrong anyway, because the Draw
    toolbar mounts a preview canvas ahead of the workspace and unmounting it on a tool switch shifted
    the index onto a hidden overlay (`canvas-helpers.ts:174-186`, `e2e/README.md:315-319`). That was
-   `e2e/levels.spec.ts:64,109` before the test id landed (`e2e/OPEN_PROBLEMS.md:48-52`).
+   `e2e/levels.spec.ts:82,146` before the test id landed (`e2e/OPEN_PROBLEMS.md:48-52`).
    **`getWorkspaceCanvas` is deliberately a single-selector locator so it can only ever match one
    element.** A tool whose own bar mounts a preview canvas makes the same trap reachable through a
    _new_ path, which is why the brief names it explicitly.
@@ -3121,10 +3123,13 @@ failure is a new defect, never a known one. Characterised, not listed:
    single `.first()` assertion is simply wrong for that key. This entry is filed under
    `## Fixed — Enter did not reliably close the flyout` (`:257`), not among the open latents.
 
-5. **The port race, and what a run can silently attach to.** `playwright.config.ts:21-22` takes the
-   port from `PLAYWRIGHT_PORT`, defaulting to 5173; `:118-119` makes `reuseExistingServer` opt-out
-   and turns it off entirely when a port is set, so an explicit `PLAYWRIGHT_PORT` is a request to
-   test _this_ checkout. Without it a run attaches to whatever answers on :5173 — and where every
+5. **The port race, and what a run can silently attach to.** `playwright.config.ts:29-30` takes the
+   port from `PLAYWRIGHT_PORT`, defaulting to 5173; `:133-134` makes `reuseExistingServer` opt-**in**
+   (`=1`, with `CI` and an explicit `PLAYWRIGHT_PORT` both forcing it off), so an explicit
+   `PLAYWRIGHT_PORT` is a request to test _this_ checkout. `npm run test:e2e` allocates one per run and
+   serializes suites with the swarm lock, so the remaining exposure is a bare `npx playwright test` —
+   which now FAILS loudly on an occupied port instead of attaching. Without a port a run could attach to
+   whatever answers on :5173 — and where every
    worktree runs `npm run dev` on the same port, that is frequently a **sibling worktree's server**.
    The failure it produced was a strict-mode violation for a test id that existed only in the
    sibling's uncommitted tree, and it pointed at a locator bug in this worktree's helpers. The
@@ -3151,20 +3156,35 @@ files; 7 are read, one per format with `comparePixels: true` (`drawing.png.png`,
 line-ending normalisation can never rewrite the committed pixels.
 
 **A green run means the pixels matched** — only because the record-vs-compare branch is gated on
-`testInfo.config.updateSnapshots === 'all'` (`e2e/export/visual-regression.spec.ts:73`). It used to
+`testInfo.config.updateSnapshots === 'all'`
+(`e2e/export/visual-regression.spec.ts:88-99`). It used to
 be `if (testInfo.config.updateSnapshots)`, and Playwright's default for that option is the string
 `'missing'`, which is **truthy** — so every run re-recorded the committed baseline and returned
 before `compareScreenshots`, and the comparison below it was unreachable. The 7 formats were a
 no-op reporting success, invisible because re-encoding the same export produced byte-identical
-files (`visual-regression.spec.ts:67-72`, `e2e/MIGRATION-TODO.md:52-60`). Budgets are `threshold:
-0.01` and `maxDiffPixels: 100` at the call site (`:86-89`), defaulting to `DEFAULT_THRESHOLD = 0.2` /
+files (`visual-regression.spec.ts:88-99`, `e2e/MIGRATION-TODO.md:52-60`). Budgets are `threshold:
+0.01` and `maxDiffPixels: 100` at the call site (`:145-148`), defaulting to `DEFAULT_THRESHOLD = 0.2` /
 `DEFAULT_MAX_DIFF_PIXELS = 100` / `DEFAULT_MAX_DIFF_PIXEL_RATIO = 0.01`
 (`e2e/helpers/image-comparison.ts:27-29`); read the call site rather than assuming a budget.
 
-**Re-recording requires an explicit `--update-snapshots` (`npm run test:e2e:update-baselines`) and
-is a recording decision that belongs to the operator.** A missing baseline
-attaches the export and then throws on purpose: the comparison was never made
-(`visual-regression.spec.ts:80-84`).
+**100 pixels is a tripwire, not a tolerance, and the argument is at the call site.** It is 0.021% of
+an 800x600 baseline, four of the seven compared formats are lossy (JPEG, WebP, GIF, AVIF), and the
+browser's encoder — not the app — decides their last digits. A Chrome, libjpeg or libavif bump is
+therefore a hard red on a blocking gate; **widening either number is the wrong repair**, because at
+`maxDiffPixels: 4800` the suite passes a visibly different picture. The Chrome version is **not**
+pinned in `ci.yml` on purpose: nothing in the repository records which Chrome produced the committed
+baselines, so a pin is a guess, and a wrong pin turns a green gate red for an undiagnosable reason.
+The failure message prints `browser.version()` so the first triage question is answerable from the
+run.
+
+**Re-recording requires `--update-snapshots=all` (`npm run test:e2e:update-baselines`) and
+is a recording decision that belongs to the operator.** The `=all` is not decoration: Playwright
+declares the flag with `preset: 'changed'`, so the **bare** flag resolves to `'changed'` and
+re-records nothing — and `'changed'` could not help even if it did, because this spec reads its
+baseline with `readFile` rather than through a snapshot assertion. The script carried the bare
+flag for as long as this document did, and the two no-opped together
+(`visual-regression.spec.ts:105-113`). A missing baseline attaches the export and then throws on
+purpose: the comparison was never made (`visual-regression.spec.ts:101-112`).
 
 **The baselines were recorded through the legacy `draw` tool**, so any change to the legacy raster
 path invalidates them — the shipped brush handoff says so explicitly (`brush-toolbar:HANDOFF.md`
@@ -3492,11 +3512,12 @@ vulnerability half.
 
 **Never weaken a gate to get green**: no skips, no raised thresholds, no deleted assertions, no
 re-recorded visual baselines. The export baselines are genuinely compared now:
-`e2e/export/visual-regression.spec.ts:73` gates re-recording on
+`e2e/export/visual-regression.spec.ts:94` gates re-recording on
 `testInfo.config.updateSnapshots === 'all'` — the exact string, because Playwright's default is the
 truthy string `'missing'` and the earlier truthiness check always re-recorded and returned before
 the comparison (`e2e/OPEN_PROBLEMS.md:396-405`). Re-record only with
-`npm run test:e2e:update-baselines`, an operator decision.
+`npm run test:e2e:update-baselines`, which passes `--update-snapshots=all` — the bare flag
+resolves to `'changed'` and re-records nothing. It is an operator decision.
 
 ---
 
@@ -3822,32 +3843,52 @@ must compute rather than feel:
 
 ### Where the app stands
 
+**Two tranches landed after this section was first written: the four-tool tranche
+(`eraser` / `magic-eraser` / `paint-bucket` / `eyedropper`) and then the eight-tool tranche
+(`elliptical-selection` / `quick-selection` / `gradient` / `sharpen` / `smudge` / `dodge` /
+`burn` / `clone-stamp`). The counts below were re-derived on `main` at `f7c242c`; the
+tables **below** this one were not, and the gap rows that name an absent tool are now wrong.
+Re-derive a row before you build it, exactly as [the rule above](#the-tool-backlog--what-to-build-next) says.
+
 On that tree:
 
-| Measure                                      | Count                                   | Where                                                                                                                                                      |
-| -------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Registered tools                             | **33**                                  | `src/tools/toolsMap.ts:45-133`; `ToolName` is `keyof ToolArgsByName` at `src/contexts/tool-types.ts:65`, and that type has the same 33 members at `:20-63` |
-| Entries in `availableTools`                  | **29**                                  | `toolbar-mapping.ts:97-127`                                                                                                                                |
-| Registrations with a `PlaceholderTool`       | **10**                                  | `toolsMap.ts:79,84,89,97,101,106,111,116,121,131`                                                                                                          |
-| Registrations with a real options bar        | **23**, over **18 distinct components** | the other 23 rows; five of them (`rectangle`, `ellipse`, `triangle`, `polygon`, `line`) all point at the same `Shape` component at `toolsMap.ts:123-127`   |
-| Registrations with `commit: 'unimplemented'` | **7**                                   | `toolProcessors.ts:237-262,268-272`; the shared no-op is `toolProcessors.ts:103`                                                                           |
-| Photoshop toolbar slots with no tool at all  | **10 of 20**                            | FROM-MEMORY on the 20-slot Photoshop column; the app side is `toolbar-mapping.ts:37-95`, which renders 5 sections / 12 tiles                               |
+| Measure                                      | Count                                   | Where                                                                                                                                                         |
+| -------------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Registered tools                             | **41**                                  | `src/tools/toolsMap.ts:54-163`; `ToolName` is `keyof ToolArgsByName` at `src/contexts/tool-types.ts:80`, and that type has the same 41 members at `:27-78`    |
+| Entries in `availableTools`                  | **41**                                  | `toolbar-mapping.ts:119-161`                                                                                                                                  |
+| Registrations with a `PlaceholderTool`       | **8**                                   | `toolsMap.ts:119,127,131,136,141,146,151,161`                                                                                                                 |
+| Registrations with a real options bar        | **33**, over **27 distinct components** | the other 33 rows; six of them (`shape`, `rectangle`, `ellipse`, `triangle`, `polygon`, `line`) all point at one `Shape` component — `toolsMap.ts:62,153-157` |
+| Registrations with `commit: 'unimplemented'` | **7**                                   | `toolProcessors.ts:299-331`; the shared no-op is `toolProcessors.ts:109`                                                                                      |
+| Toolbar tiles the app renders                | **40**                                  | `toolbar-mapping.ts:37-118`; Photoshop's 20-slot column is still FROM-MEMORY, so the slot-for-slot gap count is **not** re-derived here                       |
 
-So: three of the ten placeholders (`brush`, `pencil`, `color-replacement`) are `commit: 'raster'`
-and genuinely paint. Seven are `unimplemented` and are the defect described in Tier 2.
+`availableTools` and `toolsMap` now agree at 41. The old 33-vs-29 divergence — the reason
+the inventory scoped itself to "registered tools (all of them in `availableTools`)" — is
+**closed**; a missing-tool audit can no longer be explained away by the list lagging the
+registry, so go back to diffing Photoshop's roster against `toolsMap` directly.
 
-**The structural finding — why the original inventory could not see a missing tool.**
+Of the eight remaining placeholders, `color-replacement` is `commit: 'raster'` and genuinely
+paints. `brush` and `pencil` **left this set** — they now have real options bars
+(`Brush` / `Pencil` in `toolsMap`) — and the six pen-family rows plus `custom-shape` are the
+`unimplemented` defect described in Tier 2.
+
+**The structural finding — why an audit walking the registry cannot see a missing tool.**
 `toolsMap` is typed `Record<ToolName, Partial<ToolProcessorDefinition> & { icon; toolboxComponent }>`
-(`src/tools/toolsMap.ts:37-43,45`). The registry is still _total_ over `ToolName` and still requires
-`icon` and `toolboxComponent` on every row, so it has no way to say "this Photoshop slot is empty", and no way to say "this row is a stub" — `PlaceholderTool` and
-`Pen` are the same `ToolbarRightComponent` to the type. Absence is invisible _from inside the
-registry_: an audit that walks `Object.keys(toolsMap)` gets one row per registration, all of which look equally
-real, and **none of which is named Gradient**. The corpus's own
-`.kilo/plans/ps-research/00-tool-inventory.md:15` scopes itself to "Registered tools (all of them in
-`availableTools`)" — so a missing tool was outside its universe by construction, not by oversight.
+(`src/tools/toolsMap.ts:46-52`, declared at `:54`). The registry is still _total_ over `ToolName`
+and still requires `icon` and `toolboxComponent` on every row, so it has no way to say "this
+Photoshop slot is empty", and no way to say "this row is a stub" — `PlaceholderTool` and `Pen`
+are the same `ToolbarRightComponent` to the type. Absence is invisible _from inside the
+registry_: an audit that walks `Object.keys(toolsMap)` gets one row per registration, all of
+which look equally real. The two failure modes it cannot distinguish are both still live —
+**`Gradient` is named in the registry now** (the gap this section was written to expose has
+been filled), while `freeform-pen`, `curvature-pen`, `add-anchor-point`,
+`delete-anchor-point` and `convert-point` are rows that select, accept options, and produce
+nothing. The corpus's own `.kilo/plans/ps-research/00-tool-inventory.md:15` scopes itself to
+"Registered tools (all 29 in `availableTools`)" — a count that is now itself stale — so a
+missing tool was outside its universe by construction, not by oversight.
+
 A gap list can only come from an external roster (Photoshop's toolbar) diffed against the
-registry. That is what this section is, and it is why the original inventory's counts were right
-and its gap list empty.
+registry. That is what this section is, and it is why the original inventory's counts were
+right and its gap list empty.
 
 ### Ranked gaps
 
@@ -4015,10 +4056,13 @@ merge --ff-only main`.
    `npm ci` in the worktree before debugging any asset that will not load.
 4. **Every worktree's dev server wants :5173, and `reuseExistingServer` is on locally.**
    Symptom: "my change did nothing" in e2e — the run attached to a **different checkout**.
-   Defence: `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` in a worktree. The two escapes are already
+   Defence: `npm run test:e2e`, which allocates a port and takes the swarm lock, and behind it
+   `reuseExistingServer` is opt-**in** — only `PLAYWRIGHT_REUSE_EXISTING_SERVER=1` attaches to a
+   server the run did not start. `PLAYWRIGHT_REUSE_EXISTING_SERVER=false` is the pre-change spelling
+   and now does nothing. The two escapes are already
    wired: `CI` and an explicit `PLAYWRIGHT_PORT` both force `reuseExistingServer: false`, and
    `--strictPort` makes a clash a hard failure instead of a silent hop to 5174
-   (`playwright.config.ts:106-120`).
+   (`playwright.config.ts:114-136`).
 5. **The `agent_manager` tool in this build needs every optional key sent explicitly**
    **[unverified by me]** — arrays reportedly get mangled into `{ item: [...] }`. And
    `agent_manager` reportedly accepted 19 session requests and created none, which is why `task`

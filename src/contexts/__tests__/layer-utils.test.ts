@@ -167,6 +167,32 @@ describe('reorderLayers', () => {
     expect(layers.b.order).toBe(2);
   });
 
+  it('leaves the sorted sequence unchanged for a self-anchored move, moving only the order value', () => {
+    // `history-append.ts:204-213` refuses a self-anchored reorder on the claim that
+    // `reorderLayers` anchors on the mover's own order, shifts everything above it,
+    // and re-assigns the layer — so the resulting SEQUENCE is unchanged and only the
+    // sparse order values move. It calls that "executed, not assumed". The converter
+    // half is pinned in `history-append.reorder.test.ts`; this is the `reorderLayers`
+    // half, which nothing was pinning.
+    const layers: LayersRecord = {
+      a: makeLayer({ id: 'a', order: 0 }),
+      b: makeLayer({ id: 'b', order: 1 }),
+      c: makeLayer({ id: 'c', order: 2 }),
+    };
+
+    reorderLayers({ layers, layerToMoveId: 'c', afterWhichLayerId: 'c' });
+
+    // `c` is the anchor, so `targetOrder` is `c`'s own order (2). The shift loop
+    // only moves layers strictly above it and there are none, so the only write is
+    // the mover's own: `layer.order = targetOrder + 1` (`layer-utils.ts:288`).
+    expect(layers.c.order).toBe(3);
+    expect(layers.a.order).toBe(0);
+    expect(layers.b.order).toBe(1);
+    // The document still reads bottom-first as a, b, c — which is the half of the
+    // claim the converter half disagrees with.
+    expect(getSortedLayersArray(layers).map((layer) => layer.id)).toEqual(['a', 'b', 'c']);
+  });
+
   it('does nothing when the layer to move does not exist', () => {
     const layers: LayersRecord = {
       a: makeLayer({ id: 'a', order: 1 }),

@@ -195,6 +195,36 @@ describe('FeatherMagneticLasso toolbar', () => {
     });
   });
 
+  /**
+   * Adobe: "the rate at which the lasso sets fastening points … between 0 and 100. A higher
+   * value anchors the selection border in place more quickly."
+   *
+   * The control was a maximum path LENGTH in pixels, so a lower value added more anchors —
+   * the opposite of the documented sense — and the `px` suffix said so on screen. The sense
+   * itself is pinned at the call site in `FeatherMagneticLassoToolArea.test.tsx`.
+   */
+  describe('frequency', () => {
+    it('is the 0-100 control Adobe documents, not a path length in pixels', () => {
+      render(<FeatherMagneticLasso />);
+
+      const frequency = getSlider(/^Frequency/);
+      expect(frequency).toHaveAttribute('min', '0');
+      expect(frequency).toHaveAttribute('max', '100');
+      expect(frequency).toHaveAttribute('step', '1');
+      // The readout is the setting itself, so it carries no unit the setting does not have.
+      expect(frequency.closest('label')?.textContent).toBe('Frequency 40');
+    });
+
+    it('explains the direction the control actually moves in', async () => {
+      render(<FeatherMagneticLasso />);
+
+      fireEvent.click(getInfoButton());
+
+      const tooltip = await screen.findByRole('tooltip');
+      expect(tooltip.textContent).toContain('Higher values anchor the selection border in place more quickly');
+    });
+  });
+
   describe('keyboard navigation', () => {
     it('moves focus through every enabled control in visual order', async () => {
       setClipboardState({ activeSelection: { id: 'sel-1', geometry: 'lasso' }, hasClipboard: true });
