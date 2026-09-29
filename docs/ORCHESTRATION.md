@@ -69,6 +69,28 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
 - **Stage only your own paths, everywhere.** The main worktree is not stable
   while you work — other sessions commit into it concurrently. Re-read `git
 status` and `git diff` before staging.
+- **`git add -A` in a worktree is not a neutral staging step when the root
+  checkout is dirty.** The root is a _different checkout_ of a _different HEAD_,
+  so a file the branch never touched can be sitting in the worktree's working
+  tree with the root's older content, and `-A` commits it as a deliberate
+  reverting of whatever main has since done to that file. A merge of
+  `feature/polygon-marching-ants` shipped 17 such reverts — `AGENTS.md`,
+  `docs/CODE-REVIEW.md`, and every file main had gained in the e2e-own-server
+  work, 1,835 lines — and **not one of them was a conflict**, so the merge was
+  clean and the revert was invisible in the diff. The tell is a file that gained
+  or lost lines for no reason the branch explains.
+  **The check, by computation rather than by reading the merge diff:**
+  ```sh
+  comm -13 \
+    <(git diff --name-only "$(git merge-base main HEAD)"..<branch-tip> | sort) \
+    <(git diff --name-only main..HEAD | sort)
+  ```
+  Anything that set difference is main content the merge had no business
+  touching. The legitimate exceptions are the files the merge deliberately edits
+  and a regenerated `WORKTREES.json`; anything else gets restored from main with
+  `git checkout main -- <path>` before the merge lands. Run it _before_ the
+  review, because a reviewer only catches the files its brief happened to
+  mention.
 - **After any interrupted or abandoned merge**, run `git rev-parse -q --verify
 MERGE_HEAD` and `git rev-list --parents -n 1 HEAD` before committing. An
   interrupted merge can leave `AUTO_MERGE` and `MERGE_MSG` with no `MERGE_HEAD`,
