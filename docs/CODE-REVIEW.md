@@ -2,8 +2,8 @@
 
 **THE REVIEW IS A SUBAGENT, NOT A FEELING.** `AGENTS.md` requires it after every
 non-trivial change; this file is the prompt to run it with and the rules for running
-it. The prompt is short on purpose — do not paraphrase it, put it in the brief
-verbatim.
+it. The prompt is short on purpose — do not paraphrase it and never write a review
+brief from memory; put it in the brief verbatim.
 
 ## The prompt
 
@@ -35,7 +35,8 @@ durable text.
 - **After non-trivial work, before the merge.** A finding costs one edit before the
   merge and a revert after it. "Non-trivial" is anything that changes behaviour,
   removes code, or touches a boundary named in `AGENTS.md`; it is not a one-line
-  typo fix and not a doc edit.
+  typo fix and not a doc edit. Not "self-reviewed", not "I re-read it twice", and
+  not "the gates are green".
 - **Brief it like a fresh context.** Worktree path, branch, the files in play, the
   diff range against `main` (`git diff main...HEAD`), and what the final message
   must contain. Do not paste the diff; the reviewer opens it.
