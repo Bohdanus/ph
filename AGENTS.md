@@ -1,8 +1,8 @@
 # AGENTS.md
 
-Photoshop-inspired, production-grade photo editor — a Photoshop clone, not a
-"Photoshop-inspired" surface with room for app-specific extras. The detail lives
-in linked files; this file is the rules that apply to every task.
+Production-grade photo editor built as a Photoshop clone: the same tools, names
+and muscle memory, not a lookalike with app-specific extras. The detail lives in
+linked files; this file is the rules that apply to every task.
 
 | File                                                   | Read it when                                                        |
 | ------------------------------------------------------ | ------------------------------------------------------------------- |
@@ -85,16 +85,17 @@ Detail in [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md).
   removal. Subagents of one root agent share its worktree and split by file. The
   board cannot enforce this: identity is the branch.
 - **Claim what you touch before the first edit:** `npm run swarm -- claim <id>
---files <paths>`, or `npm run swarm -- hold <path>`, and `swarm check <paths>`
-  before editing anything a brief or a sibling names. A refused hold names the
-  holder — take their lock first, never `--force` it. `swarm note` a branch you
-  are about to land, before you start resolving it.
+--files <paths>`, or `npm run swarm -- hold <path>`, and `npm run swarm -- check
+<paths>` before editing anything a brief or a sibling names. A refused hold
+  names the holder — take their lock first, never `--force` it. `npm run swarm --
+note` a branch you are about to land, before you start resolving it.
 - **Merge order:** `main` into the branch **in the worktree**, resolve and run
   gates there, then merge the clean branch into `main`. Never resolve a conflict
   or repair the index in `main`. Never `git stash` — a shared unordered stack.
-- **A quiet agent is not a dead agent.** Preserve before reclaiming: `git status`
-  / `git diff` / `git log -1`, then `swarm doctor --dry-run`, then `swarm doctor`.
-  Force-release only a session confirmed dead, never a network-lost one.
+- **A quiet agent is not a dead agent.** Preserve before reclaiming: `git -C
+<worktree> status` / `diff` / `log -1`, then `npm run swarm -- doctor --dry-run`,
+  then `npm run swarm -- doctor`. Force-release only a session confirmed dead,
+  never a network-lost one.
 - **The worktree list is generated, never written by hand.** Run
   `node scripts/worktree-inventory.mjs` and read `WORKTREES.json` before deleting
   a worktree. **0 commits ahead of `main` is not evidence one is disposable** — it
