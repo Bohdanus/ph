@@ -408,8 +408,24 @@ describe('useHistory undo replay', () => {
       const visibleContext = contextFor(state.canvasRef.current);
       expect(visibleContext?.clearRect).toHaveBeenCalledWith(0, 0, 40, 20);
       expect(visibleContext?.drawImage).toHaveBeenCalledWith(expect.anything(), 0, 0);
-      expect(vi.mocked(createImageBitmap).mock.calls.every(([source]) => source != null)).toBe(true);
-      if (actionName === MERGE_ACTION) expect(Object.keys(state.layers)).toEqual(['image']);
+      // An image source is replayed BY REFERENCE: `createLayerSource` assigns
+      // `layer.bitmap = source.bitmap` and never builds a canvas for it
+      // (`layer-utils.ts:203-204`), and no replay path materializes one. So the
+      // replayed raster layer carries the imported bitmap and no `tmpCanvas` at all,
+      // which is what "without saving null canvases" claims. The bedrock blank layer
+      // is the control that makes it a real assertion rather than a vacuous one: it
+      // DOES get a cache, sized from its own source's 128x64.
+      expect(state.layers.image.tmpCanvas).toBeNull();
+      if (actionName === MERGE_ACTION) {
+        expect(Object.keys(state.layers)).toEqual(['image']);
+      } else {
+        const bedrockCache = state.layers['layer-1'].tmpCanvas;
+        expect(bedrockCache).not.toBeNull();
+        expect(bedrockCache && { width: bedrockCache.width, height: bedrockCache.height }).toEqual({
+          width: 128,
+          height: 64,
+        });
+      }
     }
   );
 
@@ -440,6 +456,28 @@ describe('useHistory undo replay', () => {
     expect(state.layers.image.pos.x).toBe(12);
   });
 
+  it('leaves the store completely untouched when toggleDisabled names an entry the timeline does not hold', () => {
+    const { state } = setup();
+    const entries = state.history;
+    const branchRevision = state.branchRevision;
+    const historyIndex = state.historyIndex;
+    const layers = state.layers;
+
+    useHistory().toggleDisabled('not-in-the-timeline');
+
+    // `updateHistoryTimeline` returns the SAME timeline object when no entry matches
+    // (`history-timeline.ts:25`), and `useHistory.ts:154` short-circuits on that
+    // reference identity. A deep compare there would look equivalent while letting
+    // an unknown id fall through to `resetHistoryTo`, which replays the document and
+    // repaints the canvas in response to a request that names nothing.
+    expect(dispatchMock).not.toHaveBeenCalled();
+    expect(rendererControl.drawCalls).toEqual([]);
+    expect(state.history).toBe(entries);
+    expect(state.branchRevision).toBe(branchRevision);
+    expect(state.historyIndex).toBe(historyIndex);
+    expect(state.layers).toBe(layers);
+  });
+
   it('skips dependent edits when creation is disabled and restores them when re-enabled', () => {
     const history = createHistory('layerSource');
     history.push(
@@ -456,8 +494,12 @@ describe('useHistory undo replay', () => {
     expect(state.activeLayerId).toBeNull();
     expect(state.historyIndex).toBe(4);
     expect(dispatchMock).toHaveBeenCalledTimes(1);
+    expect(state.history[0]).toMatchObject({ id: 'h-1', actionName: NEW_LAYER_ACTION, disabled: true });
+    expect(state.branchRevision).toBe(1);
     useHistory().toggleDisabled('h-1');
     expect(state.layers['layer-1']).toMatchObject({ name: 'Layer 1', visible: true });
+    expect(state.history[0].disabled).toBe(false);
+    expect(state.branchRevision).toBe(2);
   });
 
   it('selects a surviving layer when redoing deletion', () => {
