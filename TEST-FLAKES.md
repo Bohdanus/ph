@@ -565,6 +565,7 @@ module stops it testing the wrong code in the right tree.
 - `e2e/undo-redo.spec.ts` — the spec whose mutation campaign section 10 invalidated
 - `e2e/global-setup.ts` — where the warm-up in section 9 belongs
 - `e2e/sidebar-flyout.spec.ts:136-139` — the `beforeEach` that loses the race
+- `e2e/flyout-longpress-race.spec.ts` — the committed tripwire for the long-press flyout race section 8 names as a CPU-contention flake, and for the misdiagnosis section 9 recounts
 - `e2e/helpers/screenshot-scale.ts:53`, `e2e/helpers/cdp-helpers.ts:60` — the stale 1177px/440px
   figures section 8 records as stale
 - `src/hooks/useDialogFocusContainment.ts` — where the focus block section 7's lead 3 names now lives
