@@ -165,11 +165,16 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
                     onChange={(e) => setBackground(e.target.value)}
                     className="h-10 w-full rounded border px-3 py-2 text-gray-700 dark:border-gray-600 dark:bg-gray-700"
                     disabled={opacity === 0}
+                    data-testid="new-image-background-color-input"
                   />
-                  <label className="mt-2 block text-sm font-bold text-gray-700 dark:text-gray-300">
+                  <label
+                    htmlFor="opacityInput"
+                    className="mt-2 block text-sm font-bold text-gray-700 dark:text-gray-300"
+                  >
                     Opacity: {(opacity * 100).toFixed(0)}%
                   </label>
                   <input
+                    id="opacityInput"
                     type="range"
                     min="0"
                     max="1"
@@ -177,6 +182,7 @@ const NewImageDialog = ({ onClose, onCreate }: NewImageDialogProps) => {
                     value={opacity}
                     onChange={(e) => setOpacity(parseFloat(e.target.value))}
                     className="mt-2 w-full"
+                    data-testid="new-image-opacity-input"
                   />
                 </div>
               </div>

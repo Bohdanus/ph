@@ -51,17 +51,58 @@ export interface CanvasBand {
 /**
  * The part of a canvas box a clipped screenshot can actually read.
  *
- * `page.screenshot({ clip })` truncates a clip at the viewport edge and says
- * nothing about it. Measured on this application: a clip 840 CSS pixels tall on a
- * 720-pixel-tall window came back as the 620 pixels that fit, and a clip starting
- * 20 pixels above the fold came back 20 pixels tall. A band cut from the truncated
- * part therefore reads as permanently clean, which is a silent PASS rather than a
- * failure — the band assertion would report "the undo removed the stroke" about a
- * strip of canvas that was never captured. Laying the bands out over the visible
- * intersection makes that unrepresentable instead of relying on the window size.
+ * WHY THE INTERSECTION. `page.screenshot({ clip })` intersects the clip with the
+ * VISIBLE page rect and hands back that intersection without mentioning it, in
+ * BOTH axes. Measured on this Playwright build at a 1280x720 window:
+ *
+ * | clip requested                       | image returned |
+ * | ------------------------------------ | -------------- |
+ * | 400 wide at x=1100                   | 180 wide       |
+ * | 100 tall at y=-20                     | 80 tall        |
+ * | 840 tall at y=100 (720-tall window)  | 620 tall       |
+ * | 100 tall at y=900, entirely below it  | THROWS         |
+ *
+ * A band cut from the truncated part therefore reads as permanently clean, which
+ * is a silent PASS rather than a failure — the band assertion would report "the
+ * undo removed the stroke" about a strip of canvas that was never captured.
+ * Laying the bands out over the visible intersection makes that unrepresentable
+ * instead of relying on the window size.
+ *
+ * Those four rows are PROPERTIES OF THE BROWSER, not measurements of this
+ * application, and the distinction is the whole point: the table above stays true
+ * whatever the layout does, while the claim this function used to rest on — that
+ * the workspace canvas overflows the page and therefore needed a taller window —
+ * stopped being true. It is now a GUARD rather than a correction. `min-h-0
+ * overflow-y-auto` on the left sidebar's `<aside>`
+ * (`src/components/SidebarLeft/SidebarLeft.tsx:335`) is what bounds the grid row,
+ * `e2e/sidebar-layout.spec.ts:21` pins that the default page does not scroll, and
+ * the measured canvas box and page heights for both toolbar layouts live in P1 of
+ * `e2e/OPEN_PROBLEMS.md` — deliberately not restated here, because a number
+ * written next to the code is the number that goes stale.
+ *
+ * WHY IT IS ALSO LOAD-BEARING FOR THE WAITERS. The poll loop behind `waitForBands`
+ * routes every clip through `onScreenClip` (`e2e/helpers/canvas-helpers.ts`), which
+ * SCROLLS a region that is not in view and then restores the offset. A spec's own
+ * `page.screenshot({ clip })` call does not. So a clip that reached past the fold
+ * would be captured twice, at two different extents, inside one test: the waiter
+ * would scroll and photograph the whole region, the spec's own capture would come
+ * back truncated, and the band reads that follow would be slicing two different
+ * rectangles. Intersecting here is what makes the two capture paths agree on what
+ * "the whole canvas" is. `onScreenClip` is also private to its module, so it is not
+ * an alternative to this function even in principle.
+ *
+ * WHY THE THROW RATHER THAN PLAYWRIGHT'S. Playwright already refuses an empty
+ * intersection, as the last table row shows. It refuses it with
+ * `Clipped area is either empty or outside the resulting image` — naming neither
+ * the box nor the viewport — and from inside the poll loop, so a wait that never
+ * resolves reports its own timeout and never mentions the cause. This throws at
+ * the geometry layer instead, with both operands in the message, and throws
+ * before a single screenshot is taken.
  *
  * The viewport is taken at the page origin because screenshot clips are
- * page-relative and this suite never scrolls the document.
+ * page-relative and this suite never scrolls the document: at scroll 0 the
+ * intersection above is with the window, and Playwright does not scroll to reach a
+ * clip, which is why the last table row is a refusal rather than a capture.
  */
 export function visibleCanvasBox(box: BoundingBox, viewport: { width: number; height: number }): BoundingBox {
   const left = Math.max(box.x, 0);
@@ -169,9 +210,13 @@ export function bandUnionClip(bands: readonly CanvasBand[]): Required<ClipOption
  *
  * The capture comes back in DEVICE pixels, which are not the CSS pixels the
  * clips are written in, so the band heights are scaled by what the image
- * actually is rather than by `devicePixelRatio` — the same rule the rest of the
- * suite follows, and the reason a half-size capture is read correctly instead
- * of sampling the top half of the bands twice.
+ * actually is rather than by `devicePixelRatio`. That is the suite's one
+ * scaling rule, and its owner says why in so many words
+ * (`e2e/helpers/screenshot-scale.ts:6`: dividing by `devicePixelRatio` is
+ * deliberately unsupported, because capture scaling and rounding break the
+ * assumption while the decoded image dimensions are the truth). It is the
+ * reason a half-size capture is read correctly instead of sampling the top
+ * half of the bands twice.
  */
 export function bandRows(
   bands: readonly CanvasBand[],

@@ -342,6 +342,59 @@ describe('getColorAtPoint', () => {
     expect(await getColorAtPoint(image, 50, 100, 5)).toBeNull();
   });
 
+  it('returns null for a coordinate that is not a pixel address, rather than a fabricated colour', async () => {
+    // A fractional coordinate passes the bounds guard, and then the sample window is
+    // translated off the pixel grid. The three cases below are the three ways that goes,
+    // measured against this solid-red 100x100 fixture, where `index = (y * width + x) * 4`:
+    //
+    //   (50, 50.5)     the `.5` cancels against the `* 4`, so the index stays integral and
+    //                  the loop reads a real pixel - the one 50 columns to the right of the
+    //                  one asked for, and returns its colour. `{red: 255, ...}`.
+    //   (50.25, 50.25) `18281 % 4` is 1, so every read is a GREEN or BLUE channel rather
+    //                  than a red or an alpha, the transparent-pixel skip cannot fire, and
+    //                  the sum is a colour no pixel holds. `{red: 0, green: 0, blue: 255}`.
+    //   (0.1, 99.9)    the fractional part does not cancel, so `data[37960.4]` is
+    //                  `undefined`; `undefined === 0` is false, so nothing is skipped and
+    //                  the sums come back NaN.
+    //
+    // All three are non-null answers in a function whose contract is that null means
+    // "nothing at this point", and every one of them is a colour at a pixel the caller
+    // never named.
+    const image = solidRed(100, 100);
+
+    for (const [pointX, pointY] of [
+      [50, 50.5],
+      [50.25, 50.25],
+      [0.1, 99.9],
+    ] as const) {
+      expect(await getColorAtPoint(image, pointX, pointY, 5)).toBeNull();
+    }
+  });
+
+  it('returns null for a non-finite coordinate', async () => {
+    // A non-finite coordinate has no pixel address either, and it reaches the sampler
+    // through the same hole: `NaN < 0` and `NaN >= width` are both false, so the bounds
+    // guard admits it. It happens to answer null today - Infinity through the guard, NaN
+    // through a loop whose bounds never compare true - and this pins that, because a NaN
+    // coordinate is what `cssPointToImage` hands a caller whose box has no area.
+    const image = solidRed(100, 100);
+
+    expect(await getColorAtPoint(image, Number.NaN, 50, 5)).toBeNull();
+    expect(await getColorAtPoint(image, 50, Number.NaN, 5)).toBeNull();
+    expect(await getColorAtPoint(image, Number.POSITIVE_INFINITY, 50, 5)).toBeNull();
+  });
+
+  it('is unaffected by the guard for an integer coordinate', async () => {
+    // The guard rejects non-integers, not integers: the centre of the image, the pixel
+    // before it, the last one in range and the first all still sample.
+    const image = solidRed(100, 100);
+
+    expect(await getColorAtPoint(image, 50, 50, 5)).toEqual({ red: 255, green: 0, blue: 0 });
+    expect(await getColorAtPoint(image, 49, 50, 0)).toEqual({ red: 255, green: 0, blue: 0 });
+    expect(await getColorAtPoint(image, 99, 99, 0)).toEqual({ red: 255, green: 0, blue: 0 });
+    expect(await getColorAtPoint(image, 0, 0, 0)).toEqual({ red: 255, green: 0, blue: 0 });
+  });
+
   it('returns null when every sampled pixel is transparent', async () => {
     expect(await getColorAtPoint(createImageData(100, 100), 50, 50, 5)).toBeNull();
   });
