@@ -1036,7 +1036,7 @@ ring and the Color Sampler are overlay work and belong with the navigation clust
 ## 52. Hand, Zoom and Rotate View are absent because the view transform is commented out
 
 **Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and
-the placeholder is a commented-out JSX line: `src/components/SidebarLeft/SidebarLeft.tsx:553`
+the placeholder is a commented-out JSX line: `src/components/SidebarLeft/SidebarLeft.tsx:690`
 is `{/*<Zoom />*/}`.
 
 **Why it is not a wiring bug.** There is no view transform to wire. The store's
@@ -1055,7 +1055,7 @@ owning `{ dx, dy, zoom }`, with `usePointerPosition` and every pointer-to-image
 conversion reading from it, is the shape the commented-out code was reaching for.
 Do not start with a Hand tool; start with the scope, and the three tools fall out.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:553`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:690`,
 `src/contexts/StoreContext.tsx:1166-1172`, `src/hooks/usePointerPosition.ts`,
 `src/components/Main/Main.tsx:61`
 
@@ -1245,7 +1245,7 @@ layer property.
 ## 57. The mobile shell has no colour control at all
 
 **Problem.** The desktop rail carries the foreground and background swatches, a swap
-and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:507-539,542-549`).
+and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:661-668,669-676`).
 The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
 no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
 use whatever colour the document happened to be created with, and the foreground colour
@@ -1265,7 +1265,7 @@ decision. Note the swatches are 32px in the desktop rail; on a touch surface the
 the same 44px floor as the other mobile controls, which is why they should be built
 for mobile rather than copied across.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:507-539,542-549`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:661-668,669-676`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
 
 ---
@@ -1695,7 +1695,7 @@ default panel or sitting in Extra Tools.
 
 **`toolbar-mapping.ts:30-36` says "Unsupported Photoshop tools are intentionally omitted rather
 than represented by placeholder values." That sentence IS the requirement, and it has to be
-deleted, not kept.** Separately: `SidebarLeft.tsx:27` does `toolbarMap.flat()`, which discards the
+deleted, not kept.** Separately: `SidebarLeft.tsx:54` does `toolbarMap.flat()`, which discards the
 map's section boundaries entirely, so the five current sections are not Photoshop's separators and
 the new layout has to decide deliberately whether a section concept survives at all.
 
@@ -1896,7 +1896,7 @@ and each is a one-line fix.
 **1. Two tools render the letter `B`, and the real `B` handler never reaches one of them.**
 `toolbar-mapping.ts:96` gives the non-Photoshop `draw` entry `shortcut: 'B'`, the same letter
 `toolbar-mapping.ts:72` gives the Brush. The badge is rendered from the map
-(`SidebarLeft.tsx:431`), so the user is told the Draw Tool answers to `B`; and
+(`SidebarLeft.tsx:539`), so the user is told the Draw Tool answers to `B`; and
 `AppKeyboardShortcuts.tsx:18` puts `b` on `brushGroup = ['brush','pencil','color-replacement','eraser']`,
 so pressing it can never select `draw`. The same pass found `Shift+B` cycling into `eraser`, which
 is wrong twice: `B` cycles only within the brush group, and the Eraser's own letter is `E`.
@@ -2135,3 +2135,193 @@ moment the body goes green, the `fails` goes red, which is the intended signal a
 regression to chase. The live side of the same rule, and the visible false row it contrasts with,
 are held in an ordinary green test beside it, so a pin that starts failing for an unrelated reason
 cannot hide behind `it.fails` passing.
+
+## 83. The panel workspace: seven documented Photoshop behaviours are NOT built, and the list matters more than the feature
+
+`feat/panel-docks` made the tools rail and the History/Layers dock draggable and resizable. The
+behaviours it ships are transcribed from Adobe's own help pages, and the citations are in the
+header of `src/contexts/PanelLayout.tsx` — read that before crossing this boundary, because the
+two scope decisions below were made against sources rather than against taste.
+
+**1. Panels cannot float.** "Dragging a panel out of its dock creates a floating panel that you
+can position anywhere in the workspace"
+(<https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/stack-floating-panels.html>).
+Not implemented. It needs its own window layer, a z-order above the canvas, and persistence for
+panels dragged off-screen — none of which exists. **This is the one real gap.** A user who
+wants a panel out of the way has no gesture for it, and `Window` has no panel list to remove one
+from, which Adobe does document and which is also missing.
+
+**2. `Tab` and `Shift+Tab` do not hide panels.** "Press Tab to hide all panels... Press Shift +
+Tab to hide all panels except the Tools panel and Options bar."
+(<https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/hide-show-panels.html>).
+Not implemented, because `Tab` is already bound to leave an open tool flyout
+(`SidebarLeft.tsx`), and a global hide is a different feature from a drag one. `Window > Collapse
+Panels` is a reasonable way in; the keyboard shortcut needs the flyout binding resolved first.
+
+**3. `PanelGroup` is draggable but not groupable.** Photoshop lets Layers/Channels/Paths be tab
+GROUPS sharing one body. The hook does the vertical case of it and not the horizontal one, and
+the group model only pays off once a third panel exists. The drag that would extend it is the
+same `PanelGroup` header.
+
+**4. A dock cannot be shorter than the workspace.** "You can prevent panels from filling all the
+space in a dock. Drag the bottom edge of the dock up so it is separated from the workspace's
+edge." The column is always `h-full`. A `useDockDrag` comment here also claimed "the divider
+itself is not a Photoshop-documented gesture", which is false — Adobe's wording is "Drag any
+side of the panel" and "drag the dock's bottom border" — and that comment is corrected.
+
+**5. Panel icons in the icon strip are not draggable.** "To move a panel icon (or panel icon
+group), drag the icon. You can drag panel icons up and down in the dock… or outside the dock."
+They are click-only buttons.
+
+**6. A panel GROUP cannot be moved as a unit by its title bar.** "To move a panel group, drag
+its title bar (the solid empty bar above the tabs)." This branch has no title bar: `PanelGroup`'s
+header _is_ the tab, so there is no separate bar to grab. Item 3 is a different axis — grouping
+several panels into one body, not moving a group.
+
+**7. There are no workspaces.** Adobe documents saving, switching, deleting and restoring them
+as four separate operations, and a workspace "remembers the size and position of panels". This
+app has one unnamed workspace persisted under one key, with a single hard-coded
+`Window > Reset Workspace` and no panel list to remove a panel from — "Select Window from the
+menu bar. Select the panel name to remove it from the workspace", and the per-tab
+**Close / Close Tab Group** context menu, are both absent.
+
+**An earlier version of this entry listed three of these and called it complete.** It was not, and
+the count was the problem rather than the omissions: a list that claims to be the full set of what
+is missing reads as a finished audit, and the four above were each a page of Adobe's own
+documentation.
+
+**Two rules in the shipped work are worth keeping, because both were found by a test failing and
+neither is obvious from the code:**
+
+**A dock's resize handle must be on its CANVAS side, and the border must follow the dock.**
+`SidebarRight.tsx` picks `left-0` or `right-0` from `dockOnLeft`. Inverted, the handle lands
+against the window border — unreachable, and it reads as a resize grip for nothing. The unit test
+that pinned it asserted `right-0` for the default because that was what the code did, and it
+stayed green through the inversion; only `e2e/panel-workspace.spec.ts` caught it, by measuring
+the handle's real box.
+
+**The rail's re-dock target is the edge the rail is NOT on, and `dockOnLeft` is the inverse of
+the rail's destination edge.** Both halves were wrong at once, in ways that cancelled: dragging
+the rail LEFT reported a drop target at the left edge and swapped, so the rail ended up on the
+right and every outcome assertion passed. The unit test now asserts the drop target's side, and
+`e2e/panel-workspace.spec.ts` asserts the rail's `boundingBox().x` — an outcome-only assertion
+cannot see this class of bug at all.
+
+**One locator trap, because five e2e specs and three unit tests depend on it.** A layer row's
+`title` is `"Drag to reorder"`, and `page.getByTitle` matches on substring. A panel tab whose
+tooltip contained that phrase resolved to the tab header instead, and every one of those
+locators silently began pointing at the wrong element — five specs failed with
+`Received string: "History«"`. `PanelGroup`'s header `title` must stay clear of it.
+
+**One overlap that `toBeVisible()` cannot see, and its stated mechanism was wrong.** The rail is
+108px wide and its tiles sit on a 108px grid inside a ~83px content box, so a second-column tile
+starts at x≈1229 on a rail that begins at x≈1172. A flyout hung off that tile is at 1020..1221:
+inside the viewport, so nothing complains, and painted over the rail's own first column.
+`AnchoredOverlay` now takes an `xAnchor` — the rail's horizontal edges, with the tile still
+driving vertical — which is what Photoshop does by hanging a tool flyout off the panel edge.
+
+The mechanism is **overlap, not clipping**, and the first version of this entry said clipping. The
+overlay is portalled to `document.body` and positioned `fixed`, so the rail's `overflow-y: auto`
+cannot clip it at all and no `toBeVisible()` failure would ever have reported it. The assertion in
+`e2e/panel-workspace.spec.ts` is a geometry one — clear of the rail's left edge — and that is what
+fails if `xAnchor` is removed.
+
+## 84. A review of §83 found four defects, and three of them are the same shape: a test that could not fail
+
+A hostile review of `feat/panel-docks` found four blockers. Each is a trap worth writing down
+because the tests either pinned the defect or could not see it.
+
+**1. A stored dock width below the label floor is a one-way door, and the persistence guard let it
+through.** `readStoredLayout` clamped `dockWidth` to `[40, 640]` and never reconciled it with
+`isCollapsed`, so a stored `{"dockWidth":45,"isCollapsed":false}` produced a 45px column with both
+panel groups, their labels, and a control reading "Collapse panels to icons" — on a dock already
+under the floor. With `isCollapsed: true` it was worse: the icon strip's only expand control calls
+`setDockWidth(layout.dockWidth)`, which re-collapses on a width that is still under the floor, and
+the double-arrow is not rendered while collapsed, so `Window > Reset Workspace` was the only way out.
+Only a hand-edited, stale or cross-version record reaches it — which is exactly the threat model
+`readStoredLayout` documents itself as defending against, and the test that "covered" it only used
+`99_999`, which `[40, 640]` happens to catch. The read path now collapses on the same rule
+`setDockWidth` uses, and remembers the label floor so the dock is recoverable. **The general
+shape: a clamp and an invariant are different things, and a guard that only clamps has not
+enforced the invariant.**
+
+**2. Two of the half-parts of the width state were measured, and the drag read the wrong one.** The
+resize handle is rendered on the collapsed 40px strip too, and `onColumnResizeStart` recorded
+`layout.dockWidth` — the width to come _back_ to (250) — rather than `effectiveDockWidth`, the 40
+on screen. One pixel of movement opened a 250px dock and overwrote the 250 with 251: a 211px jump,
+and the user's chosen width gone. Cancelling that drag called `setDockWidth(250)`, which
+_un-collapses_, so Escape changed the value rather than restoring it. Neither the e2e nor the unit
+test dragged the handle while collapsed. **A drag has to be measured from what is on screen.**
+
+**3. The cancel flag was dropped one layer down, so Escape committed the gesture.** `useDockDrag`
+reports `onEnd(cancelled)`, and `PanelGroup` passed it through as `onDragEnd()` with the argument
+discarded — so an Escape on a tab drag reordered the panels anyway, and a cancelled resize left the
+column wherever the last `pointermove` put it. The flag is now plumbed through, a cancelled drag
+clears its preview state without committing, and a cancelled resize is restored to where the
+divider started.
+
+**4. The cursor lock was shared and unguarded.** The grabbing cursor and the selection lock live on
+`document.body`, because they have to survive the pointer leaving the handle. The guard against two
+gestures at once is _per hook instance_, so a second finger on a second handle started a second
+gesture that had not taken the lock — and the first one to end took it away from the one still
+running. Counting is now at module scope.
+
+**Three tests in the same change could not fail, and each is a shape worth recognising:**
+
+- `expect(Number.isNaN(parseFloat(style.flex))).toBe(false)` — true of every string `flex` can
+  hold, and of a divider drag that did nothing. The replacement reads the grow factor back and
+  asserts the share moved by the dragged fraction.
+- `expect(top + (1 - top)).toBeCloseTo(1)` for a loop of ratios — an arithmetic identity. It holds
+  for a no-op setter, an inverted one, and a clamp to the wrong bound.
+- The flyout test asserted `left` to name which tile a menu belonged to. Horizontal placement
+  became the rail's when `xAnchor` landed, so `left` is now identical for every group and the
+  assertion passed for the _previous_ group as readily as the current one. It asserts `top` now.
+
+**One claim in the code was false and a test was pinning it.** The module header said the resize
+handle sat "half outside the column" at `left: -4px`, and the test asserted the aside's
+`overflow: hidden` was therefore load-bearing. No rule ever set a negative offset: the handle is
+`absolute` with `left-0`/`right-0` and lies wholly within the padding box, which the e2e
+measurement says directly — 1px inside the 1px border. The clipping moved inward anyway, for a
+different reason, and both the comment and the test now say what is actually true.
+
+**`role="separator"` with `tabIndex={0}` and no `aria-value*` is a promise the control does not
+keep.** A focusable separator is the window-splitter widget and must carry `aria-valuenow`/`min`/
+`max` and answer arrow keys; these carried none and had no key handler, so a keyboard user could
+Tab onto them and do nothing. Photoshop offers no keyboard path for resizing a dock either. The
+handles are `aria-hidden` and not focusable, and the re-dock grip — a real `<button>` that
+announced a button and activated nothing on Enter — got the one non-pointer action it can offer,
+a swap. **A focus stop with no behaviour is worse than no focus stop: it costs a keyboard user a
+tab press to learn nothing.**
+
+That grip was dead for a MOUSE user too, and the reason is the one to remember: `onRailDragEnd`
+only commits once `reDockTargetRef` is set, and that happens in `onRailDrag` — so a press with no
+movement produced no drop target and no swap. "It needs a drag, so it is a drag control" is not
+the same as "it is a control", and a `<button>` beside a sibling that works on click is read by
+every user as clickable. A movement guard is also required in the other direction: a `<button>`
+synthesises a click from any pointerdown+pointerup, including one that travelled to the opposite
+edge, so an unguarded `onClick` swaps on the release and then swaps again on the click.
+
+**`aria-controls` has to name an element that holds something.** It named an empty
+`display: contents` div beside the real body, and while the group was rolled up the guarded render
+removed the id and left the reference dangling — the same "a promise the control does not keep"
+argument used to justify `aria-hidden` on the handles, applied to a control that was left
+focusable. The body moved inside `PanelGroup` so the id and the element cannot drift apart.
+
+**A module-scope counter is only correct if every writer shares it.** The first fix reference-
+counted the grabbing cursor inside `useDockDrag` alone, while `LayersTab` — the layer-row
+reorder, which predates it — still added and removed the same `document.body` class itself. A
+layer drag that ended while a dock divider was still being dragged took the cursor and the
+selection lock away from it, which is the defect the counter existed to fix, reintroduced through
+the other door. The lock now lives in `src/hooks/dragCursorLock.ts` and both writers call it.
+
+**And a counter can still leak, because an effect that never ran has no cleanup.** The lock was
+released only from inside the listener effect, which is gated on `isDragging`. If the hook's owner
+unmounted in the SAME batch that set `isDragging(true)` — which is what a gesture whose `onStart`
+drops its own subtree does — that effect never registered, no cleanup existed, and the lock was
+held for the rest of the session: a grabbing cursor, no text selection, and a count left one high
+so every later gesture's lock short-circuited. A `[]`-deps effect whose cleanup finishes a live
+gesture always has an unmount cleanup, which is the point of using one.
+
+**The two docks are not keyboard-reachable at all**, and that is a real gap rather than a
+non-issue: a rail or a dock cannot be moved with the keyboard, and nothing in `Window` lists the
+panels. The honest cost of that is recorded here rather than hidden behind `aria-hidden`.

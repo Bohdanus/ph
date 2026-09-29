@@ -373,7 +373,7 @@ with `PLAYWRIGHT_PORT=5711` and `reuseExistingServer` off, all headless:
    on this tree at 1280x720: `document.documentElement.scrollHeight` is **720**,
    equal to `innerHeight`, and `window.scrollY` was **0** at every step of the
    failing test's setup. The overflow that made the page 1177px tall was fixed by
-   `min-h-0 overflow-y-auto` on the `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx:455-456`);
+   `min-h-0 overflow-y-auto` on the `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx:564`);
    the canvas box is a constant `108,100 922x583` from tool click to capture. The
    1177px/440px figures in `e2e/helpers/screenshot-scale.ts:53`,
    `e2e/helpers/cdp-helpers.ts:60`, `e2e/helpers/toolbar-helpers.ts:102-108` and
