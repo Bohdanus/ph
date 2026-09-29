@@ -310,8 +310,21 @@ describe('DrawToolArea', () => {
       fireEvent.pointerDown(toolArea, { button: 0, clientX: 10, clientY: 20 });
       fireEvent.pointerMove(toolArea, { button: 0, clientX: 60, clientY: 40 });
       vi.mocked(drawLine).mockClear();
-      // The restore has to run whatever the assertions do: this file has no `afterEach`, so a red
-      // assertion below would leave `cancelAnimationFrame` spied for every test that follows.
+      // The restore has to run whatever the assertions do: a red assertion above the `finally`
+      // would otherwise skip `mockRestore()` entirely, and that is the shape that matters — it is
+      // exactly what a future edit to these assertions would do. This is the right shape on its
+      // own terms, not because this file leaks without it.
+      //
+      // An earlier version of this comment claimed the opposite: that this file has no `afterEach`,
+      // so the leak would persist for every following test. That was wrong, and it was worth
+      // checking rather than restating. The global `afterEach` in `src/test/setup.ts:6` calls
+      // `vi.useRealTimers()`, which re-installs a real `cancelAnimationFrame` and drops the spy.
+      // Measured with a probe pair of tests here — install the spy, do not restore it, then observe
+      // from the next test — `vi.isMockFunction(globalThis.cancelAnimationFrame)` is `false` and
+      // the function is not the pre-spy reference either. So the leak IS currently masked here,
+      // which is exactly why a comment asserting it was worth correcting: a false rationale is
+      // worse than no rationale, because the next reader trusts it and stops checking.
+      //
       // Same shape as `FreehandLasso.test.tsx:226-239`.
       const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame');
 

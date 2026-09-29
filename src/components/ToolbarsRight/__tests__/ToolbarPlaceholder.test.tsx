@@ -229,14 +229,25 @@ describe('placeholder tool wiring in toolsMap', () => {
     storeState.toolName = 'not-a-real-tool';
     render(<ToolbarHorizontal />);
 
-    // The full fallback string is the whole assertion. The negative that used to sit here was
-    // `expect(screen.queryByText('TODO')).toBeNull()`, and it did not mean what it read as: this
-    // branch renders a bare `<span>` (`ToolbarHorizontal.tsx:19`), never a `PlaceholderTool`, so
-    // there is no badge node for it to find — and Testing Library's string matcher is an exact
-    // match after whitespace normalisation, so the query could never have matched the longer
-    // 'TODO: unregistered tool placeholder' either. The correct negative form is the full-string
-    // one in the next test.
+    // The full fallback string is the whole positive: this branch renders a bare `<span>`
+    // (`ToolbarHorizontal.tsx:19`) whose text is `TODO: unregistered tool placeholder`, and
+    // Testing Library's string matcher is an exact match after whitespace normalisation, so that
+    // query cannot also match the span under a partial `TODO`.
     expect(screen.getByText('TODO: unregistered tool placeholder')).toBeInTheDocument();
+
+    // ...and the negative is the half that is NOT subsumed by it. `queryByText('TODO')` is null on
+    // a bare span only because that span's text is the longer string; the moment the fallback also
+    // renders a `<PlaceholderTool>`, its badge (`ToolbarPlaceholder.tsx:19`, text `TODO`) matches
+    // and the positive above still passes. So this is the assertion that says the fallback renders
+    // ONE placeholder and not a competing second one.
+    //
+    // This is falsifiable, and was checked rather than argued: adding
+    // `<PlaceholderTool title="Nope" options={[]} />` to the `!ToolComponent` branch makes exactly
+    // this line fail while the positive above keeps passing. It belongs HERE rather than in the
+    // sibling test, which renders `pen` — itself a `PlaceholderTool` with `showTodoBadge: true`
+    // (`toolsMap.ts:128`), so the same assertion there is red on an unmodified tree and would be
+    // asserting against the registered bar's own legitimate badge rather than a fallback.
+    expect(screen.queryByText('TODO')).toBeNull();
   });
 
   it('renders the registered placeholder bar, not the fallback, for a tool in the real toolsMap', () => {
