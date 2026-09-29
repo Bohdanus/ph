@@ -207,22 +207,40 @@ export const ShapeToolArea = ({ className, overlayCtxRef }: ShapeHandlerProps) =
   };
 
   useEffect(() => {
-    // An unmount between claim and commit is an abort like any other — switching tools mid-drag is
-    // exactly how it happens. Paired with the provider-level `resetDocumentGestures`, this is what
-    // bounds a leaked claim to the mount that leaked it.
+    // Captured in the BODY, not read in the cleanup: React detaches refs in the mutation phase,
+    // before passive destroys run, so `overlayCtxRef.current` is already null by the time this
+    // returns.
+    const ctx = overlayCtxRef.current;
+
     return () => {
+      // An unmount between claim and commit is an abort like any other — switching tools mid-drag is
+      // exactly how it happens. Paired with the provider-level `resetDocumentGestures`, this is what
+      // bounds a leaked claim to the mount that leaked it.
       releaseDocumentClaim();
 
-      // A frame left pending across an unmount would paint into the overlay, which is ONE context
-      // for the whole session and is handed to the next tool, so a shape from an area that no
-      // longer owns it lands on the next tool's canvas. Cancelled and nulled, as `EraserToolArea`
-      // does.
+      // Cancel FIRST, then clear. A frame still queued for the batched `flushDrawingFrame` would
+      // otherwise repaint after the clear below and resurrect the preview.
       if (frameRequested.current !== null) {
         cancelAnimationFrame(frameRequested.current);
         frameRequested.current = null;
       }
+
+      // This area never clears the overlay on pointer up at all: `handlePointerUp`'s last
+      // `flushDrawingFrame` REDRAWS the shape and the commit at :200 leaves it there, so the
+      // teardown below is the only thing that ever removes it. The overlay canvas is shared,
+      // long-lived and only ever `display`-toggled (`Main.tsx:239-284`), which never touches a
+      // backing store, so without it the preview stays painted over the next tool's document — and
+      // over this one, for as long as the shape tool stays selected. Safe for the reason it is safe
+      // in `useRect` and `DrawToolArea`: exactly one tool area is mounted at a time, and React runs
+      // passive destroys before passive creates, so an outgoing area's cleanup cannot wipe the
+      // incoming area's mount paint. The size is read off `ctx.canvas` at call time rather than off
+      // `totalSize` for the same reason as in `useRect`: a render-scope size frozen into this
+      // cleanup under-clears after a document resize.
+      if (ctx) {
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      }
     };
-  }, []);
+  }, [overlayCtxRef]);
 
   return (
     <div

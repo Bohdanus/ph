@@ -179,8 +179,7 @@ and destroys the only signal that the defect existed.
 
 ## 7. A second, NAMED observation — `useFile.test.tsx` JPEG-quality save
 
-**Status: OPEN. Named, not reproduced. THREE full-run failures, and the last one landed
-immediately after the only change to this test's import graph.**
+**Status: OPEN. Named, not reproduced. Four recorded full-run failures across three checkouts, and never once in isolation.**
 
 This one is worth separating from section 1, because unlike it the failing test
 was captured:
@@ -194,11 +193,34 @@ FAIL  src/contexts/__tests__/useFile.test.tsx > FileProvider PSD integration
 
 Observed 2026-09-28, in a full `npm run test` on branch
 `fix/handoff-2026-09-28`. It has **not** reproduced on demand: the same file
-passes in isolation every time, and consecutive full runs are usually green. It has
-now failed **three** times in a full run and never in isolation. The assertion text
-was never captured — only the test name — so the difference from section 1 is the
-name and three data points, not a diagnosis.
+passes in isolation, and six further consecutive full runs were green (198/198
+files, 4513 passed, 34 expected fail). It then **recurred** during the rebase
+onto the responsive tranche, so the honest tally was **two** failures in roughly
+fifteen full runs, not one in seven. A **third** appeared on 2026-09-28 on
+`integration/e2e-campaign-final`, again only in a full run and again passing
+2/2 in isolation immediately afterwards. The assertion text was not captured on
+any occasion — only the test name — so the difference from section 1 is the
+name and a third data point, not a diagnosis.
 
+**What the three occurrences have in common, now that there are three.** Every
+one was a full `npm run test` with several agents running Playwright elsewhere
+on the machine, and every one passed in isolation within seconds. That is
+consistent with the `vmThreads` pool reading timing-sensitive state under CPU
+contention rather than with anything in the change, which is why section 6's
+"not the pool" caveat and this entry have to be read together: the pool is a
+real mechanism, and so is a genuinely unresolved save pipeline, and three
+occurrences do not separate them. What would: capturing the assertion text.
+Capture it next time and this becomes diagnosable in one run.
+
+**The two accounts of the third report may be one event reported twice.** The campaign branch and
+`docs/review-findings-2026-09-28` are not ancestors of one another (merge base `3e52b4e`), which is
+why the tally cannot be pinned from the branches alone: nothing in either branch's history
+distinguishes the runs, and neither run's log was kept. Until one of them produces a captured
+assertion, **four and three are both consistent with what is recorded**, and the difference does not
+change the hunt. What does change the hunt is the fourth report, because it is the one that lands on
+the lead below.
+
+**The report that matters, because it lands on the lead below.** It
 **The third occurrence is the one that matters, and it lands on the lead below.** It
 recurred on `docs/review-findings-2026-09-28` in the run immediately after that branch
 extracted the dialog focus-ownership block out of `SaveDialog.tsx` into
@@ -230,8 +252,9 @@ open, and neither is the pool:
 3. **What the branch actually changed under this test is `SaveDialog.tsx`, and
    it changed focus.** `git diff 80eb207 --stat` on `useFile.test.tsx`,
    `useFile.tsx` and `image-load-save-utils.ts` is **empty** — the test and the
-   whole save path beneath it are untouched. The only file inside this test's
-   import graph that changed is the component itself. Its new mount effect calls
+   whole save path beneath it are untouched. The only files inside this test's
+   import graph that either branch has changed are the component itself and, since
+   `a30c318`, the hook its focus block moved into. That hook's mount effect calls
    `.focus()` synchronously and its cleanup calls `previouslyFocused?.focus?.()`,
    and both dispatch `focusin`/`focusout` — the events React 19 backs
    `onFocus`/`onBlur` with — from inside a promise continuation. **That is a lead,
@@ -252,7 +275,170 @@ green. **Capture the assertion, not just the test name**, and record whether it
 was a timeout or a value mismatch: a timeout points at the focus/async
 interaction in 3, a value mismatch points at ordering.
 
-## 8. A third, NAMED observation — the first Playwright page loads in a cold checkout time out
+## 8. A third, NAMED observation — the paint-bucket contiguous test, once, in a full headless run
+
+**Status: OPEN. Named, not reproduced. One failure in three reproduction attempts.**
+
+```
+  1 failed
+    e2e/erase-fill-eyedropper.spec.ts:438
+      > Eraser, fill tools and eyedropper
+      > the paint bucket fills a contiguous region and not its neighbour
+  Error: Canvas did not render the #cc0000 line within 10000ms
+    at helpers/canvas-helpers.ts:536
+    at waitForCanvasPixels (e2e/helpers/canvas-helpers.ts:536)
+    at drawSlab (e2e/erase-fill-eyedropper.spec.ts:233)
+    at e2e/erase-fill-eyedropper.spec.ts:441
+```
+
+Observed 2026-09-28 on `main` at `cc7b647`, in a full headless `npx playwright test`
+reporting `182 passed, 1 failed, 2 skipped` (185 total). The line numbers in that
+quote are `cc7b647`'s; on the branch that hardened the failure path the same
+anchors are the test declaration at `:487`, `drawSlab` at `:245` and the pixel
+wait at `:282`. `canvas-helpers.ts:536` is unchanged by that work.
+
+**That run was not a clean run, and that is the single most useful thing known
+about it.** It was produced by the e2e orchestrator with six other agents running
+Playwright concurrently on the same host (board post `main`, "Status of the
+takeover"), which also recorded the prediction that this flake and the flyout
+long-press one "both surface under CPU contention" and that a failure reported by
+a subagent is "very likely contention, not a regression". Every reproduction
+attempt below was made with nothing else running, and every one was green. **The
+difference between the two experiments is the contention, not the code.** A full
+suite under deliberate CPU load is the one experiment that would settle it.
+
+**That experiment has now been run, and the flake recurred — at a DIFFERENT
+assertion than the one this section records.** On 2026-09-28, a serial full-suite
+run on `integration/e2e-campaign-final` at `210ace6`, on a host with other agents
+running Playwright, reported 291 passed, 2 skipped and this test failed. The
+recovered `playwright-report/data/` artifact for the failure names the wait that
+gave up:
+
+```
+Error: the blank base layer to be composed
+Timeout 5000ms exceeded while waiting on the predicate
+  at e2e/erase-fill-eyedropper.spec.ts:146-148   (inside openWorkspace)
+```
+
+So the failure is in the test's FIRST act, before `drawSlab` is ever called, and
+it is the seed's composition poll running out of its default 5s budget — not the
+`Canvas did not render the #cc0000 line within 10000ms` at `drawSlab` that the
+observation above records. The refused-commit mechanism below cannot be what
+happened, and on this tree it cannot be produced at all: `drawSlab` now asserts
+the commit first (`erase-fill-eyedropper.spec.ts:277-280`), so a refused commit
+names itself as a `toBeEnabled()` failure on the undo button instead of
+surfacing later as a bare pixel timeout. The page snapshot at failure showed the
+document WAS published (a `Blank 1` Layers row, a `new layer` History row, undo
+and redo disabled) while the pixel poll never returned — which is the
+readiness-budget class of section 9, not a paint-bucket defect.
+
+**It still does not reproduce.** Attempts after that run, all headless on the
+same tree with the port pinned and server reuse off:
+
+| attempt                                                 | result                       |
+| ------------------------------------------------------- | ---------------------------- |
+| the test alone, `--repeat-each=5`                       | `5 passed` (24.4s)           |
+| the whole `erase-fill-eyedropper.spec.ts`               | `10 passed` (23.6s)          |
+| the test alone, `--repeat-each=20` under 10 CPU burners | `20 passed` (3.6m), 3.3-8.1s |
+| the test alone, 3 cold-Vite runs under 10 CPU burners   | `3 passed`                   |
+
+So the entry stays OPEN and its class is unchanged — intermittent, load-sensitive,
+never reproduced on demand — but **both the mechanism and the error signature
+recorded here are stale for this tree**, and the next hunter should start at
+`openWorkspace`'s 5s composition poll rather than at the Draw commit. Nothing
+here is closed: the specific 5s-budget exhaustion is still unexplained, and
+`readPixel` returning null a hundred times in a row on a document the snapshot
+shows as published is not something the reproduction attempts above can answer.
+
+**It did not reproduce again.** Attempts, all on `cc7b647` in a dedicated worktree
+with `PLAYWRIGHT_PORT=5711` and `reuseExistingServer` off, all headless:
+
+| attempt                                                 | result                                                         |
+| ------------------------------------------------------- | -------------------------------------------------------------- |
+| full suite (`npx playwright test`)                      | `183 passed, 2 skipped`                                        |
+| `e2e/erase-fill-eyedropper.spec.ts --repeat-each=5`     | `50 passed`                                                    |
+| the failing test body, instrumented, `--repeat-each=60` | 0 failures in the 20 that completed before the run was stopped |
+
+**Two properties of the observation that the hunt must not assume away.**
+
+1. **It is not a cross-test state leak, and the "7 tests in one worker" shape is
+   the wrong frame.** The file declares **10** tests, not 7, and the failing one is
+   the 6th. Every test gets a fresh `BrowserContext`, the app persists nothing but
+   the theme (`src/contexts/ThemeContext.tsx:14,28` is the only `localStorage`
+   write in `src/`), and the document starts `uninitialized` on every load
+   (`src/contexts/StoreContext.tsx:297,307,315,317`). **A leaked marquee, layer,
+   zoom or tool is impossible across tests here**, and the failing test's first act
+   is `openWorkspace`, before any of its own state exists.
+2. **It is not the 440px scroll that `preservingScroll` exists to undo.** Measured
+   on this tree at 1280x720: `document.documentElement.scrollHeight` is **720**,
+   equal to `innerHeight`, and `window.scrollY` was **0** at every step of the
+   failing test's setup. The overflow that made the page 1177px tall was fixed by
+   `min-h-0 overflow-y-auto` on the `<aside>` (`src/components/SidebarLeft/SidebarLeft.tsx:455-456`);
+   the canvas box is a constant `108,100 922x583` from tool click to capture. The
+   1177px/440px figures in `e2e/helpers/screenshot-scale.ts:53`,
+   `e2e/helpers/cdp-helpers.ts:60`, `e2e/helpers/toolbar-helpers.ts:102-108` and
+   four unit-test comments now describe a layout this build does not produce.
+   **They are stale, not load-bearing, and correcting them is its own change.**
+
+**What the failure therefore is, and is not.** `hasRedPixels`
+(`e2e/helpers/canvas-helpers.ts:473`) wants `red > 180, green < 100,
+blue < 100` anywhere in a 360x140 capture that certainly contains the line. The
+line is composited over an opaque white base, so its red channel is **204 at full
+opacity and higher at any lower opacity** — the Draw tool's `Opacity` slider
+cannot push it under the threshold, and `drawSlab` pins that slider to 1 anyway.
+**The threshold is not defeatable and is not the cause.** The capture also lands
+wholly inside the viewport at `x 228..588, y 230..370` against a 1280x720 window,
+and no entry in `e2e/OPEN_PROBLEMS.md` records a viewport-edge truncation —
+the capture is simply inside the window, so the hazard does not apply. What is left is the only remaining reading: **the stroke never reached the
+composite**, and every action in `drawSlab` reported success while it did not.
+
+**The two candidate mechanisms, neither demonstrated.**
+
+- A **refused commit**. The Draw tool commits from `handlePointerUp` and nowhere
+  else (`src/components/Main/DrawToolArea.tsx:110-143`), and it is reached only
+  when `isPointerUpValid` agrees, which refuses a non-primary button or a foreign
+  pointer id (`src/hooks/usePointerPosition.ts:221,223`) and refuses a second
+  press while one is live (`:198`). A refusal produces no layer, no history entry
+  and no log. See `HANDOFF.md` §66 — that silence is recorded there as a
+  document-state defect in its own right, independently of this flake.
+- A **commit the seed overwrote**. The store has no document until the seeding
+  `REPLACE_DOCUMENT` lands (`src/hooks/useApp.ts:77-80` ->
+  `src/contexts/useLayer.ts:214-230` -> `:174-199`), and a tool layer is appended
+  with `COMMIT_DOCUMENT_EDIT` against the `layers` its render closure captured
+  (`src/contexts/useLayer.ts:174,201-207`). **Weakened, not eliminated:** an
+  instrumented copy of the real `openWorkspace` measured its own pixel poll
+  satisfied on its **first** attempt on 20 of 20 runs, 42-154 ms after `goto`
+  resolved, so the old gate did return before it had established that a document
+  existed. That gate is now fixed and proved by a committed assertion — see below —
+  but no run of the fixed tree has yet failed either, so it is **not** evidence
+  that this was the cause.
+
+**The fixed half, and the tripwire that replaces the ambiguity.** `openWorkspace`
+waited on `readPixel(...) not.toBeNull()` and claimed to wait for the seeded base
+layer. It did not: `readPixel` calls `getColorAtPoint(image, x, y, 0)` with no
+`ignoreNearWhite`, and that returns `null` only for an out-of-capture point or a
+fully transparent one (`e2e/helpers/canvas-helpers.ts:718`) — **a white pixel
+satisfied it**, so the poll only asserted that a screenshot was non-empty. It now
+additionally waits for the seeded `Blank 1` row to be in the Layers panel, read by
+name, which is a fact about the document rather than about a capture. And `drawSlab`
+now asserts the stroke **committed** — `undo` is disabled on a seeded document and
+enabled after the append — _before_ it polls for pixels, so a refused commit names
+itself in the default expect timeout instead of surfacing ten seconds later as a
+bare `Canvas did not render … within 10000ms` from `canvas-helpers.ts:577`.
+
+**To hunt it, capture the artifact, not the name.** The single most valuable
+change to a future report of this is the state at the moment the wait gives up:
+`window.scrollY`, the canvas `boundingBox()`, `elementFromPoint` at the press
+coordinate, whether `undo-button` is enabled, and a full-canvas red-pixel count.
+`drawSlab` now fails on the commit assertion before that state is needed, so the
+artifact to attach is the Playwright trace: run with `--retries=1` so
+`trace: 'on-first-retry'` yields one, and read `test-results/`. Do **not** close
+this by re-running the suite and getting green — that is the rule this file
+already sets for section 1, and it applies here unchanged. A second observation,
+with the assertion text and whether it was a timeout or a value mismatch, is
+worth more than twenty green runs.
+
+## 9. A fourth, NAMED observation — the first Playwright page loads in a cold checkout time out
 
 This one is not a flake at all. It is deterministic, it reproduces on the first
 run in a fresh checkout, and it is regularly misdiagnosed as a product defect in
@@ -308,7 +494,59 @@ Not yet done. The warm-up in (1) is a one-request change to a file nothing else
 touches, and it is left alone here so it does not ride in on a toolbar fix that
 does not need it.
 
-## 9. Files
+**How this composes with sections 10 and 11.** Pinning `PLAYWRIGHT_PORT` is what makes section 10's
+reuse trap go away, and it does so by starting a fresh server every run — which is exactly the cold
+server this section is about. Sections 9, 10 and 11 are one family and three defects, not one defect
+three times: 9 is a server that is right and slow, 10 is the wrong server, 11 is the right server
+serving code you did not write.
+
+## 10. An e2e mutation campaign run without `PLAYWRIGHT_PORT` reports every mutation as green
+
+**The trap.** `playwright.config.ts:118-119` sets `reuseExistingServer: false` only when `CI` or
+`PLAYWRIGHT_PORT` is set. A bare `npx playwright test` from a worktree under `.kilo/worktrees/`
+therefore falls back to :5173 with reuse ON, and attaches to whichever dev server got there first —
+which is another checkout. For an ordinary green/red run this is the trap `AGENTS.md` already
+records under "Worktrees and dev servers": "my change did nothing" is this, not a cache.
+
+**Why it is much worse for a mutation campaign.** A mutation campaign exists to answer "does this
+assertion actually assert anything?", and the answer it produces is a green run. A run that never
+executed the mutated code is indistinguishable from a test that cannot fail. Measured on
+`e2e/undo-redo.spec.ts`: seven consecutive product mutations all "passed", and the cause was that
+the driver ran without a port and had attached to a different worktree's dev server. Re-running with
+`PLAYWRIGHT_PORT` set and the port pinned turned the same seven into seven real reds.
+
+**The rule.** Any agent verifying that an assertion bites MUST pin the port, and before trusting a
+green result MUST confirm the served module actually contains the mutation — `curl` the mutated
+module off the dev server and look for the change, rather than assuming the local worktree is what
+is being tested. A mutation campaign that reports "all green" has most likely measured nothing.
+
+## 11. A mutation campaign that does not verify the SERVED module reports false verdicts
+
+Section 10 is the coarse failure: with no `PLAYWRIGHT_PORT` the run attaches to another
+checkout and every mutation looks green. This is the fine one, and it survives that fix.
+
+A dev server serves a TRANSFORMED module, not the file on disk. So a mutation that is
+correct on disk can be absent from what the browser ran, and the test then reports the
+pre-mutation behaviour. Measured on `e2e/document-dialogs.spec.ts`: of thirteen mutations,
+**four verdicts were false** until the served module was fetched and inspected first. The
+fix is cheap and the check is one request — read the module off the dev server and confirm
+the mutation is in it before believing a green result.
+
+**Two transforms that will silently defeat a marker.** Both bite only if the marker is
+written in a form the transform removes, which is exactly what a hand-written mutation is:
+
+- **Vite strips type annotations.** A marker planted as a type-level change never reaches
+  the browser. Mutate a value.
+- **esbuild rewrites numeric literals.** `0.5` is served as `.5`. A marker written as
+  `=== 0.5` will not be found by a search for the original text, and a mutation asserting
+  on the served text can miss its own marker.
+
+A green mutation result is therefore evidence about the TEST only once it is evidence about
+the CODE THAT RAN. That is the same discipline as section 10, one level down, and the two
+compose: pinning the port stops the run testing the wrong tree, and verifying the served
+module stops it testing the wrong code in the right tree.
+
+## 12. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -317,7 +555,17 @@ does not need it.
 - `src/contexts/avif-utils.ts` — the encoder whose budget check changed nearby
 - `.husky/pre-push` — where `npm run test` now runs
 - `AGENTS.md`, "`test:staged` is a command, not a gate" — where it lives now, and what it costs
-- `playwright.config.ts:106-120` — the `webServer` block, and why an explicit
-  `PLAYWRIGHT_PORT` disables server reuse
-- `e2e/global-setup.ts` — where the warm-up in section 8 belongs
-- `e2e/sidebar-flyout.spec.ts:125` — the `beforeEach` that loses the race
+- `e2e/erase-fill-eyedropper.spec.ts` — the spec behind section 8, and the commit that hardened it
+- `e2e/helpers/canvas-helpers.ts:473,577,718` — the predicate, the poll loop and the sampler
+- `src/hooks/usePointerPosition.ts:194-198,214-223` — the validators whose refusal is silent
+- `playwright.config.ts:106-121`, the condition itself at `:118-119` — the `webServer` block, the
+  `reuseExistingServer` condition behind section 10, and why an explicit `PLAYWRIGHT_PORT` disables
+  server reuse
+- `e2e/document-dialogs.spec.ts` — the spec whose mutation method section 11 validates
+- `e2e/undo-redo.spec.ts` — the spec whose mutation campaign section 10 invalidated
+- `e2e/global-setup.ts` — where the warm-up in section 9 belongs
+- `e2e/sidebar-flyout.spec.ts:136-139` — the `beforeEach` that loses the race
+- `e2e/flyout-longpress-race.spec.ts` — the committed tripwire for the long-press flyout race section 8 names as a CPU-contention flake, and for the misdiagnosis section 9 recounts
+- `e2e/helpers/screenshot-scale.ts:53`, `e2e/helpers/cdp-helpers.ts:60` — the stale 1177px/440px
+  figures section 8 records as stale
+- `src/hooks/useDialogFocusContainment.ts` — where the focus block section 7's lead 3 names now lives

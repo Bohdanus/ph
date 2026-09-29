@@ -12,6 +12,33 @@ export type ContainDimensions = {
   scale: number; // how much is image scaled to be contained
 };
 
+/**
+ * The `data-*` attributes this hook publishes on its container, and what each one is.
+ *
+ * The e2e suite's `documentToCanvasOffset` re-implements the contain fit below, and until
+ * now nothing compared the two: the round-trip test that claimed to was comparing that
+ * helper against its own algebraic inverse, so it could not fail and never asked the app
+ * anything. These attributes are the app ANSWERING, at runtime, from the same values
+ * `getLocalCoords` uses, so `e2e/export/visual-regression.spec.ts` can assert the two
+ * agree — at more than one rect size, including one that differs only in width.
+ *
+ * A `data-*` attribute rather than a `window` global on purpose: it cannot be read by
+ * anything but a test that already has the element, it survives no reload state, and there
+ * is no production branch to guard.
+ */
+export const FIT_ATTRIBUTES = {
+  scale: 'data-fit-scale',
+  offsetX: 'data-fit-offset-x',
+  offsetY: 'data-fit-offset-y',
+  outerWidth: 'data-fit-outer-width',
+  outerHeight: 'data-fit-outer-height',
+  documentWidth: 'data-fit-document-width',
+  documentHeight: 'data-fit-document-height',
+  /** The container's own viewport rect, so a reader can prove WHICH element was measured. */
+  rectX: 'data-fit-rect-x',
+  rectY: 'data-fit-rect-y',
+} as const;
+
 export function usePointerPosition<T extends HTMLElement>(
   {
     ref,
@@ -47,6 +74,50 @@ export function usePointerPosition<T extends HTMLElement>(
   useEffect(() => {
     onResizeRef.current = onResize;
   }, [onResize]);
+
+  /**
+   * The last set of values written to the `data-fit-*` attributes, as one string.
+   *
+   * `getLocalCoords` calls `calculateDimensions()` on every pointer event, so publishing
+   * unconditionally would be nine `setAttribute` calls per `pointermove` in production. The
+   * dimensions only change on a resize, so this signature makes the write path cold: nine
+   * number-to-string conversions and one comparison per event, zero DOM writes.
+   */
+  const publishedFitRef = useRef<string | null>(null);
+
+  const publishFit = useCallback(
+    (dimensions: ContainDimensions, rect: Pos, image: Size) => {
+      const signature =
+        `${dimensions.scale}|${dimensions.offsetX}|${dimensions.offsetY}|` +
+        `${dimensions.outerWidth}|${dimensions.outerHeight}|` +
+        `${image.width}|${image.height}|${rect.x}|${rect.y}`;
+      if (signature === publishedFitRef.current) return;
+
+      const node = ref.current;
+      // Not `if (!node)`: the ref is generic over `T extends HTMLElement` and callers and
+      // tests put a measured stub in it, so a truthy node is not necessarily an element, and
+      // the caller has no interest in the attributes at all.
+      if (typeof node?.setAttribute !== 'function') return;
+
+      // Recorded only once the write has actually happened. Recording before the node check
+      // marked the values published for a call that wrote nothing, and the signature then
+      // matched for every later call with the same dimensions - so a first `calculateDimensions`
+      // that ran before the element was attached suppressed the publish for good, and the
+      // attributes never appeared at all.
+      publishedFitRef.current = signature;
+
+      node.setAttribute(FIT_ATTRIBUTES.scale, String(dimensions.scale));
+      node.setAttribute(FIT_ATTRIBUTES.offsetX, String(dimensions.offsetX));
+      node.setAttribute(FIT_ATTRIBUTES.offsetY, String(dimensions.offsetY));
+      node.setAttribute(FIT_ATTRIBUTES.outerWidth, String(dimensions.outerWidth));
+      node.setAttribute(FIT_ATTRIBUTES.outerHeight, String(dimensions.outerHeight));
+      node.setAttribute(FIT_ATTRIBUTES.documentWidth, String(image.width));
+      node.setAttribute(FIT_ATTRIBUTES.documentHeight, String(image.height));
+      node.setAttribute(FIT_ATTRIBUTES.rectX, String(rect.x));
+      node.setAttribute(FIT_ATTRIBUTES.rectY, String(rect.y));
+    },
+    [ref]
+  );
 
   const readContainerRect = useCallback((): Pos | null => {
     const rect = ref.current?.getBoundingClientRect();
@@ -89,9 +160,10 @@ export function usePointerPosition<T extends HTMLElement>(
         scale,
       };
 
+      publishFit(dimensionsRef.current, rect, imageSize);
       onResizeRef.current?.(dimensionsRef.current);
     },
-    [imageSize, readContainerRect]
+    [imageSize, publishFit, readContainerRect]
   );
 
   useEffect(() => {

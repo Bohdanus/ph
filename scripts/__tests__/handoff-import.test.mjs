@@ -53,7 +53,7 @@ const openProblems = byFile('e2e/OPEN_PROBLEMS.md');
 const ORIGIN_SHAPE = /^[\w.-]+\.md#\d+$|^[\w.-]+\.md#[a-z0-9-]+$/;
 const KNOWN_EXTENSION =
   /\.(?:ts|tsx|js|jsx|mjs|cjs|json|jsonc|md|scss|css|yml|yaml|txt|png|avif|jpg|jpeg|gif|webp|ico|wasm|svg)$/i;
-const DEAD_WORD = /deleted|closed|done|resolved|fixed|landed|superseded/i;
+const DEAD_WORD = /(?:^|[\s\-–—(\[])(?:deleted|closed|done|resolved|fixed|landed|superseded)\b[)\].,;:!?'"’”]*$/i;
 
 /**
  * The same short list the parser uses for a file at the repository root, restated
@@ -112,25 +112,34 @@ describe('the three real documents', () => {
     }
   });
 
-  /**
-   * Everything below asserts GRAMMAR and STABILITY, never the documents' current
-   * contents. The file's own docstring says a change to any of the three
-   * documents is allowed to move the item count without failing this suite, and
-   * three assertions here broke that promise: the exact list of TEST-FLAKES
-   * origins, a 26-element dead-number array, and two HANDOFF titles. Adding
-   * `## 9.` to TEST-FLAKES.md — the workflow AGENTS.md mandates — failed a
-   * parser test over a document edit, which is the failure mode this file exists
-   * to not have.
-   */
-  it('reads a numbered document as one item per number, ascending', () => {
-    const numbers = flakes.parsed.items.map((item) => Number(/#(\d+)$/.exec(item.origin)[1]));
-    expect(numbers.length).toBeGreaterThan(0);
-    // One item per number, no duplicates, and in document order.
-    expect(new Set(numbers).size).toBe(numbers.length);
-    expect([...numbers].sort((a, b) => a - b)).toEqual(numbers);
-    for (const item of flakes.parsed.items) {
-      expect(item.origin).toMatch(/^TEST-FLAKES\.md#\d+$/);
-    }
+  it('reads a numbered document as one item per number, in document order', () => {
+    /**
+     * Grammar and stability, never the documents' current contents. The file's own
+     * docstring says a change to any of the three documents is allowed to move the item
+     * count without failing this suite, and an earlier revision of this test broke that
+     * promise: it transcribed an exact list of TEST-FLAKES origins, so adding `## 9.` to
+     * TEST-FLAKES.md — the workflow AGENTS.md mandates — failed a parser test over a
+     * document edit. Three assertions on the other side of this merge broke the same way,
+     * over a dead-number array and two HANDOFF titles.
+     *
+     * The list below is DERIVED from the document rather than transcribed, which is
+     * stricter and not looser: it is whatever the document actually says, so a parser
+     * that mis-numbered a heading, skipped one, or reordered them still fails. Being
+     * equal to the document's own heading sequence, it subsumes the ascending,
+     * uniqueness and origin-shape properties the other side asserted separately: a list
+     * built here is unique, ordered, and shaped `TEST-FLAKES.md#<number>` by
+     * construction.
+     *
+     * The derivation accepts the `## Item 9` heading form as well as `## 9.`, because
+     * the parser's own `NUMBERED` does, and a derivation narrower than the grammar it
+     * validates is a tripwire on the next heading somebody writes that way.
+     */
+    const HEADING_NUMBER = /^#{1,6}[ \t]+(?:[Ii]tem[ \t]+)?(\d+)\b/gim;
+    const headingNumbers = [...flakes.text.matchAll(HEADING_NUMBER)].map((match) => Number(match[1]));
+    expect(headingNumbers.length).toBeGreaterThan(0);
+    expect(flakes.parsed.items.map((item) => item.origin)).toEqual(
+      headingNumbers.map((number) => `TEST-FLAKES.md#${number}`)
+    );
   });
 
   it("keeps HANDOFF.md's own numbering, so every origin there is a number", () => {
@@ -286,6 +295,69 @@ describe('planning the import', () => {
     expect(parsed.items.map((item) => item.origin)).toEqual(['HANDOFF.md#1', 'HANDOFF.md#2']);
     // Nothing is retired, so planImport files both.
     expect(planImport([parsed], []).create.map((item) => item.origin)).toEqual(['HANDOFF.md#1', 'HANDOFF.md#2']);
+  });
+
+  it('keeps a live entry whose heading merely CONTAINS a dead word as a substring', () => {
+    /**
+     * The test above covers a heading that says the dead word. This one covers a
+     * heading that merely spells it inside an ordinary word: "abandoned"
+     * contains "done", "closed" and "fixed" are all common enough inside longer
+     * words to be a hazard. `DEAD_HEADING` used to be a SUBSTRING net, so a live
+     * item titled "A gesture abandoned by switching tools" was read as a heading
+     * that LISTS retired items — and since a section that lists numbers is a
+     * section about finished ones, `assemble` dropped the very entry it numbered.
+     * The symptom was silent and off-screen: `board import` filed one item fewer
+     * than the document has, with nothing but the count to notice it by.
+     */
+    for (const word of ['abandoned', 'understated', 'unresolvedly', 'supersededly', 'landowner']) {
+      const parsed = parseHandoffDoc({
+        file: 'HANDOFF.md',
+        text: `## 7. A gesture ${word} by switching tools leaves its preview\n\nIt is still open.\n`,
+      });
+      expect(
+        parsed.items.map((item) => item.origin),
+        word
+      ).toEqual(['HANDOFF.md#7']);
+      expect(parsed.dead, word).toEqual([]);
+    }
+  });
+
+  it('keeps an item whose title merely mentions a dead word, number and all', () => {
+    /**
+     * The shape that cost §70, which is the shape the documents actually use.
+     * `retiredNumbersIn` harvests numbers out of a heading, so an anywhere-match
+     * on "fixed" picked up the `3` in `"3 FIXED"` and proved to itself that the
+     * heading was a list of retired items. The section was then closed without
+     * ever being opened, which is not a suppression but a deletion: a real
+     * defect left the import entirely, and the heading-count test reported 37
+     * headings against 36 items.
+     */
+    const parsed = parseHandoffDoc({
+      file: 'HANDOFF.md',
+      text:
+        '## 70. A closure check reported "3 FIXED" for work that was already fixed before it ran\n\n' +
+        'The checker counted work that was already done, so the count was never evidence.\n',
+    });
+    expect(parsed.items.map((item) => item.origin)).toEqual(['HANDOFF.md#70']);
+    expect(parsed.dead).toEqual([]);
+  });
+
+  it('keeps a severity item whose title merely mentions a dead word', () => {
+    // Three of the six dead-word headings in the three documents are severity
+    // items that say "closed" as part of what they are about, not as a status.
+    for (const heading of [
+      '## P1 — the dialog-closed assertion is one rename from vacuous',
+      '## P1 — the keyboard-flow test asserts the menu closed and nothing else',
+      '## P2 — `exportIcoAndVerify` has no dialog-closed assertion',
+    ]) {
+      const parsed = parseHandoffDoc({
+        file: 'e2e/OPEN_PROBLEMS.md',
+        text: `${heading}\n\nOne rename from vacuous is still a defect.\n`,
+      });
+      expect(parsed.dead, heading).toEqual([]);
+      expect(parsed.items, heading).toHaveLength(1);
+      expect(parsed.items[0].title, heading).toContain('closed');
+    }
   });
 
   it('takes no item from the prose of a section the document has deleted', () => {
