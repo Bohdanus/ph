@@ -10,7 +10,8 @@ linked files; this file is the rules that apply to every task.
 | [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md)       | other agents: worktrees, the board, the worktree list, a dead agent |
 | [`docs/PHOTOSHOP-UX.md`](docs/PHOTOSHOP-UX.md)         | the Tools rail, tool names, Photoshop fidelity                      |
 | [`docs/TOOLS-TOO-HARD.md`](docs/TOOLS-TOO-HARD.md)     | a Photoshop capability this browser cannot do, before estimating it |
-| `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN_PROBLEMS.md` | filing or checking a known defect                                   |
+| [`docs/CODE-REVIEW.md`](docs/CODE-REVIEW.md)           | finishing non-trivial work: launching the review subagent           |
+| `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN-PROBLEMS.md` | filing or checking a known defect                                   |
 
 Skills are loaded from `.kilo/skills/`, gitignored, so the durable copy of every skill is the
 tracked document it points at. There is no registry: the loader's `description` is the only
@@ -66,6 +67,33 @@ before spawning a fleet:
   acceptable — a subagent cannot weigh this file against the operator's intent.
 - **Background for long work**; wait for every result you depended on. NEVER
   answer while one is still running.
+
+## ALWAYS launch a code review subagent after non-trivial work
+
+**NON-TRIVIAL WORK IS NOT DONE UNTIL A REVIEWER SUBAGENT HAS READ THE DIFF.** Not
+"self-reviewed", not "the gates are green", not "I re-read it twice". Launch it
+**before** the merge, while a finding still costs one edit instead of a revert.
+
+1. **Use the review prompt.** [`docs/CODE-REVIEW.md`](docs/CODE-REVIEW.md) carries
+   the `code-reviewer` agent's prompt and its permissions — read it, and put that
+   prompt in the brief verbatim. Never write a review brief from memory: the tracked
+   copy exists because the original lives in gitignored `.kilo/`.
+2. **Read-only.** `edit: deny`, `mcp: deny`. The reviewer reports findings, it does
+   not fix them. A reviewer that edits is no longer a review.
+3. **Self-contained brief**: worktree, branch, files in play, the diff range against
+   `main`, and the required output — one `file:line` per finding, each with the
+   concrete failure it causes.
+4. **Several reviewers, split by file.** Never two reviewers on the same file; the
+   rule above holds for reviews too.
+5. **Re-run the load-bearing claims yourself.** A review you did not re-check is a
+   review you did not perform, and a subagent is not an authority.
+6. **A finding sends the task back.** Fix, re-review, then merge. "Reviewed,
+   nothing found" is only a claim while the findings that were weighed are on the
+   record.
+
+The reviewer reads code; it does not run the gates.
+[`docs/TESTING.md`](docs/TESTING.md) is the floor under a review, never a
+substitute for one.
 
 ## NEVER OPEN A BROWSER WINDOW
 
@@ -142,8 +170,9 @@ promotes cached canvases outside reducer publication.**
 3. **Covered** by a test that fails without the change.
 4. **Documented**: handoff updated, plus any new gate, test trap or architecture
    boundary where the next agent looks.
-5. **Reviewed by someone else** — diff, surrounding code, tests, and its own
-   load-bearing claim re-run. A finding sends the task back.
+5. **Reviewed by someone else** — a code review subagent on the prompt in
+   [`docs/CODE-REVIEW.md`](docs/CODE-REVIEW.md): the diff, the surrounding code, the
+   tests, and its own load-bearing claim re-run. A finding sends the task back.
 6. **Merged into `main`** after review and passing gates. Pushed, `main` green.
 7. **Reported as done**: what changed, what validation ran, what the review said.
 
