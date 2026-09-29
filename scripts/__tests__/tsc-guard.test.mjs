@@ -60,6 +60,23 @@ function resolveBinDir() {
 const BIN_DIR = resolveBinDir();
 const TSC_BIN = BIN_DIR ? join(BIN_DIR, 'tsc') : null;
 
+/**
+ * Whether the resolved bin directory belongs to THIS checkout.
+ *
+ * `resolveBinDir` walks up, because most worktrees here have no `node_modules`
+ * of their own and resolve the parent checkout's — which is the correct answer
+ * for every read-only assertion, since it is the link npm and npx would use.
+ *
+ * It is the WRONG answer for anything that writes. A test that plants a broken
+ * link at an ancestor's `.bin/tsc` edits a checkout this session does not own,
+ * and the repair cannot reach it either: `install()` resolves its own REPO_ROOT,
+ * so a worktree's installer will not repair the parent's bin. That happened
+ * here — a momentarily-dangling worktree link sent `resolveBinDir` walking, the
+ * test planted into the shared main checkout, and main was left with no working
+ * `tsc` at all until an install repaired it.
+ */
+const OWNS_BIN_DIR = BIN_DIR !== null && BIN_DIR.startsWith(`${REPO_ROOT}/`);
+
 function runBin(args) {
   return spawnSync(process.execPath, [TSC_BIN, ...args], { encoding: 'utf8', cwd: REPO_ROOT });
 }
@@ -240,6 +257,18 @@ describe('the tsc guard installer', () => {
     // `!resolvesToAFile()` branch, which fires when a link IT just wrote fails
     // to resolve. A correct relative target cannot produce that, so it is a
     // defensive last resort with no reachable trigger from a test.
+    if (!OWNS_BIN_DIR) {
+      // Not a skip dressed as a pass: writing here would edit a bin directory in
+      // a checkout this session does not own, and the assertion below would be
+      // measuring a real side effect somewhere else. See OWNS_BIN_DIR. The
+      // precondition is asserted rather than assumed, so a checkout that loses
+      // its own link cannot quietly take this branch.
+      expect(
+        existsSync(join(REPO_ROOT, 'node_modules', '.bin', 'tsc')),
+        'this checkout does not own its bin entry, so there is nothing here it may plant'
+      ).toBe(false);
+      return;
+    }
     const { install } = await import(INSTALLER);
     try {
       rmSync(TSC_BIN, { force: true });
