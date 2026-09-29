@@ -442,6 +442,12 @@ export const useLayers = () => {
     const layer = layers[id];
     if (!layer) return;
 
+    const { entry, durableEntry } = planHistoryAppend({
+      item: { layerId: id, actionName: REMOVE_ACTION, args: {} },
+      timeline: { entries: history, cursor: historyIndex, branchRevision },
+      currentFrame: documentFrame,
+    });
+
     const { [id]: removedLayer, ...remainingLayers } = layers;
     const deletedLayer = { ...removedLayer, bitmap: null, tmpCanvas: null };
     delete previewLayersRef.current[id];
@@ -459,11 +465,8 @@ export const useLayers = () => {
           deletedLayers: newDeletedLayers,
           activeLayerId: nextActiveLayerId,
         },
-        historyItem: createHistoryItem({
-          layerId: id,
-          actionName: REMOVE_ACTION,
-          args: {},
-        }),
+        historyItem: entry,
+        durableEntry,
       },
     });
 

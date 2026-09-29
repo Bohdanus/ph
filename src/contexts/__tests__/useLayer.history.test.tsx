@@ -2,7 +2,8 @@ import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { StoreProvider, useStore } from '../StoreContext.tsx';
-import { deriveSetLayerPropertiesEntry } from '../history-adapter.ts';
+import { getAssetRegistry } from '../asset-registry.ts';
+import { deriveRemoveLayerEntry, deriveSetLayerPropertiesEntry } from '../history-adapter.ts';
 import { useLayers } from '../useLayer.ts';
 import type { Layer, LayersRecord } from '../layer-types.ts';
 import type { DurableHistoryEntry } from '../history-model.ts';
@@ -275,6 +276,94 @@ describe('useLayers retained history commits', () => {
       y2: 20,
     });
     processor.mockRestore();
+  });
+});
+
+describe('useLayers removeLayer', () => {
+  it('routes a removal through the append boundary exactly once, against the live timeline', () => {
+    const result = setupWithDocument();
+    const id = Object.keys(result.current.store.layers)[0]!;
+    expect(planHistoryAppend).not.toHaveBeenCalled();
+
+    act(() => {
+      result.current.layers.removeLayer(id);
+    });
+
+    // The removal's durable operation is a function of the history item alone, so
+    // the hook boundary can derive it without the store's live layer record — which
+    // is why this writer asks here at all, unlike a reorder.
+    expect(planHistoryAppend).toHaveBeenCalledTimes(1);
+    expect(planHistoryAppend.mock.calls[0]![0]).toMatchObject({
+      item: { layerId: id, actionName: REMOVE_ACTION, args: {} },
+      timeline: { cursor: 0, branchRevision: 0 },
+    });
+  });
+
+  it('publishes the removal the boundary derived, under the legacy entry id', () => {
+    const result = setupWithDocument();
+    const id = Object.keys(result.current.store.layers)[0]!;
+
+    act(() => {
+      result.current.layers.removeLayer(id);
+    });
+
+    const store = result.current.store;
+    expect(store.layers[id]).toBeUndefined();
+    expect(store.deletedLayers[id]).toMatchObject({ id, bitmap: null, tmpCanvas: null });
+    expect(store.history).toHaveLength(2);
+    const entry = store.history[1]!;
+    expect(entry).toMatchObject({ actionName: REMOVE_ACTION, layerId: id, args: {} });
+
+    // A publication, not a reconversion: the shadow grew by exactly the one entry
+    // the boundary derived from the same legacy entry, under the same id.
+    expect(store.durableStatus).toBe('current');
+    expect(store.durableDiagnostics).toEqual([]);
+    expect(store.durableDocument!.history).toHaveLength(1);
+    expect(store.durableDocument!.history[0]).toEqual(deriveRemoveLayerEntry(entry));
+    expect(store.durableDocument!.history[0]!.id).toBe(entry.id);
+    expect(store.durableDocument!.cursor).toBe(0);
+  });
+
+  it('hands the store the entry it planned, so the store publishes instead of reconverting', () => {
+    // A clean removal's published document and its reconverted document are
+    // byte-identical by design — that identity is the invariant the append
+    // boundary exists to hold. So no assertion on the resulting document can tell
+    // the two paths apart, and a writer that planned the entry and then dropped it
+    // on the floor would leave the whole feature inert with every other assertion
+    // still green.
+    //
+    // The discriminator is the registry: a publication never opens an asset
+    // transaction, and every reconversion does (`convertLegacyHistorySafely`,
+    // `history-adapter.ts:728`, reached from `buildDurableDocument`). This test is
+    // the one that fails if the writer stops passing `durableEntry`.
+    const beginTransaction = vi.spyOn(getAssetRegistry(), 'beginDocumentAssetTransaction');
+    const result = setupWithDocument();
+    // `setupWithDocument` replaces the document, which itself reconverts; only the
+    // removal is under test here.
+    beginTransaction.mockClear();
+    const id = Object.keys(result.current.store.layers)[0]!;
+
+    act(() => {
+      result.current.layers.removeLayer(id);
+    });
+
+    expect(beginTransaction).not.toHaveBeenCalled();
+    expect(result.current.store.durableStatus).toBe('current');
+    beginTransaction.mockRestore();
+  });
+
+  it('removes a layer the record does not hold without asking the boundary at all', () => {
+    const result = setupWithDocument();
+    // The baseline entry `setupWithDocument` seeds, captured rather than counted:
+    // this asserts the removal added nothing, not that history is empty.
+    const before = result.current.store.history;
+
+    act(() => {
+      result.current.layers.removeLayer('ghost');
+    });
+
+    expect(planHistoryAppend).not.toHaveBeenCalled();
+    expect(result.current.store.history).toBe(before);
   });
 });
 

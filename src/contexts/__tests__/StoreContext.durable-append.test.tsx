@@ -1,9 +1,14 @@
 import { act, render } from '@testing-library/react';
 import { useEffect } from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { type StoreData, type StoreDispatch, StoreProvider, useStore } from '../StoreContext.tsx';
-import { deriveSetDocumentFrameEntry, deriveSetLayerPropertiesEntry } from '../history-adapter.ts';
+import {
+  deriveRemoveLayerEntry,
+  deriveSetDocumentFrameEntry,
+  deriveSetLayerPropertiesEntry,
+} from '../history-adapter.ts';
+import { getAssetRegistry } from '../asset-registry.ts';
 import { decideDurableAppend } from '../history-append.ts';
 import type { DurableHistoryEntry } from '../history-model.ts';
 import type { HistoryItem } from '../history-types.ts';
@@ -12,6 +17,7 @@ import type { DocumentFrame } from '../document-frame.ts';
 import {
   HIDE_LAYER_ACTION,
   OPEN_DOCUMENT_ACTION,
+  REMOVE_ACTION,
   RENAME_LAYER_ACTION,
   SET_DOCUMENT_FRAME_ACTION,
   SHOW_LAYER_ACTION,
@@ -141,6 +147,181 @@ function commitProperty(
     });
   });
 }
+
+/**
+ * A layer removal, in the shape `useLayer.removeLayer` produces it: the layer
+ * leaves the record, a bitmapless copy is retained for the presentation
+ * boundary, and the append carries the boundary's plan.
+ */
+function removalItem(id: string, target: string = layerId, overrides: Partial<HistoryItem> = {}): HistoryItem {
+  return { id, actionName: REMOVE_ACTION, layerId: target, args: {}, ...overrides };
+}
+
+function commitRemoval(
+  dispatch: StoreDispatch,
+  entry: HistoryItem,
+  planned?: DurableHistoryEntry | null,
+  target: string = layerId
+) {
+  act(() => {
+    dispatch({
+      type: 'COMMIT_DOCUMENT_EDIT',
+      payload: {
+        updates: {
+          layers: {},
+          deletedLayers: { [target]: layer() },
+          activeLayerId: null,
+        },
+        historyItem: entry,
+        ...(planned === undefined ? {} : { durableEntry: planned }),
+      },
+    });
+  });
+}
+
+describe('COMMIT_DOCUMENT_EDIT publishes a planned durable removal', () => {
+  it('appends the planned removal and advances the durable cursor by exactly one', () => {
+    const { store, dispatch } = openDocument();
+    const before = store().durableDocument!;
+    expect(before.history).toHaveLength(0);
+    expect(before.cursor).toBe(-1);
+
+    const entry = removalItem('remove-1');
+    commitRemoval(dispatch(), entry, deriveRemoveLayerEntry(entry));
+
+    const after = store();
+    expect(after.layers[layerId]).toBeUndefined();
+    expect(after.deletedLayers[layerId]).toBeDefined();
+    expect(after.durableStatus).toBe('current');
+    expect(after.durableDiagnostics).toEqual([]);
+    expect(after.durableDocument!.history).toHaveLength(1);
+    expect(after.durableDocument!.history[0]).toMatchObject({
+      id: entry.id,
+      enabled: true,
+      operation: { kind: 'remove-layer', layerId },
+    });
+    // One append mints one id, so the two models name the same entry.
+    expect(after.history).toHaveLength(2);
+    expect(after.history[1]).toBe(entry);
+    expect(after.durableDocument!.history[0]!.id).toBe(after.history[1]!.id);
+    // Exactly one step, and never ahead of the legacy cursor.
+    expect(after.durableDocument!.cursor).toBe(0);
+    expect(after.durableDocument!.cursor).toBeLessThanOrEqual(after.historyIndex);
+    expect(after.durableDocument!.durableRevision).toBe(before.durableRevision + 1);
+  });
+
+  it('produces the same document as the full conversion', () => {
+    // The single invariant the append boundary exists to hold. A translation that
+    // is self-consistent but wrong — a retargeted id, a lost key, a dropped
+    // enabled gate — passes every other test in this file and fails here.
+    const entry = removalItem('remove-1');
+
+    const { store, dispatch } = openDocument();
+    commitRemoval(dispatch(), entry, deriveRemoveLayerEntry(entry));
+    const published = store().durableDocument;
+
+    const { store: controlStore, dispatch: controlDispatch } = openDocument();
+    commitRemoval(controlDispatch(), removalItem('remove-1'));
+    const converted = controlStore().durableDocument;
+
+    // Guard against the comparison passing on two empty documents.
+    expect(published!.history).toHaveLength(1);
+    expect(converted!.history).toHaveLength(1);
+    expect(published).toEqual(converted);
+  });
+
+  it('falls back to the conversion and reports a mismatch when a publisher retargets the removal', () => {
+    const { store, dispatch } = openDocument();
+    const entry = removalItem('remove-1');
+    const retargeted = {
+      ...(deriveRemoveLayerEntry(entry) as DurableHistoryEntry),
+      operation: { kind: 'remove-layer', layerId: 'layer-2' },
+    } as DurableHistoryEntry;
+
+    commitRemoval(dispatch(), entry, retargeted);
+
+    const after = store();
+    // The edit is published and the rebuilt shadow stays exact, so the sidecar is
+    // still current; what the refusal produces is the reported diagnostic.
+    expect(after.durableStatus).toBe('current');
+    expect(after.durableDocument!.history[0]).toMatchObject({
+      id: entry.id,
+      operation: { kind: 'remove-layer', layerId },
+    });
+    // A diagnostic CODE, not a message string: the wording is the store's to
+    // change, the fact that it refused to publish is the contract.
+    expect(after.durableDiagnostics).toHaveLength(1);
+    expect(after.durableDiagnostics.map((diagnostic) => diagnostic.code)).toEqual(['durable-append-mismatch']);
+    expect(after.durableDiagnostics[0]).toMatchObject({ severity: 'error', historyId: entry.id });
+  });
+
+  it('carries a disabled removal into the published document as disabled', () => {
+    const { store, dispatch } = openDocument();
+    const entry = removalItem('remove-disabled', layerId, { disabled: true });
+    const planned = deriveRemoveLayerEntry(entry);
+    expect(planned!.enabled).toBe(false);
+
+    commitRemoval(dispatch(), entry, planned);
+
+    const after = store();
+    expect(after.durableStatus).toBe('current');
+    expect(after.durableDiagnostics).toEqual([]);
+    expect(after.durableDocument!.history[0]).toMatchObject({
+      id: entry.id,
+      enabled: false,
+      operation: { kind: 'remove-layer', layerId },
+    });
+    expect(after.durableDocument!.cursor).toBe(0);
+  });
+
+  it('reports a mismatch when a publisher would re-enable a disabled removal', () => {
+    const { store, dispatch } = openDocument();
+    const entry = removalItem('remove-disabled', layerId, { disabled: true });
+    const reenabled = {
+      ...(deriveRemoveLayerEntry(entry) as DurableHistoryEntry),
+      enabled: true,
+    } as DurableHistoryEntry;
+
+    commitRemoval(dispatch(), entry, reenabled);
+
+    const after = store();
+    expect(after.durableDocument!.history[0]).toMatchObject({ id: entry.id, enabled: false });
+    expect(after.durableDiagnostics.map((diagnostic) => diagnostic.code)).toEqual(['durable-append-mismatch']);
+  });
+
+  it('does no asset-registry work when it publishes, and does on the fallback', () => {
+    const registry = getAssetRegistry();
+    const { store, dispatch } = openDocument();
+    // The baseline replacement converts, so the spies go on after it.
+    const begin = vi.spyOn(registry, 'beginDocumentAssetTransaction');
+    const reconcile = vi.spyOn(registry, 'reconcileDocumentAssets');
+    try {
+      const published = removalItem('remove-1');
+      commitRemoval(dispatch(), published, deriveRemoveLayerEntry(published));
+
+      expect(store().durableStatus).toBe('current');
+      // A removal retires no durable asset: the baseline is uncompacted and the
+      // replayable history still holds the asset-bearing create entries, so the
+      // publication touches neither the transaction nor the reconcile.
+      expect(begin).not.toHaveBeenCalled();
+      expect(reconcile).not.toHaveBeenCalled();
+
+      // Control: the same spies fire on the conversion the refusal falls back to,
+      // so the two assertions above are read from a live path.
+      const retargeted = removalItem('remove-2');
+      commitRemoval(dispatch(), retargeted, {
+        ...(deriveRemoveLayerEntry(retargeted) as DurableHistoryEntry),
+        operation: { kind: 'remove-layer', layerId: 'layer-2' },
+      } as DurableHistoryEntry);
+
+      expect(begin).toHaveBeenCalled();
+      expect(reconcile).toHaveBeenCalled();
+    } finally {
+      begin.mockRestore();
+      reconcile.mockRestore();
+    }
+  });
+});
 
 describe('COMMIT_DOCUMENT_EDIT publishes a planned durable entry', () => {
   it('appends the planned entry and advances the durable cursor by exactly one', () => {
