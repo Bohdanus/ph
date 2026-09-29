@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { getWorkspaceCanvas } from './helpers/canvas-helpers';
 
 /**
  * `toHaveClass(/…/)` runs its regex against `classList.toString()` — the element's
@@ -11,9 +12,17 @@ const ONE_COLUMN_TILE = /(^|\s)w-14(\s|$)/;
 const TWO_COLUMN_TILE = /(^|\s)w-\[6\.75rem\](\s|$)/;
 
 test.describe('SidebarLeft - Layout Toggle (fast)', () => {
+  // The 720px viewport the fit test below names, declared on the describe rather than set
+  // inside the test. `devices['Desktop Chrome']` is 1280x720 today, so a `setViewportSize`
+  // to that same size is a no-op against this config that still fires a real resize at a
+  // mounted app — and none of the file's other four tests do that. A `test.use` here makes
+  // the size true by construction and fires nothing.
+  test.use({ viewport: { width: 1280, height: 720 } });
+
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    // Don't wait for canvas - just verify page loads
+    // Navigation, not the app: `body` is visible on a blank document and on a Vite error
+    // overlay too. The guard that needs a mounted app is each test's own locator.
     await expect(page.locator('body')).toBeVisible();
   });
 
@@ -31,6 +40,10 @@ test.describe('SidebarLeft - Layout Toggle (fast)', () => {
   });
 
   test('the default two-column toolbar fits a 720px viewport without overflowing the page', async ({ page }) => {
+    // The metrics below are page-level, so a blank page satisfies them without a toolbar
+    // having been laid out at all. The canvas is what the toolbar is being measured against.
+    await expect(getWorkspaceCanvas(page)).toBeVisible();
+
     const { height: pageHeight, scrollHeight } = await page.evaluate(() => ({
       height: document.documentElement.clientHeight,
       scrollHeight: document.documentElement.scrollHeight,
