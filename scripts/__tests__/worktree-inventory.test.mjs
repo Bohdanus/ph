@@ -1855,6 +1855,8 @@ describe('the curated table', () => {
     // it failed.
     const invisibleToGit = [
       'agents-audit',
+      'audit-falsehoods',
+      'durable-followups',
       'handoff-remove-layer-assets',
       'history-append-assets',
       'history-remove-append',
