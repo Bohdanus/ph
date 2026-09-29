@@ -39,6 +39,20 @@ const UNMEASURED: ToolbarRowMetrics = {
 };
 
 /**
+ * A computed length, or 0.
+ *
+ * `parseFloat` returns `NaN` for a value it cannot read, and a single `NaN` in `availableHeight`
+ * silently disarms the whole rule: every comparison against it is false, so the fit accepts
+ * every row and the rail never collapses — with nothing failing, because `NaN <= 0` is also
+ * false and so is `naturalHeight <= budget`. 0 is the safe reading in both directions, since a
+ * `0` there means "unmeasurable", which the planner already handles by showing everything.
+ */
+const length = (value: string): number => {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+/**
  * Read the grid's own geometry.
  *
  * Every number here is measured rather than declared, and that is the point: the tile
@@ -51,7 +65,19 @@ const UNMEASURED: ToolbarRowMetrics = {
 const readRowMetrics = (slot: HTMLElement | null, tools: HTMLElement | null): ToolbarRowMetrics => {
   if (!slot || !tools) return UNMEASURED;
 
-  const availableHeight = slot.getBoundingClientRect().height;
+  // The slot bounds the TOOLS BOX, and the tools box carries its own padding and a border
+  // inside that slot. Charging the fit for the full slot while the grid only gets what is
+  // left over makes the plan 14px light on every measurement, and a plan that is 14px light
+  // is a plan that overflows its own budget by 14px — invisible until a window height lands
+  // on the boundary. Measured from computed style rather than subtracted as a constant, so a
+  // padding change cannot silently reintroduce the same gap.
+  const toolsStyle = getComputedStyle(tools);
+  const toolsChrome =
+    length(toolsStyle.paddingTop) +
+    length(toolsStyle.paddingBottom) +
+    length(toolsStyle.borderTopWidth) +
+    length(toolsStyle.borderBottomWidth);
+  const availableHeight = slot.getBoundingClientRect().height - toolsChrome;
   // The tile is read from the DOM rather than from a constant, so `h-11` can become `h-12`
   // without anything here knowing. Any rendered tile answers, including the three-dots tile,
   // so the measurement survives a collapse that empties every group.
@@ -62,22 +88,32 @@ const readRowMetrics = (slot: HTMLElement | null, tools: HTMLElement | null): To
   if (tileHeight <= 0) return { ...UNMEASURED, availableHeight };
 
   const lists = Array.from(tools.querySelectorAll<HTMLElement>(':scope > ul'));
-  const rowGap = lists.length > 0 ? Number.parseFloat(getComputedStyle(lists[0]).rowGap) || 0 : 0;
+  const rowGap = lists.length > 0 ? length(getComputedStyle(lists[0]).rowGap) : 0;
 
-  // The section separator is the distance between one section's last row and the next
-  // section's first, minus the grid's own row gap: the two `<ul>`s are block siblings, so
-  // the gap between them is the separator's margin, padding and border rather than a grid
-  // gap. The nearest EARLIER NON-EMPTY list is used rather than the immediately preceding
-  // one, so a collapse that empties a whole section cannot make the separator unmeasurable —
-  // an empty `<ul>` occupies zero height, so the distance to the section after it is the
-  // same distance either way.
+  // The section separator is what a section boundary costs ON TOP OF the grid's row gap, and
+  // the way to read it is the distance from the previous list's BOTTOM to this section's
+  // first TILE — not to this section's own top.
+  //
+  // `getBoundingClientRect().top` is the BORDER box, and the separator's own `pt-1.5` and
+  // `border-t` are INSIDE that box. Measuring to the list's top therefore returns the margin
+  // alone, which here is exactly the 6px row gap, so `between` came out 0 and the
+  // `between > 0` guard silently discarded the separator entirely. The rail was modelled as
+  // 794px and measured 822px: four boundaries, seven pixels each, never accounted for, and
+  // nothing failed because the 20% budget hid the shortfall until a window height landed on
+  // it. The first TILE's top is outside the padding, so it is the only one of the three that
+  // measures what the planner actually charges.
+  //
+  // The nearest earlier NON-EMPTY list is used rather than the immediately preceding one, so
+  // a collapse that empties a whole section cannot make the separator unmeasurable: an empty
+  // `<ul>` is zero-height, so the distance to the section after it is unchanged either way.
   let sectionBreakHeight = 0;
   for (let index = 1; index < lists.length; index += 1) {
-    if (lists[index].childElementCount === 0) continue;
+    const firstTile = lists[index].firstElementChild;
+    if (!(firstTile instanceof HTMLElement)) continue;
     let previous = index - 1;
     while (previous >= 0 && lists[previous].childElementCount === 0) previous -= 1;
     if (previous < 0) continue;
-    const between = lists[index].getBoundingClientRect().top - lists[previous].getBoundingClientRect().bottom - rowGap;
+    const between = firstTile.getBoundingClientRect().top - lists[previous].getBoundingClientRect().bottom - rowGap;
     if (between > 0) {
       sectionBreakHeight = between;
       break;
@@ -148,6 +184,12 @@ export const createToolbarFitStore = (): ToolbarFitStore => {
       };
     },
     getSnapshot: () => version,
+    // A fallback, and honestly one. `useSyncExternalStore` normally asks for the current
+    // version or the one it last rendered with, and both are answered exactly; a THIRD,
+    // staler version can only come from a render React discarded, and a discarded render
+    // produces no output, so returning the current metrics is the safe answer and not a
+    // silent lie about the past. It is a fallback rather than an error because the cost of
+    // being wrong here is a re-derived plan on the next real measurement, not a wrong commit.
     metricsFor(requested) {
       if (requested === version) return published;
       if (requested === previousVersion) return previous;

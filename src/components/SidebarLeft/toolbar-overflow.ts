@@ -88,14 +88,21 @@ const everythingVisible = (naturalHeight: number, budget: number, slotCount: num
  * The three-dots tile is a full row, and that is what makes the answer simple: the plan
  * renders exactly as many rows as the budget holds, and the LAST of them is the tile
  * rather than a tool. Reserving the tile's row rather than appending it after the fit is
- * what buys that; deciding the fit first and then adding the tile is the bug this
- * ordering exists to prevent, because a tile added to a full budget is one row past it.
+ * what buys that; deciding the fit first and then adding the tile is the bug this ordering
+ * exists to prevent, because a tile added to a full budget is one row past it.
  *
- * The consequence is worth stating because it looks wrong until you see why: a collapse
- * always costs at least TWO rows, never one. Keeping `n - 1` tool rows and drawing the tile
- * would cost exactly the `n` rows of the full list, which is a height the budget has already
- * rejected — so a one-row collapse is not a state the planner can produce. It also means a
- * two-column rail can never drop one group of a pair, because the pair is the row.
+ * The consequence is usually that a collapse costs TWO rows rather than one: keeping `n - 1`
+ * tool rows and drawing the tile would cost exactly the `n` rows of the full list, which is
+ * the height the budget has already rejected. **"Usually", though — a one-row collapse is
+ * reachable, and it is reachable exactly when the last row is the first row of a new
+ * section.** The separator sits between the row that would be kept and the row that would be
+ * dropped, so the tile replaces the separator as well as the row, and the fit clears a band
+ * as wide as `sectionBreakHeight` that it otherwise could not. Two test fixtures happened to
+ * hide this — they put every row in one section, and the last section of the real map has
+ * three groups — so it was held by two accidents rather than by the arithmetic. It matters
+ * because the two-column half-row argument rests on it: a two-column rail cannot drop one
+ * group of a pair, because the pair is the row, and that is still true whatever the
+ * separator does.
  */
 export const planToolbarOverflow = (
   slots: readonly ToolbarSlot[],
@@ -152,6 +159,3 @@ export const planToolbarOverflow = (
     fittedThrough,
   };
 };
-
-/** The keys of the tools that moved into the three-dots tile, for a flyout that lists them. */
-export const collapsedKeysOf = (plan: ToolbarOverflowPlan): ReadonlySet<string> => new Set(plan.collapsedKeys);

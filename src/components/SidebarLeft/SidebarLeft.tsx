@@ -200,6 +200,33 @@ const SidebarLeft = () => {
   // rather than a render.
 
   /**
+   * The key a group is rendered and looked up under, in whichever layout is active.
+   *
+   * ONE function, because the two callers disagreed and the disagreement was invisible until
+   * a layout other than the default was exercised. `toolbarSlots` built two-column keys while
+   * `overflowTools` asked about one-column keys, so in the two-column rail the collapse
+   * matched nothing: the three-dots tile came out holding an empty list, `hasFlyout` was
+   * false, and a plain click on it read `tool.figure` off `undefined` and threw. Every e2e
+   * spec runs at the default one column, so nothing caught it.
+   *
+   * The two-column key is the group's index in the FLATTENED list, because that grid
+   * interleaves the sections and a section-and-group pair has no meaning there. So the flat
+   * offsets are computed once rather than re-derived at every lookup.
+   */
+  const groupKey = useMemo(() => {
+    if (isSingleColumnMode) return oneColumnGroupKey;
+    // Offset of the first group of each section, so a (section, group) pair maps to its flat
+    // index in one addition. `toolbarMap` is the source of the lengths, so this cannot drift
+    // from the grid the two-column branch actually renders.
+    const sectionOffsets: number[] = [];
+    toolbarMap.reduce((offset, section) => {
+      sectionOffsets.push(offset);
+      return offset + section.length;
+    }, 0);
+    return (sectionIndex: number, groupIndex: number) => twoColumnGroupKey(sectionOffsets[sectionIndex] + groupIndex);
+  }, [isSingleColumnMode]);
+
+  /**
    * The tool grid as a list of ROWS, which is the unit that actually occupies height.
    *
    * A row is a group in the one-column rail and a PAIR of groups in the two-column rail,
@@ -212,10 +239,7 @@ const SidebarLeft = () => {
   const toolbarSlots = useMemo<ToolbarSlot[]>(() => {
     if (isSingleColumnMode) {
       return toolbarMap.flatMap((section, sectionIndex) =>
-        section.map((_group, groupIndex) => ({
-          keys: [oneColumnGroupKey(sectionIndex, groupIndex)],
-          sectionIndex,
-        }))
+        section.map((_group, groupIndex) => ({ keys: [groupKey(sectionIndex, groupIndex)], sectionIndex }))
       );
     }
     const rows: { keys: string[]; sectionIndex: number }[] = [];
@@ -226,7 +250,7 @@ const SidebarLeft = () => {
       else rows.push({ keys: [key], sectionIndex: 0 });
     });
     return rows;
-  }, [isSingleColumnMode]);
+  }, [isSingleColumnMode, groupKey]);
 
   const { attachSlot, attachTools, plan: overflowPlan } = useToolbarOverflow(toolbarSlots);
   const collapsedGroups = useMemo(() => new Set(overflowPlan.collapsedKeys), [overflowPlan]);
@@ -239,17 +263,19 @@ const SidebarLeft = () => {
    * would put the Pencil out of reach for as long as the window is short, which is the
    * defect the two-column rail was invented to avoid and the three-dots tile must not
    * reintroduce. Each tool belongs to exactly one group, so nothing here is already a tile.
+   *
+   * Keyed through {@link groupKey}, which is what makes it correct in both layouts.
    */
   const overflowTools = useMemo(() => {
     const tools: ToolbarTool[] = [];
     toolbarMap.forEach((section, sectionIndex) => {
       section.forEach((group, groupIndex) => {
-        if (!collapsedGroups.has(oneColumnGroupKey(sectionIndex, groupIndex))) return;
+        if (!collapsedGroups.has(groupKey(sectionIndex, groupIndex))) return;
         tools.push(...group);
       });
     });
     return tools;
-  }, [collapsedGroups]);
+  }, [collapsedGroups, groupKey]);
 
   // A collapse that swallows the open group's tile unmounts the tile, and with it the
   // flyout. `openGroup` would keep naming a group that is no longer rendered, and the moment

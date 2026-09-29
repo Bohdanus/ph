@@ -907,13 +907,22 @@ carries tests on both sides: `e2e/toolbar-overflow.spec.ts` asserts that at four
 every tool is in exactly one of a tile or that flyout — nothing unreachable, nothing offered twice.
 
 **One column is the DEFAULT, and no ordinary desktop window shows all of it.** Sixteen groups of a
-44px tile with a 6px gap and four section separators is about 846px of tiles, the budget is 80% of
-the slot, and the rail's chrome takes another ~190px — so the window has to be roughly 1250px tall
-before nothing collapses at all. That is what two columns is for, and it is why one column is
-Photoshop's default and the chevron is the override. Do not read "everything fits" as something an
-ordinary laptop height satisfies, and do not pin a viewport number to mean it: the rule is on the
-slot, and `SidebarLeft.overflow.test.tsx` asserts that a different window at the same slot height
-changes nothing.
+44px tile is 822px of grid — 16 tiles, 15 row gaps at 6px, and 4 section separators at 7px on top
+of the gap — and the budget is 80% of whatever the slot has left, so the window has to be about
+**1400px tall** before nothing collapses at all (measured: at 1400 the slot is 1059 and nothing
+collapses; at 1370 the slot is 1029 and a collapse already happened). The rail also spends 341px
+of chrome above and below that grid — 137px of shell outside the rail and 204px inside it — which
+is the other reason the threshold is where it is. Measured with:
+
+```
+PLAYWRIGHT_PORT=5251 npm run test:e2e -- e2e/measure-fit.spec.ts --reporter=list
+```
+
+That is what two columns is for, and it is why one column is Photoshop's default and the chevron
+is the override. Do not read "everything fits" as something an ordinary laptop height satisfies,
+and do not pin a viewport number to mean it: the rule is on the slot, and
+`SidebarLeft.overflow.test.tsx` asserts that a different window at the same slot height changes
+nothing.
 
 **The default TOOL is the Draw tool, which the collapse puts in the three-dots tile at every
 realistic window, so the three-dots tile is the only lit tile on load.** `DEFAULT_TOOL` is `draw`

@@ -20,13 +20,13 @@ import { clickToolButton, openToolFlyout, resolveToolTile, selectFromFlyout } fr
  * flyout can *select* them and stopped there, and Color Replacement was not named in any
  * spec at all.
  *
- * All three live in one flyout group. `toolbar-mapping.ts:57-61` lists them as
+ * All three live in one flyout group. `toolbar-mapping.ts:71-73` lists them as
  * `[Brush Tool / brush, Pencil Tool / pencil, Color Replacement Tool / color-replacement]`,
  * so the group's primary is `brush` and `openToolFlyout(page, 'brush')` is the long-press
  * that opens it. The per-item test ids come from the labels
  * `Brush Tool -> brush-tool`, `Pencil Tool -> pencil-tool`,
  * `Color Replacement Tool -> color-replacement-tool`
- * (`SidebarLeft.tsx:299` mints `tool-flyout-item-${name}-${slug}`).
+ * (`SidebarLeft.tsx:670` mints `tool-flyout-item-${name}-${slug}`).
  *
  * `Main.tsx:55` routes all three to `interactionMode === 'draw'`, so the same
  * `DrawToolArea` collects the gesture for each of them, and `toolProcessors.ts:165-193`
@@ -278,9 +278,9 @@ test('selecting a paint tool releases the previously primary tool button', async
   await openToolFlyout(page, 'brush');
   await selectFromFlyout(page, { toolName: 'brush', label: 'Brush Tool' });
 
-  // `aria-pressed` is `group.some(tool => tool.name === toolName)` (SidebarLeft.tsx:170),
+  // `aria-pressed` is `group.some(tool => tool.name === toolName)` (SidebarLeft.tsx:475),
   // so it moves between groups rather than following one tile: Draw is its own group
-  // (toolbar-mapping.ts:63) and Brush a different one, so selecting Brush has to clear Draw.
+  // (toolbar-mapping.ts:96) and Brush a different one, so selecting Brush has to clear Draw.
   await expect(drawButton, 'Draw must not stay pressed after a different tool group takes over').toHaveAttribute(
     'aria-pressed',
     'false'

@@ -11,10 +11,16 @@ const GAP = 6;
 const SECTION_BREAK = 7;
 
 /**
- * The shortest slot whose 80% budget can hold a row AND the three-dots tile: the tile
- * costs `GAP + TILE` exactly as a row does, and it is the last thing rendered, so a slot
- * below `50 / 0.8 = 62.5` cannot hold both. That band is handled on its own terms in the
- * degenerate test below, and the sweep starts at the first integer that clears it.
+ * Where the two sweeps start, and the honest version of the claim.
+ *
+ * `63` is `50 / 0.8` — the slot whose budget can hold one row plus the three-dots tile's own
+ * row, and NOT the point at which a first tool row fits: that is `(TILE + 2 * GAP + TILE) /
+ * 0.8 = 117.5`. So iterations from 63 up run over heights where the plan is the lone
+ * three-dots tile, which is a real and tested state (see the degenerate case below) but is
+ * not "the shortest slot that fits a row and the tile" as an earlier version of this comment
+ * said. The number is the floor for "the budget can hold two rows of anything", which is the
+ * property both sweeps actually need: it is what makes `over <= 0` the interesting claim
+ * rather than the lone-tile case's known one-row overflow.
  */
 const SHORTEST_FITTING_SLOT = 63;
 
@@ -135,6 +141,37 @@ describe('planToolbarOverflow', () => {
     expect(plan.fittedThrough).toBe(2);
     expect(plan.collapsedKeys).toEqual(['c', 'd']);
     expect(renderedHeight(2, true, 0)).toBeLessThanOrEqual(plan.budget);
+  });
+
+  it('can collapse exactly ONE row, when the last row is the first row of a new section', () => {
+    // The counterexample to the tidy rule, found by review rather than by a failing test.
+    //
+    // "The tile is a full row, so a collapse always costs two" is right about the common case
+    // and wrong in general. When the last row is also the FIRST row of a new section, the
+    // separator sits between the row that would be kept and the row that would be dropped, so
+    // the tile replaces the separator too — and the fit clears a band `sectionBreakHeight`
+    // wide that it otherwise could not. Two fixtures had been hiding it: they put every row
+    // in one section, and the real map's last section has three groups, so no band was ever
+    // reachable from the data.
+    const slots: ToolbarSlot[] = [
+      { keys: ['a'], sectionIndex: 0 },
+      { keys: ['b'], sectionIndex: 0 },
+      { keys: ['c'], sectionIndex: 1 },
+    ];
+    const plan = planToolbarOverflow(slots, metrics(181, { sectionBreakHeight: SECTION_BREAK }));
+
+    // 181 * 0.8 = 144.8. Two rows plus the tile is 44 + 50 + 57 = 151, which does not fit;
+    // two rows plus the tile where the tile carries no separator is 144, which does. A band,
+    // not a point, and it is 7px wide — exactly the separator.
+    expect(plan.naturalHeight).toBe(TILE * 3 + GAP * 2 + SECTION_BREAK);
+    expect(plan.fittedThrough).toBe(2);
+    expect(plan.collapsedKeys).toEqual(['c']);
+    expect(plan.showOverflowTile).toBe(true);
+    // And just outside the band, two rows go, which is the common case.
+    expect(planToolbarOverflow(slots, metrics(180, { sectionBreakHeight: SECTION_BREAK })).collapsedKeys).toEqual([
+      'c',
+    ]);
+    expect(planToolbarOverflow(slots, metrics(189, { sectionBreakHeight: SECTION_BREAK })).collapsedKeys).toEqual([]);
   });
 
   it('collapses BOTH groups of a two-column row, because they share the row', () => {

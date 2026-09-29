@@ -45,8 +45,12 @@ test('screenshot of canvas area contains line of selected red color', async ({ p
 
   await clickToolButton(page, 'draw');
   // The draw tool only strokes with the active foreground color once it is the active tool.
+  // Resolved for the same reason as the assertion above it: `draw` is the seventeenth group,
+  // so at this viewport it has been folded into the three-dots tile and there is no
+  // `tool-button-draw` element. Two assertions in one test, and only one of them was
+  // converted — which is the usual way a half-finished migration reaches the gate.
   await expect(
-    page.getByTestId('tool-button-draw'),
+    await resolveToolTile(page, 'draw'),
     'clicking the Draw tile must make draw the active tool'
   ).toHaveAttribute('aria-pressed', 'true');
 
