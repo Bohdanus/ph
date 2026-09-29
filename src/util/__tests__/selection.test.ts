@@ -398,6 +398,46 @@ describe('drawSelectionOutline', () => {
     expect(ctx.setLineDash).toHaveBeenCalledTimes(1);
   });
 
+  it('resets globalAlpha to 1, and does so before it strokes, whatever the last tool left behind', () => {
+    // The reset is `resetOverlayAlpha` at `src/util/selection.ts:156` — `ctx.globalAlpha = 1` and
+    // nothing else (`src/util/canvas.ts:8-10`). The PRECONDITION is the load-bearing half of this
+    // test: `makeMockCtx` initialises `globalAlpha` to 1 (`src/__tests__/canvas-mock.ts:52`), so
+    // asserting 1 on a fresh context would pass whether or not the reset existed.
+    //
+    // The mock's `save` and `restore` are bare `vi.fn()` spies (`canvas-mock.ts:22-23`) that
+    // neither push nor pop a state stack, so nothing restores the alpha afterwards and the value
+    // read back is the one the function left behind. That is what lets the assertion survive.
+    const ctx = makeMockCtx();
+    ctx.globalAlpha = 0.25;
+    let alphaAtStroke: number | undefined;
+    ctx.stroke = vi.fn(() => {
+      alphaAtStroke = ctx.globalAlpha;
+    });
+
+    drawSelectionOutline(ctx, selection());
+
+    expect(ctx.globalAlpha).toBe(1);
+    // A reset placed after the path was stroked would leave the outline painted at 0.25 while
+    // still reading back as 1, so the value has to be sampled during the draw.
+    expect(alphaAtStroke).toBe(1);
+  });
+
+  it.each(['freehand-lasso', 'magic-wand'] as const)(
+    'resets globalAlpha on the anchor-less %s path too',
+    (sourceTool) => {
+      // These two skip the anchor loop, which is where an early return could have skipped the
+      // reset: the per-caller resets this retired were added one tool at a time and were
+      // missing the magic wand's, which is the whole reason the reset moved inside the function.
+      const ctx = makeMockCtx();
+      ctx.globalAlpha = 0.25;
+
+      drawSelectionOutline(ctx, selection({ sourceTool }));
+
+      expect(ctx.globalAlpha).toBe(1);
+      expect(ctx.stroke).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it('skips inactive selections entirely', () => {
     const ctx = makeMockCtx();
     drawSelectionOutline(ctx, selection({ isActive: false }));
@@ -482,6 +522,24 @@ describe('isPointInPolygon', () => {
     expect(isPointInPolygon({ x: 0, y: 5 }, square)).toBe(true);
   });
 
+  it('applies the same half-open rule on the vertical axis: top edge inside, bottom edge outside', () => {
+    // `pi.y > point.y !== pj.y > point.y` (`src/util/selection.ts:202`) is the vertical straddle
+    // term, a separate branch of the same predicate from the horizontal comparison above. The
+    // horizontal half-open rule was pinned without it, so nothing asserted this half at all.
+    expect(isPointInPolygon({ x: 5, y: 0 }, square)).toBe(true);
+    expect(isPointInPolygon({ x: 5, y: 10 }, square)).toBe(false);
+  });
+
+  it('puts the corners the two axes disagree about on the same side each time', () => {
+    // (0,0) is inside on both readings and (10,10) outside on both, which is the pair an axis
+    // swap in the straddle term flips. The other two corners are outside, so all four are pinned:
+    // a square whose corners were {true, false, false, true} diagonally would be wrong too.
+    expect(isPointInPolygon({ x: 0, y: 0 }, square)).toBe(true);
+    expect(isPointInPolygon({ x: 10, y: 10 }, square)).toBe(false);
+    expect(isPointInPolygon({ x: 10, y: 0 }, square)).toBe(false);
+    expect(isPointInPolygon({ x: 0, y: 10 }, square)).toBe(false);
+  });
+
   it('returns false for polygons with fewer than three vertices', () => {
     expect(isPointInPolygon({ x: 0, y: 0 }, [])).toBe(false);
     expect(isPointInPolygon({ x: 0, y: 0 }, square.slice(0, 2))).toBe(false);
@@ -553,6 +611,79 @@ describe('moveSelectionAnchor', () => {
       { x: 25, y: 4 },
       { x: 0, y: 4 },
     ]);
+  });
+
+  it('mirrors a rectangle anchor dragged past the opposite corner instead of rejecting the drag', () => {
+    // The polygon arm bails out of a degenerate drag at `src/util/selection.ts:252`
+    // (`if (!normalized) return selection;`); the rectangle arm at `:232-248` has no counterpart,
+    // so the drag is accepted and the box is re-derived from min/max by `pointsBoundingPos`
+    // (`src/util/draw.ts:6-27`, called with `lineWidth: 0`).
+    //
+    // The consequence is that the anchor is NOT where it was dropped. The box grows to contain
+    // the drop point, but index 0 is rebuilt as its top-left, so the corner the user is holding
+    // has ended up at the opposite corner of a larger rectangle. Whether that mirroring is
+    // desirable is the owner's call, not a defect; the point of the pin is that today nothing
+    // stated it, so it could change silently.
+    const rect = selection({
+      geometry: 'rectangle',
+      sourceTool: 'rectangular-selection',
+      pos: { x: 5, y: 5, width: 10, height: 10 },
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+        { x: 0, y: 10 },
+      ],
+      metadata: { movedAtVersion: 4 },
+    });
+
+    const moved = moveSelectionAnchor(rect, 0, { x: 25, y: 25 });
+
+    expect(moved.pos).toEqual({ x: 5, y: 5, width: 20, height: 20 });
+    expect(moved.points).toEqual([
+      { x: 0, y: 0 },
+      { x: 20, y: 0 },
+      { x: 20, y: 20 },
+      { x: 0, y: 20 },
+    ]);
+    expect(moved.metadata?.movedAtVersion).toBe(5);
+    // Index 0 is the top-left of the rebuilt box, not the (25, 25) the drag was dropped at.
+    expect(getSelectionAbsolutePoints(moved)[0]).toEqual({ x: 5, y: 5 });
+  });
+
+  it('keeps an already-collapsed rectangle collapsed, and never yields a negative extent', () => {
+    // `pointsBoundingPos` returns `maxX - minX`, which a min/max pair cannot make negative, so a
+    // drag along a collapsed axis holds that axis at exactly zero while the other one tracks.
+    //
+    // The starting selection is already collapsed, and that is the only reachable way in: three
+    // corners of a non-degenerate rectangle are never collinear and never share a coordinate, so
+    // moving the fourth can neither flatten the box nor collapse it. `normalizeRectangleSelectionRect`
+    // refuses to build a collapsed rectangle in the first place (`src/util/selection.ts:62`), which
+    // is what makes this state a pin on `moveSelectionAnchor` rather than on construction.
+    const collapsed = selection({
+      geometry: 'rectangle',
+      sourceTool: 'rectangular-selection',
+      pos: { x: 5, y: 5, width: 0, height: 10 },
+      points: [
+        { x: 0, y: 0 },
+        { x: 0, y: 0 },
+        { x: 0, y: 10 },
+        { x: 0, y: 10 },
+      ],
+    });
+
+    const moved = moveSelectionAnchor(collapsed, 0, { x: 5, y: 3 });
+
+    expect(moved.pos).toEqual({ x: 5, y: 3, width: 0, height: 12 });
+    expect(moved.points).toEqual([
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+      { x: 0, y: 12 },
+      { x: 0, y: 12 },
+    ]);
+    // A drag that leaves the shape degenerate still counts as a move, so the writers' own
+    // `hasSameSelectionGeometry` guard is what suppresses the commit, not the version counter.
+    expect(moved.metadata?.movedAtVersion).toBe(1);
   });
 
   it('returns the original selection unchanged for an out-of-range anchor index', () => {

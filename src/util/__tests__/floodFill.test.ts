@@ -18,7 +18,7 @@
  * `d` is selected at tolerance `d / sqrt(3)`.
  */
 import { describe, expect, it } from 'vitest';
-import { createFloodFillMask } from '../floodFill.ts';
+import { createFloodFillMask, type FloodFillOptions } from '../floodFill.ts';
 import { createMagicWandSelectionFromImageData } from '../magicWand.ts';
 
 function createImageData(width: number, height: number, fill: [number, number, number, number]): ImageData {
@@ -388,31 +388,96 @@ describe('degenerate input', () => {
 describe('large images', () => {
   const LARGE = 2000;
 
+  /**
+   * Milliseconds for one fill, with the image built BEFORE the clock starts, so the number is
+   * the algorithm and not the `Uint8ClampedArray` allocation. The count is asserted on every
+   * call: a fill that returned early would be fast and must not be able to satisfy a cost
+   * assertion.
+   */
+  const timeFill = (size: number, options: FloodFillOptions): number => {
+    const imageData = createImageData(size, size, [12, 34, 56, 255]);
+
+    const startedAt = performance.now();
+    const result = createFloodFillMask(imageData, { x: size / 2, y: size / 2 }, { tolerance: 0, ...options });
+    const elapsed = performance.now() - startedAt;
+
+    expect(result?.selectedPixelCount).toBe(size * size);
+
+    return elapsed;
+  };
+
+  const SCALE_CASES: Array<[string, FloodFillOptions]> = [
+    ['the 4-connected flood', {}],
+    ['the global scan', { contiguous: false }],
+  ];
+
+  it.each(SCALE_CASES)('scales with pixel count, not with pixel count squared, for %s', (_label, options) => {
+    // A wall-clock bound cannot see the regression it claims to guard. A quadratic fill and a
+    // linear one differ by an order of magnitude only when two SIZES are compared on the same
+    // run, where the machine's own speed cancels out; against a fixed 20s ceiling both pass on a
+    // fast runner and both fail on a loaded one. So the comparison is between two sizes.
+    //
+    // 2000x2000 is 4x the pixels of 1000x1000: linear costs ~4x, quadratic costs ~16x. The
+    // bound is 8x, which splits that space 4:1 in favour of linear.
+    //
+    // The ramp starts at 1000 rather than 500 because of what the small step actually measures.
+    // On the machine this was written on (fastest of 5, image built outside the clock) 500x500
+    // cost 1.1-2.7ms and 1000x1000 cost 4.2-12.5ms: with a 500x500 small step the measured time
+    // is the same order as any floor worth setting, and a quadratic 1000x1000 lands only ~1.1x
+    // over the bound — a tripwire with no teeth. At 1000x1000 the small step clears the floor,
+    // and the passing and the failing side each keep about 2x. Re-measure before changing these
+    // two constants; do not trust the figures above on a different machine.
+    const SMALL = 1000;
+    const BIG = 2000;
+    // The floor only exists so a fast machine cannot fail the comparison by dividing by a small
+    // run that measured at or near zero.
+    const FLOOR_MS = 4;
+    const LIMIT = 8;
+    const SAMPLES = 5;
+
+    // Warm-up, excluded from the samples: the first call pays for the JIT and for the queue
+    // allocation, and a cold small run would make the ratio look worse than the algorithm is.
+    timeFill(256, options);
+    timeFill(256, options);
+
+    // Interleaved, so a CPU spike from a neighbouring test run lands on both sizes instead of
+    // inflating one of them, and each size is reduced by its FASTEST sample rather than its mean.
+    const small: number[] = [];
+    const large: number[] = [];
+    for (let i = 0; i < SAMPLES; i++) {
+      small.push(timeFill(SMALL, options));
+      large.push(timeFill(BIG, options));
+    }
+
+    const smallMs = Math.min(...small);
+    const largeMs = Math.min(...large);
+
+    expect(largeMs).toBeLessThan(Math.max(smallMs, FLOOR_MS) * LIMIT);
+  });
+
   it('fills all four million pixels of a 2000x2000 image contiguously', () => {
+    // No wall-clock assertion: the cost guard above is the scaling comparison, and duplicating it
+    // here as a second clock would only add a machine-dependent failure. What is left is what a
+    // clock could never check anyway — that the flood reaches every pixel of a 4M-pixel buffer,
+    // that the mask agrees with the count, and that the bounds cover the whole image.
     const imageData = createImageData(LARGE, LARGE, [12, 34, 56, 255]);
-    const startedAt = Date.now();
 
-    const result = createFloodFillMask(imageData, { x: 1000, y: 1000 }, { tolerance: 0 });
+    const result = createFloodFillMask(imageData, { x: 1000, y: 1000 }, { tolerance: 0 })!;
 
-    const elapsed = Date.now() - startedAt;
-
-    expect(result?.selectedPixelCount).toBe(LARGE * LARGE);
-    expect(result?.bounds).toEqual({ left: 0, top: 0, right: LARGE - 1, bottom: LARGE - 1 });
-    // A preallocated `Int32Array` queue over four million pixels is milliseconds. The bound is
-    // set high enough that a loaded CI runner cannot trip it, and low enough that a quadratic
-    // or per-pixel-allocating fill cannot slip through.
-    expect(elapsed).toBeLessThan(20_000);
+    expect(result.selectedPixelCount).toBe(LARGE * LARGE);
+    expect(countSelectedBytes(result.mask)).toBe(LARGE * LARGE);
+    expect(result.bounds).toEqual({ left: 0, top: 0, right: LARGE - 1, bottom: LARGE - 1 });
   }, 30_000);
 
   it('scans every pixel of the same image when contiguous is false', () => {
     const imageData = createImageData(LARGE, LARGE, [12, 34, 56, 255]);
-    const startedAt = Date.now();
 
-    const result = createFloodFillMask(imageData, { x: 0, y: 0 }, { tolerance: 0, contiguous: false });
+    const result = createFloodFillMask(imageData, { x: 0, y: 0 }, { tolerance: 0, contiguous: false })!;
 
-    const elapsed = Date.now() - startedAt;
-
-    expect(result?.selectedPixelCount).toBe(LARGE * LARGE);
-    expect(elapsed).toBeLessThan(20_000);
+    // Seeded in a corner: the global scan ignores the seed's position, so this also pins that
+    // the bounds are the whole image rather than the region a flood from (0,0) would reach.
+    expect(result.selectedPixelCount).toBe(LARGE * LARGE);
+    expect(countSelectedBytes(result.mask)).toBe(LARGE * LARGE);
+    expect(result.bounds).toEqual({ left: 0, top: 0, right: LARGE - 1, bottom: LARGE - 1 });
   }, 30_000);
 });
