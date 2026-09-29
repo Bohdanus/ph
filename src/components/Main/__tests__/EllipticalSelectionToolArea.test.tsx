@@ -299,6 +299,63 @@ describe('EllipticalSelectionToolArea', () => {
     expect(dispatchMock).toHaveBeenLastCalledWith({ type: 'CANCEL_SELECTION_DRAFT' });
   });
 
+  /**
+   * TRIPWIRE — a known-broken behaviour, pinned as `it.fails`. Remove this case in the same
+   * change that fixes the move arm; `AGENTS.md` is explicit that a `test.fails` is a tripwire
+   * for broken behaviour and is deleted, not reworded, by the fix.
+   *
+   * `EllipticalSelectionToolArea.tsx:200-204` computes each frame's `delta` against `drag.origin`,
+   * which line 203 then ADVANCES, and applies it to `drag.baseline`, which never advances. So the
+   * net displacement of a multi-frame drag is not the sum of its frames — it is the LAST frame
+   * alone. A user who drags a selection out and back releases it somewhere they never took it.
+   *
+   * The one-frame move case above cannot see this, and the reason is arithmetic rather than a
+   * missing branch: with a single `pointerMove` the last delta IS the whole delta, so
+   * `moveSelectionByDelta(baseline, delta)` and `moveSelectionByDelta(preview, delta)` return the
+   * same selection. Every move-drag case in this file issues exactly one move, so the suite is
+   * blind to the difference by construction rather than by accident.
+   */
+  it.fails('commits nothing for a move drag that went out and came back to the press point', () => {
+    storeState.selections = [coveringSelection()];
+    storeState.activeSelectionId = 'selection-1';
+    const baseline = storeState.selections[0];
+    const toolArea = renderArea();
+
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    // OUT to (160, 100): the first frame's delta is (+60, +40).
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 160, clientY: 100 });
+    // BACK to the press point: the second frame's delta is (-60, -40), and the two sum to zero.
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+
+    // The claim is that the NET displacement is zero, and a zero net displacement is observed
+    // through the release gate rather than through a committed position: the preview ends back on
+    // the baseline's own geometry, `hasSameSelectionGeometry` (`:222`) suppresses the commit, and
+    // the gesture writes nothing at all — the same contract the zero-delta case below pins for
+    // the one-frame shape of the same gesture.
+    //
+    // What it does today instead: `drag.origin` advanced to (160, 100) and then to (100, 60), so
+    // the second frame's delta of (-60, -40) is applied to the never-moved `drag.baseline`, and
+    // the commit lands the selection at (-60, -40) — off the top-left corner of a document that
+    // starts at the origin, for a gesture the user drew out and retracted in one piece.
+    expect(selectionEdits()).toEqual([]);
+
+    // The control that makes the assertion above about the out-and-back and nothing else: a
+    // second, ordinary single-frame drag on the same mount, with the same pointer and the same
+    // store, still enters the move arm and still commits — so the empty assertion above is not
+    // passing because the arm never ran. This is independent of the defect, which is the property
+    // that makes it a control.
+    fireEvent.pointerDown(toolArea, { button: 0, pointerId: 1, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+    fireEvent.pointerUp(toolArea, { button: 0, pointerId: 1, clientX: 120, clientY: 80 });
+
+    const [moved] = singleSelectionEdit().payload.updates.selections;
+    expect(moved.pos).toEqual({ x: 20, y: 20, width: 200, height: 120 });
+    // And the control's whole delta is still the whole delta, because with one frame the two
+    // accumulators agree — which is exactly why the one-frame cases above cannot pin the defect.
+    expect(moved.pos).not.toEqual(baseline.pos);
+  });
+
   it('commits nothing for a selection drag whose last move had no delta', () => {
     storeState.selections = [coveringSelection()];
     storeState.activeSelectionId = 'selection-1';

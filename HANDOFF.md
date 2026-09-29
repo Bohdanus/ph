@@ -1817,3 +1817,70 @@ verdicts are unattributable and must be reported as unknown rather than as a win
 This is the same shape as §0's standing note about stale citations, one layer up: there, a citation
 moved and still read plausibly; here, a _verdict_ moved and was credited to the wrong commit. A
 plausible reading is not evidence of when it became true.
+
+## 77. A move drag that goes out and back releases the selection where it was never taken
+
+`src/components/Main/EllipticalSelectionToolArea.tsx:200-204`, and the two accumulators
+disagree about which frame of the drag they are tracking. `delta` is measured from `drag.origin`,
+which line 203 then **advances** to the current pointer position, and it is applied to
+`drag.baseline`, which **never** advances. The running displacement is therefore the last frame's
+delta alone, and every earlier frame is discarded. Take a selection 60px right and 40px down,
+retract the pointer to the point you pressed from, and release: the commit lands the selection at
+`(-60, -40)` on a document that starts at the origin. One frame's worth of history, applied twice,
+in opposite directions — and the preview overlay shows the same wrong position for the whole
+gesture, because `drag.preview` feeds `redrawOverlay` at `:205-207`.
+
+The fix is already written elsewhere in the same directory. `PolygonClickToolArea.tsx:817-819`
+applies the same delta to `selectionDrag.selection` and advances **both** accumulators into the
+next ref record in one statement; that is the correct shape and it is what line 202 should be.
+`moveSelectionByDelta(drag.preview, delta)` puts this arm on the same footing, and the first
+frame needs no special case because `drag.preview` is already seeded with `activeSelection` at
+`:161`. The release gate at `:222` then does the rest for free: a net displacement of zero lands
+the preview back on the baseline's own geometry, `hasSameSelectionGeometry` reports them equal,
+and the gesture commits nothing.
+
+**Why nothing saw it, and why that is a gap rather than a blessing.** Every move-drag case in
+`EllipticalSelectionToolArea.test.tsx` issued exactly one `pointerMove`, and with a single frame
+the last delta _is_ the whole delta — so `moveSelectionByDelta(baseline, delta)` and
+`moveSelectionByDelta(preview, delta)` return the same selection. The suite was blind to the
+difference by construction rather than by accident. Verified by mutation: changing line 202 to
+`drag.preview` leaves all five pre-existing cases green.
+
+The half of that which was sound: no assertion in the file pins the drifted position, so nothing
+enshrines the bug. It was uncovered, not endorsed — and it was recorded in no handoff entry while
+a suite named for this component sat beside it, so the next reader of that file would reasonably
+conclude the move arm was covered.
+
+Pinned as `it.fails` in `EllipticalSelectionToolArea.test.tsx`, "commits nothing for a move drag
+that went out and came back to the press point". A zero net displacement is observed through the
+absence of a commit rather than through a committed position, which is the same observable the
+neighbouring zero-delta case pins for the one-frame shape of the same gesture; the case carries
+its own control — a second, single-frame drag on the same mount, which is independent of the
+defect — so the empty assertion cannot pass by the arm never having run. **Delete the `it.fails`
+in the same change that fixes line 202**, per `AGENTS.md`: it is a tripwire for broken behaviour,
+and left behind it turns the fix into a red suite.
+
+## 78. Five components fold `!isBedrock` into `usePaintStroke`; four of them gained a test, and `CloneStampToolArea` is the one that did not
+
+A correction, because a wrong claim in this repository's own history is read by every future agent
+that runs `git log`. `b001d7d` states that five components fold `!isBedrock` into the flag they
+hand `usePaintStroke` — Dodge, Burn, Smudge, CloneStamp and Gradient — "and not one had a test".
+Both halves need narrowing, and the error in the second one is about coverage rather than about
+the flag.
+
+The list of five is **correct**: `DodgeToolArea.tsx:59`, `BurnToolArea.tsx:65`, `SmudgeToolArea.tsx:79`,
+`CloneStampToolArea.tsx:210` and `GradientToolArea.tsx:85` each compute an `enabled` /
+`isEnabled` from `activeLayer && !activeLayer.isBedrock` and pass it to `usePaintStroke`. What is
+wrong is "not one had a test" as a description of the finished branch: `b001d7d` added suites for
+four of the five, and **`CloneStampToolArea` still has no test file** — `git ls-tree main --
+src/components/Main/__tests__/` answers none. The fifth area the commit covers is
+`EllipticalSelectionToolArea`, which is **not** one of the five: it imports no `usePaintStroke`
+and reads no `isBedrock`. It is a selection tool, and the rule it shares with the four is nothing
+more than "the suite mounts a store fixture and drives real pointer events".
+
+Two components read `isBedrock` without `usePaintStroke` and must not be counted into that set
+either: `CloneStampToolArea` folds it into `isEnabled` **and** uses `usePaintStroke`, so it is
+in; `MoveToolArea.tsx:35`, `EraserToolArea.tsx:56-63` and `FillToolArea` read the flag directly
+and are out of it. **The cheapest thing that settles whether `CloneStampToolArea` is actually
+covered is a test, not a sentence** — and until one exists, treat the "not one had a test" claim
+as four, not five.
