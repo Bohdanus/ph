@@ -450,22 +450,28 @@ export const useLayers = () => {
     const sorted = getSortedLayersArray(remainingLayers);
     const nextActiveLayerId =
       activeLayerId === id ? (sorted.length > 0 ? sorted[sorted.length - 1].id : null) : activeLayerId;
+    const updates = {
+      layers: remainingLayers,
+      deletedLayers: newDeletedLayers,
+      activeLayerId: nextActiveLayerId,
+    };
+    const item = { layerId: id, actionName: REMOVE_ACTION, args: {} } as const;
 
-    dispatch({
-      type: 'COMMIT_DOCUMENT_EDIT',
-      payload: {
-        updates: {
-          layers: remainingLayers,
-          deletedLayers: newDeletedLayers,
-          activeLayerId: nextActiveLayerId,
-        },
-        historyItem: createHistoryItem({
-          layerId: id,
-          actionName: REMOVE_ACTION,
-          args: {},
-        }),
-      },
-    });
+    try {
+      const { entry, durableEntry } = planHistoryAppend({
+        item,
+        timeline: { entries: history, cursor: historyIndex, branchRevision },
+        currentFrame: documentFrame,
+      });
+      dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: entry, durableEntry } });
+    } catch {
+      // The plan is a projection, so a failure in it must not reject a valid
+      // removal. Re-dispatch the same edit with no durable plan, exactly as the
+      // selection writers do; the store rebuilds durable state from the legacy
+      // timeline instead. Nothing has been appended and no layer has left the
+      // record yet, so this is the whole edit rather than a repair of it.
+      dispatch({ type: 'COMMIT_DOCUMENT_EDIT', payload: { updates, historyItem: createHistoryItem(item) } });
+    }
 
     clearOverlay();
   };

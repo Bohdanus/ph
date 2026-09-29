@@ -10,6 +10,7 @@ linked files; this file is the rules that apply to every task.
 | [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md)       | other agents: worktrees, the board, the worktree list, a dead agent |
 | [`docs/PHOTOSHOP-UX.md`](docs/PHOTOSHOP-UX.md)         | the Tools rail, tool names, Photoshop fidelity                      |
 | [`docs/TOOLS-TOO-HARD.md`](docs/TOOLS-TOO-HARD.md)     | a Photoshop capability this browser cannot do, before estimating it |
+| [`docs/LAYERS-PANEL.md`](docs/LAYERS-PANEL.md)         | the Layers panel: row anatomy, panel chrome, layer model            |
 | [`docs/CODE-REVIEW.md`](docs/CODE-REVIEW.md)           | finishing non-trivial work: launching the review subagent           |
 | `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN-PROBLEMS.md` | filing or checking a known defect                                   |
 

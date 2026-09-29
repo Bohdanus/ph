@@ -1,6 +1,13 @@
-import { REORDER_ACTION, SELECTION_ACTION, SET_DOCUMENT_FRAME_ACTION, SHOW_LAYER_ACTION } from '../util/constants.ts';
+import {
+  REMOVE_ACTION,
+  REORDER_ACTION,
+  SELECTION_ACTION,
+  SET_DOCUMENT_FRAME_ACTION,
+  SHOW_LAYER_ACTION,
+} from '../util/constants.ts';
 import type { DocumentFrame } from './document-frame.ts';
 import {
+  deriveRemoveLayerEntry,
   deriveSetDocumentFrameEntry,
   deriveSetLayerPropertiesEntry,
   deriveSetSelectionEntry,
@@ -159,6 +166,20 @@ function translate(
       return unavailable(
         entry,
         `The ${entry.actionName} entry does not carry a valid layer-property value.`,
+        'invalid-history-entry'
+      );
+    }
+    return { entry, durableEntry, diagnostics: [] };
+  }
+
+  if (entry.actionName === REMOVE_ACTION) {
+    // Layer presence is deliberately not a precondition here or in validation:
+    // conversion and both replay models retain unknown removals as no-ops.
+    const durableEntry = deriveRemoveLayerEntry(entry);
+    if (!durableEntry) {
+      return unavailable(
+        entry,
+        'The layer removal does not name a layer, so no durable operation describes it.',
         'invalid-history-entry'
       );
     }
@@ -571,6 +592,17 @@ export function validatePlannedDurableEntry(
       default:
         return 'the action does not own a durable layer property';
     }
+  }
+
+  if (entry.actionName === REMOVE_ACTION) {
+    if (planned.operation.kind !== 'remove-layer') {
+      return `a layer removal produced a "${planned.operation.kind}" operation`;
+    }
+    const operationKeys = Object.keys(planned.operation);
+    if (operationKeys.length !== 2 || !operationKeys.includes('kind') || !operationKeys.includes('layerId')) {
+      return 'the durable remove-layer operation does not have the canonical shape';
+    }
+    return planned.operation.layerId === entry.layerId ? null : 'the durable layer id does not match the legacy entry';
   }
 
   return `no durable translation is published for "${entry.actionName}" yet`;
