@@ -385,4 +385,53 @@ describe('EllipticalSelectionToolArea', () => {
     expect(jittered).not.toEqual(baseline);
     expect(hasSameSelectionGeometry(baseline, jittered)).toBe(true);
   });
+
+  it('strokes a committed selection border, because this tool area is not one the ants canvas serves', () => {
+    // THE tripwire for the border's ownership. `POLYGON_SELECTION_MODES` in `Main.tsx` covers the
+    // lasso, the feather magnetic lasso and the magic wand; the elliptical and quick selection
+    // tools are deliberately absent, so their border is the static `drawSelectionOutline` stroke
+    // and there is no ants canvas behind them. Both commit with `sourceTool: 'magic-wand'` — the
+    // constant each borrows from the wand — and `drawSelectionAnchors` SKIPS that source, so
+    // repointing the call site at the anchors would leave this tool with no border at all, and
+    // the rest of this file would stay green because it only ever read dispatches.
+    //
+    // `QuickSelectionToolArea.tsx:104` is the OTHER caller and has no test anywhere — the module is
+    // mocked away in `Main.toolAreas.test.tsx` and there is no QuickSelection spec. So the ownership
+    // is guarded for one of the two, and the second is a live gap rather than a covered one.
+    //
+    // The fixture below is a selection this tool ITSELF commits, which is the part that makes
+    // this a tripwire rather than a paint test: it carries `ELLIPTICAL_SELECTION_SOURCE_TOOL`,
+    // not the polygonal lasso the shared fixture uses. That constant is `'magic-wand'`, and
+    // `drawSelectionAnchors` returns early on that source — so this exact fixture is the one
+    // that would render NOTHING if the call site were repointed at the anchors.
+    storeState.selections = [
+      {
+        ...coveringSelection(),
+        sourceTool: ELLIPTICAL_SELECTION_SOURCE_TOOL,
+        // `points` are NORMALIZED to the selection's own origin and `pos` offsets them
+        // (`getSelectionAbsolutePoints`), so the drawn border is at pos + points — which is what
+        // the assertions below read. Writing absolute coordinates in both would double the offset
+        // and the test would pin the wrong border.
+        pos: { x: 20, y: 30, width: 100, height: 60 },
+        points: [
+          { x: 0, y: 0 },
+          { x: 100, y: 0 },
+          { x: 100, y: 60 },
+          { x: 0, y: 60 },
+        ],
+      },
+    ];
+    storeState.activeSelectionId = 'selection-1';
+    const ctx = createOverlayContext();
+    render(<EllipticalSelectionToolArea className="test-elliptical-selection-area" overlayCtxRef={{ current: ctx }} />);
+
+    // The dashed border: a path through every vertex, stroked once, with the marching dash that
+    // the polygon's border gave up when it moved to the ants canvas.
+    expect(ctx.moveTo).toHaveBeenCalledWith(20, 30);
+    expect(ctx.lineTo).toHaveBeenCalledWith(120, 30);
+    expect(ctx.lineTo).toHaveBeenCalledWith(120, 90);
+    expect(ctx.lineTo).toHaveBeenCalledWith(20, 90);
+    expect(ctx.closePath).toHaveBeenCalled();
+    expect(ctx.setLineDash).toHaveBeenCalledWith([6, 4]);
+  });
 });
