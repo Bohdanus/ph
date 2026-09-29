@@ -858,11 +858,19 @@ Adobe-confirmed tool names, by the overview table each comes from:
 | Type                        | Horizontal Type, Vertical Type, Vertical Type Mask, Horizontal Type Mask                                                                                                                                                                                                                                                                                                   |
 | Unverified family           | Adobe's navigation-and-measuring overview (upd. 2026-02-23) exists but only one line was retrievable: "Ruler tool Measures distances, locations, and angles." Hand, Rotate View, Zoom, Frame, Slice, Perspective Crop, Slice Select, Path Selection and Direct Selection are **not Adobe-table-confirmed** and are listed from the shortcut PDF and individual tool pages. |
 
-**Four 2026 candidates that are NOT Adobe-confirmed and must not ship as tools:** Adjustment Brush
+**Three 2026 candidates that are NOT Adobe-confirmed and must not ship as tools:** Adjustment Brush
 (two third-party diagrams, zero Adobe pages), Clone Source tool (one diagram's icon numbering has
-a gap where it would sit, the name was never printed), Selection Brush (Adobe documents it for
-Photoshop on the web, not the desktop panel), and Generate Image (a real feature, but its placement
-in the panel footer is unconfirmed).
+a gap where it would sit, the name was never printed), and Generate Image (a real feature, but its
+placement in the panel footer is unconfirmed).
+
+**Selection Brush is NOT one of them, and an earlier version of this list had it there.** Adobe
+documents it for **desktop** Photoshop, and the page that does so is titled "Selection Brush and
+Lasso tools": "Select Selection Brush Tool from the **Lasso tool group** in the toolbar."
+<https://helpx.adobe.com/photoshop/using/selecting-lasso-tools.html> (upd. 2024-12-12). It is a
+real Tools-panel tool, it is Adobe-confirmed, and it is one of the tools the app has no entry for.
+The claim that it is "documented for Photoshop on the web, not the desktop panel" was the
+photo-editor product page being mistaken for the desktop one, and it would have kept a real tool
+off the list of things this rail owes its user.
 
 **Not tools, and not to be implemented as tools:** the foreground/background swatches, "Edit in Quick
 Mask Mode", the three screen-mode toggles, the `…` Edit Toolbar caret, the toolbar grip, and the
