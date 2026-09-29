@@ -76,6 +76,21 @@ type AnchoredOverlayProps = {
    */
   side?: 'left' | 'right';
   /**
+   * The element whose HORIZONTAL edges the overlay is placed against, when that is not the
+   * anchor. `anchor` still decides the vertical alignment, so a flyout still opens beside the
+   * tile that was pressed.
+   *
+   * This exists because the rail is 108px wide and its tiles are laid out on a 108px grid
+   * inside a narrower content box, so a tile in the second column starts at x≈1229 on a
+   * right-docked rail that begins at x≈1172. Hanging the flyout off that tile puts it at
+   * 1020..1221 — inside the viewport, so nothing reports a problem, and painted over the rail's
+   * own first column. Photoshop hangs a tool flyout off the PANEL's edge for the same reason:
+   * the panel is what the overlay has to get out from under.
+   *
+   * Omitted, the anchor's own edges are used, which is the previous and default behaviour.
+   */
+  xAnchor?: HTMLElement | null;
+  /**
    * Re-measures the overlay when this changes, and only then. The effect re-runs on its own
    * whenever the anchor or a placement option changes, so this is only needed by a caller
    * whose overlay keeps its identity while its CONTENT changes size — a tooltip whose label
@@ -102,6 +117,7 @@ const AnchoredOverlay = ({
   gap = 8,
   align = 'start',
   side = 'right',
+  xAnchor = null,
   viewportPadding = VIEWPORT_PADDING,
   measureKey,
 }: AnchoredOverlayProps) => {
@@ -122,6 +138,10 @@ const AnchoredOverlay = ({
     if (!anchor.isConnected) return;
 
     const anchorRect = anchor.getBoundingClientRect();
+    // Horizontal placement reads the rail's edges, vertical reads the tile's. A detached
+    // `xAnchor` falls back to the anchor rather than to zero: a zero-width box would place
+    // every overlay against the viewport origin.
+    const horizontalRect = xAnchor?.isConnected ? xAnchor.getBoundingClientRect() : anchorRect;
     const width = overlay.offsetWidth;
     const height = overlay.offsetHeight;
     // A `position: fixed` box is laid out against the viewport MINUS a classic
@@ -135,12 +155,12 @@ const AnchoredOverlay = ({
     // the right, a rail on the right opens to the left. Fall back to the OTHER edge only when
     // the preferred one cannot hold the whole overlay; if neither fits, clamp the preferred
     // side rather than choosing, so a flyout stays attached to the tile it came from.
-    const fitsTrailing = anchorRect.right + gap + width <= viewportWidth - viewportPadding;
-    const fitsLeading = anchorRect.left - gap - width >= viewportPadding;
+    const fitsTrailing = horizontalRect.right + gap + width <= viewportWidth - viewportPadding;
+    const fitsLeading = horizontalRect.left - gap - width >= viewportPadding;
     const preferred = side === 'right' ? fitsTrailing : fitsLeading;
     const fallback = side === 'right' ? fitsLeading : fitsTrailing;
-    const atPreferred = side === 'right' ? anchorRect.right + gap : anchorRect.left - gap - width;
-    const atFallback = side === 'right' ? anchorRect.left - gap - width : anchorRect.right + gap;
+    const atPreferred = side === 'right' ? horizontalRect.right + gap : horizontalRect.left - gap - width;
+    const atFallback = side === 'right' ? horizontalRect.left - gap - width : horizontalRect.right + gap;
     const unclampedLeft = preferred ? atPreferred : fallback ? atFallback : atPreferred;
 
     const unclampedTop = align === 'center' ? anchorRect.top + (anchorRect.height - height) / 2 : anchorRect.top;
@@ -153,7 +173,7 @@ const AnchoredOverlay = ({
     setPosition((current) =>
       current !== null && current.top === top && current.left === left ? current : { top, left }
     );
-  }, [align, anchor, gap, side, viewportPadding]);
+  }, [align, anchor, gap, side, viewportPadding, xAnchor]);
 
   useLayoutEffect(() => {
     reposition();

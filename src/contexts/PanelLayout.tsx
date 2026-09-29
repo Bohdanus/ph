@@ -155,6 +155,17 @@ export interface PanelLayout extends LayoutState {
    * boolean and not two paths to an icon strip.
    */
   setDockWidth: (width: number) => void;
+  /**
+   * Records the width to restore when the column comes back, WITHOUT expanding it.
+   *
+   * Separate from `setDockWidth` because a divider drag that narrows past a label passes
+   * through every width on the way down, and `setDockWidth` stores each one that is still wide
+   * enough for a label. Without this, the last of those — a few pixels above the floor — is
+   * what comes back when the user widens again, so dragging a 250px dock down to the icon
+   * strip and back leaves a 69px dock. `setDockWidth` cannot express "remember this, stay
+   * collapsed", because its whole contract is that a wide width means an open column.
+   */
+  rememberDockWidth: (width: number) => void;
   setSplitRatio: (ratio: number) => void;
   setPanelOrder: (order: PanelOrder) => void;
   /** Rolls a panel's group up to its tab bar, or back down. A double-click on the tab. */
@@ -183,6 +194,7 @@ const noProviderValue: PanelLayout = {
   effectiveDockWidth: DEFAULT_STATE.dockWidth,
   isIconOnly: false,
   setDockWidth: () => {},
+  rememberDockWidth: () => {},
   setSplitRatio: () => {},
   setPanelOrder: () => {},
   setRolledUp: () => {},
@@ -268,6 +280,10 @@ export function PanelLayoutProvider({ children }: { children: ReactNode }) {
 
   // The ratio is a fraction, so both ends are the same clamp: a divider dragged to the very top
   // gives the top panel everything, which is the same as giving the bottom panel nothing.
+  const rememberDockWidth = useCallback((width: number) => {
+    setState((current) => ({ ...current, dockWidth: clampDockWidth(width) }));
+  }, []);
+
   const setSplitRatio = useCallback((ratio: number) => {
     setState((current) => ({ ...current, splitRatio: clamp(ratio, PANEL_MIN_RATIO, 1 - PANEL_MIN_RATIO) }));
   }, []);
@@ -298,6 +314,7 @@ export function PanelLayoutProvider({ children }: { children: ReactNode }) {
       effectiveDockWidth: state.isCollapsed ? DOCK_MIN_WIDTH : state.dockWidth,
       isIconOnly: state.isCollapsed,
       setDockWidth,
+      rememberDockWidth,
       setSplitRatio,
       setPanelOrder,
       setRolledUp,
@@ -305,7 +322,17 @@ export function PanelLayoutProvider({ children }: { children: ReactNode }) {
       toggleCollapsed,
       resetWorkspace,
     }),
-    [state, setDockWidth, setSplitRatio, setPanelOrder, setRolledUp, setDockOnLeft, toggleCollapsed, resetWorkspace]
+    [
+      state,
+      setDockWidth,
+      rememberDockWidth,
+      setSplitRatio,
+      setPanelOrder,
+      setRolledUp,
+      setDockOnLeft,
+      toggleCollapsed,
+      resetWorkspace,
+    ]
   );
 
   return <PanelLayoutContext.Provider value={value}>{children}</PanelLayoutContext.Provider>;

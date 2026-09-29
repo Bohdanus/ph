@@ -198,7 +198,11 @@ describe('SidebarRight', () => {
     // stop being `hidden` for that to be visible at all.
     const aside = container.querySelector('aside')!;
     expect(edge?.parentElement).toBe(aside);
-    expect(edge).toHaveClass('right-0', 'border-r-2');
+    // On the LEFT of a dock in the right column, because that is the side the canvas is on.
+    // A handle on the outer edge is against the window border: unreachable, and it reads as a
+    // resize grip for nothing.
+    expect(edge).toHaveClass('left-0', 'border-l-2');
+    expect(edge).not.toHaveClass('right-0');
     expect(aside.className).not.toContain('overflow-hidden');
   });
 
@@ -297,6 +301,18 @@ describe('SidebarRight', () => {
     fireEvent.pointerUp(document, { pointerId: 1 });
 
     expect((container.querySelector('aside') as HTMLElement).style.width).toBe('350px');
+  });
+
+  it("moves the divider to the dock's other side once the dock is on the left edge", () => {
+    seed();
+    const { container } = renderWithLayout(<SidebarRight />, { dockOnLeft: true });
+
+    // The one rule, twice: the handle is always on the canvas side, so it mirrors when the
+    // dock does. Pinning only the default leaves the mirrored case to be discovered in a
+    // browser, which is where it was.
+    const edge = container.querySelector('[data-testid="dock-resize-handle"]');
+    expect(edge).toHaveClass('right-0', 'border-r-2');
+    expect(edge).not.toHaveClass('left-0');
   });
 
   it('reverses the drag direction once the dock is on the left edge', () => {

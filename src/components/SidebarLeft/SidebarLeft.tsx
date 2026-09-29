@@ -79,6 +79,13 @@ const SidebarLeft = () => {
   const colorSquareRef = useRef<HTMLDivElement>(null);
   const bgColorSquareRef = useRef<HTMLDivElement>(null);
   const toolGroupRefs = useRef<Record<string, HTMLLIElement | null>>({});
+  /**
+   * The rail itself, for horizontal overlay placement. The tiles sit on a 108px grid inside a
+   * narrower content box, so a second-column tile can start PAST the rail's own right edge;
+   * hanging a flyout off such a tile puts it back over the rail's first column. The rail is
+   * what an overlay has to get clear of, and this is how Photoshop hangs a tool flyout too.
+   */
+  const [railElement, setRailElement] = useState<HTMLElement | null>(null);
   // The tile a flyout is anchored to. Only the OPEN tile publishes one, and only for
   // itself, so a flyout that switches groups can never be measured against the tile it
   // replaced. Keyed by group because the anchor is published by a ref callback, which
@@ -195,6 +202,7 @@ const SidebarLeft = () => {
   const overlaySide: 'left' | 'right' = dockOnLeft ? 'left' : 'right';
   const [reDockTarget, setReDockTarget] = useState<'left' | 'right' | null>(null);
   const reDockOriginXRef = useRef(0);
+  const reDockTargetRef = useRef<'left' | 'right' | null>(null);
 
   const onRailDragStart = useCallback(
     (event: React.PointerEvent<HTMLElement>) => {
@@ -207,14 +215,26 @@ const SidebarLeft = () => {
     [closeFlyout]
   );
 
+  // The current target is ALSO held in a ref, because the commit below reads it. A
+  // `setReDockTarget` updater is the wrong place to put a side effect: React may call it more
+  // than once for the same update, and a `setDockOnLeft` inside one commits the workspace move
+  // an unpredictable number of times — or, in the case that was actually observed, not at all,
+  // because the updater's return value is the only thing React is guaranteed to use.
   const onRailDrag = useCallback(
     ({ dx }: { dx: number }) => {
       const viewportWidth = document.documentElement.clientWidth;
       const pointerX = reDockOriginXRef.current + dx;
+      // Toward the edge the rail is NOT on. A rail in the left column swaps by going RIGHT,
+      // which is the mirror of the dock's own test in `SidebarRight` — that one is a dock in
+      // the right column swapping by going LEFT. Reading either as "the low edge" is how this
+      // shipped inverted once and passed a unit test written to match it: a rail dragged left
+      // would have reported a drop target for the edge it was already against.
       const wantsSwap = dockOnLeft
-        ? pointerX > viewportWidth * (1 - RE_DOCK_ZONE)
-        : pointerX < viewportWidth * RE_DOCK_ZONE;
-      setReDockTarget(wantsSwap ? (dockOnLeft ? 'right' : 'left') : null);
+        ? pointerX < viewportWidth * RE_DOCK_ZONE
+        : pointerX > viewportWidth * (1 - RE_DOCK_ZONE);
+      const target = wantsSwap ? (dockOnLeft ? 'left' : 'right') : null;
+      reDockTargetRef.current = target;
+      setReDockTarget(target);
     },
     [dockOnLeft]
   );
@@ -224,10 +244,14 @@ const SidebarLeft = () => {
   // never produce.
   const onRailDragEnd = useCallback(
     (cancelled: boolean) => {
-      setReDockTarget((target) => {
-        if (target !== null && !cancelled) setDockOnLeft(target === 'left');
-        return null;
-      });
+      const target = reDockTargetRef.current;
+      reDockTargetRef.current = null;
+      setReDockTarget(null);
+      // The rail and the dock SWAP, so the flag is the rail's destination INVERTED: a rail
+      // going right puts the dock on the left, which is what `dockOnLeft` means. Mapping it
+      // straight through (`target === 'left'`) sends the rail to the edge it was thrown away
+      // from, and two inversions cancelling each other is exactly how this was wrong once.
+      if (target !== null && !cancelled) setDockOnLeft(target === 'right');
     },
     [setDockOnLeft]
   );
@@ -428,7 +452,13 @@ const SidebarLeft = () => {
         </ToolTooltip>
 
         {hasFlyout && isOpen && flyoutAnchor?.groupIndex === groupIndex && (
-          <AnchoredOverlay align="start" anchor={flyoutAnchor.element} measureKey={groupIndex} side={overlaySide}>
+          <AnchoredOverlay
+            align="start"
+            anchor={flyoutAnchor.element}
+            measureKey={groupIndex}
+            side={overlaySide}
+            xAnchor={railElement}
+          >
             <ul
               aria-label={group.some((tool) => tool.figure) ? 'Shape tools' : `${primaryTool.label} tools`}
               className="pointer-events-auto min-w-48 list-none rounded-lg border border-gray-300 bg-gray-100 p-1.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
@@ -537,6 +567,7 @@ const SidebarLeft = () => {
           : 'border-r border-gray-300 dark:border-gray-700 [grid-area:left]'
       }`}
       data-testid="left-sidebar"
+      ref={setRailElement}
       style={{ width: toolbarWidth }}
     >
       {/* The drop target for a rail re-dock, drawn before the release. `position: fixed` puts

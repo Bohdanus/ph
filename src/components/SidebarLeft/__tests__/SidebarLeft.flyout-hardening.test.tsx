@@ -103,6 +103,9 @@ const FLYOUT_GAP = 8;
 /** Each tile is given a distinct x, so the overlay's placement names the tile it measured. */
 const TILE_STEP = 60;
 
+/** The rail's own width, which is the horizontal anchor a flyout now hangs from. */
+const RAIL_WIDTH = 108;
+
 const toolbarButtonByName = (name: string) => screen.getByTestId(`tool-button-${name}`);
 
 /** The flyout for a tool group, by the `aria-label` the group renders it with. */
@@ -122,18 +125,21 @@ const openFlyout = (tile: HTMLElement): void => {
 /** The wrapper `AnchoredOverlay` positions, portalled into `document.body`. */
 const overlayWrapper = (): HTMLElement => screen.getByRole('menu').parentElement as HTMLElement;
 
-const tileRect = (left: number): DOMRect =>
+const tileRect = (left: number, top = 0, width = TILE_WIDTH): DOMRect =>
   ({
     left,
-    top: 0,
-    width: TILE_WIDTH,
+    top,
+    width,
     height: TILE_HEIGHT,
-    right: left + TILE_WIDTH,
-    bottom: TILE_HEIGHT,
+    right: left + width,
+    bottom: top + TILE_HEIGHT,
     x: left,
-    y: 0,
+    y: top,
     toJSON: () => ({}),
   }) as DOMRect;
+
+/** Each tile is given a distinct TOP too, so a tile-specific placement can be named on either axis. */
+const TILE_ROW_STEP = 60;
 
 /**
  * jsdom has no layout engine, so every box is zeroed and the overlay's placement — the only
@@ -154,14 +160,24 @@ const stubTileBoxes = (): ((tile: HTMLElement) => number) => {
 
   groups.forEach((group, index) => {
     const left = index * TILE_STEP;
+    const top = index * TILE_ROW_STEP;
     leftByGroup.set(group, left);
-    group.getBoundingClientRect = () => tileRect(left);
+    group.getBoundingClientRect = () => tileRect(left, top);
   });
+
+  // The rail is the HORIZONTAL anchor: a flyout hangs off the panel's edge rather than off a
+  // tile's, because the tiles sit on a 108px grid inside a narrower content box and a
+  // second-column tile can start past the rail's own right edge — which would put the flyout
+  // back over the rail's first column. jsdom measures the rail as nothing, so it is stubbed
+  // here for the same reason the tiles are.
+  screen.getByTestId('left-sidebar').getBoundingClientRect = () => tileRect(0, 0, RAIL_WIDTH);
 
   // The tile button is wrapped in the tooltip's own span, so the anchor is the group `<li>`
   // above it rather than its direct parent.
   return (tile) => leftByGroup.get(tile.closest('li') as HTMLElement)!;
 };
+
+const topOf = (tile: HTMLElement): number => tile.closest('li')!.getBoundingClientRect().top;
 
 /**
  * `AnchoredOverlay` clamps against `documentElement.client*`, which jsdom reports as 0 for
@@ -288,6 +304,10 @@ describe('SidebarLeft flyout hardening', () => {
 
   it('anchors the next group flyout to its own tile after the previous one closed', () => {
     render(<SidebarLeft />);
+    // Tall enough that neither group's top is clamped. `AnchoredOverlay` clamps a placement
+    // that would run past the viewport, and a clamp would move the flyout's top onto a value
+    // that names no tile at all — which is exactly the assertion this test makes.
+    setLayoutViewport(1280, 4000);
     const leftOf = stubTileBoxes();
 
     const brushTile = toolbarButtonByName('brush');
@@ -307,8 +327,17 @@ describe('SidebarLeft flyout hardening', () => {
     expect(screen.getByRole('menuitemradio', { name: 'Rectangle Tool' })).toBeInTheDocument();
     expect(screen.queryByRole('menuitemradio', { name: 'Brush Tool' })).toBeNull();
     // Placed beside the SHAPE tile, not the brush one the menu was open on a moment ago.
-    expect(overlayWrapper().style.left).toBe(`${leftOf(shapeTile) + TILE_WIDTH + FLYOUT_GAP}px`);
-    expect(overlayWrapper().style.left).not.toBe(`${leftOf(brushTile) + TILE_WIDTH + FLYOUT_GAP}px`);
+    // VERTICAL placement is what names the tile now. The horizontal placement is the RAIL's
+    // edge, not the tile's, so asserting `left` for "which tile is this" would pass for the
+    // previous group exactly as readily as for the current one — the assertion has to be on
+    // the axis the tile still drives.
+    expect(overlayWrapper().style.top).toBe(`${topOf(shapeTile)}px`);
+    expect(overlayWrapper().style.top).not.toBe(`${topOf(brushTile)}px`);
+    expect(overlayWrapper().style.left).toBe(`${RAIL_WIDTH + FLYOUT_GAP}px`);
+    // And the tile is still there under it, which is the point of hanging the flyout off the
+    // rail: the horizontal position is the panel's, so it is identical for every group and
+    // cannot be a stale one.
+    expect(leftOf(shapeTile)).not.toBe(leftOf(brushTile));
   });
 
   /**

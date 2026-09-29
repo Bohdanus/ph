@@ -47,6 +47,13 @@ export interface PanelGroupProps {
    * `flex` shorthand for the group's own box, so the dock can hand out shares of the column
    * by ratio and the rolled-up panel can take its natural height. See `SidebarRight.tsx`.
    */
+  /**
+   * The header's `title` deliberately avoids the phrase "Drag to reorder", which is the
+   * `title` on a LAYER row inside `LayersTab` and is a locator used verbatim by five e2e specs
+   * and three unit tests. `page.getByTitle` matches on substring, so a panel tab whose tooltip
+   * said the same words resolves to the panel header first, and every one of those locators
+   * silently starts pointing at the wrong element.
+   */
   style?: CSSProperties;
   className?: string;
   /**
@@ -121,7 +128,7 @@ const PanelGroup = ({
         }}
         role="button"
         tabIndex={0}
-        title={`${title} — drag to reorder, double-click to ${isRolledUp ? 'expand' : 'collapse'}`}
+        title={`${title} panel — drag this tab to move it, double-click to roll it up`}
         data-testid={`panel-header-${id}`}
         data-dragging={isDragging || undefined}
       >

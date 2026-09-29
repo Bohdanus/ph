@@ -1036,7 +1036,7 @@ ring and the Color Sampler are overlay work and belong with the navigation clust
 ## 52. Hand, Zoom and Rotate View are absent because the view transform is commented out
 
 **Problem.** Three of Photoshop's twenty toolbar slots have no implementation, and
-the placeholder is a commented-out JSX line: `src/components/SidebarLeft/SidebarLeft.tsx:553`
+the placeholder is a commented-out JSX line: `src/components/SidebarLeft/SidebarLeft.tsx:690`
 is `{/*<Zoom />*/}`.
 
 **Why it is not a wiring bug.** There is no view transform to wire. The store's
@@ -1055,7 +1055,7 @@ owning `{ dx, dy, zoom }`, with `usePointerPosition` and every pointer-to-image
 conversion reading from it, is the shape the commented-out code was reaching for.
 Do not start with a Hand tool; start with the scope, and the three tools fall out.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:553`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:690`,
 `src/contexts/StoreContext.tsx:1166-1172`, `src/hooks/usePointerPosition.ts`,
 `src/components/Main/Main.tsx:61`
 
@@ -1245,7 +1245,7 @@ layer property.
 ## 57. The mobile shell has no colour control at all
 
 **Problem.** The desktop rail carries the foreground and background swatches, a swap
-and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:507-539,542-549`).
+and two native colour inputs (`src/components/SidebarLeft/SidebarLeft.tsx:661-668,669-676`).
 The mobile shell has no equivalent: no swatch, no swap, no `<input type="color">`, and
 no colour picker. So on a phone the drawing, shape, paint-bucket and colour tools all
 use whatever colour the document happened to be created with, and the foreground colour
@@ -1265,7 +1265,7 @@ decision. Note the swatches are 32px in the desktop rail; on a touch surface the
 the same 44px floor as the other mobile controls, which is why they should be built
 for mobile rather than copied across.
 
-**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:507-539,542-549`,
+**Files.** `src/components/SidebarLeft/SidebarLeft.tsx:661-668,669-676`,
 `src/components/Mobile/MobileBottomBar.tsx`, `src/components/Mobile/MobileShell.tsx`
 
 ---
@@ -1695,7 +1695,7 @@ default panel or sitting in Extra Tools.
 
 **`toolbar-mapping.ts:30-36` says "Unsupported Photoshop tools are intentionally omitted rather
 than represented by placeholder values." That sentence IS the requirement, and it has to be
-deleted, not kept.** Separately: `SidebarLeft.tsx:27` does `toolbarMap.flat()`, which discards the
+deleted, not kept.** Separately: `SidebarLeft.tsx:54` does `toolbarMap.flat()`, which discards the
 map's section boundaries entirely, so the five current sections are not Photoshop's separators and
 the new layout has to decide deliberately whether a section concept survives at all.
 
@@ -1881,7 +1881,7 @@ and each is a one-line fix.
 **1. Two tools render the letter `B`, and the real `B` handler never reaches one of them.**
 `toolbar-mapping.ts:96` gives the non-Photoshop `draw` entry `shortcut: 'B'`, the same letter
 `toolbar-mapping.ts:72` gives the Brush. The badge is rendered from the map
-(`SidebarLeft.tsx:431`), so the user is told the Draw Tool answers to `B`; and
+(`SidebarLeft.tsx:539`), so the user is told the Draw Tool answers to `B`; and
 `AppKeyboardShortcuts.tsx:18` puts `b` on `brushGroup = ['brush','pencil','color-replacement','eraser']`,
 so pressing it can never select `draw`. The same pass found `Shift+B` cycling into `eraser`, which
 is wrong twice: `B` cycles only within the brush group, and the Eraser's own letter is `E`.
@@ -1905,3 +1905,61 @@ groups", not "no letter repeats".
 
 **These are filed, not fixed.** Deleting `draw` and re-grouping the flyout are §74's work, and
 doing them here would land the deletion without the replacement rail.
+
+## 79. The panel workspace: three documented Photoshop gestures are NOT built, and two of them are one line each
+
+`feat/panel-docks` made the tools rail and the History/Layers dock draggable and resizable. The
+behaviours it ships are transcribed from Adobe's own help pages, and the citations are in the
+header of `src/contexts/PanelLayout.tsx` — read that before crossing this boundary, because the
+two scope decisions below were made against sources rather than against taste.
+
+**1. Panels cannot float.** "Dragging a panel out of its dock creates a floating panel that you
+can position anywhere in the workspace"
+(<https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/stack-floating-panels.html>).
+Not implemented. It needs its own window layer, a z-order above the canvas, and persistence for
+panels dragged off-screen — none of which exists. **This is the one real gap.** A user who
+wants a panel out of the way has no gesture for it, and `Window` has no panel list to remove one
+from, which Adobe does document and which is also missing.
+
+**2. `Tab` and `Shift+Tab` do not hide panels.** "Press Tab to hide all panels... Press Shift +
+Tab to hide all panels except the Tools panel and Options bar."
+(<https://helpx.adobe.com/photoshop/desktop/get-started/learn-the-basics/hide-show-panels.html>).
+Not implemented, because `Tab` is already bound to leave an open tool flyout
+(`SidebarLeft.tsx`), and a global hide is a different feature from a drag one. `Window > Collapse
+Panels` is a reasonable way in; the keyboard shortcut needs the flyout binding resolved first.
+
+**3. `PanelGroup` is draggable but not groupable.** Photoshop lets Layers/Channels/Paths be tab
+GROUPS sharing one body. The hook does the vertical case of it and not the horizontal one, and
+the group model only pays off once a third panel exists. The drag that would extend it is the
+same `PanelGroup` header.
+
+**Two rules in the shipped work are worth keeping, because both were found by a test failing and
+neither is obvious from the code:**
+
+**A dock's resize handle must be on its CANVAS side, and the border must follow the dock.**
+`SidebarRight.tsx` picks `left-0` or `right-0` from `dockOnLeft`. Inverted, the handle lands
+against the window border — unreachable, and it reads as a resize grip for nothing. The unit test
+that pinned it asserted `right-0` for the default because that was what the code did, and it
+stayed green through the inversion; only `e2e/panel-workspace.spec.ts` caught it, by measuring
+the handle's real box.
+
+**The rail's re-dock target is the edge the rail is NOT on, and `dockOnLeft` is the inverse of
+the rail's destination edge.** Both halves were wrong at once, in ways that cancelled: dragging
+the rail LEFT reported a drop target at the left edge and swapped, so the rail ended up on the
+right and every outcome assertion passed. The unit test now asserts the drop target's side, and
+`e2e/panel-workspace.spec.ts` asserts the rail's `boundingBox().x` — an outcome-only assertion
+cannot see this class of bug at all.
+
+**One locator trap, because five e2e specs and three unit tests depend on it.** A layer row's
+`title` is `"Drag to reorder"`, and `page.getByTitle` matches on substring. A panel tab whose
+tooltip contained that phrase resolved to the tab header instead, and every one of those
+locators silently began pointing at the wrong element — five specs failed with
+`Received string: "History«"`. `PanelGroup`'s header `title` must stay clear of it.
+
+**One overlap that `toBeVisible()` cannot see.** The rail is 108px wide and its tiles sit on a
+108px grid inside a ~83px content box, so a second-column tile starts at x≈1229 on a rail that
+begins at x≈1172. A flyout hung off that tile is at 1020..1221: inside the viewport, so nothing
+complains, and painted over the rail's own first column. `AnchoredOverlay` now takes an
+`xAnchor` — the rail's horizontal edges, with the tile still driving vertical — which is what
+Photoshop does by hanging a tool flyout off the panel edge. This is the same clip-and-hide trap
+`AGENTS.md` records for the left rail, one axis further out.

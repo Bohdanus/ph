@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useRightPanelVisibility } from '../../contexts/RightPanelVisibility.tsx';
-import { usePanelLayout, type PanelId } from '../../contexts/PanelLayout.tsx';
+import { DOCK_LABEL_MIN_WIDTH, usePanelLayout, type PanelId } from '../../contexts/PanelLayout.tsx';
 import { useDockDrag } from '../../hooks/useDockDrag.ts';
 import LayersTab from './LayersTab.tsx';
 import HistoryTab from './HistoryTab.tsx';
@@ -103,9 +103,12 @@ const SidebarRight = () => {
   /** Where the column was and how tall when a divider drag began, so deltas convert to a ratio. */
   const splitterStartRef = useRef<{ ratio: number; height: number } | null>(null);
   const dockWidthStartRef = useRef(0);
+  /** The width the last move asked for, which is what tells a collapse from a resize. */
+  const lastColumnWidthRef = useRef(0);
 
   const onColumnResizeStart = useCallback(() => {
     dockWidthStartRef.current = layout.dockWidth;
+    lastColumnWidthRef.current = layout.dockWidth;
   }, [layout.dockWidth]);
 
   const onColumnResize = useCallback(
@@ -113,7 +116,9 @@ const SidebarRight = () => {
       // The dock sits to the canvas's right by default, so dragging the divider LEFT widens it.
       // When the dock is on the left edge the divider is on its other side and the sign flips.
       const delta = layout.dockOnLeft ? dx : -dx;
-      layout.setDockWidth(dockWidthStartRef.current + delta);
+      const next = dockWidthStartRef.current + delta;
+      lastColumnWidthRef.current = next;
+      layout.setDockWidth(next);
     },
     [layout]
   );
@@ -221,7 +226,18 @@ const SidebarRight = () => {
     onStart: onColumnResizeStart,
     onMove: onColumnResize,
     onEnd: (cancelled) => {
-      if (cancelled) layout.setDockWidth(dockWidthStartRef.current);
+      if (cancelled) {
+        layout.setDockWidth(dockWidthStartRef.current);
+        return;
+      }
+      // Narrowing past a label collapsed the column, and the width to come back to is the one
+      // the DRAG started from. `setDockWidth` stores every width above the threshold on the way
+      // down, so without this the last thing it stored is whatever sat a few pixels above the
+      // label floor — dragging a 250px dock down to the icon strip and back would then leave a
+      // 69px dock rather than the 250px one the user had.
+      if (lastColumnWidthRef.current < DOCK_LABEL_MIN_WIDTH) {
+        layout.rememberDockWidth(dockWidthStartRef.current);
+      }
     },
   });
   const splitterDrag = useDockDrag({
@@ -251,7 +267,11 @@ const SidebarRight = () => {
     );
   }
 
-  const collapsedClass = layout.dockOnLeft ? 'left-0 border-l-2' : 'right-0 border-r-2';
+  // The divider is on the dock's CANVAS side, which is the side the canvas is on. With the
+  // dock in the right column that is its left edge, and with the dock on the left it is its
+  // right one. Inverted, the handle lands on the dock's outer edge — against the window
+  // border, where it is unreachable and reads as a resize grip for nothing.
+  const handleSideClass = layout.dockOnLeft ? 'right-0 border-r-2' : 'left-0 border-l-2';
 
   const renderPanel = (id: PanelId, index: number) => {
     const isRolledUp = layout.rolledUp[id];
@@ -313,7 +333,7 @@ const SidebarRight = () => {
       <div
         {...columnDrag.handleProps}
         aria-label="Resize the panel dock"
-        className={`absolute top-0 z-20 h-full w-2 cursor-col-resize touch-none ${collapsedClass} ${
+        className={`absolute top-0 z-20 h-full w-2 cursor-col-resize touch-none ${handleSideClass} ${
           columnDrag.isDragging ? 'border-blue-500' : 'border-transparent'
         }`}
         role="separator"

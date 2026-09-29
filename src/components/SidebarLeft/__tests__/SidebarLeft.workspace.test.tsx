@@ -143,12 +143,16 @@ describe('SidebarLeft workspace placement', () => {
     try {
       renderRail();
 
+      // RIGHT, because the rail starts in the LEFT column. Every assertion below is about the
+      // DIRECTION as well as the outcome: a test that only checks "the rail ended up on the
+      // other side" passes just as happily when the drag is thrown toward the wrong edge and
+      // the swap fires anyway, which is the bug this test is here to stop.
       const grip = screen.getByTestId('rail-re-dock-handle');
-      fireEvent.pointerDown(grip, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 20 });
-      fireEvent.pointerMove(document, { pointerId: 1, clientX: 40, clientY: 20 });
+      fireEvent.pointerDown(grip, { button: 0, buttons: 1, pointerId: 1, clientX: 60, clientY: 20 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 1000, clientY: 20 });
 
       // "Release the tab when a blue highlight appears" — the target is shown, not implied.
-      expect(screen.getByTestId('rail-drop-line')).toHaveClass('left-0');
+      expect(screen.getByTestId('rail-drop-line')).toHaveClass('right-0');
 
       fireEvent.pointerUp(document, { pointerId: 1 });
 
@@ -157,6 +161,24 @@ describe('SidebarLeft workspace placement', () => {
       // The border follows: on the right edge, the canvas-facing side is the LEFT one.
       expect(rail).toHaveClass('border-l');
       expect(rail).not.toHaveClass('border-r');
+    } finally {
+      restore();
+    }
+  });
+
+  it('offers no drop target when the drag heads back toward the edge it is already on', () => {
+    const restore = stubViewportWidth(1024);
+    try {
+      renderRail();
+
+      // The mirror of the case above, and the one an inverted edge test gets wrong: dragging
+      // LEFT from a rail already in the left column must offer nothing, because that is where
+      // it already is.
+      const grip = screen.getByTestId('rail-re-dock-handle');
+      fireEvent.pointerDown(grip, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 20 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 40, clientY: 20 });
+
+      expect(screen.queryByTestId('rail-drop-line')).toBeNull();
     } finally {
       restore();
     }
@@ -187,8 +209,8 @@ describe('SidebarLeft workspace placement', () => {
       renderRail();
 
       const grip = screen.getByTestId('rail-re-dock-handle');
-      fireEvent.pointerDown(grip, { button: 0, buttons: 1, pointerId: 1, clientX: 900, clientY: 20 });
-      fireEvent.pointerMove(document, { pointerId: 1, clientX: 40, clientY: 20 });
+      fireEvent.pointerDown(grip, { button: 0, buttons: 1, pointerId: 1, clientX: 60, clientY: 20 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 1000, clientY: 20 });
       fireEvent.keyDown(document, { key: 'Escape' });
       fireEvent.pointerUp(document, { pointerId: 1 });
 
@@ -209,10 +231,11 @@ describe('SidebarLeft workspace placement', () => {
       expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:right]');
 
       const grip = screen.getByTestId('rail-re-dock-handle');
-      fireEvent.pointerDown(grip, { button: 0, buttons: 1, pointerId: 1, clientX: 40, clientY: 20 });
-      fireEvent.pointerMove(document, { pointerId: 1, clientX: 900, clientY: 20 });
+      // LEFT this time, because the rail is already in the right column.
+      fireEvent.pointerDown(grip, { button: 0, buttons: 1, pointerId: 1, clientX: 1000, clientY: 20 });
+      fireEvent.pointerMove(document, { pointerId: 1, clientX: 40, clientY: 20 });
 
-      expect(screen.getByTestId('rail-drop-line')).toHaveClass('right-0');
+      expect(screen.getByTestId('rail-drop-line')).toHaveClass('left-0');
 
       fireEvent.pointerUp(document, { pointerId: 1 });
       expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:left]');
@@ -225,8 +248,8 @@ describe('SidebarLeft workspace placement', () => {
     renderRail();
 
     const grip = screen.getByTestId('rail-re-dock-handle');
-    fireEvent.pointerDown(grip, { button: 2, buttons: 2, pointerId: 1, clientX: 900, clientY: 20 });
-    fireEvent.pointerMove(document, { pointerId: 1, clientX: 40, clientY: 20 });
+    fireEvent.pointerDown(grip, { button: 2, buttons: 2, pointerId: 1, clientX: 60, clientY: 20 });
+    fireEvent.pointerMove(document, { pointerId: 1, clientX: 1000, clientY: 20 });
     fireEvent.pointerUp(document, { pointerId: 1 });
 
     expect(screen.getByTestId('left-sidebar')).toHaveClass('[grid-area:left]');

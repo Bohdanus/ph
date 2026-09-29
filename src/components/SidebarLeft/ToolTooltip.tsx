@@ -21,6 +21,12 @@ type ToolTooltipProps = {
    * `AnchoredOverlay`; see its `side` prop.
    */
   side?: 'left' | 'right';
+  /**
+   * Placed against this element's horizontal edges rather than the tile's. See
+   * `AnchoredOverlay`'s `xAnchor` — a tooltip wide enough to matter, on a second-column tile of
+   * a right-docked rail, lands over the rail otherwise.
+   */
+  xAnchor?: HTMLElement | null;
 };
 
 /**
@@ -36,7 +42,7 @@ const IMPLEMENTATION_NOTE: Partial<Record<ToolTooltipProjection['implementation'
   placeholder: 'Not implemented — the options bar below is a placeholder',
 };
 
-const ToolTooltip = ({ children, label, toolName, shortcut, side = 'right' }: ToolTooltipProps) => {
+const ToolTooltip = ({ children, label, toolName, shortcut, side = 'right', xAnchor }: ToolTooltipProps) => {
   const [isVisible, setIsVisible] = useState(false);
   const showTimerRef = useRef<number | null>(null);
   // The tooltip is portalled out of the rail, which scrolls and clips, so it is positioned
@@ -80,7 +86,7 @@ const ToolTooltip = ({ children, label, toolName, shortcut, side = 'right' }: To
     >
       {cloneElement(children, { 'aria-describedby': isVisible ? tooltipId : undefined })}
       {isVisible && (
-        <AnchoredOverlay align="center" anchor={anchor} gap={12} measureKey={tooltipId} side={side}>
+        <AnchoredOverlay align="center" anchor={anchor} gap={12} measureKey={tooltipId} side={side} xAnchor={xAnchor}>
           <span
             // The label line is `whitespace-nowrap` and the summary below it wraps: a
             // tool's name is never worth a second line, but its description is. The cap is
