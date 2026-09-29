@@ -19,6 +19,10 @@ const usePointerPositionMock = vi.hoisted(() => {
   };
   return {
     usePointerPosition: vi.fn(() => mockData),
+    // Exposed because `isMouseDown` is the one drag input no pointer event can set: the real hook
+    // owns the ref and this mock's `isPointerDownValid` is a pure predicate that ignores it, so
+    // `handlePointerMove` returns at its hover branch on every event a test can synthesise.
+    mockData,
   };
 });
 
@@ -92,6 +96,10 @@ describe('useRect', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    // `mockData` is module scope and `clearAllMocks` does not touch a plain object's property, so a
+    // test that drives a real drag has to be undone here or it decides the branch every later test
+    // takes — in whatever order the runner happens to use.
+    usePointerPositionMock.mockData.isMouseDown.current = false;
     testContext = createTestContext();
   });
 
@@ -152,17 +160,41 @@ describe('useRect', () => {
   });
 
   it('clears selection on clearSelection', () => {
-    const { result } = renderUseRect({ initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 } });
+    const onRepaint = vi.fn();
+    const { result } = renderUseRect({ initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 }, onRepaint });
+
+    const target = createMockTarget();
+    const onCorner = createPointerEvent({ button: 0, clientX: 100, clientY: 100, target });
+    act(() => {
+      expect(result.current.onPointerDown(onCorner)).toBe(true);
+    });
+
+    // The mount effect published the incoming rect once; clearing it draws no rect, so it
+    // publishes nothing further.
+    const publishedBeforeClear = onRepaint.mock.calls.length;
     act(() => {
       result.current.clearSelection();
+    });
+    expect(onRepaint).toHaveBeenCalledTimes(publishedBeforeClear);
+
+    // The selection is gone, so the corner that was a handle no longer reports one.
+    act(() => {
+      expect(result.current.onPointerDown(onCorner)).toBe(false);
     });
   });
 
   it('redraws on redraw call', () => {
-    const { result } = renderUseRect();
+    const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
+    const onRepaint = vi.fn();
+    const { result } = renderUseRect({ initialRect, onRepaint });
+
+    // Drop the mount effect's own publication, so the count below is the redraw's.
+    onRepaint.mockClear();
     act(() => {
       result.current.redraw();
     });
+
+    expect(onRepaint).toHaveBeenCalledExactlyOnceWith(initialRect);
   });
 
   describe('handlePointerDown', () => {
@@ -170,73 +202,158 @@ describe('useRect', () => {
       const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
       const { result } = renderUseRect({ initialRect });
 
-      const event = createPointerEvent({ button: 0, clientX: 100, clientY: 100, target: createMockTarget() });
+      // (100, 100) is the rect's top-left corner, so it is inside the top-left handle.
+      const onCorner = createPointerEvent({ button: 0, clientX: 100, clientY: 100, target: createMockTarget() });
       act(() => {
-        const res = result.current.onPointerDown(event);
-        expect(typeof res).toBe('boolean');
+        expect(result.current.onPointerDown(onCorner)).toBe(true);
+      });
+
+      // (400, 400) misses the rect entirely, so no edge is found and no resize starts.
+      act(() => {
+        const onMiss = createPointerEvent({ button: 0, clientX: 400, clientY: 400, target: createMockTarget() });
+        expect(result.current.onPointerDown(onMiss)).toBe(false);
       });
     });
 
     it('creates rect from layer when clicking on layer', () => {
       const layer = createMockLayer();
-      const { result } = renderUseRect();
+      const onRepaint = vi.fn();
+      const { result } = renderUseRect({ onRepaint });
 
       const event = createPointerEvent({ button: 0, clientX: 150, clientY: 150, target: createMockTarget() });
       act(() => {
-        const res = result.current.onPointerDown(event, layer);
-        expect(typeof res).toBe('boolean');
+        // No selection rect exists yet, so the layer rect is adopted as a move: the pointer is
+        // inside it, not on a handle, which is what `isHandleClicked` reports.
+        expect(result.current.onPointerDown(event, layer)).toBe(false);
       });
 
-      // Proves the rect-helper mock is live and the layer position was converted.
+      // Proves the rect-helper mock is live and the layer position was converted, and that the
+      // adopted rect is what the overlay publishes.
       expect(rectUtilsMock.posToSortedRect).toHaveBeenCalledWith(layer.pos);
-      expect(result.current.onPointerUp).toBeDefined();
+      expect(onRepaint).toHaveBeenLastCalledWith({ x1: 100, y1: 100, x2: 300, y2: 250 });
     });
 
     it('respects aspect ratio modifier keys on drag start', () => {
       const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
-      const { result } = renderUseRect({ initialRect });
+      const onChangeEnd = vi.fn();
+      const { result } = renderUseRect({ initialRect, onChangeEnd });
 
-      const event = createPointerEvent({
+      const target = createMockTarget();
+      const downEvent = createPointerEvent({
         button: 0,
         clientX: 100,
         clientY: 100,
         ctrlKey: true,
-        target: createMockTarget(),
+        target,
       });
       act(() => {
-        const res = result.current.onPointerDown(event);
-        expect(typeof res).toBe('boolean');
+        // Ctrl is held over the top-left handle, so the drag starts as a handle resize.
+        expect(result.current.onPointerDown(downEvent)).toBe(true);
       });
-    });
-
-    it('starts drag on handle click', () => {
-      const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
-      const { result } = renderUseRect({ initialRect });
-
-      const target = createMockTarget();
-      const downEvent = createPointerEvent({ button: 0, clientX: 100, clientY: 100, target });
       act(() => {
-        result.current.onPointerDown(downEvent);
+        result.current.onPointerUp(createPointerEvent({ button: 0, clientX: 200, clientY: 200, target }));
       });
 
-      const moveEvent = createPointerEvent({ button: 0, clientX: 120, clientY: 120, target });
-      act(() => {
-        const res = result.current.onPointerMove(moveEvent);
-        expect(typeof res).toBe('boolean');
-      });
+      const committed = onChangeEnd.mock.lastCall?.[0] as { x1: number; y1: number; x2: number; y2: number };
+      const width = Math.abs(committed.x2 - committed.x1);
+      const height = Math.abs(committed.y2 - committed.y1);
+      // 200x150 is the rect's own ratio, not the 4:3 the drag to (200, 200) would have produced.
+      expect(width / height).toBeCloseTo(200 / 150, 10);
     });
   });
 
   describe('handlePointerMove', () => {
+    it('reports a hit for every handle and edge of the rect, and a miss off it', () => {
+      // `isMouseDown` is owned by the (mocked) pointer-position hook and is false here, so a move is
+      // a HOVER: it reports whether an edge is under the pointer and resizes nothing. The drag
+      // branch is the test below.
+      const { result } = renderUseRect({ initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 } });
+
+      // The four corner centres and the four edge midpoints of (100,100)-(300,250) each sit inside
+      // their own hit region at HANDLE_SIZE 8 / scale 1, and (400, 400) is off the rect entirely.
+      const hits: Array<[number, number]> = [
+        [100, 100],
+        [300, 100],
+        [100, 250],
+        [300, 250],
+        [200, 100],
+        [300, 175],
+        [200, 250],
+        [100, 175],
+      ];
+      for (const [clientX, clientY] of hits) {
+        act(() => {
+          expect(
+            result.current.onPointerMove(createPointerEvent({ clientX, clientY, target: createMockTarget() })),
+            `${clientX},${clientY}`
+          ).toBe(true);
+        });
+      }
+
+      act(() => {
+        expect(
+          result.current.onPointerMove(createPointerEvent({ clientX: 400, clientY: 400, target: createMockTarget() }))
+        ).toBe(false);
+      });
+    });
+
+    it('resizes on a drag, coalescing the moves that share one animation frame', () => {
+      const onChange = vi.fn();
+      const onChangeEnd = vi.fn();
+      const { result } = renderUseRect({
+        initialRect: { x1: 100, y1: 100, x2: 300, y2: 250 },
+        onChange,
+        onChangeEnd,
+      });
+      const target = createMockTarget();
+
+      act(() => {
+        expect(
+          result.current.onPointerDown(createPointerEvent({ button: 0, clientX: 100, clientY: 100, target }))
+        ).toBe(true);
+      });
+      usePointerPositionMock.mockData.isMouseDown.current = true;
+
+      // A handle drag anchors at the opposite corner, so pulling the top-left handle out to (400, 350)
+      // grows the rect to (300, 250)-(400, 350).
+      act(() => {
+        result.current.onPointerMove(createPointerEvent({ clientX: 350, clientY: 300, target }));
+        result.current.onPointerMove(createPointerEvent({ clientX: 400, clientY: 350, target }));
+      });
+      // Nothing is painted on the event itself, and the two moves share one frame: a single
+      // publication, at the LAST point, so a fast drag cannot outrun the frame it scheduled.
+      expect(onChange).not.toHaveBeenCalled();
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+      expect(onChange).toHaveBeenCalledExactlyOnceWith({ x1: 300, y1: 250, x2: 400, y2: 350 });
+
+      act(() => {
+        result.current.onPointerUp(createPointerEvent({ button: 0, clientX: 400, clientY: 350, target }));
+      });
+      expect(onChangeEnd).toHaveBeenCalledExactlyOnceWith({ x1: 300, y1: 250, x2: 400, y2: 350 });
+    });
+
     it('updates cursor on hover over handles', () => {
       const initialRect = { x1: 100, y1: 100, x2: 300, y2: 250 };
       const { result } = renderUseRect({ initialRect });
 
-      const event = createPointerEvent({ clientX: 100, clientY: 100, target: createMockTarget() });
+      // Hovering the top-left handle reports an edge and sets that handle's resize cursor.
+      const target = createMockTarget();
       act(() => {
-        const res = result.current.onPointerMove(event);
-        expect(typeof res).toBe('boolean');
+        const res = result.current.onPointerMove(createPointerEvent({ clientX: 100, clientY: 100, target }));
+        expect(res).toBe(true);
       });
+      expect(target.style.cursor).toBe('nw-resize');
+
+      // Off the rect there is no edge and the hover reports none, so the SAME target — which is
+      // carrying the handle cursor the hover above just set — has to lose it. A fresh element would
+      // satisfy this before the hook ever ran.
+      act(() => {
+        const res = result.current.onPointerMove(createPointerEvent({ clientX: 400, clientY: 400, target }));
+        expect(res).toBe(false);
+      });
+      expect(target.style.cursor).toBe('');
     });
 
     it('returns false when not dragging and no hover handler', () => {

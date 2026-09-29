@@ -17,6 +17,8 @@ import {
   RED,
   SPRAY_GRAY,
   WHITE,
+  captureAtScale,
+  captureRegionOf,
   createImageData,
   createTestImage,
   createTestImageData,
@@ -58,11 +60,15 @@ describe('STROKE_ANALYSIS constants', () => {
 
 describe('getStrokeAnalysis', () => {
   it('returns null for a fully transparent image', async () => {
-    expect(await getStrokeAnalysis(createImageData(10, 10))).toBeNull();
+    const image = createImageData(10, 10);
+
+    expect(await getStrokeAnalysis(image, captureRegionOf(image))).toBeNull();
   });
 
   it('returns null for a zero-sized image', async () => {
-    expect(await getStrokeAnalysis({ width: 0, height: 0, data: new Uint8ClampedArray(0) })).toBeNull();
+    expect(
+      await getStrokeAnalysis({ width: 0, height: 0, data: new Uint8ClampedArray(0) }, { width: 10, height: 10 })
+    ).toBeNull();
   });
 
   const NEAR_WHITE_CASES: { name: string; level: number; expectedPixels: number }[] = [
@@ -74,7 +80,8 @@ describe('getStrokeAnalysis', () => {
   it.each(NEAR_WHITE_CASES)(
     'classifies grey with $name as $expectedPixels stroke pixels',
     async ({ level, expectedPixels }) => {
-      const result = await getStrokeAnalysis(await createTestImageData(gray(level), 4, 4));
+      const image = await createTestImageData(gray(level), 4, 4);
+      const result = await getStrokeAnalysis(image, captureRegionOf(image));
 
       if (expectedPixels === 0) {
         expect(result).toBeNull();
@@ -85,7 +92,9 @@ describe('getStrokeAnalysis', () => {
   );
 
   it('classifies a dark band as a solid stroke', async () => {
-    expect(await getStrokeAnalysis(await createTestImageData(black, 50, 5))).toEqual({
+    const image = await createTestImageData(black, 50, 5);
+
+    expect(await getStrokeAnalysis(image, captureRegionOf(image))).toEqual({
       type: 'solid',
       segments: 1,
       verticalSpread: 5,
@@ -97,7 +106,7 @@ describe('getStrokeAnalysis', () => {
     const image = createImageData(10, 1);
     fillAll(image, black);
 
-    expect(await getStrokeAnalysis(image)).toEqual({
+    expect(await getStrokeAnalysis(image, captureRegionOf(image))).toEqual({
       type: 'solid',
       segments: 1,
       verticalSpread: 1,
@@ -109,7 +118,7 @@ describe('getStrokeAnalysis', () => {
     const image = createImageData(10, 10);
     for (let step = 0; step < 10; step++) setPixel(image, step, step, black);
 
-    expect(await getStrokeAnalysis(image)).toEqual({
+    expect(await getStrokeAnalysis(image, captureRegionOf(image))).toEqual({
       type: 'solid',
       segments: 1,
       verticalSpread: 10,
@@ -118,7 +127,9 @@ describe('getStrokeAnalysis', () => {
   });
 
   it('classifies a one-pixel image as a solid stroke', async () => {
-    expect(await getStrokeAnalysis(await createTestImageData(black, 1, 1))).toEqual({
+    const image = await createTestImageData(black, 1, 1);
+
+    expect(await getStrokeAnalysis(image, captureRegionOf(image))).toEqual({
       type: 'solid',
       segments: 1,
       verticalSpread: 1,
@@ -137,7 +148,7 @@ describe('getStrokeAnalysis', () => {
       fillRect(image, { left: gap[0], top: 0, right: gap[1], bottom: 9 }, WHITE);
     }
 
-    const result = await getStrokeAnalysis(image);
+    const result = await getStrokeAnalysis(image, captureRegionOf(image));
     expect(result).not.toBeNull();
     expect(result!.type).toBe('dashed');
     expect(result!.segments).toBeGreaterThan(1);
@@ -155,14 +166,16 @@ describe('getStrokeAnalysis', () => {
       fillRect(image, { left: gap[0], top: 0, right: gap[1], bottom: 9 }, WHITE);
     }
 
-    const result = await getStrokeAnalysis(image);
+    const result = await getStrokeAnalysis(image, captureRegionOf(image));
     expect(result).not.toBeNull();
     expect(result!.type).toBe('solid');
     expect(result!.segments).toBe(1);
   });
 
   it('classifies a full-clip grey wash as spray', async () => {
-    expect(await getStrokeAnalysis(await createTestImageData(SPRAY_GRAY, 200, 200))).toEqual({
+    const image = await createTestImageData(SPRAY_GRAY, 200, 200);
+
+    expect(await getStrokeAnalysis(image, captureRegionOf(image))).toEqual({
       type: 'spray',
       segments: 1,
       verticalSpread: 200,
@@ -175,7 +188,7 @@ describe('getStrokeAnalysis', () => {
     for (let x = 0; x < 25; x++) setPixel(image, x, 0, black);
     for (let x = 25; x < 50; x++) setPixel(image, x, 0, gray(200));
 
-    expect(await getStrokeAnalysis(image)).toEqual({
+    expect(await getStrokeAnalysis(image, captureRegionOf(image))).toEqual({
       type: 'solid',
       segments: 1,
       verticalSpread: 1,
@@ -192,7 +205,7 @@ describe('getStrokeAnalysis', () => {
       }
     }
 
-    expect(await getStrokeAnalysis(image)).toEqual({
+    expect(await getStrokeAnalysis(image, captureRegionOf(image))).toEqual({
       type: 'dashed',
       segments: 2,
       verticalSpread: 5,
@@ -209,11 +222,173 @@ describe('getStrokeAnalysis', () => {
       }
     }
 
-    expect(await getStrokeAnalysis(image)).toEqual({
+    expect(await getStrokeAnalysis(image, captureRegionOf(image))).toEqual({
       type: 'solid',
       segments: 1,
       verticalSpread: 5,
       pixelCount: 235,
+    });
+  });
+
+  it('refuses a region with no CSS size, rather than classifying against a scale of zero', async () => {
+    // A zero or missing width makes `imageWidth / region.width` 0, Infinity or NaN, and
+    // every threshold multiplied by one of those silently classifies the capture as
+    // something. A misconfigured call site is a loud failure, not a wrong verdict.
+    const image = createImageData(10, 1);
+    fillAll(image, black);
+
+    await expect(getStrokeAnalysis(image, { width: 0, height: 10 })).rejects.toThrow(/positive CSS size/);
+    await expect(getStrokeAnalysis(image, { width: 10, height: 0 })).rejects.toThrow(/positive CSS size/);
+    await expect(getStrokeAnalysis(image, { width: Number.NaN, height: 10 })).rejects.toThrow(/positive CSS size/);
+    await expect(getStrokeAnalysis(image, { width: Number.POSITIVE_INFINITY, height: 10 })).rejects.toThrow(
+      /positive CSS size/
+    );
+  });
+});
+
+/**
+ * One physical stroke, 20 CSS px tall, with a 3 CSS px antialiased bridge in the middle of
+ * it. Both numbers are chosen because each crosses a threshold at one scale and not the
+ * other, which is what makes the 2x capture below a real test rather than a restatement:
+ * 20 x 2 = 40 capture px clears SPRAY_VERTICAL_SPREAD_THRESHOLD (30), and a 3 CSS px gap
+ * becomes 6 capture columns, clearing PEN_GAP_THRESHOLD (5). At 1x neither crosses, so
+ * both are "solid, one segment"; unscaled at 2x the classifier reaches the other answer
+ * twice over, and reports `{ type: 'spray', segments: 2 }`.
+ */
+function bridgedStroke(): ImageDataResult {
+  const image = createImageData(50, 20);
+  fillRect(image, { left: 0, top: 0, right: 24, bottom: 19 }, black);
+  // 3 empty columns: 25, 26, 27.
+  fillRect(image, { left: 25, top: 0, right: 27, bottom: 19 }, WHITE);
+  fillRect(image, { left: 28, top: 0, right: 49, bottom: 19 }, black);
+  return image;
+}
+
+describe('getStrokeAnalysis across capture scales', () => {
+  it('classifies the same physical stroke the same way at 1x and at 2x', async () => {
+    const stroke = bridgedStroke();
+    const region = captureRegionOf(stroke);
+
+    const atOneX = await getStrokeAnalysis(stroke, region);
+    const atTwoX = await getStrokeAnalysis(captureAtScale(stroke, 2), region);
+
+    expect(atOneX).not.toBeNull();
+    expect(atTwoX).not.toBeNull();
+    expect(atTwoX!.type).toBe(atOneX!.type);
+    expect(atTwoX!.segments).toBe(atOneX!.segments);
+    expect({ type: atTwoX!.type, segments: atTwoX!.segments }).toEqual({ type: 'solid', segments: 1 });
+  });
+
+  it('does not read a 20-CSS-px spread as spray at 2x, where it measures 40 capture pixels', async () => {
+    const stroke = bridgedStroke();
+    const region = captureRegionOf(stroke);
+    const deviceCapture = captureAtScale(stroke, 2);
+
+    const atTwoX = await getStrokeAnalysis(deviceCapture, region);
+
+    // The measurement really did cross the raw constant; the test is about what the
+    // classifier does with it, not about a fixture that would have passed anyway.
+    expect(atTwoX!.verticalSpread).toBe(40);
+    expect(atTwoX!.verticalSpread).toBeGreaterThan(STROKE_ANALYSIS.SPRAY_VERTICAL_SPREAD_THRESHOLD);
+    expect(atTwoX!.type).not.toBe('spray');
+  });
+
+  it('does not split a 3-CSS-px anti-aliasing bridge at 2x, where it measures 6 capture columns', async () => {
+    const stroke = bridgedStroke();
+    const region = captureRegionOf(stroke);
+    const deviceCapture = captureAtScale(stroke, 2);
+
+    const atTwoX = await getStrokeAnalysis(deviceCapture, region);
+    const atOneX = await getStrokeAnalysis(stroke, region);
+
+    // Same bridge, 6 capture columns apart instead of 3, and one segment either way.
+    const bridgeInCaptureColumns = 3 * (deviceCapture.width / stroke.width);
+    expect(bridgeInCaptureColumns).toBe(6);
+    expect(bridgeInCaptureColumns).toBeGreaterThan(STROKE_ANALYSIS.PEN_GAP_THRESHOLD);
+    expect(atTwoX!.segments).toBe(1);
+    expect(atTwoX!.segments).toBe(atOneX!.segments);
+  });
+
+  it('still splits a genuine dash at 2x, so the scale correction is not a blanket merge', async () => {
+    // A 10-CSS-px dash gap is a real gap, not an antialiasing bridge: it clears the pen
+    // threshold at 1x and still clears the scaled one at 2x.
+    const stroke = createImageData(50, 10);
+    fillAll(stroke, black);
+    fillRect(stroke, { left: 20, top: 0, right: 29, bottom: 9 }, WHITE);
+    const region = captureRegionOf(stroke);
+
+    const atOneX = await getStrokeAnalysis(stroke, region);
+    const atTwoX = await getStrokeAnalysis(captureAtScale(stroke, 2), region);
+
+    expect(atOneX!.type).toBe('dashed');
+    expect(atTwoX!.type).toBe('dashed');
+    expect(atTwoX!.segments).toBe(atOneX!.segments);
+  });
+});
+
+/**
+ * The number of segments has to be right on its own terms, at whatever gap threshold the
+ * constant table currently holds. Seeding the count at 0 and the previous column at -10
+ * made the first occupied column a segment only while `gapThreshold` stayed below
+ * `firstColumn + 10` - a bound nothing stated and nothing could see. The table pins the
+ * gap thresholds by value, so today the bound holds by coincidence; these cases move the
+ * threshold to both ends of the range and assert the invariant that has no bound at all.
+ *
+ * The threshold is moved by writing the exported table, because that table is the only
+ * place the gap threshold lives - there is no second knob to inject it through. It is
+ * restored in a `finally`, so the contract test that pins these values by number still
+ * sees them.
+ */
+describe('getStrokeAnalysis segment seeding', () => {
+  async function withPenGapThreshold(gapThreshold: number, run: () => Promise<void>): Promise<void> {
+    const table = STROKE_ANALYSIS as { PEN_GAP_THRESHOLD: number };
+    const original = table.PEN_GAP_THRESHOLD;
+    table.PEN_GAP_THRESHOLD = gapThreshold;
+    try {
+      await run();
+    } finally {
+      table.PEN_GAP_THRESHOLD = original;
+    }
+  }
+
+  // One column, so the fixture is solid at any threshold: adjacent occupied columns are 1
+  // apart, which is a split at a threshold of 0 and is not one at 10, so a stroke several
+  // columns wide cannot pin "a solid stroke is one segment" at both ends of the range.
+  // The column is the FIRST one in the image, which is what a clip framed on a stroke
+  // normally catches.
+  const singleColumnStroke = (): ImageDataResult => {
+    const image = createImageData(10, 10);
+    fillRect(image, { left: 0, top: 0, right: 0, bottom: 9 }, black);
+    return image;
+  };
+
+  it.each([0, 10])('reports one segment for a solid stroke at a gap threshold of %i', async (gapThreshold) => {
+    await withPenGapThreshold(gapThreshold, async () => {
+      const image = singleColumnStroke();
+
+      expect(await getStrokeAnalysis(image, captureRegionOf(image))).toEqual({
+        type: 'solid',
+        segments: 1,
+        verticalSpread: 10,
+        pixelCount: 10,
+      });
+    });
+  });
+
+  it('reports one segment for a stroke starting at the first column, at a gap threshold of 10', async () => {
+    // The exact shape of the old defect, isolated from the scaling. Seeding at `prev = -10`
+    // made the first occupied column count as a segment only while
+    // `firstColumn - (-10) > gapThreshold`, so a stroke that starts at column 0 - the case a
+    // clip framed on a stroke normally catches - reported ZERO segments at a gap threshold
+    // of 10, where `10 > 10` is false. `type` tests `segments > 1`, so the classifier
+    // returned the self-inconsistent `{ type: 'solid', segments: 0 }`.
+    await withPenGapThreshold(10, async () => {
+      const image = singleColumnStroke();
+
+      const result = await getStrokeAnalysis(image, captureRegionOf(image));
+
+      expect(result!.segments).toBe(1);
+      expect(result!.type).toBe('solid');
     });
   });
 });
@@ -264,7 +439,10 @@ const DISPATCH_CASES: DispatchCase[] = [
   },
   {
     name: 'getStrokeAnalysis',
-    run: getStrokeAnalysis,
+    // The region is the CSS size of the clip the image was taken over, which here is the
+    // image's own size: the fixture is captured at CSS scale, so the scale is 1 and both
+    // sides of the dispatch comparison decode the same 50x5 capture.
+    run: (input) => getStrokeAnalysis(input, { width: 50, height: 5 }),
     color: DARK_GRAY,
     width: 50,
     height: 5,

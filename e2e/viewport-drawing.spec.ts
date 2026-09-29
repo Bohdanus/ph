@@ -4,6 +4,7 @@ import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { imageBoundsToCss } from './helpers/screenshot-scale';
 import { clickToolButton } from './helpers/toolbar-helpers';
 
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 test.describe('Viewport Drawing', () => {
   const viewports = [
     { name: 'normal', width: 1280, height: 720 },
@@ -14,7 +15,7 @@ test.describe('Viewport Drawing', () => {
   for (const viewport of viewports) {
     // line stays under cursor after window resize
     test(`line stays under cursor after window resize (${viewport.name})`, async ({ page }, testInfo) => {
-      test.setTimeout(60_000);
+      test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await page.goto('/', { waitUntil: 'domcontentloaded' });
 

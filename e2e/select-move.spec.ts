@@ -15,8 +15,7 @@ import { captureCanvasScreenshot } from './helpers/cdp-helpers';
 import { imagePointToCss } from './helpers/screenshot-scale';
 import { clickToolButton } from './helpers/toolbar-helpers';
 
-// Selection outline in the app appears to be cyan-ish; pass explicit thresholds instead of relying on defaults
-const SELECTION_COLOR_THRESHOLDS = { redMax: 80, greenMin: 80, blueMin: 180 };
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 // Resize handle center offset from selection outline edge (screenshot pixels)
 const HANDLE_OFFSET = 4;
 
@@ -41,7 +40,7 @@ test.describe('Select & Move', () => {
 
   // moves drawn line
   test('moves drawn line', async ({ page }, testInfo) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     const canvas = getWorkspaceCanvas(page);
     const box = await canvas.boundingBox();
@@ -111,7 +110,7 @@ test.describe('Select & Move', () => {
 
   // stretches selected line
   test('stretches selected line', async ({ page }, testInfo) => {
-    test.setTimeout(60_000);
+    test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
 
     const canvas = getWorkspaceCanvas(page);
     const box = await canvas.boundingBox();
@@ -132,7 +131,13 @@ test.describe('Select & Move', () => {
     await page.mouse.up();
 
     const movedScreenshot = await captureCanvasScreenshot(page, box, testInfo, 'select-move-moved-for-resize');
-    const handle = await getSelectionBounds(movedScreenshot, SELECTION_COLOR_THRESHOLDS);
+    // `getSelectionBounds` reads its colour thresholds from `STROKE_ANALYSIS`
+    // (`canvas-helpers.ts`), where they are tripwire-pinned. This call used to pass a
+    // local copy of those three numbers as its second argument, which is a behavioural
+    // no-op: if the shared constants move, this call site would have carried the old
+    // values along and the "explicit thresholds" comment would have read as a
+    // protection it never provided. Taking the defaults is the pin.
+    const handle = await getSelectionBounds(movedScreenshot);
     expect(handle, 'Bottom-right resize handle not found').toBeTruthy();
 
     // Map the handle from screenshot pixel space to CSS page space via the canvas
@@ -161,7 +166,14 @@ test.describe('Select & Move', () => {
     // and top edges cannot have moved at all: a scale about the centre reads -70/-40 there
     // and a doubled delta reads 280/160 on the other two, and both pass the two
     // `greater than` checks above.
-    const after = await getSelectionBounds(resizedScreenshot, SELECTION_COLOR_THRESHOLDS);
+    //
+    // `getSelectionBounds` is called the same way it is above — defaults, not a local
+    // copy of the thresholds — for the reason that comment gives: a second call site
+    // that passed its own `{ redMax, greenMin, blueMin }` would carry the old values
+    // the moment the shared ones in `STROKE_ANALYSIS` moved, and the "before" and
+    // "after" frames of the SAME resize would then be read under two different
+    // definitions of the outline.
+    const after = await getSelectionBounds(resizedScreenshot);
     expect(after, 'The selection outline must survive the resize').toBeTruthy();
     const frameBefore = screenshotBoundsToCss(handle!, box);
     const frameAfter = screenshotBoundsToCss(after!, box);

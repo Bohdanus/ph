@@ -38,6 +38,7 @@ const storeStateMock = vi.hoisted(() => ({
   activeSelectionId: null as string | null,
   branchRevision: 0,
   hasUnsavedChanges: false,
+  clearPreviewLayers: vi.fn(),
 }));
 
 const dispatchMock = vi.hoisted(() => vi.fn());
@@ -812,6 +813,42 @@ describe('useHistory undo replay', () => {
       });
       expect(String(diagnostic?.message)).toContain('actionName');
       expect(consoleError).toHaveBeenCalledWith('History replay is unavailable', expect.any(TypeError));
+    });
+  });
+
+  describe('preview clearing on navigation', () => {
+    const clearPreviewLayers = () => storeStateMock.clearPreviewLayers;
+
+    it('drops the preview exactly once per undo and once per redo', () => {
+      setup();
+
+      useHistory().undo();
+      expect(clearPreviewLayers()).toHaveBeenCalledTimes(1);
+
+      useHistory().redo();
+      expect(clearPreviewLayers()).toHaveBeenCalledTimes(2);
+    });
+
+    it('drops the preview even when the navigation goes on to fail closed', () => {
+      setup();
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      rendererControl.result = false;
+
+      useHistory().undo();
+
+      // The clear sits ahead of the replay, so an unpublished replay cannot leave a
+      // stale preview standing in for the document it failed to draw.
+      expect(dispatchedTypes()).toEqual(['SET_DURABLE_STATUS']);
+      expect(clearPreviewLayers()).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not drop the preview for a navigation it refuses', () => {
+      setup();
+      const historyApi = useHistory();
+
+      for (const index of [-1, 2, 0.5, NaN]) historyApi.resetHistoryTo(index);
+
+      expect(clearPreviewLayers()).not.toHaveBeenCalled();
     });
   });
 });

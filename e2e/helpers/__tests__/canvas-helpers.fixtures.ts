@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { Locator, Mouse, Page, TestInfo } from '@playwright/test';
-import { loadImageData, type ClipOptions, type ImageDataResult } from '../canvas-helpers';
+import { loadImageData, type CaptureRegion, type ClipOptions, type ImageDataResult } from '../canvas-helpers';
 
 export interface Color {
   red: number;
@@ -72,6 +72,51 @@ export function fillRect(image: ImageDataResult, rect: Rect, color: Color, alpha
 
 export function fillAll(image: ImageDataResult, color: Color, alpha = OPAQUE): void {
   fillRect(image, { left: 0, top: 0, right: image.width - 1, bottom: image.height - 1 }, color, alpha);
+}
+
+/**
+ * The region a capture of `image` at CSS scale was taken over: one CSS pixel per image
+ * pixel, so the capture scale every helper derives from it is exactly 1.
+ */
+export function captureRegionOf(image: ImageDataResult): CaptureRegion {
+  return { width: image.width, height: image.height };
+}
+
+/**
+ * The same physical pixels as a capture of the region `captureRegionOf` would name, at
+ * `scale` device pixels per CSS pixel.
+ *
+ * An integral-scale capture replicates every source pixel into a `scale x scale` block and
+ * invents no colours, which is what doubling the pixel density of a stroke actually looks
+ * like to a classifier. What it does reproduce is the defect this models: every gap and
+ * every spread in the result is now `scale` times larger in capture pixels while the CSS
+ * geometry underneath is unchanged, so a classifier that compares the two without scaling
+ * reaches a different verdict at 2x than at 1x.
+ */
+export function captureAtScale(image: ImageDataResult, scale: number): ImageDataResult {
+  if (!Number.isInteger(scale) || scale < 1) {
+    throw new Error(`captureAtScale: the scale has to be a positive integer, got ${scale}`);
+  }
+  const scaled: ImageDataResult = {
+    width: image.width * scale,
+    height: image.height * scale,
+    data: new Uint8ClampedArray(image.width * image.height * scale * scale * 4),
+  };
+  for (let y = 0; y < image.height; y++) {
+    for (let x = 0; x < image.width; x++) {
+      for (let dy = 0; dy < scale; dy++) {
+        for (let dx = 0; dx < scale; dx++) {
+          const from = (y * image.width + x) * 4;
+          const to = ((y * scale + dy) * scaled.width + x * scale + dx) * 4;
+          scaled.data[to] = image.data[from];
+          scaled.data[to + 1] = image.data[from + 1];
+          scaled.data[to + 2] = image.data[from + 2];
+          scaled.data[to + 3] = image.data[from + 3];
+        }
+      }
+    }
+  }
+  return scaled;
 }
 
 export type MoveSpy = Mock<(x: number, y: number, options?: { steps?: number }) => Promise<void>>;

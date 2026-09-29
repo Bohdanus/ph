@@ -14,6 +14,7 @@ import { type CanvasPixelPredicate, canvasRedrawClip, waitForCanvasPixels } from
 import { clickToolButton, openToolFlyout, selectFromFlyout } from './helpers/toolbar-helpers';
 import { setForegroundColor } from './helpers/color-helpers';
 
+import { DEFAULT_TEST_TIMEOUT_MS } from './helpers/timeouts';
 /**
  * A muted violet rather than a pure primary: `saturate(0)` and a non-zero saturation are
  * only distinguishable on a pixel with grey in it, because a fully saturated colour has
@@ -186,7 +187,7 @@ test.describe('Adjustment tools', () => {
 
   test.describe('Colors', () => {
     test('grayscale reaches the pixels, and Reset puts them back', async ({ page }, testInfo) => {
-      test.setTimeout(60_000);
+      test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
       const drawBox = await drawVioletStroke(page);
       // The stroke was placed in box-relative offsets, so the point to sample has to be
       // converted OUT of that space rather than into it.
@@ -297,7 +298,7 @@ test.describe('Adjustment tools', () => {
 
   test.describe('Blur', () => {
     test('a radius of zero is an exact no-op, and a radius carries colour off the stroke', async ({ page }) => {
-      test.setTimeout(60_000);
+      test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
       const { onLine } = await drawCornerToCornerStroke(page);
       const beside = besideTheLine(onLine);
 
@@ -336,7 +337,7 @@ test.describe('Adjustment tools', () => {
     });
 
     test('the reset control discards the preview and only the preview', async ({ page }) => {
-      test.setTimeout(60_000);
+      test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
       const { onLine } = await drawCornerToCornerStroke(page);
       const beside = besideTheLine(onLine);
 
@@ -363,7 +364,7 @@ test.describe('Adjustment tools', () => {
 
   test.describe('Gradient', () => {
     test('a short drag clamps to its two stops and fills the whole layer', async ({ page }, testInfo) => {
-      test.setTimeout(60_000);
+      test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
       await drawCornerToCornerStroke(page);
 
       await clickToolButton(page, 'gradient');
@@ -392,7 +393,7 @@ test.describe('Adjustment tools', () => {
     });
 
     test('the second stop colour reaches the far end of the drag', async ({ page }) => {
-      test.setTimeout(60_000);
+      test.setTimeout(DEFAULT_TEST_TIMEOUT_MS);
       await drawCornerToCornerStroke(page);
 
       await clickToolButton(page, 'gradient');

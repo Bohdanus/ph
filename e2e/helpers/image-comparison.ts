@@ -1,5 +1,3 @@
-import { type Page, type TestInfo } from '@playwright/test';
-import path from 'node:path';
 import compare from 'pixelmatch';
 import sharp from 'sharp';
 
@@ -27,31 +25,6 @@ export interface CompareResult {
 export const DEFAULT_THRESHOLD = 0.2;
 export const DEFAULT_MAX_DIFF_PIXELS = 100;
 export const DEFAULT_MAX_DIFF_PIXEL_RATIO = 0.01;
-
-/**
- * Saves an image artifact to the test output dir and attaches it to the report.
- * This gives the visual tests a real on-disk artifact even when they are not using repository snapshots.
- */
-export async function saveScreenshotArtifact(
-  page: Page,
-  testInfo: TestInfo,
-  name: string,
-  options: { clip?: { x: number; y: number; width: number; height: number } } = {}
-): Promise<Buffer> {
-  const screenshotPath = path.join(testInfo.outputDir, `${name}.png`);
-  const screenshot = await page.screenshot({
-    path: screenshotPath,
-    animations: 'disabled',
-    ...(options.clip ? { clip: options.clip } : {}),
-  });
-
-  await testInfo.attach(name, {
-    path: screenshotPath,
-    contentType: 'image/png',
-  });
-
-  return screenshot;
-}
 
 /**
  * Compare two PNG buffers using Node.js (sharp + pixelmatch).

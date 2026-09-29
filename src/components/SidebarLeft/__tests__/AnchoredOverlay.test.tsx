@@ -20,6 +20,26 @@ type Size = { width: number; height: number };
  */
 let measuredSize: Size = { width: 0, height: 0 };
 
+/**
+ * jsdom's OWN accessors, captured before anything in this file overwrites them. `delete` is
+ * not a restore: these are inherited real accessors, so deleting the own property this file
+ * installed leaves every element in the environment with `offsetWidth === undefined` instead
+ * of `0`, which is a worse leak than the one the stubs are here to contain.
+ */
+const originalOffsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth');
+const originalOffsetHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight');
+const originalClientWidth = Object.getOwnPropertyDescriptor(document.documentElement, 'clientWidth');
+const originalClientHeight = Object.getOwnPropertyDescriptor(document.documentElement, 'clientHeight');
+
+/** Puts back exactly the descriptor that was there, or removes an own property that was not. */
+const restoreOwnProperty = (target: object, key: PropertyKey, original: PropertyDescriptor | undefined) => {
+  if (original) {
+    Object.defineProperty(target, key, original);
+  } else {
+    Reflect.deleteProperty(target, key);
+  }
+};
+
 const stubMeasuredSize = (): void => {
   Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
     configurable: true,
@@ -147,9 +167,23 @@ describe('AnchoredOverlay', () => {
   afterAll(() => {
     // The stubs are installed on the prototype and would otherwise outlive the file.
     // `isolate: true` is what keeps them out of other test files today; nothing here should
-    // depend on that staying true.
-    delete (HTMLElement.prototype as { offsetWidth?: number }).offsetWidth;
-    delete (HTMLElement.prototype as { offsetHeight?: number }).offsetHeight;
+    // depend on that staying true, so the ORIGINAL descriptors go back rather than the
+    // properties being deleted — a deleted accessor reads as `undefined` where jsdom read `0`.
+    restoreOwnProperty(HTMLElement.prototype, 'offsetWidth', originalOffsetWidth);
+    restoreOwnProperty(HTMLElement.prototype, 'offsetHeight', originalOffsetHeight);
+    // `setViewport` writes own data properties over `documentElement.client*`, shadowing
+    // jsdom's inherited accessors for the rest of the environment if they are left behind.
+    restoreOwnProperty(document.documentElement, 'clientWidth', originalClientWidth);
+    restoreOwnProperty(document.documentElement, 'clientHeight', originalClientHeight);
+  });
+
+  it("captured jsdom's own accessors, so the teardown restores instead of deleting", () => {
+    // The teardown takes a `Reflect.deleteProperty` branch when nothing was captured to put
+    // back, and that branch is the defect this fix exists to remove. jsdom defining
+    // `offsetWidth`/`offsetHeight` as real accessors on the prototype is what keeps the file
+    // on the restoring branch, so it is pinned here rather than assumed.
+    expect(typeof originalOffsetWidth?.get).toBe('function');
+    expect(typeof originalOffsetHeight?.get).toBe('function');
   });
 
   it('renders into the body, so no clipping ancestor sits between it and the viewport', () => {

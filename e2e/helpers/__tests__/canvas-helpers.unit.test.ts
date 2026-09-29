@@ -19,6 +19,7 @@ import {
   SPRAY_GRAY,
   TRANSPARENT,
   WHITE,
+  captureRegionOf,
   createImageData,
   fillAll,
   fillRect,
@@ -298,6 +299,12 @@ describe('getStrokeAnalysis gap threshold', () => {
    * so the two thresholds must produce different `segments`. Both gap thresholds are
    * pinned by value in canvas-stroke-analysis.unit.test.ts; if they ever crossed, these
    * two fixtures would stop discriminating and both expectations below would fail.
+   *
+   * Both fixtures are CSS-scale captures of their own size, so the scale the classifier
+   * derives is 1 and the thresholds apply unscaled - which is what lets these two compare a
+   * 5-column jump against PEN_GAP_THRESHOLD directly. The scale-relative behaviour is
+   * covered in canvas-stroke-analysis.unit.test.ts, where the same comparisons are made
+   * against a 2x capture of the same stroke.
    */
   it('uses the pen gap threshold when spray pixels outnumber dark pixels but the spread is pen-like', async () => {
     // Columns 0-5 spray (24 px), 6-9 near-white, 10-13 dark (16 px): sprayCount
@@ -309,7 +316,7 @@ describe('getStrokeAnalysis gap threshold', () => {
     fillRect(image, { left: 6, top: 0, right: 9, bottom: 3 }, WHITE);
     fillRect(image, { left: 10, top: 0, right: 13, bottom: 3 }, BLACK);
 
-    const result = await getStrokeAnalysis(image);
+    const result = await getStrokeAnalysis(image, captureRegionOf(image));
 
     expect(result).toEqual({ type: 'solid', segments: 1, verticalSpread: 4, pixelCount: 40 });
     expect(result!.verticalSpread).toBeLessThanOrEqual(STROKE_ANALYSIS.SPRAY_VERTICAL_SPREAD_THRESHOLD);
@@ -324,7 +331,7 @@ describe('getStrokeAnalysis gap threshold', () => {
     fillRect(image, { left: 10, top: 0, right: 12, bottom: 39 }, WHITE);
     fillRect(image, { left: 13, top: 0, right: 19, bottom: 39 }, BLACK);
 
-    const result = await getStrokeAnalysis(image);
+    const result = await getStrokeAnalysis(image, captureRegionOf(image));
 
     expect(result!.verticalSpread).toBeGreaterThan(STROKE_ANALYSIS.SPRAY_VERTICAL_SPREAD_THRESHOLD);
     expect(result).toEqual({ type: 'spray', segments: 2, verticalSpread: 40, pixelCount: 680 });

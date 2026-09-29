@@ -2,26 +2,7 @@ import { type Page, type TestInfo } from '@playwright/test';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { getPageScroll } from './canvas-helpers';
-import { viewportRectToPageRect } from './screenshot-scale';
-
-interface BoundingBox {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-interface ClipOptions {
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-}
-
-/** Gets the device pixel ratio for the page. */
-export async function getDevicePixelRatio(page: Page): Promise<number> {
-  return page.evaluate(() => window.devicePixelRatio || 1);
-}
+import { type ClipOptions, type CssBox as BoundingBox, viewportRectToPageRect } from './screenshot-scale';
 
 /** Captures a canvas region through CDP to avoid headed screenshot hangs. */
 export async function captureCanvasScreenshot(
@@ -38,19 +19,28 @@ export async function captureCanvasScreenshot(
   const screenshotPath = path.join(outputDir, `${name}.png`);
   await fs.mkdir(outputDir, { recursive: true });
   const cdp = await page.context().newCDPSession(page);
-  // CDP clip coordinates are CSS pixels, and the captured image comes back at
-  // `clip_size x clip.scale x deviceScaleFactor` image pixels -- native device pixels,
-  // the same as `page.screenshot()`. This helper hardcodes `clip.scale: 1` and does no
-  // device-pixel-ratio math of its own, so at deviceScaleFactor 2 a 120x80 CSS clip
-  // decodes to 240x160. Only Playwright's own `scale: 'css'` option divides the result
-  // by the device scale factor, and that option has no CDP equivalent.
+  // CDP clip coordinates are CSS pixels. The decoded image, however, is NOT at the clip
+  // extent times the clip scale times the emulated ratio, and it is NOT equivalent to
+  // `page.screenshot()`: this comment used to assert both, and the sibling spec measured
+  // both false.
   //
-  // Do not assume CSS resolution and do not divide by devicePixelRatio: downstream code
-  // derives the scale from the decoded image dimensions instead, so it stays correct at
-  // any capture resolution -- screenshotBoundsToCss (canvas-helpers.ts) maps image pixels
-  // onto the element's CSS box proportionally, and screenshot-scale.ts is the single
-  // implementation both select-move.spec.ts and viewport-drawing.spec.ts use. See
-  // cdp-helpers.spec.ts, which pins this behaviour at deviceScaleFactor 1 and 2.
+  // `Page.captureScreenshot` bypasses Playwright's device emulation entirely and captures at
+  // Chrome's own surface scale. The emulated `deviceScaleFactor` does not change it:
+  // measured there, a 240x160 CSS clip decoded to 480x320 while `window.devicePixelRatio`
+  // reported 1, and sweeping `deviceScaleFactor` over 1, 2 and 3 produced the same 480.
+  // `page.screenshot({ clip })` is the opposite -- Playwright applies the emulated ratio
+  // itself -- which is why the two cannot be compared on size here.
+  //
+  // So the `clip.scale: 1` below pins only "no extra scaling of my own"; it promises
+  // nothing about the output resolution, and CDP has no equivalent of Playwright's
+  // `scale: 'css'`. Do not assume CSS resolution, do not assume the emulated ratio, and do
+  // not divide by devicePixelRatio: downstream code derives the scale from the decoded
+  // image dimensions instead, so it stays correct at any capture resolution --
+  // screenshotBoundsToCss (canvas-helpers.ts) maps image pixels onto the element's CSS box
+  // proportionally, and screenshot-scale.ts is the single implementation both
+  // select-move.spec.ts and viewport-drawing.spec.ts use. `cdp-helpers.spec.ts` pins the
+  // part that does hold in every mode: the capture is exactly the requested rect, at one
+  // integral scale shared by both axes.
   //
   // `box` and `clip` arrive viewport-relative (that is what `boundingBox()` returns),
   // but this helper talks to CDP directly and so bypasses the translation Playwright
