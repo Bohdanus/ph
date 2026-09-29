@@ -72,8 +72,10 @@ to every task:
   another.
 - **Only one root-level agent writes any worktree.** A root-level agent is one a
   human started as a Kilo chat; two of them never work in the same worktree, and
-  one does not take over a worktree another is inside. Subagents of one root agent
-  do share that agent's worktree and must split by file.
+  one does not take over a worktree another is inside. This one the board cannot
+  enforce — identity is the branch, so two root agents in one worktree are the
+  same agent to it. Subagents of one root agent do share that agent's worktree
+  and must split by file.
 - **Claim what you touch before the first edit:** `npm run swarm -- claim <id>
 --files <paths>`, or `swarm hold <path>` with no issue. A refused hold names the
   holder; take their lock first, never `--force` it. Announce a branch you are

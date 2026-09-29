@@ -26,10 +26,15 @@ operator explicitly asked for on `main`**, and a hotfix the operator asked for o
   same task is a fork you reconcile by hand.
 - **One root-level agent writes a worktree.** A root-level agent is one a human
   started as a Kilo chat. Two of them never work in the same worktree, and one
-  does not take over a worktree another root agent is inside — the file claim
-  refuses it, which is the point. Subagents are different: a fan-out launched by
-  one root agent works inside _that_ root's worktree and splits by file, which is
-  the whole reason `task` exists.
+  does not take over a worktree another root agent is inside. Subagents are
+  different: a fan-out launched by one root agent works inside _that_ root's
+  worktree and splits by file, which is the whole reason `task` exists.
+  **The board cannot enforce this, and the reason matters.** Board identity is the
+  git branch (`identity.mjs:43-47`), and `holdFiles` refuses only a _foreign_ lock,
+  so two root agents in one worktree are the same agent to the board: both holds
+  are granted, and the file reads as uncontended. It is a discipline, not a lock.
+  When two root-level sessions do collide in one worktree, neither sees it in the
+  board — the symptom is a merge conflict or clobbered index, not a refusal.
 - **Already compliant if the session you are running in IS a worktree** — an
   Agent Manager worktree session, or any checkout under `.kilo/worktrees/`. Never
   nest a second worktree inside one.
