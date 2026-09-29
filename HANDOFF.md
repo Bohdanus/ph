@@ -2795,3 +2795,63 @@ that change must re-point the pins at `history-adapter.diagnostics.test.ts:742` 
 assert the advanced fold on purpose.
 
 **Files.** `src/contexts/history-adapter.ts`, `src/contexts/durable-replay.ts`
+
+---
+
+## 95. A refused `PUBLISH_RUNTIME_PRESENTATION` reports an intended no-op as a lost user edit
+
+**Problem.** `StoreContext` refuses the publication when
+`layersDifferOnlyByPresentation(currentState.layers, action.payload.layers)` is false
+(`src/contexts/StoreContext.tsx:849`) and logs one `console.error` for it
+(`src/contexts/StoreContext.tsx:862`). The comment above it already knows the problem
+(`src/contexts/StoreContext.tsx:851-852`): _"Two refusals share that outcome and mean different
+things, so only one of them is reported."_ Two refusals, one message — so the second is not merely
+unreported, it is **misreported**: a publication that is a deliberate no-op is logged with the text
+of a lost logical edit.
+
+**The second reason is an identity affine operation, and it is reachable by an ordinary gesture.**
+Drag a rotate slider back to zero and release:
+
+- `normalizeCommittedToolArgs` returns `null` for a transform whose retained history args are the
+  identity (`src/contexts/useLayer.ts:76`, tested by `isIdentityAffineTransform`,
+  `src/contexts/affine-transform.ts:47`), so the operation is dropped from the **history args**.
+- The layer record published alongside it is built from the preview and **copies the preview's
+  operations array** (`src/contexts/useLayer.ts:391`), so the identity operation is still on it.
+- `pendingToolEdits` is only pushed when the normalized args are truthy
+  (`src/contexts/useLayer.ts:396`), so with nothing recorded the release takes the
+  `!pendingToolEdits.length` branch (`src/contexts/useLayer.ts:414`) and dispatches
+  `PUBLISH_RUNTIME_PRESENTATION` (`src/contexts/useLayer.ts:417`) with a payload that differs from
+  the stored layer in `operations` alone.
+- `layersDifferOnlyByPresentation` (`src/contexts/layer-presentation.ts:96`) compares durable state,
+  and `operations` is durable. The publication is refused, and a no-op is reported as an invariant
+  violation.
+
+**Why it matters beyond the log line.** The refusal is contained — the layer keeps rendering from
+its `tmpCanvas` and no logical state moves — so nothing is lost. What is lost is the signal: a
+`console.error` reading "this action's invariant was broken" for a gesture that did exactly what the
+user asked. Once that text exists, the real violation is the one an operator learns to discount.
+
+**Fix.** A second predicate beside `layersDifferOnlyByPresentation` in
+`src/contexts/layer-presentation.ts`, sharing one `layersMatch(current, next, { ignoreIdentityOperations })`
+helper rather than re-walking the record: it accepts when the records differ by presentation caches
+**and** by identity affine operations and nothing else. `StoreContext` then routes the two refusals
+apart — the identity one is the intended no-op and is reported as routine, the other keeps the
+`console.error` and its offending ids. Note the identity case is not only a difference in
+`operations`: `effectiveOperations` must compare the _filtered_ arrays, because a preview carrying
+one identity op and a stored layer carrying none are the same image.
+
+**Nothing here is missing for want of a second test.** There is no test asserting the current
+`console.error` text, so splitting it cannot contradict one — but there is also no test for the
+identity path at all, which is why the refusal went unnoticed. A test that publishes a layer whose
+only difference is an identity operation, and asserts it is not reported as a lost edit, fails
+today and is the change's coverage.
+
+**Files.** `src/contexts/StoreContext.tsx:849-868`, `src/contexts/layer-presentation.ts:96`,
+`src/contexts/useLayer.ts:76,391,396,414-417`, `src/contexts/affine-transform.ts:47`.
+
+**Origin.** Salvaged from the unmerged `fix/unit-tests` branch, which also carried two
+`history-adapter` changes — a duplicate-durable-entry-id filter and a frame-omission diagnostic.
+Both have since landed on `main` by other routes (`history-adapter.ts:581,752,780` and the `else`
+at `:656`) and the branch's copy of each is now behind `main`'s. The third change above is the only
+part of that branch still outstanding, which is why it is recorded here rather than left in a
+branch 600 commits behind.
