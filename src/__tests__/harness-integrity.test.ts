@@ -1,4 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { existsSync, readdirSync } from 'node:fs';
+import { join, relative, resolve, sep } from 'node:path';
+import { ReadableStream, TransformStream, WritableStream } from 'node:stream/web';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { configDefaults } from 'vitest/config';
+import e2eProjectConfig from '../../vitest.e2e.config.ts';
+import rootProjectConfig from '../../vitest.config.ts';
 import { createMockCanvasContext as createGlobalMockCanvasContext } from '../test/setup.ts';
 import { makeMockCanvas, makeMockCtx, makeMockOffscreenCanvas } from './canvas-mock.ts';
 import {
@@ -404,6 +410,842 @@ describe('shared data fixtures', () => {
 
     expect(tool.tmpCanvas).toBe(tmpCanvas);
     expect(createMockLayer({ id: 'other' }).tmpCanvas).not.toBe(tmpCanvas);
+  });
+});
+
+/**
+ * The `AGENTS.md` "Test traps" that no test enforced until now, and the two
+ * silent holes an adversarial review found in the first version of this file.
+ * A guard added here is not in this list until it is here, and the list is what
+ * the `it` titles below are checked against:
+ *
+ * 1. a second `setupFiles` entry, in either project;
+ * 2. a `globalSetup` on EITHER project — a second setup file that does not run
+ *    through the chain the first check can see. The e2e project is included
+ *    because the hazard is identical on the Node side;
+ * 3. `e2e/**` entering the root project's collection, through `exclude`;
+ * 4. the root project's `exclude` dropping the `configDefaults` spread, which
+ *    puts `node_modules/**` and `.git/**` back into the collection while the
+ *    pinned "additions" array stays byte-identical;
+ * 5. a `*.unit.test.ts` under `e2e/` leaving the e2e project's `include`;
+ * 6. one leaving it again through the e2e project's `exclude` — the same loss
+ *    through the OTHER of the two keys that decide collection, and the one
+ *    `passWithNoTests` cannot see because it only trips on an empty collection;
+ * 7. an e2e helper unit test becoming a Playwright spec, through `testIgnore`;
+ * 8. Playwright's `testMatch` widening, which collects every `.ts` file under
+ *    `e2e/` and subtracts none of them with the three pinned `testIgnore` rules;
+ * 9. `e2e/**` entering the app coverage report;
+ * 10. the root project ceasing to collect the Node script tests, through
+ *     `exclude`;
+ * 11. the same loss through the root project's `include` — one line beside the
+ *     existing `exclude` drops all 267 collected `scripts/*.test.mjs` cases and
+ *     leaves every `exclude`-only guard reading true;
+ * 12. a THIRD `vitest*.config.*` at the repo root — or a `vitest.workspace.*`,
+ *     which Vitest 5 does not read but a later bump would — which is how a second
+ *     project with its own `setupFiles` arrives without anything here noticing;
+ * 13. the root project leaving the `vmThreads` pool, declared and in force.
+ *
+ * All three configs — both Vitest configs and `playwright.config.ts` — are
+ * IMPORTED, not grepped, so what is asserted is the value the tool itself
+ * resolved. That is the mechanism that makes this fail when the config is
+ * edited: a deleted `'e2e/**'` is simply absent from the imported `exclude`
+ * array, and a substring search could equally well have matched the comment
+ * that says the same thing three lines above the deletion.
+ *
+ * The recurring defect these two rounds share is reading ONE key where TWO
+ * decide the property. Every collection guard below reads both `include` and
+ * `exclude`, each falling back to the Vitest default rather than to `[]`, and
+ * every one of them is stated over the REAL file list rather than over a
+ * pattern, so a guard cannot pass by matching nothing.
+ */
+
+/** Resolved from this file's own location; `process.cwd()` differs per runner. */
+const REPO_ROOT = resolve(import.meta.dirname, '..', '..');
+
+/** Repo-relative and `/`-separated, because every pinned pattern is. */
+const repoRelative = (absolute: string) => relative(REPO_ROOT, absolute).split(sep).join('/');
+
+const walkTestFiles = (directory: string, matches: RegExp): string[] =>
+  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const absolute = join(directory, entry.name);
+    if (entry.isDirectory()) return entry.name === 'node_modules' ? [] : walkTestFiles(absolute, matches);
+    return matches.test(entry.name) ? [repoRelative(absolute)] : [];
+  });
+
+/**
+ * Glob metacharacters with NO implementation here: the negating and grouping
+ * extglobs, and a bare `|`. A pattern containing one of these THROWS, because a
+ * pattern that silently matched nothing would turn the guard below into a test
+ * that passes forever.
+ */
+const UNSUPPORTED_GLOB_SYNTAX = /[!+@|]/;
+
+/** Only the escape set; `-` needs no escape outside a character class. */
+const escapeLiteral = (character: string) => character.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * The alternatives of one group, each translated to a regex body. A `{a,b}`
+ * group separates on `,` and a `?(a|b)` group on `|`; the other separator inside
+ * either form THROWS, because a silently unevaluated alternative is a pattern
+ * that quietly matches something other than what it reads as.
+ */
+const translateAlternatives = (body: string, separator: ',' | '|') => {
+  const other = separator === ',' ? '|' : ',';
+  if (body.includes(other)) {
+    throw new Error(`pinned pattern mixes "${separator}" and "${other}" inside one glob group: "${body}"`);
+  }
+  const alternatives = body.split(separator).map(translateSegmentBody);
+  if (alternatives.some((alternative) => alternative === '')) {
+    throw new Error(`pinned pattern has an empty alternative in "${body}"`);
+  }
+  return `(?:${alternatives.join('|')})`;
+};
+
+/**
+ * One path segment's glob, translated to a regex BODY. It supports exactly the
+ * syntax the patterns this guard evaluates use: `*`, a `{a,b}` alternation, a
+ * `?(a|b)` optional group, and a `[abc]` character class.
+ *
+ * The three groups beyond `*` exist because a guard now evaluates patterns this
+ * FILE did not author: the guards read `include`/`exclude` out of the configs,
+ * and a project's `include` is the Vitest DEFAULT when the config declares none
+ * — a `**` pattern whose last segment is `*.{test,spec}.?(c|m)[jt]s?(x)` —
+ * which is all three at once. Refusing that syntax would make the default
+ * unreadable, and hardcoding a hand-typed copy of it would put the value the
+ * guard actually needs behind a second copy to keep in step. The default is read
+ * from `configDefaults` instead, and matched by the same code that matches the
+ * pinned literals.
+ *
+ * Nesting one group inside another throws, and a negated or first-character
+ * character class throws. Both are fail-closed for the same reason
+ * `UNSUPPORTED_GLOB_SYNTAX` is: an unevaluated alternative is indistinguishable
+ * from a matching one.
+ */
+const translateSegmentBody = (segment: string): string => {
+  let body = '';
+  let index = 0;
+
+  while (index < segment.length) {
+    const character = segment[index];
+
+    if (UNSUPPORTED_GLOB_SYNTAX.test(character)) {
+      throw new Error(`pinned pattern uses glob syntax this matcher does not implement: "${segment}"`);
+    }
+
+    if (character === '*') {
+      body += '[^/]*';
+      index += 1;
+      continue;
+    }
+
+    if (character === '?') {
+      const close = segment.indexOf(')', index + 1);
+      if (segment[index + 1] !== '(' || close === -1) {
+        throw new Error(
+          `pinned pattern uses a single-character "?" glob, which this matcher does not implement: "${segment}"`
+        );
+      }
+      body += `${translateAlternatives(segment.slice(index + 2, close), '|')}?`;
+      index = close + 1;
+      continue;
+    }
+
+    if (character === '[') {
+      const close = segment.indexOf(']', index + 1);
+      if (close === -1) throw new Error(`pinned pattern has an unterminated character class: "${segment}"`);
+      const members = segment.slice(index + 1, close);
+      if (members === '' || members.includes('[') || members.startsWith('!') || members.startsWith('^')) {
+        throw new Error(`pinned pattern uses character-class syntax this matcher does not implement: "[${members}]"`);
+      }
+      body += `[${members.replace(/\\/g, '\\\\')}]`;
+      index = close + 1;
+      continue;
+    }
+
+    if (character === '{') {
+      const close = segment.indexOf('}', index + 1);
+      if (close === -1) throw new Error(`pinned pattern has an unterminated brace group: "${segment}"`);
+      body += translateAlternatives(segment.slice(index + 1, close), ',');
+      index = close + 1;
+      continue;
+    }
+
+    if (character === ')' || character === '}' || character === ']') {
+      throw new Error(`pinned pattern has an unbalanced "${character}": "${segment}"`);
+    }
+
+    body += escapeLiteral(character);
+    index += 1;
+  }
+
+  return body;
+};
+
+/**
+ * Matching for the glob syntax the guard evaluates: `*` within a path segment
+ * and `**` across zero or more segments, plus the `{a,b}`, `?(a|b)` and `[abc]`
+ * forms `translateSegmentBody` documents. Every other metacharacter THROWS,
+ * because a pattern that silently matched nothing would turn the guard below
+ * into a test that passes forever.
+ *
+ * It behaves as `picomatch(pattern, { dot: true })` and NOT as picomatch's
+ * default. Cross-checked against the installed picomatch over the patterns the
+ * guard actually evaluates, over THREE path sets, and the numbers below are the
+ * measured ones — an earlier version of this comment claimed a 50-path sample
+ * and a future edit would have trusted it:
+ *
+ * - REVIEWER RUN: 29 patterns x 635 real repo-relative paths, and 29 x 87,164
+ *   synthetic ones assembled from the segment and prefix shapes a glob can meet.
+ *   Zero disagreements with `{ dot: true }` in BOTH sets.
+ * - INDEPENDENT RERUN, same conclusion at a smaller sample: 30 patterns x 678
+ *   real paths and 30 x 7,224 synthetic paths, again zero with `{ dot: true }`,
+ *   and 862 disagreements with picomatch's DEFAULTS — every one of them the same
+ *   shape, a `*`/`**` segment matching a dot-prefixed segment (`e2e/**` vs
+ *   `e2e/.hidden/a.unit.test.ts`) that picomatch's default declines to match. The
+ *   real-input set shows zero disagreements with EITHER option, so the difference
+ *   is unreachable from what this guard feeds in today: no path it walks lives
+ *   under a dot-prefixed segment.
+ * - DEGENERATE paths DO disagree, and are unreachable: a leading or trailing `/`,
+ *   a bare `.` or `..` segment, and an empty segment all produce disagreements
+ *   (`e2e/**` against `e2e/./a.ts` and `e2e/../a.ts`). `walkTestFiles` cannot
+ *   produce one — it joins `readdirSync` directory entries, and `join` normalises
+ *   `.` and `..` away while an entry name is never empty and never contains a
+ *   separator — so this is the only caller and the divergence cannot reach it.
+ *
+ * `{ dot: true }` is recorded because "0 disagreements" without the option is the
+ * false claim that an earlier version of this comment's reasoning would have
+ * carried.
+ */
+const matchSegment = (segment: string, value: string) => new RegExp(`^${translateSegmentBody(segment)}$`).test(value);
+
+const matchSegments = (pattern: string[], value: string[]): boolean => {
+  if (pattern.length === 0) return value.length === 0;
+  const [head, ...rest] = pattern;
+  if (head === '**') {
+    // Zero through ALL remaining segments, which is what a trailing `**` means;
+    // stopping at `value.length - 1` is what made `a/**/__tests__/**` reject
+    // `a/__tests__/b` in the first version of this matcher.
+    for (let consumed = 0; consumed <= value.length; consumed++) {
+      if (matchSegments(rest, value.slice(consumed))) return true;
+    }
+    return false;
+  }
+  return value.length > 0 && matchSegment(head, value[0]) && matchSegments(rest, value.slice(1));
+};
+
+const matchesGlob = (pattern: string, repoRelativePath: string) =>
+  matchSegments(pattern.split('/'), repoRelativePath.split('/'));
+
+const hasExactEntries = (actual: readonly string[] | undefined, expected: readonly string[]) =>
+  actual !== undefined &&
+  actual.length === expected.length &&
+  actual.every((entry, index) => entry === expected[index]);
+
+/**
+ * What the root project adds to the Vitest defaults. Pinning the whole addition
+ * rather than searching `exclude` for one pattern is what catches a NEW
+ * exclusion: a silent `scripts` or `__tests__` exclusion changes this array
+ * instead of quietly shrinking the set of files the suite runs.
+ */
+const rootExcludeAdditions = (exclude: readonly string[] | undefined) =>
+  (exclude ?? []).filter((pattern) => !configDefaults.exclude.includes(pattern));
+
+/**
+ * Whether the declared `exclude` still BEGINS with `configDefaults.exclude`, and
+ * so still excludes everything it did when the defaults applied.
+ *
+ * `rootExcludeAdditions` alone cannot see this: replacing the spread with a bare
+ * two-pattern array holding only `.kilo` and `e2e` yields the same two additions,
+ * so the pinned array is byte-identical and the guard passes — while
+ * `node_modules` and `.git` are back in the collection. Only the SPREAD ITSELF is
+ * evidence that the defaults are still there, so the spread is what is pinned.
+ */
+const excludeKeepsTheDefaults = (exclude: readonly string[] | undefined) =>
+  exclude !== undefined && hasExactEntries(exclude.slice(0, configDefaults.exclude.length), configDefaults.exclude);
+
+/** Vitest accepts a bare string here, so both accepted shapes mean one path. */
+const asEntryList = (value: string | readonly string[] | undefined) =>
+  value === undefined ? undefined : typeof value === 'string' ? [value] : value;
+
+const setupFilesAreTheSingleOne = (
+  rootSetupFiles: string | readonly string[] | undefined,
+  e2eSetupFiles: string | readonly string[] | undefined
+) =>
+  hasExactEntries(asEntryList(rootSetupFiles), ['./src/test/setup.ts']) &&
+  (asEntryList(e2eSetupFiles)?.length ?? 0) === 0;
+
+/**
+ * `globalSetup` runs once per project, outside the test file's own environment,
+ * so BOTH projects are read here and not only the root one.
+ *
+ * A single-argument version of this predicate passed the guard while
+ * `vitest.e2e.config.ts` declared a `globalSetup`: the e2e project is imported
+ * and its `include`, `exclude`, `environment` and `root` are all asserted, and
+ * `globalSetup` was the one key of it nothing looked at. The hazard is identical
+ * on both sides — code running once per run, outside the setup-file chain the
+ * `setupFiles` check can see — so the shape mirrors `setupFilesAreTheSingleOne`
+ * directly above it, which has always read both.
+ */
+const noGlobalSetup = (
+  rootGlobalSetup: string | readonly string[] | undefined,
+  e2eGlobalSetup: string | readonly string[] | undefined
+) => (asEntryList(rootGlobalSetup)?.length ?? 0) === 0 && (asEntryList(e2eGlobalSetup)?.length ?? 0) === 0;
+
+/** The only two Vitest configs this file imports; a third one is a second project. */
+const VITEST_CONFIG_FILES = ['vitest.config.ts', 'vitest.e2e.config.ts'];
+
+/**
+ * A `vitest*.config.*` at the root is a project to keep in step, and a
+ * `vitest.workspace.*` is named here for the same reason even though Vitest 5
+ * does not read it: the string `vitest.workspace` appears nowhere in the
+ * installed `vitest@5.0.2`, so such a file is inert today, and an inert file is
+ * exactly what a later Vitest bump or a `projects: []` entry would make live.
+ * The narrower `/^vitest.*\.config\./` left it invisible with the suite green.
+ */
+const VITEST_CONFIG_FILE_NAME = /^vitest.*(?:\.config\.|workspace\.)/;
+
+const e2eUnitTestsRunInTheNodeProject = (
+  files: readonly string[],
+  include: readonly string[],
+  exclude: readonly string[]
+) =>
+  files.every(
+    (file) =>
+      include.some((pattern) => matchesGlob(pattern, file)) && !exclude.some((pattern) => matchesGlob(pattern, file))
+  );
+
+const e2eUnitTestsAreInvisibleToPlaywright = (files: readonly string[], testIgnore: readonly string[]) =>
+  files.every((file) => testIgnore.some((pattern) => matchesGlob(pattern, file)));
+
+const scriptTestsAreCollectedByTheRootProject = (
+  files: readonly string[],
+  include: readonly string[],
+  exclude: readonly string[]
+) =>
+  files.every(
+    (file) =>
+      include.some((pattern) => matchesGlob(pattern, file)) && !exclude.some((pattern) => matchesGlob(pattern, file))
+  );
+
+const coverageExcludesE2E = (exclude: readonly string[] | undefined) => (exclude ?? []).includes('e2e/**');
+
+/**
+ * Playwright's `testMatch` is a glob string, a `RegExp`, an array of either, or
+ * absent. A `RegExp` is recompiled for every call rather than reused: a `/g` or
+ * `/y` regexp carries `lastIndex` between `.test` calls, so a shared instance
+ * would make this predicate depend on how many times it had already been called.
+ * Both flags throw instead, because that statefulness is a silent wrong answer
+ * and not a property of this repository.
+ */
+const matchesPlaywrightPattern = (pattern: string | RegExp, file: string) => {
+  if (typeof pattern === 'string') return matchesGlob(pattern, file);
+  if (pattern.flags.includes('g') || pattern.flags.includes('y')) {
+    throw new Error(`playwright testMatch uses a stateful regexp flag: /${pattern.source}/${pattern.flags}`);
+  }
+  return new RegExp(pattern.source, pattern.flags).test(file);
+};
+
+/**
+ * `testMatch` UNSET is Playwright's own default, and that is the value this
+ * repository runs, so the guard accepts it rather than restating Playwright's
+ * default as a second copy to keep in step.
+ *
+ * A DECLARED `testMatch` is held to what it can actually change: every real
+ * `*.spec.ts` must still match, and no real `.ts` file under `e2e/` that is
+ * neither a spec nor already hidden by `testIgnore` may match. The second half
+ * is the escaping mutation — `testMatch: /.*\.(ts|tsx)$/` collects every helper,
+ * fixture and `global-setup.ts` in the tree — and it is only falsifiable against
+ * the real file list, which is why the caller passes one.
+ */
+const playwrightTestMatchCollectsOnlySpecs = (
+  testMatch: string | RegExp | readonly (string | RegExp)[] | undefined,
+  specFiles: readonly string[],
+  nonSpecFiles: readonly string[]
+) => {
+  if (testMatch === undefined) return true;
+  const patterns = typeof testMatch === 'string' || testMatch instanceof RegExp ? [testMatch] : testMatch;
+  return (
+    specFiles.every((file) => patterns.some((pattern) => matchesPlaywrightPattern(pattern, file))) &&
+    nonSpecFiles.every((file) => !patterns.some((pattern) => matchesPlaywrightPattern(pattern, file)))
+  );
+};
+
+/**
+ * `node:sqlite` also works under `forks` and `threads`, so `agent-board.test.mjs`
+ * keeps passing on a pool change and the only evidence it happened is an import
+ * error in an unrelated file. These two are the pin: the declared value, and the
+ * flag Vitest sets in the running process, which a pool change removes.
+ */
+const poolIsVmThreads = (pool: unknown) => pool === 'vmThreads';
+const runsInTheVmPool = (flag: unknown) => flag === '1';
+
+/**
+ * `playwright.config.ts` is IMPORTED, like both Vitest configs, so `testIgnore`
+ * and `testMatch` are the values Playwright's own `defineConfig` produced rather
+ * than a regex over the file's text. There is no fallback and no second reading
+ * of the file: a `testIgnore` that is absent, a bare string, or a `RegExp` fails
+ * the equality assertion below by being exactly what it is.
+ *
+ * The WHOLE config is returned, not just `testIgnore`, because `testMatch` is
+ * the other half of the same decision: `testIgnore` only subtracts from what
+ * `testMatch` collected, and widening the collection is invisible to a guard
+ * that reads one key.
+ *
+ * Loading it under the root jsdom project needs three globals jsdom does not
+ * define. They are installed with `??=` — an environment that already has one
+ * keeps its own — and immediately before the import, because the import is what
+ * throws without them. Every test file gets its own global object from Vitest
+ * (`isolate: true`), so nothing installed here can reach another file's
+ * environment; that is the property this relies on, not the `??=` alone.
+ */
+const loadPlaywrightConfig = async () => {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  globals.TransformStream ??= TransformStream;
+  globals.WritableStream ??= WritableStream;
+  globals.ReadableStream ??= ReadableStream;
+
+  return (await import('../../playwright.config.ts')).default;
+};
+
+type PlaywrightConfig = Awaited<ReturnType<typeof loadPlaywrightConfig>>;
+
+describe('harness configuration guards (the AGENTS.md test traps)', () => {
+  const rootTest = rootProjectConfig.test;
+  const e2eTest = e2eProjectConfig.test;
+
+  /**
+   * `include` and `exclude` are BOTH read by every collection guard below, and
+   * each falls back to the Vitest default rather than to `[]`. An empty fallback
+   * would make a project that declares neither key collect nothing while every
+   * guard read it as "no constraint", which is the same silent hole from the
+   * other side; the defaults are the value the tool really uses, and they are
+   * read from the installed Vitest rather than typed out here.
+   */
+  const rootInclude = rootTest?.include ?? configDefaults.include;
+  const rootExclude = rootTest?.exclude ?? configDefaults.exclude;
+  const e2eInclude = e2eTest?.include ?? configDefaults.include;
+  const e2eExclude = e2eTest?.exclude ?? configDefaults.exclude;
+
+  let e2eSpecFiles: string[] = [];
+  let e2eUnitTestFiles: string[] = [];
+  let e2eNonSpecTsFiles: string[] = [];
+  let scriptTestFiles: string[] = [];
+  let vitestConfigFiles: string[] = [];
+  let playwrightConfig: PlaywrightConfig;
+  let playwrightTestIgnore: readonly string[] = [];
+
+  beforeAll(async () => {
+    e2eSpecFiles = walkTestFiles(join(REPO_ROOT, 'e2e'), /\.spec\.ts$/);
+    e2eUnitTestFiles = walkTestFiles(join(REPO_ROOT, 'e2e'), /\.unit\.test\.ts$/);
+    scriptTestFiles = walkTestFiles(join(REPO_ROOT, 'scripts'), /\.test\.mjs$/);
+    playwrightConfig = await loadPlaywrightConfig();
+    // The `string[]` reading is the config's own shape here — `playwright.config.ts`
+    // writes three literal strings — and one `it` below pins them exactly, so a
+    // config that is a bare string or a RegExp fails that assertion before any use
+    // of this variable is reached.
+    playwrightTestIgnore = playwrightConfig.testIgnore as readonly string[];
+    // A third `vitest*.config.*` — or a `vitest.workspace.*` — at the root is how a
+    // second project with its own `setupFiles` arrives without any of the imports
+    // below noticing it exists. `VITEST_CONFIG_FILE_NAME` documents why the second
+    // form is matched even though Vitest 5 does not read it.
+    vitestConfigFiles = readdirSync(REPO_ROOT)
+      .filter((name) => VITEST_CONFIG_FILE_NAME.test(name))
+      .sort();
+    // What Playwright would collect BEYOND its specs: every `.ts`/`.tsx` file in
+    // `testDir` that is neither a spec nor already subtracted by `testIgnore`.
+    // `testIgnore` is pinned exactly, so reading it here is not circular.
+    e2eNonSpecTsFiles = walkTestFiles(join(REPO_ROOT, 'e2e'), /\.tsx?$/).filter(
+      (file) => !e2eSpecFiles.includes(file) && !playwrightTestIgnore.some((pattern) => matchesGlob(pattern, file))
+    );
+  });
+
+  it('locates the repository root from this file, not from the working directory', () => {
+    expect(
+      existsSync(join(REPO_ROOT, 'vitest.config.ts')),
+      'the repo root was not resolved from import.meta.dirname, so every guard below would read the wrong tree'
+    ).toBe(true);
+  });
+
+  it('finds no Vitest config this file does not import', () => {
+    // This file imports two configs and asserts properties of both. A third one
+    // at the repo root is a fourth project to keep in step — the exact failure
+    // `AGENTS.md` names — and nothing above could see it, because the escape is
+    // that the file it was written into was never read. The name pattern is
+    // `VITEST_CONFIG_FILE_NAME`, which also matches `vitest.workspace.*`.
+    expect(
+      vitestConfigFiles,
+      'a `vitest*.config.*` or `vitest.workspace.*` exists at the repo root that this file does not import, so its `setupFiles`, `environment` and collection rules are unasserted. Import it here and guard it, or delete it.'
+    ).toEqual(VITEST_CONFIG_FILES);
+    expect(
+      existsSync(join(REPO_ROOT, 'playwright.config.ts')),
+      '`playwright.config.ts` is imported below, so its absence is a broken import rather than a missing guard'
+    ).toBe(true);
+  });
+
+  it('loads exactly one setup file for the whole repository', () => {
+    expect(
+      setupFilesAreTheSingleOne(rootTest?.setupFiles, e2eTest?.setupFiles),
+      'a second setupFiles entry exists, so jsdom globals are installed twice and a second entry silently becomes a required path for every test'
+    ).toBe(true);
+    // `environment: 'jsdom'` is NOT asserted here, and the omission is deliberate: a
+    // non-jsdom root project makes `src/test/setup.ts` unimportable, so this file never
+    // loads and no assertion in it can run. It is enforced by the module graph instead.
+  });
+
+  it('runs no global setup file in either project', () => {
+    // `globalSetup` runs ONCE per project, before any test file loads, in its own
+    // environment — not per test file, and not through the jsdom `setupFiles`
+    // chain above. So a second one is not "a second setup file" to the check
+    // that exists: it is invisible to it, and `AGENTS.md`'s "one setup file" trap
+    // names both. BOTH projects are read, because a `globalSetup` added to
+    // `vitest.e2e.config.ts` is the same hazard on the Node side and the e2e
+    // config is imported here for every other key.
+    expect(
+      noGlobalSetup(rootTest?.globalSetup, e2eTest?.globalSetup),
+      'a project declares a globalSetup, so code runs once per run outside the jsdom `setupFiles` chain, where the OffscreenCanvas and createImageBitmap polyfills are not installed'
+    ).toBe(true);
+  });
+
+  it('keeps every file under e2e/ out of the root project', () => {
+    expect(
+      excludeKeepsTheDefaults(rootExclude),
+      "the root project's `exclude` no longer begins with `configDefaults.exclude`, so the defaults it used to inherit — `**/node_modules/**` and `**/.git/**` — are back in the collection"
+    ).toBe(true);
+    expect(
+      rootExcludeAdditions(rootTest?.exclude),
+      "the root project's exclusion set changed: anything added here stops running under `npm run test` without any test noticing, and anything removed starts running there"
+    ).toEqual(['**/.kilo/**', 'e2e/**']);
+    expect(
+      e2eSpecFiles.length,
+      'THIS RUN FOUND NO `*.spec.ts` UNDER `e2e/`, so the exclusion above is unproven rather than satisfied. Nothing in the configs is wrong: either the specs moved out of `e2e/`, or the walk pattern `\\.spec\\.ts$` in this file is stale. Re-derive it before trusting this file.'
+    ).toBeGreaterThan(0);
+  });
+
+  it('runs the e2e helper tests in a separate Node project scoped to e2e/**/__tests__/**/*.unit.test.ts', () => {
+    expect(
+      hasExactEntries(e2eTest?.include, ['e2e/**/__tests__/**/*.unit.test.ts']),
+      'the e2e project include changed: a `**`-scoped pattern also swallows a `*.unit.test.ts` added under src/ and runs it in Node with no DOM and no setup file'
+    ).toBe(true);
+    expect(
+      e2eTest?.environment,
+      'the e2e project is no longer Node, so its helper tests lose the fs and Buffer they require'
+    ).toBe('node');
+    expect(
+      e2eTest?.root,
+      'the e2e project root moved, so its `e2e/**`-relative patterns resolve against a different tree'
+    ).toBe(REPO_ROOT);
+    expect(
+      e2eUnitTestsRunInTheNodeProject(e2eUnitTestFiles, e2eInclude, e2eExclude),
+      `an e2e helper test is no longer collected by the e2e project, so no project runs it. Outside include: ${e2eUnitTestFiles
+        .filter((file) => !e2eInclude.some((pattern) => matchesGlob(pattern, file)))
+        .join(', ')}. Excluded: ${e2eUnitTestFiles
+        .filter((file) => e2eExclude.some((pattern) => matchesGlob(pattern, file)))
+        .join(', ')}`
+    ).toBe(true);
+    // `passWithNoTests` is NOT the pin, and the reason is the same as the escaping
+    // mutation's: it defaults to `false` but only trips on an EMPTY collection. An
+    // `exclude` that removes one of the eleven helper files leaves ten, exits 0, and
+    // leaves CI's blocking `e2e-unit` job green. Only the file-level predicate above
+    // sees the partial case.
+    expect(
+      e2eUnitTestFiles.length,
+      'THIS RUN FOUND NO `*.unit.test.ts` UNDER `e2e/`, so the assertions above are unproven rather than satisfied. Nothing in the configs is wrong: either the helper tests moved out of `e2e/`, or the walk pattern `\\.unit\\.test\\.ts$` in this file is stale. Re-derive it before trusting this file.'
+    ).toBeGreaterThan(0);
+  });
+
+  it('keeps every e2e helper test out of the browser', () => {
+    expect(
+      playwrightConfig.testIgnore,
+      "Playwright's testIgnore changed, so an e2e helper test is collected as a browser-driven spec and fails in a way that looks like a product bug"
+    ).toEqual(['**/__tests__/**', '**/*.unit.spec.ts', '**/*.unit.test.ts']);
+
+    // Safe because of the equality assertion immediately above: the only way to
+    // get here with anything else is a config this test has already failed on.
+    const testIgnore = playwrightTestIgnore;
+
+    expect(
+      e2eUnitTestsAreInvisibleToPlaywright(e2eUnitTestFiles, testIgnore),
+      `an e2e helper unit test is no longer ignored by Playwright and would run in a browser: ${e2eUnitTestFiles
+        .filter((file) => !testIgnore.some((pattern) => matchesGlob(pattern, file)))
+        .join(', ')}`
+    ).toBe(true);
+    // The real file list against the NAME rule alone. This read of the real tree
+    // used to sit in the scratch-values test below, whose title claimed that no
+    // real file was touched; it belongs here, beside the real-layout assertions.
+    expect(
+      e2eUnitTestsAreInvisibleToPlaywright(e2eUnitTestFiles, ['**/*.unit.test.ts']),
+      'a real e2e helper test must be hidden by the name rule alone; the `__tests__` rule is defence in depth for one that is not named *.unit.test.ts'
+    ).toBe(true);
+  });
+
+  it("leaves Playwright's collection scoped to specs", () => {
+    // `testMatch` is the key ABOVE `testIgnore`, not beside it: it decides what is
+    // collected, and `testIgnore` only subtracts from the result. A `testIgnore`
+    // that is byte-identical while `testMatch` is `/.*\.(ts|tsx)$/` collects every
+    // helper, every fixture and `e2e/global-setup.ts`, and the three pinned
+    // `testIgnore` patterns do not subtract a single one of them.
+    expect(
+      playwrightTestMatchCollectsOnlySpecs(playwrightConfig.testMatch, e2eSpecFiles, e2eNonSpecTsFiles),
+      "Playwright's testMatch collects files in e2e/ that are neither specs nor hidden by testIgnore, so Playwright loads them as browser-driven tests: " +
+        e2eNonSpecTsFiles
+          .filter((file) => {
+            const patterns =
+              typeof playwrightConfig.testMatch === 'string' || playwrightConfig.testMatch instanceof RegExp
+                ? [playwrightConfig.testMatch]
+                : (playwrightConfig.testMatch ?? []);
+            return patterns.some((pattern) => matchesPlaywrightPattern(pattern, file));
+          })
+          .join(', ')
+    ).toBe(true);
+    expect(
+      e2eNonSpecTsFiles.length,
+      'THIS RUN FOUND NO NON-SPEC `.ts` FILE UNDER `e2e/`, so the testMatch guard above is unproven rather than satisfied. Either the helpers moved out of `e2e/`, or the walk pattern `\\.tsx?$` in this file is stale. Re-derive it before trusting this file.'
+    ).toBeGreaterThan(0);
+  });
+
+  it('keeps app coverage a measure of src/ by excluding e2e/**', () => {
+    expect(
+      coverageExcludesE2E(rootTest?.coverage?.exclude),
+      'e2e/** left the app coverage exclude, so the app coverage report is no longer a measure of src/ and the two reports cannot be compared'
+    ).toBe(true);
+  });
+
+  it('runs the Node script tests in the root jsdom project, on the vmThreads pool', () => {
+    expect(
+      poolIsVmThreads(rootTest?.pool),
+      "the root project's pool changed; node:sqlite works under forks and threads too, so agent-board.test.mjs would keep passing and only an unrelated import error would reveal it"
+    ).toBe(true);
+    expect(
+      runsInTheVmPool(import.meta.env.VITEST_VM_POOL),
+      'this very test is not running under the vmThreads pool, so the declared pool and the pool in force have already drifted apart'
+    ).toBe(true);
+  });
+
+  it('collects the Node script tests by neither excluding nor narrowing the root project', () => {
+    // TWO keys decide this, so there are TWO assertions, and the second is the one
+    // that used to be missing. A root `include` whose last segment is
+    // `*.{test,spec}.?(c|m)[jt]s?(x)` under a `src/` prefix, added beside the
+    // existing `exclude`, collects ZERO of the 267 `scripts/*.test.mjs` cases,
+    // leaves every `exclude`-only guard true, and reports green here.
+    //
+    // THE REMAINING ESCAPE IS LOUD, NOT SILENT, and that is the reason no guard
+    // sits above it: an `include` narrow enough to also drop
+    // `src/__tests__/**` un-collects THIS FILE, so the run reports "No test files
+    // found" instead of a red assertion. Accepted deliberately — the config is
+    // broken in a way CI and the developer both see, and no predicate can assert
+    // on a suite that has stopped collecting itself. Do not add a guard for it;
+    // re-derive the `include` instead.
+    expect(
+      scriptTestsAreCollectedByTheRootProject(scriptTestFiles, rootInclude, rootExclude),
+      `a Node script test is no longer collected by the root project, so npm run test silently stops covering it. Not in include: ${scriptTestFiles
+        .filter((file) => !rootInclude.some((pattern) => matchesGlob(pattern, file)))
+        .join(', ')}. Excluded: ${scriptTestFiles
+        .filter((file) => rootExclude.some((pattern) => matchesGlob(pattern, file)))
+        .join(', ')}`
+    ).toBe(true);
+    // The default `include` is the value a project with no explicit `include` runs,
+    // and it is read from `configDefaults` rather than typed out, so a Vitest bump
+    // that changes the default cannot leave this guard matching a stale copy.
+    expect(
+      scriptTestFiles.every((file) => configDefaults.include.some((pattern) => matchesGlob(pattern, file))),
+      'the Vitest default `include` no longer collects a real `scripts/*.test.mjs`, so the fallback above is asserting that the root project collects nothing. Re-derive the default before trusting this file.'
+    ).toBe(true);
+    expect(
+      scriptTestFiles.length,
+      'THIS RUN FOUND NO `*.test.mjs` UNDER `scripts/`, so the assertions above are unproven rather than satisfied. Nothing in the configs is wrong: either the script tests moved out of `scripts/`, or the walk pattern `\\.test\\.mjs$` in this file is stale. Re-derive it before trusting this file.'
+    ).toBeGreaterThan(0);
+  });
+
+  it('fires on every invariant above (scratch values only; the one process-global write is restored with no await between)', () => {
+    // Every argument below is a LITERAL, except `configDefaults` — read, never
+    // restated, so the default cannot drift from the installed Vitest. The real
+    // layout and the real configs are read by the tests above; a negative proven
+    // against them is only as good as the positive next to it, and those
+    // positives belong with the guards they justify, not here.
+    const realShaped = ['e2e/helpers/__tests__/canvas-helpers.unit.test.ts'];
+    const realInclude = ['e2e/**/__tests__/**/*.unit.test.ts'];
+    // The two files the e2e project really collects, one under each directory the
+    // escaping mutation narrows, so the negative below is falsifiable.
+    const realExported = 'e2e/export/__tests__/helpers.unit.test.ts';
+    const realScriptShaped = ['scripts/__tests__/agent-board.test.mjs'];
+    // The one thing in this file that touches process-global state, and the
+    // invariant that makes it safe: Vitest backs `import.meta.env` with
+    // `process.env`, so the write below IS a process-global write, and it is
+    // restored in the `finally` of the same synchronous block. There must be NO
+    // `await` between the write and the restore — an `await` yields to the
+    // microtask queue and to any concurrently running test file, which is the
+    // only way another file could observe `VITEST_VM_POOL === '0'`. Under
+    // `pool: 'vmThreads'` + `isolate: true` each test file has its own global
+    // object, so even a leaked value would not cross a file boundary; the
+    // no-await rule is what keeps two files in the SAME worker safe.
+    const realSpecShaped = ['e2e/helpers/canvas.spec.ts'];
+    const realNonSpecShaped = ['e2e/global-setup.ts', 'e2e/helpers/canvas-helpers.ts'];
+
+    expect(
+      setupFilesAreTheSingleOne(['./src/test/setup.ts', './src/test/second.ts'], undefined),
+      'second setup file'
+    ).toBe(false);
+    expect(
+      setupFilesAreTheSingleOne(['./src/test/setup.ts'], ['./src/test/setup.ts']),
+      'setup file in the e2e project'
+    ).toBe(false);
+    expect(
+      setupFilesAreTheSingleOne('./src/test/setup.ts', undefined),
+      "vitest's bare-string form is still exactly one setup file"
+    ).toBe(true);
+    expect(
+      setupFilesAreTheSingleOne('./src/test/other.ts', undefined),
+      'the bare-string form is content-checked too'
+    ).toBe(false);
+    expect(noGlobalSetup(undefined, undefined), 'a project with no globalSetup is the pinned shape').toBe(true);
+    expect(noGlobalSetup([], undefined), 'an empty array is the same as none').toBe(true);
+    expect(noGlobalSetup(['./src/test/global-setup.ts'], undefined), 'a single globalSetup must be caught').toBe(false);
+    expect(noGlobalSetup('./src/test/global-setup.ts', undefined), "vitest's bare-string form must be caught too").toBe(
+      false
+    );
+    // The e2e half, which is what a single-argument predicate could not see.
+    expect(noGlobalSetup(undefined, ['./e2e/global-setup.ts']), 'a globalSetup on the e2e project must be caught').toBe(
+      false
+    );
+    expect(noGlobalSetup(undefined, './e2e/global-setup.ts'), "and the e2e project's bare-string form too").toBe(false);
+    expect(noGlobalSetup(undefined, []), 'an empty e2e globalSetup array is the same as none').toBe(true);
+    expect(excludeKeepsTheDefaults([...configDefaults.exclude, '**/.kilo/**', 'e2e/**']), 'the real shape').toBe(true);
+    expect(
+      excludeKeepsTheDefaults(['**/.kilo/**', 'e2e/**']),
+      'dropping the `configDefaults` spread yields the same pinned additions, so the spread itself is what is pinned'
+    ).toBe(false);
+    expect(excludeKeepsTheDefaults(undefined), 'no exclude at all is not a spread').toBe(false);
+    expect(
+      rootExcludeAdditions(['**/node_modules/**', '**/.git/**', '**/.kilo/**']),
+      'e2e/** deleted from exclude'
+    ).toEqual(['**/.kilo/**']);
+    expect(
+      rootExcludeAdditions([...configDefaults.exclude, '**/.kilo/**', 'e2e/**', 'scripts/**']),
+      'scripts/** added'
+    ).toEqual(['**/.kilo/**', 'e2e/**', 'scripts/**']);
+    expect(
+      e2eUnitTestsRunInTheNodeProject(realShaped, realInclude, []),
+      'the real-layout positive, so the negatives below are not vacuous'
+    ).toBe(true);
+    expect(
+      e2eUnitTestsRunInTheNodeProject([realShaped[0], realExported], realInclude, ['e2e/export/**']),
+      'the e2e-unit escaping mutation: an exclude that removes ONE helper file while the collection stays non-empty, so `passWithNoTests` never trips'
+    ).toBe(false);
+    expect(
+      e2eUnitTestsRunInTheNodeProject([realShaped[0], realExported], realInclude, configDefaults.exclude),
+      'the defaults must not themselves exclude a real helper test, or the positive above is false for the wrong reason'
+    ).toBe(true);
+    expect(e2eUnitTestsRunInTheNodeProject(realShaped, [], []), 'an emptied include collects none of the files').toBe(
+      false
+    );
+    expect(
+      e2eUnitTestsRunInTheNodeProject(['e2e/helpers/brand-new.test.ts'], realInclude, []),
+      'a new e2e test outside __tests__/ or named *.unit.test.ts is caught here'
+    ).toBe(false);
+    expect(
+      e2eUnitTestsRunInTheNodeProject(['e2e/helpers/__tests__/brand-new.test.ts'], realInclude, []),
+      'a new e2e __tests__ file not named *.unit.test.ts is caught here'
+    ).toBe(false);
+    expect(matchesGlob(realInclude[0], realShaped[0]), 'the matcher accepts the shape the real files have').toBe(true);
+    expect(
+      matchesGlob(realInclude[0], 'e2e/helpers/__tests__/canvas-helpers.test.ts'),
+      'the matcher rejects the same file without the .unit. marker'
+    ).toBe(false);
+    // The three forms `translateSegmentBody` added, each with the positive that
+    // makes the negatives below mean something. These are the shapes the Vitest
+    // DEFAULT `include` is written in, so they are the reason the guard can read
+    // a project that declares no `include` at all.
+    expect(
+      matchesGlob(configDefaults.include[0], realScriptShaped[0]),
+      'the default `include` collects a real scripts test, and the matcher reads it'
+    ).toBe(true);
+    expect(
+      matchesGlob('src/**/*.{test,spec}.?(c|m)[jt]s?(x)', 'src/a.test.ts'),
+      'a brace group and two optional groups'
+    ).toBe(true);
+    expect(
+      matchesGlob('src/**/*.{test,spec}.?(c|m)[jt]s?(x)', 'src/a.ts'),
+      'the same pattern with no .test. marker'
+    ).toBe(false);
+    expect(
+      matchesGlob('src/**/*.{test,spec}.?(c|m)[jt]s?(x)', 'e2e/a.test.ts'),
+      'a path the `src/**` prefix rules out'
+    ).toBe(false);
+    expect(matchesGlob('*.[jt]s', 'a.ts'), 'a character class').toBe(true);
+    expect(matchesGlob('*.[jt]s', 'a.ps'), 'a character class rejects its complement').toBe(false);
+    expect(() => matchSegment('*.!(ts)', 'a.ts'), 'unsupported glob syntax must throw, not match nothing').toThrow();
+    expect(() => matchSegment('a?(b', 'ab'), 'an unterminated extglob must throw').toThrow();
+    expect(() => matchSegment('[!a]', 'a'), 'a negated character class must throw, not match nothing').toThrow();
+    expect(
+      e2eUnitTestsAreInvisibleToPlaywright(realShaped, ['**/*.unit.test.ts']),
+      'the real-shape positive, so the negatives below are not vacuous'
+    ).toBe(true);
+    expect(
+      e2eUnitTestsAreInvisibleToPlaywright(['e2e/helpers/__tests__/helpers.test.ts'], ['**/*.unit.test.ts']),
+      'the __tests__ rule is the only thing hiding a helper test that is not named *.unit.test.ts'
+    ).toBe(false);
+    expect(
+      e2eUnitTestsAreInvisibleToPlaywright(['e2e/helpers/__tests__/helpers.test.ts'], ['**/__tests__/**']),
+      'the __tests__ rule alone does hide it'
+    ).toBe(true);
+    expect(
+      playwrightTestMatchCollectsOnlySpecs(undefined, realSpecShaped, realNonSpecShaped),
+      "an absent testMatch is Playwright's own default and cannot widen anything"
+    ).toBe(true);
+    expect(
+      playwrightTestMatchCollectsOnlySpecs('**/*.spec.ts', realSpecShaped, realNonSpecShaped),
+      'a spec-only glob is a legal narrowing and must pass'
+    ).toBe(true);
+    expect(
+      playwrightTestMatchCollectsOnlySpecs(/.*\.(ts|tsx)$/, realSpecShaped, realNonSpecShaped),
+      'the escaping mutation: a regexp that collects every .ts file in e2e/'
+    ).toBe(false);
+    expect(
+      playwrightTestMatchCollectsOnlySpecs('**/*.unit.test.ts', realSpecShaped, realNonSpecShaped),
+      'a testMatch that collects no spec at all must be caught'
+    ).toBe(false);
+    expect(() => matchesPlaywrightPattern(/a/g, 'a'), 'a stateful regexp must throw rather than alternate').toThrow();
+    expect(
+      scriptTestsAreCollectedByTheRootProject(realScriptShaped, configDefaults.include, []),
+      'the real-shape positive, so the negatives below are not vacuous'
+    ).toBe(true);
+    expect(
+      scriptTestsAreCollectedByTheRootProject(realScriptShaped, configDefaults.include, ['scripts/**']),
+      'a scripts/** exclusion must stop the root project from collecting them'
+    ).toBe(false);
+    expect(
+      scriptTestsAreCollectedByTheRootProject(realScriptShaped, ['src/**/*.{test,spec}.?(c|m)[jt]s?(x)'], []),
+      'the root-include escaping mutation: an include narrowed to src/** collects zero scripts tests'
+    ).toBe(false);
+    expect(coverageExcludesE2E(['src/**/__tests__/**']), 'e2e/** dropped from coverage.exclude').toBe(false);
+    // The root config-name pattern, including the `vitest.workspace.*` form the
+    // narrower `/^vitest.*\.config\./` left invisible with the suite green.
+    for (const name of VITEST_CONFIG_FILES) {
+      expect(VITEST_CONFIG_FILE_NAME.test(name), `${name} must match the pattern the beforeAll filters with`).toBe(
+        true
+      );
+    }
+    expect(VITEST_CONFIG_FILE_NAME.test('vitest.extra.config.mts'), 'a third vitest config is caught').toBe(true);
+    expect(
+      VITEST_CONFIG_FILE_NAME.test('vitest.workspace.ts'),
+      'and a workspace file, though vitest 5 ignores it'
+    ).toBe(true);
+    expect(VITEST_CONFIG_FILE_NAME.test('vite.config.ts'), 'vite is not vitest').toBe(false);
+    expect(VITEST_CONFIG_FILE_NAME.test('src/vitest.config.ts'), 'the filter reads the root listing only').toBe(false);
+    expect(poolIsVmThreads('forks'), 'a pool change must be caught').toBe(false);
+    expect(runsInTheVmPool('0'), 'a non-vm pool must be caught even when the config still claims vmThreads').toBe(
+      false
+    );
+
+    const liveFlag = import.meta.env.VITEST_VM_POOL;
+    try {
+      import.meta.env.VITEST_VM_POOL = '0';
+      expect(runsInTheVmPool(import.meta.env.VITEST_VM_POOL), 'the live pool flag must be read, not assumed').toBe(
+        false
+      );
+    } finally {
+      import.meta.env.VITEST_VM_POOL = liveFlag;
+    }
   });
 });
 
