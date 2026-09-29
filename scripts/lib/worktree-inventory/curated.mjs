@@ -815,29 +815,14 @@ export const CURATED = {
       'A dev-server warm-up in global setup, with the blockers and the honesty fixes a review raised and the failure modes written down.',
     landed: true,
   },
-  'fix-harness-guard-holes': {
+  'cleanup-stale-curated': {
     summary:
-      'Closes the holes in the test-harness guard: the AGENTS.md test traps that the first version did not enforce, including the two collection keys that each independently decide what a project runs.',
-    note: 'This entry describes a fix branch, and that branch goes when the change lands — at which point this entry should be deleted with it. It carried a `mustNotPrune` on the claim that its work was uncommitted on a branch tip that was a main commit; its work is committed, the tree is clean, and the branch is ahead of main, so the inventory already refuses to prune it and the flag was retracted with the claim.',
-  },
-  'fix-lying-pins': {
-    summary:
-      'Repairs pins that could not fail: test titles and assertions whose bodies did the opposite of what they claimed.',
-    note: 'This entry describes a fix branch, and that branch goes when the change lands — at which point this entry should be deleted with it. It carried a `mustNotPrune` claiming the repaired pins were uncommitted on a main commit; they are committed, the tree is clean, and the branch is ahead of main.',
-  },
-  'fix-parser-truth': {
-    summary:
-      'The handoff importer’s dead-heading handling, made true against the tree: the end-anchored separator forms and the prose-substring direction, with the regression tests.',
-    note: 'This entry describes a fix branch, and that branch goes when the change lands — at which point this entry should be deleted with it. It carried a `mustNotPrune` claiming the importer change and its tests were uncommitted on a main commit; both are committed, the tree is clean, and the branch is ahead of main.',
+      'Deletes the curated entries for four fix worktrees that have landed and been removed, and regenerates the inventory without them. Each of the four said in its own note that it should be deleted with the worktree it described; the worktrees are gone, so the entries were prose about branches that no longer exist.',
+    note: 'This entry describes the worktree that wrote it, and that worktree goes when this change lands — at which point this entry should be deleted with it, the same rule the four entries it replaced carried.',
   },
   'tools-too-hard': {
     summary:
       'The TOO HARD register: each Photoshop capability too hard for this architecture recorded with what Adobe does, what the app does, why the gap is out of reach here, and what it offers instead — plus the gaps that are the operator’s call rather than an engineering one.',
-  },
-  'fix-curated-table': {
-    summary:
-      'The curated table’s own duplicate-key defect: five keys were declared twice, so the detailed entries were unreachable dead code and a committed curation change was a no-op. Removes the terse declarations, makes the duplicate-key check fail closed rather than reading the file with a regex that four declaration shapes slip past, and re-derives every entry’s prose against git instead of against a stale reading.',
-    note: 'This entry describes the worktree that wrote it, and that worktree goes when the change lands — at which point this entry should be deleted with it, not left behind as prose about a branch that is gone.',
   },
 
   /* ---------------- worktrees that really do hold work git cannot see ----- */
