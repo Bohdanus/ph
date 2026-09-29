@@ -28,23 +28,25 @@ this pass, the source wins, and the two places it loses are recorded at the end.
   away.
 - **No selection tool reads a combination-mode modifier, and most read no modifier at all.**
   A grep for `shiftKey|altKey|metaKey|ctrlKey` across `src/components/Main/*.tsx` returns
-  production hits in `EllipticalSelectionToolArea`, `FeatherMagneticLassoToolArea` and
-  `ShapeToolArea` only. Of the seven tools here, that leaves exactly two whose
-  `modifiers[]` rows describe anything real: the elliptical marquee (Shift → circle, Alt →
-  from centre, `EllipticalSelectionToolArea.tsx:172`-`:173`) and the magnetic lasso's one
-  `Alt` read (`FeatherMagneticLassoToolArea.tsx:449`, the freehand segment). The freehand
-  lasso, polygonal lasso, Magic Wand and Quick Selection read no modifier key whatsoever, so
-  every combination-mode row on those four — and the Quick Selection's two `Alt` rows — is a
-  Photoshop binding with no implementation. The `options[]` rows already said `missing`; the
-  `modifiers[]` rows did not say anything, which read as implemented. They are kept, because
-  the file describes Photoshop, and each absence is now stated in `appNotes` with the file
-  that proves it.
+  production hits in `CloneStampToolArea`, `EllipticalSelectionToolArea`,
+  `FeatherMagneticLassoToolArea`, `ShapeToolArea` and `TextToolArea` only — five files, none of
+  them a selection tool but the two marquee-family ones. Of the seven tools here, that leaves
+  exactly two whose `modifiers[]` rows describe anything real: the elliptical marquee (Shift →
+  circle, Alt → from centre, `EllipticalSelectionToolArea.tsx:172`-`:173`) and the magnetic
+  lasso's one `Alt` read (`FeatherMagneticLassoToolArea.tsx:449`, the freehand segment). The
+  freehand lasso, polygonal lasso, Magic Wand and Quick Selection read no modifier key
+  whatsoever, so every combination-mode row on those four — and the Quick Selection's two
+  modifier rows — is a Photoshop binding with no implementation. The `options[]` rows already
+  said `missing`; the `modifiers[]` rows did not say anything, which read as implemented. They
+  are kept, because the file describes Photoshop, and each absence is now stated in `appNotes`
+  with the file that proves it.
 - **The keyboard.** `src/components/Common/AppKeyboardShortcuts.tsx` is the app's complete
   global table. It binds `Z`/`Y` (undo, redo), `Cmd/Ctrl+C` (copy the selection), `Cmd/Ctrl+V`
   (paste), `Cmd/Ctrl+J` (layer via copy), and the tool letters `V` (reposition), `I`
-  (eyedropper), `B`, `U`, `T`, `L`, `W`, `G`, `O`, `P` — each of the last eight with a
-  `Shift+<letter>` twin that cycles its flyout — plus the single-tool tiles `E` (eraser) and
-  `S` (clone stamp) and `C` (crop). It binds no `[`, `]`, `,`, `.`, `Caps Lock`, or `Return`.
+  (eyedropper), `J`, `C`, `B`, `U`, `T`, `L`, `W`, `G`, `O`, `M`, `P` — of which `B`, `U`, `L`,
+  `W`, `G`, `O`, `M` and `P` each have a `Shift+<letter>` twin that cycles its flyout, and the
+  rest are singletons — plus the single-tool tiles `E` (eraser) and `S` (clone stamp). It binds
+  no `[`, `]`, `,`, `.`, `Caps Lock`, or `Return`.
   The two click-built lassos register four keys of their own on
   their own gesture — `Escape`, `Enter`, `Backspace`, `Delete`
   (`PolygonClickToolArea.tsx:914`-`:950`, `FeatherMagneticLassoToolArea.tsx:534`-`:570`) — and
@@ -55,18 +57,21 @@ this pass, the source wins, and the two places it loses are recorded at the end.
 - **The app has no `Select` menu.** There is no `Select All`, `Deselect`, `Inverse`,
   `Color Range`, `Modify > Feather/Expand/Contract/Border/Smooth`, `Grow`, `Similar`,
   `Refine Edge`, `Select and Mask` or `Transform Selection` anywhere in the application. The
-  only deselect is the `Clear` button the elliptical, freehand, magnetic, wand and quick-selection
-  bars render, bound to `clearSelections`. This removes Photoshop's two most important
-  follow-ups for the wand and the quick selection outright.
+  only deselect is the `Clear` button the rectangular, elliptical, freehand, magnetic, wand and
+  quick-selection bars render, bound to `clearSelections`. This removes Photoshop's two most
+  important follow-ups for the wand and the quick selection outright.
 - **`Select and Mask` is on every bar, not just the wand's.** Adobe's 2022 Select-and-Mask tutorial
   puts it this way: "Open the Select and Mask workspace by choosing Select > Select and Mask, or
   by clicking Select and Mask in the Options bar **for any of the selection tools**." Two
   **current desktop pages** also name it on their own tools' bars — the Quick Selection's ("Select
   Select and Mask to refine the selection further") and the Magic Wand's ("Select Select and Mask to
-  further refine or preview the selection as a mask"), both 2025-11-04. It is
+  further refine or preview the selection as a mask"), both 2025-11-04 — and a third, Adobe's own
+  feather-edges product page, reaches it from the Quick Selection ("Mask it: Choose Select and Mask
+  from the options bar"), with a fourth naming it on a lasso bar
+  (`helpx.adobe.com/ph_fil/photoshop/how-to/retouch-remove-background.html`). It is
   therefore recorded as a `missing` control on all seven tools rather than on the one whose own
-  page happens to name it. The seven-tool generalization still rests on the 2022 sentence; see the
-  Quick Selection section. The workspace it opens is documented by Adobe
+  page happens to name it. The seven-tool generalization therefore no longer rests on the 2022
+  sentence alone; see the Quick Selection section. The workspace it opens is documented by Adobe
   (`refine-your-selection-and-mask.html`, last updated February 2026) as carrying a Refine Edge
   Brush for soft edges, a plain Brush for manual work, View Modes of `On Black`, `On White`,
   `Black and White`, `On Layers` and `Show Edge`, and an `Output To` menu that can produce a
@@ -76,11 +81,11 @@ this pass, the source wins, and the two places it loses are recorded at the end.
   `create` commit, so there is no model in which a second selection can be unioned, subtracted
   from or intersected with the first. Every combination mode in this family is therefore
   `missing` for a structural reason, not an oversight in one bar.
-- **The selection is a single point path.** `Selection` in `src/contexts/general-types.ts:17`
-  carries a `points` polyline and no mask, and `SelectionSourceTool` has no
-  `elliptical-selection` or `quick-selection` member. The elliptical marquee and the quick
-  selection both commit under a borrowed `'magic-wand'` identifier so that their outlines carry
-  neither draggable anchors nor an anchor hit-test.
+- **The selection is a single point path.** `Selection` in `src/contexts/general-types.ts:61`
+  carries a `points` polyline and no mask, and `SelectionSourceTool` at `:17` in the same file
+  has no `elliptical-selection` or `quick-selection` member. The elliptical marquee and the
+  quick selection both commit under a borrowed `'magic-wand'` identifier so that their outlines
+  carry neither draggable anchors nor an anchor hit-test.
 
 ## Rectangular Marquee Tool — `rectangular-selection`
 
@@ -147,11 +152,44 @@ anti-aliasing on or off for the Elliptical Marquee tool." Modifiers: `Shift` for
 | Width and Height                              | decimal pair (ratio) / whole pixels (size) / units | `partial`  | `EllipticalSelection.tsx:130` |
 | Select and Mask                               | on every selection tool's bar                      | `missing`  | —                             |
 
-**App fidelity: partial** — the only tool in the family with any Photoshop control on its bar,
-and the geometry is right. The two `partial` verdicts are both about the _shape of the fields_:
+**App fidelity: `implemented`** — and this is the one verdict in the family that moved this pass,
+so the reasoning is recorded here. The tool is the only one in the family with any Photoshop
+control on its bar, and the geometry is right. `types.ts:86`-`:91` draws the line: `implemented` is
+"the tool's primary gesture behaves as Photoshop's, and nothing the app renders contradicts
+Photoshop", with gaps "recorded per control as `missing`; a missing control is a capability the
+app lacks, not a divergence"; `partial` is "not the same something: a wrong default, a wrong
+algorithm, a control welded to one of its states, a gesture that does something else. **Narrowness
+is not partiality; getting it wrong is.**" Every behaviour Photoshop defines is implemented —
+Shift → `constrainToCircle`, Alt → `fromCentre`, `fixed-size` ignoring the drag with the press
+point supplying only the centre, the same `resolveEllipseRect` the bar and the tool area share —
+and the one divergence is the **shape of the field**. So the side of the line this file takes is:
+a narrower field is a capability the app lacks, scored per control, and the tool verdict stays
+`implemented`.
+
+That is not a reading of the verdict as convenient. Two things were checked against the alternative
+and held: the committed outline is a sagitta-bounded polygon rather than a true ellipse, which is
+"a wrong algorithm" in the letter of the comment but is a quarter-pixel bound imposed by a data
+model that holds a point path and cannot hold a curve — the same class of bound as the polygonal
+lasso, which _is_ Photoshop's tool; and the ellipse commits under a borrowed `'magic-wand'`
+identifier, which is a data-model consequence with no user-visible effect on what the tool selects.
+If a reviewer disagrees, the flip is one line: `implementation: 'partial'` plus the two `partial`
+control verdicts, and the `appNotes` sentence that names the verdict.
+
+**The two `partial` verdicts are both about the _shape of the fields_**:
 Fixed Ratio is a single `Ratio` number (floor `0.05`, ceiling `20`) where Photoshop's is a pair
 of decimals, and Fixed Size is a plain pixel `input[type=number]` where Photoshop's accepts
-`in` and `cm`. `resolveEllipseRect` does implement `fixed-size` the way Photoshop does —
+`in` and `cm`. **The ratio itself is not a divergence, and an earlier version of this file said it
+was.** It used to claim the app "cannot express a ratio the way Photoshop states one", which is
+wrong on Adobe's own wording: Fixed Ratio "Sets a height-to-width ratio. Enter values (decimal
+values are valid) for the aspect ratio. For example, to draw a marquee twice as wide as it is
+high, enter **2 for the width and 1 for the height**"
+(`https://helpx.adobe.com/photoshop/using/selecting-marquee-tools.html`) — which is a
+width-to-height ratio, which is exactly what `applyRatio` computes
+(`src/tools/ellipticalSelection.ts:121`-`:131`) and exactly what the bar's hint tells the user,
+`Drag at ${args.fixedRatio}:1` (`EllipticalSelection.tsx:88`). What the app loses is expressiveness
+in the field, not fidelity in the geometry: the ratio must be entered as one number with a floor of
+0.05, where a Width/Height pair can take any two decimals. `resolveEllipseRect` does implement
+`fixed-size` the way Photoshop does —
 ignoring the drag, with the press point only supplying the center, so a click is a complete
 gesture — and `EllipticalSelectionToolArea` passes `event.shiftKey` as `constrainToCircle` and
 `event.altKey` as `fromCentre`, which are exactly Photoshop's two modifiers.
@@ -190,7 +228,7 @@ field, so a feather can be typed before the next trace. Nothing in the app binds
 **Modifier gap.** None of this tool's Photoshop modifiers is implemented, and neither is the
 `Space`-to-Hand mid-trace binding. The freehand lasso is drawn by `PolygonClickToolArea` — the
 same component as the polygonal lasso, reached through the shared `interactionMode === 'lasso'`
-branch at `src/components/Main/Main.tsx:78`/`:202` — and that file reads no modifier key at all.
+branch at `src/components/Main/Main.tsx:85`/`:210` — and that file reads no modifier key at all.
 The `modifiers[]` rows are kept because the file describes Photoshop; the absence is stated in
 `appNotes` rather than by deleting the rows.
 
@@ -277,7 +315,7 @@ option. The tool is "not available for 32-bits-per-channel images".
 | --------------------------------------------- | ------------------------------------------------------------------------ | ---------- | ------------------------------ |
 | New / Add To / Subtract From / Intersect With | four modes                                                               | `missing`  | —                              |
 | Feather                                       | pixel radius, default 0                                                  | `partial`  | `FeatherMagneticLasso.tsx:252` |
-| Anti-alias                                    | on by default                                                            | `present`  | `FeatherMagneticLasso.tsx:331` |
+| Anti-alias                                    | on by default                                                            | `partial`  | `FeatherMagneticLasso.tsx:331` |
 | Width                                         | pixel detection radius; `[`/`]` adjust; `Caps Lock` shows it as a circle | `present`  | `FeatherMagneticLasso.tsx:265` |
 | Contrast                                      | 1%–100%                                                                  | `partial`  | `FeatherMagneticLasso.tsx:278` |
 | Frequency                                     | 0–100 rate; **higher anchors the border sooner**                         | `partial`  | `FeatherMagneticLasso.tsx:291` |
@@ -304,12 +342,27 @@ control, and a user who transfers a muscle memory from one slider to the other g
 result. This is marked `partial` rather than `missing` because the control is rendered and
 genuinely wired — it just means something else.
 
-**The other two `partial` verdicts.** `Contrast` allows 0% where Adobe's documented range
-starts at 1%. `Feather` is the same _meaning_ as the marquee Feather but is capped at 100
-pixels, is applied to the copied alpha mask rather than to the selection, and has no
-`Select > Modify > Feather` behind it — and because `copySelectionToCanvas` routes only this
-tool through the feathered path, it is the only tool in the family where a feather control does
-anything at all.
+**The other three `partial` verdicts, and the two that are the same defect.** `Contrast` allows 0%
+where Adobe's documented range starts at 1%. `Feather` and `Anti-alias` are the same divergence in
+the same function of the same file, and until this pass the file contradicted itself by scoring them
+differently: `Anti-alias` was `present` beside a `partial` `Feather`, and the two are wired
+identically. `args.featherRadius` and `args.antiAlias` are both written into the selection's
+metadata at commit
+(`src/components/Main/FeatherMagneticLassoToolArea.tsx:385`-`:387`) and both are read back in
+exactly **one** place, `copySelectionToCanvas` → `copyFeatheredPolygonSelectionToCanvas`
+(`src/util/selection.ts:729`-`:730`). So both reach the **copied alpha mask** and nothing else:
+un-ticking Anti-alias changes the copy and leaves the selection the marching ants are drawn from
+untouched, which is exactly what `Feather` already said. Both are now `partial`.
+
+**The 100-pixel cap was never a divergence.** It was carried as one because the app's slider stops
+at 100 (`FeatherMagneticLasso.tsx:256`) and because "Adobe never states the field's bound" was
+recorded in `## Unverified`. Adobe does state it, and states the same number: "In the text box,
+enter a value of between 0 and 100 pixels" (`https://www.adobe.com/products/photoshop/feather-edges.html`).
+The `0.1–1000` figure that made the two look different is the UXP range for the
+`Select > Modify > Feather` **command**, a different control applied to an existing selection. What
+is genuinely missing behind both sliders is that command, and both sliders' real divergence is the
+scope — copied mask, not selection. Because `copySelectionToCanvas` routes only this tool through
+the feathered path, it is the only tool in the family where a feather control does anything at all.
 
 **Three app-only controls.** `Snap` (0–1, described by the bar's own help text as "how
 strongly the cursor is pulled toward detected edges"), `Smooth` (0–10 px path simplification),
@@ -445,18 +498,40 @@ attributed to this tool on that page.
 
 ### `W`, and the `Shift+L` badge
 
+**The bare letter re-selects; `Shift+letter` is the cycling key.** Every one of the three groups
+in this family shares its letter, and an earlier version of the data file said the opposite —
+that "repeated presses cycle between" the group's tools. Adobe's own keyboard-shortcut table
+carries the cycling as a separate row, and the bare letter as the select:
+
+> Lasso tool | L | L … Quick selection tool | W | W … Rectangular marquee tool | M | M …
+> Elliptical marquee tool | M | M … **Switch between marquee tools | SHIFT+M | SHIFT+M**
+
+(`helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html`, Adobe).
+The general rule is stated in words by an Adobe presenter: "Photoshop assigns the same shortcut
+to multiple, similar, tools. For example, all three Lasso tools have the shortcut 'L' assigned to
+them. To cycle through tools that use the same keyboard shortcut, add the Shift key (for example
+Shift + L will cycle through the Lasso, Polygonal, and Magnetic Lasso Tools)"
+(`jkost.com/blog/2023/01/10-little-known-tips-for-working-with-tools-in-photoshop.html`). All
+seven `shortcuts[]` arrays are rewritten on that basis, each keeping its bare letter and gaining
+the `Shift+<letter>` row for its group.
+
+The app happens to agree with the corrected reading rather than the old one: `M`, `L` and `W` are
+each bound twice in `AppKeyboardShortcuts.tsx`, once plain and once shifted, and the shifted
+handler is the one that calls `cycleToolGroup`. So the `appNotes` sentences about cycling are
+unchanged and the bare-letter rows are the ones that were wrong.
+
 `W` is correct for the Quick Selection — Adobe's own how-to page opens with "Select the Quick
 Selection tool (W)" — and it is the same key as the Magic Wand because the two share one Tools-panel
-flyout and are cycled by repeated presses; Adobe's wand page likewise opens "Select the Magic Wand
+flyout; Adobe's wand page likewise opens "Select the Magic Wand
 tool (W)". The app binds `W` to the Magic Wand tile (`toolbar-mapping.ts:52`) and gives the Quick
 Selection tile no badge of its own (`:53`), which puts the badge on the flyout's primary rather
 than on the second item. That is a presentation difference, not a wrong key.
 
 The app's `Shift+L` badge on the Magnetic Lasso is a different matter and is **not** carried over
-as a Photoshop fact anywhere in the data file. In Photoshop all three lasso tools share `L`, and
-repeated presses cycle between them. `Shift+L` is the app's own binding for one item in its
-flyout; the data file's `shortcuts` field records app bindings, and the magnetic lasso's
-`appNotes` now says explicitly that this is the app's binding and not Photoshop's.
+as a Photoshop fact. `Shift+L` now appears in the data file as the **Photoshop** lasso cycling key,
+which is where it belongs, and the magnetic lasso's `appNotes` says explicitly that the app's badge
+is its own binding for one item in a flyout and coincidentally reads the same as Photoshop's
+cycling shortcut. In Photoshop all three lasso tools share `L`; `Shift+L` cycles them.
 
 ### Edge detection, and why a small brush
 
@@ -549,14 +624,14 @@ evidence it does not start enabled. The default state itself is in `## Unverifie
 
 ### `Select and Mask` and `Mask`
 
-**`Select and Mask`** is sourced by Adobe three times and is on every selection tool's bar, so it is
+**`Select and Mask`** is sourced by Adobe six times and is on every selection tool's bar, so it is
 recorded on all seven:
 
 - "Open the Select and Mask workspace by choosing Select > Select and Mask, or by clicking
   Select and Mask in the Options bar **for any of the selection tools**." — Adobe, 2022-12-28. This
-  is the sentence that generalises it to all seven, and it is the weakest of the three because it is
-  a **2022 `ph_fil` tutorial**: a beginner how-to, not a current desktop reference page, and on a
-  different locale line from the 2025 documentation this entry otherwise rests on.
+  is the sentence that generalises it to all seven, and it remains the weakest of the six because
+  it is a **2022 `ph_fil` tutorial**: a beginner how-to, not a current desktop reference page, and
+  on a different locale line from the 2025 documentation this entry otherwise rests on.
 - "In the options bar, click Select and Mask to open the Select and Mask workspace." — Adobe
   Learn, _Make selections_.
 - **Current desktop pages, which is what this claim should have leaned on.** The Quick Selection
@@ -564,10 +639,26 @@ recorded on all seven:
   (`paint-a-selection-with-quick-selection-tool.html`, 2025-11-04), and the Magic Wand page ends
   "Select **Select and Mask** to further refine or preview the selection as a mask"
   (`select-areas-by-color-with-the-magic-wand-tool.html`, 2025-11-04). Both tools' own current
-  desktop pages therefore name the control on their own bars, and both quotes are now in the data
-  file's two `Select and Mask` rows. Neither page says "for any of the selection tools", so the
-  seven-tool generalization still rests on the 2022 sentence; what changed is that the two tools
-  whose rows a reader is most likely to check no longer rest on it.
+  desktop pages therefore name the control on their own bars, and both quotes are in the data
+  file's two `Select and Mask` rows.
+- **Two more, neither of which is this tool's own page, which is what makes them worth having.**
+  Adobe's feather-edges product page numbers three ways to feather a selection, and the second is
+  "Mask it: Choose **Select and Mask** from the options bar" — the control, on the options bar,
+  reached from the Quick Selection
+  (`https://www.adobe.com/products/photoshop/feather-edges.html`). And the `ph_fil` background
+  removal how-to names it on a **lasso** bar
+  (`https://helpx.adobe.com/ph_fil/photoshop/how-to/retouch-remove-background.html`), which is the
+  group the 2022 sentence was actually doing the work for. Neither page says "for any of the
+  selection tools", so the seven-tool generalization still rests on the 2022 sentence; what changed
+  is that it is no longer the only thing carrying it, and that the two tools whose rows a reader is
+  most likely to check do not rest on it at all.
+
+**And the eight controls are now named identically in all seven rows.** Five of the seven copies
+listed only "Radius, Smooth, Contrast, Shift Edge and Decontaminate Colors", omitting `Smart
+Radius` and `Feather`, while the Quick Selection's copy beside them listed all eight. That is a
+file that described the same panel two ways, and it is resolved: every row now carries the same
+sentence, and the two tools whose own pages quote the control keep that quote as a trailing
+clause.
 
 The workspace it opens is the refinement surface the quick selection feeds: "Use the Quick
 Selection tool to select automatically based on similar tones and image edges. Use the **Refine
@@ -664,14 +755,26 @@ Alt-drag size gesture and the live size/opacity readout are not bound. The commi
 traced contour, so a grown region containing an enclosed hole is refused outright rather than
 committed, and a `Selection` cannot express the hole.
 
-**Both `Alt` rows are unannotated false claims about the app.** `QuickSelectionToolArea` reads no
+**Both modifier rows are unannotated false claims about the app.** `QuickSelectionToolArea` reads no
 modifier key either, so neither the `Alt`-subtracts-for-the-stroke row nor the
-`Alt`-drag-changes-the-brush-size row has an implementation. Both were carried as if they did.
+`Ctrl+Alt`-drag-changes-the-brush-size row has an implementation. Both were carried as if they did.
 The rows are kept as Photoshop descriptions and the absence is now in `appNotes`.
 
+**The second row was also a false claim about Photoshop, and is now corrected in the data file.** It
+read "the same gesture Photoshop binds on every brush tool" for a plain `Alt`-drag. Adobe's own
+brush-shortcut post gives the real bindings: "On Mac: **Control + Option** –drag left/right in order
+to decrease/increase brush size and up/down to decrease/increase brush hardness" and "On Windows:
+**Control + Alt + Right click** -drag left/right to decrease/increase brush size and up/down
+decrease/increase brush hardness"
+(`jkost.com/blog/2017/05/brushes-and-painting-tool-shortcuts-in-photoshop-cc.html`). Plain
+`Alt`-drag is not bound to brush size on either platform, so the row's `keys` is now `Ctrl+Alt` and
+its `action` states the macOS and Windows forms and says the plain-`Alt` gesture is not bound. The
+`[`/`]` rows on the same tool are Photoshop's and are unaffected.
+
 **The bar promises a gesture it does not honour.** The quick-selection bar's own hint text reads
-"Shift and Alt drag on the canvas" (`src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:99`,
-and the same sentence on the Subtract branch at `:100`) while the tool area consults neither key.
+"Shift and Alt drag on the canvas" on the Subtract branch
+(`src/components/ToolbarsRight/QuickSelection/QuickSelection.tsx:99`) and the same sentence on the
+default branch (`:100`), while the tool area consults neither key.
 That is an on-screen promise to the user, not a documentation gap, and it is recorded in
 `appNotes` as one. It is the sharpest instance of the defect this pass is about, because it is
 the only false claim in the family a user reads without opening anything.
@@ -691,22 +794,45 @@ the only false claim in the family a user reads without opening anything.
 - `https://asktimgrey.com/2021/04/07/controlling-the-quick-selection-tool` — third party: no `Tolerance` on this tool
 - `https://www.photoshopessentials.com/basics/selections/quick-selection-tool` — third party: three mode icons, `W`, smaller cursor accuracy, `Auto-Enhance` cost, the Wand/brush distinction
 - `https://cod.pressbooks.pub/photoshopmastery1250/chapter/selections` — third-party textbook: what `Enhance Edge` does; the general four-mode diagram that is _not_ this tool's
+- `https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/brushes-presets/create-brush-set-painting-options.html` (2025-10-27) — **desktop** page: "Select your preferred settings under Brush Tip Shape to adjust size, angle, roundness, and spacing", which is what closed the `Spacing`/`Angle`/`Roundness` gap
+- `https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/create-tool-preset.html` (2026-02-23) — the `Tool Presets` picker: "You can also select the Tool Presets dropdown menu next to the tool at the upper-left of the Options bar", which is what closed the `Tool presets` row's sourcing
+- `https://www.adobe.com/products/photoshop/feather-edges.html` — the options-bar `Feather` box's stated 0–100 range, and a second desktop source for `Select and Mask` on a bar
+- `https://jkost.com/blog/2017/05/brushes-and-painting-tool-shortcuts-in-photoshop-cc.html` — Adobe presenter: the real brush-size bindings, `Control+Option`-drag (Mac) and `Control+Alt` right-click-drag (Windows)
+- `https://helpx.adobe.com/photoshop/web/get-set-up/preferences-and-settings/keyboard-shortcuts.html` (Adobe) — the shortcut table: bare letter selects, `Shift+<letter>` cycles
+- `https://jkost.com/blog/2023/01/10-little-known-tips-for-working-with-tools-in-photoshop.html` — Adobe presenter: the cycling rule in words, naming `Shift+L` across the three lasso tools
 
 ## Unverified
 
 Claims this pass could not establish from a source that was actually opened. Each is either
 absent from the data file or hedged inside it, and each names the URL that came closest.
 
-1. **The maximum value of the marquee tools' options-bar `Feather` field.** Adobe documents the
-   control and its effect but never states the field's bound. The UXP API takes
-   `feather` as a decimal on 0–1000 for `selectRectangle` / `selectEllipse` / `selectPolygon`,
-   and `Select > Modify > Feather` is documented at 0.1–1000 in the same reference — but a
-   scripting argument's range is not the same claim as a UI field's range, and the widely
-   repeated "0–250" figure appears only in Adobe's **Elements** documentation, which is a
-   different product. Closest:
-   `https://developer.adobe.com/photoshop/uxp/2022/ps_reference/classes/selection/` and
-   `https://helpx.adobe.com/uk/photoshop-elements/mac-app-store/smoothing-selection-edges-anti-aliasing1.html`.
-   The data file therefore states the default and the API range and no UI maximum.
+**Three of these are closed.** Items 1, 8 and 11 were re-derived against sources that this pass
+opened and are kept in place rather than deleted, each marked `RESOLVED` or `CLOSED` and carrying
+the source that closed it — an audit trail is the point of this file, and an entry that silently
+vanishes cannot be distinguished from one that was never wrong. Every one of their sources was also
+folded into the relevant tool's `## Sources` in the data file. The numbering is left **gapped and
+unrenumbered** because items 7 and 10 are referenced by number from elsewhere in this file and
+from the data file's `appNotes`; a gap is cheaper than a broken cross-reference.
+
+1. **RESOLVED — the options-bar `Feather` field's maximum is 0–100 pixels, and the two figures that
+   made this look open are two different controls.** Adobe states it directly: "From the settings
+   bar at the top of the window, select **Feather**… In the text box, enter a value of **between 0
+   and 100 pixels** to determine how heavily the Feather effect will be applied to the selected
+   area" (`https://www.adobe.com/products/photoshop/feather-edges.html`). That is the **options-bar
+   box**, the same one the magnetic lasso renders, and 0–100 is the same ceiling the app's slider
+   uses (`FeatherMagneticLasso.tsx:256`) — so the cap was never a divergence and the
+   `feather-magnetic-lasso` `appNotes` no longer claims it is. The `0.1–1000` figure in the UXP
+   reference belongs to `Select > Modify > Feather`, which is a **separate command applied to an
+   existing selection** with a `Feather Radius` argument, not a field on any tool's bar; the
+   desktop feathered-edges page documents the two as distinct paths ("Define a feathered edge for
+   a selection tool" → "Enter a value in the Feather box in the Options bar", versus "Define a
+   feathered edge for an existing selection" → "Go to Select > Modify > Feather"), at
+   `https://helpx.adobe.com/photoshop/desktop/make-selections/refine-modify-selections/define-feathered-edges.html`.
+   The UXP `feather` argument on `selectRectangle` / `selectEllipse` / `selectPolygon` is a third
+   thing again — a scripting argument, not a UI field — and is still described as a range rather
+   than a UI maximum in the marquee `Feather` rows. What is left open is narrower and is recorded
+   where it belongs: the app has no `Select > Modify > Feather` at all, and its magnetic-lasso
+   feather reaches only the copied mask.
 
 2. **The Magnetic Lasso's two-slider `Smoothing` group (`Feather` + `Width` smoothers).** The
    brief asked for this specifically. No current Adobe page documents it: the 2023-12 and
@@ -766,14 +892,17 @@ absent from the data file or hedged inside it, and each names the URL that came 
    withdrawn. Closest: `https://helpx.adobe.com/ph_fil/photoshop/how-to/use-quick-selection-tool.html`
    and `https://www.photoshopessentials.com/basics/selections/quick-selection-tool`.
 
-8. **Quick Selection brush `Size` / `Hardness` and the `Spacing` / `Angle` / `Roundness` flyout
-   in _desktop_ Photoshop.** The page that enumerates `Spacing`, `Angle` and `Roundness` is
-   Adobe's **Photoshop on the web** page, not the desktop one
-   (`https://helpx.adobe.com/photoshop/web/edit-images/make-selections/automate-selections-with-quick-selection-tool.html`).
-   Adobe Learn's desktop tutorial does say to "adjust the size and hardness of the Quick
-   Selection tool in the options bar", which is why `Size` is scored `partial` rather than
-   `missing`, but the hardness control itself is not documented in a desktop page this pass
-   opened.
+8. **CLOSED — Quick Selection brush `Size` / `Hardness` and the `Spacing` / `Angle` / `Roundness`
+   flyout are no longer web-only.** This item previously read that the page enumerating
+   `Spacing`, `Angle` and `Roundness` is Adobe's **Photoshop on the web** page and that no desktop
+   page documents the hardness control. That is no longer true, and the source is already in this
+   tool's `## Sources`: Adobe's desktop brush page instructs the reader to "Select your preferred
+   settings under **Brush Tip Shape** to adjust size, angle, roundness, and spacing"
+   (`https://helpx.adobe.com/photoshop/desktop/apply-painting-techniques/brushes-presets/create-brush-set-painting-options.html`,
+   2025-10-27), which documents all four on desktop Photoshop as brush-tip-shape settings, and
+   Adobe Learn's desktop tutorial says to "adjust the size and hardness of the Quick Selection
+   tool in the options bar". `Size` was already scored `partial` and stays there: the app renders a
+   flat size slider with no hardness, and the `Tool presets` row beside it is `missing` outright.
 
 9. **Photoshop's default `Frequency` semantics of the _magnetic_ lasso versus its `Feather`
    being a _smoother_ rather than a selection feather.** Adobe's current page describes
@@ -799,24 +928,31 @@ absent from the data file or hedged inside it, and each names the URL that came 
     one is not. It was also the only tool carrying the row, which was itself an artifact of the
     mined corpus rather than of a documented difference.
 
-11. **A `Tool presets` picker as a per-tool options-bar control.** The recovered corpus row
-    opens with `[Tool presets]`, and a preset picker is present on every Photoshop tool bar, but
-    no Adobe page this pass opened documents it as a control on a selection tool's bar. The only
-    description found is a third-party textbook: "Presets: Use this option to save Presets
-    specific to the tool being used."
-    (`https://cod.pressbooks.pub/photoshopmastery1250/chapter/selections`). The row is in the data
-    file on that source alone.
+11. **CLOSED — the `Tool presets` picker is a per-tool options-bar control, and Adobe's current
+    desktop page says so.** This item previously rested on a third-party textbook ("Presets: Use
+    this option to save Presets specific to the tool being used", `cod.pressbooks.pub`) and on the
+    claim that no Adobe page documents the picker on a selection tool's bar. Adobe's own page now
+    names it and places it: "You can also select the **Tool Presets dropdown menu next to the tool
+    at the upper-left of the Options bar**. Select Create New Tool Preset icon"
+    (`https://helpx.adobe.com/photoshop/desktop/get-started/set-up-toolbars-panels/create-tool-preset.html`,
+    2026-02-23), and an Adobe presenter calls the same control by name — "click the tool icon in the
+    Options bar (officially called the **Tool Preset Picker**)"
+    (`https://jkost.com/blog/2023/01/10-little-known-tips-for-working-with-tools-in-photoshop.html`).
+    The data file's `Tool presets` row is unchanged in substance — still `missing`, still the
+    leftmost item on the bar — and now carries an Adobe-desktop source in the tool's `## Sources`.
 
-12. **The Magic Wand being unavailable on Bitmap and 32-bits-per-channel images.** The data file
-    stated this flatly and **in none of its own sources**. Adobe states the 32-bit exclusion for
-    the **Magnetic Lasso** — "not available for 32-bits-per-channel images",
-    `https://helpx.adobe.com/photoshop/using/tool-techniques/magnetic-lasso-tool.html` — and says
-    nothing of the kind for the Wand on either the 2023 how-to page or the 2025-11-04 desktop page.
-    The Wand is greyed out on a 32-bit document in practice, which is almost certainly why the
-    claim reads as verified, but "almost certainly" is not a source. The `magic-wand` `purpose` now
-    attributes the exclusion rather than asserting it. The closest statement found is the UXP
-    reference's own Bitmap/32-bit exclusion list for `Grow` and related commands:
-    `https://developer.adobe.com/photoshop/uxp/2022/ps_reference/classes/selection/`.
+12. **The Magic Wand being unavailable on Bitmap and 32-bits-per-channel images — HALF RESOLVED.**
+    The **32-bit** half is Adobe's, and Adobe names this tool: "All tools in the toolbox except:
+    **Magnetic Lasso, Magic Wand**, Spot Healing Brush, Healing Brush, Red Eye, Color Replacement,
+    Art History Brush, Magic Eraser, Background Eraser, Paint Bucket, Dodge, Burn, and Sponge"
+    (`https://helpx.adobe.com/photoshop/using/high-dynamic-range-images.html`). The data file's
+    `magic-wand` `purpose` used to say the exclusion was "an exclusion Adobe states for the
+    Magnetic Lasso, **not for this tool**", which was wrong on the evidence and is corrected: the
+    sentence now quotes Adobe's list and says the **Bitmap** half is the one half no Adobe page
+    states. The Wand is greyed out on a Bitmap document in practice, and the UXP reference carries
+    Bitmap/32-bit exclusion lists for `Grow` and related commands
+    (`https://developer.adobe.com/photoshop/uxp/2022/ps_reference/classes/selection/`), but that is
+    a command exclusion, not a statement about the tool.
 
 13. **The Magic Wand's four defaults — `Tolerance` 32, `Contiguous` on, `Anti-alias` on,
     `Sample All Layers` off.** Adobe's 2025-11-04 desktop page gives the `Tolerance` **range**
