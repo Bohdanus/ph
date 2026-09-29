@@ -741,7 +741,38 @@ obvious candidates — the board database and the queue lock file, both shared b
 every agent in the repository — are where to look, but no single mechanism was
 isolated, so this entry records the pattern and the reproduction, not a cause.
 
-## 15. Files
+## 15. The worktree-inventory suite cannot pass in a checkout without this machine's worktrees
+
+**Problem.** `scripts/__tests__/worktree-inventory.test.mjs` reads the LIVE
+worktree list, and the case at `:1837` guards on it:
+`expect(live.length).toBeGreaterThan(1)`. A fresh clone has exactly one — its own
+main worktree — so the case fails with `expected 1 to be greater than 1`.
+`vitest.config.ts` leaves `include` at the Vitest default and excludes only
+`**/.kilo/**` and `e2e/**`, and `.github/workflows/ci.yml` runs
+`npm run test -- --coverage` after a plain `actions/checkout`, so the `ci` job's
+Test step runs this suite against a checkout that has never had a worktree.
+
+**Reproduced twice, deterministically.** A fresh `--no-single-branch` clone of
+`main` fails this suite with 1 of 123 red. A fresh clone of
+`chore/untrack-worktrees-json` fails with the same 1 of 126, and the three extra
+passing tests are that branch's untracked-inventory tripwire, which passes in a
+clone because the inventory is absent there by design. Neither is a regression of
+that branch: the same case is red on `main`.
+
+**Not claimed.** Whether the `ci` job on `main` is red right now was NOT observed
+— there is no `gh` on this machine to read run history — so this rests on two
+local clones, which have the shape `actions/checkout` produces. Two further cases
+in the same file shell out to `git rev-parse main`, so a clone made with
+`--branch <name>` fails those two as well; that is an artefact of that clone, not
+a defect, and it is why the reproduction must use `--no-single-branch`.
+
+**The call is the operator's.** Either the live-tree cases skip when the
+repository holds fewer than two worktrees, or this suite is excluded from the
+`ci` job. Skipping is only honest if the guard is meaningless without the
+worktrees — on a machine that has them it is the thing stopping a preservation
+branch from reading as disposable, so it must not be skipped there.
+
+## 16. Files
 
 - `vitest.config.ts:6-9` — the pool configuration this is about
 - `src/test/setup.ts` — the polyfills most likely to be involved
@@ -797,3 +828,5 @@ isolated, so this entry records the pattern and the reproduction, not a cause.
   suites section 14 saw fail only inside a full run, and pass alone
 - `scripts/lib/worktree-inventory/curated.mjs` — the table whose entries name the worktrees
   whose shape has to be re-derived when they commit or land
+- `scripts/__tests__/worktree-inventory.test.mjs:1837` — the `live.length > 1` guard section 15
+  observed failing in a fresh clone, and the suite `ci` runs there without a worktree to find
