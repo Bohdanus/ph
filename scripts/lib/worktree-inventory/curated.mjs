@@ -492,6 +492,16 @@ export const CURATED = {
     ],
   },
 
+  'durable-diag': {
+    summary:
+      'Re-implements the two conversion diagnostics that the never-merged `fix/unit-tests` branch left silent: a repeated durable entry id, and a document-frame action carrying no usable next frame.',
+    note: 'Not a port. The branch is preserved at tag `archive/fix-unit-tests` and its commits predate main’s selection-baseline extraction and its weaker id-set bitmap retirement, so merging or cherry-picking it would have reverted both. Severity was also changed deliberately: the branch used `error` for a repeated id, but an error diagnostic voids the whole shadow, and replay addresses history by array index, so parity with legacy replay rules that out.',
+    issues: [
+      { ref: 'ph-9', title: 'Duplicate durable entry id has no second line of defence' },
+      { ref: 'ph-8', title: 'An invalid document frame converts with no diagnostic' },
+    ],
+  },
+
   /* ------------------------------------------------------------ history */
   'history-append-layer-ops-main': {
     summary: 'A re-creation of the layer-property append-boundary slice against main.',
