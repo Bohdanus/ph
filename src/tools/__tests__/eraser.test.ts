@@ -179,7 +179,12 @@ describe('eraser registry delegation', () => {
   it('routes the eraser to the alpha-subtracting stroke, through the registry', () => {
     RecordingOffscreenCanvas.instances = [];
 
-    toolProcessors.eraser.imageProcessor({ size: { width: 24, height: 18 } })(eraserArgs({ lineWidth: 7 }));
+    // `mode` is named rather than inherited, for the reason the two tests above already give:
+    // the seeded default is `brush`, which does not reach the shared painter at all. This is one
+    // of the two hard modes' contract, so it says which one it is about.
+    toolProcessors.eraser.imageProcessor({ size: { width: 24, height: 18 } })(
+      eraserArgs({ mode: 'pencil', lineWidth: 7 })
+    );
 
     const ctx = recordCommitCtx();
 
@@ -191,5 +196,33 @@ describe('eraser registry delegation', () => {
     // `fill.test.ts`'s registry pair.
     expect(ctx.globalCompositeOperation).toBe('destination-out');
     expect(ctx.putImageData).not.toHaveBeenCalled();
+  });
+
+  it('routes the eraser to the stamped tip in brush mode, through the registry', () => {
+    // The same wiring, in the mode that cannot use the pair above. The Brush tip has no path to
+    // stroke and no composite operator to ask for: it reads the layer, zeroes alpha per dab and
+    // writes the buffer back, because `destination-out` is defined as `da' = da * (1 - sa)` and
+    // a per-dab falloff has no way to express itself as one constant. So the two assertions that
+    // discriminate the eraser here are the INVERSE of the hard modes', and they discriminate it
+    // just as well: no path call is issued, and the buffer is round-tripped.
+    //
+    // What the soft edge actually looks like is not re-asserted here and does not need to be:
+    // `eraser.brush.test.ts` reads the committed alpha for every claim about the tip — the
+    // ramp, the Hardness extremes, the single-dab click and the whole stroke — and it is the
+    // only place in the suite that can see a colour, which a call-count pin cannot.
+    RecordingOffscreenCanvas.instances = [];
+
+    toolProcessors.eraser.imageProcessor({ size: { width: 24, height: 18 } })(
+      eraserArgs({ mode: 'brush', lineWidth: 7 })
+    );
+
+    const ctx = recordCommitCtx();
+
+    expect(ctx.beginPath).not.toHaveBeenCalled();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+    expect(ctx.strokeRect).not.toHaveBeenCalled();
+    expect(ctx.fillRect).not.toHaveBeenCalled();
+    expect(ctx.getImageData).toHaveBeenCalled();
+    expect(ctx.putImageData).toHaveBeenCalled();
   });
 });
