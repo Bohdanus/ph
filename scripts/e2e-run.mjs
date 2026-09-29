@@ -17,7 +17,10 @@
  * 2. **Two runs share one output directory.** Playwright DELETES `outputDir` at the
  *    start of every run (`playwright/lib/runner/index.js:6398-6417`). Serialized or
  *    not, the second run erases the first run's failure screenshots before anybody
- *    has read them.
+ *    has read them. Each run gets its own `test-results/runs/<id>/` for exactly that
+ *    reason. The HTML report is left alone, because `npm run test:e2e:report` is a
+ *    bare `playwright show-report` and a per-run folder would leave it with nothing
+ *    to open.
  * 3. **Two runs fight over the same dev server.** `reuseExistingServer` used to
  *    default to ON locally, so a second run attached to whatever got there first,
  *    and a stale Vite process from a dead agent outlived the run that started it.
@@ -33,10 +36,19 @@
  * `e2e/.swarm-e2e-runner` is a VIRTUAL path. It is never created on disk, and no
  * agent should ever create it. That is legitimate: the board's path normalization
  * is lexical on purpose and a relative path never reaches the filesystem
- * (`scripts/lib/agent-board/db.mjs:1409`), which is the same property that lets an
+ * (`scripts/lib/agent-board/db.mjs:1410`), which is the same property that lets an
  * agent hold a file it is about to create. The sentinel is a mutex, not a claim on
  * anything in that directory, and an agent editing `e2e/*.spec.ts` holds those
  * files separately.
+ *
+ * **The holder is a RUN, not a branch.** Board identity is the branch by default,
+ * and its conflict test is `lock.agent_id !== who` (`db.mjs:1130`), so a branch
+ * never conflicts with itself: two runs on one branch would both acquire, and the
+ * second one's `unlock` would release the row the first still believes it holds.
+ * The mutex is over a machine resource, so this run passes its own identity
+ * (`e2e-run/<branch>/<pid>`) to every board call. `swarm status` therefore shows
+ * one `e2e-run/…` agent per live suite, which is the useful reading: the branch
+ * says which checkout, the pid says which process.
  *
  * ## Every run still happens, including the ones that "already passed"
  *
@@ -44,8 +56,10 @@
  * the skip invisible. Nothing here can tell whether a change is "heavy UI work",
  * and the Definition of Done already requires `test:e2e` for a user-visible change
  * before it merges. This wrapper does not weaken that: it queues the run, names the
- * agent ahead of you, and exits with the board's own code 4 rather than letting a
- * second suite start on top of a live one.
+ * run ahead of you, and exits 4 — the board's own "file held by another agent" code
+ * — rather than letting a second suite start on top of a live one. (`swarm check`
+ * uses 1 for a held path; the wrapper uses 4 because that is the code the board
+ * itself returns for a refused `hold`, and the two answer different questions.)
  *
  * ## Knobs (all optional, all in the environment)
  *
@@ -53,7 +67,10 @@
  *   minutes. `0` fails immediately instead of queueing.
  * - `E2E_LOCK_POLL` — how often to re-check while waiting, in ms. Default 3000.
  * - `E2E_LOCK_LEASE` — the board lease for the hold, as `swarm` spells it (`30m`,
- *   `2h`, or a bare number of minutes). Default `30m`.
+ *   `2h`, or a bare number of minutes). Default `30m`. It is validated here, in the
+ *   board's own grammar, and a malformed value stops the run: `parseDuration` exits
+ *   1 on `30min`, which is indistinguishable from "no board", and a typo in one
+ *   variable must not silently turn the lock off.
  * - `E2E_SKIP_LOCK=1` — run without taking the sentinel, loudly. The operator's
  *   escape hatch; `--no-lock` is the same thing as a flag.
  *
@@ -77,7 +94,7 @@ const BOARD_CLI = path.join(import.meta.dirname, 'agent-board.mjs');
  * reader looks for an e2e concern — it claims nothing in that directory, and an
  * agent editing `e2e/*.spec.ts` holds those files separately.
  */
-const SENTINEL = 'e2e/.swarm-e2e-runner';
+export const E2E_SENTINEL = 'e2e/.swarm-e2e-runner';
 
 const DEFAULT_LOCK_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_LOCK_POLL_MS = 3_000;
@@ -93,8 +110,24 @@ const DEFAULT_LOCK_POLL_MS = 3_000;
  */
 const DEFAULT_LOCK_LEASE = '30m';
 
-/** Comfortably inside the lease, so one missed tick is not an expired lock. */
-const RENEW_EVERY_MS = 5 * 60_000;
+/** The renewal ceiling. The real interval is a third of the lease, never more. */
+const MAX_RENEW_EVERY_MS = 5 * 60_000;
+
+/**
+ * The board's own duration grammar, read off `parseDuration`
+ * (`scripts/lib/agent-board/db.mjs:267-280`): `45m`, `90s`, `2h`, `500ms`, or a bare
+ * number of minutes. Copied rather than imported because the board is reached
+ * through its CLI, and a lease this wrapper cannot parse is a lock it would
+ * silently not take — see `assertLease`.
+ */
+const DURATION = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)?$/i;
+const DURATION_SCALE = { ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+
+function parseDurationMs(input) {
+  const match = DURATION.exec(String(input).trim());
+  if (!match) return null;
+  return Math.round(Number(match[1]) * DURATION_SCALE[(match[2] || 'm').toLowerCase()]);
+}
 
 const PREFIX = '[e2e-run]';
 
@@ -167,23 +200,38 @@ function defaultExec(command, options) {
  * nothing beside a suite and keeps this file free of board internals.
  */
 export class SwarmLock {
+  /**
+   * @param identity the board identity this run holds the sentinel AS. It must be
+   *   per-RUN, not per-branch: the board's conflict test is `lock.agent_id !== who`
+   *   (`db.mjs:1130`), so a branch never conflicts with itself. Two runs on one
+   *   branch — a session and its own subagent, a targeted spec beside the full
+   *   suite — would both "acquire", and the second one's `unlock` would release the
+   *   row the first still believes it holds, handing a third agent a free sentinel
+   *   while a suite is live. The mutex is over a machine resource, so its holder has
+   *   to be a process.
+   */
   constructor(options = {}) {
     this.env = options.env ?? process.env;
     this.log = options.log ?? ((line) => console.log(line));
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.now = options.now ?? (() => Date.now());
     this.exec = options.exec ?? defaultExec;
+    this.identity = options.identity ?? defaultIdentity();
     this.lease = options.lease ?? this.env.E2E_LOCK_LEASE ?? DEFAULT_LOCK_LEASE;
     this.timeoutMs = options.timeoutMs ?? readNumber(this.env.E2E_LOCK_TIMEOUT, DEFAULT_LOCK_TIMEOUT_MS);
     this.pollMs = options.pollMs ?? readNumber(this.env.E2E_LOCK_POLL, DEFAULT_LOCK_POLL_MS);
-    this.renewEveryMs = options.renewEveryMs ?? RENEW_EVERY_MS;
+    this.leaseMs = assertLease(this.lease);
+    // A third of the lease, capped: the interval has to be comfortably inside it,
+    // or `doctor` reclaims a live run's lock on the next board command from anybody
+    // and the run starts racing a second suite.
+    this.renewEveryMs = options.renewEveryMs ?? Math.min(MAX_RENEW_EVERY_MS, Math.floor(this.leaseMs / 3));
     this.held = false;
     this.renewal = null;
   }
 
-  /** `node scripts/agent-board.mjs <args>`, in the repository root. */
+  /** `node scripts/agent-board.mjs <args>`, in the repository root, as this run. */
   #board(args) {
-    return this.exec(['node', BOARD_CLI, ...args], { cwd: REPO_ROOT, env: this.env });
+    return this.exec(['node', BOARD_CLI, ...args, '--agent', this.identity], { cwd: REPO_ROOT, env: this.env });
   }
 
   /**
@@ -200,7 +248,7 @@ export class SwarmLock {
     let announced = false;
 
     for (;;) {
-      const attempt = this.#board(['hold', SENTINEL, '--lease', this.lease]);
+      const attempt = this.#board(['hold', E2E_SENTINEL, '--lease', this.lease]);
 
       if (attempt.status === 0) {
         this.held = true;
@@ -215,11 +263,11 @@ export class SwarmLock {
         if (!announced) {
           announced = true;
           const how = this.timeoutMs === 0 ? 'E2E_LOCK_TIMEOUT=0, so this fails instead of waiting' : 'queueing';
-          this.log(`${PREFIX} another agent is running e2e${holder ? ` (${holder})` : ''}; ${how}`);
+          this.log(`${PREFIX} another run has the e2e sentinel${holder ? ` (${holder})` : ''}; ${how}`);
         }
         if (this.now() >= deadline) {
           this.log(
-            `${PREFIX} gave up after ${this.timeoutMs}ms waiting for ${SENTINEL}` +
+            `${PREFIX} gave up after ${this.timeoutMs}ms waiting for ${E2E_SENTINEL}` +
               `${holder ? `, still held by ${holder}` : ''}. Nothing ran. Do the other work, then run the ` +
               'same command again — it queues exactly the same way.'
           );
@@ -230,7 +278,8 @@ export class SwarmLock {
       }
 
       // Anything else means the BOARD is unavailable: no git home, no `node:sqlite`,
-      // a database that will not open.
+      // a database that will not open. The lease is validated in the constructor, so
+      // a bad argument cannot arrive here.
       this.log(
         `${PREFIX} WARNING: the swarm board is unavailable (exit ${attempt.status}: ` +
           `${firstLine(attempt.stderr || attempt.stdout)}), so this run is NOT serialized against other ` +
@@ -242,11 +291,11 @@ export class SwarmLock {
 
   /** Who holds the sentinel right now, for a message somebody can act on. */
   #holderName() {
-    const probe = this.#board(['check', SENTINEL, '--json']);
+    const probe = this.#board(['check', E2E_SENTINEL, '--json']);
     if (probe.status !== 1) return null;
     try {
       const parsed = JSON.parse(probe.stdout);
-      const entry = parsed?.report?.find((item) => item.path === SENTINEL);
+      const entry = parsed?.report?.find((item) => item.path === E2E_SENTINEL);
       const holders = entry?.holders ?? [];
       return holders.length > 0 ? holders.map((holder) => holder.agent_id).join(', ') : null;
     } catch {
@@ -268,12 +317,12 @@ export class SwarmLock {
   startRenewal(onLost) {
     if (!this.held || this.renewal) return;
     this.renewal = setInterval(() => {
-      const renew = this.#board(['hold', SENTINEL, '--lease', this.lease]);
+      const renew = this.#board(['hold', E2E_SENTINEL, '--lease', this.lease]);
       if (renew.status === 0) return;
       this.held = false;
       this.stopRenewal();
       onLost(
-        `the ${SENTINEL} lock could not be renewed (exit ${renew.status}). Another agent may have taken it, ` +
+        `the ${E2E_SENTINEL} lock could not be renewed (exit ${renew.status}). Another agent may have taken it, ` +
           'so this run is being stopped rather than left racing a second suite.'
       );
     }, this.renewEveryMs);
@@ -294,7 +343,7 @@ export class SwarmLock {
     // Only ever releases OUR OWN hold: `unlock` skips a row belonging to another
     // agent unless given --force, so a late timer here cannot free a suite that
     // has legitimately taken the sentinel since.
-    this.#board(['unlock', SENTINEL]);
+    this.#board(['unlock', E2E_SENTINEL]);
   }
 }
 
@@ -302,6 +351,42 @@ function readNumber(value, fallback) {
   if (value === undefined || value === '') return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+/**
+ * Reject a lease this wrapper cannot parse, loudly, and BEFORE any run.
+ *
+ * This is not defensive tidiness. `parseDuration` throws `BoardError code 1` on
+ * `30min`, the CLI prints it and exits 1, and exit 1 is also what a missing board
+ * looks like — so without this check a typo in one environment variable silently
+ * took the run UNSERIALIZED while the warning blamed `node:sqlite`.
+ */
+function assertLease(lease) {
+  const ms = parseDurationMs(lease);
+  if (ms === null || ms <= 0) {
+    throw new Error(
+      `E2E_LOCK_LEASE=${JSON.stringify(lease)} is not a duration the swarm board accepts. ` +
+        'Use 45m, 90s, 2h, 500ms, or a bare number of minutes. Refusing to run rather than ' +
+        'running without the lock.'
+    );
+  }
+  return ms;
+}
+
+/**
+ * This run's board identity: the branch, so a human can read `swarm status` and
+ * know which checkout has the suite, plus the pid, so two runs on one branch are
+ * two holders rather than one holder and a race.
+ */
+function defaultIdentity() {
+  const branch = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+  });
+  const name = String(branch.stdout ?? '')
+    .trim()
+    .replace(/[^A-Za-z0-9._/@+-]/g, '-');
+  return `e2e-run/${name || 'detached'}/${process.pid}`;
 }
 
 function firstLine(value) {
@@ -319,17 +404,23 @@ function firstLine(value) {
 /**
  * Where this run's output goes.
  *
- * Both are per-run, and both live under directories that are gitignored wholesale
- * (`test-results`, `playwright-report`), so isolation costs one nested directory
- * and nothing else. The HTML folder is set through the ENVIRONMENT because that is
- * the only lever the installed Playwright reads ahead of the config
- * (`playwright/lib/runner/index.js:3506-3509`); `outputDir` has no environment
- * equivalent in 1.63, so it is set with the `--output` flag instead.
+ * `outputDir` is per-run, and it is the one that has to be: Playwright DELETES it
+ * at the start of every run (`playwright/lib/runner/index.js:6398-6417`), so a
+ * second run would otherwise erase the first run's failure screenshots before
+ * anybody read them. It lives under `test-results`, which is gitignored wholesale,
+ * so isolation costs one nested directory.
+ *
+ * The HTML report deliberately is NOT isolated. Playwright honours
+ * `PLAYWRIGHT_HTML_OUTPUT_DIR` (`playwright/lib/runner/index.js:3506-3509`), and
+ * moving it to `playwright-report/runs/<id>/` would have broken
+ * `npm run test:e2e:report`, which is a bare `playwright show-report` and resolves
+ * `playwright-report`. The report is a viewer over artifacts that live in
+ * `outputDir`; the artifacts are the part worth keeping per-run.
  */
 export function runOutputPaths(repoRoot, runId) {
   return {
     outputDir: path.join(repoRoot, 'test-results', 'runs', runId),
-    htmlDir: path.join(repoRoot, 'playwright-report', 'runs', runId),
+    htmlDir: null,
   };
 }
 
@@ -401,7 +492,7 @@ const HELP = [
   '',
   '  The run takes the swarm lock e2e/.swarm-e2e-runner first, so one suite runs at a',
   '  time across every worktree, and gives the run a port and an output directory of',
-  '  its own. Exit 4 means another agent has the sentinel and nothing ran.',
+  '  its own. Exit 4 means another run has the sentinel and nothing ran here.',
   '',
   '  Environment: E2E_LOCK_TIMEOUT, E2E_LOCK_POLL, E2E_LOCK_LEASE, E2E_SKIP_LOCK=1.',
   '  The header of scripts/e2e-run.mjs is the full contract.',
@@ -430,7 +521,7 @@ export async function run(argv, options = {}) {
     return spawnSuite(playwrightArgv, { ...options, env });
   }
 
-  const lock = options.lock ?? new SwarmLock({ env, log, ...options });
+  const lock = options.lock ?? new SwarmLock({ ...options, env, log });
   let locked = false;
 
   if (noLock) {
@@ -440,10 +531,11 @@ export async function run(argv, options = {}) {
   } else {
     const attempt = await lock.acquire();
     if (attempt.reason === 'contended') {
-      // Exit 4, the board's own code for "somebody else holds this file", so an
-      // agent branching on exit codes learns the same thing here as it would from
-      // `swarm check`.
-      log(`${PREFIX} not running: another agent holds the e2e sentinel.`);
+      // Exit 4 is the code the board's own `hold` returns for a path another agent
+      // holds, so a branching agent learns the same thing here as from `swarm hold`.
+      // It is deliberately not 1: `swarm check` uses 1 for "this path is busy",
+      // which is a different question and is what a shell gates on.
+      log(`${PREFIX} not running: another run holds the e2e sentinel.`);
       return 4;
     }
     locked = attempt.acquired;
@@ -470,9 +562,15 @@ export async function run(argv, options = {}) {
     if (!ci) {
       const runId = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
       const paths = runOutputPaths(REPO_ROOT, runId);
-      playwrightArgs.push('--output', paths.outputDir);
-      childEnv.PLAYWRIGHT_HTML_OUTPUT_DIR = paths.htmlDir;
-      log(`${PREFIX} output: ${path.relative(REPO_ROOT, paths.outputDir)} (report under playwright-report/runs)`);
+      // A caller who passed their own `--output` has said where the run's output
+      // goes. Two `--output` flags is not an error to Playwright, it silently takes
+      // the last one, so the caller's wins by not being overridden.
+      if (!playwrightArgs.includes('--output')) {
+        playwrightArgs.push('--output', paths.outputDir);
+        log(`${PREFIX} output: ${path.relative(REPO_ROOT, paths.outputDir)}`);
+      } else {
+        log(`${PREFIX} output: as given on the command line`);
+      }
 
       const { port, reason } = resolvePort(env, ci);
       if (port === 'allocate') {

@@ -70,9 +70,9 @@ are latent defects that no current run trips.
 ### Invariant — headless is the default, and the refusal is structural
 
 **This is not a work item.** The mitigation is already shipped, and the rest of
-this file is the work queue. `playwright.config.ts:83` resolves
+this file is the work queue. `playwright.config.ts:91` resolves
 `headless: process.env.PLAYWRIGHT_ALLOW_HEADED !== '1'`, and
-`playwright.config.ts:46` loads `e2e/global-setup.ts`, which throws on `--headed`,
+`playwright.config.ts:54` loads `e2e/global-setup.ts`, which throws on `--headed`,
 `--ui` and `--debug` and on any project that resolves to `headless: false`
 (`e2e/global-setup.ts:44-61`). The refusal arrives before a browser exists, so the
 rule is structural rather than remembered. What follows is the reasoning the default

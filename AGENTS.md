@@ -90,9 +90,12 @@ node scripts/worktree-inventory.mjs   # WORKTREES.json: what every worktree hold
 ```
 
 `npm run test:e2e` queues behind `e2e/.swarm-e2e-runner`, a swarm file lock that
-serializes e2e across every worktree on this machine. `npm run swarm status` shows who has it;
-`npm run swarm check e2e/.swarm-e2e-runner` exits 1 while it is held, and so does a run that gives
-up waiting. It is a virtual path and is never created on disk.
+serializes e2e across every worktree on this machine. `npm run swarm status` shows
+who has it as an `e2e-run/<branch>/<pid>` agent — the holder is a **run**, not a
+branch, so two runs in one worktree are two holders rather than a race. A run that
+gives up waiting exits **4** (the board's "somebody else holds this file"); `swarm
+check` exits **1** for a busy path. It is a virtual path and is never created on
+disk.
 
 ## The swarm board
 

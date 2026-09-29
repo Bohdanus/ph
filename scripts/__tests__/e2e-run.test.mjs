@@ -1,18 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 
-import { SwarmLock, findFreePort, resolvePort, run, runOutputPaths } from '../e2e-run.mjs';
+import { SwarmLock, E2E_SENTINEL, findFreePort, resolvePort, run, runOutputPaths } from '../e2e-run.mjs';
 
 /**
- * The sentinel is a fixed string in the script, and these tests assert on it, so a
- * rename that left the tests passing would mean the two disagree. Read it from
- * the module's own constant instead of repeating it.
+ * The sentinel is exported by the module rather than repeated here, so a rename in
+ * the implementation moves this file's expectation with it instead of leaving two
+ * strings to drift. The one place a literal is unavoidable is the board calls,
+ * which are made by the real CLI.
  */
-const SENTINEL = 'e2e/.swarm-e2e-runner';
+const SENTINEL = E2E_SENTINEL;
 
 /**
  * Built from `import.meta.dirname`, never from `import.meta.url`: Vitest gives
@@ -33,12 +34,20 @@ const REPO_ROOT = join(import.meta.dirname, '..', '..');
  * board in the common git dir. The repository itself is NOT faked: path
  * normalization is lexical but the git home and worktree list are real, and a
  * fixture that invented a repo would stop exercising the same code.
+ *
+ * `CI` is deleted rather than merely unset-by-spread, because GitHub Actions sets
+ * it for every step and `run()` treats it as "skip the lock, the port and the
+ * output directory" — which is correct for a CI job and wrong for these tests. An
+ * earlier version inherited `process.env` wholesale and went 7-red in the `ci`
+ * job, which is exactly the failure a locally-green test file cannot show you.
  */
 function tempBoard() {
   const dir = mkdtempSync(join(tmpdir(), 'e2e-run-test-'));
+  const env = { ...process.env, AGENT_BOARD_DIR: dir };
+  delete env.CI;
   return {
     dir,
-    env: { ...process.env, AGENT_BOARD_DIR: dir },
+    env,
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
@@ -155,6 +164,14 @@ describe('e2e-run: the swarm sentinel', () => {
     expect(code, 'exit 4 is the board\'s own "held by another agent"').toBe(4);
     expect(suite.calls, 'a refused run must not start Playwright').toEqual([]);
     expect(log.text(), 'the message names the holder').toContain('somebody-else');
+    expect(log.text(), 'and says another RUN, not another agent: the holder is a process').toMatch(
+      /another run has the e2e sentinel/
+    );
+    // The refusal path returns before the `try`, so nothing releases anything. If it
+    // ever did, the queue would be handed a sentinel that is still in use.
+    expect(observeHeld(boardDir.env).holders, "a refused run must not take the other holder's lock with it").toEqual([
+      'somebody-else',
+    ]);
   });
 
   it('waits for a held sentinel and runs as soon as it is free', async () => {
@@ -316,11 +333,52 @@ describe('e2e-run: run isolation', () => {
       expect(output).toMatch(/test-results[\\/]runs[\\/]\d{4}-/);
       expect(env.PLAYWRIGHT_PORT, 'a port of its own, never the shared 5173').toMatch(/^\d+$/);
       expect(Number(env.PLAYWRIGHT_PORT)).toBeGreaterThan(0);
-      expect(env.PLAYWRIGHT_HTML_OUTPUT_DIR).toMatch(/playwright-report[\\/]runs[\\/]\d{4}-/);
       expect(
-        env.PLAYWRIGHT_HTML_OUTPUT_DIR.includes(env.PLAYWRIGHT_PORT) || env.PLAYWRIGHT_HTML_OUTPUT_DIR.includes(output),
-        'the report folder is not nested inside outputDir, which Playwright rejects'
-      ).toBe(false);
+        env.PLAYWRIGHT_HTML_OUTPUT_DIR,
+        'the HTML report is NOT moved: `npm run test:e2e:report` is a bare show-report'
+      ).toBeUndefined();
+    } finally {
+      boardDir.cleanup();
+    }
+  });
+
+  it('leaves a caller-supplied --output alone instead of sending two', async () => {
+    const boardDir = tempBoard();
+    try {
+      const suite = fakeSuite();
+      await run(['--output', 'test-results/mine'], {
+        env: { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' },
+        log: recorder().log,
+        runPlaywright: suite,
+      });
+
+      const { args } = suite.calls[0];
+      // Playwright silently takes the LAST --output, so a second one would override
+      // the caller's without either of them noticing.
+      expect(
+        args.filter((arg) => arg === '--output'),
+        'exactly one --output'
+      ).toHaveLength(1);
+      expect(args[args.indexOf('--output') + 1]).toBe('test-results/mine');
+    } finally {
+      boardDir.cleanup();
+    }
+  });
+
+  it('runs unlocked on E2E_SKIP_LOCK=1 too, not only on the --no-lock flag', async () => {
+    const boardDir = tempBoard();
+    try {
+      const suite = fakeSuite();
+      const log = recorder();
+      await run(['e2e/levels.spec.ts'], {
+        env: { ...boardDir.env, E2E_SKIP_LOCK: '1' },
+        log: log.log,
+        runPlaywright: suite,
+      });
+
+      expect(suite.calls, 'the escape hatch still runs the suite').toHaveLength(1);
+      expect(log.text(), 'and still announces that it is unsynchronized').toMatch(/UNSERIALIZED/);
+      expect(observeHeld(boardDir.env).status, 'taking no lock is not the same as taking a bad one').toBe(0);
     } finally {
       boardDir.cleanup();
     }
@@ -391,29 +449,95 @@ describe('e2e-run: port rules', () => {
     }
   });
 
-  it('finds a port that is actually free', async () => {
+  it('finds a port it can then bind itself, which is what "free" has to mean', async () => {
+    // The earlier version asserted only that the number was in a plausible range,
+    // which `return 3000` satisfies verbatim. This one takes the port back and
+    // binds it: a port something else is listening on cannot be bound, so the
+    // assertion fails for a hardcoded answer and passes for a real one.
     const port = await findFreePort();
-    expect(port).toBeGreaterThan(1024);
-    expect(port).toBeLessThan(65536);
+    await new Promise((resolve, reject) => {
+      const server = createServer();
+      server.on('error', reject);
+      server.listen(port, '127.0.0.1', () => server.close(resolve));
+    });
   });
 
-  it('nests run output under the two gitignored roots, never beside them', () => {
+  it('nests run output under the gitignored root, never beside it', () => {
     const paths = runOutputPaths('/repo', '2026-01-01T00-00-00-000Z-1');
     expect(paths.outputDir).toBe(join('/repo', 'test-results', 'runs', '2026-01-01T00-00-00-000Z-1'));
-    expect(paths.htmlDir).toBe(join('/repo', 'playwright-report', 'runs', '2026-01-01T00-00-00-000Z-1'));
+    // Deliberately null: a per-run HTML folder would leave `npm run test:e2e:report`
+    // (a bare `playwright show-report`) with nothing to open.
+    expect(paths.htmlDir, 'the HTML report stays where show-report looks for it').toBeNull();
   });
 });
 
-describe('e2e-run: the board it depends on', () => {
-  it('probes that node:sqlite is loadable, so the lock is not silently dead', () => {
-    // The lock is a `node:sqlite` database one process over. If a pool or engine
-    // change took the binding away, `hold` would exit non-zero and the wrapper would
-    // run unlocked with a warning — which is the right behaviour but a silent loss
-    // of serialization, so the binding is asserted here.
-    const db = new DatabaseSync(':memory:');
-    db.exec('create table t (a integer)');
-    db.prepare('insert into t values (1)').run();
-    expect(db.prepare('select a from t').get()).toEqual({ a: 1 });
-    db.close();
+describe('e2e-run: the lease', () => {
+  // A malformed lease used to take the run UNSERIALIZED. `parseDuration` throws
+  // BoardError code 1 on `30min`, the CLI exits 1, and exit 1 is also what a
+  // missing board looks like — so the wrapper printed a warning about `node:sqlite`
+  // and ran anyway. A typo in one environment variable silently disarming the lock
+  // is the failure mode this whole change exists to remove.
+  //
+  // These are the values the board actually refuses, checked against its CLI rather
+  // than picked by eye. `30 m` and `0.5h` are ACCEPTED (its regex allows a space and
+  // a decimal), and a first draft of this list called them invalid — which would have
+  // had the wrapper refusing configurations that work. `0m` is accepted by the board
+  // and refused here, on purpose: a zero lease expires the lock immediately.
+  const bad = ['30min', 'soon', '-5m', '1 hour', '', '0m'];
+
+  it.each(bad)('refuses %j rather than running without the lock', (lease) => {
+    expect(() => new SwarmLock({ lease, identity: 'test' })).toThrow(/E2E_LOCK_LEASE/);
+  });
+
+  it("accepts the board's own grammar, including a bare minute count and a decimal", () => {
+    for (const lease of ['30m', '30 m', '90s', '2h', '500ms', '45', '0.5h', '1.5h']) {
+      expect(new SwarmLock({ lease, identity: 'test' }).leaseMs, `lease ${lease}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('renews inside the lease, never outside it', () => {
+    // A 4-minute lease with a 5-minute interval expires the lock before the first
+    // renewal, `doctor` reclaims it on the next board command from anybody, and the
+    // run races a second suite until its timer happens to notice.
+    const lock = new SwarmLock({ lease: '4m', identity: 'test' });
+    expect(lock.renewEveryMs).toBeLessThan(lock.leaseMs / 2);
+    expect(new SwarmLock({ lease: '30m', identity: 'test' }).renewEveryMs).toBe(5 * 60_000);
+  });
+});
+
+describe('e2e-run: the identity it holds the lock as', () => {
+  it('is per run, so two runs on one branch are two holders', async () => {
+    // Board identity is the branch by default and the conflict test is
+    // `lock.agent_id !== who`, so a branch never conflicts with itself: two runs on
+    // one branch both "acquire", and the second one's `unlock` releases the row the
+    // first still holds — handing a third run a free sentinel while a suite is live.
+    const boardDir = tempBoard();
+    try {
+      // 0 is "refuse rather than queue", so the test does not sit on a clock.
+      const env = { ...boardDir.env, E2E_LOCK_TIMEOUT: '0' };
+      const first = new SwarmLock({ env, identity: 'e2e-run/branch/1', log: recorder().log });
+      const second = new SwarmLock({ env, identity: 'e2e-run/branch/2', log: recorder().log });
+
+      expect(await first.acquire(), 'the first run takes it').toMatchObject({ acquired: true });
+      const secondAttempt = await second.acquire();
+      expect(secondAttempt, 'the second run is refused, not admitted alongside the first').toMatchObject({
+        acquired: false,
+        reason: 'contended',
+      });
+
+      // And the refusal must not have taken the first run's lock with it.
+      expect(observeHeld(boardDir.env).status, 'the holder still holds it after a refusal').toBe(1);
+
+      first.release();
+      expect(observeHeld(boardDir.env).status, 'and gives it back when it finishes').toBe(0);
+    } finally {
+      boardDir.cleanup();
+    }
+  });
+
+  it('names the branch and the pid, so `swarm status` says which checkout is running', () => {
+    const identity = new SwarmLock({ env: {} }).identity;
+    expect(identity).toMatch(/^e2e-run\/.+\/\d+$/);
+    expect(identity, 'the pid is what makes it per run').toContain(String(process.pid));
   });
 });

@@ -150,11 +150,13 @@ including when the run fails or the wrapper is interrupted. That path is
 live lock while a suite is in flight, so an agent can see who has it without
 asking.
 
-If another agent has it, the run **queues** rather than starting on top of it. It
+If another run has it, the run **queues** rather than starting on top of it. It
 prints the holder's name and waits; if the wait runs out, nothing runs and the
-command exits **4** — the board's own "file held by another agent" code, so
-`npm run swarm check e2e/.swarm-e2e-runner` and this wrapper agree on what 4
-means. Do the other work and run the same command again.
+command exits **4**. The two exit codes answer different questions and neither is a
+mistake: `swarm check <path>` exits **1** when the path is busy, which is what a
+shell gates on, while the board's own `hold` — and therefore this wrapper — exits
+**4** for "somebody else holds this file". Do the other work and run the same
+command again.
 
 | Variable           | Default | What it does                                            |
 | ------------------ | ------- | ------------------------------------------------------- |
@@ -164,10 +166,21 @@ means. Do the other work and run the same command again.
 | `E2E_SKIP_LOCK`    | unset   | `1` runs unsynchronized, loudly. Operator escape hatch. |
 
 `--no-lock` is the same as `E2E_SKIP_LOCK=1`. The lock is skipped automatically
-under `CI`, where one job owns one checkout and there is no board to talk to. If
-the board cannot be reached at all — outside a git checkout, or a Node without
-`node:sqlite` — the wrapper prints a **warning and runs anyway**: failing every
-suite on that machine would be worse than the collision the lock prevents.
+under `CI`, where one job owns one checkout outright — the board would be a fresh
+one-run-per-job database that no other job could see. If the board cannot be
+reached at all — outside a git checkout, or a Node without `node:sqlite` — the
+wrapper prints a **warning and runs anyway**: failing every suite on that machine
+would be worse than the collision the lock prevents. A malformed `E2E_LOCK_LEASE`
+is the opposite case and **stops the run**, because the board rejects it with the
+same exit code as a missing board and a typo in one variable must not silently turn
+the lock off.
+
+**The holder is a run, not a branch.** `swarm status` shows one `e2e-run/<branch>/<pid>`
+agent while a suite is in flight, and that is the useful reading: the branch says
+which checkout, the pid says which process. The board's identity is the branch and a
+branch never conflicts with itself, so two runs on one branch — a session and its own
+subagent — would otherwise both "acquire", and the second one's release would free
+the first.
 
 The lease is deliberately shorter than a full suite and renewed while the run
 lives. A file lock is never renewed by the board itself (`renewOwnClaims` only
@@ -217,13 +230,17 @@ PLAYWRIGHT_BASE_URL=https://staging.example.com npm run test:e2e
 
 ### Output
 
-Each run writes to `test-results/runs/<run-id>/` and
-`playwright-report/runs/<run-id>/`, and the wrapper prints the directory before
-the suite starts. Both parents are gitignored, and `npm run test:e2e:clean`
-removes them. A bare `npx playwright test` (or `npm run test:e2e:raw`) skips the
-wrapper and writes to the shared `test-results/` — that is the same as CI, where
-the JSON reporter's output is collected as an artifact, and it is why CI calls
-Playwright directly.
+Each run writes to `test-results/runs/<run-id>/`, and the wrapper prints that
+directory before the suite starts. `test-results/` is gitignored wholesale, and
+`npm run test:e2e:clean` removes it. A bare `npx playwright test` (or
+`npm run test:e2e:raw`) skips the wrapper and writes to the shared `test-results/`
+— that is the same as CI, where the JSON reporter's output is collected as an
+artifact, and it is why CI calls Playwright directly.
+
+The HTML report is **not** isolated, deliberately: `npm run test:e2e:report` is a
+bare `playwright show-report`, which resolves `playwright-report`, and a per-run
+folder would leave it with nothing to open. The report is a viewer; the failure
+PNGs and traces it draws from are the ones under `test-results/runs/<run-id>/`.
 
 The project defaults to the system Chrome channel (`channel: 'chrome'`), so
 install it once with:

@@ -542,7 +542,7 @@ and reuse is opt-in, so a warm server is now something you have to ask for. Sect
 are one family and three defects, not one defect three times: 9 is a server that is right and slow,
 10 is the wrong server, 11 is the right server serving code you did not write.
 
-## 10. An e2e mutation campaign run without a pinned port reports every mutation as green
+## 10. An e2e mutation campaign run without a pinned port reported every mutation as green
 
 **The trap, and the fix for it.** `playwright.config.ts` used to set
 `reuseExistingServer: false` only when `CI` or `PLAYWRIGHT_PORT` was set, so a bare
@@ -553,11 +553,12 @@ did nothing" is this, not a cache.
 
 **Reuse is now opt-in and `npm run test:e2e` no longer relies on the port being pinned.**
 `playwright.config.ts` reads `PLAYWRIGHT_REUSE_EXISTING_SERVER=1` (and nothing else) as the
-permission to attach to a server this run did not start, and `scripts/e2e-run.mjs` — which every
-`test:e2e*` script routes through — allocates a free port and sets `PLAYWRIGHT_PORT` for the run.
-So the two ways into this section are both narrower than they were: an agent using
-`npm run test:e2e` gets a port of its own without asking, and the remaining exposure is a bare
-`npx playwright test` (which is `npm run test:e2e:raw`, and is what CI runs).
+permission to attach to a server this run did not start, and the scripts that RUN a suite
+(`test:e2e`, `:headed`, `:ui`, `:debug`, `:update-baselines`) go through `scripts/e2e-run.mjs`,
+which allocates a free port, sets `PLAYWRIGHT_PORT`, and serializes suites with a swarm lock. The
+residual exposure is narrower than it was, and it fails loudly rather than green: a bare
+`npx playwright test` — `npm run test:e2e:raw`, and what CI runs — now starts its own server or
+dies on `--strictPort`. It can no longer report another checkout's code as a pass.
 
 **Why it is much worse for a mutation campaign.** A mutation campaign exists to answer "does this
 assertion actually assert anything?", and the answer it produces is a green run. A run that never
@@ -646,7 +647,8 @@ or mislocated. Until a failing run is captured, a fix here would be a guess.
 - `e2e/erase-fill-eyedropper.spec.ts` — the spec behind section 8, and the commit that hardened it
 - `e2e/helpers/canvas-helpers.ts:473,577,718` — the predicate, the poll loop and the sampler
 - `src/hooks/usePointerPosition.ts:194-198,214-223` — the validators whose refusal is silent
-- `scripts/e2e-run.mjs` — the wrapper every `test:e2e*` script routes through: the
+- `scripts/e2e-run.mjs` — the wrapper the scripts that RUN a suite route through
+  (`test:e2e`, `:headed`, `:ui`, `:debug`, `:update-baselines`): the
   `e2e/.swarm-e2e-runner` lock that serializes suites, the per-run port allocation and
   output directory, and the three outcomes of `SwarmLock.acquire`
 - `scripts/__tests__/e2e-run.test.mjs` — the only coverage of the lock, including a

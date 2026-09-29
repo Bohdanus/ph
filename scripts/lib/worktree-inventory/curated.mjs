@@ -656,7 +656,7 @@ export const CURATED = {
   },
   'e2e-swarm-lock': {
     summary:
-      'Serializes Playwright runs across agents: scripts/e2e-run.mjs takes the swarm lock e2e/.swarm-e2e-runner, allocates a free port per run and gives each run its own output directory, and every test:e2e* npm script routes through it. Makes playwright.config.ts server reuse opt-in and rewrites the e2e docs, AGENTS.md and TEST-FLAKES 10/11 to match.',
+      'Serializes Playwright runs across agents: scripts/e2e-run.mjs takes the swarm lock e2e/.swarm-e2e-runner, allocates a free port per run and gives each run its own output directory, and the scripts that run a suite route through it. Makes playwright.config.ts server reuse opt-in and rewrites the e2e docs, AGENTS.md, TEST-FLAKES 10/11 and .skills/photoshop-tool-creation.md to match.',
     note: 'Adds a wrapper the commit gate and CI do not run. The e2e job still calls npx playwright test directly, because a CI job owns its checkout and collects artifacts from the shared test-results/.',
   },
   'fix-e2e-findings': {
