@@ -12,8 +12,17 @@ type ToolTooltipProps = {
    * `ToolbarTool.name`, so a `figure` variant resolves to its own entry rather than to the
    * generic one, and the required prop is what stops a tile from quietly losing its
    * description because nobody passed one.
+   *
+   * `null` is for the one tile that stands for no tool at all: the three-dots tile, whose
+   * content is whichever tools the rail could not fit, so there is no single tool whose
+   * description would be true of it. It renders the label line and nothing else, which is
+   * the honest rendering — a borrowed description would describe whichever tool happened
+   * to be first in the overflow. The guarantee the required prop bought is kept by a test
+   * rather than by this type: `SidebarLeft.icon-state.test.tsx` asserts every TOOL tile
+   * passes a name, which is the check a required prop could not make — a required prop
+   * cannot tell a right name from a plausible wrong one.
    */
-  toolName: ToolName;
+  toolName: ToolName | null;
   shortcut?: string;
 };
 
@@ -41,8 +50,8 @@ const ToolTooltip = ({ children, label, toolName, shortcut }: ToolTooltipProps) 
   const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
   const tooltipId = `tool-tooltip-${label.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-')}`;
 
-  const description = toolTooltips[toolName];
-  const implementationNote = IMPLEMENTATION_NOTE[description.implementation];
+  const description = toolName === null ? null : toolTooltips[toolName];
+  const implementationNote = description === null ? undefined : IMPLEMENTATION_NOTE[description.implementation];
 
   useEffect(() => {
     return () => {
@@ -93,14 +102,18 @@ const ToolTooltip = ({ children, label, toolName, shortcut }: ToolTooltipProps) 
                 </kbd>
               )}
             </span>
-            <span className="font-normal leading-snug text-gray-300 dark:text-gray-700">{description.summary}</span>
-            {implementationNote && (
-              <span
-                className="font-normal text-[10px] uppercase tracking-[0.16em] text-amber-300 dark:text-amber-600"
-                data-testid="tool-tooltip-implementation-note"
-              >
-                {implementationNote}
-              </span>
+            {description !== null && (
+              <>
+                <span className="font-normal leading-snug text-gray-300 dark:text-gray-700">{description.summary}</span>
+                {implementationNote && (
+                  <span
+                    className="font-normal text-[10px] uppercase tracking-[0.16em] text-amber-300 dark:text-amber-600"
+                    data-testid="tool-tooltip-implementation-note"
+                  >
+                    {implementationNote}
+                  </span>
+                )}
+              </>
             )}
           </span>
         </AnchoredOverlay>

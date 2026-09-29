@@ -145,11 +145,18 @@ const tileRect = (left: number): DOMRect =>
  * not reach anything else in the suite, and it has to be installed after the render and
  * before the flyout mounts: the overlay measures its anchor in a layout effect on mount.
  *
+ * EVERY `<ul>` is walked, not just the first. The one-column rail renders one `<ul>` per
+ * toolbar section, so reading `querySelector('ul')` used to hand back section 0's tiles and
+ * nothing else: `leftOf('shape')` came back `undefined` and the placement assertion
+ * compared against `NaN`, which fails loudly. The louder failure is the lucky case — a
+ * reader who had stubbed a `<ul>` holding every tile, and a reader who had not, differ only
+ * in which assertions degrade to `not.toBe` rather than in which tiles are stubbed at all.
+ *
  * The returned reader maps a tile button to the x its group was given, so a test can state
  * the placement as "beside THAT tile" instead of a magic number.
  */
 const stubTileBoxes = (): ((tile: HTMLElement) => number) => {
-  const groups = Array.from(screen.getByTestId('left-toolbar-tools').querySelector('ul')!.children) as HTMLElement[];
+  const groups = Array.from(screen.getByTestId('left-toolbar-tools').querySelectorAll('ul > li')) as HTMLElement[];
   const leftByGroup = new Map<HTMLElement, number>();
 
   groups.forEach((group, index) => {

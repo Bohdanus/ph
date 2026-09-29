@@ -1,4 +1,13 @@
-import { type ChangeEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  type ChangeEvent,
+  type ComponentType,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useStore } from '../../contexts/StoreContext.tsx';
 import { useApp } from '../../hooks/useApp.ts';
 import AnchoredOverlay from './AnchoredOverlay.tsx';
@@ -8,6 +17,8 @@ import { slugifyToolLabel, toolbarMap, type ToolbarTool, type ToolbarToolGroup }
 import { useCurrentTool } from '../../contexts/useCurrentTool.tsx';
 import { descriptionKeyFor } from '../../tools/descriptions/tooltips.ts';
 import { useIsMobileViewport, useIsTabletViewport } from '../../hooks/useMediaQuery.ts';
+import { useToolbarOverflow } from './use-toolbar-overflow.ts';
+import type { ToolbarSlot } from './toolbar-overflow.ts';
 
 const TOOL_BUTTON_BASE_CLASS =
   'group relative flex h-11 w-11 items-center justify-center rounded-md border text-gray-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-1 focus:ring-offset-gray-100 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-200 dark:focus:ring-offset-gray-800';
@@ -24,7 +35,92 @@ const LayoutIcon = ({ singleColumn }: { singleColumn: boolean }) => (
   </span>
 );
 
+/**
+ * The three-dots tile: Photoshop's slot for the tools the rail is not showing.
+ *
+ * Photoshop calls it the Edit Toolbar tile and puts it below the tools, above the colour
+ * swatches; click-and-hold or right-click opens the flyout, which lists the Extra Tools
+ * alongside the Edit Toolbar command. This app has no Edit Toolbar command, so the flyout
+ * is nothing but the tools themselves — which is the whole point of it, and the reason
+ * its contents are every TOOL of a collapsed group rather than one entry per collapsed
+ * GROUP: a group is the unit the rail hides, but the nested tool is the unit the user
+ * reaches for, and hiding a six-entry group behind a single entry would make the Pencil
+ * unreachable for as long as the window is short.
+ */
+const MoreToolsIcon = () => (
+  <svg
+    aria-hidden="true"
+    viewBox="0 0 24 24"
+    className="h-6 w-6 fill-none stroke-current"
+    strokeWidth={2.5}
+    strokeLinecap="round"
+  >
+    <circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+    <circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none" />
+  </svg>
+);
+
+const MORE_TOOLS_LABEL = 'More Tools';
+
+/**
+ * The three-dots tile's test id, and it is NOT `tool-button-<name>`.
+ *
+ * A tool tile's id is the tool, because that is what every spec and every helper selects
+ * on. The three-dots tile has no tool, so minting one would have `getByTestId('tool-button-…')`
+ * match a tile that selects something else — the same conflation that made the tile's
+ * `primaryTool` a liability in the first place. A name of its own also lets a helper ask
+ * "is this tool on the rail, or only in the overflow" without a regex over ids.
+ */
+const OVERFLOW_TILE_TESTID = 'tool-overflow-tile';
+
+/** The group key in the one-column rail, which is the one the toolbar map's order reads as. */
+const oneColumnGroupKey = (sectionIndex: number, groupIndex: number): string => `${sectionIndex}-${groupIndex}`;
+
+/** The group key in the two-column rail, prefixed so the two layouts cannot collide. */
+const twoColumnGroupKey = (groupIndex: number): string => `two-column-${groupIndex}`;
+
+/** The three-dots tile's own key. Not a number, so no `sectionIndex-groupIndex` can be it. */
+const OVERFLOW_GROUP_KEY = 'overflow';
+
+/**
+ * The three-dots tile's identity, module-level.
+ *
+ * Module-level because a fresh object per render is a fresh `Icon` component type, which
+ * React unmounts and remounts on every commit — the tile would lose its flyout anchor, and
+ * `hasFlyout`'s corner marker would be re-evaluated against a new component type, on a
+ * render that has no reason to touch either.
+ */
+const OVERFLOW_IDENTITY: ToolGroupIdentity = { label: MORE_TOOLS_LABEL, Icon: MoreToolsIcon };
+
 const toolbarGroups = toolbarMap.flat();
+
+/**
+ * What a tile draws, when the tile is not one specific tool.
+ *
+ * The three-dots tile is the only user: it stands for whichever tools did not fit, so its
+ * icon and its name are the tile's own rather than a tool's. Left to itself `renderToolGroup`
+ * would take the first member of its list as the tile's identity, which for the overflow
+ * tile is whichever tool happened to be collapsed first.
+ */
+type ToolGroupIdentity = {
+  label: string;
+  Icon: ComponentType;
+};
+
+/**
+ * One `<li>` of the tool grid, which is either a group or the three-dots tile.
+ *
+ * Modelled as an entry in the SAME list the groups are, rather than as a separate element
+ * placed after them, for one reason that is about the code rather than the screen: the
+ * `react-hooks/refs` rule reports a call to `renderToolGroup` made directly in the render
+ * path — it reaches refs through the tile's `ref` callback and its press handlers — and
+ * treats a call inside a `.map` callback as the library's business rather than the
+ * component's. Every group tile is mapped, and a three-dots tile rendered as a sibling
+ * expression is not, so expressing the tile as an entry keeps one code path for every tile
+ * and satisfies the rule without a suppression.
+ */
+type ToolbarEntry = { kind: 'group'; group: ToolbarToolGroup; key: string } | { kind: 'overflow' };
 
 const SidebarLeft = () => {
   const [{ hasImage, toolName, color, backgroundColor }, dispatch] = useStore();
@@ -32,13 +128,18 @@ const SidebarLeft = () => {
   const { toolArgs, patchToolArgs } = useCurrentTool();
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [primaryTools, setPrimaryTools] = useState<Record<string, ToolbarTool>>({});
-  // Two columns is the default. `min-h-0 overflow-y-auto` on the `<aside>` is what actually
-  // stops the toolbar from dictating the canvas: the aside's min-content height would otherwise
-  // become the grid row floor and drag the `h-full` canvas up (main's responsive work added that,
-  // and the page no longer outgrows a 720px viewport as a result). With the row bounded, the
-  // canvas keeps the same height in both layouts, so a single column only means the toolbar
-  // itself scrolls — which it now can, and which two columns mostly avoids.
-  const [isSingleColumn, setIsSingleColumn] = useState(false);
+  // One column is the DEFAULT, because that is Photoshop's default: the double-chevron at the
+  // top of the Tools panel switches to two columns to save vertical room, which is only
+  // coherent if one column is where you start. It is also the layout that makes overflow
+  // possible, which is what the three-dots tile below is for.
+  //
+  // `min-h-0 overflow-y-auto` on the `<aside>` is what stops the toolbar from dictating the
+  // canvas: the aside's min-content height would otherwise become the grid row floor and drag
+  // the `h-full` canvas up (main's responsive work added that, and the page no longer outgrows a
+  // 720px viewport as a result). The rail still owns a scrollbar as a backstop, but the tiles
+  // themselves are fitted to the space they have rather than being cut off, so in practice
+  // nothing in the rail scrolls any more.
+  const [isSingleColumn, setIsSingleColumn] = useState(true);
   const isTablet = useIsTabletViewport();
   const isMobile = useIsMobileViewport();
   const longPressFlyoutTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -81,6 +182,82 @@ const SidebarLeft = () => {
   const [lastRailLayout, setLastRailLayout] = useState(railLayout);
   if (lastRailLayout !== railLayout) {
     setLastRailLayout(railLayout);
+    setOpenGroup(null);
+    setFlyoutAnchor(null);
+  }
+
+  // The tablet band has no room for a 108px two-column rail: at 768px that plus the layers
+  // panel leaves the canvas 410px. The two-column choice is a desktop preference, so below
+  // `lg` the rail is forced to one column and the toggle is hidden rather than shown
+  // inert. This is the one place a media query has to reach the DOM rather than a class,
+  // because the two modes are different markup (one `<ul>` per section, versus a single
+  // two-column `<ul>`) and not a restyle of the same tree.
+  const isSingleColumnMode = isTablet || isSingleColumn;
+
+  // The overflow machinery, above the `hasImage` early return for the ordinary reason: a
+  // hook called after a conditional return is called a different number of times once the
+  // document appears, and the first image to load would then be a hook-order violation
+  // rather than a render.
+
+  /**
+   * The tool grid as a list of ROWS, which is the unit that actually occupies height.
+   *
+   * A row is a group in the one-column rail and a PAIR of groups in the two-column rail,
+   * because that grid auto-flows into two columns: two groups share a row there, so a
+   * collapse that hid one of them would leave a hole in the middle of the grid. The
+   * two-column rows all report section `0` because that grid interleaves the sections into
+   * one list with no separators between them, and a separator charged to a row that has
+   * none is height the fit would never give back.
+   */
+  const toolbarSlots = useMemo<ToolbarSlot[]>(() => {
+    if (isSingleColumnMode) {
+      return toolbarMap.flatMap((section, sectionIndex) =>
+        section.map((_group, groupIndex) => ({
+          keys: [oneColumnGroupKey(sectionIndex, groupIndex)],
+          sectionIndex,
+        }))
+      );
+    }
+    const rows: { keys: string[]; sectionIndex: number }[] = [];
+    toolbarGroups.forEach((_group, groupIndex) => {
+      const key = twoColumnGroupKey(groupIndex);
+      const last = rows[rows.length - 1];
+      if (last !== undefined && last.keys.length < 2) last.keys.push(key);
+      else rows.push({ keys: [key], sectionIndex: 0 });
+    });
+    return rows;
+  }, [isSingleColumnMode]);
+
+  const { attachSlot, attachTools, plan: overflowPlan } = useToolbarOverflow(toolbarSlots);
+  const collapsedGroups = useMemo(() => new Set(overflowPlan.collapsedKeys), [overflowPlan]);
+
+  /**
+   * Every TOOL of every collapsed group, which is what the three-dots flyout lists.
+   *
+   * A group is the unit the rail hides, and a tool is the unit the user reaches for, so the
+   * flyout lists tools: collapsing the six-entry brush group behind one "Brush Tool" entry
+   * would put the Pencil out of reach for as long as the window is short, which is the
+   * defect the two-column rail was invented to avoid and the three-dots tile must not
+   * reintroduce. Each tool belongs to exactly one group, so nothing here is already a tile.
+   */
+  const overflowTools = useMemo(() => {
+    const tools: ToolbarTool[] = [];
+    toolbarMap.forEach((section, sectionIndex) => {
+      section.forEach((group, groupIndex) => {
+        if (!collapsedGroups.has(oneColumnGroupKey(sectionIndex, groupIndex))) return;
+        tools.push(...group);
+      });
+    });
+    return tools;
+  }, [collapsedGroups]);
+
+  // A collapse that swallows the open group's tile unmounts the tile, and with it the
+  // flyout. `openGroup` would keep naming a group that is no longer rendered, and the moment
+  // the window grew back the tile would mount with `isOpen` already true — the flyout
+  // reopening itself with nothing the user did to open it. The same defect the `lg`
+  // crossing above has, reached a third way, and fixed the same way: derived from the state
+  // that changed, adjusted during render.
+  if (openGroup !== null && collapsedGroups.has(openGroup)) {
     setOpenGroup(null);
     setFlyoutAnchor(null);
   }
@@ -226,7 +403,7 @@ const SidebarLeft = () => {
     goToTool(tool.name);
   };
 
-  const renderToolGroup = (group: ToolbarToolGroup, groupIndex: string) => {
+  const renderToolGroup = (group: ToolbarToolGroup, groupIndex: string, identity?: ToolGroupIdentity) => {
     const hasFlyout = group.length > 1;
     // Photoshop-style contract for grouped tools:
     // - the first item in a flyout group is the default tool for that top-level tile.
@@ -237,8 +414,15 @@ const SidebarLeft = () => {
     //   feel like a transient visual state rather than a deliberate selection action.
     // This is why the group button uses the default tool as its visible identity, while the flyout remains a
     // long-press-only submenu instead of a hover-driven popover.
-    const primaryTool = primaryTools[groupIndex] ?? group[0];
-    const Icon = getToolIcon(primaryTool);
+    //
+    // The three-dots tile is the one caller that passes an `identity`, and it is the case the
+    // rule above cannot describe: it stands for no tool, so "the first item is the default"
+    // has nothing to select. Its identity is the tile's own and it is never rewritten by a
+    // pick from its flyout — `identity` present is the signal for both, because a tile that
+    // has a fixed icon must not start wearing a tool's icon after the first choice.
+    const primaryTool = identity === undefined ? (primaryTools[groupIndex] ?? group[0]) : group[0];
+    const Icon = identity?.Icon ?? getToolIcon(primaryTool);
+    const tileLabel = identity?.label ?? primaryTool.label;
     const isOpen = openGroup === groupIndex;
 
     return (
@@ -254,14 +438,14 @@ const SidebarLeft = () => {
         }}
       >
         <ToolTooltip
-          label={primaryTool.label}
-          shortcut={primaryTool.shortcut}
-          toolName={descriptionKeyFor(primaryTool.name, primaryTool.figure)}
+          label={tileLabel}
+          shortcut={identity === undefined ? primaryTool.shortcut : undefined}
+          toolName={identity === undefined ? descriptionKeyFor(primaryTool.name, primaryTool.figure) : null}
         >
           <button
             aria-expanded={hasFlyout ? isOpen : undefined}
             aria-haspopup={hasFlyout ? 'menu' : undefined}
-            aria-label={primaryTool.label}
+            aria-label={tileLabel}
             aria-pressed={group.some((tool) => tool.name === toolName)}
             className={`${TOOL_BUTTON_BASE_CLASS} ${group.some((tool) => tool.name === toolName) ? TOOL_BUTTON_ACTIVE_CLASS : TOOL_BUTTON_INACTIVE_CLASS}`}
             onClick={() => {
@@ -337,9 +521,13 @@ const SidebarLeft = () => {
               clearLongPressFlyout();
             }}
             type="button"
-            data-testid={`tool-button-${primaryTool.name}`}
+            data-testid={identity === undefined ? `tool-button-${primaryTool.name}` : OVERFLOW_TILE_TESTID}
+            // Read by the fit measurement, which is why every tile carries it and not only
+            // the tool tiles: a rail whose first section has collapsed away must still be
+            // able to report a tile height, and the three-dots tile is then the only one left.
+            data-toolbar-tile=""
           >
-            <Icon title={primaryTool.label} />
+            <Icon title={tileLabel} />
             {hasFlyout && (
               <span
                 aria-hidden="true"
@@ -352,7 +540,13 @@ const SidebarLeft = () => {
         {hasFlyout && isOpen && flyoutAnchor?.groupIndex === groupIndex && (
           <AnchoredOverlay align="start" anchor={flyoutAnchor.element} measureKey={groupIndex}>
             <ul
-              aria-label={group.some((tool) => tool.figure) ? 'Shape tools' : `${primaryTool.label} tools`}
+              aria-label={
+                identity !== undefined
+                  ? 'More tools'
+                  : group.some((tool) => tool.figure)
+                    ? 'Shape tools'
+                    : `${primaryTool.label} tools`
+              }
               className="pointer-events-auto min-w-48 list-none rounded-lg border border-gray-300 bg-gray-100 p-1.5 shadow-xl dark:border-gray-600 dark:bg-gray-800"
               data-toolbar-flyout={groupIndex}
               onKeyDown={(event) => {
@@ -415,7 +609,13 @@ const SidebarLeft = () => {
                           : 'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700'
                       }`}
                       onClick={() => {
-                        setPrimaryTools((current) => ({ ...current, [groupIndex]: tool }));
+                        // The three-dots tile is excluded: its identity is the tile's, so a
+                        // pick must not promote anything to be its icon. Every other tile
+                        // keeps the promotion, which is what makes a chosen nested tool
+                        // survive the next collapse into the three-dots tile and expand back.
+                        if (identity === undefined) {
+                          setPrimaryTools((current) => ({ ...current, [groupIndex]: tool }));
+                        }
                         selectTool(tool);
                         // No focus restore: a click here may be a mouse pick, which has
                         // already put focus where the user aimed. The keyboard's Enter path
@@ -442,14 +642,54 @@ const SidebarLeft = () => {
 
   if (!hasImage) return;
 
-  // The tablet band has no room for a 108px two-column rail: at 768px that plus the layers
-  // panel leaves the canvas 410px. The two-column choice is a desktop preference, so below
-  // `lg` the rail is forced to one column and the toggle is hidden rather than shown
-  // inert. This is the one place a media query has to reach the DOM rather than a class,
-  // because the two modes are different markup (one `<ul>` per section, versus a single
-  // two-column `<ul>`) and not a restyle of the same tree.
-  const isSingleColumnMode = isTablet || isSingleColumn;
   const toolbarWidth = isSingleColumnMode ? '3.5rem' : '6.75rem';
+
+  /**
+   * The one-column rail, one `<ul>` per section, minus whatever collapsed, with the
+   * three-dots tile as the last entry of the section that holds the last visible row.
+   *
+   * The tile goes INSIDE that section's grid rather than in a grid of its own, so the space
+   * it occupies is exactly the row gap plus one tile that the fit reserved for it. A tile in
+   * its own grid would also carry the tools box's per-child border and padding, and the fit
+   * would be wrong by however much that is.
+   *
+   * A section that loses every one of its groups still renders its `<ul>`, empty. That is
+   * not tidiness: an empty `<ul>` occupies zero height, so the distance from the section
+   * before it to the section after it is unchanged, and that distance is how the fit
+   * measures a separator. Dropping the element instead would move every later section up
+   * and the measurement would read a separator that is not there. It is given no separator
+   * classes of its own, so it costs no pixels and draws no stray hairline.
+   */
+  const singleColumnSections: { sectionIndex: number; entries: ToolbarEntry[] }[] = toolbarMap.map(
+    (section, sectionIndex) => ({
+      sectionIndex,
+      entries: section
+        .map((group, groupIndex) => ({ group, key: oneColumnGroupKey(sectionIndex, groupIndex) }))
+        .filter(({ key }) => !collapsedGroups.has(key))
+        .map(({ group, key }): ToolbarEntry => ({ kind: 'group', group, key })),
+    })
+  );
+  if (overflowPlan.showOverflowTile && isSingleColumnMode) {
+    // The last visible ROW, then the SECTION it belongs to. Rows and sections are different
+    // axes — one column has one row per group, so row 12 is in section 4 — and using one for
+    // the other is how the tile ends up pushed off the end of the array.
+    const lastVisibleRow = toolbarSlots[overflowPlan.fittedThrough - 1];
+    const target = lastVisibleRow?.sectionIndex ?? singleColumnSections.length - 1;
+    singleColumnSections[target].entries.push({ kind: 'overflow' });
+  }
+
+  /**
+   * The two-column rail, one grid, minus whatever collapsed, with the tile last for the
+   * same reason. Filtering rather than slicing is what keeps a collapsed group from leaving
+   * a hole in the middle of the grid — though the fit never produces a half-collapsed row,
+   * so in practice the two agree.
+   */
+  const twoColumnEntries: ToolbarEntry[] = [
+    ...toolbarGroups
+      .map((group, groupIndex) => ({ kind: 'group' as const, group, key: twoColumnGroupKey(groupIndex) }))
+      .filter((entry) => !collapsedGroups.has(entry.key)),
+    ...(overflowPlan.showOverflowTile ? [{ kind: 'overflow' as const }] : []),
+  ];
 
   return (
     <aside
@@ -457,11 +697,29 @@ const SidebarLeft = () => {
       data-testid="left-sidebar"
       style={{ width: toolbarWidth }}
     >
-      {/* `min-h-full`, not `h-full`: the aside now scrolls, and `h-full` on a child of a
-          scroll container resolves against the container's own height, which would leave
-          the colour swatches unpainted at the bottom of a long rail. */}
-      <div className="flex min-h-full flex-col items-center px-3 py-4">
-        <div className="mb-2 flex w-full justify-end px-1">
+      {/* `h-full`, and that is the change that makes the fit possible. A flex column sized
+          by its CONTENT has no height for `flex-1` to divide: the tools slot would be handed
+          whatever the tools happened to need, so the fit would measure its own output and
+          agree with it. Giving the column the rail's own height makes the slot the leftover
+          after the chrome, which is a number nothing inside the slot can influence.
+
+          THE ONE ASSUMPTION A MOVABLE PANEL WOULD CHANGE, and the seam for it. This says the
+          rail is a grid cell that fills its row, which is true of a docked rail and false of
+          a panel the user has dragged off the left edge. Everything the overflow rule does
+          is already written against `left-toolbar-slot` — its height, and nothing else — and
+          never against `innerHeight` or the rail's own box, so a floating panel with a height
+          of its own needs exactly one change: the column stops being `h-full` and the slot
+          stops being `flex-1`, and gets that height instead. Nothing in `toolbar-overflow.ts`
+          or `use-toolbar-fit.ts` moves, and `SidebarLeft.overflow.test.tsx` already asserts
+          the property that makes this true — a different window at the same slot height does
+          not change the fit.
+
+          The rail keeps `overflow-y-auto`, but the tiles are now fitted to the slot rather
+          than cut off, so nothing in it scrolls: the one case the scrollbar still answers is
+          a window so short that the colour swatches alone do not fit, which no layout of
+          this rail can serve anyway. */}
+      <div className="flex h-full flex-col items-center px-3 py-4">
+        <div className="mb-2 flex w-full shrink-0 justify-end px-1">
           {!isTablet && (
             <button
               aria-label={isSingleColumn ? 'Use two-column toolbar' : 'Use one-column toolbar'}
@@ -480,29 +738,51 @@ const SidebarLeft = () => {
           )}
         </div>
         <div
-          className={`rounded-lg border border-gray-300 bg-gray-200/70 p-1.5 shadow-inner dark:border-gray-700 dark:bg-gray-950/35 ${
-            isSingleColumnMode ? 'w-14' : 'w-[6.75rem]'
-          }`}
-          data-testid="left-toolbar-tools"
+          // `overflow-y-auto`, not `overflow-hidden`, and the difference is the difference
+          // between a tile that is somewhere else and a tile that is gone. The fit already
+          // keeps the tiles inside the slot — it reserves a row for the three-dots tile and
+          // then fills no more than the 80% budget — so this scrollbar never appears. It is
+          // here so that IF the arithmetic is ever wrong, the tools it misjudged are still
+          // reachable by scrolling rather than clipped out of existence. A rail that could
+          // hide a tool is a worse failure than a rail that scrolls.
+          className="flex min-h-0 w-full flex-1 justify-center overflow-y-auto"
+          data-testid="left-toolbar-slot"
+          ref={attachSlot}
         >
-          {isSingleColumnMode ? (
-            toolbarMap.map((section, sectionIndex) => (
-              <ul
-                className={`grid list-none grid-cols-1 gap-1.5 ${sectionIndex > 0 ? 'mt-1.5 border-t border-gray-300 pt-1.5 dark:border-gray-700' : ''}`}
-                key={`toolbar-section-${sectionIndex}`}
-              >
-                {section.map((group, groupIndex) => renderToolGroup(group, `${sectionIndex}-${groupIndex}`))}
+          <div
+            className={`rounded-lg border border-gray-300 bg-gray-200/70 p-1.5 shadow-inner dark:border-gray-700 dark:bg-gray-950/35 ${
+              isSingleColumnMode ? 'w-14' : 'w-[6.75rem]'
+            }`}
+            data-testid="left-toolbar-tools"
+            ref={attachTools}
+          >
+            {isSingleColumnMode ? (
+              singleColumnSections.map(({ sectionIndex, entries }) => (
+                <ul
+                  className={`grid list-none grid-cols-1 gap-1.5 ${entries.length > 0 && sectionIndex > 0 ? 'mt-1.5 border-t border-gray-300 pt-1.5 dark:border-gray-700' : ''}`}
+                  key={`toolbar-section-${sectionIndex}`}
+                >
+                  {entries.map((entry) =>
+                    entry.kind === 'overflow'
+                      ? renderToolGroup(overflowTools, OVERFLOW_GROUP_KEY, OVERFLOW_IDENTITY)
+                      : renderToolGroup(entry.group, entry.key)
+                  )}
+                </ul>
+              ))
+            ) : (
+              <ul className="grid list-none grid-cols-2 gap-1.5">
+                {twoColumnEntries.map((entry) =>
+                  entry.kind === 'overflow'
+                    ? renderToolGroup(overflowTools, OVERFLOW_GROUP_KEY, OVERFLOW_IDENTITY)
+                    : renderToolGroup(entry.group, entry.key)
+                )}
               </ul>
-            ))
-          ) : (
-            <ul className="grid list-none grid-cols-2 gap-1.5">
-              {toolbarGroups.map((group, groupIndex) => renderToolGroup(group, `two-column-${groupIndex}`))}
-            </ul>
-          )}
+            )}
+          </div>
         </div>
-        <hr className="my-3 border-gray-300 dark:border-gray-700" />
+        <hr className="my-3 shrink-0 border-gray-300 dark:border-gray-700" />
 
-        <div className="flex flex-col items-center mt-4">
+        <div className="flex shrink-0 flex-col items-center mt-4">
           <div className="relative w-14 h-14" data-testid="color-pickers">
             <div
               className="absolute top-4 left-4 w-8 h-8 cursor-pointer rounded border border-gray-400 dark:border-gray-500 shadow-sm"
@@ -549,7 +829,7 @@ const SidebarLeft = () => {
           </button>
         </div>
 
-        <hr className="my-3 border-gray-300 dark:border-gray-700" />
+        <hr className="my-3 shrink-0 border-gray-300 dark:border-gray-700" />
         {/*<Zoom />*/}
       </div>
     </aside>
