@@ -51,8 +51,16 @@ import {
  * 30s to be reported instead of 5s, which is bounded and is the price of tests
  * that are allowed to spawn processes.
  *
- * A per-test `it(name, fn, timeout)` argument still wins over this, and the two
- * tests here that already declare one keep it.
+ * A per-test `it(name, fn, timeout)` argument still wins over this, which is how
+ * the two tests in `worktree-inventory.test.mjs` that read git in every worktree
+ * keep their declared `60_000`. This file declares none of its own, so 30s is
+ * what every test in it gets; a test that ever needs longer should say so on
+ * itself rather than by raising this.
+ *
+ * The budget is scoped to THIS file, which was checked rather than assumed: a 7s
+ * body in a sibling file with no declaration still died at the 5s default while
+ * running in the same run as this one. So raising it here buys nothing outside
+ * here, and cannot be quietly masking a slow test somewhere else.
  */
 vi.setConfig({ testTimeout: 30_000 });
 
