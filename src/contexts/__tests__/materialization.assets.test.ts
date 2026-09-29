@@ -774,6 +774,52 @@ describe('materialization ownership of borrowed rasters', () => {
   });
 });
 
+describe('materialization affine composition', () => {
+  // `operationAffine` (`src/contexts/materialization.ts:109-116`) folds every retained
+  // affine into ONE matrix with `multiplyAffineTransforms(operation.transform, transform)`
+  // — the newest premultiplied onto the accumulated one. This is the only test in the tree
+  // that composes two affines, and the order is the whole point: it is the difference
+  // between folding newest-first (translate, then scale → e=20, f=40) and folding
+  // oldest-first (scale, then translate → e=10, f=20). A `toEqual` on the transform alone
+  // would separate them; a count of transform calls would not, because both orders emit
+  // exactly one `ctx.transform` call.
+  //
+  // The numbers below are derived from `multiplyAffineTransforms` (`affine-transform.ts:59-68`):
+  //   step 1: op = T(1,0,0,1,e=10,f=20) * I            = (1,0,0,1,e=10,f=20)
+  //   step 2: op = S(2,0,0,2,e=0,f=0)  * T             = (2,0,0,2, e=2·10+0·20+0 = 20, f=0·10+2·20+0 = 40)
+  // and from `getAffineBounds` (`affine-transform.ts:101-123`) over a 10x10 size, whose four
+  // transformed corners are (20,40) (40,40) (40,60) (20,60) → x 20..40, y 40..60.
+  it('composes two retained affine operations newest-premultiplied into a single transform', async () => {
+    const registry = new AssetRegistry();
+    const affine = (transform: { a: number; b: number; c: number; d: number; e: number; f: number }) =>
+      ({
+        kind: 'apply-affine-transform',
+        layerId: 'layer-1',
+        transform: Object.freeze(transform),
+      }) as DurableOperation;
+
+    const layer = makeLayer('layer-1', blankSource(10, 10), { x: 0, y: 0, width: 10, height: 10 }, [
+      // translate(10, 20)
+      affine({ a: 1, b: 0, c: 0, d: 1, e: 10, f: 20 }),
+      // scale(2, 2)
+      affine({ a: 2, b: 0, c: 0, d: 2, e: 0, f: 0 }),
+    ]);
+
+    const result = await materializeLayer(layer, makeRequest(registry));
+
+    // One composed matrix, and it is the newest-premultiplied one. The oldest-first
+    // ordering (A·B) would read [2, 0, 0, 2, 10, 20] here.
+    const transformCalls = recordedContexts.flatMap((ctx) => vi.mocked(ctx.transform).mock.calls);
+    expect(transformCalls).toEqual([[2, 0, 0, 2, 20, 40]]);
+
+    // The presentation bounds follow the composed matrix, offset from the layer origin.
+    expect(result.bounds).toEqual({ x: 20, y: 40, width: 20, height: 20 });
+
+    result.lease.release();
+    registry.shutdown();
+  });
+});
+
 describe('materialization document frame presentation', () => {
   it('frames the presentation into the requested document frame bounds', async () => {
     const registry = new AssetRegistry();

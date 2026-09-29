@@ -118,19 +118,67 @@ describe('replayDurableDocument layer operation semantics (P1.8)', () => {
   });
 
   it('remove-layer drops the layer at the tip and retains it at prior cursors', () => {
+    // The previous fixture converted a `REMOVE_ACTION` for a layer the baseline
+    // never contained — `documentSource` below holds only `layer-1` — so the
+    // delete was a silent no-op and the single assertion read a DIFFERENT,
+    // surviving layer. The name promised a tip-versus-prior-cursor comparison
+    // and delivered neither.
+    //
+    // The fixture is now a genuine create-then-remove, so the removal has
+    // something to remove at the tip and something it reveals before it. The
+    // shapes and the registry scope follow the create/remove pair below.
     const registry = new AssetRegistry();
-    const document = convert(registry, {
-      id: 'remove-second',
-      actionName: REMOVE_ACTION,
-      layerId: layer2Id,
-    });
+    const document = legacyHistoryToDurable(
+      [
+        {
+          id: 'baseline',
+          actionName: OPEN_DOCUMENT_ACTION,
+          layerId,
+          documentSource: {
+            layers: { [layerId]: createBaselineLayer() },
+            size: initialSize,
+            frame: baselineFrame,
+          },
+        },
+        {
+          id: 'add-layer',
+          actionName: NEW_LAYER_ACTION,
+          layerId: layer2Id,
+          layerSource: blankLayerSource(layerPos),
+        },
+        {
+          id: 'remove-layer',
+          actionName: REMOVE_ACTION,
+          layerId: layer2Id,
+        },
+      ],
+      { documentId: 'rm-tip-test', registry }
+    ).document;
 
-    // Baseline has layer-1; no second layer to remove — but the operation
-    // still appears in history and must execute without crashing.
-    const replay = replayDurableDocument(document);
-    expect(replay.layers[layerId]).toBeDefined();
-    // Removing a non-existent layer is a no-op, not a crash.
-    void document;
+    // Cursor 0: the create has run, so the layer exists — and it is the active
+    // one, because `create-layer` is what sets `activeLayerId` in the reducer.
+    const atCreate = replayDurableDocument(document, 0);
+    expect(atCreate.layers[layer2Id]).toBeDefined();
+    expect(atCreate.activeLayerId).toBe(layer2Id);
+
+    // Cursor 1, the tip: the remove has run, the layer is gone, and
+    // `activeLayerId` fell back to the remaining layer rather than dangling.
+    const atTip = replayDurableDocument(document, 1);
+    expect(atTip.layers[layer2Id]).toBeUndefined();
+    expect(atTip.layers[layerId]).toBeDefined();
+    expect(atTip.activeLayerId).toBe(layerId);
+
+    // Replaying BACK to cursor 0 brings the layer back, identical to the
+    // forward read: the tip replay above left no residue, so "retained at prior
+    // cursors" is a property of the reducer and not of call ordering.
+    const backToCreate = replayDurableDocument(document, 0);
+    expect(backToCreate.layers[layer2Id]).toBeDefined();
+    expect(backToCreate).toEqual(atCreate);
+
+    // And the tip still reads the same after the backward replay.
+    expect(replayDurableDocument(document, 1)).toEqual(atTip);
+
+    registry.shutdown();
   });
 
   it('remove-layer drops an existing layer when it was created earlier', () => {

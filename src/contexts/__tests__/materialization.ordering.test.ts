@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AssetRegistry } from '../asset-registry.ts';
 import type { BitmapSource } from '../general-types.ts';
@@ -116,6 +116,18 @@ function makeRequest(registry: AssetRegistry, signal?: AbortSignal): Materializa
     ...(signal ? { signal } : {}),
   };
 }
+
+/**
+ * Every `vi.spyOn` in this file is undone here, once, at file scope — the same
+ * shape `materialization.assets.test.ts` already uses. The setup file installs
+ * its own `HTMLCanvasElement.prototype.getContext` spy at module load and again
+ * in every `beforeEach` (`src/test/setup.ts:353-363`), and neither
+ * `vitest.config.ts` nor the setup's `afterEach` restores mocks, so without this
+ * the file leaks its own instrumentation forward.
+ */
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('materializeLayer safety (P0.3)', () => {
   it('rejects cleanly for a raster source with an unknown asset id', async () => {
@@ -412,6 +424,22 @@ describe('materialization cache key determinism (P0.6)', () => {
 });
 
 describe('materialization operation ordering (P1.10)', () => {
+  // A tripwire, kept releasable. The production defect is out of scope here, so the
+  // test stays `it.fails`; what this change fixes is that the pin could never be
+  // released, because the test could only ever have passed by accident:
+  //
+  // 1. The cleanup used to be a `.mockRestore()` on `HTMLCanvasElement.prototype.getContext`
+  //    captured BEFORE `vi.spyOn` replaced it. That captured value is not plain jsdom —
+  //    the setup file's own spy is already on the prototype — so the call does not
+  //    throw, and it silently restores plain jsdom over the global canvas stub for
+  //    everything after it. (Measured, not assumed: `_isMockFunction` is `true` on the
+  //    capture, the call returns normally, and afterwards the prototype's `getContext`
+  //    has neither `mockRestore` nor `_isMockFunction` and answers `null` for `('2d')`.)
+  //    Cleanup is now the file-level `afterEach` above.
+  // 2. A positive control now runs first, so a run in which the instrumentation is
+  //    still dead fails legibly on the instrumentation instead of on an ambiguous
+  //    transform count of zero. Fixing that is `createCanvas` reaching the DOM branch,
+  //    at which point the only thing left to do is delete `it.fails`.
   it.fails('applies interleaved affine and filter operations in original order, not grouped by type', async () => {
     // BUG: materializeLayer groups all apply-affine-transform operations into a
     // single ctx.transform call and all apply-filter operations into a single
@@ -422,20 +450,30 @@ describe('materialization operation ordering (P1.10)', () => {
     const { bitmap } = createOwnedBitmap(100, 80);
     const assetId = registry.registerBaseline('document-a', bitmap, { ownership: 'adopt' });
 
-    const transformSpy = vi.fn();
-    const drawImageCalls: Array<{ filter: string }> = [];
+    // One record per context handed out, so the positive control below can count
+    // contexts and the ordering assertions can read the recorded calls.
+    const recordedContexts: Array<{
+      transforms: unknown[][];
+      drawImageCalls: Array<{ filter: string }>;
+    }> = [];
 
-    const originalGetContext = HTMLCanvasElement.prototype.getContext;
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (this: HTMLCanvasElement) {
+      const record: { transforms: unknown[][]; drawImageCalls: Array<{ filter: string }> } = {
+        transforms: [],
+        drawImageCalls: [],
+      };
+      recordedContexts.push(record);
       return {
         canvas: this,
         save: vi.fn(),
         restore: vi.fn(),
         translate: vi.fn(),
-        transform: transformSpy,
+        transform: (...args: unknown[]) => {
+          record.transforms.push(args);
+        },
         setLineDash: vi.fn(),
         drawImage: vi.fn(() => {
-          drawImageCalls.push({ filter: '' });
+          record.drawImageCalls.push({ filter: '' });
         }),
         clip: vi.fn(),
         createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
@@ -443,7 +481,7 @@ describe('materialization operation ordering (P1.10)', () => {
           return '';
         },
         set filter(value: string) {
-          drawImageCalls.push({ filter: value });
+          record.drawImageCalls.push({ filter: value });
         },
         strokeStyle: '',
         fillStyle: '',
@@ -486,16 +524,33 @@ describe('materialization operation ordering (P1.10)', () => {
     ];
 
     const layer = makeRasterLayer('layer-1', assetId, 100, 80, operations);
-    await materializeLayer(layer, makeRequest(registry));
 
-    // If applied in original order, there would be 2 separate transform calls
-    // (one per affine) with a filter set between them.
-    // Current code: 1 combined transform call + 1 combined filter assignment.
-    expect(transformSpy).toHaveBeenCalledTimes(2);
-    expect(drawImageCalls.filter((c) => c.filter !== '').length).toBe(2);
+    try {
+      await materializeLayer(layer, makeRequest(registry));
 
-    (originalGetContext as unknown as { mockRestore: () => void }).mockRestore();
-    registry.shutdown();
+      // POSITIVE CONTROL, first on purpose. `createCanvas`
+      // (`src/contexts/materialization.ts:52-63`) returns the global `OffscreenCanvas`
+      // at line 55 and never reaches the `document.createElement('canvas')` branch at
+      // line 57, so the spy above fires zero times today. Asserting the count is
+      // non-zero BEFORE the ordering counts turns a bare "expected 2, got 0" into a
+      // statement about which half of the test is broken.
+      expect(
+        recordedContexts.length,
+        'the instrumented HTMLCanvasElement.getContext was never called, so every count ' +
+          'below is measuring nothing: createCanvas (src/contexts/materialization.ts:55) ' +
+          'returns the global OffscreenCanvas before the DOM branch is reached'
+      ).toBeGreaterThan(0);
+
+      // If applied in original order, there would be 2 separate transform calls
+      // (one per affine) with a filter set between them.
+      // Current code: 1 combined transform call + 1 combined filter assignment.
+      expect(recordedContexts.flatMap((context) => context.transforms)).toHaveLength(2);
+      expect(
+        recordedContexts.flatMap((context) => context.drawImageCalls).filter((call) => call.filter !== '')
+      ).toHaveLength(2);
+    } finally {
+      registry.shutdown();
+    }
   });
 
   it('applies apply-raster-processor operations in array order before the final draw', async () => {
