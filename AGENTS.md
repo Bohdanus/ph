@@ -9,7 +9,17 @@ linked files; this file is the rules that apply to every task.
 | [`docs/TESTING.md`](docs/TESTING.md)                   | any check: `tsc`, `test`, `lint`, `e2e`, build, CI                  |
 | [`docs/ORCHESTRATION.md`](docs/ORCHESTRATION.md)       | other agents: worktrees, the board, the worktree list, a dead agent |
 | [`docs/PHOTOSHOP-UX.md`](docs/PHOTOSHOP-UX.md)         | the Tools rail, tool names, Photoshop fidelity                      |
+| [`docs/TOOLS-TOO-HARD.md`](docs/TOOLS-TOO-HARD.md)     | a Photoshop capability this browser cannot do, before estimating it |
 | `HANDOFF.md`, `TEST-FLAKES.md`, `e2e/OPEN_PROBLEMS.md` | filing or checking a known defect                                   |
+
+Skills are loaded from `.kilo/skills/`, gitignored, so the durable copy of every skill is the
+tracked document it points at. There is no registry: the loader's `description` is the only
+discovery mechanism, and a skill nobody can find is a skill nobody reads.
+
+| Skill                     | Tracked document                                                           | Read it when                                                     |
+| ------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `hard-merge`              | [`.skills/hard-merge.md`](.skills/hard-merge.md)                           | two branches implemented overlapping features and one has landed |
+| `photoshop-tool-creation` | [`.skills/photoshop-tool-creation.md`](.skills/photoshop-tool-creation.md) | adding or changing a tool or its options bar                     |
 
 ## Subagents: THE DEFAULT, NOT THE FALLBACK
 

@@ -861,6 +861,11 @@ export const CURATED = {
       'The left rail fits its tiles to the space it has and moves the ones that do not fit into a Photoshop-style three-dots tile, with one column as the default. A pure planner, a DOM-measuring fit store reached by ref callbacks, the tile itself, and the e2e specs it de-fragilised off hard-coded rail widths.',
     note: "Do NOT record a width or a viewport height here \u2014 that is the thing this branch removed. The three-dots menu needs a `max-h` and scrolls: `AnchoredOverlay` clamps a flyout's position and never its size, so a menu as tall as its contents in a `position: fixed` wrapper is unreachable below the fold.",
   },
+  'hard-merge-skill': {
+    summary:
+      'A hard-merge skill: the procedure for merging two branches that independently implemented overlapping features, recovered from the toolbar/panel-docks conflict it was written for. Requirements recovered from the chat transcripts, conflicts arbitrated against Adobe and the web platform, a documented questions-file protocol, and the four post-merge sweeps that catch a silently wrong merge.',
+    note: 'Documents only — .skills/hard-merge.md, its loader, and the skill registry rows in AGENTS.md. The research it encodes is not in this worktree: the transcripts it was derived from live in the machine-local Kilo database, and the merge commits it quotes are already on main.',
+  },
   'swarm-watch-tail': {
     summary:
       'Makes `swarm watch` mean what a reader expects from a log: an unnamed call tails the last page and says which page it printed, and an explicit --since reads forward to the end of the log instead of stopping after one page.',
