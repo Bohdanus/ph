@@ -29,6 +29,12 @@ const PNG_BASE64 = PNG_BYTES.toString('base64');
 interface CaptureParams {
   format: string;
   clip: { x: number; y: number; width: number; height: number; scale: number };
+  /**
+   * The capture scope, declared explicitly. Present here because the helper now sends it and
+   * the payload assertions pin it, not because it was ever optional on the helper's part —
+   * CDP's own default is to capture beyond the viewport.
+   */
+  captureBeyondViewport: boolean;
 }
 
 type SendSpy = Mock<(method: string, params: CaptureParams) => Promise<{ data?: string }>>;
@@ -179,8 +185,31 @@ describe('CDP Helpers', () => {
       expect(send).toHaveBeenCalledTimes(1);
       expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
         format: 'png',
+        captureBeyondViewport: false,
         clip: { ...BOX, scale: 1 },
       });
+    });
+
+    it('declares the capture scope explicitly, rather than inheriting Chrome’s default', async () => {
+      const outputDir = await makeOutputDir('capture-scope');
+      const { page, send } = createCdpHarness(outputDir);
+      const { testInfo } = createTestInfoMock(outputDir);
+
+      await captureCanvasScreenshot(page, BOX, testInfo, 'scope');
+
+      // The seven payload assertions above already carry it, so this is not a new claim —
+      // it is a claim that the flag is a DECISION rather than a field that happens to be in
+      // the object, and the difference matters because the drift this addresses is still
+      // open (`e2e/OPEN_PROBLEMS.md`, the 87px capture). A later edit that drops the flag to
+      // "tidy up" passes every other test here, because `toHaveBeenCalledWith` with an exact
+      // object would fail loudly — so this one exists to say the flag is load-bearing even
+      // though the failure it was added for is not fixed.
+      const [, params] = send.mock.calls[0];
+      expect(params).toMatchObject({ captureBeyondViewport: false });
+      // Not merely present: `true` is the value that captures beyond the viewport, and a
+      // future reader who reads it as "capture more" would be right about the API and wrong
+      // about the intent.
+      expect(params.captureBeyondViewport).toBe(false);
     });
 
     it('decodes the base64 payload, returns those bytes, and writes them to outputDir/<name>.png', async () => {
@@ -235,6 +264,7 @@ describe('CDP Helpers', () => {
       // pass a complete clip, would not notice.
       expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
         format: 'png',
+        captureBeyondViewport: false,
         clip: { x: 10, y: BOX.y, width: BOX.width, height: BOX.height, scale: 1 },
       });
     });
@@ -251,6 +281,7 @@ describe('CDP Helpers', () => {
 
       expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
         format: 'png',
+        captureBeyondViewport: false,
         clip: { x: 0, y: 0, width: 0, height: 0, scale: 1 },
       });
     });
@@ -268,6 +299,7 @@ describe('CDP Helpers', () => {
 
       expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
         format: 'png',
+        captureBeyondViewport: false,
         clip: { x: -20, y: -10, width: 30, height: 40, scale: 1 },
       });
     });
@@ -288,6 +320,7 @@ describe('CDP Helpers', () => {
 
       expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
         format: 'png',
+        captureBeyondViewport: false,
         clip: { x: BOX.x, y: 100, width: BOX.width, height: BOX.height, scale: 1 },
       });
     });
@@ -306,6 +339,7 @@ describe('CDP Helpers', () => {
 
       expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
         format: 'png',
+        captureBeyondViewport: false,
         clip: { x: BOX.x + 50, y: 250, width: 100, height: 60, scale: 1 },
       });
     });
@@ -336,6 +370,7 @@ describe('CDP Helpers', () => {
 
       expect(send).toHaveBeenCalledWith('Page.captureScreenshot', {
         format: 'png',
+        captureBeyondViewport: false,
         clip: { x: 10, y: 20, width: 30, height: 40, scale: 1 },
       });
     });

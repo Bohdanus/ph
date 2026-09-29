@@ -203,7 +203,7 @@ On the branch, before merge:
 
 - `npx tsc -b --force` — clean
 - `npx eslint .` — 0 errors (16 pre-existing warnings in files this work does not touch)
-- `npx prettier --check src/ docs/` — clean. (`.copilot-instructions.md` and `.skills/broad-test-improvement.md` fail prettier and are **pre-existing**; they are untouched by this branch and fail identically on `main`.)
+- `npx prettier --check src/ docs/` — clean. (`.skills/broad-test-improvement.md` fails prettier and is **pre-existing**; it is untouched by this branch and fails identically on `main`.)
 - `npm run test` — 106 files, 1361 passed, 2 expected fail, 0 failed
 - **Gate §4 "every new test fails without its fix"** — verified by reverting each file to `a3f9050` and re-running:
 
@@ -238,7 +238,7 @@ Gate re-run on `main` after the merge:
 | new runtime dependencies                                        | none                                                                                                                                                           |
 | new comments in `src/`                                          | 0                                                                                                                                                              |
 
-`npx prettier --check .` still reports `.copilot-instructions.md` and `.skills/broad-test-improvement.md`. Both are pre-existing and fail identically before this merge.
+`npx prettier --check .` still reports `.skills/broad-test-improvement.md`, which is pre-existing and fails identically before this merge.
 
 **The Playwright suite was deliberately not run.** `main`'s working tree carries another session's in-flight, uncommitted e2e edits (6 files, 189 insertions), so a run would measure their work rather than this merge and could not be attributed. The merge plan's gate is `tsc -b --force` + `eslint`/`prettier` + `npm run test`, and all three are green. If you want e2e confidence on this code, the honest way is a clean checkout of `67a7fc4`.
 

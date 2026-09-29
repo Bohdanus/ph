@@ -95,39 +95,38 @@ async function openSaveDialogAndWait(page: Page): Promise<void> {
  * behave that way, so both halves of its mechanism were false even though the bump itself
  * still turns out to be load-bearing.
  *
- * WHAT IS FALSE, and was measured rather than assumed. The old comment said the workspace
- * canvas element is 974x963 here and would be 974x840 at 1280x720 with "220px below the
- * fold". Every number in that is wrong:
+ * WHAT IS FALSE, and was measured rather than assumed. An earlier version of this comment
+ * described a 108px two-column rail — `grid-cols-[auto_1fr_250px]` (`src/App.tsx:75`) with
+ * `1280 - 108 - 250 = 922` — and every number derived from it. The rail is 56px in the
+ * one-column default now, so the element is 974 wide, and the derived fit, the rendered
+ * document and the count of bare rows above it all moved with it. Nothing caught that: the
+ * assertions below read PIXELS, and a stale explanation of a passing measurement is not a
+ * failing test.
  *
- *   - The WIDTH is 922, not 974. The suite runs the TWO-COLUMN desktop shell:
- *     `grid-cols-[auto_1fr_250px]` (`src/App.tsx:75`) with a 108px rail (6.75rem), so
- *     1280 - 108 - 250 = 922. 974 is the ONE-COLUMN width (rail 3.5rem = 56px), which
- *     nothing here selects.
- *   - There IS no fold. Measured at 1280x720: the element is 922x583 at page (108, 100)
- *     and `documentElement.scrollHeight` is 720, equal to `clientHeight` and to
- *     `innerHeight` — the page does not overflow at all. The left rail owns its own
- *     scrolling (`min-h-0 overflow-y-auto`, `src/components/SidebarLeft/SidebarLeft.tsx:335`),
- *     so the shell is exactly viewport-tall.
- *   - So the element is not "840 tall with 220 below the fold"; it is 583 tall and
- *     entirely on screen.
- *   - The clip-truncation mechanism is gone. `waitForCanvasPixels` reads through
- *     `page.screenshot` at `e2e/helpers/canvas-helpers.ts:531`, but behind `onScreenClip`
- *     at `:529`, which re-derives the clip every poll and SCROLLS the region into view;
- *     it is not a silent truncation at a fold. The `:380` this comment used to cite is
- *     inside an unrelated red-dominance predicate. Nothing about this file's captures goes
- *     near a fold.
+ * The other two halves of that comment are still false, for the same reason and by the same
+ * measurement. There is no fold: `documentElement.scrollHeight` is 720 at 1280x720, equal to
+ * `clientHeight` and to `innerHeight`, because the left rail owns its own scrolling
+ * (`min-h-0 overflow-y-auto`, `src/components/SidebarLeft/SidebarLeft.tsx:335`) and the tiles
+ * collapse rather than pushing the page taller. And the clip-truncation mechanism is gone:
+ * `waitForCanvasPixels` reads through `page.screenshot` at
+ * `e2e/helpers/canvas-helpers.ts:531`, but behind `onScreenClip` at `:529`, which re-derives
+ * the clip every poll and SCROLLS the region into view; it is not a silent truncation at a
+ * fold. Nothing about this file's captures goes near a fold.
  *
  * WHAT IS TRUE, and is the reason the bump stays: the taller viewport is what leaves bare
  * WORKSPACE BACKDROP above the letterboxed document, and `backdropRange` below can only
  * measure a backdrop where there is backdrop. That is a property of the document's aspect
- * against the ELEMENT's, not of the viewport or any capture API.
+ * against the ELEMENT's, not of the viewport or any capture API — and it is now asserted from
+ * the measured rail rather than argued in prose, because an argument in a comment is exactly
+ * what went stale here.
  *
- *   At 1280x1100 the element is 922x963, aspect 0.957. The 800x600 boot document is 1.333,
- *   so `object-fit: contain` is WIDTH-limited: it renders 922x691.5 centred, leaving about
- *   136 rows of bare element above it. The top 4% strip (38 rows) lands entirely in that
- *   bare region, which is exactly what the strip is for.
+ *   At 1280x1100 the element measures 974x963, aspect 1.011. The 800x600 boot document is
+ *   1.333, so `object-fit: contain` is WIDTH-limited at 1.2175: it renders 974x730.5 centred,
+ *   leaving about 116 rows of bare element above it. The top 4% strip (38 rows) lands entirely
+ *   in that bare region, which is exactly what the strip is for. Measured by
+ *   {@link letterboxFit}, and asserted there rather than here.
  *
- *   At 1280x720 the element is 922x583, aspect 1.581 — WIDER than the document's 1.333.
+ *   At 1280x720 the element measures 974x583, aspect 1.671 — WIDER than the document's 1.333.
  *   The fit flips to HEIGHT-limited: the document renders 777x583 and fills the element's
  *   full height, so there is no bare strip anywhere and the top 4% is ON the document.
  *
@@ -212,17 +211,20 @@ const JPEG_SOI = [0xff, 0xd8];
  */
 const ASPECT_TOLERANCE = 0.02;
 
+/** Fraction of the capture the backdrop strip occupies. See {@link backdropRange}. */
+const BACKDROP_STRIP_FRACTION = 0.04;
+
 /**
  * Detail strokes, in canvas-box relative coordinates. Enough edges for JPEG quantisation
  * to show. The boot document is 800x600 (`src/App.tsx:20-25`) and is letterboxed into the
- * workspace canvas element, which is 922x963 with its top 100px down the page at this
- * file's 1280x1100 viewport (measured). `object-fit: contain` is width-limited there —
- * 922/800 = 1.1525 against 963/600 = 1.605 — so the document renders 922x691.5 centred,
- * occupying roughly y 136..827 of the box, and x the full width. Every point below sits
- * inside it, and none of them is on an edge the box scales.
+ * workspace canvas element, which at this file's 1280x1100 measures 974x963 with its top 100px
+ * down the page. `object-fit: contain` is width-limited there — 974/800 = 1.2175 against
+ * 963/600 = 1.605 — so the document renders 974x730.5 centred, occupying roughly y 116..847 of
+ * the box, and x the full width. Every point below sits inside it, and none of them is on an
+ * edge the box scales.
  *
- * The 922 is the two-column width; see the `test.use` comment above for why the width was
- * 974 in an earlier revision and what actually makes this viewport necessary.
+ * The width is 974 because the rail is 56px in the one-column default, not the 922 this comment
+ * used to derive from a 108px two-column rail; see {@link letterboxFit}, which measures it.
  */
 const DETAIL_STROKES: ReadonlyArray<readonly [number, number, number, number]> = [
   [140, 180, 620, 320],
@@ -343,6 +345,40 @@ async function documentSize(page: Page): Promise<DocumentSize> {
   });
 }
 
+/**
+ * Where the document lands inside the canvas element, in that element's own coordinates.
+ *
+ * DERIVED, and that is the whole point of it. The element's WIDTH is not a constant: it is the
+ * `1fr` track of `grid-cols-[auto_1fr_250px]` (`src/App.tsx:75`), so it is
+ * `viewport - railWidth - 250` and the rail picks its own width — 56px in one column, 108px in
+ * two, with one column the default. This file's comments used to carry the two-column
+ * arithmetic (1280 - 108 - 250 = 922) and a matching "about 136 rows" of bare element above the
+ * document, and both went stale silently the day the default changed, because nothing here
+ * asserts WHY the strip is bare: `onFill` only counts pixels, and a wrong explanation of them
+ * is not a failing test. Reading the box and computing the fit puts the number the failure
+ * message quotes on the same footing as the assertion that produced it.
+ */
+const letterboxFit = async (page: Page) => {
+  const box = await workspaceBox(page);
+  const document = await documentSize(page);
+
+  // `object-fit: contain` is the smaller of the two ratios; the unused axis is letterboxed.
+  const scale = Math.min(box.width / document.width, box.height / document.height);
+  return {
+    box,
+    document,
+    scale,
+    /** Rows of BARE element above the document — zero when the fit is height-limited. */
+    bareAbove: (box.height - document.height * scale) / 2,
+  };
+};
+
+/** The `onFill` failure message, with the geometry measured rather than remembered. */
+const letterboxDescription = (fit: Awaited<ReturnType<typeof letterboxFit>>) =>
+  `the ${fit.document.width}x${fit.document.height} document is letterboxed into the ` +
+  `${Math.round(fit.box.width)}x${Math.round(fit.box.height)} element and centred, which leaves ` +
+  `about ${Math.round(fit.bareAbove)} rows above it at a fit scale of ${fit.scale.toFixed(5)}`;
+
 async function workspaceBox(page: Page): Promise<BoundingBox> {
   const box = await getWorkspaceCanvas(page).boundingBox();
   if (!box) throw new Error('workspace canvas has no bounding box');
@@ -379,10 +415,10 @@ async function documentColourSample(page: Page, testInfo: TestInfo, name: string
  *
  * Only the TOP strip, because it is the one the centred document is guaranteed to leave
  * bare AT THIS VIEWPORT, and the bottom strip's guarantee is a property of the capture
- * rather than of the layout. Measured at this file's 1280x1100: the element is 922x963 and
- * the 800x600 document renders 922x691.5 centred, so both the top and the bottom 4% are
+ * rather than of the layout. Measured at this file's 1280x1100: the element is 974x963 and
+ * the 800x600 document renders 974x730.5 centred, so both the top and the bottom 4% are
  * bare checkerboard — light theme darkest 243, brightest 255, which are exactly the two
- * colours `src/index.scss:126-137` mixes. At 1280x720 the element is 922x583 and the same
+ * colours `src/index.scss:126-137` mixes. At 1280x720 the element is 974x583 and the same
  * document renders 777x583 filling the element's whole height, so NEITHER strip is bare:
  * that is why the viewport above is bumped, and why this strip only needs the top. The
  * bottom 4% would additionally be below the fold at 720, where it carries no checkerboard
@@ -395,10 +431,12 @@ async function documentColourSample(page: Page, testInfo: TestInfo, name: string
  * element, which is not true of an arbitrary document, so `onFill` counts the pixels that
  * match the opaque fill and the caller refuses them. Failing there is the right direction:
  * a strip that had landed on the document would otherwise be measured as backdrop and
- * quietly weaken the margin instead of naming itself.
+ * quietly weaken the margin instead of naming itself. The caller also measures the bare
+ * band from the rail ({@link letterboxFit}) and asserts the strip fits inside it, so the
+ * layout fact this comment states is checked rather than believed.
  */
 async function backdropRange(image: ImageDataResult): Promise<BackdropRange> {
-  const strip = Math.max(2, Math.floor(image.height * 0.04));
+  const strip = Math.max(2, Math.floor(image.height * BACKDROP_STRIP_FRACTION));
   const darkest: Rgb = { red: 255, green: 255, blue: 255 };
   const brightest: Rgb = { red: 0, green: 0, blue: 0 };
   let onFill = 0;
@@ -533,11 +571,21 @@ test.describe('New Image dialog', () => {
     // backdrop is the 20px checkerboard, so it is measured here on the real pixels, off
     // the same capture, and the failure message names the number that broke it.
     const { darkest, brightest, onFill } = atOne.backdrop;
+    // The strip has to be ABOVE the document for the whole block to mean anything, and that is
+    // a property of the ELEMENT's aspect against the document's — so it is measured from the
+    // rail rather than assumed, and asserted rather than left to the prose. `onFill` below is
+    // still the real check: this one says which layout change took the bare band away, and that
+    // one catches a strip that landed on the document for any other reason.
+    const fit = await letterboxFit(page);
+    expect(
+      Math.max(2, Math.floor(fit.box.height * BACKDROP_STRIP_FRACTION)),
+      `the top ${BACKDROP_STRIP_FRACTION * 100}% strip does not fit above the document, so the range ` +
+        `below would be measured off the document itself. ${letterboxDescription(fit)}`
+    ).toBeLessThanOrEqual(fit.bareAbove);
     expect(
       onFill,
       `${onFill} of the top 4% of the capture is the opaque #${BACKGROUND_HEX} fill, so the strip read as ` +
-        `the workspace backdrop is on the document. The 800x600 document is letterboxed into the 922x963 ` +
-        `element and centred, which leaves about 136 rows above it, so this says the letterbox changed ` +
+        `the workspace backdrop is on the document. ${letterboxDescription(fit)} — the letterbox changed, ` +
         `and the backdrop is no longer being measured where it is claimed to be.`
     ).toBe(0);
     for (const channel of CHANNELS) {
