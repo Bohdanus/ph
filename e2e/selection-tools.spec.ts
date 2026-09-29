@@ -659,6 +659,11 @@ test.describe('Elliptical marquee', () => {
     expect
       .soft(dragAspect, 'the drag itself is deliberately not the locked ratio')
       .not.toBeCloseTo(Number(FIXED_RATIO_VALUE), 1);
+    // The locked ratio grows the SHORT side and leaves the long one alone, so the width is the
+    // only part of the committed geometry that still matches the drag. Both ways of hitting
+    // the ratio — growing the height, or shrinking the width — produce the same aspect, so
+    // this is the assertion that tells them apart.
+    expect.soft(Math.abs(outlineWidth(outline!) - rect.width) <= OUTLINE_BOUNDS_TOLERANCE_PX).toBe(true);
     expect
       .soft(outlineAspect(outline!), `committed aspect should be ${FIXED_RATIO_VALUE}, not the drag's`)
       .toBeCloseTo(Number(FIXED_RATIO_VALUE), 1);
@@ -752,11 +757,6 @@ test.describe('Elliptical marquee', () => {
     expect.soft(Math.abs(outlineHeight(outline!) - rect.height) <= OUTLINE_BOUNDS_TOLERANCE_PX).toBe(true);
     expect.soft(Math.abs(centre.x - absolutePress.left) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'centre x').toBe(true);
     expect.soft(Math.abs(centre.y - absolutePress.top) <= OUTLINE_BOUNDS_TOLERANCE_PX, 'centre y').toBe(true);
-    // A corner-anchored drag would put the press point on the boundary, half a size away
-    // from the centre on both axes.
-    expect
-      .soft(Math.abs(centre.x - absolutePress.left) <= OUTLINE_BOUNDS_TOLERANCE_PX)
-      .not.toBe(outlineWidth(outline!) / 2);
   });
 
   test('an elliptical marquee click without movement commits nothing', async ({ page }) => {

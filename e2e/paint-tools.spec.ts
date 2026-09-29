@@ -246,6 +246,20 @@ async function readLevel(page: Page, geometry: Geometry, point: DocPoint, halfDo
 }
 
 /**
+ * The computed cursor of whatever element a page point actually hits, read through
+ * `elementFromPoint` so the answer comes from hit testing rather than from a selector that
+ * could be describing some other element. The options bars carry no `data-testid` by house
+ * rule, and the tool area is the only thing mounted over the workspace, so a class selector
+ * would be asserting the layout rather than the gate.
+ */
+async function cursorAt(page: Page, point: { x: number; y: number }): Promise<string | null> {
+  return page.evaluate(({ x, y }) => {
+    const hit = document.elementFromPoint(x, y);
+    return hit ? getComputedStyle(hit).cursor : null;
+  }, point);
+}
+
+/**
  * A cross-section of the composite along one axis, one entry per capture pixel across it, each
  * entry averaged over the window PERPENDICULAR to the axis. Averaging that way removes the
  * resampling noise a single-row read picks up at the capture scale, and it leaves the axis
@@ -975,9 +989,23 @@ test.describe('Paint tools', () => {
       const armed = await selectCloneStamp(page);
       // `source` is null until Alt-clicked, and the hook runs with `enabled: false`, so the
       // gesture is IGNORED rather than refused: no pixels, no history item, no error.
+      //
+      // THE CURSOR IS THE GATE, and it is the only observable. `buildLayerArgs` returns null for
+      // a null source, so `onMove` and `onCommit` both return on it and an unsourced stroke
+      // changes nothing whether or not `isEnabled` consulted `args.source` — the gate and its
+      // absence are pixel-identical. `CloneStampToolArea` puts `cursor-not-allowed` on the
+      // tool area exactly when `isEnabled` is false, and the source is the only one of its
+      // three conditions missing here, so this is the one thing a broken gate moves.
+      await expect
+        .poll(() => cursorAt(page, armed.toCss(probe)), {
+          message: 'the tool area must refuse the gesture while no source is set',
+        })
+        .toBe('not-allowed');
       await strokeDocument(page, armed, probe, { x: probe.x + 20, y: probe.y }, 8);
 
       expect.soft(pageErrors, 'an unsourced stroke must not raise').toEqual([]);
+      // Kept as a regression guard on the callbacks themselves, not as the test of the gate:
+      // see above, this read is the same whether the gate is there or not.
       expect.soft(await readLevel(page, armed, probe), 'an unsourced stroke must not stamp').toBe(before);
     });
 
