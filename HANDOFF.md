@@ -312,30 +312,43 @@ use. What remains here is one real defect the slice found, and the conversion-on
 
 ### The remaining conversion-only writers
 
-Reorder is no longer one of them. These production sites still pass no `durableEntry`, so each one
-runs `buildDurableDocument` over the whole timeline. Passing a `durableEntry` is necessary but not
-sufficient: the store publishes only on `outcome === 'published'` and otherwise reconverts.
+Reorder and `remove-layer` are no longer among them. These production sites still pass no
+`durableEntry`, so each one runs `buildDurableDocument` over the whole timeline. Passing a
+`durableEntry` is necessary but not sufficient: the store publishes only on
+`outcome === 'published'` and otherwise reconverts.
 
-| Site                                    | Action             | Why                                           |
-| --------------------------------------- | ------------------ | --------------------------------------------- |
-| `useLayer.ts:170` `_addLayer`           | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
-| `useLayer.ts:308` `updateLayerByTool`   | `TOOL_ACTION`      | asset-bearing                                 |
-| `useLayer.ts:337` `updateLayerByTool`   | `TOOL_ACTION`      | asset-bearing                                 |
-| `useLayer.ts:400-411` `commitDirtyTool` | `TOOL_ACTION`      | asset-bearing; one commit per pending edit    |
-| `useLayer.ts:421` `removeLayer`         | `REMOVE_ACTION`    | needs layer retirement, see §54               |
-| `useLayer.ts:668` `mergeAllLayers`      | `MERGE_ACTION`     | asset-bearing, retires layers                 |
-| `useSelectionHistory.ts:149`            | `SELECTION_ACTION` | `catch` fallback when planning throws         |
-| `useSelectionHistory.ts:305`            | `SELECTION_ACTION` | `catch` fallback when planning throws         |
+| Site                                      | Action             | Why                                           |
+| ----------------------------------------- | ------------------ | --------------------------------------------- |
+| `useLayer.ts:229` `createBlankLayer`      | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
+| `useLayer.ts:247` `createLayerFromBitmap` | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
+| `useLayer.ts:278` `createLayerFromTool`   | `NEW_LAYER_ACTION` | asset-bearing; needs the registry transaction |
+| `useLayer.ts:323` `updateLayerByTool`     | `TOOL_ACTION`      | asset-neutral; not blocked by §54             |
+| `useLayer.ts:365` `commitDirtyTool`       | `TOOL_ACTION`      | asset-neutral; one commit per pending edit    |
+| `useLayer.ts:671` `mergeAllLayers`        | `MERGE_ACTION`     | asset-bearing, retires layers                 |
+| `useSelectionHistory.ts:149`              | `SELECTION_ACTION` | `catch` fallback when planning throws         |
+| `useSelectionHistory.ts:305`              | `SELECTION_ACTION` | `catch` fallback when planning throws         |
+
+The three `NEW_LAYER_ACTION` rows are the creators that mint the history item, not one shared
+dispatch: `useLayer.ts:240`, `:262` and `:316` are the only `layerSource:` writers in the file, and
+`_addLayer` (`:185`) is the sink they all dispatch through.
 
 Three sites have no `durableEntry` concept and reconvert unconditionally: `useHistory.ts:117`
-`resetHistoryTo` (`APPLY_HISTORY_REPLAY`), `useLayer.ts:180` and `useApp.ts:116` (both
+`resetHistoryTo` (`APPLY_HISTORY_REPLAY`), `useLayer.ts:195` and `useApp.ts:117` (both
 `REPLACE_DOCUMENT`). The `useHistory.ts:52 addHistoryEntry` row this table used to carry is
 **deleted**: that symbol no longer exists anywhere in `src/`, and "see item 14" pointed at a
 reader that no longer had a referent.
 
-**Fix, in order.** The asset-bearing operations (`create-layer`, `remove-layer`,
-`merge-document`, the tool operations) cannot be published at all until §54's registry transaction
-exists, and that single gap is what keeps the majority of these writers here.
+**Fix, in order.** Only `create-layer` and `merge-document` are blocked on §54's registry
+transaction, and that gap is what keeps those four writers here. `remove-layer` and the
+`TOOL_ACTION` operations are asset-neutral: a `remove-layer` carries only a `layerId`
+(`history-model.ts:89`), and a `TOOL_ACTION` carrying no layer source is derived by
+`operationForTool` (`history-adapter.ts:442`), whose every arm returns an operation with no raster
+snapshot — `apply-raster-processor` (`:460`, `:511`), `apply-affine-transform` (`:478`),
+`apply-filter` (`:494`) and `reposition-layer` (`:503`) — reached from the caller arm at `:754`.
+`collectDurableAssetIds` scans the whole replayable history but collects only raster-bearing kinds
+(`history-model.ts:158-175`), so a removal or an in-place pixel edit changes no reachable asset and
+needs neither registration nor retirement. They remain here only until a `durableEntry` is planned
+for them; §54 is untouched and still applies to the first actual asset-bearing append writer.
 
 **Files.** `src/contexts/history-adapter.ts`, `src/contexts/history-append.ts`,
 `src/contexts/StoreContext.tsx`, `src/contexts/useLayer.ts`, `src/components/SidebarRight/LayersTab.tsx`
@@ -1159,9 +1172,13 @@ agent not checked `Main.tsx:61`.
 
 **Problem.** `decideDurableAppend` publishes a cloned durable document directly, while full
 conversion wraps asset-bearing operations in `beginDocumentAssetTransaction` / commit / reconcile
-(`history-adapter.ts:728-742`). The current append slice is safe because layer-property operations
-carry no assets, but the next asset-bearing operation could publish a document without registering
-or retiring its raster ownership.
+(`history-adapter.ts:830`, `:843`, `:844`). Every append family published today is asset-neutral —
+`set-document-frame`, `set-selection`, `reorder-layers`, `set-layer-properties` and `remove-layer`
+(`history-append.ts:499,513,534,556,589` are the five `validatePlannedDurableEntry` arms, and its
+terminal refusal at `:600` is what makes the set exhaustive), none of which
+`collectDurableAssetIds` scans (`history-model.ts:158-175`) — so the fast path is safe so far. The
+next asset-bearing operation could publish a document without registering or retiring its raster
+ownership.
 
 **Fix.** Extend the single-writer publication path with the asset-registry transaction before
 publishing the first durable operation that introduces or replaces an asset. Keep the property-only
@@ -1890,13 +1907,13 @@ namespace and left an unguarded regex in the test. Half-finished is worse than f
 **The loss, measured.** `NUMBERED = /^(?:item\s+)?#?(\d+)\b/i` cannot match a letter suffix —
 there is no word boundary between `5` and `a`, so `NUMBERED.exec('15a. A self-anchored reorder …')`
 is `null`. `assemble` then falls through to the `SEVERITY` test (also false) and reaches
-`if (open && record.level <= open.level) close(...)`. `HANDOFF.md:429` is a **level-2**
+`if (open && record.level <= open.level) close(...)`. `HANDOFF.md:442` is a **level-2**
 `## 15a. A self-anchored reorder is refused, and the refusal is load-bearing`, a sibling of
 `## 15.` — so it **closes item 15's body there** and opens nothing itself. The span
-`HANDOFF.md:430-443` is **872 raw characters**, or **870** once the span's leading and
+`HANDOFF.md:443-456` is **872 raw characters**, or **870** once the span's leading and
 trailing blank lines are trimmed — 870 is the trimmed count, and the raw count is the one
-that includes them. Line 442 is a `---` rule, which `bodyOf` drops as layout, so the prose the
-parser actually strands is lines 430-441. All of it is unreachable from any item title or body.
+that includes them. Line 455 is a `---` rule, which `bodyOf` drops as layout, so the prose the
+parser actually strands is lines 443-454. All of it is unreachable from any item title or body.
 Item 15's stored body is 3994 chars and ends mid-sentence; the 15a prose is not in it. The
 entry is a load-bearing tripwire, so this is live work loss, not latent.
 
