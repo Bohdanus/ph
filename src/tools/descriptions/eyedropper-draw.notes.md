@@ -25,16 +25,42 @@ resolve — but the path in the brief is wrong.
 
 ### Prose
 
-Photoshop's Eyedropper is a click, not a drag: it reads pixels under the pointer and writes the
-result into the app's color controls. A plain click sets the foreground color; Alt-click (Windows) /
-Option-click (macOS) sets the background color. Adobe's own page states both halves — "Select the
-Eyedropper tool (I)", "Use the Options Bar to customize tool settings, like Sample Size and Sample",
-"The sampled color will become the foreground color and be added to your Swatches panel" — and
-Adobe's **current** set-colors page states the background half as a rule of the tool, and replaces
-the CS4 mirror this file used to lean on: "**Select a new background color by holding Alt (Windows)
-or Option (macOS) and clicking the desired area in the image**"
+**The drag is real, and an earlier pass of this file denied it.** This section used to open
+"Photoshop's Eyedropper is a click, not a drag", and that claim then propagated into three places
+in the data file: a `summary` ending "on a click rather than a drag", a `purpose` sentence "A click
+is the whole gesture — there is nothing to drag", and an `Alt` modifier row asserting "These are
+click modifiers, not drag modifiers: the Eyedropper has no drag". All three are false about
+Photoshop. Adobe's **current** set-colors page carries the drag in a Tip on the same page that
+sources the rest of this family's controls: "**You can drag the Eyedropper tool along an area of the
+image and release once you get the desired color to confirm selection. The foreground or background
+color box will change dynamically as you drag along.**"
+(`https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/set-foreground-and-background-colors.html`).
+The Alt half is a **drag** modifier for the same reason, and the sentence claiming otherwise is
+deleted rather than hedged: held through a drag, it is the _background_ color box that changes
+dynamically, and the release confirms the sample. Adobe's own CS5 Elements help says the same in
+starker form — "As you select and drag the Eyedropper tool, the foreground color box changes" and
+"Release the mouse button to pick the new color" — so the behaviour is not a 2026 addition.
+
+The app really is click-only, and that is now a divergence rather than agreement: see the
+`appNotes` sentence citing `EyedropperToolArea.tsx:57`, and the only pointer handler in the file is
+the `onPointerDown` at `:132`. Nothing above is a claim about the app.
+
+Photoshop's Eyedropper reads pixels under the pointer and writes the result into the app's color
+controls. A plain click sets the foreground color; Alt-click (Windows) / Option-click (macOS) sets
+the background color. Adobe's own page states the two headline halves — "Select the Eyedropper tool
+(I)", "Use the Options Bar to customize tool settings, like Sample Size and Sample", "The sampled
+color will become the foreground color and be added to your Swatches panel" — and Adobe's **current**
+set-colors page states the background half as a rule of the tool, and replaces the CS4 mirror this
+file used to lean on: "**Select a new background color by holding Alt (Windows) or Option (macOS) and
+clicking the desired area in the image**"
 (`https://helpx.adobe.com/photoshop/desktop/adjust-color/choose-colors/set-foreground-and-background-colors.html`).
 The Adobe-authored _Photoshop CS5 On Demand_ text says it the same way, and that source is kept.
+
+**The temporary switch is a separate fact and no longer runs on from the gesture shape.** The
+`purpose` sentence that carried it also carried the false gesture claim, and joining the two is what
+made both harder to read. It is now: "Separately, and not as part of that gesture shape, holding Alt
+or Option from any painting tool reaches the Eyedropper temporarily and samples the foreground color
+at the Eyedropper's current Sample Size."
 
 Sample Size is the footprint, and **the claim here is better sourced than this file used to admit.**
 Adobe's current page enumerates the entire menu, and enumerates it with **no Median entries at
@@ -81,10 +107,14 @@ switch — nothing that records history. A second audit reached the same conclus
 rule.
 
 **No single Adobe sentence stating this was found**, and the two audits' agreement is agreement on a
-deduction, not on a quotation, so it is recorded that way in both files. It is stated in `purpose`
-as a consequence ("A sample changes no pixel, so it is not an edit and belongs with a zoom or a panel
-move rather than with anything that records a history state") and in `appNotes` as what the app
-therefore does. It is not dressed as a sourced claim, and it is item 4 in `Unverified`.
+deduction, not on a quotation. `purpose` is a Photoshop-claim field per `types.ts` — it "describes
+_Photoshop's_ tool" — and an unsourced deduction about Adobe's history panel does not belong there,
+so **it has been removed from `purpose` outright rather than hedged.** It survives in `appNotes`,
+where it is a statement about what this app does and the reason is in the tree: "A click dispatches
+a color change and nothing else, so the app records no history entry for a sample and a sample is
+not undoable — the same class as a zoom, a panel move or a tool switch." Nothing was lost by the
+move — the second half of the same sentence pair was always about the app — and it is item 4 in
+`Unverified`.
 
 The app implements exactly that: `src/components/Main/EyedropperToolArea.tsx:121` is the only
 dispatch in the file, and it is a `SET_COLOR`. The reason is written down in the tree at
@@ -101,6 +131,19 @@ and both attribute it to Adobe's rule.
 **Counts: present 0 · partial 1 · inert 1 · missing 0.** Nothing in this bar is `present` or
 `missing`, because Photoshop's eyedropper bar is only these two controls and the app renders both.
 
+**The sampling ring is omitted on purpose, and the decision is recorded in `appNotes` so it is not
+silently missing.** Adobe's current page names only `Sample Size` and `Sample`, so the ring is **not
+a proven gap** and is not filed as `missing` — that status would assert a control Adobe's own page
+does not show. The 27.x _name_ is unconfirmed as well: no Adobe page carrying `"Show color overlay"`
+was found on five searches, and the only names anyone sources are third-party — "Show Sampling
+Ring" (`jkost`, an Adobe expert's blog, and `enviragallery`) and an Adobe Community Expert's "Show
+Sampling Circle". The one Adobe-authored sighting is Adobe's own CS5 help, which says only "a color
+sampler ring for the Eyedropper tool" and names no control. Putting an unverified third-party string
+in `control` would break the field's own contract ("The control's name in Photoshop's options bar,
+verbatim"), so the row is left out and the reason is stated in `appNotes` instead, together with the
+fact that the app has no ring either way — the ring is a cursor, and this repo has no cursor registry
+at all (`HANDOFF.md:1017`). This is item 7 in `Unverified`, which stays open.
+
 Three judgement calls worth stating, because each could reasonably have gone the other way:
 
 - **`Sample` is one row, not two.** `Sample All Layers` and the modern `Sample` dropdown are the
@@ -114,7 +157,7 @@ Three judgement calls worth stating, because each could reasonably have gone the
   behind it", and names both qualifying shapes — state in `src/tools/settings.ts` that persists
   and drives nothing, and a label on a placeholder chip no component reads. This control is the
   first shape exactly. It is on screen, permanently unchecked and permanently disabled
-  (`Eyedropper.tsx:41`); the field is seeded `false` at `src/tools/settings.ts:204`; and a grep of
+  (`Eyedropper.tsx:41`); the field is seeded `false` at `src/tools/settings.ts:210`; and a grep of
   `sampleAllLayers` across `src/` finds no writer — the only `patchToolArgs` call in the bar
   (`Eyedropper.tsx:16`) writes `sampleSize`. Nothing can make the read at
   `src/components/Main/EyedropperToolArea.tsx:63` true in the app, so the settings state persists
@@ -153,7 +196,7 @@ shortcut: 'I' }`, its own single-tool tile. The runtime binding is
   did not mention the cycle at all; it does now. The same check applies to the four tools Photoshop
   cycles to — Color Sampler, Ruler, Note and Count are in none of the `ToolName` union
   (`src/contexts/tool-types.ts`), so the group has no members in the app to cycle through.
-- Defaults: `sampleSize: 1`, `sampleAllLayers: false` at `src/tools/settings.ts:202-206`, pinned by
+- Defaults: `sampleSize: 1`, `sampleAllLayers: false` at `src/tools/settings.ts:208-212`, pinned by
   `src/tools/__tests__/eyedropper.test.ts:12-18`. **The app's defaults are not claimed to be
   Photoshop's.** This line previously read "Defaults match Photoshop's", which was a claim about
   Photoshop that nothing sourced — Adobe states the `Sample` menu but no default for it (item 10),
@@ -218,7 +261,7 @@ that settles it, in order:
    single-tool tile, in the tonal group after Dodge/Burn.
 2. `src/contexts/tool-types.ts:34` — `draw: DrawToolArgs`, and `:2` imports both `DrawToolArgs` and
    `PaintToolArgs`, so the two are separate arg types rather than one shared paint type. The split is
-   real: `src/tools/draw.ts:55` defines `PaintToolArgs` as `Omit<DrawToolArgs, 'toolName' |
+   real: `src/tools/draw.ts:69` defines `PaintToolArgs` as `Omit<DrawToolArgs, 'toolName' |
 'smoothing' | 'blendMode'> & PaintSettings`, i.e. the paint tools are the draw args plus required
    paint settings, and `smoothing`/`blendMode` are exactly what they add.
 3. `src/tools/draw.ts:6` — `export type PenType = 'pen' | 'pen-dashed' | 'spray';`. Three renderers,
@@ -230,7 +273,7 @@ that settles it, in order:
    brush. **The path is not resampled.** `drawLine` reads `args.points` and hands it to
    `smoothStrokePoints` (`src/tools/brush.ts:101`), which returns _the same array instance_ whenever
    the pull is zero (`:103`) and otherwise emits exactly one output point per input point. For the
-   legacy draw tool it always returns the same array: `defaultSettings.draw` (`settings.ts:63-69`)
+   legacy draw tool it always returns the same array: `defaultSettings.draw` (`settings.ts:68-74`)
    carries no `smoothing` key, so the argument is `0`. The raw samples are whatever
    `handlePointerMove` pushed (`DrawToolArea.tsx:103`), and the curve through them is drawn by
    `bezierSmoothedLine` (`src/util/draw.ts:29`, called at `:153`). The data file's `purpose` used to
@@ -246,7 +289,7 @@ that settles it, in order:
    **Pen Type** (select, three options, `:122-131`), **Size** (0.5–500 px, step 0.5, `:142-151`),
    **Dash** and **Gap** (1–100 px each, `:154-194`, rendered only when the pen is `pen-dashed`), and
    **Opacity** (0–100%, `:204-213`), then a live 96×48 stroke preview (`:216-222`). Per-pen settings
-   are remembered in `savedDrawPerPen` (`src/tools/settings.ts:32-36`), keyed by `PenType`, written
+   are remembered in `savedDrawPerPen` (`src/tools/settings.ts:37-41`), keyed by `PenType`, written
    by `Draw.tsx:35-42`.
 
 So: a drag becomes a path, the path becomes ink, the ink becomes a layer. It is a **freehand stroke
@@ -257,19 +300,24 @@ worth checking rather than assuming, because the paint family records the same-s
 false for Color Replacement. Here it is true, and two independent lines decide it: the bar reads the
 store's foreground out of `useStore()` (`Draw.tsx:14`) and writes it into the tool args in an effect
 whenever the two disagree (`Draw.tsx:29-33`), and the renderers consume `args.color` —
-`ctx.strokeStyle = color` for the two pen types (`src/tools/draw.ts:74`) and
-`hexToRgb(args.color)` inside `drawSpray` (`src/util/draw.ts:162`). So `appNotes` and `purpose` keep
+`ctx.strokeStyle = color` for the two pen types (`src/tools/draw.ts:87`) and
+`hexToRgb(args.color)` inside `drawSpray` (`src/util/draw.ts:194`). So `appNotes` and `purpose` keep
 the foreground-colour statement and only the resampling clause was cut.
 
 **One consequence of the one-stroke-per-layer design, which the data file now records.** The
 renderers issue a single `beginPath`/`moveTo`/`stroke()` per stroke at the tool's `globalAlpha`
-(`src/util/draw.ts:151-154`, `src/tools/draw.ts:77`), so a stroke that crosses itself does not
+(`src/util/draw.ts:151-154`, `src/tools/draw.ts:91`), so a stroke that crosses itself does not
 compound within that stroke. That is the whole of the `Opacity` divergence, and it is the one an
 earlier pass stated wrongly: it also claimed that "a second stroke lays a second semi-transparent
 layer over the first rather than adding to the same one", and a second Photoshop stroke is _also_ a
 separate compositing pass over the same pixels that reaches the same value, so that clause named a
 difference that is not one. The `Opacity` row's build-up sentence is Photoshop's, and `appNotes` is
-where the divergence is stated.
+where the divergence is stated. **The row's status was `present` while this paragraph said the
+behaviour diverges, and that contradiction is now closed in the direction the paragraph already
+picked**: `partial`, because Adobe states the build-up rule as part of what the control does — "the
+opacity does not exceed the set level no matter how many times you move the pointer over the area,
+until you release the mouse button" — and a single `stroke()` over the whole path does not hold that
+within a self-crossing stroke.
 
 ### Modifiers and bracket keys, both absent
 
@@ -292,7 +340,8 @@ file no longer asserts either.
 ### Photoshop provenance: there is none
 
 **Photoshop has no tool called Draw.** Adobe's painting-tools page covers the Brush, Pencil, Eraser,
-Blur, Smudge, Mixer Brush, Color Replacement and the paint bar's Mode/Opacity/Flow/airbrush options,
+Blur, Smudge, Mixer Brush, Color Replacement and the paint bar's Mode/Opacity/Flow/Airbrush options
+plus the brush bar's Smoothing field,
 and names no Draw tool. Two independent third-party inventories of the whole Tools panel
 (`clippingpathstudio.com/photoshop-toolbar/`,
 `offshoreclipping.com/blog/photoshop-cc-toolbar-tools/`) list every group, both give `B` to the Brush
@@ -329,16 +378,17 @@ behavior", never "Photoshop's Draw tool has this".
 
 ### Options-bar control census (reference bar: the Photoshop Brush Tool)
 
-| #   | Brush bar control                        | Status    | App rendering                                                      | Note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| --- | ---------------------------------------- | --------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | `Brush Preset picker`                    | `missing` | —                                                                  | No tip, no hardness, no presets. The per-pen records in `settings.ts:32-36` are three hardcoded strokes, not a preset system.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| 2   | `Size`                                   | `partial` | `src/components/ToolbarsRight/Draw/Draw.tsx:142`, handler `:44-47` | Wired and applied verbatim (`src/tools/draw.ts:74`), but the range diverges at **both** ends: 0.5–500 px, step 0.5, against Photoshop's 1–5000.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| 3   | `Mode`                                   | `inert`   | declared `src/tools/draw.ts:43`                                    | Declared on the args, set by no Draw-bar control, absent from `defaultSettings.draw` (`settings.ts:63-69`) — **and refused even if set**: `src/contexts/layer-utils.ts:149` returns `source-over` for any `toolName` other than `brush`/`pencil`/`color-replacement`, so a draw stroke's layer is forced to Normal.                                                                                                                                                                                                                                                                |
-| 4   | `Opacity`                                | `present` | `src/components/ToolbarsRight/Draw/Draw.tsx:204`, handler `:49-52` | 0–100% on `args.alpha`, applied as `ctx.globalAlpha` (`src/tools/draw.ts:77`). Default 90% for `pen`/`pen-dashed`, 50% for `spray` (`settings.ts:33-35`) against Photoshop's 100% — the data file's `detail` now names both numbers. The build-up behavior Photoshop documents for this control is not reproduced: see the one-stroke, one-layer paragraph above.                                                                                                                                                                                                                  |
-| 5   | `Flow`                                   | `missing` | —                                                                  | The app has a single `alpha` and no flow concept.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| 6   | `Enable airbrush-style build-up effects` | `missing` | —                                                                  | The bar renders Pen Type, Size, Dash, Gap, Opacity and a preview, and nothing else. The `spray` pen is the nearest thing and it diverges twice: it is reached from a Pen Type dropdown rather than a toggle, and it stamps one soft gradient per sampled point along the drag, so it builds while the pointer moves and a held press adds nothing after the single dot it laid. The old `partial` here carried an `appRef` into `Draw.tsx:129`, which is a Pen Type `<option>`, not an airbrush control — a citation to a line that does not contain the control the row is about. |
+| #   | Brush bar control     | Status    | App rendering                                                      | Note                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --- | --------------------- | --------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `Brush Preset picker` | `missing` | —                                                                  | No tip, no hardness, no presets. The per-pen records in `settings.ts:37-41` are three hardcoded strokes, not a preset system.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 2   | `Size`                | `partial` | `src/components/ToolbarsRight/Draw/Draw.tsx:142`, handler `:44-47` | Wired and applied verbatim (`src/tools/draw.ts:87`), but the range diverges at **both** ends: 0.5–500 px, step 0.5, against Photoshop's 1–5000.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| 3   | `Mode`                | `inert`   | declared `src/tools/draw.ts:43`                                    | Declared on the args, set by no Draw-bar control, absent from `defaultSettings.draw` (`settings.ts:68-74`) — **and refused even if set**: `src/contexts/layer-utils.ts:149` returns `source-over` for any `toolName` other than `brush`/`pencil`/`color-replacement`, so a draw stroke's layer is forced to Normal.                                                                                                                                                                                                                                                                                                                                |
+| 4   | `Opacity`             | `partial` | `src/components/ToolbarsRight/Draw/Draw.tsx:204`, handler `:49-52` | 0–100% on `args.alpha`, applied as `ctx.globalAlpha` (`src/tools/draw.ts:91`). Default 90% for `pen`/`pen-dashed`, 50% for `spray` (`settings.ts:38-40`). The build-up behavior Adobe documents for this control is not reproduced, so the row is `partial` and not `present`: see the one-stroke, one-layer paragraph above.                                                                                                                                                                                                                                                                                                                      |
+| 5   | `Flow`                | `missing` | —                                                                  | The app has a single `alpha` and no flow concept.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| 6   | `Airbrush`            | `missing` | —                                                                  | The bar renders Pen Type, Size, Dash, Gap, Opacity and a preview, and nothing else. The `spray` pen is the nearest thing and it diverges twice: it is reached from a Pen Type dropdown rather than a toggle, and it stamps one soft gradient per sampled point along the drag, so it builds while the pointer moves and a held press adds nothing after the single dot it laid. The old `partial` here carried an `appRef` into `Draw.tsx:129`, which is a Pen Type `<option>`, not an airbrush control — a citation to a line that does not contain the control the row is about.                                                                 |
+| 7   | `Smoothing`           | `inert`   | declared `src/tools/draw.ts:38`                                    | The seventh row, and the one this table was missing. Adobe's stroke-smoothing page puts the control on the options bar for "the Brush, Pencil, Mixer Brush, and Eraser" and gives its range: "Smoothing amount: Set a value between 0 and 100"; higher values "may slightly delay the stroke preview". Declared on the draw args, written by no Draw-bar control, absent from `defaultSettings.draw` (`settings.ts:68-74`), and `PaintToolArgs` at `src/tools/draw.ts:69` exists precisely by `Omit`-ing `smoothing` out — so the field is the paint family's and this bar never exposes it. `inert` for the same reason as `Mode`, one row above. |
 
-**Counts: present 1 · partial 2 · inert 1 · missing 3.**
+**Counts: present 0 · partial 2 · inert 2 · missing 3.**
 
 `Size` and the airbrush toggle were both `present`/`partial` on the strength of "it does something
 nearby". Neither is that any more. `Size` is `partial` because `types.ts` defines the status as
@@ -349,6 +399,49 @@ the nearest neighbour — the Spray pen — is a different Photoshop control rea
 Its old `detail` was the sharper defect: it ended "Click the button to toggle it", which would have
 told a user to click a control that does not exist.
 
+`Opacity` was `present` and was **also** wrong, in the direction `present` most easily hides: it
+contradicted this file's own `appNotes`, which said the build-up story diverges. `types.ts` defines
+`present` as "The app renders this control and it does what Photoshop's does", and Adobe's Opacity
+text makes the build-up rule part of the control rather than an extra: "As you paint over an area,
+the opacity does not exceed the set level no matter how many times you move the pointer over the
+area, until you release the mouse button." A single `beginPath`/`stroke()` over the whole path at
+`globalAlpha` (`src/util/draw.ts:151-154`, `src/tools/draw.ts:91`) does not hold that within a
+self-crossing stroke, so the behaviour diverges and the status is `partial`.
+
+**`Smoothing` was absent from a table that declares itself the Brush-bar census, and its own
+`appNotes` named it.** The sentence "The two fields the Photoshop paint bar exposes as Mode and
+Smoothing are declared on the draw args but unreachable from this bar" was true while the census
+listed only `Mode`. Both halves of that sentence now have a row, and both are `inert` for the same
+reason: declared, written by nothing. Bar order puts `Smoothing` last, after `Airbrush`, which is
+where Adobe's Brush bar puts it and where the sibling paint family puts it (`paint.ts:72`, after its
+`Airbrush` at `:54`).
+
+**Two defaults were removed rather than sourced (`Opacity` and `Flow`).** Both rows ended
+"Default: 100%." Adobe's page says "Opacity of 100 percent is opaque" — a value, not a default — and
+states **no default for Flow at all**. This file's own `Unverified` item 10 says a default "is the
+cheapest claim in the file for anyone to disprove", and these two were exactly that, so removing them
+costs nothing: the `Opacity` row now quotes the value sentence and says outright that Adobe states no
+default, and `Flow` says the same. The app's own per-pen defaults stay, because those are verifiable
+in the tree. Note the sibling `paint.ts:127` still says the bar "seeds it at 90 percent where
+Photoshop's is 100" — **that half is the same unsourced default and is out of this family's scope to
+change**; flagged here so a later pass does not treat the two files as agreeing.
+
+**`Airbrush` is Adobe's own name, and the longer string this file used was not.** The row was
+`Enable airbrush-style build-up effects`. Adobe's painting-tools page heads the section "Airbrush"
+and describes it as "Simulates painting with an airbrush… Click the button to turn on or off this
+option." No Adobe page carrying the longer string could be opened, and the sibling `paint.ts:54`
+records the same control as `Airbrush`, so this file was the outlier and is now aligned with both.
+The longer form reads as a description of what the toggle does rather than as a label printed on the
+bar, which is the likeliest route by which it entered the file; that is an inference and is recorded
+as one.
+
+**One control name in this table is Adobe-verbatim while the sibling family capitalises it, and it is
+this file that is right.** `Brush Preset picker` here, `Brush Preset Picker` in `paint.ts:15` and
+`:151`. Adobe's own sentence is "You can quickly choose presets from the **Brush Preset picker** in
+the options bar, which lets you temporarily modify the size and hardness of a brush preset", so the
+lower-case `p` is Adobe's and the sibling is the outlier. Deliberately **not** changed, and flagged so
+a future pass harmonises in this direction rather than the other.
+
 `Mode` is the one row where `inert` and `missing` were genuinely contestable. `inert` was chosen
 because the field exists on the args type and is read on the commit path, so the app _has_ the
 control and this bar simply does not expose it — which is what `inert` exists to name. It is
@@ -357,7 +450,7 @@ reproduced correctly: the app's own paint bar renders a working `Mode` select at
 therefore has the control the Draw bar lacks. The qualification recorded here is now settled rather
 than open: `types.ts` words `inert` as "declared **or displayed**, and nothing is wired behind it",
 and names two qualifying shapes, so a field that is neither persisted in `src/tools/settings.ts`
-(`defaultSettings.draw` at `settings.ts:63-69` has neither `blendMode` nor `smoothing`) nor rendered
+(`defaultSettings.draw` at `settings.ts:68-74` has neither `blendMode` nor `smoothing`) nor rendered
 by this bar still qualifies on the display side — the declared `blendMode` is the paint family's
 control, and the blend-mode gate refuses it for this tool anyway
 (`src/contexts/layer-utils.ts:149`). The row stays `inert`.
@@ -410,8 +503,25 @@ through these tools by pressing Shift+B."
 - https://helpx.adobe.com/photoshop/using/painting-tools.html — Adobe. "The Brush tool and the
   Pencil tool work like traditional drawing tools applying color with brush strokes"; the Brush
   Preset picker "lets you temporarily modify the size and hardness of a brush preset"; Mode;
-  Opacity; Flow; the airbrush toggle's own description; and Shift-click for a straight line. The
-  source for every Brush-bar row in the table above.
+  Opacity, with its build-up rule "As you paint over an area, the opacity does not exceed the set
+  level no matter how many times you move the pointer over the area, until you release the mouse
+  button" and the value sentence "Opacity of 100 percent is opaque"; Flow, with no default; the
+  section headed **Airbrush** — "Simulates painting with an airbrush… Click the button to turn on or
+  off this option", which is the verbatim name the row now carries; and Shift-click for a straight
+  line. The source for every Brush-bar row in the table above except `Smoothing`, and for no default
+  anywhere on that bar.
+- https://helpx.adobe.com/photoshop/desktop/repair-retouch/clean-restore-images/create-smoother-more-polished-brush-strokes-with-stroke-smoothing.html
+  — Adobe, last updated Feb 23, 2026. The `Smoothing` row, on one page that carries **both** halves
+  the row needs: the tools it applies to — "supported tools like the Brush, Pencil, Mixer Brush, and
+  Eraser" — and the range, "**Smoothing amount: Set a value between 0 and 100** to control how much
+  smoothing is applied. Lower values apply minimal correction. Higher values result in stronger
+  smoothing but may slightly delay the stroke preview." It states **no default**, and none is claimed.
+  (The brief for this pass offered an Adobe Community thread for the 0–100 range instead; this page
+  carries the range as Adobe prose and removes the need for the community source.)
+  https://helpx.adobe.com/uk/photoshop/using/painting-tools.html — Adobe's UK mirror of the
+  painting-tools page, which corroborates both halves in one sentence: "enter a value (0-100) for
+  Smoothing in the options bar when working with any of these tools: Brush, Pencil, Mixer Brush, or
+  Eraser." Not in the data file's `sources`, because the page above is the primary.
 - https://helpx.adobe.com/ee/photoshop/how-to/color-management-basics.html — Adobe, South Asia
   edition of the color-management article. The Brush picker carrying Size and Hardness, and `[` / `]`
   growing and shrinking the tip.
@@ -472,8 +582,10 @@ is listed with the URL that came closest.
    entry, belonging with a zoom, a panel move or a tool switch; a second audit reached the same
    conclusion from the governing rule. The tree asserts the rule at `src/tools/toolProcessors.ts:73-74`
    and `src/components/Main/EyedropperToolArea.tsx:30-44`, but **no single Adobe sentence stating it
-   was found**, and two audits agreeing on a deduction is not a citation. Recorded as a derivation in
-   `purpose` and `appNotes`, not as a quote. Closest:
+   was found**, and two audits agreeing on a deduction is not a citation. **It is now recorded in
+   `appNotes` only** — removed from `purpose` outright, because `purpose` is a Photoshop-claim field
+   per `types.ts` and an unsourced deduction about Adobe's history panel does not belong in one. It
+   is not dressed as a sourced claim anywhere. Closest:
    https://helpx.adobe.com/photoshop/using/tool-techniques/eyedropper-tool.html
 5. **That the Tools panel has no freehand-annotation or pen-stroke tool "in any released version."**
    The universal negative is not sourceable. The _current-version_ negative is well supported —
@@ -487,20 +599,40 @@ is listed with the URL that came closest.
    the Mixer Brush; this app's own `brushGroup` adds the Eraser instead. The data file says only
    that `B` selects the Brush and `Shift+B` cycles the brush group, which every version agrees on.
    Closest: https://www.thedigitalprocess.com/selecting-color-in-photoshop/
-7. **`Show Sampling Ring` as a control on the eyedropper's bar in Photoshop 2024–2026.** Two
-   sources place it on the CC-era bar, and Adobe's own CS5 help mentions "a color sampler ring for
-   the Eyedropper tool", but nothing establishes that the toggle is still there. It was left out of
-   the census rather than filed as `missing` on the strength of a 2018 blog. Closest:
+7. **`Show Sampling Ring` as a control on the eyedropper's bar in Photoshop 2024–2026 — still open,
+   and now a recorded decision rather than a silence.** Two sources place it on the CC-era bar, and
+   Adobe's own CS5 help mentions "a color sampler ring for the Eyedropper tool", but nothing
+   establishes that the toggle is still there, and the 27.x **name** is unconfirmed: five searches for
+   `"Show color overlay"` returned nothing on any Adobe page, and the only names anyone sources are
+   third-party "Show Sampling Ring" and an Adobe Community Expert's "Show Sampling Circle". It is left
+   out of the census rather than filed as `missing` on the strength of a 2018 blog, because `missing`
+   would assert a control Adobe's current page does not show — that page names only `Sample Size` and
+   `Sample`. **The decision, recorded so it cannot be read as an oversight:** no row, because
+   `types.ts` requires `control` to be Adobe's name verbatim and no Adobe page supplies one; the
+   omission and its reason are stated in the data file's `appNotes` instead, which also notes that the
+   app has no ring either way — the ring is a cursor and this repo has no cursor registry at all
+   (`HANDOFF.md:1017`). A later pass that finds an Adobe name for the control should add the row;
+   this item then closes the way item 1 did. Closest:
    https://jkost.com/blog/2018/03/the-eyedropper-color-samplers-and-info-panel-in-photoshop-cc.html
 8. **A tool-preset picker leading the eyedropper's options bar.** The corpus's own table gives every
    bar a leading `tool-preset` (`03-ui-chrome-spec.md:182-194`), and tool presets are a documented
    Photoshop feature, but the Adobe page that was opened does not establish that a preset picker
    leads this bar. Excluded from the census rather than filed as `missing`.
    Closest: https://helpx.adobe.com/photoshop/using/painting-tools.html
-9. **`Shift+I` cycling, from an Adobe source.** The cycle rule is documented in the consolidated CS3
-   table and in O'Reilly's _Photoshop CS4 Bible_, and the five-tool group is confirmed by two
-   independent inventories, so the shortcut is in the data file — but no Adobe page establishing it
-   was opened. Closest: https://bruceblinn.com/1-Photography/UsingPhotoshopCS3.pdf
+9. **CLOSED — `Shift+I` cycling, and the data file's row is the closure.** This item used to say the
+   cycle is documented only outside Adobe: in the consolidated CS3 table and in O'Reilly's _Photoshop
+   CS4 Bible_, with the five-tool group confirmed by two independent inventories, and **no Adobe page
+   establishing it had been opened.** The claim was already in the data file — the `Shift+I` shortcut
+   row names all five tools, Eyedropper, Color Sampler, Ruler, Note and Count — and the thing that was
+   missing was corroboration at the level the rest of the file holds. It now has it: `bruceblinn`'s
+   consolidated CS3 table states the group **and** the rule in two adjacent lines, "I, Shift-I Eye
+   dropper, color sampler, ruler, and count tools" and "Using the Shift key with the letter key will
+   cycle through the tools", and `clippingpathstudio` and `offshoreclipping` both put the same
+   five-tool group on `I`. All three are already in the data file's `sources`, which is where the
+   closure is recorded. The row needs no hedge it did not already carry, and the app's own divergence
+   — no `Shift+I` cycle, because the single-tool tile registers `I` twice and no `shift: true` twin —
+   was already disclosed in `appNotes`. **Do not re-raise this item.** Closest:
+   https://bruceblinn.com/1-Photography/UsingPhotoshopCS3.pdf
 10. **Photoshop's default `Sample` value — and the data file no longer claims one.** Two third-party
     sources say the eyedropper samples all layers by default and that this can be narrowed, and
     Adobe's current page enumerates the menu — "All Layers : Sample color from all layers" and
@@ -514,16 +646,51 @@ is listed with the URL that came closest.
     the corpus's Brush row lists. Not enumerated in the census because the Adobe page that was
     opened does not name them, and the app has no pointer-pressure handling to map them onto in any
     case. Closest: https://helpx.adobe.com/photoshop/using/painting-tools.html
-12. **Photoshop's default `Sample Size` value, and the `Show Sampling Ring` default.** Added by this
-    pass, not by the review, and of exactly the same class as item 10. The data file's `Sample Size`
-    row ends "Default: Point Sample." Adobe's current page enumerates the menu and does not say
-    which entry ships selected; a third-party tutorial says "By default, it's set to 'Point Sample'",
-    which is one source. **The default is left in the data file and is recorded here as the one
-    remaining unsourced default in the `eyedropper` description** — a judgement call, since it is a
+12. **Photoshop's default `Sample Size` value, and the `Show Sampling Ring` default.** Added by an
+    earlier pass, not by the review, and of exactly the same class as item 10. The data file's
+    `Sample Size` row ends "Default: Point Sample." Adobe's current page enumerates the menu and does
+    not say which entry ships selected; a third-party tutorial says "By default, it's set to 'Point
+    Sample'", which is one source. **The default is left in the data file and is recorded here as the
+    one remaining unsourced default in the `eyedropper` description** — and, after this pass removed
+    the two on the `draw` side, in the family as a whole — a judgement call, since it is a
     conventional first-entry default and the app's own value is 1, but it is the same shape of claim
     that item 10's "defaults to" was and it should be treated as one. Remove it or source it in a
-    later pass. Closest:
+    later pass. The ring default stays unverified with item 7, which now carries the whole ring
+    question. Closest:
     http://phlearn.com/tutorial/photoshop-basics-how-to-use-the-eyedropper-tool/
+
+**Two unsourced defaults were removed rather than listed here, because they are no longer claims.**
+The `draw` family's `Opacity` and `Flow` rows both ended "Default: 100%." Adobe says "Opacity of
+100 percent is opaque" — a value, not a default — and states no default for Flow at all, so both
+sentences are gone from the data file and the rows now say outright that Adobe states no default.
+The `Smoothing` row added this pass states the 0–100 range from Adobe's own page and claims no
+default, and the sibling `paint.ts:74` claims "Default 10" on the same control with nothing here to
+support it. That is out of this family's scope to change and is flagged for whichever pass owns the
+paint family.
+
+## Citation drift corrected in this pass
+
+The header of this file says every `file:line` below was re-derived against the tree in this
+worktree, and a cluster of them had not been. All of them had drifted **upwards** — the cited files
+grew above the citation and nothing below it moved — and all are now re-derived, not nudged:
+
+| Was                   | Now                   | What is there                             |
+| --------------------- | --------------------- | ----------------------------------------- |
+| `draw.ts:55`          | `draw.ts:69`          | the `PaintToolArgs` `Omit`                |
+| `draw.ts:74`          | `draw.ts:87`          | `ctx.strokeStyle = color`                 |
+| `draw.ts:77`          | `draw.ts:91`          | `ctx.globalAlpha = alpha`                 |
+| `util/draw.ts:162`    | `util/draw.ts:194`    | `hexToRgb(args.color)` inside `drawSpray` |
+| `settings.ts:32-36`   | `settings.ts:37-41`   | the `savedDrawPerPen` record              |
+| `settings.ts:33-35`   | `settings.ts:38-40`   | the three per-pen alphas                  |
+| `settings.ts:63-69`   | `settings.ts:68-74`   | the `defaultSettings.draw` block          |
+| `settings.ts:202-206` | `settings.ts:208-212` | the `eyedropper` defaults                 |
+| `settings.ts:204`     | `settings.ts:210`     | `sampleAllLayers: false`                  |
+
+The `draw.ts` drift matters more than the rest, because two of those citations are load-bearing for
+this pass: the E4 finding's own evidence is `src/util/draw.ts:151-154` plus `src/tools/draw.ts:91`,
+and the table previously cited `:77` for the `globalAlpha` the divergence turns on. A `file.ts:NNN`
+in a handoff is only useful if it still resolves, and a `grep` sweep does not catch this — the text
+at the stale line still reads plausibly.
 
 ## Incidental observation, not fixed here
 

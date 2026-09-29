@@ -121,16 +121,14 @@ export const CURATED = {
     note: 'Verify each of the three commits separately before landing; the tip subject is a docs commit and understates the branch.',
   },
   'fix-oracle': {
-    summary:
-      'Layout-independent export oracle, including the helpers and the document-mapping unit test. No commits: the work is in the working tree only.',
+    summary: 'Layout-independent export oracle, including the helpers and the document-mapping unit test.',
     issues: [
       {
         ref: 'e2e/OPEN_PROBLEMS.md#P2-export-line-is-document-space',
         title: 'the export line is specified in document space',
       },
     ],
-    mustNotPrune: true,
-    note: 'The branch tip is a main commit, so git reports this as merged and clean. The five e2e paths are the entire work and exist on no ref.',
+    note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'fix-oracle-axes': {
     summary:
@@ -176,22 +174,25 @@ export const CURATED = {
       'Corrections to AGENTS.md and the worktree-inventory comments, from a code review of AGENTS.md against the tree. The structural orphan under "The board is cross-session" and the board-to-swarm regression it introduced; the toolbar section, which listed a shipped Color Replacement options bar as a PlaceholderTool and understated the hand-copied tool lists by fourfold; the mergeChecked semantics, which the document and the code comment both got wrong; the npx tsc --noEmit explanation, which named a missing exclude that does not exist; and the drifted enumerations (orphaned, the curated code sample, the at-risk third source). Adds mergeChecked to the --check watched list.',
     note: 'Short-lived documentation work. Safe to drop once the branch is an ancestor of main; the only non-AGENTS.md change that outlives the prose is the mergeChecked entry in scripts/worktree-inventory.mjs.',
   },
+  'e2e-truth': {
+    summary:
+      'A documentation-truth pass over e2e/README.md, e2e/OPEN_PROBLEMS.md, e2e/global-setup.ts and TEST-FLAKES section 8, correcting claims a review found false against the tree: the spec and helper counts in the README tree block, two README bullets that attributed a pattern to a spec that does not follow it, the per-spec count in the headless guard comment, a deleted-entry check, and a cluster of drifted file:line citations. Its distinct value was largely taken by main while the branch was in review: main deleted the same stale Text-toolbar entry, cut OPEN_PROBLEMS by more than half its entries, and replaced the README count block with an explicit "keep no counts here" decision. NOT LANDED, and landing it now would re-introduce counts main deliberately removed.',
+    note: 'Superseded, not wrong. The three findings that were still unique at review time were the rotted cdp-helpers and canvas-helpers citation clusters (main re-derived its own against a larger tree, so neither side’s line numbers can be taken verbatim across the merge) and one citation that moved rather than resolved. A reviewer wanting the residual must re-derive every number against current main; there is nothing here that contradicts the tree. The branch is ahead of main and not on it, so the inventory already refuses to prune it and no flag is owed on top of that.',
+  },
   'polygon-marching-ants': {
     summary:
-      'Polygon-selection marching ants: the ants component, the selection-ants hook, a new usePolylineAnts module and its tests, and edits to the lasso, magic wand and click tool areas. The branch has no commits of its own.',
-    mustNotPrune: true,
-    note: 'git reports this as merged and 0 ahead because the branch sits on an old main commit. The work exists on no ref; see `dirty` and `untracked` for what the working tree holds.',
+      'Polygon-selection marching ants: the ants component, the selection-ants hook, a new usePolylineAnts module and its tests, and edits to the lasso, magic wand and click tool areas.',
+    note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'ps-pixel-tools': {
     summary:
-      'Eraser, Magic Eraser, Paint Bucket and Clone Stamp as four tool areas plus toolbars, with their tools and tests. The branch has no commits of its own; see `dirty` and `untracked` for what the working tree holds.',
+      'Eraser, Magic Eraser, Paint Bucket and Clone Stamp as four tool areas plus toolbars, with their tools and tests.',
     issues: [
       { ref: 'HANDOFF.md#48', title: 'eraser is hard-edged; Flow and Airbrush are dead controls' },
       { ref: 'HANDOFF.md#49', title: 'bucket and magic eraser leave a hard edge; mask is a threshold' },
       { ref: 'HANDOFF.md#50', title: 'bucket has no blend mode; gate excludes paint-bucket' },
     ],
-    mustNotPrune: true,
-    note: 'Reported as merged for the same reason as polygon-marching-ants: the tip is an old main commit. The eraser family is the live target for #48/#49/#50.',
+    note: 'The eraser family is the live target for #48/#49/#50. A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'ps-brush-engine': {
     summary:
@@ -243,8 +244,7 @@ export const CURATED = {
       { ref: 'HANDOFF.md#50', title: 'the committed seam is redundant with main; the uncommitted set is not' },
       { ref: 'HANDOFF.md#48', title: 'stamp loop / dab accumulator is the named fix' },
     ],
-    mustNotPrune: true,
-    note: 'A split decision: #50 says drop the committed seam, but the uncommitted gradient tool, rounded-rectangle and eraser icons have no ref anywhere. The untracked eraser icons overlap ps-pixel-tools.',
+    note: 'A split decision: #50 says drop the committed seam, but the gradient tool, the rounded-rectangle shape and the eraser-family icons are on this branch only. An earlier version of this note called the last two untracked and on no ref; the working tree is clean and everything here is committed.',
   },
 
   /* ------------------------------------------------- wip preservation */
@@ -322,50 +322,43 @@ export const CURATED = {
       },
       { ref: 'MIGRATION_NEXT_STEPS_SUNDAY.md#5.1', title: 'P0 — already fixed on fix/unit-tests, do not redo this' },
     ],
-    mustNotPrune: true,
-    note: 'The only holder of the #16 and #17 fixes, and its commits are not on main, so `git branch -D` would lose work that exists on no other ref.',
+    note: 'The only holder of the #16 and #17 fixes, and its commits are not on main, so `git branch -D` would lose work that exists on no other ref. A branch that is not on main is already refused by the inventory, so no flag is owed on top of that.',
   },
 
   /* ---------------------------------------------------------------- e2e */
   'e2e-1-export-oracle': {
-    summary: 'Campaign shard 1 of 5, meant to make the export specs prove the app’s contain-fit mapping. Zero commits.',
-    mustNotPrune: true,
-    note: 'The export spec is untracked content on no ref, and the branch tip is an old main commit, so git reports 0 ahead and merged. Removing the worktree destroys the only copy.',
+    summary: 'Campaign shard 1 of 5, meant to make the export specs prove the app’s contain-fit mapping.',
+    note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'e2e-2-draw-specs': {
-    summary: 'Campaign shard 2 of 5, meant to write the drawing spec. Zero commits.',
+    summary: 'Campaign shard 2 of 5, meant to write the drawing spec.',
     issues: [
       {
         ref: 'e2e/OPEN_PROBLEMS.md#P2-buildclip-redraw-clip',
         title: 'an explicit redraw clip is in page coordinates and a canvas-relative one passes for the wrong reason',
       },
     ],
-    mustNotPrune: true,
-    note: 'e2e/draw.spec.ts is untracked content on no ref, and the branch tip is an old main commit, so git reports 0 ahead and merged.',
+    note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'e2e-3-layers-levels': {
     summary:
-      'Campaign shard 3 of 5, named for the layers and levels specs. Uncommitted work touches two production files, `LayersTab.tsx` and `layer-renderer.ts`, alongside the specs.',
-    mustNotPrune: true,
-    note: 'A leftover AUTO_MERGE ref records an abandoned merge here, so the worktree is not simply empty even though the branch itself carries no commits.',
+      'Campaign shard 3 of 5, named for the layers and levels specs. Its production changes are the layers panel and the layer renderer, alongside the specs.',
+    note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'e2e-4-flyout-keyboard': {
     summary:
-      'Campaign shard 4 of 5, meant for flyout and keyboard specs. The board records its uncommitted files as the campaign’s content rather than flyout work.',
-    mustNotPrune: true,
-    note: 'The board measured the branch as merged while holding uncommitted campaign content; the tip is an old main commit, and that content exists on no ref.',
+      'Campaign shard 4 of 5, meant for flyout and keyboard specs. The board records its files as the campaign’s content rather than flyout work.',
+    note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'e2e-5-history-undo': {
-    summary:
-      'Campaign shard 5 of 5, meant to cover the history panel and undo/redo. The branch has no commits of its own.',
+    summary: 'Campaign shard 5 of 5, meant to cover the history panel and undo/redo.',
     issues: [
       {
         ref: 'e2e/OPEN_PROBLEMS.md#P2-cached-canvas-box',
         title: 'a cached canvas box addresses a different pixel after a tool switch',
       },
     ],
-    mustNotPrune: true,
-    note: 'e2e/history-panel.spec.ts exists only in this working tree and on no branch, and the tip is an old main commit.',
+    note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'e2e-campaign-int': {
     summary:
@@ -380,7 +373,6 @@ export const CURATED = {
   'repair-dialogs-text': {
     summary:
       'Despite its name, no dialogs or text repair: the repairs were committed on the integration branch, not here. It tracks `integration/e2e-campaign-final` but is not level with it, and against `main` it carries the whole campaign chain.',
-    mustNotPrune: true,
     note: 'The branch is not a fast-forward of the integration branch, so anything committed to that branch since is missing here. The repairs its name promises are on the integration branch only.',
   },
   'repair-undo-redo': {
@@ -401,7 +393,6 @@ export const CURATED = {
   'e2ewt-document-dialogs': {
     summary:
       'Covers the New Image and Save dialogs through the document, with test hooks in the dialogs and in layer-utils, plus two new HANDOFF items.',
-    mustNotPrune: true,
     note: 'Two HANDOFF items exist only in this branch’s own renumbered copy of HANDOFF.md; main’s copy has neither defect, so a bare HANDOFF.md ref would misresolve.',
   },
   'e2ewt-file-roundtrip': {
@@ -419,13 +410,11 @@ export const CURATED = {
   'e2ewt-paint-tools': {
     summary:
       'Asserts paint-tool pixels and records two P1s: brush, pencil and Color Replacement ignore the foreground colour, and Color Replacement accumulates a low-contrast haze.',
-    mustNotPrune: true,
     note: 'Main has a different, larger e2e/paint-tools.spec.ts with the same filename, so a naive land conflicts. Neither P1 is recorded in main’s documents.',
   },
   'e2ewt-selection-gestures': {
     summary:
       'Covers selection gestures and records two defects: a marquee overlay that survives the tool switch that deselects it, and a white-on-white shape fill.',
-    mustNotPrune: true,
     note: 'Neither recorded defect appears in main’s documents, and the branch’s own copy of Main.tsx conflicts with the responsive rewrite on main, so the record survives only here.',
   },
   'e2ewt-spec-defect-fixes': {
@@ -468,10 +457,9 @@ export const CURATED = {
   },
   'harden-flyout': {
     summary:
-      'A rail-layout guard that closes the flyout on breakpoint crossings, plus a comment-only ToolTooltip edit. Zero commits on the branch.',
+      'A rail-layout guard that closes the flyout on breakpoint crossings, plus a comment-only ToolTooltip edit.',
     issues: [{ ref: 'ph-55', title: 'SidebarLeft flyout: main is fixed and green' }],
-    mustNotPrune: true,
-    note: 'Highest risk in its batch: the breakpoint guard exists only in this working tree. The sibling worktree holds a committed version of the same guard, and the two differ.',
+    note: 'Highest risk in its batch: the sibling worktree holds a committed version of the same guard, and the two differ, so one of them is a decision rather than a merge. An earlier version of this note said the guard existed only in this working tree; it is committed here.',
   },
   'harden-flyout-overlay': {
     summary:
@@ -496,10 +484,8 @@ export const CURATED = {
 
   /* ------------------------------------------------------------ history */
   'history-append-layer-ops-main': {
-    summary:
-      'A re-creation of the layer-property append-boundary slice against main. The branch was created from main and never committed, so its output is three uncommitted files.',
-    mustNotPrune: true,
-    note: 'The work exists on no ref. HANDOFF.md names a different worktree for the same slice, whose work became 2dfc18e/2d985d4.',
+    summary: 'A re-creation of the layer-property append-boundary slice against main.',
+    note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'history-append-readiness': {
     summary:
@@ -545,19 +531,16 @@ export const CURATED = {
   'history-selection-creation-writer-2': {
     summary:
       'A competing second attempt at the selection creation writer, including a new test. Not a duplicate of its siblings — the three share one commit but hold three different working trees.',
-    mustNotPrune: true,
-    note: 'The branch tip is main’s own commit, so git reports it merged and 0 ahead, while the tool areas, the hook and a new test exist on no ref.',
+    note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'history-selection-deselect-writer': {
     summary: 'A third selection-writer attempt aimed at deselect.',
-    mustNotPrune: true,
-    note: 'The branch tip is main’s own commit, so git reports it merged and 0 ahead, while the deselect writer and its tool-area edits exist on no ref.',
+    note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'history-selection-gesture-writer': {
     summary:
       'A fourth selection-writer attempt aimed at per-pointer gesture updates, covering both tool-area suites and adding a new test.',
-    mustNotPrune: true,
-    note: 'The branch tip is main’s own commit, so git reports it merged and 0 ahead, while the gesture writer, both tool areas, their suites and a new test exist on no ref.',
+    note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
   'reorder-durable-append': {
     summary:
@@ -579,14 +562,12 @@ export const CURATED = {
         title: 'the single-writer cutover gate in AGENTS.md names a behaviour saveLayerCanvas no longer has',
       },
     ],
-    mustNotPrune: true,
     note: 'That entry exists only on this branch and the defect it describes is still live on main. The playbook text itself is superseded by .skills/photoshop-tool-creation.md.',
   },
   'responsive-design-plan': {
     summary:
-      'A responsive-design review and implementation for mobile and tablet: a plan document, a new Mobile component suite, a useBreakpoint hook, and App/index.scss changes. The branch has no commits of its own.',
-    mustNotPrune: true,
-    note: 'Reports 0 ahead and merged while holding hours of uncommitted work — the exact shape HANDOFF.md warns about.',
+      'A responsive-design review and implementation for mobile and tablet: a plan document, a new Mobile component suite, a useBreakpoint hook, and App/index.scss changes.',
+    note: 'A later `wip(salvage)` commit captured what was on no ref, so the work is on a ref now: this branch is ahead of main and not on it, and the working tree is clean. An earlier version of this entry said the work was uncommitted and that git called the branch merged; neither was true, and the flag that claim carried is retracted.',
   },
 
   /* ------------------------------------------- newer worktrees, no notes */
@@ -634,8 +615,6 @@ export const CURATED = {
   'integration-test-pins': {
     summary:
       'Integration branch merging the eight test-pin branches for a single cross-branch gate run; held no work of its own, and the handoff section numbering collision was resolved here.',
-    mustNotPrune: true,
-    note: 'The flood-fill scaling-ramp test carries an uncommitted change raising its own timeout, because the assertion it makes is a ratio rather than a deadline and the default was killing it on a loaded machine. The branch is well ahead of main and that edit is on no ref.',
   },
   'hooks-pins': {
     summary: 'Pins the commit-gate hooks, which were the subject of the silent-no-gate bug in 89 of 118 worktrees.',
@@ -660,8 +639,7 @@ export const CURATED = {
   },
   'swarm-lease': {
     summary: 'A board worktree on lease behaviour, sitting on the merge that landed the brush-tip-core branch.',
-    mustNotPrune: true,
-    note: 'Holds an uncommitted change and is branched from a main that is already moving; the lease semantics it is about are still the open board item.',
+    note: 'The worktree and its branch are both gone, so there is nothing here left to protect and the entry survives only as a record of what the worktree was for. The lease semantics it was about are still the open board item — read that from the board, not from this line.',
   },
   'swarm-units': {
     summary:
@@ -696,6 +674,22 @@ export const CURATED = {
       },
     ],
   },
+  'e2e-findings-tail': {
+    // The tail of the work `fix-e2e-findings` already landed: the findings its
+    // adversarial review produced after the fixes merged, which the orchestrator
+    // session died before acting on. The branch is on main, so whatever the
+    // session did not do was finished by someone else afterwards.
+    summary:
+      'Finishes the transferred e2e findings: the per-axis capture scale in getStrokeAnalysis, the throw its JSDoc never stated, the zero-width defence pinned by a test that carries ink, the external oracle’s load-bearing check, and the ledger’s own arithmetic. It also corrects the review’s own divisor, which had been wrong about its own count.',
+    issues: [
+      {
+        ref: 'e2e/OPEN_PROBLEMS.md#transferred-findings--external-review-of-the-pre-migration-tree',
+        title:
+          'the review tail left four unaddressed findings and a section header that counted two entries below it and found three',
+      },
+    ],
+    note: 'Two accounts of this branch disagreed about how many of the review’s findings were behavioural rather than comment/precision defects, and neither figure can be re-derived from git, so neither is asserted here. Read the branch and its handoff section instead.',
+  },
   'handoff-citation-rotation': {
     summary:
       'Rotates the line-numbered citations in the handoff documents after they were invalidated by file growth, and corrects one false claim in section 1.',
@@ -704,10 +698,8 @@ export const CURATED = {
     ],
   },
   'review-findings': {
-    summary:
-      'Carries the review findings for the 2026-09-28 focused review as uncommitted edits across the components those findings name.',
-    mustNotPrune: true,
-    note: 'The findings exist in no commit and on no ref. The branch tip is a main commit, so git reports it merged and 0 ahead.',
+    summary: 'Carries the review findings for the 2026-09-28 focused review across the components those findings name.',
+    note: 'The worktree is gone and its branch is on main, so the findings are on main and not on no ref — the opposite of what this entry used to say.',
   },
   'text-tool-requirements': {
     summary:
@@ -732,28 +724,37 @@ export const CURATED = {
   // the descriptions, these check them.
   //
   // These entries are HISTORY. The integration branch merged all eight onto
-  // main, a follow-up commit fixed the four blocking findings an independent
-  // review of the merge found, and the worktrees and their branches were then
-  // removed — all of it while the duplicate-key defect below was still being
-  // fixed. The branches are gone, so there is nothing here for the `landed`
-  // test to re-derive, and the entries are kept for the same reason
+  // main, a follow-up commit fixed the blocking findings an independent review
+  // of the merge found, and the worktrees and their branches were then removed.
+  // The branches are gone, so there is nothing here for the `landed` test to
+  // re-derive, and the entries are kept for the same reason
   // `board-entrypoint` is: a landed-and-removed worktree says what the work was
   // for, and the next agent who wonders where the per-family notes came from
   // gets an answer.
+  //
+  // Both sides of the merge that produced this file described the same eight
+  // worktrees. This side's version records that the campaign has since been
+  // merged and deleted; the other named the slice of the tool set each worktree
+  // held. Both are kept, because they do not overlap: the family lists are the
+  // only place here that says which tools were in which slice, and the removal
+  // is the only thing that says the branches are gone. Where the other side said
+  // the families "land via audit/tool-desc-revalidation" and the branches are
+  // still open, that part is stale.
   'desc-eyedropper-draw': {
     summary:
-      'The eyedropper and draw half of the tool-description revalidation: the descriptions and the notes beside them, re-derived from Adobe’s pages rather than from the name of the tool.',
+      'The eyedropper-and-draw half of the tool-description revalidation, re-derived from Adobe’s own pages rather than from the name of the tool, together with the notes beside the descriptions.',
   },
   'desc-focus': {
     summary:
-      'The focus family’s half of the tool-description revalidation, including the finding its own review raised.',
+      'The focus family’s half of the tool-description revalidation — blur, sharpen, smudge, dodge, burn, gradient — including the finding its own review raised.',
   },
   'desc-paint': {
     summary:
-      'The paint family’s half of the tool-description revalidation, over both the descriptions and the notes beside them.',
+      'The paint family’s half of the tool-description revalidation — brush, pencil, colour replacement, eraser, magic eraser, paint bucket, clone stamp — over both the descriptions and the notes beside them.',
   },
   'desc-pen': {
-    summary: 'The pen family’s half of the tool-description revalidation, including the finding its own review raised.',
+    summary:
+      'The pen family’s half of the tool-description revalidation — pen, freeform, curvature and the anchor-point tools — including the finding its own review raised.',
   },
   'desc-selection': {
     summary:
@@ -761,19 +762,19 @@ export const CURATED = {
   },
   'desc-shape': {
     summary:
-      'The shape family’s half of the tool-description revalidation, including the finding its own review raised.',
+      'The shape family’s half of the tool-description revalidation — the shape group and its figures — including the finding its own review raised.',
   },
   'desc-transform': {
     summary:
-      'The transform family’s half of the tool-description revalidation, over both the descriptions and the notes beside them.',
+      'The transform family’s half of the tool-description revalidation — reposition, transform, levels, colour — over both the descriptions and the notes beside them.',
   },
   'desc-type-crop': {
     summary:
-      'The type and crop families’ half of the tool-description revalidation, over both the descriptions and the notes beside them.',
+      'The type-and-crop family’s half of the tool-description revalidation, over both the descriptions and the notes beside them.',
   },
   'tool-desc-integration': {
     summary:
-      'The integration branch for the tool-description revalidation: every family branch merged, then what the corrected record implies elsewhere — the generated tooltips and TOOLS table regenerated, the AGENTS.md rail claim corrected against Adobe’s page, and the shortcut collisions filed as handoff items. Landed on main and the worktree and branch removed.',
+      'The integration branch for the tool-description revalidation: every family branch merged, the generated tooltips and the TOOLS table regenerated from the corrected record, the AGENTS.md rail claim corrected against Adobe’s own page, and the shortcut collisions filed as handoff items. Landed on main, and the worktree and branch were then removed.',
     note: 'No `landed` claim: the branch was deleted after the merge, so nothing re-derives it. The uncommitted AGENTS.md and docs/TOOLS.md edits it held at the last reading are the open question here — the merge reached main without them.',
   },
 
@@ -796,17 +797,9 @@ export const CURATED = {
   },
 
   /* ------------------------------------------------- e2e truth and guards */
-  'e2e-findings-tail': {
-    summary:
-      'The review tail an earlier e2e session died before addressing: two of its four findings were real, including a stroke threshold that spent one axis’s capture scale on a measurement from the other axis.',
-  },
   'e2e-shell': {
     summary: 'The responsive-shell assertions, with the review findings applied and the branch merged onto main.',
     landed: true,
-  },
-  'e2e-truth': {
-    summary:
-      'Corrects e2e documentation that a review found false against the tree: a spec list that named a file which does not exist and omitted several that do, and a browser-spec total that left out what Playwright actually collects.',
   },
   'e2e-vacuous': {
     summary:
@@ -820,41 +813,42 @@ export const CURATED = {
   'fix-harness-guard-holes': {
     summary:
       'Closes the holes in the test-harness guard: the AGENTS.md test traps that the first version did not enforce, including the two collection keys that each independently decide what a project runs.',
-    mustNotPrune: true,
-    note: 'The guard’s expansion is uncommitted and on no ref, while the branch tip is a main commit — so git reports this as merged and clean and the only copy of the work is the working tree.',
+    note: 'This entry describes a fix branch, and that branch goes when the change lands — at which point this entry should be deleted with it. It carried a `mustNotPrune` on the claim that its work was uncommitted on a branch tip that was a main commit; its work is committed, the tree is clean, and the branch is ahead of main, so the inventory already refuses to prune it and the flag was retracted with the claim.',
   },
   'fix-lying-pins': {
     summary:
       'Repairs pins that could not fail: test titles and assertions whose bodies did the opposite of what they claimed.',
-    mustNotPrune: true,
-    note: 'The repaired pins are uncommitted and on no ref, while the branch tip is a main commit, so git reports this as merged and clean and removing the worktree destroys the only copy.',
+    note: 'This entry describes a fix branch, and that branch goes when the change lands — at which point this entry should be deleted with it. It carried a `mustNotPrune` claiming the repaired pins were uncommitted on a main commit; they are committed, the tree is clean, and the branch is ahead of main.',
   },
   'fix-parser-truth': {
     summary:
       'The handoff importer’s dead-heading handling, made true against the tree: the end-anchored separator forms and the prose-substring direction, with the regression tests.',
-    mustNotPrune: true,
-    note: 'Both the importer change and its tests are uncommitted and on no ref while the branch tip is a main commit, so git reports this as merged and clean.',
+    note: 'This entry describes a fix branch, and that branch goes when the change lands — at which point this entry should be deleted with it. It carried a `mustNotPrune` claiming the importer change and its tests were uncommitted on a main commit; both are committed, the tree is clean, and the branch is ahead of main.',
   },
   'tools-too-hard': {
     summary:
       'The TOO HARD register: each Photoshop capability too hard for this architecture recorded with what Adobe does, what the app does, why the gap is out of reach here, and what it offers instead — plus the gaps that are the operator’s call rather than an engineering one.',
   },
-
-  /* ---------------- merged branches whose working tree still holds the work */
-  // Each of these sits on a main commit with nothing ahead of it, so git reports
-  // each as disposable. Each also holds uncommitted work that exists on no ref,
-  // which is the exact shape this table exists for.
-  'no-scrollbars': {
+  'fix-curated-table': {
     summary:
-      'Hides the scrollbar chrome while keeping the left rail and the mobile bar genuinely scrollable: a shared class that removes the scrollbar and nothing else, with the measured overflow heights that make it necessary.',
-    mustNotPrune: true,
-    note: 'The change is uncommitted and on no ref, while the branch tip is a main commit, so git reports this as merged and clean and the only copy of the rule and its comment is the working tree.',
+      'The curated table’s own duplicate-key defect: five keys were declared twice, so the detailed entries were unreachable dead code and a committed curation change was a no-op. Removes the terse declarations, makes the duplicate-key check fail closed rather than reading the file with a regex that four declaration shapes slip past, and re-derives every entry’s prose against git instead of against a stale reading.',
+    note: 'This entry describes the worktree that wrote it, and that worktree goes when the change lands — at which point this entry should be deleted with it, not left behind as prose about a branch that is gone.',
   },
+
+  /* ---------------- worktrees that really do hold work git cannot see ----- */
+  // The one shape this table exists for, and the only one that earns
+  // `mustNotPrune`: a branch git already calls disposable, carrying edits that
+  // are in no commit on it. Every entry under this heading was re-derived with
+  // `git rev-list --left-right --count main...<branch>`,
+  // `git merge-base --is-ancestor`, and `git -C <path> status --porcelain`
+  // before the claim was written, because the previous version of this section
+  // asserted that shape for entries whose branches were ahead of main and
+  // whose trees were clean — the opposite of what it said.
   'rail-drop-draw': {
     summary:
       'The invented Draw tool removed from the rail and the registry, together with the description and settings work that removal forces across the tool areas, the e2e specs that switched away from it, and the pen spec it deletes.',
     mustNotPrune: true,
-    note: 'The whole deletion and everything it touches is uncommitted, including the staged removal of the tool’s files, while the branch tip is a main commit — so git reports this as merged and clean and the only copy of the removal is the working tree.',
+    note: 'The whole deletion and everything it touches is uncommitted, the Draw tool’s own files among them staged for removal, while the branch tip is a main commit — so git reports this as merged and clean and the only copy of the removal is the working tree.',
   },
   'shape-truth': {
     summary:
@@ -866,32 +860,39 @@ export const CURATED = {
     summary:
       'A left rail that collapses its tool tiles into the three-dots tile rather than demanding vertical room: the pure fit arithmetic split from the DOM measuring so the boundary can be pinned in jsdom.',
     mustNotPrune: true,
-    note: 'The fit module is an untracked file and the hook beside it is uncommitted, on a branch tip that is a main commit — so git reports this as merged and clean and removing the worktree loses the module entirely.',
-  },
-  'fix-curated-table': {
-    summary:
-      'The curated table’s own duplicate-key defect: five keys declared twice, so the detailed entries were unreachable dead code and a committed curation change was a no-op. Removes the terse declarations and adds a source-level test, because a duplicate key is invisible to Object.keys().',
-    note: 'This entry describes the worktree that wrote it; it should be deleted with the worktree.',
-  },
-  'panel-docks': {
-    summary:
-      'Photoshop-style draggable panel docks: the right dock resizable by dragging, a History/Layers splitter with drag-reorder between them, the tools rail relocatable, and the layout persisted. Board issue ph-72. No commits of its own yet.',
-  },
-  'retina-dpr': {
-    summary:
-      'A canvas-resolution investigation, carried in a plan document rather than in code: what the report called a paint-algorithm bug is answered as already correct, with the geometry pipeline shown to have no step that could introduce a device-pixel count.',
-    mustNotPrune: true,
-    note: 'The plan is an untracked file and the curated entry describing it is uncommitted, on a branch tip that is a main commit — so git reports this as merged and clean and the only copy of the investigation is the working tree. Note that this entry may duplicate one its own owner is writing in the same file.',
-  },
-  'chat-damage-audit': {
-    summary:
-      'An audit of what the agent transcripts say about damaged work, reading the chats rather than inferring it from their shape. Sits on a main commit with nothing of its own.',
+    note: 'The collapse itself is committed and this branch is not on main, so git does see that much. The rail and the flyout specs that have to move with it are uncommitted, and an earlier version of this note claimed the fit module was an untracked file — there is no untracked file in this worktree, so read the record rather than that claim.',
   },
   'swarm-watch-tail': {
     summary:
       'Makes `swarm watch` mean what a reader expects from a log: an unnamed call tails the last page and says which page it printed, and an explicit --since reads forward to the end of the log instead of stopping after one page.',
     mustNotPrune: true,
-    note: 'The change to the board script is uncommitted and on no ref, while the branch tip is a main commit, so git reports this as merged and clean and the only copy of the two-invocation rule is the working tree.',
+    note: 'The board script and its database module are also edited in the working tree, uncommitted, and this branch is ahead of main rather than sitting on a main commit. An earlier version of this note said the opposite of both, which is why every claim in this section is now re-derived before it is written.',
+  },
+
+  /* ------- worktrees whose danger git already sees: entry, but no flag ----- */
+  // These were flagged `mustNotPrune` on a premise that was false when written
+  // and is false now. The flag is the claim that the work here is on no ref;
+  // where the branch is ahead of main and the tree is clean, git already
+  // refuses to prune, and a flag on top of that protects nothing while
+  // asserting something untrue. The entry stays: it still says what the
+  // worktree is for.
+  'no-scrollbars': {
+    summary:
+      'Hides the scrollbar chrome while keeping the left rail and the mobile bar genuinely scrollable: a shared class that removes the scrollbar and nothing else, with the measured overflow heights that make it necessary.',
+    note: 'The branch is on main and the working tree is clean, so the rule and its comment are in commits and no flag is owed. An earlier version of this entry claimed the change was uncommitted and on no ref; it was not.',
+  },
+  'retina-dpr': {
+    summary:
+      'A canvas-resolution investigation, carried in a plan document rather than in code: what the report called a paint-algorithm bug is answered as already correct, with the geometry pipeline shown to have no step that could introduce a device-pixel count.',
+    note: 'The investigation is committed and the tree is clean. An earlier version of this entry claimed the plan was an untracked file, and there is no untracked file here; the flag that claim carried is retracted with it.',
+  },
+  'panel-docks': {
+    summary:
+      'Photoshop-style draggable panel docks: the right dock resizable by dragging, a History/Layers splitter with drag-reorder between them, the tools rail relocatable, and the layout persisted. Board issue ph-72.',
+  },
+  'chat-damage-audit': {
+    summary:
+      'An audit of what the agent transcripts say about damaged work, reading the chats rather than inferring it from their shape.',
   },
 };
 

@@ -93,13 +93,16 @@ async function decodeScreenshot(screenshot: Buffer): Promise<ImageDataResult> {
  * `imageWidth === rect.width * devicePixelRatio` failed in one mode and passed in the
  * other for byte-identical code, and no amount of DPR bookkeeping fixes it.
  *
- * Deriving the scale from the decoded image instead would be tautological, so this
- * asserts the properties that are true in every mode and that consumers depend on:
- * the capture is exactly the requested rect, at one integral scale shared by both
- * axes. A clipped, padded, full-canvas or anisotropic capture all fail it. The
- * absolute scale is then genuinely unconstrained, which is correct — downstream,
- * `screenshotBoundsToCss` and `screenshot-scale.ts` derive it from the decoded
- * dimensions, so it is an input rather than a promise.
+ * Deriving the scale from the decoded image instead would be tautological, so what is
+ * asserted here is the part that is true in every mode and that consumers depend on: the
+ * capture preserves the requested rect's ASPECT RATIO at one integral scale shared by both
+ * axes. An anisotropic capture fails it, and a capture of some other rect at an integral
+ * scale does NOT — a full 240x160 canvas answering a 120x80 clip decodes 240s x 160s, which
+ * is 2s on both axes and passes for s = 1 and s = 2 alike. The absolute scale is
+ * deliberately unconstrained, and correctly so: downstream, `screenshotBoundsToCss` and
+ * `screenshot-scale.ts` derive it from the decoded dimensions, so it is an input rather
+ * than a promise. A test that needs the extent pinned as well anchors it to a reference
+ * capture of the same rect, which is what the two below do.
  */
 function expectFaithfulCaptureOf(imageData: ImageDataResult, rect: { width: number; height: number }): void {
   const scaleX = imageData.width / rect.width;
@@ -118,11 +121,12 @@ test.describe('CDP Helpers', () => {
    * the browser and the host, not of this helper, and it differs between headed and
    * headless on a HiDPI machine. See `expectFaithfulCaptureOf` for the measurement.
    *
-   * What every test below does pin is the part that is ours: the capture covers the
-   * requested rect and nothing else, at one integral scale on both axes. The colour
-   * assertions carry the spatial guarantee, since the fixture paints the canvas red
-   * against a blue page — a capture that strayed outside the canvas would not be all
-   * red.
+   * What every test below does pin is the part that is ours: the capture preserves the
+   * requested rect's aspect at one integral scale shared by both axes, and the two that can
+   * additionally say anything about its EXTENT pin that against a reference capture of the
+   * same rect. The colour assertions carry the spatial guarantee, since the fixture paints
+   * the canvas red against a blue page — a capture that strayed outside the canvas would not
+   * be all red.
    */
   test.describe('captureCanvasScreenshot', () => {
     test('captures screenshot via CDP', async ({ page }, testInfo) => {
@@ -166,14 +170,24 @@ test.describe('CDP Helpers', () => {
       const imageData = await decodeScreenshot(screenshot);
       expect(countPixelsDifferingFrom(imageData, EXPECTED_CANVAS_RED)).toBe(0);
       expectFaithfulCaptureOf(imageData, box);
-      // A partial box must not silently degrade to the full canvas or the viewport.
-      // `expectFaithfulCaptureOf` cannot see that on its own — a 120x80 clip and the
-      // 240x160 canvas share a scale of 2 — so compare against the canvas directly.
-      // The box is strictly smaller than the canvas, so at any common scale the box
-      // capture must be strictly smaller too.
-      const scale = imageData.width / box.width;
-      expect(imageData.width).toBeLessThan(FULL_CANVAS_BOX.width * scale);
-      expect(imageData.height).toBeLessThan(FULL_CANVAS_BOX.height * scale);
+      // A partial box must not silently degrade to the full canvas or the viewport, and
+      // the guard this replaces compared a number with itself: `imageData.width < 240 *
+      // (imageData.width / 100)` is `w < 2.4w`, which is true for every `w` a capture can
+      // have, so it could not fail. What replaced it is a comparison of two DECODED sizes.
+      //
+      // The claim is worth stating precisely, because at THIS call site it is not the one
+      // that needs saying. This box is 100x60 and the canvas is 240x160, so a
+      // full-canvas capture answers 2.4s x 2.667s and `expectFaithfulCaptureOf` already
+      // rejects it on both the integral and the equal-axes check. What no call site gets
+      // from that helper is the EXTENT: it divides the decoded size by the requested rect
+      // and is satisfied by any rect standing to the request in a uniform integral ratio,
+      // which is why the 120x80 clip in `expectFaithfulCaptureOf`'s own docblock needs a
+      // separate argument. Playwright's `page.screenshot({ clip, scale: 'device' })` of the
+      // SAME rect at the same native device scale is the reference that closes that gap for
+      // the proportional case as well as this one.
+      const reference = await decodeScreenshot(await page.screenshot({ clip: box, scale: 'device', type: 'png' }));
+      expect(imageData.width, 'a capture that took the whole canvas instead of the box').toBe(reference.width);
+      expect(imageData.height, 'a capture that took the whole canvas instead of the box').toBe(reference.height);
     });
 
     test('captures screenshot via CDP without explicit DPR scaling', async ({ page }, testInfo) => {
@@ -305,9 +319,9 @@ test.describe('CDP Helpers', () => {
       const screenshot = await captureCanvasScreenshot(page, box, testInfo, 'test-capture-2x-css', clip);
       const imageData = await decodeScreenshot(screenshot);
 
-      // viewport-drawing.spec.ts and text-tool.spec.ts feed these pixel bounds straight
-      // into screenshotBoundsToCss, so whatever scale the capture comes back at, that
-      // conversion has to reconstruct the CSS rect of the clip.
+      // select-move.spec.ts, viewport-drawing.spec.ts and text-tool.spec.ts feed these
+      // pixel bounds straight into screenshotBoundsToCss, so whatever scale the capture
+      // comes back at, that conversion has to reconstruct the CSS rect of the clip.
       //
       // The property asserted is the ROUND TRIP, against literals rather than against
       // the function's own formula. An expectation written as

@@ -760,6 +760,47 @@ describe('retirement at the COMMIT_DOCUMENT_EDIT call site', () => {
   });
 });
 
+describe('retirement at the REORDER_LAYERS call site', () => {
+  it('leaves a promoted cache open when a reorder only rewrites order values', async () => {
+    // `StoreContext.tsx:945` is the fourth publisher that retires: the dispatcher's
+    // reorder fast path calls the same helper the promotion, commit and replay paths
+    // do. A reorder is the one that never touches a cache — `reorderLayersFromState`
+    // copies each layer and `reorderLayers` writes only `order` — so it is the one
+    // that must not close one. The layer record keeps naming the same raster under a
+    // new order, so the liveness set is unchanged and nothing is retirable.
+    const cache = createMockImageBitmap(100, 80);
+    const staged = createMockOffscreenCanvas(100, 80);
+    stubPromotion(new Map([[staged, cache]]));
+    const { store, dispatch } = renderWithProbe();
+    replaceDocument(dispatch(), {
+      [layerId]: { ...layerWithCanvas(layerId, staged), order: 0 },
+      [secondLayerId]: { ...layerWithCanvas(secondLayerId, canvas(60, 40)), order: 1 },
+    });
+    await publish(store(), [{ layerId, canvas: staged }]);
+    const before = layerAt(store, layerId);
+    expect(before.bitmap).toBe(cache);
+    expect(before.order).toBe(0);
+
+    // `afterWhichLayerId` is layer-2, so `targetOrder` is 1. Nothing is above it, so
+    // the only order written is the mover's own: `layer.order = targetOrder + 1`
+    // (`layer-utils.ts:288`). The move is real, which is what makes the retirement
+    // question non-trivial.
+    act(() => {
+      dispatch()({
+        type: 'REORDER_LAYERS',
+        payload: { layerToMoveId: layerId, afterWhichLayerId: secondLayerId },
+      });
+    });
+
+    const after = layerAt(store, layerId);
+    expect(after).not.toBe(before);
+    expect(after.order).toBe(2);
+    expect(layerAt(store, secondLayerId).order).toBe(1);
+    expect(after.bitmap).toBe(cache);
+    expect(closeOf(cache)).not.toHaveBeenCalled();
+  });
+});
+
 describe('retirement against every alias of a raster, not only layer.bitmap', () => {
   it('closes an adopted raster a commit removed once no live history entry names it', async () => {
     // The control for the two cases below, and the only proof that `ADOPT_LAYER_BITMAPS`
