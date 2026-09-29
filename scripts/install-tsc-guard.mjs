@@ -12,9 +12,7 @@
  * `node_modules/.bin/tsc` is npm's symlink to `typescript/bin/tsc`. This
  * replaces it with a symlink to `scripts/tsc-guard.mjs`, which refuses to run
  * without build mode and hands off to the real compiler when build mode is
- * present. `npx tsc`, a bare `tsc` on an npm script's PATH, and a direct
- * `./node_modules/.bin/tsc` all resolve through that one file, so no spelling of
- * the trap reaches the compiler without passing the guard.
+ * present. Every spelling of `tsc` resolves through that one file.
  *
  * WHY A SYMLINK AND NOT A GENERATED FILE
  * --------------------------------------
@@ -27,10 +25,17 @@
  * --------------------------------------
  * npm links bins from inside `reify`, and for a direct dependency it always
  * passes `force: true` to `linkGently`, which `rm`s whatever is sitting at the
- * bin path. So `npm install`, `npm ci`, `npm update`, `npm dedupe`, `npm prune`,
- * `npm rebuild` and `npm audit fix` all delete this link — and only `install`
- * and `ci` re-run `prepare` afterwards, so the rest leave the plain npm symlink
- * and the trap reopens silently.
+ * bin path. So a command that reifies can delete this link, and only `install`
+ * and `ci` re-run `prepare` afterwards.
+ *
+ * `npm rebuild` is the one measured end to end: the link flips back to npm's
+ * plain symlink, and `npm install` puts the guard back. `update`, `dedupe`,
+ * `prune` and `audit fix` all call the same code path and are expected to behave
+ * the same way, but they were NOT each measured — an audit found `dedupe` and
+ * `prune` did not actually clobber, so treat the enumeration as the risk surface
+ * rather than as a list of observations. It does not matter which of them is
+ * right, because the shim cannot be made un-removeable inside `node_modules` and
+ * the answer does not depend on the answer.
  *
  * A shim cannot be made un-removeable inside node_modules, so this does not
  * pretend otherwise. The defence is that the absence is LOUD rather than
