@@ -519,4 +519,151 @@ describe('the document shapes the parser has to survive', () => {
       expect(parsed.items, heading).toHaveLength(count);
     }
   });
+
+  /**
+   * The marker rule, held from the DEAD side. Every form here is a heading the
+   * documents could write — the separator and the parentheses are variations of
+   * the one real shape, `### Items 5, 7, 9 … — deleted` — so a future heading
+   * that retires a list is read as a retirement rather than as a section about
+   * one. This half passes under the loose word-anywhere rule as well, which is
+   * the point: it is what proves the fix did not simply delete the concept by
+   * making `deadNumbers` return nothing.
+   */
+  it('reads a heading that ENDS with a status marker as a retirement, in every separator form', () => {
+    const markers = [
+      ['## 5. Whatever — resolved', [5]],
+      ['### Items 1, 2 — deleted', [1, 2]],
+      ['## 3, 4. — deleted', [3, 4]],
+      ['## 9. An old thing - fixed', [9]],
+      ['## 11. Another: closed', [11]],
+      ['## 12. And a third (done)', [12]],
+      ['## 13. Landed, superseded and deleted', [13]],
+    ];
+    for (const [heading, dead] of markers) {
+      expect(deadNumbers(`${heading}\n`), heading).toEqual(dead);
+    }
+    // The one real retirement in all three documents, verbatim, still retires.
+    expect(deadNumbers('### Items 5, 7, 9, 13, 14, 18, 19, 21-29, 33-35, 37-42, 44 — deleted\n')).toEqual([
+      5, 7, 9, 13, 14, 18, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29, 33, 34, 35, 37, 38, 39, 40, 41, 42, 44,
+    ]);
+    // A heading that ends in a marker is never opened as an item: `assemble`
+    // consumes it, so the heading and the dead set carry the same information
+    // and the entry is not lost. This is the contract the older
+    // `## 3, 4. — deleted` fixture already pins, stated here next to the rule
+    // that decides it.
+    const parsed = parse('## 5. Whatever — resolved\n\nBody.\n');
+    expect(parsed.dead).toEqual([5]);
+    expect(parsed.items.map((item) => item.origin)).toEqual([]);
+    expect(planImport([parsed], []).create).toEqual([]);
+  });
+
+  /**
+   * The marker rule, held from the LIVE side, against the five real headings
+   * that a word-anywhere rule retired. They are legitimate prose and must not be
+   * edited to fit a parser, so they are reproduced here verbatim as fixtures.
+   *
+   * Every one of these was silently dropped: `assemble` closed the heading, never
+   * opened it as an item, and nothing in the parse result said so. The first
+   * also retired a second, unrelated number — the `3` harvested out of the quoted
+   * figure `"3 FIXED"` — which is why `dead` is asserted empty and not merely
+   * "not containing 70".
+   */
+  it('keeps a LIVE entry whose title merely CONTAINS a status word mid-title', () => {
+    const seventy = parse(
+      '## 70. A closure check reported "3 FIXED" for work that was already fixed before it ran\n\nBody.\n'
+    );
+    expect(seventy.dead).toEqual([]);
+    expect(seventy.items.map((item) => item.origin)).toEqual(['HANDOFF.md#70']);
+    expect(planImport([seventy], []).create.map((item) => item.origin)).toEqual(['HANDOFF.md#70']);
+
+    // A SUBHEADING, which is the shape at HANDOFF.md's §15: it retires nothing,
+    // and it must not truncate the entry that owns it either.
+    const sub = parse(
+      '## 15. `reorder-layers` is published\n\nIntro.\n\n' +
+        '### The self-anchored move: a converter defect, deliberately not fixed here\n\nDetail.\n'
+    );
+    expect(sub.dead).toEqual([]);
+    expect(sub.items.map((item) => item.origin)).toEqual(['HANDOFF.md#15']);
+    expect(sub.items[0].body).toMatch(/self-anchored/);
+
+    // The three `P`-severity entries, which go through the severity arm and have
+    // no number at all — so `dead` cannot express the failure and only the item
+    // count can.
+    for (const title of [
+      'P1 — the dialog-closed assertion is one rename from vacuous',
+      'P1 — the keyboard-flow test asserts the menu closed and nothing else',
+      'P2 — `exportIcoAndVerify` has no dialog-closed assertion',
+    ]) {
+      const parsed = parse(`## ${title}\n\nBody.\n`, 'e2e/OPEN_PROBLEMS.md');
+      expect(parsed.dead, title).toEqual([]);
+      expect(
+        parsed.items.map((item) => item.title),
+        title
+      ).toEqual([title]);
+      expect(planImport([parsed], []).create.length, title).toBe(1);
+    }
+  });
+
+  /**
+   * A marker is still the last WORD of a heading when punctuation follows it.
+   *
+   * The one real retirement in the corpus is `— deleted`, and a hand-written
+   * heading that ends in a full stop is an ordinary thing to write: `## 5. —
+   * deleted.` is a document saying exactly what it means. The trailing-punctuation
+   * tolerance is a tolerance, not a behavioural widening: swept over all 110
+   * headings in the three documents and all 54 fixture headings in this file, it
+   * changes no verdict at all — a live title does not end in a full stop after a
+   * status word, because the marker has to be the last thing in the heading for
+   * this rule to fire in the first place.
+   *
+   * The last four rows are the half that matters: the marker must still be
+   * LAST, so punctuation is absorbed but a following clause is not — and the
+   * absorbed set is a fixed and named one. `…` is not in it, because an
+   * ellipsis after the marker is the author continuing to write, not a sentence
+   * ending.
+   */
+  it('reads a trailing full stop after a marker as punctuation, not as prose', () => {
+    for (const [heading, dead] of [
+      ['## 5. — deleted.', [5]],
+      ['## 6. — deleted,', [6]],
+      ['## 7. — deleted;', [7]],
+      ['## 8. — deleted:', [8]],
+      ['## 9. — deleted .', [9]],
+      ['## 10. An old thing (done)…', []],
+      // Absorbing trailing punctuation must not become "a marker anywhere at
+      // the end of a sentence": a clause after it is prose again.
+      ['## 11. — deleted (was P2)', []],
+      ['## 12. — deleted and replaced by 4', []],
+      ['## 13. Old thing. Deleted by the reviewer', []],
+    ]) {
+      expect(deadNumbers(`${heading}\n`), heading).toEqual(dead);
+    }
+    // And the document shape it recovers is a real retirement end to end: the
+    // number is retired and the entry is not filed as open work.
+    const parsed = parse('## 5. Whatever — deleted.\n\nBody.\n');
+    expect(parsed.dead).toEqual([5]);
+    expect(parsed.items).toEqual([]);
+    expect(planImport([parsed], []).create).toEqual([]);
+  });
+
+  /**
+   * The same rule on the arm the parser handles separately: a heading that does
+   * not end in a marker must not close the section to inline `**Item 18**`
+   * markers. Under the loose rule this heading's `9` was harvested as a
+   * retirement AND the section was closed to inline markers, so `**Item 18**`
+   * was suppressed and the document's own prose became nothing at all.
+   *
+   * `#9` is in the expected list because a live numbered heading DOES open an
+   * item, and the inline marker closes it and opens the next one. Under the loose
+   * rule the list is empty, not a different shape.
+   */
+  it('takes an inline item marker under a heading that merely mentions a status word', () => {
+    const parsed = parse(
+      '## 9. A heading that says fixed in passing and then keeps going\n\n' +
+        '- **Item 18** turned a dropped publication into an error.\n'
+    );
+    expect(parsed.dead).toEqual([]);
+    expect(parsed.items.map((item) => item.origin)).toEqual(['HANDOFF.md#9', 'HANDOFF.md#18']);
+    expect(planImport([parsed], []).create.map((item) => item.origin)).toEqual(['HANDOFF.md#9', 'HANDOFF.md#18']);
+  });
 });

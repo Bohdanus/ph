@@ -102,12 +102,77 @@ const HEADING = /^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/;
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
 
 /**
- * How these documents record a finished item: a heading that says so. The
- * alternation is deliberately the seven words the documents actually use. A
- * looser net (a bare `dead`, or `close`) would swallow live entries — one real
- * heading ends in the word "dead" and means it as prose.
+ * How these documents record a finished item: a heading that ENDS with a status
+ * word, optionally preceded by a separator (`—`, `–`, `-`, `:` or `(`), and with
+ * trailing punctuation after it. The alternation is deliberately the seven words
+ * the documents actually use; a looser net (a bare `dead`, or `close`) would
+ * swallow live entries — one real heading ends in the word "dead" and means it as
+ * prose.
+ *
+ * WHY THE WORD HAS TO BE TRAILING — THIS IS THE WARNING, AND THE WHOLE REASON
+ * FOR THE RULE
+ * ---------------------------------------------------------
+ * A live entry's title may contain any of the seven words as ordinary prose, and
+ * testing for the word ANYWHERE in the heading silently retired the entry: the
+ * heading was closed by `assemble`, never opened as an item, and dropped from the
+ * import with nothing in the output saying so. Five real headings did exactly
+ * that, and all five are legitimate prose that must not be edited to fit a
+ * parser:
+ *
+ *   - `## 70. A closure check reported "3 FIXED" for work that was already fixed
+ *     before it ran` — and it retired a second, unrelated number: the `3` was
+ *     harvested out of the quoted figure `"3 FIXED"`.
+ *   - `### The self-anchored move: a converter defect, deliberately not fixed here`
+ *   - `## P1 — the dialog-closed assertion is one rename from vacuous`
+ *   - `## P1 — the keyboard-flow test asserts the menu closed and nothing else`
+ *   - `## P2 — \`exportIcoAndVerify\` has no dialog-closed assertion`
+ *
+ * The documents put the marker at the END of the heading and nowhere else — the
+ * one real retirement in all three of them is `### Items 5, 7, 9, … — deleted` —
+ * so that is the rule. A dead word alone is not a status; a dead word AT THE END
+ * is. A LEADING `## Fixed — a real P2 race` is therefore live, which this parser
+ * has always intended: it is a section about a race, and treating it as a
+ * retirement deleted every entry beneath it.
+ *
+ * THE TWO FAILURE MODES ARE NOT SYMMETRIC, AND THAT IS THE ARGUMENT FOR THE RULE
+ * -----------------------------------------------------------------------------
+ * Wrong in the OLD direction, the cost is INVISIBLE: a live heading is consumed,
+ * no item opens, and the document's own prose is unreachable from any item —
+ * three of the five above do not even reach the `dead` set, because a severity
+ * heading carries no number for it to harvest, so the only symptom is a missing
+ * item that nothing reports.
+ *
+ * Wrong in the NEW direction — a retirement heading this rule does not recognise
+ * — the cost is a ROW: the heading becomes an item whose title is printed on
+ * `swarm ready`, and clearing it is what the handoff lifecycle already requires
+ * anyway (delete the heading, or let the entry be worked and closed). Every
+ * failure of the narrow rule is a false LIVE entry a reader can see; no failure
+ * of the wide rule is anything but a silent loss. So the rule stays narrow, and
+ * the residual risk is deliberately one-sided and deliberately loud.
+ *
+ * WHAT IS STILL READ AS LIVE, AND WHY THAT IS ACCEPTABLE
+ * -----------------------------------------------------
+ * The marker has to be the last WORD in the heading, so a heading that states the
+ * retirement and then keeps writing is live: a marker in the first clause
+ * (`## Fixed — a real P2 race`), a clause after the marker (`## 5. — deleted (was
+ * P2)`), or an ellipsis rather than a full stop (`## 5. — deleted…`) — an
+ * ellipsis is the author continuing, not a sentence ending, so it is not in the
+ * tolerated set. Every one of those is a heading somebody has to notice on
+ * `swarm ready` and fix.
+ *
+ * Punctuation after the marker is NOT one of them: `## 5. — deleted.` is the
+ * document saying what it means with a full stop on the end, and it retires. That
+ * is the whole of the trailing-punctuation tolerance, and it is a tolerance
+ * rather than a widening — swept over all 110 headings in the three documents it
+ * changes no verdict at all, because a live title does not end in a full stop
+ * after a status word, the marker having to be last for this rule to reach it.
+ *
+ * The LIST form and the DEAD form stay separate, and both use this: a heading
+ * that ends in a marker retires the numbers it lists, and only a heading that
+ * LISTS retired numbers closes the section to inline `**Item 18**` markers.
  */
-const DEAD_HEADING = /deleted|closed|done|resolved|fixed|landed|superseded/i;
+const DEAD_HEADING =
+  /^(?:.*?[\s—–:(]\s*)?\(?\s*(?:deleted|closed|done|resolved|fixed|landed|superseded)\b\s*\)?[\s.,;:]*$/i;
 
 /**
  * A leading item number, with or without its dot and with or without the `Item`
@@ -241,11 +306,23 @@ function scan(text) {
  * The item numbers a dead heading retires.
  *
  * Extracted so `assemble` can ask one question per heading — does this heading
- * actually LIST retired items? — rather than re-deriving it. A section that
- * lists numbers is a section about retired items, and its prose mentions them
- * without being them. A heading that merely contains a dead word, like
- * `## Fixed — a real P2 race in the adapter`, is a section about something else,
- * and treating it as a retirement list deleted every entry beneath it.
+ * actually LIST retired items? — rather than re-deriving it. The two questions
+ * are different and stay different, because `DEAD_HEADING` only says a heading
+ * ENDS with a status marker and says nothing about whether it names anything:
+ *
+ *   - `### Items 5, 7, 9 — deleted` ends with a marker AND names three entries.
+ *     It is a section ABOUT retired items, and the prose beneath it mentions
+ *     them without being them, so every inline marker under it is suppressed.
+ *   - `## Done` ends with a marker and names nothing. It closes the entry above
+ *     it and retires nothing.
+ *   - `## Fixed — a real P2 race in the adapter` does not end with a marker at
+ *     all, so it is not even a dead heading: a section about a race, whose
+ *     entries beneath it were deleted wholesale when it was treated as one.
+ *
+ * The `[]` case is therefore reachable from two directions — a heading with no
+ * marker, and a marker with no numbers — and both have to keep the section open
+ * to inline markers. Collapsing them is what deleted every entry under
+ * `## Fixed — a real P2 race …`.
  */
 function retiredNumbersIn(record) {
   if (record.kind !== 'heading' || !DEAD_HEADING.test(record.text)) return [];
@@ -421,9 +498,10 @@ function assemble(base, { lines, records }) {
         close(record.line, 0);
         // Only a heading that LISTS retired items closes the section to inline
         // markers. `### Items 5, 7, 9 — deleted` is a section about retired
-        // items and its prose mentions them; `## Fixed — a real P2 race` is a
-        // section about a race, and suppressing the entries under it deleted
-        // them. The dead word alone is not enough.
+        // items and its prose mentions them; a marker with no numbers in it —
+        // `## Done` — retires nothing and must not suppress the entries under
+        // it either. `retiredNumbersIn` returning `[]` is the whole test, and it
+        // is why the marker test and the LIST test are not the same test.
         inDeadSection = retiredNumbersIn(record).length > 0;
         continue;
       }
