@@ -108,18 +108,65 @@ const FENCE = /^\s{0,3}(`{3,}|~{3,})/;
  * heading ends in the word "dead" and means it as prose.
  *
  * The word must be the LAST one in the heading, which is what makes it a marker
- * rather than a mention. It cannot be an anywhere-match: five live headings in
- * these documents merely SAY a status word, and three of them say it as part of
- * a hyphenated phrase — `## P1 — the dialog-closed assertion is one rename from
- * vacuous`, `## P1 — the keyboard-flow test asserts the menu closed and nothing
- * else`, `## 70. A closure check reported "3 FIXED" for work that was already
- * fixed before it ran`. That last one also cost a whole item: an anywhere-match
- * found "fixed", `retiredNumbersIn` then harvested the `3` out of `"3 FIXED"`, so
- * the section was marked retired and §70 was never opened as an item at all —
- * a real defect dropped out of the import, and the heading-count test reported 37
- * headings against 36 items. The only retirement marker any of the three
- * documents actually uses is `### Items 5, 7, 9, … — deleted`, which ends in
- * the word. Anchoring to the end is what the documents do, not a guess.
+ * rather than a mention. It cannot be an anywhere-match: at `eba42f8` the loose
+ * net `/deleted|closed|done|resolved|fixed|landed|superseded/i` matched six of
+ * the 111 real headings, of which exactly one was a retirement and five were
+ * live prose. **Two** of those five said the word inside a hyphenated compound
+ * (`dialog-closed`, twice) — not three, which is what an earlier revision of
+ * this comment claimed from the same tree, because its third example,
+ * `"3 FIXED"`, is not hyphenated at all.
+ *
+ * The three documents' own headings, as measured on the corpus rather than
+ * remembered: the loose net matches five of today's 92, and the narrow one
+ * matches exactly one of them — the genuine retirement,
+ * `### Items 5, 7, 9, … — deleted`. The four live ones are
+ * `### The self-anchored move: a converter defect, deliberately not fixed here`
+ * (`HANDOFF.md:368`), `## 69. An eraser gesture abandoned by switching tools …`
+ * (`HANDOFF.md:1508`), `## 76. A closure check reported "3 FIXED" …`
+ * (`HANDOFF.md:1788`) and `## 77. … and a suffixed retirement retires its
+ * PARENT` (`HANDOFF.md:1821`). §69 and §77 are the cases with no boundary at
+ * all — `abandoned` contains `done` and `suffixed` contains `fixed`, both
+ * inside an ordinary word rather than after a hyphen — and they are the two the
+ * corpus actually has. The hyphenated severities that motivated the rule were
+ * moved out of the corpus by `77c3663`, so a count taken from that tree is
+ * history and the counts above are not.
+ *
+ * §76 cost a whole item as well, and it is the reason the anchoring is worth an
+ * argument at all: the loose net found `fixed`, `retiredNumbersIn` then
+ * harvested the `3` out of `"3 FIXED"`, the section was marked retired, and the
+ * entry was never opened as an item at all — a real defect dropped out of the
+ * import with nothing in the output saying so.
+ *
+ * THE RESIDUAL RISK IS TWO-SIDED, AND THIS RULE DOES NOT MAKE IT ONE-SIDED
+ * -----------------------------------------------------------------------
+ * An earlier revision of this comment argued that under-matching is loud
+ * (a false LIVE row a reader sees on `swarm ready`) while over-matching is
+ * always a silent loss, and concluded the risk was "deliberately one-sided and
+ * deliberately loud". **That was false, and it was false for the very headings
+ * the rule is about.** `assemble` consumes a dead heading with `continue` and
+ * never opens it as an item, so a NUMBERED heading this rule retires vanishes
+ * from `items` exactly the way one it fails to recognise becomes a visible row.
+ * Measured, both directions, both silent for a numbered heading:
+ *
+ *     ## 31. The dialog-closed assertion is fixed   ->  dead=[31]  items=[]
+ *     ## 9.  — deleted .                           ->  dead=[]   items=[#9]
+ *
+ * The first is a live entry retired with nothing in the parse result to say so.
+ * The second is the visible false row. The only difference is which way the
+ * heading points, and a NUMBERED heading that genuinely ends in a status word —
+ * `## 5. Whatever — resolved` — is indistinguishable from one that merely does.
+ * Narrowing trades one silent class for a smaller one; it does not remove it.
+ *
+ * What anchoring does buy is the empirical half, which is the half that holds:
+ * over all 92 real headings the narrow rule matches exactly the one heading the
+ * loose one also reads as a retirement, so the loose rule's other four are the
+ * wrong verdicts and none of them is a retirement this rule has lost. It is
+ * also brittle at the punctuation boundary in a way worth knowing about — the
+ * tolerated trailing set is a fixed, named list, so `— deleted.` retires and
+ * `— deleted .` (one space) does not, and a tab, an asterisk or a second space
+ * all read as LIVE. `scripts/__tests__/handoff-import.test.mjs` pins each of
+ * those, so the asymmetry is on the record rather than discovered by a heading
+ * somebody happened to write.
  */
 const DEAD_HEADING = /(?:^|[\s\-–—(\[])(?:deleted|closed|done|resolved|fixed|landed|superseded)\b[)\].,;:!?'"’”]*$/i;
 
